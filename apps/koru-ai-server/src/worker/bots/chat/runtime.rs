@@ -13,6 +13,12 @@ enum Phase {
     Observe,
     Delivery,
     Stop,
+    Interrupt,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Finish {
+    Stop,
+    Interrupt,
 }
 pub(in crate::worker) struct LiveChat {
     pub(super) submission: BotSubmission,
@@ -25,11 +31,14 @@ pub(in crate::worker) struct LiveChat {
     due: Instant,
     busy: bool,
     control_busy: bool,
-    stopping: bool,
+    finishing: Option<Finish>,
 }
 impl LiveChat {
     pub(super) fn control_fence(&self) -> Option<BotExecutionFence> {
-        if self.stopping || self.pending.is_some() || !matches!(self.phase, Phase::Observe) {
+        if self.finishing.is_some()
+            || self.pending.is_some()
+            || !matches!(self.phase, Phase::Observe)
+        {
             return None;
         }
         self.fence
@@ -61,7 +70,7 @@ impl LiveChat {
             due: Instant::now(),
             busy: false,
             control_busy: false,
-            stopping: false,
+            finishing: None,
         }
     }
 }
@@ -132,7 +141,7 @@ impl WorkerState {
                 due: Instant::now(),
                 busy: false,
                 control_busy: false,
-                stopping: false,
+                finishing: None,
             },
         );
         let bot = self
@@ -151,11 +160,22 @@ impl WorkerState {
             return;
         };
         let now = Instant::now();
-        let control = self
-            .bot_chats
-            .values()
-            .any(|chat| chat.stopping && !chat.control_busy && chat.due <= now);
-        if !control && self.bot_chats.values().any(|chat| chat.busy) {
+        let control = self.bot_chats.values().any(|chat| {
+            chat.finishing == Some(Finish::Stop) && !chat.control_busy && chat.due <= now
+        });
+        let automatic = !control
+            && self.bot_chats.values().any(|chat| {
+                chat.finishing == Some(Finish::Interrupt) && !chat.busy && chat.due <= now
+            });
+        // Automatic reconciliation runs on the normal administration pool, so
+        // an in-flight interruption does not occupy the provider Bot slot.
+        if !control
+            && !automatic
+            && self
+                .bot_chats
+                .values()
+                .any(|chat| chat.busy && chat.finishing != Some(Finish::Interrupt))
+        {
             return;
         }
         let Some(id) = self
@@ -164,9 +184,11 @@ impl WorkerState {
             .filter(|(_, chat)| {
                 chat.due <= now
                     && if control {
-                        chat.stopping && !chat.control_busy
+                        chat.finishing == Some(Finish::Stop) && !chat.control_busy
+                    } else if automatic {
+                        chat.finishing == Some(Finish::Interrupt) && !chat.busy
                     } else {
-                        !chat.stopping && !chat.busy
+                        chat.finishing.is_none() && !chat.busy
                     }
             })
             .min_by_key(|(_, chat)| chat.due)
@@ -214,6 +236,10 @@ impl WorkerState {
                 key: run_key(&chat.submission),
                 fence: chat.fence.clone(),
             },
+            Phase::Interrupt => DelegateCommand::Interrupt {
+                key: run_key(&chat.submission),
+                fence: chat.fence.clone(),
+            },
         };
         let job = StepJob {
             attempt: id,
@@ -225,6 +251,11 @@ impl WorkerState {
         let sent = if control {
             self.provider_admin.as_ref().is_some_and(|pool| {
                 pool.try_submit(ProviderAdminJob::BotChatControl(job))
+                    .is_ok()
+            })
+        } else if automatic {
+            self.provider_admin.as_ref().is_some_and(|pool| {
+                pool.try_submit(ProviderAdminJob::BotChatRecovery(job))
                     .is_ok()
             })
         } else {
@@ -250,12 +281,13 @@ impl WorkerState {
             chat.busy = false;
         }
         chat.due = Instant::now() + Duration::from_millis(250);
-        if chat.stopping && !step.administrative {
+        if chat.finishing == Some(Finish::Stop) && !step.administrative {
             self.bot_chats.insert(step.attempt, chat);
             return;
         }
         let recovery = match &step.phase {
             Phase::Stop => Some(koru_delegate_core::NativeDrainReason::OwnerStop),
+            Phase::Interrupt => Some(koru_delegate_core::NativeDrainReason::RunRecovery),
             Phase::Delivery => Some(koru_delegate_core::NativeDrainReason::TerminalTurn),
             Phase::Admission => Some(koru_delegate_core::NativeDrainReason::RunRecovery),
             _ => None,
@@ -283,7 +315,7 @@ impl WorkerState {
         }
         if self.native_recovery.is_some()
             && !recovery_admitted
-            && matches!(&step.phase, Phase::Delivery)
+            && matches!(&step.phase, Phase::Delivery | Phase::Interrupt)
             && matches!(&step.result, Ok(BotReply::Applied))
         {
             // An absorbing Run may acknowledge delivery history while Held
@@ -306,9 +338,11 @@ impl WorkerState {
                 self.bot_chats.insert(step.attempt, chat);
             }
             Err(_) => {
+                // An automatic failure never selects Stop, and it never
+                // replaces a person's Stop that is already in progress.
                 self.interrupt_bot_chat(step.attempt);
-                chat.phase = Phase::Stop;
-                chat.stopping = true;
+                chat.phase = Phase::Admission;
+                chat.finishing.get_or_insert(Finish::Interrupt);
                 self.bot_chats.insert(step.attempt, chat);
             }
         }
@@ -321,7 +355,12 @@ impl WorkerState {
         phase: Phase,
         result: Result<BotReply, koru_delegate_api::Failure>,
     ) -> Result<bool, AiError> {
-        if chat.stopping && !matches!(phase, Phase::Stop | Phase::Admission) {
+        if chat.finishing.is_some()
+            && !matches!(
+                phase,
+                Phase::Stop | Phase::Interrupt | Phase::Admission | Phase::Delivery
+            )
+        {
             // A result may arrive after the person's Stop. It is never a new
             // permission to begin/advance the old AI task.
             if let Ok(BotReply::Turn { turn }) = &result {
@@ -329,7 +368,7 @@ impl WorkerState {
                     fence.turn = Some(*turn);
                 }
             }
-            chat.phase = Phase::Stop;
+            chat.phase = Phase::Admission;
             return Ok(true);
         }
         let reply = match result {
@@ -337,9 +376,14 @@ impl WorkerState {
             Err(error) if error.retryable || error.code == "bot_delivery_pending" => {
                 return Ok(true);
             }
-            Err(_) if matches!(phase, Phase::Stop) => {
+            Err(_) if matches!(phase, Phase::Stop | Phase::Interrupt) => {
                 chat.phase = Phase::Admission;
                 return Ok(true);
+            }
+            // A finished Run's refused history acknowledgment is not retried in
+            // a loop; its durable outbox stays pending for the next recovery.
+            Err(_) if chat.finishing.is_some() && matches!(phase, Phase::Delivery) => {
+                return Ok(false);
             }
             Err(_) => return Err(bot_route_error()),
         };
@@ -354,7 +398,7 @@ impl WorkerState {
                     .status
                     == BotOperationStatus::Rejected
                 {
-                    if chat.stopping {
+                    if chat.finishing.is_some() {
                         return Ok(false);
                     }
                     return Err(bot_route_error());
@@ -382,14 +426,35 @@ impl WorkerState {
                     admission.state,
                     BotAdmissionState::Refused | BotAdmissionState::Settled
                 ) {
-                    if chat.stopping {
+                    if chat.finishing.is_some() {
+                        // Real delivery history still reaches the owner; none
+                        // is synthesized for an interruption.
+                        if self.repository.bot_delivery_pending(id)? {
+                            chat.phase = Phase::Delivery;
+                            return Ok(true);
+                        }
                         return Ok(false);
                     }
                     return Err(bot_route_error());
                 }
-                if chat.stopping {
+                if let Some(finish) = chat.finishing {
+                    // Reconcile may refresh this attempt's turn after an
+                    // uncertain Begin. A different attempt, generation or
+                    // session is never substituted: the owner no longer runs
+                    // the attempt this chat was finishing, so nothing is sent.
+                    if let (Some(old), Some(current)) = (&chat.fence, &admission.fence) {
+                        if old.attempt != current.attempt
+                            || old.generation != current.generation
+                            || old.session != current.session
+                        {
+                            return Ok(false);
+                        }
+                    }
                     chat.fence = admission.fence;
-                    chat.phase = Phase::Stop;
+                    chat.phase = match finish {
+                        Finish::Stop => Phase::Stop,
+                        Finish::Interrupt => Phase::Interrupt,
+                    };
                     return Ok(true);
                 }
                 if let Some(fence) = admission.fence {
@@ -445,7 +510,12 @@ impl WorkerState {
                     .acknowledge_bot_delivery(id, &receipt, Timestamp::now())?;
                 return Ok(false);
             }
-            (Phase::Stop, BotReply::Applied) => return Ok(false),
+            (Phase::Stop | Phase::Interrupt, BotReply::Applied) => {
+                if !self.repository.bot_delivery_pending(id)? {
+                    return Ok(false);
+                }
+                chat.phase = Phase::Delivery;
+            }
             _ => return Err(bot_route_error()),
         }
         Ok(true)
@@ -485,22 +555,7 @@ impl WorkerState {
             cancellation.cancel();
         }
         let state = self.repository.bot_replay_state(id).map_err(ai_failure)?;
-        let chat = self.bot_chats.entry(id).or_insert_with(|| LiveChat {
-            submission: receipt.intent.submission.clone(),
-            input: receipt.intent.submission.input.clone(),
-            fence: state.fence,
-            mapper: None,
-            live: Vec::new(),
-            pending: None,
-            phase: Phase::Admission,
-            due: Instant::now(),
-            busy: false,
-            control_busy: false,
-            stopping: true,
-        });
-        chat.stopping = true;
-        chat.phase = Phase::Admission;
-        chat.due = Instant::now();
+        self.request_bot_stop(id, &receipt.intent.submission, state.fence);
         self.publish(AiEvent::Cancelled {
             attempt_id: id,
             at: Timestamp::now(),
@@ -508,6 +563,48 @@ impl WorkerState {
         self.streams.remove(&id);
         self.work_terminal(id);
         Ok(AttemptStatus::Cancelled)
+    }
+    /// A person's Stop after an automatic interruption or failure already ended
+    /// the AI attempt. The stronger Stop reaches the owner on the reserved lane
+    /// at once, without waiting for an in-flight automatic reply. The attempt's
+    /// durable status is left as it ended: recording Cancelled over it needs a
+    /// schema change (its terminal status is absorbing), so nothing claims it.
+    pub(in crate::worker) fn stop_interrupted_bot_chat(
+        &mut self,
+        id: InferenceAttemptId,
+        status: AttemptStatus,
+    ) -> ApiResult<AttemptStatus> {
+        let receipt = self
+            .repository
+            .bot_submission_for_attempt(id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        let state = self.repository.bot_replay_state(id).map_err(ai_failure)?;
+        self.request_bot_stop(id, &receipt.intent.submission, state.fence);
+        Ok(status)
+    }
+    fn request_bot_stop(
+        &mut self,
+        id: InferenceAttemptId,
+        submission: &BotSubmission,
+        fence: Option<BotExecutionFence>,
+    ) {
+        let chat = self.bot_chats.entry(id).or_insert_with(|| LiveChat {
+            submission: submission.clone(),
+            input: submission.input.clone(),
+            fence,
+            mapper: None,
+            live: Vec::new(),
+            pending: None,
+            phase: Phase::Admission,
+            due: Instant::now(),
+            busy: false,
+            control_busy: false,
+            finishing: Some(Finish::Stop),
+        });
+        chat.finishing = Some(Finish::Stop);
+        chat.phase = Phase::Admission;
+        chat.due = Instant::now();
     }
     pub(in crate::worker) fn recover_bot_chats(&mut self) {
         let Some(after) = self.bot_chat_recovery else {
@@ -541,6 +638,22 @@ impl WorkerState {
             let Ok(replay) = self.repository.bot_replay_state(id) else {
                 continue;
             };
+            let finish = match self.repository.attempt(id) {
+                Ok(Some(attempt)) if attempt.status == AttemptStatus::Cancelled => {
+                    Some(Finish::Stop)
+                }
+                Ok(Some(attempt))
+                    if matches!(
+                        attempt.status,
+                        AttemptStatus::Interrupted | AttemptStatus::Failed
+                    ) =>
+                {
+                    Some(Finish::Interrupt)
+                }
+                Ok(Some(_)) => None,
+                // Never guess a disposition, and never resume the old task.
+                _ => continue,
+            };
             let mut input = receipt.intent.submission.input.clone();
             input.text.clear();
             self.bot_chats.insert(
@@ -552,7 +665,7 @@ impl WorkerState {
                     mapper: None,
                     live: Vec::new(),
                     pending: None,
-                    phase: if delivery {
+                    phase: if delivery && finish.is_none() {
                         Phase::Delivery
                     } else {
                         Phase::Admission
@@ -560,7 +673,7 @@ impl WorkerState {
                     due: Instant::now(),
                     busy: false,
                     control_busy: false,
-                    stopping: !delivery,
+                    finishing: finish,
                 },
             );
         }

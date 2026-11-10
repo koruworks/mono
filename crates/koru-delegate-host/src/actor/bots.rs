@@ -14,7 +14,10 @@ fn bot_failure(error: RunError) -> Failure {
         RunError::Port(error)
             if matches!(
                 error.code.as_str(),
-                "bot_native_effects_pending" | "bot_delivery_pending" | "bot_stop_unconfirmed"
+                "bot_native_effects_pending"
+                    | "bot_delivery_pending"
+                    | "bot_stop_unconfirmed"
+                    | "bot_interrupt_pending"
             ) =>
         {
             Failure::new(
@@ -239,6 +242,16 @@ impl Actor {
                 self.orchestrator
                     .bot_answer_questions(&fence, device, request, answers)
                     .map_err(bot_failure)?;
+                BotReply::Applied
+            }
+            BotCommand::Interrupt { key, fence } => {
+                // A pending reply may follow a durable status change; watchers
+                // learn it either way. The caller wakes the queue (handle).
+                let result = self
+                    .orchestrator
+                    .bot_interrupt(&key, device, fence.as_ref());
+                self.notify(key.run);
+                result.map_err(bot_failure)?;
                 BotReply::Applied
             }
             BotCommand::Stop { key, fence } => {

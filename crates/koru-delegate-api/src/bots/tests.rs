@@ -4,8 +4,35 @@ use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
 
 #[test]
-fn drain_commands_use_ipc_ten_and_refuse_undeclared_trigger_authority() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 10);
+fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
+    let key: BotRunKey = serde_json::from_value(serde_json::json!({
+        "owner":{"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()},
+        "bot":Uuid::new_v4(),"run":Uuid::new_v4()
+    }))
+    .unwrap();
+    let command = BotCommand::Interrupt {
+        key: key.clone(),
+        fence: None,
+    };
+    assert_eq!(command.owner(), Some(&key.owner));
+    let bytes = koru_ipc::frame::encode(11, &command).unwrap();
+    let (version, decoded): (u8, BotCommand) =
+        koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
+    assert_eq!(version, crate::ipc::WIRE_VERSION);
+    assert_eq!(decoded, command);
+    let mut wire = serde_json::to_value(command).unwrap();
+    assert_eq!(wire["command"], "interrupt");
+    wire["force"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<BotCommand>(wire).is_err());
+    let bytes = koru_ipc::frame::encode(10, &serde_json::json!({"frame":"hello"})).unwrap();
+    let error = crate::local::read_current_response(&mut bytes.as_slice()).unwrap_err();
+    assert_eq!(error.code, "delegate_incompatible");
+    assert!(!error.retryable);
+}
+
+#[test]
+fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
+    assert_eq!(crate::ipc::WIRE_VERSION, 11);
     let request = prepare();
     for reason in [
         NativeDrainReason::GatewayStartup,
@@ -21,7 +48,7 @@ fn drain_commands_use_ipc_ten_and_refuse_undeclared_trigger_authority() {
         let encoded = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (version, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut encoded.as_slice()).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert_eq!(decoded, command);
         let mut json = serde_json::to_value(command).unwrap();
         json["reason"]["trusted"] = serde_json::json!(true);

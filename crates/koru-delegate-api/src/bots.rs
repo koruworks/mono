@@ -141,6 +141,11 @@ pub enum BotCommand {
         key: BotRunKey,
         fence: Option<BotExecutionFence>,
     },
+    /// Automatic AI interruption never borrows explicit owner Stop authority.
+    Interrupt {
+        key: BotRunKey,
+        fence: Option<BotExecutionFence>,
+    },
     AnswerApproval {
         fence: BotExecutionFence,
         approval: ApprovalId,
@@ -199,6 +204,7 @@ impl BotCommand {
             | Self::Trash { key, .. }
             | Self::Restore { key, .. }
             | Self::Stop { key, .. }
+            | Self::Interrupt { key, .. }
             | Self::AcknowledgeDelivery { key, .. } => Some(&key.owner),
             Self::Observe { fence, .. }
             | Self::BeginTurn { fence, .. }

@@ -14,6 +14,7 @@ use koru_delegate_sqlite::{
     QueuedBotAdmission,
 };
 mod cleanup;
+mod interrupt;
 
 pub(crate) fn refused(code: &'static str) -> RunError {
     PortError::new(Port::Store, code, "The Bot operation cannot be admitted.").into()

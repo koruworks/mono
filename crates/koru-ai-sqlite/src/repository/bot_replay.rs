@@ -384,6 +384,19 @@ impl Repository {
         delivery_on(&self.connection, attempt)
     }
 
+    /// Whether the outbox still owes the owner an acknowledgment. The receipt
+    /// itself stays readable as history after acknowledgment.
+    pub fn bot_delivery_pending(&self, attempt: InferenceAttemptId) -> Result<bool, AiError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bot_chat_runs
+            WHERE ai_attempt_id=?1 AND delivery_state IN ('pending','unconfirmed'))",
+                [attempt.to_storage()],
+                |r| r.get(0),
+            )
+            .map_err(storage_failed)
+    }
+
     /// Only a trusted owner's exact acknowledgment may move the durable outbox.
     pub fn acknowledge_bot_delivery(
         &mut self,

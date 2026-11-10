@@ -37,7 +37,8 @@ use koru_delegate_core::ArtifactDisposition;
 // authenticated, content-free native schedule wake. Version 2 preserved
 // explicit model intent on creation and every later start.
 // Version 10 adds scoped native-effect discovery, eligibility and drain proof.
-pub const WIRE_VERSION: u8 = 10;
+// Version 11 separates automatic Bot interruption from explicit owner Stop.
+pub const WIRE_VERSION: u8 = 11;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

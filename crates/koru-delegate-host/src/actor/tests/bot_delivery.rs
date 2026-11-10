@@ -165,3 +165,85 @@ fn delivery_command_returns_retryable_pending_then_applied_without_reopening_fai
         matches!(answer.recv().unwrap(), Response::Failure(failure) if failure.code == "bot_conflict" && !failure.retryable)
     );
 }
+
+#[test]
+fn queued_interrupt_reply_waits_for_canonical_ack_and_never_borrows_another_device() {
+    let (mut actor, _, _) = actor();
+    let s = bot_submission();
+    actor.device = s.provenance.owner.device;
+    let key = BotRunKey {
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        run: s.request.run,
+    };
+    let store = &mut actor.orchestrator.ports_mut().store;
+    store.bots().unwrap().admit_bot(&s).unwrap();
+    store.satisfy_intent(key.run, DocumentId::new()).unwrap();
+    let mut header = RunHeader::from_request(s.request, 0);
+    header.bot = Some(s.provenance);
+    assert_eq!(header.status, RunStatus::Created);
+    let durable = Arc::new(AtomicBool::new(false));
+    actor.orchestrator.ports_mut().documents = Box::new(PendingDocuments {
+        snapshot: RunDocument::create(&header)
+            .unwrap()
+            .export_snapshot()
+            .unwrap(),
+        durable: durable.clone(),
+    });
+    let interrupt = |actor: &mut Actor, key: BotRunKey| {
+        let (reply, answer) = mpsc::sync_channel(1);
+        actor.handle(Command::Bot {
+            command: BotCommand::Interrupt { key, fence: None },
+            reply,
+        });
+        answer.recv().unwrap()
+    };
+    let mut foreign = key.clone();
+    foreign.owner.device = DeviceId::from_uuid(uuid::Uuid::new_v4());
+    assert!(
+        matches!(interrupt(&mut actor, foreign), Response::Failure(failure) if failure.code == "bot_owner_mismatch" && !failure.retryable)
+    );
+    assert_eq!(
+        actor.orchestrator.header(key.run).unwrap().status,
+        RunStatus::Created
+    );
+    // The status is committed but not acknowledged: capacity stays queued and
+    // the reply is the retryable canonical-durability failure, never Applied.
+    assert!(
+        matches!(interrupt(&mut actor, key.clone()), Response::Failure(failure) if failure.code == "bot_stop_unconfirmed" && failure.retryable)
+    );
+    let ledger = actor.orchestrator.ports_mut().store.bots().unwrap();
+    assert_eq!(
+        ledger.bot_execution(key.run).unwrap().unwrap().state,
+        BotAdmissionState::Queued
+    );
+    durable.store(true, Ordering::Release);
+    assert!(matches!(
+        interrupt(&mut actor, key.clone()),
+        Response::Bot(BotReply::Applied)
+    ));
+    assert!(matches!(
+        interrupt(&mut actor, key.clone()),
+        Response::Bot(BotReply::Applied)
+    ));
+    assert_eq!(
+        actor.orchestrator.header(key.run).unwrap().status,
+        RunStatus::Interrupted {
+            prior_attempt: PriorAttempt::Unknown
+        }
+    );
+    let ledger = actor.orchestrator.ports_mut().store.bots().unwrap();
+    assert_eq!(
+        ledger.bot_execution(key.run).unwrap().unwrap().state,
+        BotAdmissionState::Settled
+    );
+    assert!(
+        actor
+            .orchestrator
+            .ports_mut()
+            .store
+            .current_attempt(key.run)
+            .unwrap()
+            .is_none()
+    );
+}

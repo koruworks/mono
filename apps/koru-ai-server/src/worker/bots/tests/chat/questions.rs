@@ -292,7 +292,8 @@ fn settled(native: &TerminalNative, begin: usize) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let state = native.native.state.lock().unwrap();
-        if state.begin == begin && (state.delivered || state.stopped) {
+        // A failed native turn finishes through automatic Interrupt.
+        if state.begin == begin && (state.delivered || state.stopped || state.interrupt_settled) {
             break;
         }
         drop(state);

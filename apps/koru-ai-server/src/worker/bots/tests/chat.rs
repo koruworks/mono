@@ -6,6 +6,7 @@ use koru_delegate_core as d;
 use koru_session_protocol as s;
 use std::sync::Mutex;
 mod controls;
+mod interruption;
 mod questions;
 
 #[derive(Default)]
@@ -17,6 +18,13 @@ struct Native {
     stop_reports: Mutex<Option<SyncSender<()>>>,
     settled_reports: Mutex<Option<SyncSender<()>>>,
     delivery_reports: Mutex<Option<SyncSender<()>>>,
+    begin_reports: Mutex<Option<SyncSender<()>>>,
+    interrupt_reports: Mutex<Option<SyncSender<bool>>>,
+    interrupt_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
+    hold_interrupt: AtomicBool,
+    hold_stop: bool,
+    replay_failure: bool,
+    hold_observation: bool,
 }
 #[derive(Default)]
 struct NativeState {
@@ -29,6 +37,9 @@ struct NativeState {
     input: Option<s::PendingInput>,
     stopped: bool,
     stop_calls: usize,
+    interrupt_calls: usize,
+    interrupt_settled: bool,
+    stop_unconfirmed: bool,
 }
 impl BotDelegatePort for Native {
     fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
@@ -48,6 +59,12 @@ impl BotDelegatePort for Native {
         if matches!(&command, D::Submit { .. }) {
             if let Some((entered, release)) = self.submit_gate.lock().unwrap().take() {
                 entered.send(()).unwrap();
+                let _ = release.recv();
+            }
+        }
+        if matches!(&command, D::Interrupt { .. }) {
+            if let Some((entered, release)) = self.interrupt_gate.lock().unwrap().take() {
+                let _ = entered.send(());
                 let _ = release.recv();
             }
         }
@@ -73,6 +90,8 @@ impl BotDelegatePort for Native {
                 state.submission = Some(submission);
                 state.fence = Some(fence);
                 state.stopped = false;
+                state.stop_unconfirmed = false;
+                state.interrupt_settled = false;
                 state.delivered = false;
                 state.observed_before_begin = false;
                 Ok(admission(&state))
@@ -94,6 +113,25 @@ impl BotDelegatePort for Native {
             }
             D::Observe { fence, after } => {
                 assert_eq!(Some(&fence), state.fence.as_ref());
+                if self.hold_observation && fence.turn.is_some() {
+                    return Ok(BotReply::Observation {
+                        observation: BotObservation {
+                            fence,
+                            observation: s::AgentEventObservation {
+                                events: Vec::new(),
+                                cursor: s::StreamSequence::new(if self.replay_failure {
+                                    2
+                                } else {
+                                    1
+                                })
+                                .unwrap(),
+                                earlier_truncated: self.replay_failure,
+                                commands: None,
+                                session_cursor: None,
+                            },
+                        },
+                    });
+                }
                 let events = if let Some(turn_id) = fence.turn {
                     let native = vec![
                         s::AgentEvent::TurnStarted { turn_id },
@@ -154,6 +192,9 @@ impl BotDelegatePort for Native {
                 assert!(state.observed_before_begin);
                 assert_eq!(Some(&fence), state.fence.as_ref());
                 state.begin += 1;
+                if let Some(report) = self.begin_reports.lock().unwrap().as_ref() {
+                    let _ = report.try_send(());
+                }
                 state.input = Some(input);
                 let turn = s::AgentTurnId::mint();
                 state.fence.as_mut().unwrap().turn = Some(turn);
@@ -178,11 +219,31 @@ impl BotDelegatePort for Native {
                 }
                 Ok(BotReply::Applied)
             }
+            D::Interrupt { key, fence } => {
+                assert_eq!(key.run, state.submission.as_ref().unwrap().request.run);
+                assert_eq!(fence, state.fence);
+                state.interrupt_calls += 1;
+                let settled = !self.hold_interrupt.load(Ordering::SeqCst);
+                state.interrupt_settled |= settled;
+                if let Some(report) = self.interrupt_reports.lock().unwrap().as_ref() {
+                    let _ = report.try_send(settled);
+                }
+                if settled {
+                    Ok(BotReply::Applied)
+                } else {
+                    Err(koru_delegate_api::Failure::new(
+                        "bot_interrupt_pending",
+                        "fixture human takeover",
+                        true,
+                    ))
+                }
+            }
             D::Stop { key, fence } => {
                 assert_eq!(key.run, state.submission.as_ref().unwrap().request.run);
                 assert_eq!(fence, state.fence);
                 state.stopped = true;
                 state.stop_calls += 1;
+                state.stop_unconfirmed = self.hold_stop;
                 if let Some(tx) = self.stop_reports.lock().unwrap().as_ref() {
                     let _ = tx.try_send(());
                 }
@@ -210,7 +271,10 @@ fn admission(state: &NativeState) -> BotReply {
                 request: submission.provenance.submission,
             },
             run: submission.request.run,
-            state: if state.delivered || state.stopped {
+            state: if state.delivered
+                || (state.stopped && !state.stop_unconfirmed)
+                || state.interrupt_settled
+            {
                 d::BotAdmissionState::Settled
             } else {
                 d::BotAdmissionState::Executing
@@ -461,10 +525,11 @@ fn shared_bot_retry_uses_original_task_once_and_exact_replay_keeps_identity() {
         .unwrap()
         .unwrap();
     let context = proof(authority.clone(), &bot, chat);
-    let (stopped_tx, stopped) = sync_channel(1);
+    // A failed native turn is an automatic outcome: Interrupt, never Stop.
+    let (interrupted_tx, interrupted) = sync_channel(4);
     let native = Arc::new(Native {
         fail_first: true,
-        stop_reports: Mutex::new(Some(stopped_tx)),
+        interrupt_reports: Mutex::new(Some(interrupted_tx)),
         ..Native::default()
     });
     let mut config = WorkerConfig::new(
@@ -496,7 +561,8 @@ fn shared_bot_retry_uses_original_task_once_and_exact_replay_keeps_identity() {
             break;
         }
     }
-    stopped.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(interrupted.recv_timeout(Duration::from_secs(5)).unwrap());
+    assert_eq!(native.state.lock().unwrap().stop_calls, 0);
     let request = RetryTurnRequest {
         destination_workspace: Some(bot.home_workspace),
         operation_id: Uuid::new_v4(),
@@ -661,4 +727,6 @@ fn cancel_during_submit_and_lost_stop_reply_recovers_after_writer_restart() {
     let state = native.state.lock().unwrap();
     assert_eq!(state.begin, 0);
     assert!(state.stop_calls >= 1);
+    // The durable Cancelled status, not the restart, selects the strong Stop.
+    assert_eq!(state.interrupt_calls, 0);
 }

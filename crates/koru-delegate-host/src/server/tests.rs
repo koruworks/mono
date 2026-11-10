@@ -32,7 +32,7 @@ fn stale_wire_versions_cannot_reach_dispatch() {
             confirm: false,
         },
     ] {
-        for stale in [1, 3, 4, 6, 7] {
+        for stale in [1, 3, 4, 6, 7, 10] {
             let legacy = frame::encode(stale, &request).unwrap();
             assert!(
                 read_current_request(&mut legacy.as_slice())

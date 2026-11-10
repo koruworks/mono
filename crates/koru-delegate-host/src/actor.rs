@@ -580,6 +580,7 @@ impl Actor {
                     koru_delegate_api::bots::BotCommand::Submit { .. }
                         | koru_delegate_api::bots::BotCommand::Barrier { .. }
                         | koru_delegate_api::bots::BotCommand::Stop { .. }
+                        | koru_delegate_api::bots::BotCommand::Interrupt { .. }
                 );
                 let response = match self.bot_command(command) {
                     Ok(reply) => Response::Bot(reply),

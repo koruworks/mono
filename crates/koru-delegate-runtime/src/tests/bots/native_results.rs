@@ -2,6 +2,7 @@
 
 use super::*;
 mod drain;
+mod interrupt;
 
 impl NativeResultLedger for RecordingStore {
     fn verified_native_result(

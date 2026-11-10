@@ -10,6 +10,39 @@
 
 use super::*;
 
+#[test]
+fn only_vouched_bot_context_can_interrupt_a_created_run_without_fake_start() {
+    let event = RunEvent::Interrupt {
+        prior_attempt: PriorAttempt::Unknown,
+    };
+    assert!(transition(&RunStatus::Created, &event).is_err());
+    assert_eq!(
+        crate::transition_bot(&RunStatus::Created, &event).unwrap(),
+        RunStatus::Interrupted {
+            prior_attempt: PriorAttempt::Unknown
+        }
+    );
+    assert!(
+        crate::transition_bot(
+            &RunStatus::Created,
+            &RunEvent::Interrupt {
+                prior_attempt: PriorAttempt::Ended
+            }
+        )
+        .is_err()
+    );
+    // Every other pair is identical: the Bot entry adds exactly one row.
+    let mut differing = Vec::new();
+    for state in every_state() {
+        for event in every_event() {
+            if transition(&state, &event) != crate::transition_bot(&state, &event) {
+                differing.push((state.clone(), event));
+            }
+        }
+    }
+    assert_eq!(differing, vec![(RunStatus::Created, event)]);
+}
+
 use Attention::*;
 use CancelReason::{Run, TakeoverBoundary};
 use ControlState::{HandoverPending, Human, Orchestrator};

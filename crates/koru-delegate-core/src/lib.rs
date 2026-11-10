@@ -88,7 +88,7 @@ pub use schedule::{ScheduleContextFailureStage, ScheduleFiringOutcome, ScheduleP
 pub use scope::{ExecutionEnvironment, ScopeOverlap, WorkspaceScope};
 pub use status::{
     Attention, AttentionSet, CancelReason, ControlState, FailureStage, IllegalTransition,
-    PriorAttempt, RunEvent, RunStatus, transition,
+    PriorAttempt, RunEvent, RunStatus, transition, transition_bot,
 };
 pub use text::{
     ArtifactTitle, MAX_ARTIFACT_TITLE_CHARS, MAX_OBJECTIVE_CHARS, MAX_RATING_NOTE_CHARS,

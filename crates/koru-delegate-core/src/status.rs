@@ -413,6 +413,20 @@ impl std::error::Error for IllegalTransition {}
 ///   `Running` with `FinishedNeedingAttention` (D29).
 /// - `CancelReason::TakeoverBoundary` never terminalizes (D36).
 pub fn transition(from: &RunStatus, event: &RunEvent) -> Result<RunStatus, IllegalTransition> {
+    transition_with_context(from, event, false)
+}
+
+/// The canonical Bot owner alone selects this context from its stored header.
+/// Ordinary Run transition rules remain unchanged.
+pub fn transition_bot(from: &RunStatus, event: &RunEvent) -> Result<RunStatus, IllegalTransition> {
+    transition_with_context(from, event, true)
+}
+
+fn transition_with_context(
+    from: &RunStatus,
+    event: &RunEvent,
+    bot: bool,
+) -> Result<RunStatus, IllegalTransition> {
     use RunEvent as E;
     use RunStatus as S;
 
@@ -434,6 +448,14 @@ pub fn transition(from: &RunStatus, event: &RunEvent) -> Result<RunStatus, Illeg
             _,
         ) => refuse(),
 
+        (
+            S::Created,
+            E::Interrupt {
+                prior_attempt: PriorAttempt::Unknown,
+            },
+        ) if bot => Ok(S::Interrupted {
+            prior_attempt: PriorAttempt::Unknown,
+        }),
         (S::Created, E::Start) => Ok(S::Starting),
         (S::Created | S::Starting, E::StartFailed { stage }) => Ok(S::Failed { stage: *stage }),
         (S::Created | S::Starting | S::Interrupted { .. }, E::Cancel) => Ok(S::Cancelled),

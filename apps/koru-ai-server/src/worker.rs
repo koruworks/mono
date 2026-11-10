@@ -4701,15 +4701,26 @@ impl WorkerState {
             .attempt(attempt_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        let bot = attempt.status != AttemptStatus::Complete
+            && self
+                .repository
+                .bot_submission_for_attempt(attempt_id)
+                .map_err(ai_failure)?
+                .is_some();
+        if bot
+            && matches!(
+                attempt.status,
+                AttemptStatus::Interrupted | AttemptStatus::Failed
+            )
+        {
+            // Automatic interruption ended the attempt; the person's Stop is
+            // still the stronger owner command for the Run.
+            return self.stop_interrupted_bot_chat(attempt_id, attempt.status);
+        }
         if attempt.status.is_terminal() {
             return Ok(attempt.status);
         }
-        if self
-            .repository
-            .bot_submission_for_attempt(attempt_id)
-            .map_err(ai_failure)?
-            .is_some()
-        {
+        if bot {
             return self.stop_bot_chat(attempt_id);
         }
         if let Some(cancellation) = self.cancellations.get(&attempt_id) {
@@ -5472,6 +5483,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    BotChatRecovery(bots::chat::StepJob),
     NativeDrain(native_recovery::NativeDrainJob),
     BotPolicy(bots::BotPolicyJob),
     #[cfg(test)]
@@ -5532,6 +5544,13 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
+                        ProviderAdminJob::BotChatRecovery(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotChatStep(job.run()),
+                                &thread_shutdown,
+                            );
+                        }
                         ProviderAdminJob::NativeDrain(job) => {
                             let result = job.run();
                             send_admin_envelope(

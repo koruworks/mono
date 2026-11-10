@@ -10,9 +10,9 @@ impl Orchestrator {
         if header.bot.is_none()
             || !matches!(
                 header.status,
-                RunStatus::Interrupted {
-                    prior_attempt: koru_delegate_core::PriorAttempt::Unknown
-                } | RunStatus::Failed { .. }
+                RunStatus::Interrupted { .. }
+                    | RunStatus::Completed
+                    | RunStatus::Failed { .. }
                     | RunStatus::Cancelled
             )
         {
