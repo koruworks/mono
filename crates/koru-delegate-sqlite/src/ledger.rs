@@ -134,6 +134,20 @@ impl RunsDb {
         }
     }
 
+    /// Exercise the production forward migration opener on a disposable memory fixture.
+    #[cfg(test)]
+    pub(crate) fn migrate_in_memory(&mut self) {
+        koru_sqlite::prepare(
+            &koru_sqlite::Schema {
+                database: crate::DATABASE_NAME,
+                understood: crate::RUNS_SCHEMA_VERSION,
+                migrations: db::MIGRATIONS,
+            },
+            &mut self.conn,
+        )
+        .unwrap();
+    }
+
     /// Simulate losing the writer's volatile crash state while retaining its
     /// committed database. Tests never open a file or a real Store.
     #[cfg(test)]

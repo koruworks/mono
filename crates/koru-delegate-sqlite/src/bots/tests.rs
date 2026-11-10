@@ -566,7 +566,7 @@ fn every_bot_write_keeps_the_existing_crash_commit_boundary() {
                     WriteOp::AcknowledgeBotInitialSend => {
                         db.acknowledge_bot_initial_send(a.run, &ack).map(|_| ())
                     }
-                    WriteOp::RecordBotDelivery => db.record_bot_delivery(&receipt),
+                    WriteOp::RecordBotDelivery => db.record_bot_delivery(&receipt).map(|_| ()),
                     _ => unreachable!(),
                 }
             };
@@ -623,4 +623,167 @@ fn execution_projection_and_reserved_candidates_keep_recovery_identity_without_p
     );
     assert_eq!(db.queued_bots(0, 1).unwrap()[0].run, s.request.run);
     assert!(!format!("{:?}", active[0]).contains("PRIVATE-TASK-SENTINEL"));
+}
+
+fn delivered(db: &mut RunsDb) -> (BotSubmission, BotDeliveryReceipt) {
+    let s = submission(1);
+    let a = running(db, &s);
+    let mut initial = send(&a);
+    db.prepare_bot_initial_send(a.run, &initial).unwrap();
+    initial.turn = Some(fixtures::v4(0xc2).to_string().parse().unwrap());
+    db.acknowledge_bot_initial_send(a.run, &initial).unwrap();
+    let receipt = BotDeliveryReceipt {
+        run: a.run,
+        attempt: a.attempt,
+        generation: a.generation,
+        chat_id: s.provenance.chat_id,
+        ai_attempt_id: s.provenance.ai_attempt_id.unwrap(),
+        assistant_message_id: s.provenance.assistant_message_id.unwrap(),
+        confirmed_at_ms: 2000,
+    };
+    (s, receipt)
+}
+
+#[test]
+fn delivery_publication_identity_is_atomic_unique_and_survives_lost_ack() {
+    for moment in Moment::ALL {
+        let (mut db, _) = memory();
+        let (_, receipt) = delivered(&mut db);
+        let point = CrashPoint {
+            op: WriteOp::RecordBotDelivery,
+            at: moment,
+        };
+        db.arm_crash(point);
+        assert!(
+            matches!(db.record_bot_delivery(&receipt), Err(BotLedgerError::Ledger(LedgerError::Crashed(p))) if p == point)
+        );
+        let after = db.bot_admission(receipt.run).unwrap().unwrap();
+        assert_eq!(after.delivery.is_some(), moment == Moment::AfterCommit);
+        assert_eq!(
+            after.delivery_publication.is_some(),
+            moment == Moment::AfterCommit
+        );
+        db.restart_in_memory();
+        let event = db.record_bot_delivery(&receipt).unwrap();
+        if let Some(retained) = after.delivery_publication {
+            assert_eq!(event, retained);
+        }
+        assert_eq!(db.record_bot_delivery(&receipt).unwrap(), event);
+        let mut changed = receipt.clone();
+        changed.confirmed_at_ms += 1;
+        assert_eq!(
+            db.record_bot_delivery(&changed),
+            Err(BotLedgerError::Conflict)
+        );
+        assert_eq!(
+            db.bot_admission(receipt.run)
+                .unwrap()
+                .unwrap()
+                .delivery_publication,
+            Some(event)
+        );
+    }
+}
+
+#[test]
+fn populated_runs_five_delivery_migrates_and_repairs_once_with_exact_receipt() {
+    let (mut db, _) = memory();
+    let (submission, receipt) = delivered(&mut db);
+    db.record_bot_delivery(&receipt).unwrap();
+    // Remove only the unshipped v6 additions to construct the actual v5 shape,
+    // retaining populated canonical v5 admission, attempt and delivery columns.
+    db.conn().execute_batch("DROP TABLE native_result_intents; DROP TABLE bot_policy_barriers; DROP INDEX bot_delivery_publication_identity; ALTER TABLE bot_admissions DROP COLUMN delivery_publication_event_id; PRAGMA user_version=5;").unwrap();
+    db.migrate_in_memory();
+    db.migrate_in_memory();
+    let migrated = db.bot_admission(receipt.run).unwrap().unwrap();
+    assert_eq!(migrated.submission, submission);
+    assert_eq!(migrated.delivery, Some(receipt.clone()));
+    assert_eq!(migrated.delivery_publication, None);
+    let mut changed = receipt.clone();
+    changed.ai_attempt_id = Uuid::new_v4();
+    assert_eq!(
+        db.record_bot_delivery(&changed),
+        Err(BotLedgerError::Conflict)
+    );
+    assert_eq!(
+        db.bot_admission(receipt.run)
+            .unwrap()
+            .unwrap()
+            .delivery_publication,
+        None
+    );
+    let event = db.record_bot_delivery(&receipt).unwrap();
+    db.restart_in_memory();
+    assert_eq!(db.record_bot_delivery(&receipt).unwrap(), event);
+    assert_eq!(db.schema_version().unwrap(), 6);
+}
+
+#[test]
+fn legacy_delivery_id_repair_rolls_back_or_reuses_committed_identity() {
+    for moment in Moment::ALL {
+        let (mut db, _) = memory();
+        let (_, receipt) = delivered(&mut db);
+        db.record_bot_delivery(&receipt).unwrap();
+        db.conn()
+            .execute(
+                "UPDATE bot_admissions SET delivery_publication_event_id=NULL",
+                [],
+            )
+            .unwrap();
+        let point = CrashPoint {
+            op: WriteOp::RecordBotDelivery,
+            at: moment,
+        };
+        db.arm_crash(point);
+        assert!(db.record_bot_delivery(&receipt).is_err());
+        let known = db
+            .bot_admission(receipt.run)
+            .unwrap()
+            .unwrap()
+            .delivery_publication;
+        assert_eq!(known.is_some(), moment == Moment::AfterCommit);
+        db.restart_in_memory();
+        let event = db.record_bot_delivery(&receipt).unwrap();
+        if let Some(known) = known {
+            assert_eq!(known, event);
+        }
+        assert_eq!(db.record_bot_delivery(&receipt).unwrap(), event);
+    }
+}
+
+#[test]
+fn delivery_publication_constraints_and_decoder_refuse_corruption() {
+    let (mut db, _) = memory();
+    let (_, receipt) = delivered(&mut db);
+    let good = koru_delegate_core::EventId::mint();
+    assert!(
+        db.conn()
+            .execute(
+                "UPDATE bot_admissions SET delivery_publication_event_id=?1",
+                [good.to_string()]
+            )
+            .is_err()
+    );
+    db.record_bot_delivery(&receipt).unwrap();
+    for bad in [
+        "",
+        "not-an-id",
+        "00000000-0000-0000-0000-000000000000",
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "00000000-0000-7000-8000-000000000000",
+    ] {
+        assert!(
+            db.conn()
+                .execute(
+                    "UPDATE bot_admissions SET delivery_publication_event_id=?1",
+                    [bad]
+                )
+                .is_err()
+        );
+    }
+    db.conn().execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE bot_admissions SET delivery_publication_event_id='not-an-id'; PRAGMA ignore_check_constraints=OFF;").unwrap();
+    assert!(matches!(
+        db.bot_admission(receipt.run),
+        Err(BotLedgerError::Ledger(LedgerError::Corrupt { .. }))
+    ));
 }
