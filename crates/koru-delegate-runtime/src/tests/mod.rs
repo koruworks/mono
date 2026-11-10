@@ -685,7 +685,8 @@ impl Default for SessionScript {
             summaries: HashMap::new(),
             observation: AgentEventObservation {
                 events: Vec::new(),
-                cursor: StreamSequence::new(1).unwrap(),
+                cursor: StreamSequence::new(koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR)
+                    .unwrap(),
                 earlier_truncated: false,
                 commands: None,
                 session_cursor: None,

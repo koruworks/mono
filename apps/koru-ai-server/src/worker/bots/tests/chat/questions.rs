@@ -46,7 +46,7 @@ impl BotDelegatePort for TerminalNative {
             let state = self.native.state.lock().unwrap();
             if self.fail_second && state.begin == 2 && fence.turn.is_some() {
                 let turn_id = fence.turn.unwrap();
-                let events = vec![
+                let native = vec![
                     s::AgentEvent::TurnStarted { turn_id },
                     s::AgentEvent::TurnFailed {
                         turn_id,
@@ -55,22 +55,29 @@ impl BotDelegatePort for TerminalNative {
                             message: "fixture answer turn failed".into(),
                         },
                     },
-                ]
-                .into_iter()
-                .enumerate()
-                .filter(|(n, _)| after.is_none_or(|cursor| *n as u64 + 1 > cursor.get()))
-                .map(|(n, event)| s::SequencedAgentEvent {
-                    session_id: fence.session,
-                    sequence: s::StreamSequence::new(n as u64 + 1).unwrap(),
-                    event,
-                })
-                .collect();
+                ];
+                let cursor = s::AGENT_EVENT_INITIAL_CURSOR + native.len() as u64;
+                let events = native
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(n, _)| {
+                        after.is_none_or(|cursor| {
+                            *n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE > cursor.get()
+                        })
+                    })
+                    .map(|(n, event)| s::SequencedAgentEvent {
+                        session_id: fence.session,
+                        sequence: s::StreamSequence::new(n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE)
+                            .unwrap(),
+                        event,
+                    })
+                    .collect();
                 return Ok(BotReply::Observation {
                     observation: BotObservation {
                         fence: fence.clone(),
                         observation: s::AgentEventObservation {
                             events,
-                            cursor: s::StreamSequence::new(2).unwrap(),
+                            cursor: s::StreamSequence::new(cursor).unwrap(),
                             earlier_truncated: false,
                             commands: None,
                             session_cursor: None,
@@ -122,14 +129,19 @@ impl BotDelegatePort for TerminalNative {
                 } else {
                     s::AgentEvent::TurnCompleted { turn_id }
                 });
-                let sequence = native.len() as u64;
+                let sequence = s::AGENT_EVENT_INITIAL_CURSOR + native.len() as u64;
                 let events = native
                     .into_iter()
                     .enumerate()
-                    .filter(|(n, _)| after.is_none_or(|cursor| *n as u64 + 1 > cursor.get()))
+                    .filter(|(n, _)| {
+                        after.is_none_or(|cursor| {
+                            *n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE > cursor.get()
+                        })
+                    })
                     .map(|(n, event)| s::SequencedAgentEvent {
                         session_id: fence.session,
-                        sequence: s::StreamSequence::new(n as u64 + 1).unwrap(),
+                        sequence: s::StreamSequence::new(n as u64 + s::AGENT_EVENT_FIRST_SEQUENCE)
+                            .unwrap(),
                         event,
                     })
                     .collect();
@@ -300,8 +312,13 @@ fn answer_request(f: &Fixture, text: &str) -> SendTurnRequest {
     });
     request
 }
+/// Events in a one-card asking turn: TurnStarted, QuestionsRequired, the
+/// reply delta and the terminal event.
+const ONE_CARD_ASKING_EVENTS: u64 = 4;
+/// Replay cursor after a one-card asking turn has been fully committed.
+const ONE_CARD_ASKING_CURSOR: u64 = s::AGENT_EVENT_INITIAL_CURSOR + ONE_CARD_ASKING_EVENTS;
 fn answer_context(f: &Fixture) -> CommandContext {
-    answer_context_at(f, 4)
+    answer_context_at(f, ONE_CARD_ASKING_CURSOR)
 }
 fn answer_context_at(f: &Fixture, sequence: u64) -> CommandContext {
     let old = f.context.prepared.as_ref().unwrap();
@@ -578,10 +595,14 @@ fn stale_proof_invalid_and_oversized_answers_leave_terminal_card_open() {
     let f = start(false);
     let request = answer_request(&f, "valid text");
     assert_eq!(
-        send(&f.client, answer_context_at(&f, 3), request.clone())
-            .err()
-            .unwrap()
-            .code,
+        send(
+            &f.client,
+            answer_context_at(&f, ONE_CARD_ASKING_CURSOR - 1),
+            request.clone()
+        )
+        .err()
+        .unwrap()
+        .code,
         "questions_closed"
     );
     let mut invalid = request.clone();

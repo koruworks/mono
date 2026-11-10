@@ -968,8 +968,9 @@ fn recovered_originator(
     None
 }
 
-/// The stream starts at cursor one, before its first event (sequence two).
-/// An oversized event can empty the replay without setting earlier_truncated.
+/// The stream starts at `AGENT_EVENT_INITIAL_CURSOR`, before its first event
+/// (`AGENT_EVENT_FIRST_SEQUENCE`). An oversized event can empty the replay
+/// without setting earlier_truncated.
 fn observation_covers_session(
     observation: &koru_session_protocol::AgentEventObservation,
     session: koru_delegate_core::SessionId,
@@ -977,7 +978,7 @@ fn observation_covers_session(
     if observation.earlier_truncated {
         return false;
     }
-    let mut sequence = 1u64;
+    let mut sequence = koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR;
     for entry in &observation.events {
         let Some(next) = sequence.checked_add(1) else {
             return false;
