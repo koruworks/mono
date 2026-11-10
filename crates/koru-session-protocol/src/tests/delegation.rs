@@ -9,7 +9,8 @@ use super::state::sample_summary;
 /// pins the two together so a host gate cannot drift from the changelog.
 #[test]
 fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
-    assert_eq!(MAX_PROTOCOL_VERSION, 24);
+    assert_eq!(MAX_PROTOCOL_VERSION, 25);
+    assert_eq!(CONDITIONAL_STEERING_PROTOCOL_VERSION, 25);
     assert_eq!(CONTEXT_USAGE_PROTOCOL_VERSION, 24);
     assert_eq!(PATH_REFERENCES_PROTOCOL_VERSION, 23);
     assert_eq!(TURN_MODEL_PROTOCOL_VERSION, 22);
@@ -30,7 +31,7 @@ fn the_delegation_family_rides_protocol_fourteen_and_its_own_capability() {
     // `managed-questions`, rides v21: the creating peer draws an agent's
     // questions (koru-ai D108). The thirty-third, `agent-commands`, rides
     // v21 too: an agent's skills listed and named with an input (D121).
-    assert_eq!(capability::ALL.len(), 34);
+    assert_eq!(capability::ALL.len(), 35);
     assert_eq!(
         capability::DELEGATION
             .parse::<CapabilityName>()

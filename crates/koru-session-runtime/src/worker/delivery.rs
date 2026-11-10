@@ -98,7 +98,7 @@ pub(super) fn mark_reported(
     state
         .pending_inputs
         .values_mut()
-        .find(|submission| submission.turn_id == turn_id)
+        .find(|submission| submission.turn_id == turn_id && submission.conditional.is_none())
         .is_some_and(|submission| submission.reported.insert((attachment_id, outcome)))
 }
 
@@ -118,7 +118,15 @@ pub(super) fn publish_delivery_fact(
     shared.lifecycle.publish(event.into());
 }
 
+/// A reserved conditional command is never eligible for ordinary resend.
+#[derive(Clone)]
+enum ConditionalOutcome {
+    InFlight,
+    Finished(Result<(), ErrorCode>),
+}
+
 pub(super) struct PendingSubmission {
+    conditional: Option<ConditionalOutcome>,
     fingerprint: blake3::Hash,
     turn_id: AgentTurnId,
     command_sent: bool,
@@ -127,6 +135,124 @@ pub(super) struct PendingSubmission {
 }
 
 impl SessionHandle {
+    /// Conditional steering has its own reservation and never calls send_input.
+    pub fn steer_pending_input(
+        &self,
+        lease: ControllerLeaseToken,
+        expected_turn: AgentTurnId,
+        input: PendingInput,
+    ) -> Result<SendPendingInputResult, ErrorCode> {
+        let SessionIo::Managed(managed) = &self.shared.io else {
+            return Err(ErrorCode::DeliveryUnsupported);
+        };
+        let fingerprint = {
+            let mut state = self.shared.lock();
+            require_lease(&state, lease)?;
+            input.validate_conditional_steering()?;
+            validate_input(&input, false)?;
+            if !state
+                .summary
+                .capabilities
+                .supports(capability::CONDITIONAL_TURN_STEERING)
+            {
+                return Err(ErrorCode::DeliveryUnsupported);
+            }
+            let mut hash = blake3::Hasher::new();
+            hash.update(b"koru-conditional-turn-steering-v1");
+            hash.update(self.shared.id.as_uuid().as_bytes());
+            hash.update(expected_turn.as_uuid().as_bytes());
+            // Lease bytes are hashed privately, never logged or returned.
+            hash.update(&serde_json::to_vec(&lease).map_err(|_| ErrorCode::InvalidRequest)?);
+            hash.update(&serde_json::to_vec(&input).map_err(|_| ErrorCode::InvalidRequest)?);
+            let fingerprint = hash.finalize();
+            if let Some(previous) = state.pending_inputs.get(&input.idempotency_key) {
+                if previous.fingerprint != fingerprint || previous.turn_id != expected_turn {
+                    return Err(ErrorCode::IdempotencyConflict);
+                }
+                return match &previous.conditional {
+                    Some(ConditionalOutcome::Finished(outcome)) => {
+                        outcome.clone().map(|()| SendPendingInputResult {
+                            turn_id: expected_turn,
+                            attachments: Vec::new(),
+                        })
+                    }
+                    Some(ConditionalOutcome::InFlight) => Err(ErrorCode::Backpressure),
+                    None => Err(ErrorCode::IdempotencyConflict),
+                };
+            }
+            if state
+                .failed_ordinary_steers
+                .contains(&input.idempotency_key)
+            {
+                return Err(ErrorCode::IdempotencyConflict);
+            }
+            if state.summary.process != koru_session_protocol::ProcessState::Running {
+                return Err(ErrorCode::SessionExited);
+            }
+            if state.summary.active_turn_id != Some(expected_turn) {
+                return Err(ErrorCode::InvalidTransition);
+            }
+            // No eviction: uncertainty must outlive every replay in this session.
+            if state
+                .pending_inputs
+                .len()
+                .saturating_add(state.failed_ordinary_steers.len())
+                >= 4096
+            {
+                return Err(ErrorCode::Backpressure);
+            }
+            state.pending_inputs.insert(
+                input.idempotency_key,
+                PendingSubmission {
+                    fingerprint,
+                    turn_id: expected_turn,
+                    command_sent: true,
+                    in_flight: true,
+                    reported: BTreeSet::new(),
+                    conditional: Some(ConditionalOutcome::InFlight),
+                },
+            );
+            fingerprint
+        };
+        let outcome = managed.steer(
+            AgentInput {
+                turn_id: expected_turn,
+                text: input.text.clone(),
+                attachments: Vec::new(),
+                references: Vec::new(),
+                mode: None,
+                fast: None,
+                reasoning: None,
+                skills: Vec::new(),
+                model: None,
+            },
+            None,
+        );
+        {
+            let mut state = self.shared.lock();
+            let reserved = state
+                .pending_inputs
+                .get_mut(&input.idempotency_key)
+                .ok_or(ErrorCode::IdempotencyConflict)?;
+            if reserved.fingerprint != fingerprint {
+                return Err(ErrorCode::IdempotencyConflict);
+            }
+            reserved.in_flight = false;
+            reserved.conditional = Some(ConditionalOutcome::Finished(outcome.clone()));
+        }
+        outcome?;
+        let event = InputSubmittedFact {
+            session_id: self.shared.id,
+            input_kind: input_kind(&input, false),
+        }
+        .commit(self.shared.trace);
+        self.shared.lifecycle.publish(event.into());
+        Ok(SendPendingInputResult {
+            turn_id: expected_turn,
+            attachments: Vec::new(),
+        })
+    }
+
     pub fn send_pending_input(
         &self,
         lease: ControllerLeaseToken,
@@ -238,14 +364,14 @@ impl SessionHandle {
         answers: Option<&QuestionsReply>,
     ) -> Result<Option<SendPendingInputResult>, ErrorCode> {
         let active = {
-            let state = self.shared.lock();
+            let mut state = self.shared.lock();
             require_lease(&state, lease)?;
             let running = matches!(state.summary.mode, SessionMode::Managed { .. })
                 && state.summary.process == koru_session_protocol::ProcessState::Running;
             // A steer carries text: an input that names a skill (koru-ai
             // D121) or a model (v22) waits for a turn of its own, as one
             // with attachments does.
-            match state.summary.active_turn_id {
+            let active = match state.summary.active_turn_id {
                 Some(active)
                     if running
                         && input.attachment_ids.is_empty()
@@ -257,12 +383,24 @@ impl SessionHandle {
                     active
                 }
                 _ => return Ok(None),
-            }
+            };
+            state.pending_inputs.insert(
+                input.idempotency_key,
+                PendingSubmission {
+                    fingerprint: input_fingerprint(input, answers),
+                    turn_id: active,
+                    command_sent: false,
+                    in_flight: true,
+                    reported: BTreeSet::new(),
+                    conditional: None,
+                },
+            );
+            active
         };
         let SessionIo::Managed(managed) = &self.shared.io else {
             return Ok(None);
         };
-        managed.steer(
+        let outcome = managed.steer(
             AgentInput {
                 model: None,
                 turn_id: active,
@@ -275,19 +413,35 @@ impl SessionHandle {
                 skills: Vec::new(),
             },
             answers.cloned(),
-        )?;
-        // Recorded as sent, so the same key repeated is answered and not sent
-        // twice. The running turn stays the session's active one.
-        self.shared.lock().pending_inputs.insert(
-            input.idempotency_key,
-            PendingSubmission {
-                fingerprint: input_fingerprint(input, answers),
-                turn_id: active,
-                command_sent: true,
-                in_flight: false,
-                reported: BTreeSet::new(),
-            },
         );
+        // The reservation precedes native dispatch, including the legacy path:
+        // a racing conditional command cannot dispatch under this same key.
+        let mut state = self.shared.lock();
+        let reserved = state
+            .pending_inputs
+            .get(&input.idempotency_key)
+            .ok_or(ErrorCode::IdempotencyConflict)?;
+        if reserved.conditional.is_some()
+            || reserved.fingerprint != input_fingerprint(input, answers)
+        {
+            return Err(ErrorCode::IdempotencyConflict);
+        }
+        if let Err(error) = outcome {
+            // Preserve ordinary retry-after-refusal behavior. Only strict
+            // conditional failures retain uncertainty until session retirement.
+            if state.failed_ordinary_steers.len() < 4096 {
+                state.failed_ordinary_steers.insert(input.idempotency_key);
+            }
+            state.pending_inputs.remove(&input.idempotency_key);
+            return Err(error);
+        }
+        let reserved = state
+            .pending_inputs
+            .get_mut(&input.idempotency_key)
+            .expect("checked reservation");
+        reserved.command_sent = true;
+        reserved.in_flight = false;
+        drop(state);
         let event = InputSubmittedFact {
             session_id: self.shared.id,
             input_kind: input_kind(input, answers.is_some()),
@@ -373,6 +527,7 @@ impl SessionHandle {
                 command_sent: false,
                 in_flight: true,
                 reported: BTreeSet::new(),
+                conditional: None,
             },
         );
         Ok((turn_id, true))

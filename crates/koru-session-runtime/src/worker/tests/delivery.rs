@@ -51,6 +51,9 @@ struct NativeInner {
     /// A provider that takes text into the running turn.
     steerable: bool,
     steered: Vec<AgentInput>,
+    steer_calls: usize,
+    hold_steer: bool,
+    steer_failure: Option<ErrorCode>,
     /// A set's answers sent as the next message (D108), and whether they
     /// were steered into the running turn.
     answered: Vec<(AgentInput, koru_session_protocol::QuestionsReply, bool)>,
@@ -129,6 +132,24 @@ impl AgentControl for NativeControl {
 
     fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
         let mut inner = self.state.inner.lock().unwrap();
+        inner.steer_calls += 1;
+        self.state.ready.notify_all();
+        while inner.hold_steer {
+            let (next, waited) = self
+                .state
+                .ready
+                .wait_timeout(inner, Duration::from_secs(5))
+                .unwrap();
+            inner = next;
+            assert!(!waited.timed_out(), "fixture must release native steering");
+        }
+        if let Some(code) = inner.steer_failure.clone() {
+            return Err(ProviderFailure::new(
+                code,
+                crate::providers::ProviderStage::Submit,
+                crate::providers::ProviderDiagnostic::InvalidState,
+            ));
+        }
         if !inner.steerable {
             return Err(ProviderFailure::new(
                 ErrorCode::InvalidTransition,
@@ -1324,3 +1345,6 @@ fn an_inputs_skills_reach_the_adapter_and_never_ride_a_steer() {
     harness.state.ready.notify_one();
     eventually(|| handle.summary().active_turn_id.is_none());
 }
+
+#[path = "delivery/conditional.rs"]
+mod conditional;

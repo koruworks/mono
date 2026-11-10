@@ -642,6 +642,45 @@ impl SessionClient {
         }
     }
 
+    /// Join exactly this active turn. Unsupported hosts/providers never receive
+    /// an ordinary send fallback, and non-text options are explicitly refused.
+    pub fn steer_pending_input(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        expected_turn: AgentTurnId,
+        input: PendingInput,
+    ) -> Result<SendPendingInputResult, ClientError> {
+        if !self.supports_conditional_steering() {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        input
+            .validate_conditional_steering()
+            .map_err(|code| ClientError::Session(failure(code)))?;
+        match self.request(Request::SteerPendingInput(
+            koru_session_wire::SteerPendingInput {
+                session_id,
+                controller_lease,
+                expected_turn,
+                input,
+            },
+        ))? {
+            Response::PendingInputSent { result } => Ok(result),
+            _ => Err(ClientError::UnexpectedResponse),
+        }
+    }
+
+    pub fn supports_conditional_steering(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::CONDITIONAL_STEERING_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::CONDITIONAL_TURN_STEERING)
+    }
+
     pub fn send_pending_input(
         &self,
         session_id: SessionId,

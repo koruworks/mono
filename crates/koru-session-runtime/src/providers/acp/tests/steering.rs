@@ -133,3 +133,14 @@ fn only_the_running_turn_is_steered_and_only_with_text() {
     );
     assert!(sent_steers(&h).is_empty());
 }
+
+#[test]
+fn native_extension_without_expected_turn_fence_does_not_advertise_conditional_steering() {
+    let mut h = steering("injected");
+    let capabilities = start(&mut h.control);
+    assert!(
+        !capabilities
+            .capabilities
+            .supports(capability::CONDITIONAL_TURN_STEERING)
+    );
+}

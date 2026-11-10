@@ -419,3 +419,22 @@ async fn an_older_reader_gets_an_empty_delta_for_a_mode_change() {
     assert_eq!(older["event"]["kind"], "message_delta");
     assert_eq!(older["event"]["text"], "");
 }
+
+#[test]
+fn conditional_steering_needs_both_version_twenty_five_and_explicit_capability() {
+    for version in [24, 25] {
+        for enabled in [false, true] {
+            let mut peer = protocol(version, true, false);
+            if enabled {
+                peer.capabilities =
+                    CapabilitySet::new([capability::CONDITIONAL_TURN_STEERING.parse().unwrap()]);
+            }
+            assert_eq!(peer.conditional_steering(), version >= 25 && enabled);
+        }
+    }
+    assert!(
+        crate::protocol_offer()
+            .capabilities
+            .supports(capability::CONDITIONAL_TURN_STEERING)
+    );
+}

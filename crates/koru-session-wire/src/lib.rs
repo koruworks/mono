@@ -6,6 +6,9 @@
 //! behavior, window behavior, PTY, emulator, or reconnect loop. Interactive
 //! bytes therefore cannot drift into `koru-agent-wire` by convenience.
 
+mod steering;
+pub use steering::SteerPendingInput;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -281,6 +284,8 @@ impl SubscriptionId {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Request {
+    /// Protocol25: strictly join expected_turn, never start a turn.
+    SteerPendingInput(SteerPendingInput),
     /// End only this client connection, releasing its controller lease while
     /// leaving every session process alive.
     Disconnect,
