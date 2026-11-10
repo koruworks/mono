@@ -302,7 +302,10 @@ fn current(tx: &rusqlite::Connection, run: RunId) -> Result<AttemptRow, LedgerEr
     latest(tx, run)?.ok_or(LedgerError::NoAttempt)
 }
 
-fn latest(conn: &rusqlite::Connection, run: RunId) -> Result<Option<AttemptRow>, LedgerError> {
+pub(crate) fn latest(
+    conn: &rusqlite::Connection,
+    run: RunId,
+) -> Result<Option<AttemptRow>, LedgerError> {
     conn.query_row(
         &format!(
             "SELECT {COLUMNS} FROM run_attempts WHERE run_id = ?1
