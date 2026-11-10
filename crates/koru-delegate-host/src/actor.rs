@@ -964,7 +964,18 @@ impl Actor {
                     Ok(HandleOutcome::Continue) => {}
                     Ok(HandleOutcome::Ended) => self.stop_pump(run),
                     Err(error) => {
-                        tracing::warn!(target: "koru::delegate", run = ?run, %error, "an update was refused");
+                        // A Bot Run's interruption is absorbing: the person's
+                        // later turns, gaps and handback on the borrowed session
+                        // are expected refusals there, not news.
+                        let absorbing = self.orchestrator.header(run).is_ok_and(|header| {
+                            header.bot.is_some()
+                                && matches!(header.status, RunStatus::Interrupted { .. })
+                        });
+                        if absorbing {
+                            tracing::debug!(target: "koru::delegate", run = ?run, %error, "an update to an interrupted Bot Run was refused");
+                        } else {
+                            tracing::warn!(target: "koru::delegate", run = ?run, %error, "an update was refused");
+                        }
                     }
                 }
                 self.notify(run);

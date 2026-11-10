@@ -230,6 +230,19 @@ impl Orchestrator {
         {
             return Ok(None);
         }
+        // A Run interrupted while queued can never start; do not reserve a
+        // host slot for it. Only an existing document is read here, so an
+        // ordinary admission (still Created, or not yet materialized) is
+        // unchanged and keeps the canonical check below.
+        if self
+            .ports
+            .store
+            .intent(key.run)?
+            .is_some_and(|intent| intent.state == IntentState::Satisfied)
+            && self.status(key.run)? != RunStatus::Created
+        {
+            return Ok(None);
+        }
         match self.bot_ledger()?.reserve_bot(key.run)? {
             BotReservation::Acquired | BotReservation::AlreadyOwned => {}
             _ => return Ok(None),

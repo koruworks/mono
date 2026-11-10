@@ -66,6 +66,20 @@ impl Orchestrator {
                 },
                 &entry,
             )?;
+            // Published once, with the transition it describes; a retry finds
+            // the absorbing status and publishes nothing. It travels only after
+            // the document is durable. A queued Run has no attempt to name.
+            if let Some(row) = &row {
+                self.publish(
+                    key.run,
+                    crate::RunFact::Interrupted {
+                        run: key.run,
+                        attempt: row.attempt,
+                        generation: row.generation,
+                        prior_attempt: PriorAttempt::Unknown,
+                    },
+                )?;
+            }
         }
         // The existing canonical acknowledgment guard precedes any lifecycle
         // settlement, including the positive no-attempt queued case.

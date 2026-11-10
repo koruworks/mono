@@ -41,6 +41,12 @@ fn interruptions(h: &mut Harness, run: RunId) -> usize {
         .filter(|step| matches!(step, StepKind::Interrupted { .. }))
         .count()
 }
+fn interrupted_facts(h: &Harness, run: RunId) -> usize {
+    h.facts()
+        .iter()
+        .filter(|fact| matches!(fact, RunFact::Interrupted { run: r, .. } if *r == run))
+        .count()
+}
 
 #[test]
 fn queued_interrupt_is_durable_idempotent_and_never_invents_an_attempt() {
@@ -105,6 +111,15 @@ fn queued_interrupt_is_durable_idempotent_and_never_invents_an_attempt() {
             .unwrap()
             .is_none()
     );
+    // The refused dispatch reserved no host slot for a Run that cannot start.
+    assert_eq!(
+        h.schedule_store
+            .bot_execution(s.request.run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Queued
+    );
     assert!(
         h.orchestrator
             .ports_mut()
@@ -137,6 +152,8 @@ fn queued_interrupt_is_durable_idempotent_and_never_invents_an_attempt() {
             .is_none()
     );
     assert_eq!(interruptions(&mut h, s.request.run), 1);
+    // A queued Run has no attempt for the lifecycle fact to name.
+    assert_eq!(interrupted_facts(&h, s.request.run), 0);
     assert!(
         !h.steps(s.request.run)
             .iter()
@@ -245,6 +262,8 @@ fn automatic_interrupt_during_takeover_retains_native_and_process_reservations_u
         }
     );
     assert_eq!(interruptions(&mut h, fence.run), 1);
+    // Every retry above found the absorbing status: one lifecycle fact.
+    assert_eq!(interrupted_facts(&h, fence.run), 1);
     assert_eq!(count_submits(&h), submits);
     assert!(!h.calls().contains(&Call::Terminate(fence.session)));
 }
