@@ -2867,6 +2867,8 @@ pub enum Key {
     FloorChipAction,
     RailCurrentWorkspace,
     RailSwitchWorkspace,
+    /// The rail's `…` under the workspace squares, which opens the menu.
+    RailWorkspaceMenu,
     PinToRail,
     UnpinFromRail,
     PinNamedToRail,
@@ -3184,7 +3186,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2222] = [
+    pub const ALL: [Key; 2223] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5197,6 +5199,7 @@ impl Key {
         Key::FloorChipAction,
         Key::RailCurrentWorkspace,
         Key::RailSwitchWorkspace,
+        Key::RailWorkspaceMenu,
         Key::PinToRail,
         Key::UnpinFromRail,
         Key::PinNamedToRail,
@@ -16168,8 +16171,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ComingLater, en: "Coming in a later build", es: "Disponible en una versión posterior", pt_br: "Disponível em uma versão futura", de: "Kommt in einer späteren Version", fr: "Disponible dans une version ultérieure", ar: "سيتوفر في إصدار لاحق", zh_hans: "将在后续版本中提供", ja: "今後のビルドで提供予定" },
     Row { key: Key::Help, en: "Help", es: "Ayuda", pt_br: "Ajuda", de: "Hilfe", fr: "Aide", ar: "مساعدة", zh_hans: "帮助", ja: "ヘルプ" },
     Row { key: Key::FloorChipAction, en: "Open account and workspace menu", es: "Abrir el menú de cuenta y espacio de trabajo", pt_br: "Abrir o menu de conta e espaço de trabalho", de: "Konto- und Arbeitsbereichsmenü öffnen", fr: "Ouvrir le menu du compte et de l'espace de travail", ar: "فتح قائمة الحساب ومساحة العمل", zh_hans: "打开账户和工作区菜单", ja: "アカウントとワークスペースのメニューを開く" },
-    Row { key: Key::RailCurrentWorkspace, en: "Workspace: {}. Open workspace menu", es: "Espacio de trabajo: {}. Abrir el menú", pt_br: "Espaço de trabalho: {}. Abrir o menu", de: "Arbeitsbereich: {}. Arbeitsbereichsmenü öffnen", fr: "Espace de travail : {}. Ouvrir le menu", ar: "مساحة العمل: {}. فتح قائمة مساحة العمل", zh_hans: "工作区：{}。打开工作区菜单", ja: "ワークスペース：{}。ワークスペースメニューを開く" },
+    Row { key: Key::RailCurrentWorkspace, en: "{}, the open workspace", es: "{}, el espacio de trabajo abierto", pt_br: "{}, o espaço de trabalho aberto", de: "{}, der geöffnete Arbeitsbereich", fr: "{}, l'espace de travail ouvert", ar: "{}، مساحة العمل المفتوحة", zh_hans: "{}，当前打开的工作区", ja: "{}（開いているワークスペース）" },
     Row { key: Key::RailSwitchWorkspace, en: "Switch to {}", es: "Cambiar a {}", pt_br: "Alternar para {}", de: "Zu {} wechseln", fr: "Passer à {}", ar: "التبديل إلى {}", zh_hans: "切换到 {}", ja: "{} に切り替える" },
+    Row { key: Key::RailWorkspaceMenu, en: "Workspaces", es: "Espacios de trabajo", pt_br: "Espaços de trabalho", de: "Arbeitsbereiche", fr: "Espaces de travail", ar: "مساحات العمل", zh_hans: "工作区", ja: "ワークスペース" },
     Row { key: Key::PinToRail, en: "Pin to rail", es: "Fijar en la barra", pt_br: "Fixar na barra", de: "An der Leiste anheften", fr: "Épingler à la barre", ar: "تثبيت في الشريط", zh_hans: "固定到侧栏", ja: "レールに固定" },
     Row { key: Key::UnpinFromRail, en: "Unpin from rail", es: "Desfijar de la barra", pt_br: "Desafixar da barra", de: "Von der Leiste lösen", fr: "Détacher de la barre", ar: "إلغاء التثبيت من الشريط", zh_hans: "从侧栏取消固定", ja: "レールから固定を解除" },
     Row { key: Key::PinNamedToRail, en: "Pin {} to the rail", es: "Fijar {} en la barra", pt_br: "Fixar {} na barra", de: "{} an der Leiste anheften", fr: "Épingler {} à la barre", ar: "تثبيت {} في الشريط", zh_hans: "将 {} 固定到侧栏", ja: "{} をレールに固定" },

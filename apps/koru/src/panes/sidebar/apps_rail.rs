@@ -17,6 +17,8 @@ pub const GAP: f32 = 4.0;
 pub struct Rects {
     pub band: Rect,
     pub workspaces: Vec<(Option<koru_core::WorkspaceId>, Rect)>,
+    /// The `…` under the workspace squares that opens the workspace menu.
+    pub workspace_menu: Rect,
     /// One square per app the build shows, in the person's order
     /// (`rail_order::RailOrder::visible`).
     /// Nothing under the last: the *Manage apps* `+` is out until the
@@ -35,6 +37,8 @@ pub struct Rects {
 pub enum Hit {
     Workspace(koru_core::WorkspaceId),
     WaitingWorkspace,
+    /// The `…` that opens the workspace menu.
+    WorkspaceMenu,
     App(NavigatorMode),
     Overflow,
     Help,

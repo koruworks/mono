@@ -320,9 +320,7 @@ impl ExploreView {
             .id(PAGE)
             .semantics(Role::Menu)
             .name(koru_i18n::Key::Workspaces)
-            .pad_y(alias::PANEL_PAD)
-            .child(self.workspace_menu_header())
-            .child(super::workspace_menu_elements::rule());
+            .pad_y(alias::PANEL_PAD);
         if let Some(group) = self.unassigned_group() {
             page = page.child(group);
         }

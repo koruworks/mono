@@ -407,7 +407,7 @@ pub enum PopoverAnchor {
     Heading,
     /// Beside the rail's profile square, its foot level with the square's.
     Rail,
-    /// Beside the current workspace square, aligned to its top.
+    /// Beside the rail's `…` under the workspace squares, aligned to its top.
     WorkspaceRail,
 }
 
@@ -628,6 +628,8 @@ struct RowDrag {
 pub enum ExploreChromeFocus {
     RailOverflow,
     Workspace(Option<WorkspaceId>),
+    /// The `…` under the workspace squares.
+    WorkspaceMenu,
     App(usize),
     RailHelp,
     RailSettings,
@@ -1084,47 +1086,6 @@ impl ExploreView {
             }
             Some(_) if cloud == SyncStatus::NotSetUp => SyncStatus::UpToDate,
             _ => cloud,
-        }
-    }
-
-    /// The second line under a profile's name. The open Profile says where
-    /// it syncs and how many other devices hold it; another says its email,
-    /// or that it is on this computer (the review's artboard).
-    ///
-    /// **Two facts at most**: the line has about 180 px, and *Needs
-    /// attention · Koru Cloud · 2 devices* was cut mid-word on screen. The
-    /// device count stands in for *Koru Cloud* when there is one — a Profile
-    /// other devices hold is a cloud Profile.
-    fn profile_detail(&self, profile: &ProfileSummary, lang: koru_i18n::Lang) -> String {
-        use koru_i18n::{Key, fill, t};
-        if self.current_profile != Some(profile.id) {
-            return if profile.email.is_empty() {
-                t(lang, Key::OnThisComputer).to_owned()
-            } else {
-                profile.email.clone()
-            };
-        }
-        let status = self.sync_status();
-        let first = match status {
-            SyncStatus::NotSetUp => t(lang, Key::OnThisComputer),
-            status => t(lang, status.key()),
-        };
-        let n = self.linked_count;
-        let second = if n > 0 {
-            let key = if n == 1 {
-                Key::DevicesCountOne
-            } else {
-                Key::DevicesCountMany
-            };
-            Some(fill(t(lang, key), &[&n.to_string()]))
-        } else if status != SyncStatus::NotSetUp {
-            Some(t(lang, Key::CloudTitle).to_owned())
-        } else {
-            None
-        };
-        match second {
-            Some(second) => format!("{first} · {second}"),
-            None => first.to_owned(),
         }
     }
 
@@ -3685,12 +3646,10 @@ impl ExploreView {
             PopoverKind::Summary => {
                 let list = &self.workspaces;
                 let mut out = Vec::with_capacity(list.len() + 1);
-                out.extend(
-                    self.sync_channels()
-                        .controls()
-                        .into_iter()
-                        .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
-                );
+                // No Profile card and its sync controls at the top, and no
+                // Trash at the foot: the menu is the rail's `…` now, and it
+                // lists workspaces. Sync is the Profile menu's, Trash the
+                // column's floor row.
                 // **Unassigned first** (root-catalog §3.6): a workspace no
                 // Profile lists is reachable before this Profile's own rows,
                 // and only while there is one.
@@ -3726,7 +3685,6 @@ impl ExploreView {
                 out.extend([
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Import),
-                    PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Trash),
                 ]);
                 if self.workspace_waiting.is_some() || self.workspace_notice.is_some() {
                     out.push(PopoverRow::WorkspaceNotice);
@@ -3861,12 +3819,8 @@ impl ExploreView {
         let x = x.min((viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE));
         let y = match p.kind {
             PopoverKind::Summary => {
-                let square = self
-                    .apps_rail_rects(rail)
-                    .workspaces
-                    .first()
-                    .map(|(_, r)| *r)
-                    .unwrap_or(rail);
+                let menu = self.apps_rail_rects(rail).workspace_menu;
+                let square = if menu.w > 0.0 { menu } else { rail };
                 square
                     .y
                     .min((viewport.1 - h - POPOVER_EDGE).max(POPOVER_EDGE))
@@ -4517,12 +4471,17 @@ impl ExploreView {
     pub fn apps_rail_mouse_down(&mut self, rail: Rect, x: f32, y: f32) -> Outcome {
         let rects = self.apps_rail_rects(rail);
         match self.rail_hit(rail, x, y) {
-            Some(apps_rail::Hit::Workspace(id)) if self.current != Some(id) => {
+            // **A square switches, and can be carried** — the open one too,
+            // so the run can be put in any order. The switch happens on
+            // release, which is what lets the same press start a drag.
+            Some(apps_rail::Hit::Workspace(id)) => {
                 self.close_popover();
                 self.begin_workspace_drag(id, &rects, y);
                 Outcome::Consumed
             }
-            Some(apps_rail::Hit::Workspace(_)) | Some(apps_rail::Hit::WaitingWorkspace) => {
+            // No workspace open: the waiting square still opens the menu,
+            // the one way to choose one.
+            Some(apps_rail::Hit::WaitingWorkspace) | Some(apps_rail::Hit::WorkspaceMenu) => {
                 self.toggle_popover(PopoverKind::Summary);
                 Outcome::Consumed
             }

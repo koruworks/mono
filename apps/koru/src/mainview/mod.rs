@@ -10284,13 +10284,15 @@ impl MainView {
             // The rail: an app, Settings, Help or the profile square. A press
             // on it is a press outside the popover, so the popover shuts
             // first (the review's note: the Profiles list stayed up beside the
-            // help popover the `?` opened) — unless the press is the square,
-            // the popover's own door, which toggles it.
+            // help popover the `?` opened) — unless the press is a popover's
+            // own door, which toggles it: the profile square, or the `…` and
+            // the waiting square for the workspace menu. A workspace square
+            // is not one any more; it switches (2026-11-10).
             let door = matches!(
                 self.explore.rail_hit(self.rail_area(), x, y),
                 Some(
                     crate::panes::sidebar::apps_rail::Hit::Profile
-                        | crate::panes::sidebar::apps_rail::Hit::Workspace(_)
+                        | crate::panes::sidebar::apps_rail::Hit::WorkspaceMenu
                         | crate::panes::sidebar::apps_rail::Hit::WaitingWorkspace
                 )
             );
@@ -18167,13 +18169,19 @@ impl MainView {
                     .find(|item| item.hit == hit)
                     .map(|item| item.name)
                     .unwrap_or_default();
+                Some(TooltipContent::new(5, *square, name))
+            } else if on(rail.workspace_menu) {
+                // The chord that opens the menu, on the control that does.
                 Some(
-                    TooltipContent::new(5, *square, name).with_optional_shortcut(
-                        koru_keys::show_hint(
-                            koru_keys::ShortcutId::SwitchWorkspace,
-                            koru_keys::Section::Tooltip,
-                        ),
-                    ),
+                    TooltipContent::new(
+                        4,
+                        rail.workspace_menu,
+                        koru_i18n::t(lang, koru_i18n::Key::RailWorkspaceMenu),
+                    )
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::SwitchWorkspace,
+                        koru_keys::Section::Tooltip,
+                    )),
                 )
             } else if on(rail.overflow) {
                 Some(TooltipContent::new(

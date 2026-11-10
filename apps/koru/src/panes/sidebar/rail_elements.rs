@@ -19,6 +19,7 @@ pub(crate) fn key(hit: Hit) -> Key {
     match hit {
         Hit::Workspace(id) => Key::model(id.as_uuid().as_u128(), "rail"),
         Hit::WaitingWorkspace => Key::surface(SURFACE, "waiting-workspace"),
+        Hit::WorkspaceMenu => Key::surface(SURFACE, "workspace-menu"),
         Hit::App(mode) => Key::surface(SURFACE, mode.token()),
         Hit::Overflow => Key::surface(SURFACE, "overflow"),
         Hit::Help => Key::surface(SURFACE, "help"),
@@ -289,6 +290,7 @@ impl Rail {
             apps: Vec::new(),
             overflow: Rect::new(band.x, band.y, 0.0, 0.0),
             workspaces: Vec::new(),
+            workspace_menu: Rect::new(band.x, band.y, 0.0, 0.0),
             help: Rect::new(band.x, band.y, 0.0, 0.0),
             settings: Rect::new(band.x, band.y, 0.0, 0.0),
             profile: Rect::new(band.x, band.y, 0.0, 0.0),
@@ -305,6 +307,7 @@ impl Rail {
             match item.hit {
                 Hit::Workspace(id) => rects.workspaces.push((Some(id), r)),
                 Hit::WaitingWorkspace => rects.workspaces.push((None, r)),
+                Hit::WorkspaceMenu => rects.workspace_menu = r,
                 Hit::App(mode) => rects.apps.push((mode, r)),
                 Hit::Overflow => rects.overflow = r,
                 Hit::Help => rects.help = r,

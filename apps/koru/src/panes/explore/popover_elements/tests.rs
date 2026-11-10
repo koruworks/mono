@@ -279,21 +279,22 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
     assert_eq!(menu.label.as_deref(), Some("Workspaces"));
     assert_eq!(
         menu.size_of_set,
-        Some(14),
-        "three primaries, three pins, three gears and five fixed actions"
+        Some(12),
+        "three primaries, three pins, three gears, the heading's manage, New and Import"
     );
+    // The heading leads: the menu has no profile header any more.
     let roles: Vec<_> = menu.children.iter().map(|c| c.role).collect();
-    assert_eq!(roles[1], AkRole::Heading);
+    assert_eq!(roles[0], AkRole::Heading);
     assert!(
         roles
             .iter()
             .enumerate()
-            .all(|(i, r)| i == 1 || *r == AkRole::MenuItem)
+            .all(|(i, r)| i == 0 || *r == AkRole::MenuItem)
     );
     for (i, w) in v.workspaces.iter().enumerate() {
-        let primary = &menu.children[3 + i * 3];
-        let gear = &menu.children[4 + i * 3];
-        let pin = &menu.children[5 + i * 3];
+        let primary = &menu.children[2 + i * 3];
+        let gear = &menu.children[3 + i * 3];
+        let pin = &menu.children[4 + i * 3];
         assert_eq!(
             pin.occurrence,
             Occurrence::model(
@@ -321,7 +322,7 @@ fn the_semantic_tree_puts_the_gear_beside_its_row() {
             "today's locator"
         );
         assert_eq!(primary.label.as_deref(), Some(w.name.as_str()));
-        assert_eq!(primary.position, Some(2 + i * 3));
+        assert_eq!(primary.position, Some(1 + i * 3));
         assert_eq!(primary.selected, Some(v.current == Some(w.id)));
         assert_eq!(
             gear.occurrence,

@@ -4026,11 +4026,12 @@ fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) 
         list.clone(),
         Some(list[0].id),
     );
-    // The floor chip opens the switcher; its Profiles page is one page away.
-    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
-    let (x, y) = chip.centre();
+    // The `…` under the workspace squares opens the switcher; its Profiles
+    // page is one page away. The square itself switches, it opens nothing.
+    let more = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
+    let (x, y) = more.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.popover_open(), "the chip opens the switcher");
+    assert!(v.explore.popover_open(), "the `…` opens the switcher");
     (v, w, profiles)
 }
 
@@ -4133,10 +4134,8 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
     assert_eq!(
         first(&v),
-        Some(PopoverRow::WorkspaceAction(
-            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
-        )),
-        "the chip's page lists the workspaces only"
+        Some(PopoverRow::WorkspacesHeading),
+        "the `…`'s page lists the workspaces only"
     );
     // The rail's profile square: the Profiles page.
     let rail = v.rail_area();
@@ -4153,16 +4152,11 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     assert!(!v.explore.popover_open(), "the square shuts it");
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
-    let (cx, cy) = chip.centre();
+    let menu = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
+    let (cx, cy) = menu.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
-    assert!(v.explore.popover_open(), "and the chip opens its page");
-    assert_eq!(
-        first(&v),
-        Some(PopoverRow::WorkspaceAction(
-            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
-        ))
-    );
+    assert!(v.explore.popover_open(), "and the `…` opens its page");
+    assert_eq!(first(&v), Some(PopoverRow::WorkspacesHeading));
 }
 
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
@@ -4182,7 +4176,7 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         v.show_navigator(mode);
         // Read after the switch: a mode that opens a tab can relay out the
         // pane, and the floor moves with it.
-        let square = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
+        let square = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
         let (cx, cy) = square.centre();
         v.mouse_down(&mut w.ws, cx, cy, false);
         assert!(
@@ -6271,8 +6265,8 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     v.menu = None;
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
-    let (cx, cy) = chip.centre();
+    let menu = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
+    let (cx, cy) = menu.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open());
     let (_, h) = v

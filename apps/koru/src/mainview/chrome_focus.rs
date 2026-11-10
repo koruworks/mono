@@ -279,7 +279,10 @@ impl MainView {
                 ExploreChromeFocus::Workspace(Some(id)) if Some(id) != self.current_workspace() => {
                     self.open_workspace(id);
                 }
-                ExploreChromeFocus::Workspace(_) => {
+                // The open workspace is already answered; the menu is the
+                // `…` under the squares.
+                ExploreChromeFocus::Workspace(Some(_)) => {}
+                ExploreChromeFocus::Workspace(None) | ExploreChromeFocus::WorkspaceMenu => {
                     self.open_workspaces_popover();
                 }
                 ExploreChromeFocus::App(i) => {

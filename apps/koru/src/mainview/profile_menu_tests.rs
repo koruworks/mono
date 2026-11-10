@@ -54,8 +54,10 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
     }
 }
 
+/// The sync channel icons live on the Profile menu only: the workspace menu
+/// lost its Profile card on 2026-11-10 and lists workspaces.
 #[test]
-fn workspace_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
+fn profile_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
     use crate::manage::Page;
     use koru_agent_wire::{AccountProfileCloud, AccountStage, AccountState, CloudConnectionStage};
     use koru_draw::el::Key;
@@ -93,14 +95,10 @@ fn workspace_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
         .into_iter()
         .filter(|(shown, _, _)| *shown)
         .collect();
-        for profile_menu in [false, true, false, true] {
+        for _ in 0..2 {
             for &(_, part, page) in &destinations {
                 view.select(0);
-                if profile_menu {
-                    view.explore.toggle_profile_popover();
-                } else {
-                    view.explore.toggle_workspace_menu();
-                }
+                view.explore.toggle_profile_popover();
                 let key = Key::surface("explore-popover", part);
                 let (x, y) = view
                     .explore

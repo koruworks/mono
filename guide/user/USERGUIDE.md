@@ -983,15 +983,17 @@ Down the left is the **sidebar** — `Ctrl+Shift+E`, or the sidebar button
 that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
 full height of the window and pushes everything else to the right. At its
 top is a lane with the Koru mark, **Search** and the sidebar button; under
-it a vertical rail with the **current workspace** first, then the **apps** —
+it a vertical rail with your **workspaces** first, a **…** under them, then
+the **apps** —
 Documents, Files, Tasks and the rest the build shows (`Alt+1`…`Alt+8` switch them by
 place: `Alt+1` is the top view, `Alt+2` the next;
 drag an icon up or down to put it where you want it, or with the rail
 focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
 the shortcuts go with the place, so moving Chats to the top makes it `Alt+1`;
 the order is remembered on this computer);
-then that app's own navigation. Press the current workspace square for its
-menu: switch workspace, create or import one, open Trash, or open Manage.
+then that app's own navigation. Press a workspace square to switch to it.
+The **…** under the squares opens the workspace menu: switch workspace,
+create or import one, or open Manage.
 Right-click a workspace row for its management actions. Help, Settings and
 your Profile stay at the bottom of the rail. The **?** opens help: what is new in
 this build, the full changelog, **Send feedback**, **Star us on GitHub**
@@ -1003,13 +1005,14 @@ the arrows move within
 each, Enter presses, Escape returns to the page.
 
 Use a workspace row's **Pin to rail** control to keep it one click away.
-The rail shows your current workspace first and up to three saved pins,
-without repeating the current workspace. New pins are capped at three;
+The rail shows up to three saved pins in your order, the open one drawn
+selected where it stands; switching does not move them. A workspace you open
+that is not pinned is shown after them. New pins are capped at three;
 additional saved pins received from another device or restored from Archive
 remain saved and available in the workspace menu. Unpinning is always available.
 Pin choices sync; their order stays on this computer. Drag a pinned square,
 or focus it with F6 and press `Ctrl+Shift+↑`/`↓`, to change that order.
-The current square stays first. Escape cancels a drag. A pending pin has a
+Any pinned square can be dragged, the open one too. Escape cancels a drag. A pending pin has a
 progress mark; if its listing needs repair, **Try again** remains in the menu.
 
 In a short window, **More views** (`⋯`) opens the apps that no longer fit on

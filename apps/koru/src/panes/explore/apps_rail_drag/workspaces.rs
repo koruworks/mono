@@ -2,6 +2,12 @@
 
 //! Workspace drag shares the rail's carry, swap and easing geometry.
 //! Only release publishes a Store order; a click switches on release.
+//!
+//! **The run is the pinned workspaces in their saved order**, the open one
+//! among them where it stands. It used to be lifted to the top, so every
+//! switch reshuffled the squares; now only a drag moves one. An open
+//! workspace that is not pinned is drawn after the run and is not carried:
+//! it is not part of the saved order, and a drop could not keep it there.
 
 use super::*;
 use crate::panes::{Outcome, explore::DRAG_ARM_PX};
@@ -21,17 +27,33 @@ pub(crate) struct WorkspaceDrag {
 }
 
 impl ExploreView {
+    /// The pinned squares, in the saved order: the part of the run a drag
+    /// may reorder.
+    fn pinned_workspace_run(&self) -> Vec<WorkspaceId> {
+        self.workspaces
+            .iter()
+            .filter(|w| w.pinned && !w.archived && w.deleted_at.is_none())
+            .take(3)
+            .map(|w| w.id)
+            .collect()
+    }
+
+    /// Every workspace square, top to bottom: the pinned run, then the open
+    /// workspace when it is not in it.
     fn saved_workspace_run(&self) -> Vec<WorkspaceId> {
-        let mut ids: Vec<_> = self.current.into_iter().collect();
-        ids.extend(
-            self.workspaces
-                .iter()
-                .filter(|w| w.pinned && !w.archived && w.deleted_at.is_none())
-                .take(3)
-                .filter(|w| Some(w.id) != self.current)
-                .map(|w| w.id),
-        );
+        let mut ids = self.pinned_workspace_run();
+        if let Some(current) = self.current
+            && !ids.contains(&current)
+        {
+            ids.push(current);
+        }
         ids
+    }
+
+    /// Where the run starts among the rail's squares: after the waiting
+    /// square, when no workspace is open.
+    fn workspace_run_offset(&self) -> usize {
+        usize::from(self.current.is_none())
     }
 
     pub(crate) fn rail_workspace_ids(&self) -> Vec<WorkspaceId> {
@@ -43,8 +65,7 @@ impl ExploreView {
     pub(crate) fn check_workspace_drag_membership(&mut self) {
         let current = self.saved_workspace_run();
         if self.workspace_drag.as_ref().is_some_and(|drag| {
-            drag.original.first() != current.first()
-                || drag.original.len() != current.len()
+            drag.original.len() != current.len()
                 || drag.original.iter().any(|id| !current.contains(id))
         }) {
             self.workspace_drag = None;
@@ -58,15 +79,13 @@ impl ExploreView {
         rects: &apps_rail::Rects,
         y: f32,
     ) {
-        if self.current == Some(id) {
+        // Only a pinned square is carried. The one square that is not — the
+        // open workspace drawn after the run — has nothing to switch to
+        // either, so a press on it starts nothing at all.
+        if !self.pinned_workspace_run().contains(&id) {
             return;
         }
-        let Some((_, square)) = rects
-            .workspaces
-            .iter()
-            .skip(1)
-            .find(|(wid, _)| *wid == Some(id))
-        else {
+        let Some((_, square)) = rects.workspaces.iter().find(|(wid, _)| *wid == Some(id)) else {
             return;
         };
         let original = self.saved_workspace_run();
@@ -81,6 +100,13 @@ impl ExploreView {
         });
     }
 
+    /// The pinned squares' rects, which bound a carry and are its slots.
+    fn pinned_squares<'a>(&self, rects: &'a apps_rail::Rects) -> &'a [(Option<WorkspaceId>, Rect)] {
+        let start = self.workspace_run_offset().min(rects.workspaces.len());
+        let end = (start + self.pinned_workspace_run().len()).min(rects.workspaces.len());
+        &rects.workspaces[start..end]
+    }
+
     pub(crate) fn workspace_carried(&self, rects: &apps_rail::Rects) -> Option<(usize, Rect)> {
         let drag = self.workspace_drag.as_ref()?;
         let index = rects
@@ -88,8 +114,9 @@ impl ExploreView {
             .iter()
             .position(|(id, _)| *id == Some(drag.id))?;
         let square = rects.workspaces[index].1;
-        let first = rects.workspaces.get(1)?.1;
-        let last = rects.workspaces.last()?.1;
+        let pinned = self.pinned_squares(rects);
+        let first = pinned.first()?.1;
+        let last = pinned.last()?.1;
         let top = if drag.armed {
             reorder::carry(drag.y - drag.grab, first.y, last.y + last.h, square.h)
         } else {
@@ -109,18 +136,19 @@ impl ExploreView {
             return true;
         }
         let rects = self.apps_rail_rects(rail);
+        let offset = self.workspace_run_offset();
         if let Some((index, carried)) = self.workspace_carried(&rects) {
-            let slots: Vec<_> = rects
-                .workspaces
+            let slots: Vec<_> = self
+                .pinned_squares(&rects)
                 .iter()
-                .skip(1)
                 .map(|(_, rect)| (rect.y, rect.h))
                 .collect();
-            let to = reorder::drop_index(&slots, index - 1, carried.y + carried.h * 0.5) + 1;
+            let to =
+                reorder::drop_index(&slots, index - offset, carried.y + carried.h * 0.5) + offset;
             if to != index {
                 let drag = self.workspace_drag.as_mut().unwrap();
-                let id = drag.preview.remove(index);
-                drag.preview.insert(to, id);
+                let id = drag.preview.remove(index - offset);
+                drag.preview.insert(to - offset, id);
                 let before: Vec<_> = rects.workspaces.iter().map(|(_, r)| r.y).collect();
                 let after: Vec<_> = self
                     .apps_rail_rects(rail)
@@ -142,6 +170,10 @@ impl ExploreView {
         let landing = self.workspace_carried(&rects);
         let drag = self.workspace_drag.take()?;
         if !drag.armed {
+            // A click on the open workspace is already answered.
+            if self.current == Some(drag.id) {
+                return Some(Outcome::Consumed);
+            }
             return Some(Outcome::SwitchWorkspace(drag.id));
         }
         if let Some((index, carried)) = landing {
@@ -156,20 +188,22 @@ impl ExploreView {
             return Some(Outcome::Consumed);
         }
         let at = drag.preview.iter().position(|id| *id == drag.id)?;
+        // The next *pinned* square, so an open workspace drawn after the run
+        // cannot become an anchor the saved order does not hold.
+        let pinned = self.pinned_workspace_run().len();
         Some(Outcome::ReorderWorkspace {
             workspace: drag.id,
-            before: drag.preview.get(at + 1).copied(),
+            before: (at + 1 < pinned)
+                .then(|| drag.preview.get(at + 1).copied())
+                .flatten(),
         })
     }
 
     pub(crate) fn nudge_workspace(&self, workspace: WorkspaceId, up: bool) -> Option<Outcome> {
-        if self.current == Some(workspace) {
-            return None;
-        }
-        let ids = self.saved_workspace_run();
+        let ids = self.pinned_workspace_run();
         let at = ids.iter().position(|id| *id == workspace)?;
         let before = if up {
-            if at <= 1 {
+            if at == 0 {
                 return None;
             }
             Some(ids[at - 1])
