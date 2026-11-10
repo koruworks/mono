@@ -182,6 +182,13 @@ impl ConnectionProtocol {
         self.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
     }
 
+    fn conditional_steering(&self) -> bool {
+        self.version >= koru_session_protocol::CONDITIONAL_STEERING_PROTOCOL_VERSION
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::CONDITIONAL_TURN_STEERING)
+    }
+
     fn path_references(&self) -> bool {
         self.version >= koru_session_protocol::PATH_REFERENCES_PROTOCOL_VERSION
             && self
@@ -950,6 +957,22 @@ fn handle_request(
                         .remove_attachment(controller_lease, attachment_id)
                         .map_err(failure)?;
                     Ok(Response::AttachmentRemoved { attachment })
+                })
+            }
+        }
+        Request::SteerPendingInput(request) => {
+            if !protocol.conditional_steering() {
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else {
+                with_session(state, request.session_id, |session| {
+                    session
+                        .steer_pending_input(
+                            request.controller_lease,
+                            request.expected_turn,
+                            request.input,
+                        )
+                        .map(|result| Response::PendingInputSent { result })
+                        .map_err(failure)
                 })
             }
         }

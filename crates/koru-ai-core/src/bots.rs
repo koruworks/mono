@@ -6,6 +6,10 @@ use crate::{ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
 pub use koru_delegate_core::{BotId, BotRequestId, DeviceId};
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
+pub mod admission;
+pub use admission::*;
+
+pub mod replay;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -97,6 +101,17 @@ pub trait BotAuthority: Send + Sync {
     fn owner(&self) -> Result<BotOwner, BotError>;
     fn workspace(&self, workspace: WorkspaceId) -> Result<ProfileId, BotError>;
     fn page(&self, page: &BotPage) -> Result<(), BotError>;
+    /// Trusted preparation only: capture immutable history under fresh current
+    /// authority. Public callers cannot supply the returned version identities.
+    fn capture(
+        &self,
+        _owner: BotOwner,
+        _workspace: WorkspaceId,
+        _profile: ProfileId,
+        _pages: &[BotPage],
+    ) -> Result<Vec<koru_delegate_core::RunContextItem>, BotError> {
+        Err(BotError::Unavailable)
+    }
     /// One bounded command's authority inspection; adapters batch this under one Store lock.
     fn inspect(
         &self,
@@ -121,6 +136,41 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    Start {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        chat_id: ChatId,
+        expected_revision: u64,
+        destination: WorkspaceId,
+        task: BotTask,
+    },
+    Continue {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        chat_id: ChatId,
+        expected_revision: u64,
+        destination: WorkspaceId,
+        task: BotTask,
+        previous_run: koru_delegate_core::RunId,
+    },
+    Pause {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+    },
+    Resume {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+    },
+    ReadOperation {
+        request_id: BotRequestId,
+        bot_id: BotId,
+    },
+    ReconcileOperation {
+        request_id: BotRequestId,
+        bot_id: BotId,
+    },
     Create {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -155,6 +205,7 @@ pub enum BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    Operation { operation: BotOperation },
     Bot { bot: Bot },
     List { bots: Vec<Bot> },
 }

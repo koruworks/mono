@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -330,6 +330,8 @@ struct State {
     output_subscribers: Vec<OutputSubscriber>,
     idempotency: VecDeque<MutationRecord>,
     pending_inputs: BTreeMap<IdempotencyKey, PendingSubmission>,
+    /// Bounded strict-only conflict markers; saturation closes new strict admission.
+    failed_ordinary_steers: BTreeSet<IdempotencyKey>,
     attachments: BTreeMap<AttachmentId, Attachment>,
 }
 
@@ -493,6 +495,7 @@ impl SessionOwner {
                 output_subscribers: Vec::new(),
                 idempotency: VecDeque::with_capacity(IDEMPOTENCY_HISTORY),
                 pending_inputs: BTreeMap::new(),
+                failed_ordinary_steers: BTreeSet::new(),
                 attachments: BTreeMap::new(),
             }),
             io: SessionIo::Raw {
@@ -645,6 +648,7 @@ impl SessionOwner {
                 output_subscribers: Vec::new(),
                 idempotency: VecDeque::with_capacity(IDEMPOTENCY_HISTORY),
                 pending_inputs: BTreeMap::new(),
+                failed_ordinary_steers: BTreeSet::new(),
                 attachments: BTreeMap::new(),
             }),
             io: SessionIo::Managed(managed_handle),

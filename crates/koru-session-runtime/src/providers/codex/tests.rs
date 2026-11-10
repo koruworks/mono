@@ -3124,3 +3124,54 @@ fn a_refused_codex_names_both_versions_and_a_crash_did_not_start() {
         }
     ));
 }
+
+#[test]
+fn conditional_native_turn_race_is_refused_without_starting_another_turn() {
+    let mut frames = initialize_frames(false);
+    frames.push(json!({"id":4,"result":{"turn":{"id":"native-turn-1"}}}));
+    frames.push(
+        json!({"id":5,"error":{"code":-32600,"message":"expected turn is no longer active"}}),
+    );
+    let (mut control, state) = replay_control(frames, Arc::new(NoopAttachmentPathResolver));
+    let capabilities = control
+        .start(AgentStart {
+            session_id: SessionId::mint(),
+            parent_session_id: None,
+            resume: None,
+        })
+        .unwrap();
+    assert!(
+        capabilities
+            .capabilities
+            .supports(capability::CONDITIONAL_TURN_STEERING)
+    );
+    let input = AgentInput {
+        turn_id: AgentTurnId::mint(),
+        text: "first".into(),
+        attachments: vec![],
+        references: vec![],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: vec![],
+        model: None,
+    };
+    control.submit(input.clone()).unwrap();
+    // Native completion wins after local admission; expectedTurnId remains the
+    // native arbiter. The error must not become another turn/start request.
+    assert!(control.steer(input).is_err());
+    let state = state.lock().unwrap();
+    let starts = state
+        .sent
+        .iter()
+        .filter(|v| v["method"] == "turn/start")
+        .count();
+    let steers: Vec<_> = state
+        .sent
+        .iter()
+        .filter(|v| v["method"] == "turn/steer")
+        .collect();
+    assert_eq!(starts, 1);
+    assert_eq!(steers.len(), 1);
+    assert_eq!(steers[0]["params"]["expectedTurnId"], "native-turn-1");
+}

@@ -732,6 +732,7 @@ impl AgentControl for CodexControl {
             capability::MANAGED_APPROVAL,
             capability::DYNAMIC_APPROVALS,
             capability::MANAGED_USAGE,
+            capability::CONDITIONAL_TURN_STEERING,
         ];
         if model.image {
             names.push(capability::NATIVE_ATTACHMENT_DELIVERY);

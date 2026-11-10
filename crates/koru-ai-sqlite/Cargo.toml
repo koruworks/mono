@@ -14,6 +14,7 @@ fixtures = []
 
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core" }
+koru-delegate-core = { path = "../koru-delegate-core" }
 # Opening and versioning the file: the one policy every Koru database shares.
 koru-sqlite = { path = "../koru-sqlite" }
 rusqlite.workspace = true

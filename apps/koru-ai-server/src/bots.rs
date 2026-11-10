@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Read-only bridge to existing root identity and current Store authority.
+//! Existing root authority and trusted immutable-history capture for Bot intent.
 use koru_ai_core::bots::*;
 use koru_ai_core::{ProfileId, WorkspaceId};
 use koru_store_server::StoreWorkerClient;
@@ -15,6 +15,73 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn capture(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        profile: ProfileId,
+        pages: &[BotPage],
+    ) -> Result<Vec<koru_delegate_core::RunContextItem>, BotError> {
+        if owner.device != self.device
+            || pages.is_empty()
+            || pages.len() > 17
+            || pages.iter().any(|p| p.workspace != workspace)
+        {
+            return Err(BotError::Forbidden);
+        }
+        let pages = pages.to_vec();
+        self.client
+            .with_store(move |store| {
+                if store
+                    .local_user_scope()
+                    .map_err(|_| BotError::Unavailable)?
+                    != owner.user_scope
+                    || store
+                        .current_placement_profile(workspace)
+                        .map_err(|_| BotError::Unavailable)?
+                        != Some(profile)
+                {
+                    return Err(BotError::Forbidden);
+                }
+                store
+                    .workspace(workspace)
+                    .map_err(|_| BotError::Forbidden)?;
+                store.profile(profile).map_err(|_| BotError::Forbidden)?;
+                let entries = store
+                    .documents(workspace)
+                    .map_err(|_| BotError::Unavailable)?;
+                if pages.iter().any(|p| {
+                    !entries
+                        .iter()
+                        .any(|e| e.id == p.document && e.trashed_at.is_none())
+                }) {
+                    return Err(BotError::Forbidden);
+                }
+                pages
+                    .into_iter()
+                    .map(|page| {
+                        let entry = store
+                            .capture_history(
+                                workspace,
+                                page.document,
+                                None,
+                                koru_store_core::ports::HistoryReason::Manual,
+                                koru_store_core::model::Timestamp::now(),
+                                None,
+                                None,
+                                None,
+                            )
+                            .map_err(|_| BotError::Unavailable)?;
+                        Ok(koru_delegate_core::RunContextItem::Document {
+                            workspace,
+                            document: page.document,
+                            version: entry.version,
+                        })
+                    })
+                    .collect()
+            })
+            .map_err(|_| BotError::Unavailable)?
+    }
     fn inspect(
         &self,
         workspaces: &[WorkspaceId],

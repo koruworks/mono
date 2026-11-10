@@ -984,7 +984,7 @@ fn populated_v15_survives_bot_migration_and_repeated_open_unchanged() {
  INSERT INTO inference_attempts(id,operation_id,chat_id,surface,provider,requested_model,prompt_template_version,status,queued_at_ms,context_used_tokens) VALUES('attempt','operation','chat','standalone','mock','fixture','v1','pending',1,42);").unwrap();
     for _ in 0..2 {
         prepare(&mut c).unwrap();
-        assert_eq!(user_version(&c).unwrap(), 16);
+        assert_eq!(user_version(&c).unwrap(), SCHEMA_VERSION);
         assert_eq!(
             c.query_row(
                 "SELECT markdown FROM messages WHERE id='message'",

@@ -208,6 +208,24 @@ pub struct PendingInput {
 }
 
 impl PendingInput {
+    /// The conditional command cannot silently drop turn settings or files.
+    pub fn validate_conditional_steering(&self) -> Result<(), ErrorCode> {
+        if !self.attachment_ids.is_empty()
+            || !self.references.is_empty()
+            || self.mode.is_some()
+            || self.fast.is_some()
+            || self.reasoning.is_some()
+            || !self.skills.is_empty()
+            || self.model.is_some()
+        {
+            return Err(ErrorCode::DeliveryUnsupported);
+        }
+        if self.text.is_empty() {
+            return Err(ErrorCode::InvalidRequest);
+        }
+        Ok(())
+    }
+
     pub fn needs_path_references(&self) -> bool {
         !self.references.is_empty()
     }

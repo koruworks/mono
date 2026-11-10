@@ -26,6 +26,7 @@ pub(in crate::worker) struct PreparedBotCommand {
     pub(in crate::worker) authority: Arc<dyn BotAuthority>,
     pub(in crate::worker) chats: Vec<(BotId, ChatId, u64, u64)>,
     pub(in crate::worker) runtime: ApiResult<()>,
+    pub(in crate::worker) pins: Vec<koru_delegate_core::RunContextItem>,
 }
 pub(in crate::worker) struct BotPreparationJob {
     command: WorkerCommand,
@@ -34,6 +35,7 @@ pub(in crate::worker) struct BotPreparationJob {
     pages: Vec<BotPage>,
     chats: Vec<(BotId, ChatId, u64, u64)>,
     model: Option<BotConfig>,
+    capture: Option<(BotOwner, WorkspaceId, Vec<BotPage>)>,
 }
 impl BotPreparationJob {
     pub(in crate::worker) fn run(
@@ -53,10 +55,23 @@ impl BotPreparationJob {
                     .inspect(&self.workspaces, &self.pages)
                     .map_err(bot_failure)?,
             );
+            let pins = if let Some((owner, workspace, pages)) = &self.capture {
+                runtime.clone()?;
+                if authority.owner().map_err(bot_failure)? != *owner {
+                    return Err(bot_failure(BotError::Forbidden));
+                }
+                let profile = authority.workspace(*workspace).map_err(bot_failure)?;
+                self.authority
+                    .capture(*owner, *workspace, profile, pages)
+                    .map_err(bot_failure)?
+            } else {
+                Vec::new()
+            };
             Ok(PreparedBotCommand {
                 authority,
                 chats: self.chats.clone(),
                 runtime,
+                pins,
             })
         }))
         .unwrap_or_else(|_| Err(bot_failure(BotError::Unavailable)));
@@ -113,6 +128,7 @@ impl WorkerState {
                 chats.push((id, chat, bot.revision, bot.policy_revision));
             }
             let mut model = None;
+            let mut capture = None;
             if let WorkerCommand::Bots { request, .. } = &command {
                 match request {
                     BotCommand::Create {
@@ -136,7 +152,57 @@ impl WorkerState {
                     BotCommand::List { workspace } => {
                         workspaces.insert(*workspace);
                     }
-                    BotCommand::Read { .. } => {}
+                    BotCommand::Start {
+                        bot_id,
+                        request_id,
+                        destination,
+                        task,
+                        ..
+                    }
+                    | BotCommand::Continue {
+                        bot_id,
+                        request_id,
+                        destination,
+                        task,
+                        ..
+                    } => {
+                        let bot = self
+                            .repository
+                            .bot(*bot_id)
+                            .map_err(bot_failure)?
+                            .ok_or_else(|| bot_failure(BotError::NotFound))?;
+                        task.validate(*destination).map_err(bot_failure)?;
+                        if *destination != bot.home_workspace {
+                            return Err(bot_failure(BotError::Forbidden));
+                        }
+                        let owner = BotOwner {
+                            user_scope: bot.user_scope,
+                            device: bot.owner_device,
+                        };
+                        // Retrying a durable intent never recaptures a different
+                        // Role version or requires its original runtime to be online.
+                        if self
+                            .repository
+                            .bot_admission_receipt(owner, *bot_id, *request_id)
+                            .map_err(bot_failure)?
+                            .is_none()
+                        {
+                            let mut captured = vec![bot.config.role.clone()];
+                            for page in &task.documents {
+                                if !captured.contains(page) {
+                                    captured.push(page.clone());
+                                }
+                            }
+                            pages.extend(captured.clone());
+                            model = Some(bot.config.clone());
+                            capture = Some((owner, *destination, captured));
+                        }
+                    }
+                    BotCommand::Read { .. }
+                    | BotCommand::Pause { .. }
+                    | BotCommand::Resume { .. }
+                    | BotCommand::ReadOperation { .. }
+                    | BotCommand::ReconcileOperation { .. } => {}
                 }
             }
             // Every referenced workspace is inspected, including invalid foreign-page requests.
@@ -146,9 +212,10 @@ impl WorkerState {
                 pages.into_iter().collect(),
                 chats,
                 model,
+                capture,
             ))
         })();
-        let (workspaces, pages, chats, model) = match snapshot {
+        let (workspaces, pages, chats, model, capture) = match snapshot {
             Ok(value) => value,
             Err(error) => {
                 command.refuse(error);
@@ -162,6 +229,7 @@ impl WorkerState {
             pages,
             chats,
             model,
+            capture,
         };
         let Some(pool) = self.provider_admin.as_ref() else {
             job.command.refuse(bot_failure(BotError::Unavailable));
@@ -252,7 +320,13 @@ pub(super) fn bot_targets(
             BotCommand::Create { bot_id, .. }
             | BotCommand::Read { bot_id }
             | BotCommand::Update { bot_id, .. }
-            | BotCommand::UpdateAccess { bot_id, .. } => {
+            | BotCommand::UpdateAccess { bot_id, .. }
+            | BotCommand::Start { bot_id, .. }
+            | BotCommand::Continue { bot_id, .. }
+            | BotCommand::Pause { bot_id, .. }
+            | BotCommand::Resume { bot_id, .. }
+            | BotCommand::ReadOperation { bot_id, .. }
+            | BotCommand::ReconcileOperation { bot_id, .. } => {
                 ids.insert(*bot_id);
             }
             BotCommand::List { .. } => unreachable!(),
