@@ -3228,8 +3228,12 @@ impl MobileReplicationStore {
             // not for blobs on this host (D238/D258): Android has no mode
             // toggle, so a gate on the *content* path — serving bytes a peer
             // already knows about, and admitting the bytes a peer sends back
-            // — would be a silent outage on every phone, where every row sits
-            // at migration 12's `local_only` seed and nothing can promote it.
+            // — would be a silent outage for every row seeded before this
+            // device was linked, which nothing on a phone can promote.
+            // Linking now opens the rows created *after* it
+            // (`DeviceLinkage`), which is what lets a phone sync at all; it
+            // does not reach back over the earlier ones, so closing this
+            // path still needs the Android transport surface D238 defers.
             //
             // **Describing a subject is not on that list.** A path that would
             // put a name, a placement, a manifest or a document list in front
@@ -5111,8 +5115,9 @@ mod tests {
     /// One phone holding one Profile, one Workspace named `Original` with a
     /// document in it, and the all-data relationship of the same person's
     /// other device. Every `local_transport_modes` row sits exactly where
-    /// migration 12 seeds it — `local_only` — because nothing but a person
-    /// promotes one (D258).
+    /// migration 12 seeds it — `local_only` — because the Profile and the
+    /// Workspace are created before anything is linked, and a row's seed is
+    /// read once, when it is written (`DeviceLinkage`).
     #[allow(clippy::type_complexity)]
     fn peer_description_fixture() -> (
         tempfile::TempDir,
@@ -5896,9 +5901,10 @@ mod tests {
 
         // **The person has turned sync on for this Profile.**
         //
-        // Every row starts at the seeded `local_only` default and nothing
-        // promotes one but a person (D258): the desktop asks at the Profile
-        // prompt and commits the answer through `choose_transport_mode`. A
+        // These rows were written before anything was linked, so they start
+        // at the seeded `local_only` default and only a person moves them
+        // (D258): the desktop asks at the Profile prompt and commits the
+        // answer through `choose_transport_mode`. A
         // Local-only subject exports nothing over a peer — not its bytes and,
         // since the root catalog landed, not its Workspace unit either
         // (root-catalog TECHNICAL.final §3.5, §4.4) — and without that unit
