@@ -132,7 +132,7 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
         key: BotPolicyBarrierKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
-            request: BotRequestId::mint(),
+            request: BotRequestId::mint().into(),
         },
         config_revision: 1,
         policy_revision: 1,

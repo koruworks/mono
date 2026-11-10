@@ -121,7 +121,7 @@ fn historical_read_window_is_strict_and_lifecycle_is_owner_and_revision_fenced()
         barrier: BotPolicyBarrierKey {
             owner: key.owner.clone(),
             bot: key.bot,
-            request: koru_delegate_core::BotRequestId::mint(),
+            request: koru_delegate_core::BotRequestId::mint().into(),
         },
         config_revision: 2,
         policy_revision: 1,

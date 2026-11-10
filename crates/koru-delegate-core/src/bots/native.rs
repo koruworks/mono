@@ -7,6 +7,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+mod policy_id;
+pub use policy_id::NativePolicyRequestId;
 
 /// Server-derived classification after a Run bearer has been authenticated.
 /// Unknown or stale state is an error, never an Ordinary classification.
@@ -30,7 +32,7 @@ impl std::fmt::Debug for RunToolAuthority {
 pub struct BotPolicyBarrierKey {
     pub owner: crate::BotOwner,
     pub bot: crate::BotId,
-    pub request: crate::BotRequestId,
+    pub request: NativePolicyRequestId,
 }
 
 /// A current AI-owned policy snapshot for effect fencing, never a second

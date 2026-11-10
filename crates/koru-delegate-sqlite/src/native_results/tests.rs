@@ -108,7 +108,7 @@ impl Harness {
             key: BotPolicyBarrierKey {
                 owner: submission.provenance.owner,
                 bot: submission.provenance.bot,
-                request: BotRequestId::mint(),
+                request: BotRequestId::mint().into(),
             },
             config_revision: 1,
             policy_revision: 1,
@@ -163,7 +163,7 @@ impl Harness {
     }
     fn narrow(&self) -> BotPolicyBarrier {
         let mut p = self.policy.clone();
-        p.key.request = BotRequestId::mint();
+        p.key.request = BotRequestId::mint().into();
         p.config_revision += 1;
         p.policy_revision += 1;
         p.effects_allowed = false;
@@ -218,6 +218,27 @@ fn prepare_and_first_lease_have_distinct_commit_boundaries_and_never_reexecute()
     );
     assert!(h.lease().execute.is_none());
     assert!(!format!("{saved:?}").contains("PRIVATE"));
+}
+
+#[test]
+fn legacy_v4_policy_and_lease_remain_readable_and_v8_same_epoch_refuses() {
+    let mut h = Harness::new();
+    h.prepare();
+    let leased = h.lease();
+    h.db.restart_in_memory();
+    let original = h.db.native_policy(&h.policy.key).unwrap().unwrap();
+    let mut replacement = h.policy.clone();
+    replacement.key.request = "12345678-1234-8234-8234-123456789abc".parse().unwrap();
+    assert!(matches!(
+        h.db.install_native_policy(&replacement),
+        Err(BotLedgerError::Conflict)
+    ));
+    assert_eq!(h.db.native_policy(&h.policy.key).unwrap(), Some(original));
+    assert_eq!(
+        h.db.native_result(&h.request.key).unwrap().unwrap(),
+        leased.intent
+    );
+    assert!(h.lease().execute.is_none());
 }
 
 #[test]
@@ -280,7 +301,7 @@ fn narrowing_stays_pending_through_restart_and_uncertainty_until_proven_settled(
         Err(BotLedgerError::Conflict)
     );
     changed = h.policy.clone();
-    changed.key.request = BotRequestId::mint();
+    changed.key.request = BotRequestId::mint().into();
     assert_eq!(
         h.db.install_native_policy(&changed),
         Err(BotLedgerError::Stale)
@@ -427,7 +448,7 @@ fn captured_policy_cannot_widen_and_only_verified_creation_conveys_provenance() 
     h.request.expected_revision = Some(vec![1]);
     h.prepare();
     let mut widened = h.policy.clone();
-    widened.key.request = BotRequestId::mint();
+    widened.key.request = BotRequestId::mint().into();
     widened.config_revision = 2;
     widened.policy_revision = 2;
     widened.policy.access = BotAccess::Workspace;

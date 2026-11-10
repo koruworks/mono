@@ -126,7 +126,7 @@ fn active() -> (
         key: BotPolicyBarrierKey {
             owner: fence.owner,
             bot: fence.bot,
-            request: BotRequestId::from_uuid(v4(90)),
+            request: BotRequestId::from_uuid(v4(90)).into(),
         },
         config_revision: 1,
         policy_revision: 1,
@@ -211,7 +211,7 @@ fn native_effect_requires_fresh_policy_and_issues_one_lease_across_retry_and_bar
         .unwrap();
     assert_eq!(replay.target, first.target);
     assert_eq!(replay.disposition, NativeResultDisposition::ReconcileOnly);
-    policy.key.request = BotRequestId::from_uuid(v4(92));
+    policy.key.request = BotRequestId::from_uuid(v4(92)).into();
     policy.config_revision = 2;
     policy.policy_revision = 2;
     policy.effects_allowed = false;
@@ -352,6 +352,44 @@ fn verified_native_result_is_registered_once_and_partial_result_survives_termina
     assert!(header.artifacts.is_empty());
     assert!(!h.orchestrator.native_effects_pending(fence.run).unwrap());
     h.orchestrator.cancel(fence.run).unwrap();
+}
+
+#[test]
+fn completed_native_turn_refuses_new_effects_but_preserves_held_reconciliation() {
+    let (mut h, _, fence, policy, request) = active();
+    let device = fence.owner.device;
+    h.orchestrator
+        .synchronize_native_policy(policy, device)
+        .unwrap();
+    h.orchestrator
+        .prepare_native_effect(&request, device)
+        .unwrap();
+    h.agent(
+        fence.run,
+        AgentEvent::TurnCompleted {
+            turn_id: fence.turn.unwrap(),
+        },
+    );
+    assert!(h.orchestrator.native_effect_fence(&fence, device).is_err());
+    let mut late = request.clone();
+    late.key.operation_id = v4(199);
+    assert!(h.orchestrator.prepare_native_effect(&late, device).is_err());
+    assert!(
+        h.orchestrator
+            .ports_mut()
+            .store
+            .native_results()
+            .unwrap()
+            .native_result(&late.key)
+            .unwrap()
+            .is_none()
+    );
+    let retained = h
+        .orchestrator
+        .reconcile_native_result(&request.key, device)
+        .unwrap();
+    assert_eq!(retained.disposition, NativeResultDisposition::ReconcileOnly);
+    assert!(h.orchestrator.native_effects_pending(fence.run).unwrap());
 }
 
 #[test]

@@ -129,15 +129,28 @@ impl Orchestrator {
         fence: &BotExecutionFence,
         device: DeviceId,
     ) -> Result<CapturedBotPolicy, RunError> {
-        self.bot_live_fence(fence, device, true, true)?;
-        if fence.turn.is_none() {
-            return Err(refused("bot_fenced"));
-        }
+        self.native_live_turn(fence, device)?;
         let admission = self
             .bot_ledger()?
             .bot_admission(fence.run)?
             .ok_or(RunError::UnknownRun)?;
         Ok(admission.submission.policy)
+    }
+
+    fn native_live_turn(
+        &mut self,
+        fence: &BotExecutionFence,
+        device: DeviceId,
+    ) -> Result<(), RunError> {
+        self.bot_live_fence(fence, device, true, true)?;
+        let attempt = self.open(fence.run)?.attempt.as_ref().expect("validated");
+        if fence.turn.is_none()
+            || attempt.orchestrator_turn != fence.turn
+            || attempt.bot_terminal_turn == fence.turn
+        {
+            return Err(refused("bot_turn_stale"));
+        }
+        Ok(())
     }
 
     pub fn prepare_native_effect(
@@ -162,7 +175,7 @@ impl Orchestrator {
             .bot_admission_view(&record)?
             .fence
             .ok_or_else(|| refused("bot_fenced"))?;
-        self.bot_live_fence(&fence, device, true, true)?;
+        self.native_live_turn(&fence, device)?;
         if fence.attempt != request.key.attempt || fence.turn != Some(request.key.turn) {
             return Err(refused("bot_fenced"));
         }
