@@ -657,3 +657,5 @@ fn bot_actor_rechecks_trusted_device_before_any_persistence_or_provider_use() {
     let result = actor.bot_command(koru_delegate_api::bots::BotCommand::Submit { submission: s });
     assert!(matches!(result,Err(failure) if failure.code=="bot_owner_mismatch"));
 }
+
+mod bot_delivery;

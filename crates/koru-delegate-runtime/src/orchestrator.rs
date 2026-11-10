@@ -8,6 +8,7 @@
 //! is the one path every fact takes into the document and out to the bus.
 
 mod bot_controls;
+mod bot_delivery;
 mod bots;
 mod control;
 mod create;

@@ -104,3 +104,91 @@ fn native_registration_is_idempotent_conflict_safe_and_bot_only() {
             .is_err()
     );
 }
+
+#[test]
+fn delivery_completion_is_exact_atomic_and_preserves_native_result_fields() {
+    let mut expected = bot_header();
+    let receipt = expected.chat_delivery.take().unwrap();
+    expected.status = RunStatus::running();
+    let doc = RunDocument::create(&expected).unwrap();
+    let entry = TimelineEntry::new(
+        StepKind::Completed,
+        TimelineRefs::new([TimelineRef::Attempt {
+            attempt: receipt.attempt,
+        }])
+        .unwrap(),
+        11,
+    );
+    doc.complete_bot_chat_delivery(&receipt, &entry).unwrap();
+    let completed = doc.header().unwrap();
+    assert_eq!(completed.status, RunStatus::Completed);
+    assert_eq!(completed.chat_delivery, Some(receipt.clone()));
+    assert_eq!(completed.native_results, expected.native_results);
+    assert_eq!(completed.artifacts, expected.artifacts);
+    assert_eq!(doc.timeline_len(), 1);
+    doc.complete_bot_chat_delivery(&receipt, &entry).unwrap();
+    assert_eq!(doc.timeline_len(), 1);
+    let snapshot = doc.export_snapshot().unwrap();
+    let reopened = RunDocument::from_snapshot(&snapshot).unwrap();
+    assert_eq!(reopened.header().unwrap(), completed);
+    let mut changed = receipt;
+    changed.confirmed_at_ms += 1;
+    assert!(doc.record_bot_chat_delivery(&changed).is_err());
+    assert!(doc.complete_bot_chat_delivery(&changed, &entry).is_err());
+    assert_eq!(doc.header().unwrap(), completed);
+}
+
+#[test]
+fn delivery_history_does_not_reopen_failure_or_bypass_human_and_approval() {
+    let mut value = bot_header();
+    let receipt = value.chat_delivery.take().unwrap();
+    let entry = TimelineEntry::new(
+        StepKind::Completed,
+        TimelineRefs::new([TimelineRef::Attempt {
+            attempt: receipt.attempt,
+        }])
+        .unwrap(),
+        11,
+    );
+    for status in [
+        RunStatus::Cancelled,
+        RunStatus::Failed {
+            stage: FailureStage::Turn,
+        },
+        RunStatus::Interrupted {
+            prior_attempt: PriorAttempt::Unknown,
+        },
+        RunStatus::Running {
+            attention: Default::default(),
+            control: ControlState::Human {
+                objective_satisfied: false,
+            },
+        },
+        RunStatus::Running {
+            attention: [Attention::ApprovalRequired].into_iter().collect(),
+            control: ControlState::Orchestrator,
+        },
+    ] {
+        value.status = status.clone();
+        let doc = RunDocument::create(&value).unwrap();
+        doc.record_bot_chat_delivery(&receipt).unwrap();
+        assert!(doc.complete_bot_chat_delivery(&receipt, &entry).is_err());
+        assert_eq!(doc.header().unwrap().status, status);
+        assert_eq!(doc.header().unwrap().chat_delivery, Some(receipt.clone()));
+        assert_eq!(doc.timeline_len(), 0);
+    }
+}
+
+#[test]
+fn ordinary_run_and_changed_ai_identity_cannot_receive_bot_delivery() {
+    let doc = RunDocument::create(&header()).unwrap();
+    let receipt = bot_header().chat_delivery.unwrap();
+    assert!(doc.record_bot_chat_delivery(&receipt).is_err());
+    let mut value = bot_header();
+    value.chat_delivery = None;
+    let doc = RunDocument::create(&value).unwrap();
+    let mut receipt = receipt;
+    receipt.ai_attempt_id = v4(90);
+    assert!(doc.record_bot_chat_delivery(&receipt).is_err());
+    assert_eq!(doc.header().unwrap(), value);
+}

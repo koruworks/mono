@@ -961,6 +961,15 @@ pub trait Sessions {
         reason: CancelReason,
     ) -> PortResult<()>;
     fn terminate(&mut self, session: SessionId) -> PortResult<()>;
+    /// Automatic completion may terminate only under a current controller lease.
+    /// Never fall back to delegated/user-Stop authority or seize a human lease.
+    fn terminate_owned(&mut self, _session: SessionId) -> PortResult<()> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Owned termination is unsupported.",
+        ))
+    }
     /// The adapter's resume seam (§7.6): the token an adapter that declared
     /// native resume minted for `session`, so a fresh creation can continue
     /// the provider session. `None` is every other adapter — Codex declares

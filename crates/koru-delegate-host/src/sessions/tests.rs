@@ -173,3 +173,101 @@ fn bot_creation_offers_interactive_controls_without_enabling_ordinary_questions(
             .supports(capability::BEGIN_PENDING_INPUT)
     );
 }
+
+struct OwnedWriter {
+    frames: mpsc::Sender<Vec<u8>>,
+    pending: Vec<u8>,
+    observed: Arc<std::sync::Mutex<Vec<SessionCommand>>>,
+}
+impl Write for OwnedWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.pending.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        let (_, frame): (_, RequestFrame) =
+            koru_ipc::frame::read_frame(&mut self.pending.as_slice())?;
+        self.pending.clear();
+        match frame.request {
+            Request::Command { command } => self.observed.lock().unwrap().push(command),
+            Request::Disconnect => return Ok(()),
+            _ => panic!("owned completion must never use a delegated termination or another route"),
+        }
+        let response = FromHost::Response {
+            frame: ResponseFrame {
+                id: frame.id,
+                result: Err(SessionFailure {
+                    code: ErrorCode::StaleLease,
+                    message: "fixture takeover".into(),
+                }),
+            },
+        };
+        let mut bytes = Vec::new();
+        koru_ipc::frame::write_frame(&mut bytes, FRAME_VERSION, &response)?;
+        self.frames.send(bytes).unwrap();
+        Ok(())
+    }
+}
+
+#[test]
+fn owned_completion_uses_current_lease_and_never_falls_back_after_takeover() {
+    let offered = offer();
+    let agreement = koru_session_protocol::negotiate(&offered, &offered).unwrap();
+    let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (frames, reader) = mpsc::channel();
+    let client = SessionClient::from_test_transport(
+        HostHello {
+            product: "fixture".into(),
+            product_version: "fixture".into(),
+            instance_id: "fixture".into(),
+            supervisor_launch_id: "fixture".into(),
+            agreement: agreement.clone(),
+        },
+        Reader {
+            frames: reader,
+            current: Cursor::new(vec![]),
+        },
+        OwnedWriter {
+            frames,
+            pending: vec![],
+            observed: observed.clone(),
+        },
+    )
+    .unwrap();
+    let (frames, reader) = mpsc::channel();
+    let unary = SessionClient::from_test_transport(
+        HostHello {
+            product: "fixture".into(),
+            product_version: "fixture".into(),
+            instance_id: "fixture".into(),
+            supervisor_launch_id: "fixture".into(),
+            agreement,
+        },
+        Reader {
+            frames: reader,
+            current: Cursor::new(vec![]),
+        },
+        OwnedWriter {
+            frames,
+            pending: vec![],
+            observed: observed.clone(),
+        },
+    )
+    .unwrap();
+    let session = SessionId::mint();
+    let lease = ControllerLeaseToken::mint();
+    let mut sessions = HostSessions {
+        endpoint: koru_ipc::Endpoint::for_service("session", "internal-debug").unwrap(),
+        unary,
+        controllers: HashMap::from([(session, Controller { client, lease })]),
+        provider_readiness: vec![],
+        provider_subscription: None,
+    };
+    assert!(sessions.terminate_owned(session).is_err());
+    assert!(!sessions.controllers.contains_key(&session));
+    let observed = observed.lock().unwrap();
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].session_id, session);
+    assert_eq!(observed[0].controller_lease, lease);
+    assert!(matches!(observed[0].action, RawCommand::Terminate));
+}

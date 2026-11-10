@@ -492,6 +492,8 @@ pub(crate) struct DocumentScript {
     pub fail_commit: bool,
     /// The host has not yet called the commits durable: a fact must wait.
     pub not_durable: bool,
+    /// Settle returned without a durable acknowledgment (lost or pending Store reply).
+    pub hold_settle_ack: bool,
     pub commits: usize,
     pub committed_snapshots: Vec<Vec<u8>>,
 }
@@ -540,7 +542,10 @@ impl RunDocumentHandle for MemoryHandle {
 
     fn settle(&mut self) -> PortResult<()> {
         // The scripted host settles the moment it is asked to.
-        self.script.lock().unwrap().not_durable = false;
+        let mut script = self.script.lock().unwrap();
+        if !script.hold_settle_ack {
+            script.not_durable = false;
+        }
         Ok(())
     }
 }
@@ -623,6 +628,7 @@ pub(crate) enum Call {
         reason: CancelReason,
     },
     Terminate(SessionId),
+    TerminateOwned(SessionId),
     ResumeToken(SessionId),
     Observe(SessionId),
     Subscribe(SessionId),
@@ -645,6 +651,7 @@ pub(crate) struct SessionScript {
     pub summaries: HashMap<SessionId, SessionSummary>,
     pub observation: AgentEventObservation,
     pub attach_fails: bool,
+    pub owned_termination_refused: bool,
     /// Keys the host has been asked about, oldest first, for the re-ask
     /// scenario: each lookup pops the next answer when several are given.
     pub lookup_sequence: VecDeque<(HostInstanceId, CreationLookup)>,
@@ -683,6 +690,7 @@ impl Default for SessionScript {
                 session_cursor: None,
             },
             attach_fails: false,
+            owned_termination_refused: false,
             lookup_sequence: VecDeque::new(),
             resume_tokens: HashMap::new(),
             cancel_refused: None,
@@ -831,6 +839,18 @@ impl Sessions for ScriptedSessions {
             Some(code) => Err(PortError::new(Port::Sessions, code, "refused")),
             None => Ok(()),
         }
+    }
+    fn terminate_owned(&mut self, session: SessionId) -> PortResult<()> {
+        let mut script = self.script.lock().unwrap();
+        script.calls.push(Call::TerminateOwned(session));
+        if script.owned_termination_refused {
+            return Err(PortError::new(
+                Port::Sessions,
+                "stale_lease",
+                "fixture takeover",
+            ));
+        }
+        Ok(())
     }
     fn terminate(&mut self, session: SessionId) -> PortResult<()> {
         self.script

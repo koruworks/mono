@@ -35,6 +35,9 @@ impl Orchestrator {
         event: &RunEvent,
         reason: Option<koru_delegate_core::RunFailureReason>,
     ) -> Result<RunStatus, RunError> {
+        if matches!(event, RunEvent::BotResponseDelivered) {
+            return Err(super::bots::refused("bot_delivery_owner_required"));
+        }
         let from = self.status(run)?;
         let next = transition(&from, event)?;
         let now = self.ports.clock.now_ms();

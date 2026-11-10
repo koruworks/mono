@@ -323,6 +323,9 @@ pub enum RunEvent {
         originator: TurnOriginator,
         reason: CancelReason,
     },
+    /// The Bot owner validated durable AI delivery and the exact native terminal.
+    /// Ordinary Run callers must never manufacture this authority.
+    BotResponseDelivered,
     ApprovalRequired,
     /// Resolved or expired — both clear the marker.
     ApprovalResolved,
@@ -351,6 +354,7 @@ impl RunEvent {
             Self::TurnCompleted { .. } => "turn_completed",
             Self::TurnFailed { .. } => "turn_failed",
             Self::TurnCancelled { .. } => "turn_cancelled",
+            Self::BotResponseDelivered => "bot_response_delivered",
             Self::ApprovalRequired => "approval_required",
             Self::ApprovalResolved => "approval_resolved",
             Self::WaitingForInput => "waiting_for_input",
@@ -546,6 +550,9 @@ fn running(attention: &AttentionSet, control: ControlState, event: &RunEvent) ->
             _ => None,
         },
 
+        E::BotResponseDelivered => {
+            (control == C::Orchestrator && !approval_open).then_some(RunStatus::Completed)
+        }
         E::ApprovalRequired => running(attention.with(Attention::ApprovalRequired), control),
         E::ApprovalResolved => approval_open
             .then(|| running(attention.without(Attention::ApprovalRequired), control))?,

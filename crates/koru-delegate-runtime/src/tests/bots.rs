@@ -956,3 +956,5 @@ fn prepared_restart_with_genuine_human_controller_uses_existing_handover_state()
     );
     assert_eq!(count_submits(&h), 0);
 }
+
+mod delivery;

@@ -102,6 +102,7 @@ fn every_event() -> Vec<RunEvent> {
             originator: ByHuman,
             reason: TakeoverBoundary,
         },
+        E::BotResponseDelivered,
         E::ApprovalRequired,
         E::ApprovalResolved,
         E::WaitingForInput,
@@ -123,6 +124,7 @@ fn every_event() -> Vec<RunEvent> {
             | E::TurnCompleted { .. }
             | E::TurnFailed { .. }
             | E::TurnCancelled { .. }
+            | E::BotResponseDelivered
             | E::ApprovalRequired
             | E::ApprovalResolved
             | E::WaitingForInput
@@ -227,7 +229,7 @@ fn orchestrator_turn_end_rows(cleared: &[Attention], control: ControlState) -> V
         HandoverPending { .. } => running(cleared, hp(true)),
         Human { .. } => running(cleared, human(true)),
     };
-    vec![
+    let mut rows = vec![
         (
             E::TurnCompleted {
                 originator: ByOrchestrator,
@@ -256,7 +258,11 @@ fn orchestrator_turn_end_rows(cleared: &[Attention], control: ControlState) -> V
             },
             S::Cancelled,
         ),
-    ]
+    ];
+    if control == Orchestrator {
+        rows.push((E::BotResponseDelivered, S::Completed));
+    }
+    rows
 }
 
 /// The rows for a `Running` state under human control with no approval

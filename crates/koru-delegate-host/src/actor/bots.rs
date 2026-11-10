@@ -11,11 +11,18 @@ fn unavailable(code: &'static str) -> Failure {
 }
 fn bot_failure(error: RunError) -> Failure {
     match error {
-        RunError::Port(error) if error.code == "bot_native_effects_pending" => Failure::new(
-            error.code,
-            "A native result is still being reconciled.",
-            true,
-        ),
+        RunError::Port(error)
+            if matches!(
+                error.code.as_str(),
+                "bot_native_effects_pending" | "bot_delivery_pending" | "bot_stop_unconfirmed"
+            ) =>
+        {
+            Failure::new(
+                error.code,
+                "The Bot operation is still being reconciled.",
+                true,
+            )
+        }
         RunError::Port(error) if error.code.starts_with("bot_") => {
             Failure::new(error.code, "The Bot operation was refused.", false)
         }
@@ -246,6 +253,14 @@ impl Actor {
                     .bot_attachments(&fence, device)
                     .map_err(bot_failure)?,
             },
+            BotCommand::AcknowledgeDelivery { key, receipt } => {
+                self.orchestrator
+                    .bot_acknowledge_delivery(&key, device, &receipt)
+                    .map_err(bot_failure)?;
+                self.notify(key.run);
+                self.wake_bots();
+                BotReply::Applied
+            }
             BotCommand::TakeOver { .. } | BotCommand::HandBack { .. } => {
                 return Err(unavailable("bot_control_unsupported"));
             }
@@ -255,9 +270,6 @@ impl Actor {
                 }
                 return Err(unavailable("bot_lifecycle_unavailable"));
             }
-            // Reserved consumers own their effect/receipt implementation. No
-            // success or effective authority is fabricated by this foundation.
-            _ => return Err(unavailable("bot_effects_unavailable")),
         };
         Ok(reply)
     }

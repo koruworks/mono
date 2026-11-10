@@ -527,6 +527,28 @@ impl Sessions for HostSessions {
             .map_err(|error| session_error("cancel", error))
     }
 
+    fn terminate_owned(&mut self, session: SessionId) -> PortResult<()> {
+        // attach_live refuses a human-held controller. A cached stale lease is
+        // checked again by the session owner when it receives this command.
+        self.attach(session)?;
+        let controller = self.controllers.remove(&session).ok_or_else(|| {
+            PortError::new(
+                Port::Sessions,
+                "bot_delivery_pending",
+                "A current controller is required.",
+            )
+        })?;
+        controller
+            .client
+            .command(SessionCommand {
+                idempotency_key: IdempotencyKey::mint(),
+                session_id: session,
+                controller_lease: controller.lease,
+                action: RawCommand::Terminate,
+            })
+            .map_err(|error| session_error("terminate_owned", error))
+    }
+
     fn terminate(&mut self, session: SessionId) -> PortResult<()> {
         if let Some(controller) = self.controllers.remove(&session) {
             return controller
