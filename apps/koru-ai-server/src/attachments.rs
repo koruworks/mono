@@ -817,6 +817,7 @@ fn storage_failure_message() -> Failure {
 /// removals after a delete, the start-up sweep, and a branch's copies.
 pub(crate) enum CleanupJob {
     RemoveChat(ChatId),
+    RemoveAttachments(Vec<(ChatId, ChatAttachmentId)>),
     Sweep {
         known: KnownAttachmentDirs,
         started: SystemTime,
@@ -837,6 +838,18 @@ pub(crate) struct Cleanup {
 }
 
 impl Cleanup {
+    #[cfg(test)]
+    pub(crate) fn recording() -> (Self, Receiver<CleanupJob>) {
+        let (sender, receiver) = channel();
+        (
+            Self {
+                sender: Some(sender),
+                thread: None,
+            },
+            receiver,
+        )
+    }
+
     pub(crate) fn spawn(store: AttachmentStore) -> Result<Self, String> {
         let (sender, receiver) = channel();
         let thread = std::thread::Builder::new()
@@ -874,6 +887,11 @@ fn run_cleanup(store: &AttachmentStore, jobs: &Receiver<CleanupJob>) {
     while let Ok(job) = jobs.recv() {
         match job {
             CleanupJob::RemoveChat(chat) => store.remove_chat(chat),
+            CleanupJob::RemoveAttachments(attachments) => {
+                for (chat, attachment) in attachments {
+                    store.remove_attachment(chat, attachment);
+                }
+            }
             CleanupJob::Sweep {
                 known,
                 started,

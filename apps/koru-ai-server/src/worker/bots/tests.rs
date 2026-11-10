@@ -664,3 +664,187 @@ fn named_bot_preparation_captures_only_that_bot_and_ordinary_owner_chat_bypasses
     );
     assert_ne!(bot.id, other.id);
 }
+
+fn branch_attachment(chat_id: ChatId) -> koru_ai_core::AttachmentRecord {
+    koru_ai_core::AttachmentRecord {
+        chat_id,
+        attachment: koru_ai_core::ChatAttachment {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            message_id: None,
+            ordinal: None,
+            kind: koru_ai_core::AttachmentKind::Image,
+            source: koru_ai_core::AttachmentSource::Clipboard,
+            file_name: "fixture.png".into(),
+            media_type: "image/png".into(),
+            byte_count: 1,
+            dimensions: Some((1, 1)),
+            origin: None,
+            reference_path: None,
+            created_at: at(1),
+        },
+        has_sent_copy: false,
+        content_blake3: "a".repeat(64),
+    }
+}
+
+fn branch_fixture(repo: &mut Repository, bot: &Bot, destination: ChatId) -> BranchCopy {
+    let access = ChatReadAccess::authorized(vec![bot.main_chat]);
+    let mut chat = repo
+        .chat_with_access(bot.main_chat, &access)
+        .unwrap()
+        .unwrap();
+    chat.id = ChatId::new();
+    repo.create_chat(&chat).unwrap();
+    let pending = turn(chat.id, Uuid::new_v4(), 1);
+    repo.begin_turn(&pending).unwrap();
+    let mut message = pending.user_message;
+    let original = message.id;
+    message.id = MessageId::new();
+    message.chat_id = destination;
+    message.origin_message_id = Some(original);
+    let mut tool_policy = repo.chat_tool_policy(chat.id).unwrap().unwrap();
+    tool_policy.chat_id = destination;
+    chat.branched_from = Some(BranchOrigin {
+        chat_id: chat.id,
+        through_message_id: original,
+    });
+    chat.id = destination;
+    let mut attachment = branch_attachment(destination);
+    attachment.attachment.message_id = Some(message.id);
+    attachment.attachment.ordinal = Some(0);
+    BranchCopy {
+        chat,
+        tool_policy,
+        messages: vec![message],
+        blocks: vec![],
+        citations: vec![],
+        pinned_documents: vec![],
+        attachments: vec![attachment],
+    }
+}
+
+#[test]
+fn branch_destination_guard_refuses_hidden_bot_before_attachment_dispatch() {
+    use crate::attachments::{Cleanup, CleanupJob};
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let existing_attachment = branch_attachment(bot.main_chat);
+    repo.stage_attachment(&existing_attachment).unwrap();
+    let copy = branch_fixture(&mut repo, &bot, bot.main_chat);
+    assert!(repo.chat(bot.main_chat).unwrap().is_none());
+    let (cleanup, jobs) = Cleanup::recording();
+    let authority: Arc<dyn BotAuthority> = authority;
+    for owner in [false, true] {
+        let (reply, response) = sync_channel(1);
+        let dispatched = guard_command(
+            &repo,
+            Some(&authority),
+            WorkerCommand::BranchChat {
+                context: context(owner).into(),
+                chat: copy.chat.branched_from.as_ref().unwrap().chat_id,
+                request: BranchChatRequest {
+                    branch_chat_id: bot.main_chat,
+                    through_message_id: copy
+                        .chat
+                        .branched_from
+                        .as_ref()
+                        .unwrap()
+                        .through_message_id,
+                    title: copy.chat.title.clone(),
+                },
+                reply,
+            },
+        );
+        // A recording worker is enough: a rejected command must never reach copy dispatch.
+        if dispatched.is_some() {
+            cleanup.submit(CleanupJob::CopyBranch {
+                folders: vec![],
+                done: Box::new(|_| {}),
+            });
+        }
+        assert!(dispatched.is_none());
+        assert_eq!(
+            response.recv().unwrap().unwrap_err().code,
+            "idempotency_conflict"
+        );
+        assert!(jobs.try_recv().is_err());
+    }
+    assert_eq!(repo.bot(bot.id).unwrap(), Some(bot));
+    assert_eq!(
+        repo.attachment(existing_attachment.attachment.id).unwrap(),
+        Some(existing_attachment)
+    );
+}
+
+#[test]
+fn branch_copy_completion_collision_cleans_only_owned_attachment_ids() {
+    use super::super::attachments::commit_branch_copy;
+    use crate::attachments::{Cleanup, CleanupJob};
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority, command);
+    let preserved = branch_attachment(bot.main_chat);
+    repo.stage_attachment(&preserved).unwrap();
+    let (cleanup, jobs) = Cleanup::recording();
+    let copy = branch_fixture(&mut repo, &bot, bot.main_chat);
+    assert_eq!(
+        commit_branch_copy(&mut repo, &cleanup, &copy)
+            .unwrap_err()
+            .code,
+        "idempotency_conflict"
+    );
+    let CleanupJob::RemoveAttachments(removed) = jobs.try_recv().unwrap() else {
+        panic!("must never remove an existing chat folder");
+    };
+    assert_eq!(
+        removed,
+        vec![(bot.main_chat, copy.attachments[0].attachment.id)]
+    );
+    assert_ne!(removed[0].1, preserved.attachment.id);
+    assert_eq!(
+        repo.attachment(preserved.attachment.id).unwrap(),
+        Some(preserved)
+    );
+    assert_eq!(repo.bot(bot.id).unwrap(), Some(bot.clone()));
+    // A destination created while the asynchronous copy ran is also a collision,
+    // even if its branch metadata matches. This copy owns no persisted row there.
+    let copy = branch_fixture(&mut repo, &bot, ChatId::new());
+    repo.create_chat(&copy.chat).unwrap();
+    assert_eq!(
+        commit_branch_copy(&mut repo, &cleanup, &copy)
+            .unwrap_err()
+            .code,
+        "idempotency_conflict"
+    );
+    assert!(matches!(
+        jobs.try_recv().unwrap(),
+        CleanupJob::RemoveAttachments(_)
+    ));
+    assert_eq!(repo.chat(copy.chat.id).unwrap(), Some(copy.chat.clone()));
+    assert!(repo.messages(copy.chat.id).unwrap().is_empty());
+}
+
+#[test]
+fn ordinary_branch_copy_commits_and_inflight_destination_is_reserved() {
+    use super::super::attachments::{commit_branch_copy, require_unreserved_branch};
+    use crate::attachments::Cleanup;
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority, command);
+    let copy = branch_fixture(&mut repo, &bot, ChatId::new());
+    let (cleanup, jobs) = Cleanup::recording();
+    let reservations = HashSet::from([copy.chat.id]);
+    assert_eq!(
+        require_unreserved_branch(&reservations, copy.chat.id)
+            .unwrap_err()
+            .code,
+        "chat_busy"
+    );
+    assert!(require_unreserved_branch(&reservations, ChatId::new()).is_ok());
+    commit_branch_copy(&mut repo, &cleanup, &copy).unwrap();
+    assert!(jobs.try_recv().is_err());
+    assert_eq!(repo.chat(copy.chat.id).unwrap(), Some(copy.chat.clone()));
+    assert_eq!(repo.messages(copy.chat.id).unwrap(), copy.messages);
+    assert_eq!(
+        repo.attachment_records(copy.chat.id).unwrap(),
+        copy.attachments
+    );
+}

@@ -2506,6 +2506,7 @@ impl WorkerState {
     ) -> ApiResult<CreateChatResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(None)?;
+        attachments::require_unreserved_branch(&self.branching, request.chat_id)?;
         if request.title.trim().is_empty() || request.model.requested_model.trim().is_empty() {
             return Err(failure(
                 "invalid_request",
@@ -3336,6 +3337,7 @@ impl WorkerState {
         request: BranchChatRequest,
     ) -> ApiResult<BranchPlan> {
         authorize(&context, AiScope::Chat)?;
+        attachments::require_ordinary_branch_destination(&self.repository, request.branch_chat_id)?;
         if request.title.trim().is_empty() {
             return Err(failure(
                 "invalid_request",
