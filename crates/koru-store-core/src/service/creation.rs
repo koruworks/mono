@@ -9,6 +9,52 @@ pub struct ProvenSeededCreation {
     pub origin: CreationOrigin,
 }
 impl<C: Catalog, B: Backend> Store<C, B> {
+    /// Current visibility through live manifest metadata, including inherited
+    /// Trash. At most 256 indexed ancestors; malformed chains fail closed.
+    /// The projection supplies only a non-authority ordinal hint. If absent,
+    /// availability is refused rather than fabricating placement or ordering.
+    pub fn document_entry_live(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> Result<Option<DocumentEntry>> {
+        self.ensure_open(workspace)?;
+        let open = &self.open[&workspace];
+        let Some(entry) = open.manifest.entry(document)? else {
+            return Ok(None);
+        };
+        let visible = live_ancestor_chain(document, |id| {
+            Ok(open
+                .manifest
+                .entry(id)?
+                .map(|entry| (entry.parent, entry.trashed_at.is_some())))
+        })?;
+        if !visible {
+            return Ok(None);
+        }
+        let ordinal = open
+            .repo
+            .entry(document)?
+            .ok_or_else(|| {
+                Error::new(
+                    Code::VersionUnavailable,
+                    "document projection is unavailable",
+                )
+            })?
+            .ordinal;
+        Ok(Some(DocumentEntry {
+            id: entry.id,
+            parent: entry.parent,
+            ordinal,
+            title: entry.title,
+            kind: entry.kind,
+            mime: entry.mime,
+            note: entry.note,
+            trashed_at: entry.trashed_at,
+            trashed_by: entry.trashed_by,
+        }))
+    }
+
     /// Read retained local creation evidence without interpreting synced content.
     pub fn creation_origin(
         &mut self,
@@ -146,3 +192,39 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(ProvenSeededCreation { creation, origin })
     }
 }
+
+fn live_ancestor_chain(
+    document: DocumentId,
+    mut entry: impl FnMut(DocumentId) -> Result<Option<(Option<DocumentId>, bool)>>,
+) -> Result<bool> {
+    let mut seen = std::collections::HashSet::new();
+    let mut current = Some(document);
+    for _ in 0..256 {
+        let Some(id) = current else {
+            return Ok(true);
+        };
+        if !seen.insert(id) {
+            return Err(Error::new(
+                Code::CorruptState,
+                "cyclic manifest parent chain",
+            ));
+        }
+        let Some((parent, trashed)) = entry(id)? else {
+            return Err(Error::new(Code::CorruptState, "missing manifest ancestor"));
+        };
+        if trashed {
+            return Ok(false);
+        }
+        current = parent;
+    }
+    if current.is_none() {
+        Ok(true)
+    } else {
+        Err(Error::new(
+            Code::VersionUnavailable,
+            "manifest ancestry exceeds native bound",
+        ))
+    }
+}
+#[cfg(test)]
+mod tests;

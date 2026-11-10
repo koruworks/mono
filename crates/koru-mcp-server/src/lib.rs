@@ -711,6 +711,56 @@ pub trait Backend: Send + Sync {
 /// implementation. The desktop MCP bridge uses its existing local client;
 /// embedded product hosts implement this port over their bounded Store worker.
 pub trait EmbeddedStore: Send + Sync {
+    /// Targeted current workspace metadata under the host's authority check.
+    fn workspace(&self, _workspace: StoreWorkspaceId) -> Result<Workspace, ToolError> {
+        Err(native::unavailable())
+    }
+    /// Targeted live metadata including ancestor Trash; use the Store's live
+    /// manifest helper, not a potentially stale raw listing projection.
+    fn document_entry(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _document: StoreDocumentId,
+    ) -> Result<Option<DocumentEntry>, ToolError> {
+        Err(native::unavailable())
+    }
+
+    /// Trusted embedded-only proof; ordinary HTTP stores do not emulate it.
+    fn creation_origin(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _document: StoreDocumentId,
+    ) -> Result<koru_store_core::CreationOriginLookup, ToolError> {
+        Err(native::unavailable())
+    }
+    /// Refused proves the effect was not entered. Once seed/publication starts,
+    /// an unproven failure must remain Unconfirmed, including transport timeout.
+    fn seed_document_with_origin(
+        &self,
+        _request: EmbeddedSeedDocument,
+        _identity: native::NativeStoreIdentity,
+    ) -> Result<koru_store_core::ProvenSeededCreation, native::NativeWriteError> {
+        Err(native::NativeWriteError::Refused(native::unavailable()))
+    }
+    /// Preserve the Store's typed preflight versus effect-bearing failure stage.
+    fn persist_update_at_version(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _document: StoreDocumentId,
+        _expected_version: Vec<u8>,
+        _update: Vec<u8>,
+    ) -> Result<koru_store_core::ports::DocumentVersion, native::NativeWriteError> {
+        Err(native::NativeWriteError::Refused(native::unavailable()))
+    }
+    fn retain_creation_version(
+        &self,
+        _workspace: StoreWorkspaceId,
+        _identity: native::NativeStoreIdentity,
+        _request_hash: String,
+    ) -> Result<koru_store_core::ports::DocumentVersion, ToolError> {
+        Err(native::unavailable())
+    }
+
     fn workspaces(&self) -> Result<Vec<Workspace>, ToolError>;
     fn documents(&self, workspace: StoreWorkspaceId) -> Result<Vec<DocumentEntry>, ToolError>;
     fn search(
@@ -3962,7 +4012,7 @@ struct ReadFileRequest {
     /// Number of bytes, capped at 1 MiB per call.
     length: Option<usize>,
 }
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct CreateDocumentRequest {
     /// UUID of the workspace returned by `list_workspaces`.
@@ -4011,7 +4061,7 @@ struct RestoreRequest {
     entry_id: String,
     base_revision: String,
 }
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EditDocumentRequest {
     /// UUID of the workspace returned by `list_workspaces`.
@@ -14423,3 +14473,6 @@ mod tests {
         assert!(store.state() == before, "a refused update wrote");
     }
 }
+
+/// Owner-scoped semantic page operations for embedded native clients.
+pub mod native;

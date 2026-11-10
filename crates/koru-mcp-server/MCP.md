@@ -1769,3 +1769,45 @@ A hosted call through an app connection differs in three places
 message naming the connection
 ([connector-attribution-v1](../../contracts/connector-attribution-v1.md)). Local
 changes carry no message.
+
+## Trusted native page operations
+
+The embedded native owner prepares shared Create/Edit requests through
+`LocalBackend::prepare_native_write` before acquiring its effect lease. The
+opaque prepared request exposes only a normalized description/fingerprint and
+cannot be replaced at execution. Native creation is a root page; the owner,
+never provider arguments, supplies its persisted candidate and scoped Store key.
+Page-body text, structure and formatting use the same semantic operation engine.
+Inline references, attributes/tags, task completion/task insertion, images and
+other secondary effects refuse explicitly before writes. Ordinary MCP vocabulary
+and behavior remain unchanged.
+
+Exact local edits compare decoded VV both at semantic preparation and under the
+sole Store owner. Complete-causality preview rejects Loro successful-but-pending
+imports before live mutation. A successful Store flush plus pinned exact version
+returns evidence to the delegate; this module never announces Run Saved itself.
+Uncertain edit outcomes stay Unconfirmed, with no content-based inference or
+blind replay. Creation reconciliation uses immutable Store origin and a current
+published page, then idempotently pins only its original state; it never repairs
+page bytes or missing placement. Current authorization and effect/drain ordering
+remain the caller's responsibility. These embedded methods do not fall back to
+ordinary Store HTTP or a broad Chat tool bridge when unavailable.
+
+The native catalog derives these four shared definitions and advertises only
+supported fields and operations. Its operation identity is added by the trusted
+transport, while candidate and Store key never come from provider arguments.
+Requests are counted through a bounded serializer before fingerprint allocation.
+A semantic no-change is a refusal, not Saved.
+
+Effect calls return typed Refused or Unconfirmed outcomes: current-authority,
+visibility and exact-revision refusal proven before mutation does not hold an
+unknown effect. Once a seed or edit may have started, lost replies and later
+evidence failures stay Unconfirmed. Callers must not infer phase from error
+strings. An edit with unknown outcome is not automatically replayable or drainable.
+The current implementation retains its effect until independent proof exists.
+
+Target metadata comes from the current live Manifest, including a bounded
+ancestor Trash check. A stale SQLite listing projection is never visibility
+authority; missing projection data refuses availability. Current authorization
+must be checked again under the same Store lock as the effect. No workspace-wide
+listing is needed for this targeted validation.

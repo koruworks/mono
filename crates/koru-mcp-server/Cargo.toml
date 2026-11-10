@@ -38,6 +38,8 @@ image = "0.25"
 emojis.workspace = true
 
 [dev-dependencies]
+# Native semantics exercise the real Store over memory-only SQLite.
+koru-store-sqlite = { path = "../koru-store-sqlite" }
 rmcp = { version = "=3.9.0", features = ["client", "transport-io"] }
 # The golden cases, run through this crate's own task wrapper (ADR-249). The
 # feature is off in every product build; a dependency is never compiled with

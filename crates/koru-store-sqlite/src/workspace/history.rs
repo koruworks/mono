@@ -41,8 +41,6 @@ fn validate_once(
         || entry.reason != capture.reason
         || entry.pinned != capture.reason.pinned()
         || entry.boundary.as_deref() != capture.boundary
-        || entry.label.as_deref() != capture.label
-        || entry.message.as_deref() != capture.message
         || actual != expected
     {
         return Err(Error::new(

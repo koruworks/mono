@@ -6354,6 +6354,7 @@ dependencies = [
  "koru-diagram",
  "koru-history",
  "koru-store-core",
+ "koru-store-sqlite",
  "koru-store-wire",
  "koru-title",
  "koru-workspace",

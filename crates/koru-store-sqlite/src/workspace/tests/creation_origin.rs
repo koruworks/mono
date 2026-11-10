@@ -250,6 +250,16 @@ fn history_once_rejects_key_collision_and_corrupt_referenced_version() {
     let first = w.capture_history_once(&capture, identity).unwrap();
     capture.recorded_at = Timestamp::from_millis(at().millis() + 100);
     assert_eq!(w.capture_history_once(&capture, identity).unwrap(), first);
+    let relabeled = w
+        .relabel_history_entry(identity, Some("Owner's recovery label"))
+        .unwrap();
+    capture.label = Some("Different retry label");
+    capture.message = Some("Different retry message");
+    assert_eq!(
+        w.capture_history_once(&capture, identity).unwrap(),
+        relabeled
+    );
+    assert_eq!(relabeled.recorded_at, first.recorded_at);
     capture.boundary = Some("other");
     assert_eq!(
         w.capture_history_once(&capture, identity)
@@ -315,4 +325,62 @@ fn history_once_late_failure_rolls_back_version_and_marker_then_replays_once() {
     let first = w.capture_history_once(&capture, identity).unwrap();
     assert_eq!(w.capture_history_once(&capture, identity).unwrap(), first);
     assert_eq!(w.history_entries(d, None, 10).unwrap().len(), 1);
+}
+
+#[test]
+fn grouped_backfill_preserves_unique_lineage_without_correlated_receipt_scan() {
+    let mut old = schema_twelve();
+    let mut unique = Vec::new();
+    let mut ambiguous = Vec::new();
+    for index in 0..64 {
+        let a = DocumentId::new();
+        let b = DocumentId::new();
+        for id in [a, b] {
+            old.create_document(id, DocumentKind::Document, at())
+                .unwrap();
+        }
+        old_receipt(&mut old, a, &format!("unique-{index}"), "hash");
+        old_receipt(&mut old, b, &format!("first-{index}"), "hash");
+        old_receipt(&mut old, b, &format!("second-{index}"), "hash");
+        unique.push(a);
+        ambiguous.push(b);
+    }
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.to == 13)
+        .unwrap()
+        .sql;
+    let (_, tail) = migration.split_once("SELECT c.document_id").unwrap();
+    let explain = format!("EXPLAIN QUERY PLAN SELECT c.document_id{tail}");
+    let mut statement = old.connection.prepare(&explain).unwrap();
+    let plan = statement
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        !plan.iter().any(|detail| detail.contains("CORRELATED")),
+        "{plan:?}"
+    );
+    drop(statement);
+    let w = SqliteWorkspace::from_connection(old.connection).unwrap();
+    for id in unique {
+        assert!(matches!(
+            w.creation_origin(id).unwrap(),
+            CreationOriginLookup::Known(_)
+        ));
+    }
+    for id in ambiguous {
+        assert_eq!(
+            w.creation_origin(id).unwrap(),
+            CreationOriginLookup::Unknown
+        );
+    }
+    assert_eq!(
+        w.connection
+            .query_row("SELECT count(*) FROM document_creations", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        192
+    );
 }

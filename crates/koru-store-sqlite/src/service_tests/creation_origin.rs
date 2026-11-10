@@ -343,3 +343,96 @@ fn creation_history_recovery_reuses_first_marker_after_lost_reply_and_human_edit
         Code::IdempotencyConflict
     );
 }
+
+#[test]
+fn live_entry_uses_current_manifest_before_flush_and_after_failed_projection() {
+    use koru_store_core::{manifest::Manifest, ports::DocumentIndex, service::Backend};
+    use std::sync::Arc;
+    struct Shared(Arc<SqliteBackend>);
+    impl Backend for Shared {
+        type Workspace = crate::SqliteWorkspace;
+        type Blobs = crate::blobs::SqliteBlobs;
+        fn open_workspace(
+            &self,
+            id: WorkspaceId,
+        ) -> koru_store_core::errors::Result<Self::Workspace> {
+            self.0.open_workspace(id)
+        }
+        fn create_workspace(
+            &self,
+            id: WorkspaceId,
+        ) -> koru_store_core::errors::Result<Self::Workspace> {
+            self.0.create_workspace(id)
+        }
+        fn delete_workspace(&self, id: WorkspaceId) -> koru_store_core::errors::Result<()> {
+            self.0.delete_workspace(id)
+        }
+        fn objects(&self) -> koru_store_core::errors::Result<Self::Blobs> {
+            Backend::objects(self.0.as_ref())
+        }
+    }
+    let backend = Arc::new(SqliteBackend::in_memory());
+    let mut store =
+        Store::open(SqliteCatalog::in_memory().unwrap(), Shared(backend.clone())).unwrap();
+    let profile = store
+        .create_profile("Test", None, None, Locale::default(), at())
+        .unwrap();
+    let ws = store.create_workspace(profile.id, "Work", at()).unwrap().id;
+    let (parent, _) = store
+        .create_document(ws, "Parent", "page", None, None, at())
+        .unwrap();
+    let (child, _) = store
+        .create_document(ws, "Child", "page", Some(parent), None, at())
+        .unwrap();
+    assert!(store.document_entry_live(ws, child).unwrap().is_some());
+    let manifest_id = store.manifest_id(ws).unwrap();
+    let mut fork = Manifest::from_snapshot(&store.snapshot(ws, manifest_id).unwrap()).unwrap();
+    let before = fork.version();
+    fork.trash_document(parent, at(), None).unwrap();
+    store
+        .apply_update(
+            ws,
+            manifest_id,
+            fork.export_updates_since(&before).unwrap(),
+            at(),
+            UpdateOrigin::Store,
+        )
+        .unwrap();
+    let repo = backend.open_workspace(ws).unwrap();
+    assert!(repo.entry(parent).unwrap().unwrap().trashed_at.is_none());
+    assert!(store.document_entry_live(ws, child).unwrap().is_none());
+    repo.connection().execute_batch("CREATE TRIGGER fail_reindex BEFORE DELETE ON documents BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    store.flush(ws, manifest_id, at()).unwrap();
+    assert!(repo.entry(parent).unwrap().unwrap().trashed_at.is_none());
+    assert!(store.document_entry_live(ws, child).unwrap().is_none());
+    repo.connection()
+        .execute_batch("DROP TRIGGER fail_reindex")
+        .unwrap();
+    let (outside, _) = store
+        .create_document(ws, "Outside", "page", None, None, at())
+        .unwrap();
+    let mut fork = Manifest::from_snapshot(&store.snapshot(ws, manifest_id).unwrap()).unwrap();
+    let before = fork.version();
+    fork.move_document(outside, Some(parent), 0).unwrap();
+    store
+        .apply_update(
+            ws,
+            manifest_id,
+            fork.export_updates_since(&before).unwrap(),
+            at(),
+            UpdateOrigin::Store,
+        )
+        .unwrap();
+    assert_eq!(repo.entry(outside).unwrap().unwrap().parent, None);
+    assert!(store.document_entry_live(ws, outside).unwrap().is_none());
+    let (live, _) = store
+        .create_document(ws, "Live", "page", None, None, at())
+        .unwrap();
+    repo.connection()
+        .execute("DELETE FROM documents WHERE doc_id=?1", [live.to_storage()])
+        .unwrap();
+    assert_eq!(
+        store.document_entry_live(ws, live).unwrap_err().code(),
+        Code::VersionUnavailable
+    );
+}

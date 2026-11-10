@@ -88,6 +88,18 @@ const K_DELETIONS: &str = "deletions";
 const K_DELETED_AT: &str = "at";
 const K_DELETED_BY: &str = "by";
 
+/// Current authority metadata, without a potentially expensive sibling ordinal.
+pub(crate) struct EntryMetadata {
+    pub id: DocumentId,
+    pub parent: Option<DocumentId>,
+    pub title: String,
+    pub kind: String,
+    pub mime: Option<String>,
+    pub note: Option<DocumentId>,
+    pub trashed_at: Option<Timestamp>,
+    pub trashed_by: Option<String>,
+}
+
 /// A workspace's manifest document.
 ///
 /// Holds a live `LoroDoc` and an index from [`DocumentId`] to `TreeID`. The
@@ -414,6 +426,66 @@ impl Manifest {
     /// Whether this manifest already publishes a document id.
     pub fn contains_document(&self, id: DocumentId) -> bool {
         self.index.contains_key(&id)
+    }
+
+    /// One current entry through the live ID index. No derived SQL projection
+    /// participates in identity, parent or lifecycle authority.
+    pub(crate) fn entry(&self, id: DocumentId) -> Result<Option<EntryMetadata>> {
+        let Some(&tid) = self.index.get(&id) else {
+            return Ok(None);
+        };
+        let tree = self.doc.get_tree(C_DOCUMENTS);
+        if tree.is_node_deleted(&tid).map_err(loro_failed)? {
+            return Ok(None);
+        }
+        let meta = tree.get_meta(tid).map_err(loro_failed)?;
+        let invalid = || {
+            Error::new(
+                Code::CorruptState,
+                "manifest entry has invalid identity or parent",
+            )
+        };
+        if meta
+            .get(K_DOC_ID)
+            .and_then(as_string)
+            .as_deref()
+            .and_then(DocumentId::parse)
+            != Some(id)
+        {
+            return Err(invalid());
+        }
+        let parent = match tree.parent(tid) {
+            Some(TreeParentId::Root) => None,
+            Some(TreeParentId::Node(parent)) => {
+                let parent_meta = tree.get_meta(parent).map_err(loro_failed)?;
+                let pid = parent_meta
+                    .get(K_DOC_ID)
+                    .and_then(as_string)
+                    .as_deref()
+                    .and_then(DocumentId::parse)
+                    .ok_or_else(invalid)?;
+                if self.index.get(&pid) != Some(&parent) {
+                    return Err(invalid());
+                }
+                Some(pid)
+            }
+            _ => return Err(invalid()),
+        };
+        let (trashed_at, trashed_by) = trash_state(&meta);
+        Ok(Some(EntryMetadata {
+            id,
+            parent,
+            title: meta.get(K_TITLE).and_then(as_string).unwrap_or_default(),
+            kind: meta.get(K_KIND).and_then(as_string).unwrap_or_default(),
+            mime: meta.get(K_MIME).and_then(as_string),
+            note: meta
+                .get(K_NOTE_DOC)
+                .and_then(as_string)
+                .as_deref()
+                .and_then(DocumentId::parse),
+            trashed_at,
+            trashed_by,
+        }))
     }
 
     /// Register a document. Appended under `parent`, or at the root.
