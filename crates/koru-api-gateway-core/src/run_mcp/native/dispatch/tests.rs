@@ -114,6 +114,10 @@ impl BotDelegatePort for Owner {
                 assert_eq!(intent.key, request.key);
                 assert_eq!(intent.request_fingerprint, request.request_fingerprint);
                 match request.observation {
+                    NativeResultObservation::DrainedUnknown { .. } => {
+                        intent.stage = NativeResultStage::SettledUnknown;
+                        intent.disposition = NativeResultDisposition::ReconcileOnly;
+                    }
                     NativeResultObservation::Durable { evidence } => {
                         intent.verified = Some(evidence);
                         intent.stage = NativeResultStage::Verified;
@@ -321,6 +325,29 @@ fn prepared_none_can_lease_but_held_missing_candidate_never_reexecutes() {
         assert_eq!(result.is_ok(), !held);
         assert_eq!(f.owner.state.lock().unwrap().leases, usize::from(!held));
     }
+}
+
+#[test]
+fn drained_unknown_without_store_proof_never_reexecutes_or_reports_saved() {
+    let f = Fixture::new();
+    let arguments = f.arguments();
+    f.retain_prepared("create_document", arguments.clone(), true);
+    f.owner.state.lock().unwrap().intent.as_mut().unwrap().stage =
+        NativeResultStage::SettledUnknown;
+    assert!(f.call("create_document", arguments).is_err());
+    let state = f.owner.state.lock().unwrap();
+    assert_eq!((state.leases, state.prepares, state.confirms), (0, 0, 0));
+    assert_eq!(
+        state.intent.as_ref().unwrap().stage,
+        NativeResultStage::SettledUnknown
+    );
+    let workspace = f.record.workspace;
+    assert!(
+        f.memory
+            .with_store(move |store| store.documents(workspace).unwrap())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
