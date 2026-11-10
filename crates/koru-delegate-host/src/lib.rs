@@ -154,8 +154,11 @@ fn serve(
     // launch profile from its intent, and the bus reads the identity a run's
     // `created` fact first travelled under.
     let ledger = ledger::SharedLedger::new(
-        RunsDb::open_beside(&bootstrap.store_directory)
-            .map_err(|error| format!("runs.db: {error}"))?,
+        RunsDb::open_with_clock(
+            &koru_delegate_sqlite::runs_db_path(&bootstrap.store_directory),
+            Box::new(stubs::WallClock),
+        )
+        .map_err(|error| format!("runs.db: {error}"))?,
     );
     // The gateway builds a run's endpoint URL from the address it published,
     // so this worker overrides it only when a person named one.

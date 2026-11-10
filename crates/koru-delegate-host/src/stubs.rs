@@ -57,6 +57,14 @@ impl Clock for WallClock {
     }
 }
 
+// Activation timestamps and active-budget checks must share one clock domain,
+// including the existing controlled clock in opt-in process fixtures.
+impl koru_delegate_sqlite::Clock for WallClock {
+    fn now_ms(&self) -> i64 {
+        wall_now_ms()
+    }
+}
+
 impl ScheduleClock for WallClock {
     fn now_ms(&mut self, _evaluation_now_ms: i64) -> i64 {
         wall_now_ms()
