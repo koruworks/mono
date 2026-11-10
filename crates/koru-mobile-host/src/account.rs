@@ -981,6 +981,26 @@ impl koru_account_runtime::account::lifecycle::LocalProfileInventory for Embedde
             })
     }
 
+    /// The same guarded restore desktop asks its Store for — see
+    /// `LocalProfileInventory::restore_removed`.
+    fn restore_removed(&self, profile: koru_account_core::ProfileId) -> Result<(), ServiceError> {
+        use koru_store_core::errors::Code;
+        self.0
+            .with_store(move |store| store.restore_profile_local(profile))
+            .map_err(|_| ServiceError::retryable("profile_provisioning_unavailable"))?
+            .map(|_| ())
+            .map_err(|error| match error.code {
+                Code::ProfileRemoved => ServiceError::terminal("profile_deleted"),
+                Code::ProfileNotFound | Code::ProfileReserved => {
+                    ServiceError::terminal("profile_not_authorized")
+                }
+                Code::VersionUnavailable | Code::CorruptState | Code::ProfileUnitScopeMismatch => {
+                    ServiceError::terminal("profile_restore_unavailable")
+                }
+                _ => ServiceError::retryable("profile_provisioning_unavailable"),
+            })
+    }
+
     fn inventory(&self) -> Result<koru_store_wire::ProfileLifecycleInventory, ServiceError> {
         let rows = self
             .0

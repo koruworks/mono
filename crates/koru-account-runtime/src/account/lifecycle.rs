@@ -67,6 +67,18 @@ pub trait LocalProfileInventory: Send + Sync {
         Err(ServiceError::retryable("profile_provisioning_unavailable"))
     }
 
+    /// **Bring back a Profile this computer removed earlier**, because the
+    /// person has just chosen it again under *Import Profiles*.
+    ///
+    /// The Store's own guarded restore (`restore_profile_local`): it refuses a
+    /// Profile that was deleted from the account rather than only removed
+    /// here, and checks the retained identity before the Profile becomes
+    /// visible. Its Workspaces stay in the Trash, where the removal put them.
+    /// Read-only host adapters fail closed.
+    fn restore_removed(&self, _profile: ProfileId) -> Result<(), ServiceError> {
+        Err(ServiceError::retryable("profile_restore_unavailable"))
+    }
+
     /// A fresh local presence check before granting reciprocal enrollment trust.
     fn authorize(
         &self,

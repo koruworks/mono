@@ -642,6 +642,98 @@ fn service_outage_is_explicit_and_has_bounded_inspectable_retry() {
     );
 }
 
+/// Signs in on the first command, then refuses the two hosted calls the
+/// test sends: one for a reason of its own, one because the service no
+/// longer accepts the session.
+struct RefusesHostedCalls;
+impl AccountService for RefusesHostedCalls {
+    fn execute(
+        &mut self,
+        generation: u64,
+        command: AccountCommand,
+        _: Option<&SessionCredential>,
+        _: &Cancel,
+        _: &mut dyn FnMut(ServiceProgress),
+    ) -> Result<ServiceOutcome, ServiceError> {
+        match command {
+            AccountCommand::SelectProfiles { .. } => Err(ServiceError::terminal("profile_removed")),
+            AccountCommand::ListProfiles => Err(ServiceError::terminal("authentication_required")),
+            _ => Ok(ServiceOutcome {
+                state: AccountState {
+                    generation,
+                    stage: AccountStage::SignedIn,
+                    capability: true,
+                    ..Default::default()
+                },
+                credential: CredentialChange::Replace(
+                    SessionCredential::new("session".into(), "refresh".into()).unwrap(),
+                ),
+                result: AccountOperationResult::SignedIn,
+                follow_up: None,
+            }),
+        }
+    }
+}
+
+/// **A hosted call refused for its own reasons is that call's answer.**
+/// Selecting a Profile that had been removed from this computer was refused
+/// as `profile_removed`, and the worker published the whole account as
+/// Failed: every surface read "signed out" while the stored session was
+/// fine. A refusal about the session itself still fails the account.
+#[test]
+fn a_terminal_refusal_of_a_hosted_call_answers_it_and_keeps_the_account_signed_in() {
+    let (sent, events) = mpsc::channel();
+    let control = AccountControl::start(
+        RefusesHostedCalls,
+        Arc::new(SessionCredentialStore::default()),
+        entry(),
+        move |event| {
+            let _ = sent.send(event);
+        },
+    );
+    let signed_in = control.enqueue(1, AccountCommand::Retry).unwrap();
+    assert_eq!(
+        terminal_result(&events, 1, signed_in),
+        AccountOperationResult::SignedIn
+    );
+
+    let select = control
+        .enqueue(
+            2,
+            AccountCommand::SelectProfiles {
+                profile_ids: vec![ProfileId::new().to_string()],
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        terminal_result(&events, 2, select),
+        AccountOperationResult::Failed {
+            code: "profile_removed".into()
+        },
+        "the person who asked hears why"
+    );
+    let state = control.state();
+    assert_eq!(
+        state.stage,
+        AccountStage::SignedIn,
+        "and is still signed in"
+    );
+    assert_eq!(state.failure_code, None);
+
+    let list = control.enqueue(3, AccountCommand::ListProfiles).unwrap();
+    let _ = terminal_result(&events, 3, list);
+    let state = control.state();
+    assert_eq!(
+        state.stage,
+        AccountStage::Failed,
+        "a refusal of the session itself still fails the account"
+    );
+    assert_eq!(
+        state.failure_code.as_deref(),
+        Some("authentication_required")
+    );
+}
+
 struct RemoveCredential;
 impl AccountService for RemoveCredential {
     fn execute(

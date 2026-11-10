@@ -301,9 +301,10 @@ fn signed_in_profile_creation_requests_content_availability_choices() {
     assert_eq!(c.take_request(), Some(AccountCommand::ListProfileChoices));
 }
 
+/// *Open local content* on the first row, by keyboard. A Profile already on
+/// this computer has no checkbox, so its button is the first control.
 fn choose_first_local_profile(c: &mut ProfilesController) {
     let creation = form(c);
-    assert!(creation.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty(),));
     assert!(creation.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty(),));
     c.drain_profile_creation_action();
 }

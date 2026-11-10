@@ -53,8 +53,12 @@ fn set(ids: &[&str]) -> BTreeSet<String> {
     ids.iter().map(|id| (*id).to_owned()).collect()
 }
 
+/// **A Profile already on this computer is not an import choice.** Its row
+/// says it is here and offers *Open local content*; it has no checkbox, is
+/// not counted in *N selected*, and is never sent in a selection. It used to
+/// be ticked like the rest, which read as importing it a second time.
 #[test]
-fn connected_local_rows_accept_checkbox_clicks_and_open_without_reenrollment() {
+fn a_profile_already_here_has_no_checkbox_and_opens_from_its_own_button() {
     let mut view = view();
     view.account_state.enrollments = vec![koru_agent_wire::AccountProfileEnrollment {
         profile_id: id(11),
@@ -64,21 +68,46 @@ fn connected_local_rows_accept_checkbox_clicks_and_open_without_reenrollment() {
     }];
     view.set_viewport(900.0, 650.0);
     let row = view.selection_layout().rows[0].rect;
-    let hit = view.selection_hit(row.x + 20.0, row.y + 18.0);
-    assert_eq!(hit, Some(Hit::Existing(0)));
-    view.activate(hit.unwrap());
-    assert_eq!(view.selection_ids(), vec![id(11)]);
-    assert!(view.enrollment_selection_ids().is_empty());
-    assert!(view.selection_controls().contains(&Hit::Primary));
-    view.activate(Hit::Primary);
+    assert_eq!(
+        view.selection_hit(row.x + 20.0, row.y + 18.0),
+        None,
+        "a press on its body ticks nothing"
+    );
+    assert!(!view.selection_controls().contains(&Hit::Existing(0)));
+    view.activate(Hit::Existing(0));
+    assert!(view.selection_ids().is_empty());
+    assert_eq!(view.selection_count(), "0 selected");
+    assert!(!view.selection_controls().contains(&Hit::Primary));
+    assert_eq!(
+        view.selection_layout().rows[0].source,
+        "Already on this device"
+    );
+
+    assert!(view.selection_controls().contains(&Hit::OpenExisting(0)));
+    view.activate(Hit::OpenExisting(0));
     assert_eq!(
         view.take_action(),
         Some(Action::RestoreLocalProfile { profile_id: id(11) })
     );
 }
 
+/// A tick left on a Profile from before it arrived here does not survive it
+/// arriving: the next list prunes it, so the count and the selection agree
+/// with what is drawn.
 #[test]
-fn mixed_selection_enrolls_only_missing_members_then_opens_first_selected_local_profile() {
+fn a_tick_on_a_profile_that_has_since_arrived_here_is_dropped() {
+    let mut view = view();
+    view.activate(Hit::Existing(1));
+    assert_eq!(view.selection_ids(), vec![id(12)]);
+    let mut arrived = choices(1);
+    arrived[1].available_on_this_device = true;
+    view.show_account_profile_choices("", arrived);
+    assert!(view.selection_ids().is_empty());
+    assert!(!view.selection.checked.contains(&id(12)));
+}
+
+#[test]
+fn a_selection_sends_only_profiles_that_are_not_here_and_opens_the_first_once_durable() {
     let mut view = view();
     view.account_state.enrollments = vec![koru_agent_wire::AccountProfileEnrollment {
         profile_id: id(11),
@@ -93,7 +122,8 @@ fn mixed_selection_enrolls_only_missing_members_then_opens_first_selected_local_
         view.take_action(),
         Some(Action::SelectAccountProfiles {
             profile_ids: vec![id(12)]
-        })
+        }),
+        "the Profile already here is not sent"
     );
     view.profiles_selected(vec![koru_agent_wire::AccountProfileEnrollment {
         profile_id: id(12),
@@ -103,7 +133,7 @@ fn mixed_selection_enrolls_only_missing_members_then_opens_first_selected_local_
     }]);
     assert_eq!(
         view.take_action(),
-        Some(Action::RestoreLocalProfile { profile_id: id(11) })
+        Some(Action::RestoreLocalProfile { profile_id: id(12) })
     );
 }
 
@@ -230,7 +260,8 @@ fn real_view_submits_one_subset_and_all_once_and_keeps_unavailable_members() {
     for (indices, expected) in [
         (vec![2], vec![id(13)]),
         (vec![1, 2], vec![id(12), id(13)]),
-        (vec![0, 1, 2], vec![id(11), id(12), id(13)]),
+        // The row at 0 is already on this computer: ticking it does nothing.
+        (vec![0, 1, 2], vec![id(12), id(13)]),
     ] {
         let mut view = view();
         for index in indices {
@@ -470,12 +501,12 @@ fn all_captures_the_explicit_choice_and_new_grants_do_not_expand_it_before_submi
     added.profile.profile_id = id(14);
     expanded.push(added);
     view.show_account_profile_choices("", expanded);
-    assert_eq!(view.selection.checked, set(&[&id(11), &id(12), &id(13)]));
+    assert_eq!(view.selection.checked, set(&[&id(12), &id(13)]));
     view.activate(Hit::Primary);
     assert_eq!(
         view.take_action(),
         Some(Action::SelectAccountProfiles {
-            profile_ids: vec![id(11), id(12), id(13)]
+            profile_ids: vec![id(12), id(13)]
         })
     );
 }
