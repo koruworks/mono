@@ -420,6 +420,7 @@ impl MainView {
                     key: key.to_owned(),
                     name: koru_session_profiles::display_name(&profile, "", "").to_owned(),
                     install: install_plan(key, &status).is_some(),
+                    update: self.agent_cli_update(key),
                     status,
                     guide: setup_guide(key),
                     on: !disabled.iter().any(|off| off == key),

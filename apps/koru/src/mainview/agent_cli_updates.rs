@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The coding-agent CLI cards: one per installed CLI that is behind its
-//! channel, being updated, just updated, or failed to update — stacked at the
-//! top right, each with the button that answers it.
+//! The coding-agent CLI cards: one per CLI that is being updated, just
+//! updated, or failed to update — and one per CLI that is behind its channel
+//! **once the person starts it** — stacked at the top right, each with the
+//! button that answers it.
+//!
+//! **An offer waits to be relevant.** The Agent's check runs twenty seconds
+//! after it starts, and every offer it found used to be drawn in every window
+//! at once: a person who opened Koru to write was met by a column of cards
+//! about tools they had not touched. An offer is now drawn when they start
+//! that CLI in this window ([`MainView::offer_agent_cli_update`]), and it
+//! stands the whole time on the agent's row in *Settings → Agent providers*
+//! ([`update_offer`]), where *Update* is one press away. A run they asked for
+//! — from either place — reports its progress, its result and its failure in
+//! a card as before.
 //!
 //! **This window draws the conversation and holds none of it**, the rule
 //! [`super::update_ui`] states for Koru's own update. The agent checks, runs
@@ -67,6 +78,11 @@ pub(super) struct Cards {
     bars: Vec<(String, ProgressBar)>,
     /// When each *updated* card appeared, for its auto-dismiss.
     done_since: Vec<(String, Instant)>,
+    /// The CLIs the person has started in this window: the only ones whose
+    /// *update available* is drawn as a card.
+    started: Vec<String>,
+    /// The report the settings rows were last built from, to notice a new one.
+    shown_in_settings: Option<AgentCliReport>,
 }
 
 /// One card, laid out. The action and the close are `None` where the stage
@@ -82,12 +98,46 @@ pub(super) struct Card {
     pub(super) close: Option<Rect>,
 }
 
-/// The rows a card is drawn for, in the agent's order.
-fn attention(report: &AgentCliReport) -> impl Iterator<Item = &AgentCliRow> {
-    report
-        .clis
-        .iter()
-        .filter(|row| row.stage != AgentCliStage::UpToDate)
+/// The rows a card is drawn for, in the agent's order: every run in flight
+/// or just ended, and the offers for the CLIs in `started`.
+fn attention<'a>(
+    report: &'a AgentCliReport,
+    started: &'a [String],
+) -> impl Iterator<Item = &'a AgentCliRow> {
+    report.clis.iter().filter(move |row| match row.stage {
+        AgentCliStage::UpToDate => false,
+        AgentCliStage::Available => started.contains(&row.id),
+        AgentCliStage::Updating | AgentCliStage::Updated | AgentCliStage::Failed => true,
+    })
+}
+
+/// **What an agent's row in *Agent providers* says about its CLI**: a newer
+/// release is there, or its updater is running. `None` when the CLI is
+/// current, when its channel could not be read, and after a run ended — the
+/// card says how that went.
+///
+/// An offer the person dismissed on a card is still an update that exists,
+/// so the page keeps saying so: the agent reports a dismissed offer as *up
+/// to date*, and the two versions it sends are compared here instead.
+pub(super) fn update_offer(row: &AgentCliRow) -> Option<koru_settings_ui::AgentUpdate> {
+    let behind = || match (
+        row.installed.parse::<koru_cli_updates::Version>(),
+        row.latest.parse::<koru_cli_updates::Version>(),
+    ) {
+        (Ok(installed), Ok(latest)) => latest > installed,
+        _ => false,
+    };
+    let running = match row.stage {
+        AgentCliStage::Updating => true,
+        AgentCliStage::Available => false,
+        AgentCliStage::UpToDate if behind() => false,
+        AgentCliStage::UpToDate | AgentCliStage::Updated | AgentCliStage::Failed => return None,
+    };
+    Some(koru_settings_ui::AgentUpdate {
+        installed: row.installed.clone(),
+        latest: row.latest.clone(),
+        running,
+    })
 }
 
 /// The two lines, localized. `pub(super)` for the tests.
@@ -134,7 +184,7 @@ impl MainView {
             return Vec::new();
         };
         let x = (self.viewport.0 - MARGIN - CARD_W).max(MARGIN);
-        attention(&report)
+        attention(&report, &self.agent_cli_cards.started)
             .enumerate()
             .map(|(index, row)| {
                 let y = TOP + index as f32 * (CARD_H + GAP);
@@ -285,9 +335,55 @@ impl MainView {
     /// A moving bar, or a finished card waiting out its time, needs frames.
     pub(super) fn agent_cli_animating(&self) -> bool {
         self.agent_clis.report().is_some_and(|report| {
-            attention(&report)
+            attention(&report, &self.agent_cli_cards.started)
                 .any(|row| matches!(row.stage, AgentCliStage::Updating | AgentCliStage::Updated))
         })
+    }
+
+    /// The person started `cli` in this window: from now on its *update
+    /// available*, if it has one, is drawn. Named by the CLI's id, which is
+    /// the agent's key.
+    pub(super) fn offer_agent_cli_update(&mut self, cli: &str) {
+        if !self.agent_cli_cards.started.iter().any(|id| id == cli) {
+            self.agent_cli_cards.started.push(cli.to_owned());
+        }
+    }
+
+    /// What *Agent providers* says about `key`'s CLI. See [`update_offer`].
+    pub(super) fn agent_cli_update(&self, key: &str) -> Option<koru_settings_ui::AgentUpdate> {
+        let report = self.agent_clis.report()?;
+        report
+            .clis
+            .iter()
+            .find(|row| row.id == key)
+            .and_then(update_offer)
+    }
+
+    /// *Update* on an agent's row: ask the Agent to run the CLI's own
+    /// updater. Its progress arrives as the card every run has.
+    pub(super) fn update_agent_cli(&mut self, key: &str) -> bool {
+        if self.agent_cli_choice_in_flight(key) {
+            return true;
+        }
+        let asked = self
+            .agent_clis
+            .choose(AgentCliChoice::Update { id: key.to_owned() });
+        if asked {
+            self.agent_cli_cards.pending = Some((key.to_owned(), Instant::now()));
+        }
+        asked
+    }
+
+    /// Whether the Agent's report moved since the settings rows were last
+    /// built from it. Asked on the window's maintenance pass, so a check
+    /// that finishes while *Agent providers* is open redraws its rows.
+    pub(super) fn agent_cli_report_moved(&mut self) -> bool {
+        let report = self.agent_clis.report();
+        if report == self.agent_cli_cards.shown_in_settings {
+            return false;
+        }
+        self.agent_cli_cards.shown_in_settings = report;
+        true
     }
 
     pub(super) fn draw_agent_cli_cards(&mut self, scene: &mut Scene, root: Affine) {

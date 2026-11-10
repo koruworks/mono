@@ -94,8 +94,8 @@ pub use action::{FontRole, Request};
 pub use links::SettingsLinks;
 pub use page::{PageGroup, PageId};
 pub use state::{
-    AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AiSlot, Availability,
-    DictionaryRow, NeededVersion, Notice, RendererRow, VoiceFacts,
+    AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AgentUpdate, AiSlot,
+    Availability, DictionaryRow, NeededVersion, Notice, RendererRow, VoiceFacts,
 };
 
 use action::Action;
@@ -2349,6 +2349,7 @@ impl SettingsSurface {
             Action::RefreshAgentStatus => self.requests.push(Request::RefreshAgentStatus),
             Action::AgentGuide(url) => self.requests.push(Request::OpenAgentGuide(url)),
             Action::InstallAgent(key) => self.requests.push(Request::InstallAgent(key)),
+            Action::UpdateAgent(key) => self.requests.push(Request::UpdateAgent(key)),
             // The control moves at once; the host stores it and hands every
             // chat surface the new default.
             Action::AgentPermission(other, permission) => {
@@ -2526,6 +2527,7 @@ fn clone_action(action: &Action) -> Action {
         Action::RefreshAgentStatus => Action::RefreshAgentStatus,
         Action::AgentGuide(url) => Action::AgentGuide(url),
         Action::InstallAgent(key) => Action::InstallAgent(key.clone()),
+        Action::UpdateAgent(key) => Action::UpdateAgent(key.clone()),
         Action::AgentPermission(other, permission) => Action::AgentPermission(*other, *permission),
         Action::DefaultAgent(agent) => Action::DefaultAgent(agent.clone()),
     }

@@ -1375,8 +1375,20 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert!(!v.popover_open());
     v.advance_popover(Instant::now() + Duration::from_secs(1));
 
-    // The rail's profile square: the Profiles page, no views inside it.
+    // The rail's settings square: the destination, and a shut menu.
     let rail = v.rail_of(a);
+    let squares = v.apps_rail_rects(rail);
+    assert!(squares.help.y < squares.settings.y && squares.settings.y < squares.profile.y);
+    v.toggle_popover(PopoverKind::Summary);
+    let (gx, gy) = squares.settings.centre();
+    assert_eq!(v.apps_rail_mouse_down(rail, gx, gy), Outcome::OpenSettings);
+    assert!(
+        !v.popover_open(),
+        "a press on App settings shuts an open menu"
+    );
+    v.advance_popover(Instant::now() + Duration::from_secs(1));
+
+    // The rail's profile square: the Profiles page, no views inside it.
     let (sx, sy) = v.apps_rail_rects(rail).profile.centre();
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(v.popover_open());
@@ -1390,7 +1402,7 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert!(rows.contains(&PopoverRow::Profile(0)));
     assert_eq!(
         rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Settings))
+        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
     );
     // The square shuts it.
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
@@ -1900,13 +1912,13 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfileAction(ProfileAction::Settings)),
-        "wraps from Manage profiles to App settings"
+        Some(PopoverRow::ProfileAction(ProfileAction::Sync)),
+        "wraps from Manage profiles to Global sync"
     );
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSettings),
-        "Enter activates App settings"
+        Some(Outcome::OpenSyncSettings),
+        "Enter activates Global sync"
     );
     assert!(!v.popover_open(), "the fixed action closes the menu");
     v.advance_popover(Instant::now() + Duration::from_secs(1));
@@ -1923,13 +1935,12 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
 
 /// Fixed Profile menu actions retain their destination regardless of Cloud state.
 #[test]
-fn the_profile_actions_offer_creation_global_sync_and_app_settings() {
+fn the_profile_actions_offer_creation_and_global_sync() {
     let a = area();
     for cloud in [false, true] {
         for (action, outcome) in [
             (ProfileAction::New, Outcome::NewProfile),
             (ProfileAction::Sync, Outcome::OpenSyncSettings),
-            (ProfileAction::Settings, Outcome::OpenSettings),
         ] {
             let (mut v, profiles, _) = with_context(0);
             if cloud {
@@ -2245,9 +2256,8 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::ProfileAction(ProfileAction::New),
             PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync),
             PopoverRow::ProfileAction(ProfileAction::Sync),
-            PopoverRow::ProfileAction(ProfileAction::Settings),
         ],
-        "PROFILES, every Profile, Add new Profile, device control, Global sync, App settings"
+        "PROFILES, every Profile, Add new Profile, device control, Global sync"
     );
     // The chip's page: the heading and the workspaces, nothing else.
     v.toggle_popover(PopoverKind::Summary);
@@ -2436,7 +2446,8 @@ fn a_chip_colour_follows_the_email_and_not_the_name() {
 
 // ---------------------------------------------------- folder-profile rows
 
-/// The Profile menu exposes exactly the three approved fixed navigation rows.
+/// The Profile menu exposes exactly its two fixed navigation rows. App
+/// settings is the rail's square, not a row here.
 #[test]
 fn the_profiles_page_offers_no_folder_actions() {
     let (mut v, _, _) = with_context(4);
@@ -2444,7 +2455,7 @@ fn the_profiles_page_offers_no_folder_actions() {
     let rows = v.popover_rows();
     assert_eq!(
         rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Settings))
+        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
     );
     let actions: Vec<_> = rows
         .into_iter()
@@ -2453,14 +2464,7 @@ fn the_profiles_page_offers_no_folder_actions() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        actions,
-        [
-            ProfileAction::New,
-            ProfileAction::Sync,
-            ProfileAction::Settings
-        ]
-    );
+    assert_eq!(actions, [ProfileAction::New, ProfileAction::Sync]);
 }
 
 // ------------------------------------------------------------------ the fade

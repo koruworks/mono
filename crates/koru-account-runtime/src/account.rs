@@ -2973,10 +2973,17 @@ impl AccountService for ProductionAccountService {
                 })
             }
             AccountCommand::InspectProfileLifecycle { profile_id } => {
+                // A settled row is the journal's memory of a finished
+                // deletion, kept so a re-delivered tombstone starts nothing.
+                // To a caller asking what is in flight it is what it was
+                // before the row was kept: nothing.
                 let lifecycle = self
                     .journal()
                     .get(parse_profile(&profile_id)?)
                     .map_err(|error| ServiceError::retryable(error.code))?
+                    .filter(|record| {
+                        record.stage != koru_agent_wire::ProfileCleanupStage::NavigationSettled
+                    })
                     .map(|record| record.wire());
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
@@ -2996,11 +3003,6 @@ impl AccountService for ProductionAccountService {
                     .acknowledge(profile, stage, now)
                     .map_err(|error| ServiceError::retryable(error.code))?
                     .map(|record| record.wire());
-                if stage == koru_agent_wire::ProfileCleanupStage::NavigationSettled {
-                    self.journal()
-                        .clear_completed(profile)
-                        .map_err(|error| ServiceError::retryable(error.code))?;
-                }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
                     credential: CredentialChange::Keep,

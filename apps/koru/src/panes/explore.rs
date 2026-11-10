@@ -630,6 +630,7 @@ pub enum ExploreChromeFocus {
     Workspace(Option<WorkspaceId>),
     App(usize),
     RailHelp,
+    RailSettings,
     RailProfile,
 }
 
@@ -3753,7 +3754,7 @@ impl ExploreView {
                         .into_iter()
                         .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
                 );
-                out.extend([MenuAction::Sync, MenuAction::Settings].map(PopoverRow::ProfileAction));
+                out.push(PopoverRow::ProfileAction(MenuAction::Sync));
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -4540,6 +4541,10 @@ impl ExploreView {
             }
             Some(apps_rail::Hit::Overflow) => Outcome::OpenRailOverflow,
             Some(apps_rail::Hit::Help) => Outcome::OpenHelp,
+            Some(apps_rail::Hit::Settings) => {
+                self.close_popover();
+                Outcome::OpenSettings
+            }
             Some(apps_rail::Hit::Profile) => {
                 self.toggle_profile_popover();
                 Outcome::Consumed

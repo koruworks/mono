@@ -227,16 +227,6 @@ impl ExploreView {
         y: f32,
     ) -> Option<(Rect, String, Option<koru_keys::ShortcutId>)> {
         self.with_page(area, viewport, |frame| {
-            if let Some(node) = frame
-                .node(profiles::MenuAction::Settings.key())
-                .filter(|node| node.rect.contains(x, y))
-            {
-                return Some((
-                    node.rect,
-                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::ProfileAppSettings).into(),
-                    Some(koru_keys::ShortcutId::Settings),
-                ));
-            }
             if let Some(node) = [
                 profiles::MenuAction::Sync.key(),
                 super::workspace_menu_elements::MenuAction::Sync.key(),

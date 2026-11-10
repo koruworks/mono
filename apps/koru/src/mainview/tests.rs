@@ -6286,28 +6286,14 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     assert!(v.explore.popover_open(), "and the page stays");
 }
 
-/// **The Profile menu's App settings tooltip carries its chord**, the
-/// way the lane's controls carry theirs; the `?` has no chord to carry.
+/// **The rail's App settings tooltip carries its chord**, the way the
+/// lane's controls carry theirs; the `?` has no chord to carry.
 #[test]
-fn the_profile_menus_settings_tooltip_carries_its_chord() {
+fn the_rails_settings_tooltip_carries_its_chord() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
     let rects = v.explore.apps_rail_rects(v.rail_area());
-    v.explore.toggle_profile_popover();
-    let (_, settings) = v
-        .explore
-        .popover_rects(v.explore_popover_area(), v.viewport)
-        .into_iter()
-        .find(|(row, _)| {
-            matches!(
-                row,
-                crate::panes::explore::PopoverRow::ProfileAction(
-                    crate::panes::explore::popover_elements::profiles::MenuAction::Settings
-                )
-            )
-        })
-        .unwrap();
-    let (x, y) = settings.centre();
+    let (x, y) = rects.settings.centre();
     v.mouse_move(x, y);
     assert_eq!(
         v.tooltip.label(),
@@ -6320,7 +6306,6 @@ fn the_profile_menus_settings_tooltip_carries_its_chord() {
         v.tooltip.shortcut(),
         Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
     );
-    v.explore.close_popover();
     let (hx, hy) = rects.help.centre();
     v.mouse_move(hx, hy);
     assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
@@ -6451,9 +6436,9 @@ fn the_workspace_menu_actions_reach_import_trash_and_creation() {
 }
 
 /// Global sync opens Linked devices in the singleton Manage tab; the
-/// Profile menu's settings action opens Settings.
+/// rail's settings square opens Settings.
 #[test]
-fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
+fn the_sync_settings_tab_opens_once_and_the_rail_opens_settings() {
     let (mut v, mut w, _) = with_summary_open();
     v.explore.close_popover();
     let tabs = v.tabs().len();
@@ -6466,21 +6451,10 @@ fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
     assert!(v.open_sync_settings_tab(), "the same tab comes forward");
     assert_eq!(v.tabs().len(), tabs + 1, "and no second one opens");
 
-    v.explore.toggle_profile_popover();
-    let (_, settings) = v
-        .explore
-        .popover_rects(v.explore_popover_area(), v.viewport)
-        .into_iter()
-        .find(|(row, _)| {
-            matches!(
-                row,
-                crate::panes::explore::PopoverRow::ProfileAction(
-                    crate::panes::explore::popover_elements::profiles::MenuAction::Settings
-                )
-            )
-        })
-        .unwrap();
-    let (x, y) = settings.centre();
+    if v.explore.apps_rail_rects(v.rail_area()).settings.w <= 0.0 {
+        v.toggle_sidebar();
+    }
+    let (x, y) = v.explore.apps_rail_rects(v.rail_area()).settings.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(
         matches!(v.tabs().active_tab().view, TabView::Settings(_)),

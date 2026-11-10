@@ -517,7 +517,11 @@ pub fn run(
                     ),
                 )),
                 Arc::new(koru_account_runtime::ports::SystemClock),
-                true,
+                // Parked, not running: the Agent opens it after a short grace
+                // (`Agent::begin_account_work`). The worker's first act is to
+                // rotate the stored refresh token, and an Agent that lives
+                // for a second or two has no business spending one.
+                false,
                 move |mut event| {
                     if let (
                         Some((descriptor, signing_secret)),

@@ -24,6 +24,8 @@ pub struct Rects {
     pub apps: Vec<(NavigatorMode, Rect)>,
     pub overflow: Rect,
     pub help: Rect,
+    /// App settings, between Help and the profile square.
+    pub settings: Rect,
     /// The profile square at the foot.
     pub profile: Rect,
 }
@@ -36,5 +38,6 @@ pub enum Hit {
     App(NavigatorMode),
     Overflow,
     Help,
+    Settings,
     Profile,
 }

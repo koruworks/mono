@@ -170,6 +170,8 @@ pub(crate) enum Action {
     AgentGuide(&'static str),
     /// *Install*: run the vendor's install command for the agent, by key.
     InstallAgent(String),
+    /// *Update*: run the agent CLI's own updater, by key.
+    UpdateAgent(String),
     /// *Default permission for new chats*: `true` for the *Other agents*
     /// row, and the permission chosen.
     AgentPermission(bool, koru_settings::AgentPermission),
@@ -257,6 +259,9 @@ pub enum Request {
     /// vendor's install command, where the person sees its output and
     /// answers its prompts, and checks the agent again when it ends.
     InstallAgent(String),
+    /// Update an agent's CLI, by key: the host asks the Agent to run the
+    /// CLI's own updater, and the card that reports its progress appears.
+    UpdateAgent(String),
     /// Store the permission new chats start in, on this machine: for the
     /// supported agents, or (`other`) for every other agent.
     SetAgentPermission {

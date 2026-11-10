@@ -1748,3 +1748,90 @@ fn storing_the_same_pair_keeps_its_retry_key_and_a_new_pair_earns_its_own() {
         "a different pair rotates under a key of its own"
     );
 }
+
+/// The same session with the pair the service rotated it to.
+fn rotated(session: &str) -> SessionCredential {
+    SessionCredential::new(session.into(), format!("secret-{session}-rotated")).unwrap()
+}
+
+/// Part of the stretch that signed a device out: the service had already
+/// replaced the pair, and the vault write waited behind a hosted owner
+/// inspection. A process that stopped during that round trip came back holding
+/// a token the service no longer accepted. A rotation changes neither the
+/// account nor the session, so its owner is known and the service is not
+/// asked. (The directory's pending row still precedes the vault write.)
+#[test]
+fn a_rotation_of_the_held_session_reaches_the_vault_without_asking_the_service() {
+    let (vault, directory, armed) = signed_in("old");
+    let entry = legacy()
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+    let mut restarted =
+        CredentialPersistence::new(vault.clone(), legacy(), Some(directory.clone()));
+    restarted.restore(&mut inspector()).unwrap().unwrap();
+
+    // The service cannot be reached at all, which is what the write used to
+    // wait for.
+    let mut unreachable = Inspector(HashMap::new());
+    let mut write = PendingCredentialWrite::default();
+    restarted
+        .replace(&rotated("old"), &mut write, &mut unreachable)
+        .expect("a rotation needs no owner inspection");
+
+    let stored = vault.load(&entry).unwrap().unwrap();
+    assert_eq!(
+        SessionCredential::decode(&stored).unwrap().refresh_token,
+        "secret-old-rotated"
+    );
+    assert_ne!(
+        decode_retry_key(&stored),
+        Some(armed),
+        "the rotated pair carries its own retry key"
+    );
+
+    // The next process holds the pair the service now accepts.
+    let mut after_stop = CredentialPersistence::new(vault, legacy(), Some(directory));
+    assert_eq!(
+        after_stop
+            .restore(&mut inspector())
+            .unwrap()
+            .unwrap()
+            .refresh_token,
+        "secret-old-rotated"
+    );
+}
+
+/// Writing first must not become writing blind. A slot whose directory record
+/// was removed — a sign-out, or a newer incarnation of the account — is not a
+/// rotation's to touch, exactly as the delayed write already refuses.
+#[test]
+fn a_rotation_leaves_a_slot_alone_once_its_directory_record_is_gone() {
+    let (vault, directory, _) = signed_in("old");
+    let namespace = legacy().namespace();
+    let entry = legacy()
+        .for_account(&owner(1, 1).account.to_string())
+        .unwrap();
+    let mut restarted =
+        CredentialPersistence::new(vault.clone(), legacy(), Some(directory.clone()));
+    restarted.restore(&mut inspector()).unwrap().unwrap();
+    let record = restarted.record().expect("the restored account's record");
+    directory.remove(&namespace, &record).unwrap();
+
+    let mut unreachable = Inspector(HashMap::new());
+    assert!(
+        restarted
+            .replace(
+                &rotated("old"),
+                &mut PendingCredentialWrite::default(),
+                &mut unreachable,
+            )
+            .is_err(),
+        "without its record this is no longer a rotation, and the owner cannot be asked"
+    );
+    let stored = vault.load(&entry).unwrap().unwrap();
+    assert_eq!(
+        SessionCredential::decode(&stored).unwrap().refresh_token,
+        "secret-old",
+        "the slot was not written"
+    );
+}

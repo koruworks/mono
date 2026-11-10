@@ -22,6 +22,7 @@ pub(crate) fn key(hit: Hit) -> Key {
         Hit::App(mode) => Key::surface(SURFACE, mode.token()),
         Hit::Overflow => Key::surface(SURFACE, "overflow"),
         Hit::Help => Key::surface(SURFACE, "help"),
+        Hit::Settings => Key::surface(SURFACE, "settings"),
         Hit::Profile => Key::surface(SURFACE, "profile"),
     }
 }
@@ -289,6 +290,7 @@ impl Rail {
             overflow: Rect::new(band.x, band.y, 0.0, 0.0),
             workspaces: Vec::new(),
             help: Rect::new(band.x, band.y, 0.0, 0.0),
+            settings: Rect::new(band.x, band.y, 0.0, 0.0),
             profile: Rect::new(band.x, band.y, 0.0, 0.0),
         };
         for item in self.items() {
@@ -306,6 +308,7 @@ impl Rail {
                 Hit::App(mode) => rects.apps.push((mode, r)),
                 Hit::Overflow => rects.overflow = r,
                 Hit::Help => rects.help = r,
+                Hit::Settings => rects.settings = r,
                 Hit::Profile => rects.profile = r,
             }
         }

@@ -106,6 +106,15 @@ impl ExploreView {
                     },
                     ..glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION)
                 },
+                // App settings are the app's, not a Profile's: they sat at
+                // the foot of the Profile menu, behind a press on a square
+                // that says nothing about settings. Here they are one press
+                // away, between Help and the profile square.
+                glyph(
+                    apps_rail::Hit::Settings,
+                    t(lang, Key::ProfileAppSettings),
+                    icons::FADERS,
+                ),
                 Item {
                     hit: apps_rail::Hit::Profile,
                     name: profile
@@ -164,6 +173,7 @@ impl ExploreView {
             ),
             apps_rail::Hit::Overflow => ExploreChromeFocus::RailOverflow,
             apps_rail::Hit::Help => ExploreChromeFocus::RailHelp,
+            apps_rail::Hit::Settings => ExploreChromeFocus::RailSettings,
             apps_rail::Hit::Profile => ExploreChromeFocus::RailProfile,
         }
     }
@@ -185,6 +195,7 @@ impl ExploreView {
             }
             Some(ExploreChromeFocus::RailOverflow) => Some(apps_rail::Hit::Overflow),
             Some(ExploreChromeFocus::RailHelp) => Some(apps_rail::Hit::Help),
+            Some(ExploreChromeFocus::RailSettings) => Some(apps_rail::Hit::Settings),
             Some(ExploreChromeFocus::RailProfile) => Some(apps_rail::Hit::Profile),
             _ => None,
         };

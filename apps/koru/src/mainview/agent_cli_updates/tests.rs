@@ -25,6 +25,14 @@ fn report(rows: Vec<AgentCliRow>) -> AgentCliReport {
     }
 }
 
+/// The offers these tests press are for CLIs the person started: an offer
+/// is a card only then.
+fn started(v: &mut MainView) {
+    for cli in ["codex", "grok", "kimi"] {
+        v.offer_agent_cli_update(cli);
+    }
+}
+
 fn sent(queue: &std::sync::mpsc::Receiver<FromShell>) -> Vec<Request> {
     std::iter::from_fn(|| queue.try_recv().ok())
         .map(|FromShell::Request { body, .. }| body)
@@ -41,6 +49,7 @@ fn only_rows_that_need_attention_become_cards_and_a_running_one_cannot_be_closed
         row("kimi", "Kimi", AgentCliStage::Failed),
     ]));
     v.agent_clis = feed;
+    started(&mut v);
     let cards = v.agent_cli_cards();
     assert_eq!(
         cards
@@ -74,6 +83,7 @@ fn update_sends_one_choice_and_a_second_press_while_it_is_in_flight_sends_nothin
         AgentCliStage::Available,
     )]));
     v.agent_clis = feed;
+    started(&mut v);
     let (_, button) = v.agent_cli_cards()[0].action.unwrap();
     assert!(
         v.mouse_down(&mut workspace.ws, button.x + 2.0, button.y + 2.0, false),
@@ -115,6 +125,7 @@ fn the_close_dismisses_and_a_press_on_the_card_body_is_claimed_but_sends_nothing
         AgentCliStage::Available,
     )]));
     v.agent_clis = feed;
+    started(&mut v);
     let card = &v.agent_cli_cards()[0];
     let (rect, close) = (card.rect, card.close.unwrap());
     assert!(v.mouse_down(&mut workspace.ws, rect.x + 4.0, rect.y + 4.0, false));
@@ -180,6 +191,7 @@ fn a_finished_card_puts_itself_away_after_its_time_and_only_once() {
         AgentCliStage::Updated,
     )]));
     v.agent_clis = feed;
+    started(&mut v);
     let cards = v.agent_cli_cards();
     let start = Instant::now();
     v.agent_cli_tend(&cards, start);
@@ -208,6 +220,7 @@ fn a_card_offers_dismiss_beside_its_action_and_the_label_sends_it() {
         row("grok", "Grok", AgentCliStage::Updated),
     ]));
     v.agent_clis = feed;
+    started(&mut v);
     let cards = v.agent_cli_cards();
     let (action, dismiss) = (
         cards[0].action.as_ref().unwrap().1,
@@ -246,6 +259,7 @@ fn over_a_card_the_pointer_is_the_plain_arrow_and_elsewhere_it_is_not_claimed() 
         AgentCliStage::Available,
     )]));
     v.agent_clis = feed;
+    started(&mut v);
     let card = &v.agent_cli_cards()[0];
     let (action, rect) = (card.action.as_ref().unwrap().1, card.rect);
     for (x, y) in [
@@ -273,6 +287,7 @@ fn the_card_contents_nest_under_its_floating_panel() {
         AgentCliStage::Available,
     )]));
     v.agent_clis = feed;
+    started(&mut v);
     let mut canvas = vello::Scene::new();
     let root = Affine::IDENTITY;
     let capture = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 1200.0, 800.0));
@@ -301,4 +316,99 @@ fn the_card_contents_nest_under_its_floating_panel() {
         inside >= 4,
         "the title, the version line and both buttons are the panel's: {inside}"
     );
+}
+
+/// **An offer waits to be relevant.** The check runs twenty seconds after the
+/// Agent starts, and every offer it found used to be drawn in every window at
+/// once. Now an offer is a card only for a CLI the person started here; a run
+/// in flight, a finished one and a failed one are drawn whoever asked.
+#[test]
+fn an_offer_is_a_card_only_for_a_cli_the_person_started() {
+    let (mut v, _workspace) = container();
+    let (feed, _queue) = crate::agent::AgentCliFeed::for_test(report(vec![
+        row("codex", "Codex", AgentCliStage::Available),
+        row("kimi", "Kimi", AgentCliStage::Available),
+        row("grok", "Grok", AgentCliStage::Updating),
+        row("qwen", "Qwen Code", AgentCliStage::Failed),
+    ]));
+    v.agent_clis = feed;
+    let ids = |v: &mut MainView| -> Vec<String> {
+        v.agent_cli_cards()
+            .iter()
+            .map(|card| card.row.id.clone())
+            .collect()
+    };
+    assert_eq!(
+        ids(&mut v),
+        ["grok", "qwen"],
+        "no offer is drawn unasked; the runs are"
+    );
+
+    v.offer_agent_cli_update("kimi");
+    v.offer_agent_cli_update("kimi");
+    assert_eq!(
+        ids(&mut v),
+        ["kimi", "grok", "qwen"],
+        "starting Kimi brings its offer, and only its"
+    );
+}
+
+/// What an agent's row in *Agent providers* is told about its CLI.
+#[test]
+fn the_settings_row_is_offered_an_update_whenever_the_cli_is_behind() {
+    let offer = |stage| update_offer(&row("codex", "Codex", stage));
+    let behind = |running| {
+        Some(koru_settings_ui::AgentUpdate {
+            installed: "0.163.0".into(),
+            latest: "0.165.0".into(),
+            running,
+        })
+    };
+    assert_eq!(offer(AgentCliStage::Available), behind(false));
+    assert_eq!(offer(AgentCliStage::Updating), behind(true));
+    // An offer dismissed on a card is reported as up to date; the page still
+    // says the update exists, because it does.
+    assert_eq!(offer(AgentCliStage::UpToDate), behind(false));
+    // A finished run and a failed one are the card's to report.
+    assert_eq!(offer(AgentCliStage::Updated), None);
+    assert_eq!(offer(AgentCliStage::Failed), None);
+
+    let mut current = row("codex", "Codex", AgentCliStage::UpToDate);
+    current.latest = current.installed.clone();
+    assert_eq!(update_offer(&current), None, "nothing newer, nothing said");
+    // A channel that could not be read offers nothing, and neither does a
+    // channel behind what is installed (a pre-release, a local build).
+    current.latest = String::new();
+    assert_eq!(update_offer(&current), None);
+    current.latest = "0.162.0".into();
+    assert_eq!(update_offer(&current), None);
+}
+
+/// *Update* on the settings row sends the same single choice a card's does.
+#[test]
+fn update_from_settings_asks_the_agent_once() {
+    let (mut v, _workspace) = container();
+    let (feed, queue) = crate::agent::AgentCliFeed::for_test(report(vec![row(
+        "codex",
+        "Codex",
+        AgentCliStage::Available,
+    )]));
+    v.agent_clis = feed;
+    assert!(v.update_agent_cli("codex"));
+    assert!(v.update_agent_cli("codex"), "claimed while it is in flight");
+    assert_eq!(
+        sent(&queue),
+        [Request::AgentCliChoice {
+            choice: AgentCliChoice::Update { id: "codex".into() }
+        }]
+    );
+    assert_eq!(
+        v.agent_cli_update("codex"),
+        Some(koru_settings_ui::AgentUpdate {
+            installed: "0.163.0".into(),
+            latest: "0.165.0".into(),
+            running: false,
+        })
+    );
+    assert_eq!(v.agent_cli_update("claude"), None, "a CLI not reported");
 }

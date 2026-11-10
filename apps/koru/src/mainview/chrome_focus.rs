@@ -290,6 +290,9 @@ impl MainView {
                 ExploreChromeFocus::RailHelp => {
                     self.open_help_beside();
                 }
+                ExploreChromeFocus::RailSettings => {
+                    self.open_settings_tab();
+                }
                 ExploreChromeFocus::RailOverflow => {
                     self.open_rail_overflow();
                 }

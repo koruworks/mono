@@ -2519,6 +2519,16 @@ struct App<H: Host> {
     /// open Profile's own document, and is `None` only for a Profile that
     /// never had one.
     remote_profile_deletions: HashMap<koru_core::ProfileId, Option<String>>,
+    /// Hosted removals whose local cleanup this window has already finished.
+    /// The Agent announces a deletion again whenever its journal has not
+    /// recorded the end of the cleanup; a window that ran it all again each
+    /// time showed its notice each time. An announcement for one of these
+    /// gets the acknowledgements again and nothing else.
+    cleaned_hosted_profiles: HashSet<koru_core::ProfileId>,
+    /// Deletions from another device whose stalled cleanup has been
+    /// explained in this window, so a retry that fails the same way is not
+    /// explained twice.
+    stalled_cleanup_notices: HashSet<koru_core::ProfileId>,
     profile_bindings_in_flight: HashSet<koru_core::ProfileId>,
     connected_profile_creation_tx: mpsc::Sender<OnboardingCreation>,
     connected_profile_creation_rx: mpsc::Receiver<OnboardingCreation>,
@@ -5779,6 +5789,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
             remote_deletion_rx,
             remote_deletion_checks_in_flight: HashSet::new(),
             remote_profile_deletions: HashMap::new(),
+            cleaned_hosted_profiles: HashSet::new(),
+            stalled_cleanup_notices: HashSet::new(),
             profile_bindings_in_flight: HashSet::new(),
             connected_profile_creation_tx,
             connected_profile_creation_rx,
@@ -18870,21 +18882,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.restore_from_tray();
                     self.open_support(event_loop);
                 }
-                // The Agent's report is the first this window hears of the
-                // deletion, and the last moment the Profile's name can still
-                // be read: the catalog refresh that follows drops its row,
-                // and the notice is worded at the end of a cleanup that runs
-                // after that.
                 crate::AgentAsk::ProfileLifecycleDeleted(profile) => {
-                    let name = self.observed_profile_name(profile);
-                    self.hosted_profile_removals.insert(
-                        profile,
-                        HostedProfileRemoval {
-                            source: HostedProfileRemovalSource::Peer,
-                            name,
-                        },
-                    );
-                    self.start_profile_cascade(profile);
+                    self.observe_peer_profile_deletion(profile);
                 }
             }
         }

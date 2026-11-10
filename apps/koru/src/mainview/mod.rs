@@ -9596,6 +9596,9 @@ impl MainView {
             Request::InstallAgent(key) => {
                 self.install_agent(&key);
             }
+            Request::UpdateAgent(key) => {
+                self.update_agent_cli(&key);
+            }
             Request::SetAgentPermission { other, permission } => {
                 self.set_agent_permission(other, permission);
             }
@@ -15210,7 +15213,10 @@ impl View for MainView {
         // The presence probe answered since the last pass: the `+` menu's
         // profile rows may dim (or undim) without the pointer moving.
         let probe_changed = self.profile_probe.take_dirty();
-        let agent_rows_changed = probe_changed && self.sync_agent_providers();
+        // Not short-circuited: the report is taken note of either way, or
+        // the next pass would find it moved again.
+        let clis_moved = self.agent_cli_report_moved();
+        let agent_rows_changed = (probe_changed || clis_moved) && self.sync_agent_providers();
         // An open *Agents* flyout drops the agents the answer says are not
         // here (`refresh_open_agent_flyout`); the repaint is `probe_changed`'s.
         if probe_changed {
@@ -18181,6 +18187,20 @@ impl MainView {
                     rail.help,
                     koru_i18n::t(lang, koru_i18n::Key::Help),
                 ))
+            } else if on(rail.settings) {
+                // The name and the Settings chord, which the Profile menu's
+                // row carried before this square took its place.
+                Some(
+                    TooltipContent::new(
+                        7,
+                        rail.settings,
+                        koru_i18n::t(lang, koru_i18n::Key::ProfileAppSettings),
+                    )
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::Settings,
+                        koru_keys::Section::Tooltip,
+                    )),
+                )
             } else if on(rail.profile) {
                 Some(
                     TooltipContent::new(

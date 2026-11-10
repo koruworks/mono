@@ -93,6 +93,13 @@ pub type LocalProfileRemovalResult = (
     String,
     Result<koru_agent_wire::LocalProfileRemovalOutcome, String>,
 );
+/// The Agent's answer to one cleanup acknowledgement: which Profile and
+/// stage, and whether its journal now holds it.
+pub type ProfileCleanupAcknowledgement = (
+    String,
+    koru_agent_wire::ProfileCleanupStage,
+    Result<(), String>,
+);
 pub type LocalProfileBindingResult = (
     String,
     Result<koru_agent_wire::LocalProfileAccountBindingOutcome, String>,
@@ -531,6 +538,12 @@ pub struct AgentLink {
     profile_removal_results: Arc<Mutex<VecDeque<LocalProfileRemovalResult>>>,
     pending_profile_bindings: Arc<Mutex<HashMap<u64, String>>>,
     profile_binding_results: Arc<Mutex<VecDeque<LocalProfileBindingResult>>>,
+    /// Cleanup acknowledgements awaiting the Agent's answer. They were sent
+    /// untracked, so a refusal was dropped on the floor and a journal that
+    /// never advanced looked, from here, exactly like one that had.
+    pending_cleanup_acknowledgements:
+        Arc<Mutex<HashMap<u64, (String, koru_agent_wire::ProfileCleanupStage)>>>,
+    cleanup_acknowledgements: Arc<Mutex<VecDeque<ProfileCleanupAcknowledgement>>>,
     /// Browser-only race state. Each bounded attempt records browser and Agent
     /// terminal sides until both arrive; capacity refusals are also bounded.
     /// Ordinary account results never consume either bound.
@@ -629,6 +642,8 @@ impl AgentLink {
             profile_removal_results: Arc::new(Mutex::new(VecDeque::new())),
             pending_profile_bindings: Arc::new(Mutex::new(HashMap::new())),
             profile_binding_results: Arc::new(Mutex::new(VecDeque::new())),
+            pending_cleanup_acknowledgements: Arc::new(Mutex::new(HashMap::new())),
+            cleanup_acknowledgements: Arc::new(Mutex::new(VecDeque::new())),
             browser_completions: Arc::new(Mutex::new(BrowserCompletions::default())),
             pairing: Arc::new(Mutex::new(koru_agent_wire::PairingView {
                 state: koru_agent_wire::PairingState::Idle,
@@ -895,6 +910,63 @@ impl AgentLink {
     }
     pub fn take_local_profile_removal(&self) -> Option<LocalProfileRemovalResult> {
         self.profile_removal_results
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pop_front()
+    }
+
+    /// Tell the Agent's cleanup journal that one stage of a removed Profile's
+    /// local cleanup is durable, and keep the request so its answer can be
+    /// read back through [`Self::take_profile_cleanup_acknowledgement`].
+    ///
+    /// No owner scope: the journal is the device's, not an account view's.
+    pub fn acknowledge_profile_cleanup(
+        &self,
+        profile: ProfileId,
+        stage: koru_agent_wire::ProfileCleanupStage,
+    ) {
+        let profile_id = profile.to_storage();
+        let refuse = |code: &str| {
+            self.cleanup_acknowledgements
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push_back((profile_id.clone(), stage, Err(code.into())));
+            let _ = wake_the_loop(&self.wake);
+        };
+        let Some(writer) = self.current_writer() else {
+            refuse("agent_unavailable");
+            return;
+        };
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.pending_cleanup_acknowledgements
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(id, (profile_id.clone(), stage));
+        if writer
+            .send(FromShell::Request {
+                id,
+                body: Request::Account {
+                    expected_owner_scope: None,
+                    command: koru_agent_wire::AccountCommand::AcknowledgeProfileCleanup {
+                        profile_id: profile_id.clone(),
+                        stage,
+                    },
+                },
+            })
+            .is_err()
+            && self
+                .pending_cleanup_acknowledgements
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&id)
+                .is_some()
+        {
+            refuse("agent_disconnected");
+        }
+    }
+
+    pub fn take_profile_cleanup_acknowledgement(&self) -> Option<ProfileCleanupAcknowledgement> {
+        self.cleanup_acknowledgements
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .pop_front()
@@ -1693,6 +1765,8 @@ impl AgentLink {
         let profile_removal_results = Arc::clone(&self.profile_removal_results);
         let pending_profile_bindings = Arc::clone(&self.pending_profile_bindings);
         let profile_binding_results = Arc::clone(&self.profile_binding_results);
+        let pending_cleanup_acknowledgements = Arc::clone(&self.pending_cleanup_acknowledgements);
+        let cleanup_acknowledgements = Arc::clone(&self.cleanup_acknowledgements);
         let browser_completions = Arc::clone(&self.browser_completions);
         let pairing = Arc::clone(&self.pairing);
         let pairing_dirty = Arc::clone(&self.pairing_dirty);
@@ -1809,6 +1883,25 @@ impl AgentLink {
                                 .lock()
                                 .unwrap_or_else(|error| error.into_inner())
                                 .push_back((requested_profile, result));
+                            let _ = wake_the_loop(&wake);
+                            continue;
+                        }
+                    }
+                    if let FromAgent::Response { id, body } = &message {
+                        let acknowledged = pending_cleanup_acknowledgements
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .remove(id);
+                        if let Some((profile_id, stage)) = acknowledged {
+                            let result = match body {
+                                Response::Ok => Ok(()),
+                                Response::Failed { code, .. } => Err(code.clone()),
+                                _ => Err("unexpected_agent_response".into()),
+                            };
+                            cleanup_acknowledgements
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .push_back((profile_id, stage, result));
                             let _ = wake_the_loop(&wake);
                             continue;
                         }
@@ -2311,6 +2404,20 @@ impl AgentLink {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .extend(pending_bindings);
+            let _ = wake_the_loop(&self.wake);
+        }
+        let unanswered = self
+            .pending_cleanup_acknowledgements
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .drain()
+            .map(|(_, (profile, stage))| (profile, stage, Err("agent_disconnected".into())))
+            .collect::<Vec<_>>();
+        if !unanswered.is_empty() {
+            self.cleanup_acknowledgements
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .extend(unanswered);
             let _ = wake_the_loop(&self.wake);
         }
         let browser_failures =

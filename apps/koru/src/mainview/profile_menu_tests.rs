@@ -9,7 +9,6 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
         MANAGE_PROFILES,
         MenuAction::New.key(),
         MenuAction::Sync.key(),
-        MenuAction::Settings.key(),
     ] {
         let (mut view, mut workspace) = harness::container();
         let owner = ProfileSummary {
@@ -34,9 +33,7 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
         assert!(view.mouse_down(&mut workspace.ws, x, y, false));
         assert!(!view.explore.popover_open());
         let tab = view.tabs().active_tab();
-        if key == MenuAction::Settings.key() {
-            assert!(matches!(tab.view, TabView::Settings(_)));
-        } else if key == MenuAction::Sync.key() {
+        if key == MenuAction::Sync.key() {
             let TabView::Manage(manage) = &tab.view else {
                 panic!("Global sync must open Manage, not a document");
             };
@@ -126,4 +123,28 @@ fn workspace_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
             }
         }
     }
+}
+
+/// App settings left the Profile menu for a square of its own on the rail,
+/// between Help and the profile square: the app's settings are not a
+/// Profile's, and they are now one press away instead of two.
+#[test]
+fn the_rails_settings_square_sits_between_help_and_the_profile_and_opens_settings() {
+    let (mut view, mut workspace) = harness::container();
+    if view.explore.apps_rail_rects(view.rail_area()).settings.w <= 0.0 {
+        view.toggle_sidebar();
+    }
+    let rail = view.explore.apps_rail_rects(view.rail_area());
+    assert!(rail.settings.w > 0.0, "the square is drawn");
+    assert!(rail.help.y < rail.settings.y, "below Help");
+    assert!(rail.settings.y < rail.profile.y, "above the profile square");
+    assert_eq!(rail.settings.w, rail.help.w);
+
+    let (x, y) = rail.settings.centre();
+    assert!(view.mouse_down(&mut workspace.ws, x, y, false));
+    assert!(matches!(
+        view.tabs().active_tab().view,
+        TabView::Settings(_)
+    ));
+    assert!(!view.explore.popover_open());
 }

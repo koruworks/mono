@@ -110,6 +110,30 @@ enum DeferredStage {
     Ready,
 }
 
+/// How long a new Agent leaves its account worker parked. Long enough that an
+/// Agent stopped straight after it started — the ones in the logs lived
+/// between one and two seconds — never rotates the refresh token; short
+/// enough that Cloud sync on a cold start is not noticeably late.
+const ACCOUNT_WORK_GRACE: Duration = Duration::from_secs(3);
+
+/// Account commands a window issues by itself when it connects, to draw what
+/// it shows. They are answered when the account worker runs; they are not a
+/// reason to start it early ([`Agent::begin_account_work`]).
+fn reads_account_state(command: &koru_agent_wire::AccountCommand) -> bool {
+    use koru_agent_wire::AccountCommand;
+    matches!(
+        command,
+        AccountCommand::Status
+            | AccountCommand::ListProfiles
+            | AccountCommand::ListProfileChoices
+            | AccountCommand::ReconcileProfileLifecycles
+            | AccountCommand::InspectProfileLifecycle { .. }
+            | AccountCommand::InspectAccountSession
+            | AccountCommand::InspectCloudSync { .. }
+            | AccountCommand::InspectCloudSubscription { .. }
+    )
+}
+
 /// Requests that can admit new work or launch a process after update
 /// quiescence has begun. Status, close/refusal, and shutdown traffic must still
 /// pass so the handoff can finish or abort cleanly.
@@ -539,6 +563,12 @@ pub struct Agent {
     /// Hosted-deleted Profiles whose recoverable local cleanup is unfinished.
     /// Loaded before the event loop and replayed on every shell `Hello`.
     pending_profile_cleanup: std::collections::HashSet<String>,
+    /// Which pending cleanups each connection has already been told about.
+    /// A shell says `Hello` again whenever its presence changes, and the
+    /// replay used to follow every one of them: a window that had finished
+    /// the cleanup was told to start it again, finished it again, and showed
+    /// its notice again. One connection is told once.
+    profile_cleanup_replayed: std::collections::HashSet<(ConnectionId, String)>,
     pairing: Option<koru_pairing::InvitationSession>,
     joining: Option<koru_agent_wire::PairingView>,
     /// The Global settings section, kept current off the event thread. Read for
@@ -606,6 +636,9 @@ pub struct Agent {
     /// exclusive restart gate before reopening ordinary shells/chat. This is a
     /// maintenance deadline, not a blocking wait on the event loop.
     startup_gate_retry_at: Option<Instant>,
+    /// When the parked account worker is let run; `None` once it has been.
+    /// See [`Agent::begin_account_work`].
+    account_work_at: Option<Instant>,
     /// Which chord the hotkey thread actually registered, once it says. Held
     /// here rather than pushed straight at the tray because the tray may not
     /// exist yet when the answer arrives — registration starts before the
@@ -985,6 +1018,7 @@ impl Agent {
             cloud_configured: true,
             account_generations: HashMap::new(),
             pending_profile_cleanup: std::collections::HashSet::new(),
+            profile_cleanup_replayed: std::collections::HashSet::new(),
             pairing: None,
             joining: None,
             settings,
@@ -1019,6 +1053,7 @@ impl Agent {
             update_health_token: None,
             startup_transition_complete: false,
             startup_gate_retry_at: None,
+            account_work_at: None,
             shortcut: crate::tray::Shortcut::Unknown,
             dictation_shortcut: crate::tray::Shortcut::Unknown,
             notification_area: false,
@@ -1094,6 +1129,26 @@ impl Agent {
 
     pub fn set_account_control(&mut self, control: crate::account::AccountControl) {
         self.account = Some(control);
+        self.account_work_at = Some(Instant::now() + ACCOUNT_WORK_GRACE);
+    }
+
+    /// Let the account worker run: restore the stored session, refresh it,
+    /// start enrollment and Cloud sync. Once; later calls do nothing.
+    ///
+    /// **Why it waits at all.** Restoring a session rotates its refresh
+    /// token, and the service keeps only the newest pair. Agents were being
+    /// started and stopped within two seconds — several in a row — and each
+    /// of them spent a rotation on the way in. One that stopped before the
+    /// new pair was durable left the next start holding a token the service
+    /// had already replaced, which is how a device that had signed in once
+    /// kept coming back signed out. An Agent that does not survive
+    /// [`ACCOUNT_WORK_GRACE`] now touches neither the vault nor the service.
+    fn begin_account_work(&mut self) {
+        if self.account_work_at.take().is_some()
+            && let Some(control) = &self.account
+        {
+            control.set_foreground(true);
+        }
     }
 
     /// Record whether this build has a Koru Cloud. Without one there is never
@@ -1471,6 +1526,8 @@ impl Agent {
         self.pending_profile_cleanup.insert(profile_id.clone());
         let ids: Vec<_> = self.connections.iter().map(Connection::id).collect();
         for id in ids {
+            self.profile_cleanup_replayed
+                .insert((id, profile_id.clone()));
             self.push(
                 id,
                 Push::ProfileLifecycleDeleted {
@@ -1492,7 +1549,53 @@ impl Agent {
             .collect::<Vec<_>>();
         profiles.sort();
         for profile_id in profiles {
-            self.push(connection, Push::ProfileLifecycleDeleted { profile_id });
+            if self
+                .profile_cleanup_replayed
+                .insert((connection, profile_id.clone()))
+            {
+                self.push(connection, Push::ProfileLifecycleDeleted { profile_id });
+            }
+        }
+    }
+
+    /// One durable cleanup boundary, written to the journal **here** rather
+    /// than through the account worker.
+    ///
+    /// The journal is this device's own file, and the deletion it tracks
+    /// arrives from a trusted peer whether or not this build has Koru Cloud
+    /// or anybody is signed in. Routed as an account command, the
+    /// acknowledgement needed an owner scope the window never sent and an
+    /// account worker that may not exist, so it was refused every time, the
+    /// row never left `hosted_committed`, and every `Hello` replayed a
+    /// cleanup that had already finished.
+    fn acknowledge_profile_cleanup(
+        &mut self,
+        profile_id: &str,
+        stage: koru_agent_wire::ProfileCleanupStage,
+    ) -> Response {
+        match crate::identity::profile_lifecycle::acknowledge_cleanup(
+            &self.paths,
+            profile_id,
+            stage,
+        ) {
+            Ok(settled) => {
+                if settled {
+                    self.pending_profile_cleanup.remove(profile_id);
+                }
+                Response::Ok
+            }
+            Err(code) => {
+                tracing::warn!(
+                    target: "koru::profiles",
+                    code,
+                    ?stage,
+                    "a Profile cleanup acknowledgement was not recorded"
+                );
+                Response::Failed {
+                    code: code.into(),
+                    message: "the Profile cleanup journal did not record this stage".into(),
+                }
+            }
         }
     }
 
@@ -1658,9 +1761,12 @@ impl Agent {
         if !matches!(outcome, koru_device::ApplyOutcome::Stale { .. })
             && let Some(lifecycle) = lifecycle
         {
-            crate::identity::profile_lifecycle::observe_received(&self.paths, &lifecycle)
-                .map_err(str::to_owned)?;
-            if lifecycle.state == koru_device::ProfileLifecycleStateV1::Deleted {
+            // Only a deletion whose cleanup this device still owes is
+            // announced. A tombstone re-sent after the cleanup settled is
+            // `AlreadyApplied`, not `Stale`, and used to start it again.
+            if crate::identity::profile_lifecycle::observe_received(&self.paths, &lifecycle)
+                .map_err(str::to_owned)?
+            {
                 self.broadcast_profile_lifecycle_deleted(lifecycle.profile_id.to_storage());
             }
         }
@@ -1701,25 +1807,20 @@ impl Agent {
             match koru_device::verify_gossip_record(&view, record) {
                 Ok(verified) => match repository.apply(verified) {
                     Ok(koru_device::ApplyOutcome::Stale { .. }) => applied += 1,
-                    Ok(_) => {
-                        let observed = lifecycle.as_ref().is_none_or(|lifecycle| {
-                            crate::identity::profile_lifecycle::observe_received(
-                                &self.paths,
-                                lifecycle,
-                            )
-                            .is_ok()
-                        });
-                        if observed {
-                            if let Some(lifecycle) = lifecycle
-                                && lifecycle.state == koru_device::ProfileLifecycleStateV1::Deleted
-                            {
-                                deleted_profiles.push(lifecycle.profile_id.to_storage());
-                            }
+                    Ok(_) => match lifecycle.as_ref().map(|lifecycle| {
+                        crate::identity::profile_lifecycle::observe_received(&self.paths, lifecycle)
+                            .map(|cleanup_owed| cleanup_owed.then_some(lifecycle.profile_id))
+                    }) {
+                        None | Some(Ok(None)) => applied += 1,
+                        // Announced only while the cleanup is still owed: the
+                        // whole device list is gossiped every few minutes,
+                        // and this tombstone goes with it every time.
+                        Some(Ok(Some(profile))) => {
+                            deleted_profiles.push(profile.to_storage());
                             applied += 1;
-                        } else {
-                            rejected += 1;
                         }
-                    }
+                        Some(Err(_)) => rejected += 1,
+                    },
                     Err(_) => rejected += 1,
                 },
                 // A kind this build does not know comes from a newer device.
@@ -3732,6 +3833,21 @@ impl Agent {
                         "account command connection={} command={:?} scope={:?}",
                         connection.0, command, expected_owner_scope
                     ));
+                }
+                if let koru_agent_wire::AccountCommand::AcknowledgeProfileCleanup {
+                    profile_id,
+                    stage,
+                } = &command
+                {
+                    let response = self.acknowledge_profile_cleanup(profile_id, *stage);
+                    self.reply(connection, id, response);
+                    return;
+                }
+                // Something a person asked for does not wait out the startup
+                // grace. What a window reads on its own when it connects
+                // does: those are queued and answered when the worker runs.
+                if !reads_account_state(&command) {
+                    self.begin_account_work();
                 }
                 if matches!(command, koru_agent_wire::AccountCommand::Status) {
                     let state = self
@@ -7999,6 +8115,8 @@ impl WindowApp for Agent {
                     control.disconnect(connection.0);
                 }
                 self.account_generations.remove(&connection);
+                self.profile_cleanup_replayed
+                    .retain(|(replayed, _)| *replayed != connection);
                 self.drop_connection(connection);
                 // A window closing is how an install in progress makes
                 // progress. Harmless otherwise: `shell_gone` only looks at the
@@ -8041,6 +8159,7 @@ impl WindowApp for Agent {
             // this adds no wake-up to an idle agent.
             self.handoff.deadline(),
             self.startup_gate_retry_at,
+            self.account_work_at,
             self.dictation.deadline(),
             self.voice_window.maintenance_deadline(),
         ]
@@ -8063,6 +8182,9 @@ impl WindowApp for Agent {
                 // re-enters the transition.
                 self.startup_gate_retry_at = None;
             }
+        }
+        if self.account_work_at.is_some_and(|at| now >= at) {
+            self.begin_account_work();
         }
         let mut changed = self.poll_voice_write();
         changed |= self.voice_window.maintain(now);
