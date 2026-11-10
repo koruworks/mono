@@ -22,6 +22,7 @@ koru-ai-provider = { path = "../../crates/koru-ai-provider" }
 koru-ai-provider-agent = { path = "../../crates/koru-ai-provider-agent" }
 koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite" }
 koru-ai-wire = { path = "../../crates/koru-ai-wire" }
+koru-delegate-api = { path = "../../crates/koru-delegate-api" }
 koru-export = { path = "../../crates/koru-export" }
 koru-export-markdown = { path = "../../crates/koru-export-markdown" }
 koru-link = { path = "../../crates/koru-link" }
