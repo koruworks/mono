@@ -148,6 +148,7 @@ fn send_with(
     client.send_turn(
         context(),
         SendTurnRequest {
+            destination_workspace: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,

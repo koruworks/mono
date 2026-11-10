@@ -29,6 +29,7 @@ pub(in crate::worker) struct BotCoordinationJob {
     action: Action,
     receipt: BotAdmissionReceipt,
     previous: Option<BotSubmissionKey>,
+    ai_live: bool,
 }
 pub(in crate::worker) struct BotCoordinationResult {
     owner: BotOwner,
@@ -57,7 +58,7 @@ impl BotCoordinationJob {
             }
             let command = match (&self.action, &self.receipt) {
                 (Action::Submit, BotAdmissionReceipt::Submission(r)) => {
-                    if r.intent.submission.provenance.ai_attempt_id.is_some()
+                    if (r.intent.submission.provenance.ai_attempt_id.is_some() && !self.ai_live)
                         || (r.intent.submission.provenance.continued_from.is_some()
                             && self.previous.is_none())
                     {
@@ -292,7 +293,7 @@ impl WorkerState {
             })
         })())
     }
-    fn queue_bot_receipt(
+    pub(super) fn queue_bot_receipt(
         &mut self,
         bot: &Bot,
         receipt: BotAdmissionReceipt,
@@ -347,6 +348,10 @@ impl WorkerState {
                 .map(|r| key(&r)),
             _ => None,
         };
+        let ai_live = match &receipt {
+            BotAdmissionReceipt::Submission(r) => ai_submission_live(&self.repository, r),
+            _ => false,
+        };
         let job = BotCoordinationJob {
             owner: owner(bot),
             bot: bot.id,
@@ -357,6 +362,7 @@ impl WorkerState {
             action,
             receipt,
             previous,
+            ai_live,
         };
         if pool
             .try_submit(ProviderAdminJob::BotCoordinate(job))
@@ -511,7 +517,9 @@ fn apply_result(
             Ok(None)
         }
         (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(r))
-            if r.intent.submission.provenance.ai_attempt_id.is_none() && r.outcome.is_none() =>
+            if (r.intent.submission.provenance.ai_attempt_id.is_none()
+                || ai_submission_live(repository, r))
+                && r.outcome.is_none() =>
         {
             Ok(Some((receipt.clone(), Some(Action::Submit))))
         }
@@ -545,7 +553,18 @@ fn apply_result(
         _ => Ok(None), // Uncertain/unknown replies keep the durable intent and folder guard.
     }
 }
-fn make_intent(
+fn ai_submission_live(repository: &Repository, receipt: &BotSubmissionReceipt) -> bool {
+    let Some(id) = receipt.intent.submission.provenance.ai_attempt_id else {
+        return false;
+    };
+    let Some(id) = InferenceAttemptId::parse(&id.to_string()) else {
+        return false;
+    };
+    matches!(repository.attempt(id), Ok(Some(attempt)) if !attempt.status.is_terminal())
+        && matches!(repository.bot_replay_state(id), Ok(state) if state.stop_reason.is_none())
+        && matches!(repository.bot_submission_for_attempt(id), Ok(Some(current)) if current.intent == receipt.intent)
+}
+pub(super) fn make_intent(
     bot: &Bot,
     request: BotRequestId,
     chat: ChatId,

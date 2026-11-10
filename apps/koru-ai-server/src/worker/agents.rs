@@ -1557,7 +1557,7 @@ fn steer_unavailable() -> Failure {
     )
 }
 
-fn agent_row(
+pub(super) fn agent_row(
     invocation: ToolInvocationId,
     attempt_id: InferenceAttemptId,
     chat_id: ChatId,

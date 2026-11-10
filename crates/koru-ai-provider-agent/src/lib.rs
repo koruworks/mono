@@ -48,6 +48,13 @@ use koru_session_protocol::{
 
 mod control;
 mod joined;
+pub mod mapping;
+
+/// Shared AI-owned conversation/context rendering for a fresh delegated turn.
+/// This does not start a session or add delegate-owned Run/file instructions.
+pub fn compose_delegated_prompt(request: &koru_ai_core::AiRequest) -> String {
+    turn::compose_prompt(request, true)
+}
 mod turn;
 
 pub use control::{AgentCatalog, AgentSessions, CommandListingUpdate, EndOutcome, EnsuredSession};

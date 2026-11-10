@@ -7,6 +7,112 @@ use std::io::Write;
 mod preparation;
 
 impl Repository {
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn fail_after_bot_replay_commit_for_fixture(&mut self) {
+        self.bot_replay_fail_after_commit = true;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn refuse_bot_replay_commit_for_fixture(&self, refuse: bool) -> Result<(), AiError> {
+        self.connection.execute_batch(if refuse {
+            "CREATE TRIGGER refuse_bot_cursor BEFORE UPDATE OF last_sequence ON bot_run_replay BEGIN SELECT RAISE(ABORT,'fixture replay rollback'); END;"
+        } else {"DROP TRIGGER refuse_bot_cursor;"}).map_err(storage_failed)
+    }
+    /// Byte position without materializing the transcript or prior messages.
+    pub fn bot_reply_bytes(&self, attempt: InferenceAttemptId) -> Result<u64, AiError> {
+        self.connection
+            .query_row(
+                "SELECT length(CAST(m.markdown AS BLOB)) FROM bot_chat_runs b
+            JOIN messages m ON m.id=b.assistant_message_id WHERE b.ai_attempt_id=?1",
+                [attempt.to_storage()],
+                |r| r.get(0),
+            )
+            .map_err(storage_failed)
+    }
+    /// Finite startup scan. Bound scanned associations, not only matches, so
+    /// old completed history cannot make one worker command unbounded.
+    pub fn bot_recovery_page(
+        &self,
+        after: Option<InferenceAttemptId>,
+        limit: u16,
+    ) -> Result<Vec<(InferenceAttemptId, bool, bool)>, AiError> {
+        if limit == 0 || limit > 64 {
+            return Err(invariant_failed());
+        }
+        let mut statement=self.connection.prepare("WITH page AS MATERIALIZED (
+            SELECT ai_attempt_id,delivery_state FROM bot_chat_runs WHERE ai_attempt_id>?1 ORDER BY ai_attempt_id LIMIT ?2)
+            SELECT page.ai_attempt_id,a.status IN ('failed','cancelled','interrupted'),page.delivery_state IN ('pending','unconfirmed')
+            FROM page JOIN inference_attempts a ON a.id=page.ai_attempt_id ORDER BY page.ai_attempt_id").map_err(storage_failed)?;
+        let rows = statement
+            .query_map(
+                params![after.map(|id| id.to_storage()).unwrap_or_default(), limit],
+                |r| {
+                    Ok((
+                        required_id(r, 0, InferenceAttemptId::parse, "InferenceAttemptId")?,
+                        r.get(1)?,
+                        r.get(2)?,
+                    ))
+                },
+            )
+            .map_err(storage_failed)?;
+        collect_rows(rows)
+    }
+    /// Fail closed before an execution fence exists (for example context
+    /// assembly failed). Keep the ai16 receipt/folder guard for reconciliation;
+    /// this never asserts that the native worker stopped.
+    pub fn interrupt_bot_preparation(
+        &mut self,
+        attempt: InferenceAttemptId,
+        now: Timestamp,
+    ) -> Result<(), AiError> {
+        self.finish_bot_locally(attempt, now, false)
+    }
+    /// Cancels AI presentation, not the delegate's reservation or Run. The
+    /// caller still owes exact native Stop/refusal-fence reconciliation.
+    pub fn cancel_bot_chat(
+        &mut self,
+        attempt: InferenceAttemptId,
+        now: Timestamp,
+    ) -> Result<(), AiError> {
+        self.finish_bot_locally(attempt, now, true)
+    }
+    fn finish_bot_locally(
+        &mut self,
+        attempt: InferenceAttemptId,
+        now: Timestamp,
+        cancelled: bool,
+    ) -> Result<(), AiError> {
+        self.bot_submission_for_attempt(attempt)?
+            .ok_or_else(invariant_failed)?;
+        let tx = self.connection.transaction().map_err(storage_failed)?;
+        let current =
+            query_attempt(&tx, "id", &attempt.to_storage())?.ok_or_else(invariant_failed)?;
+        if current.status.is_terminal() {
+            return Ok(());
+        }
+        tx.execute("UPDATE bot_run_replay SET stop_reason='owner_unavailable',updated_at_ms=?2 WHERE ai_attempt_id=?1 AND stop_reason IS NULL",
+            params![attempt.to_storage(),now.millis()]).map_err(storage_failed)?;
+        tx.execute("UPDATE inference_attempts SET status=?3,completed_at_ms=max(queued_at_ms,?2) WHERE id=?1",
+            params![attempt.to_storage(),now.millis(),if cancelled {"cancelled"}else {"interrupted"}]).map_err(storage_failed)?;
+        complete_message(
+            &tx,
+            current
+                .assistant_message_id
+                .map(MessageId::to_storage)
+                .as_deref(),
+            MessageState::Interrupted,
+            None,
+            now,
+        )?;
+        finish_agent_rows_on(
+            &tx,
+            attempt,
+            &BotTerminalCleanup {
+                retained_question_ids: Vec::new(),
+            },
+            now,
+        )?;
+        tx.commit().map_err(storage_failed)
+    }
     /// Foundation seam: the ai16 intent must already be prepared. P1.3's typed
     /// transaction helper will compose intent/lock preparation with this turn.
     /// This method neither creates nor repairs an admission receipt.
@@ -198,6 +304,10 @@ impl Repository {
         )
         .map_err(storage_failed)?;
         tx.commit().map_err(storage_failed)?;
+        #[cfg(any(test, feature = "fixtures"))]
+        if std::mem::take(&mut self.bot_replay_fail_after_commit) {
+            return Err(invariant_failed());
+        }
         Ok(BotReplayDisposition::Applied)
     }
 

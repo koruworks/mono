@@ -255,6 +255,7 @@ fn send_with(
         .send_turn(
             context(),
             SendTurnRequest {
+                destination_workspace: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -878,6 +879,7 @@ fn a_removed_profiles_chats_are_hidden_everywhere_until_it_is_restored() {
             .send_turn(
                 context(),
                 SendTurnRequest {
+                    destination_workspace: None,
                     operation_id: Uuid::new_v4(),
                     chat_id: gone_chat,
                     surface: AiSurface::Standalone,

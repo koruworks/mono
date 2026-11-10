@@ -211,7 +211,10 @@ fn populated_v16_migrates_twice_without_changing_chat_bot_or_receipt() {
         migrations: &db::MIGRATIONS[..16],
     };
     let connection = koru_sqlite::open_in_memory(&older).unwrap();
-    let mut repo = Repository { connection };
+    let mut repo = Repository {
+        connection,
+        bot_replay_fail_after_commit: false,
+    };
     let (bot, _, submission) = fixture(&mut repo);
     let ordinary = ChatId::new();
     repo.create_chat(&chat(ordinary, 0)).unwrap();

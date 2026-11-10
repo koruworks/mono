@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod chat;
 
 #[test]
 fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {
@@ -77,6 +78,7 @@ fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {
     );
     let (reply, response) = sync_channel(1);
     let request = SendTurnRequest {
+        destination_workspace: None,
         operation_id: pending.attempt.operation_id,
         chat_id: ChatId::new(),
         surface: AiSurface::Standalone,
@@ -108,6 +110,7 @@ fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {
     );
     let (reply, response) = sync_channel(1);
     let request = RetryTurnRequest {
+        destination_workspace: None,
         operation_id: pending.attempt.operation_id,
         message_id: pending.assistant_message.id,
         surface: AiSurface::Standalone,
@@ -136,7 +139,7 @@ fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {
 }
 use std::sync::atomic::{AtomicBool, Ordering};
 
-struct Authority {
+pub(super) struct Authority {
     owner: BotOwner,
     workspace: WorkspaceId,
     profile: koru_ai_core::ProfileId,
@@ -157,7 +160,7 @@ impl BotAuthority for Authority {
         self.workspace(page.workspace).map(|_| ())
     }
 }
-fn fixture() -> (Repository, Arc<Authority>, BotCommand) {
+pub(super) fn fixture() -> (Repository, Arc<Authority>, BotCommand) {
     let authority = Arc::new(Authority {
         owner: BotOwner {
             user_scope: UserScopeId::new(),
@@ -210,7 +213,11 @@ fn context(owner: bool) -> RequestContext {
         deadline_millis: None,
     }
 }
-fn created(repo: &mut Repository, authority: Arc<Authority>, command: BotCommand) -> Bot {
+pub(super) fn created(
+    repo: &mut Repository,
+    authority: Arc<Authority>,
+    command: BotCommand,
+) -> Bot {
     let BotResponse::Bot { bot } =
         execute_bot_command(repo, authority, |_| Ok(()), context(true), command).unwrap()
     else {
@@ -419,7 +426,7 @@ use koru_ai_core::*;
 fn at(ms: i64) -> Timestamp {
     Timestamp::from_millis(ms)
 }
-fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
+pub(super) fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
     let user_id = MessageId::new();
     let assistant_id = MessageId::new();
     PendingTurn {
@@ -593,6 +600,7 @@ fn stalled_bot_authority_is_bounded_and_ordinary_chat_keeps_progressing() {
         .send_turn(
             context(true),
             SendTurnRequest {
+                destination_workspace: None,
                 operation_id: Uuid::new_v4(),
                 chat_id: chat,
                 surface: AiSurface::Standalone,

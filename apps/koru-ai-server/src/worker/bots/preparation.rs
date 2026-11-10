@@ -27,6 +27,7 @@ pub(in crate::worker) struct PreparedBotCommand {
     pub(in crate::worker) chats: Vec<(BotId, ChatId, u64, u64)>,
     pub(in crate::worker) runtime: ApiResult<()>,
     pub(in crate::worker) pins: Vec<koru_delegate_core::RunContextItem>,
+    pub(in crate::worker) chat_snapshot: Option<Chat>,
 }
 pub(in crate::worker) struct BotPreparationJob {
     command: WorkerCommand,
@@ -36,6 +37,7 @@ pub(in crate::worker) struct BotPreparationJob {
     chats: Vec<(BotId, ChatId, u64, u64)>,
     model: Option<BotConfig>,
     capture: Option<(BotOwner, WorkspaceId, Vec<BotPage>)>,
+    chat_snapshot: Option<Chat>,
 }
 impl BotPreparationJob {
     pub(in crate::worker) fn run(
@@ -72,6 +74,7 @@ impl BotPreparationJob {
                 chats: self.chats.clone(),
                 runtime,
                 pins,
+                chat_snapshot: self.chat_snapshot.clone(),
             })
         }))
         .unwrap_or_else(|_| Err(bot_failure(BotError::Unavailable)));
@@ -129,6 +132,7 @@ impl WorkerState {
             }
             let mut model = None;
             let mut capture = None;
+            let mut chat_snapshot = None;
             if let WorkerCommand::Bots { request, .. } = &command {
                 match request {
                     BotCommand::Create {
@@ -205,6 +209,12 @@ impl WorkerState {
                     | BotCommand::ReconcileOperation { .. } => {}
                 }
             }
+            if let Some(chat) = chat::chat_capture(&self.repository, &command)? {
+                pages.extend(chat.pages.clone());
+                model = Some(chat.model);
+                capture = Some((chat.owner, chat.destination, chat.pages));
+                chat_snapshot = Some(chat.chat);
+            }
             // Every referenced workspace is inspected, including invalid foreign-page requests.
             workspaces.extend(pages.iter().map(|p| p.workspace));
             Ok((
@@ -213,9 +223,10 @@ impl WorkerState {
                 chats,
                 model,
                 capture,
+                chat_snapshot,
             ))
         })();
-        let (workspaces, pages, chats, model, capture) = match snapshot {
+        let (workspaces, pages, chats, model, capture, chat_snapshot) = match snapshot {
             Ok(value) => value,
             Err(error) => {
                 command.refuse(error);
@@ -230,6 +241,7 @@ impl WorkerState {
             chats,
             model,
             capture,
+            chat_snapshot,
         };
         let Some(pool) = self.provider_admin.as_ref() else {
             job.command.refuse(bot_failure(BotError::Unavailable));
@@ -261,6 +273,21 @@ impl WorkerState {
             return;
         }
         // Authority evidence is bound to the writer snapshot; a queued edit/lifecycle change invalidates it.
+        if let Some(expected) = &proof.chat_snapshot {
+            match self
+                .repository
+                .chat_with_access(expected.id, &ChatReadAccess::authorized(vec![expected.id]))
+            {
+                Ok(Some(chat))
+                    if chat.current_model == expected.current_model
+                        && chat.agent_mode == expected.agent_mode
+                        && chat.agent_fast == expected.agent_fast => {}
+                _ => {
+                    command.refuse(bot_failure(BotError::RevisionConflict));
+                    return;
+                }
+            }
+        }
         for (id, chat, revision, policy) in &proof.chats {
             match self.repository.bot(*id) {
                 Ok(Some(bot))

@@ -5105,6 +5105,7 @@ impl ChatSurface {
         });
         self.messages_dirty = true;
         let request = SendTurnRequest {
+            destination_workspace: None,
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
             surface: SURFACE,
@@ -9265,6 +9266,7 @@ impl ChatSurface {
                 self.send_command(Command::Retry(
                     chat.id,
                     RetryTurnRequest {
+                        destination_workspace: None,
                         operation_id: uuid::Uuid::new_v4(),
                         message_id: message,
                         surface: SURFACE,

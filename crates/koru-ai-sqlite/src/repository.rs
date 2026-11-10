@@ -35,12 +35,16 @@ pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 
 pub struct Repository {
     connection: Connection,
+    #[cfg(any(test, feature = "fixtures"))]
+    bot_replay_fail_after_commit: bool,
 }
 
 impl Repository {
     pub fn open(path: &Path) -> Result<Self, OpenError> {
         Ok(Self {
             connection: db::open(path)?,
+            #[cfg(any(test, feature = "fixtures"))]
+            bot_replay_fail_after_commit: false,
         })
     }
 
@@ -48,6 +52,7 @@ impl Repository {
     pub fn in_memory() -> Result<Self, OpenError> {
         Ok(Self {
             connection: db::open_in_memory()?,
+            bot_replay_fail_after_commit: false,
         })
     }
 

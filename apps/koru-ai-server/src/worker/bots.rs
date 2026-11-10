@@ -14,6 +14,7 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
 }
 
 mod admission;
+pub(in crate::worker) mod chat;
 pub(crate) mod policy;
 mod preparation;
 pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
@@ -381,7 +382,12 @@ fn guard_command(
                 authority.ok_or_else(|| bot_failure(BotError::Unavailable))?,
                 &bot,
             )?;
-            if !command.bot_read_only() {
+            let implemented = matches!(
+                command,
+                WorkerCommand::SendTurn { .. } | WorkerCommand::RetryTurn { .. }
+            ) || matches!(&command,WorkerCommand::CancelAttempt {attempt,..}
+                    if repository.bot_submission_for_attempt(*attempt).map_err(ai_failure)?.is_some());
+            if !command.bot_read_only() && !implemented {
                 return Err(failure(
                     "unsupported_capability",
                     "Bot conversation controls are not available yet.",

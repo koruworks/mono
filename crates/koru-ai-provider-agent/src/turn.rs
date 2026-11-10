@@ -18,7 +18,7 @@
 //! pictures — or a file it should read — still has them. The session's copies
 //! are removed when the turn ends, which frees the host's slots.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -26,17 +26,15 @@ use std::sync::mpsc::{Receiver, sync_channel};
 use std::time::{Duration, Instant};
 
 use koru_ai_core::{
-    AgentActivityEvent, AgentToolFailure, AgentToolKind, AiError, AiErrorClass, AiEvent, AiRequest,
-    AiUsage, AttachmentInput, AttachmentKind, AttemptNotice, Cancellation, ChatRole, ChoiceIntent,
-    ContextItem, InferenceAttemptId, OfferedChoice, ProviderStream, ReasoningChoice,
-    ReasoningLevel, Timestamp, ToolInvocationId, UsageSource, bound_agent_content, bound_live_text,
+    AiError, AiErrorClass, AiEvent, AiRequest, AttachmentInput, AttachmentKind, AttemptNotice,
+    Cancellation, ChatRole, ContextItem, InferenceAttemptId, ProviderStream, ReasoningChoice,
+    ReasoningLevel, Timestamp,
 };
 use koru_session_client::{ClientError, SessionClient, Subscription};
 use koru_session_protocol::{
-    AgentEvent, AgentModeId, AgentTurnId, AgentUsage, ApprovalDecision, ApprovalId, ApprovalIntent,
-    Attachment, AttachmentId, AttachmentSource, CancelReason, ControllerLeaseToken, DeliveryMode,
-    ErrorCode, IdempotencyKey, LaunchReasoning, LaunchSelection, ModelIdentity, ModelName,
-    PendingInput, SessionId, ToolCallId, ToolFailure, ToolKind, ViewportGeneration,
+    AgentEvent, AgentModeId, AgentTurnId, Attachment, AttachmentId, AttachmentSource, CancelReason,
+    ControllerLeaseToken, DeliveryMode, ErrorCode, IdempotencyKey, LaunchReasoning,
+    LaunchSelection, ModelIdentity, ModelName, PendingInput, SessionId, ViewportGeneration,
 };
 use koru_session_wire::SubscriptionUpdate;
 
@@ -392,10 +390,19 @@ pub(crate) fn start(
     });
     // The answers' set closes in this reply: its resolution is followed here
     // though another turn asked it.
-    let question_rows = answering
+    let question_rows: Vec<_> = answering
         .map(|(invocation, set, _)| (set.request, invocation))
         .into_iter()
         .collect();
+    let mut mapper = crate::mapping::AgentEventMapper::new(
+        attempt,
+        sent.turn_id,
+        request.options.agent_mode.clone(),
+        crate::mapping::UsageDelivery::AtTerminal,
+    );
+    for (request, invocation) in question_rows {
+        mapper.seed(crate::mapping::AgentSource::Questions(request), invocation);
+    }
     Ok(Box::new(TurnStream {
         attempt,
         chat,
@@ -410,12 +417,8 @@ pub(crate) fn start(
         cancellation,
         cancelling: None,
         queued,
-        tools: HashMap::new(),
-        approvals: HashMap::new(),
-        question_rows,
-        usage: None,
+        mapper,
         ingested: delivered.native,
-        started_in: request.options.agent_mode.clone(),
         done: false,
     }))
 }
@@ -786,16 +789,9 @@ struct TurnStream {
     cancellation: Cancellation,
     cancelling: Option<Instant>,
     queued: VecDeque<AiEvent>,
-    tools: HashMap<ToolCallId, ToolInvocationId>,
-    approvals: HashMap<ApprovalId, ToolInvocationId>,
-    /// Each question set this turn asked, by the row it is (D108).
-    question_rows: HashMap<koru_session_protocol::QuestionRequestId, ToolInvocationId>,
-    usage: Option<AiUsage>,
+    mapper: crate::mapping::AgentEventMapper,
     /// The session's copies of this turn's pictures, removed when it ends.
     ingested: Vec<AttachmentId>,
-    /// The chat's mode the message was sent in, for a move the agent makes
-    /// during it (D7).
-    started_in: Option<String>,
     done: bool,
 }
 
@@ -981,299 +977,65 @@ impl TurnStream {
     }
 
     fn queue_terminal(&mut self, terminal: AiEvent) {
-        if let Some(usage) = self.usage.take() {
-            self.queued.push_back(AiEvent::Usage {
-                attempt_id: self.attempt,
-                usage,
-            });
-        }
-        self.queued.push_back(terminal);
+        let mut events = Vec::new();
+        self.mapper.queue_terminal(&mut events, terminal);
+        self.queued.extend(events);
     }
 
     fn apply(&mut self, event: AgentEvent) {
-        let at = Timestamp::now();
-        let attempt_id = self.attempt;
-        match event {
-            AgentEvent::TurnStarted { turn_id } if turn_id == self.turn => {}
-            AgentEvent::ContextUsage { used, size } if size > 0 => {
-                self.queued.push_back(AiEvent::ContextUsage {
-                    attempt_id,
-                    used,
-                    size,
-                });
-            }
-            AgentEvent::MessageDelta { turn_id, text } if turn_id == self.turn => {
-                self.queued.push_back(AiEvent::TextDelta {
-                    attempt_id,
-                    text,
-                    at,
-                });
-            }
-            AgentEvent::ToolStarted {
-                turn_id,
-                tool_call_id,
-                label,
-                input,
-            } if turn_id == self.turn => {
-                let invocation = ToolInvocationId::new();
-                self.tools.insert(tool_call_id, invocation);
-                self.queued.push_back(AiEvent::AgentActivity {
-                    attempt_id,
-                    activity: AgentActivityEvent::ToolStarted {
-                        invocation,
-                        label: bound_live_text(&label),
-                        input: input.as_deref().and_then(bound_agent_content),
-                    },
-                    at,
-                });
-            }
-            AgentEvent::ToolCompleted {
-                turn_id,
-                tool_call_id,
-                succeeded,
-                tool,
-                failure,
-                detail,
-                output,
-            } if turn_id == self.turn => {
-                let invocation = match self.tools.remove(&tool_call_id) {
-                    Some(invocation) => invocation,
-                    None => {
-                        // A completion for a start this turn never saw:
-                        // give it a row anyway, so the outcome is kept.
-                        let invocation = ToolInvocationId::new();
-                        self.queued.push_back(AiEvent::AgentActivity {
-                            attempt_id,
-                            activity: AgentActivityEvent::ToolStarted {
-                                invocation,
-                                label: String::new(),
-                                input: None,
-                            },
-                            at,
-                        });
-                        invocation
-                    }
-                };
-                self.queued.push_back(AiEvent::AgentActivity {
-                    attempt_id,
-                    activity: AgentActivityEvent::ToolCompleted {
-                        invocation,
-                        tool: agent_tool_kind(tool),
-                        succeeded,
-                        failure: failure.map(|failure| match failure {
-                            ToolFailure::Denied => AgentToolFailure::Denied,
-                            ToolFailure::Cancelled => AgentToolFailure::Cancelled,
-                            ToolFailure::TimedOut => AgentToolFailure::TimedOut,
-                            ToolFailure::Errored => AgentToolFailure::Errored,
-                            ToolFailure::Unclassified => AgentToolFailure::Unclassified,
-                        }),
-                        detail: detail.as_deref().map(bound_live_text),
-                        output: output.as_deref().and_then(bound_agent_content),
-                    },
-                    at,
-                });
-            }
-            AgentEvent::ApprovalRequired {
-                turn_id,
-                approval_id,
-                summary,
-                choices,
-            } if turn_id == self.turn => {
-                let invocation = ToolInvocationId::new();
-                self.approvals.insert(approval_id, invocation);
-                self.live.offer(
-                    attempt_id,
+        use crate::mapping::AgentLiveAction;
+        let mapped = self
+            .mapper
+            .apply(event, Timestamp::now(), self.cancelling.is_some());
+        for action in mapped.live {
+            match action {
+                AgentLiveAction::OfferApproval {
                     invocation,
-                    PendingApproval {
-                        approval: approval_id,
-                        choices: choices
-                            .iter()
-                            .map(|choice| (choice.id, choice.intent.decision()))
-                            .collect(),
-                    },
-                );
-                self.queued.push_back(AiEvent::AgentActivity {
-                    attempt_id,
-                    activity: AgentActivityEvent::ApprovalRequired {
-                        invocation,
-                        summary: bound_live_text(&summary),
-                        choices: choices
-                            .into_iter()
-                            .map(|choice| OfferedChoice {
-                                id: choice.id.to_string(),
-                                intent: choice_intent(choice.intent),
-                                label: bound_live_text(&choice.label),
-                            })
-                            .collect(),
-                    },
-                    at,
-                });
-            }
-            AgentEvent::ApprovalResolved {
-                turn_id,
-                approval_id,
-                decision,
-                ..
-            } if turn_id == self.turn => {
-                self.live.settle(attempt_id, approval_id);
-                if let Some(invocation) = self.approvals.remove(&approval_id) {
-                    self.queued.push_back(AiEvent::AgentActivity {
-                        attempt_id,
-                        activity: AgentActivityEvent::ApprovalResolved {
-                            invocation,
-                            approved: decision == ApprovalDecision::Approve,
-                        },
-                        at,
-                    });
-                }
-            }
-            AgentEvent::ApprovalExpired {
-                turn_id,
-                approval_id,
-            } if turn_id == self.turn => {
-                self.live.settle(attempt_id, approval_id);
-                if let Some(invocation) = self.approvals.remove(&approval_id) {
-                    self.queued.push_back(AiEvent::AgentActivity {
-                        attempt_id,
-                        activity: AgentActivityEvent::ApprovalExpired { invocation },
-                        at,
-                    });
-                }
-            }
-            AgentEvent::Usage { turn_id, usage } if turn_id == self.turn => {
-                // The adapter reports the turn's total so far, replacing the
-                // last; one usage event reaches the chat, at the end.
-                self.usage = Some(ai_usage(&usage));
-            }
-            AgentEvent::TurnCompleted { turn_id } if turn_id == self.turn => {
-                self.queue_terminal(AiEvent::Completed {
-                    attempt_id,
-                    stop_reason: None,
-                    at,
-                });
-            }
-            AgentEvent::TurnCancelled { turn_id, .. } if turn_id == self.turn => {
-                self.queue_terminal(AiEvent::Cancelled { attempt_id, at });
-            }
-            AgentEvent::TurnFailed { turn_id, error } if turn_id == self.turn => {
-                let terminal = if self.cancelling.is_some() {
-                    AiEvent::Cancelled { attempt_id, at }
-                } else {
-                    tracing::info!(
-                        target: "koru_ai::agent",
-                        code = %error.code,
-                        "agent turn failed"
-                    );
-                    AiEvent::Failed {
-                        attempt_id,
-                        error: AiError::new(
-                            AiErrorClass::Provider,
-                            "The agent could not finish this turn.",
-                            true,
-                        ),
-                        at,
-                    }
-                };
-                self.queue_terminal(terminal);
-            }
-            AgentEvent::ModeChanged { turn_id, mode } if turn_id == self.turn => {
-                self.queued.push_back(AiEvent::AgentActivity {
-                    attempt_id,
-                    activity: AgentActivityEvent::ModeChanged {
-                        started_in: self.started_in.clone(),
-                        mode: mode.as_str().to_owned(),
-                    },
-                    at,
-                });
-            }
-            // A status line, not the reply (D69): kept beside it.
-            AgentEvent::Notice { turn_id, text } if turn_id == self.turn => {
-                self.queued.push_back(AiEvent::AgentActivity {
-                    attempt_id,
-                    activity: AgentActivityEvent::Notice { text },
-                    at,
-                });
-            }
-            // The agent stopped to ask (D108): a row of its own, filed as a
-            // permission request, whose questions are live until answered.
-            AgentEvent::QuestionsRequired {
-                turn_id,
-                request_id,
-                questions,
-                blocking,
-                delivery,
-            } if turn_id == self.turn => {
-                let invocation = ToolInvocationId::new();
-                let next_message =
-                    delivery == koru_session_protocol::QuestionsDelivery::NextMessage;
-                self.question_rows.insert(request_id, invocation);
-                self.live.offer_questions(
-                    attempt_id,
+                    approval,
+                    choices,
+                } => self.live.offer(
+                    self.attempt,
                     invocation,
-                    crate::PendingQuestions {
-                        request: request_id,
-                        questions: questions.clone(),
-                    },
-                );
-                // A set answered by the next message outlives this turn.
-                if next_message {
-                    self.live.keep_next_message(
+                    PendingApproval { approval, choices },
+                ),
+                AgentLiveAction::SettleApproval { approval } => {
+                    self.live.settle(self.attempt, approval)
+                }
+                AgentLiveAction::OfferQuestions {
+                    invocation,
+                    request,
+                    questions,
+                    next_message,
+                } => {
+                    self.live.offer_questions(
+                        self.attempt,
                         invocation,
-                        crate::NextMessageSet {
-                            chat: self.chat,
-                            session: self.session,
-                            request: request_id,
+                        crate::PendingQuestions {
+                            request,
                             questions: questions.clone(),
                         },
                     );
-                }
-                self.queued.push_back(AiEvent::AgentActivity {
-                    attempt_id,
-                    activity: AgentActivityEvent::QuestionsAsked {
-                        invocation,
-                        questions: questions.into_iter().map(chat_question).collect(),
-                        blocking,
-                        next_message,
-                    },
-                    at,
-                });
-            }
-            // A set this turn asked, or one whose answers this turn carries.
-            AgentEvent::QuestionsResolved {
-                turn_id,
-                request_id,
-                outcome,
-            } if turn_id == self.turn || self.question_rows.contains_key(&request_id) => {
-                self.live.settle_questions(attempt_id, request_id);
-                if let Some(invocation) = self.question_rows.remove(&request_id) {
-                    self.live.forget_next_message(invocation);
-                    use koru_session_protocol::QuestionsOutcome;
-                    let activity = match outcome {
-                        QuestionsOutcome::Answered { answers } => {
-                            AgentActivityEvent::QuestionsAnswered {
-                                invocation,
-                                answers: Some(answers.into_iter().map(chat_answer).collect()),
-                            }
-                        }
-                        QuestionsOutcome::Skipped => AgentActivityEvent::QuestionsAnswered {
+                    if next_message {
+                        self.live.keep_next_message(
                             invocation,
-                            answers: None,
-                        },
-                        QuestionsOutcome::Expired => {
-                            AgentActivityEvent::ApprovalExpired { invocation }
-                        }
-                    };
-                    self.queued.push_back(AiEvent::AgentActivity {
-                        attempt_id,
-                        activity,
-                        at,
-                    });
+                            crate::NextMessageSet {
+                                chat: self.chat,
+                                session: self.session,
+                                request,
+                                questions,
+                            },
+                        );
+                    }
+                }
+                AgentLiveAction::SettleQuestions { request } => {
+                    self.live.settle_questions(self.attempt, request)
+                }
+                AgentLiveAction::ForgetNextMessage { invocation } => {
+                    self.live.forget_next_message(invocation)
                 }
             }
-            // Another turn's events, provider state, attachments, children:
-            // counted, never surfaced.
-            _ => {}
         }
+        self.queued.extend(mapped.events);
     }
 
     fn finish(&mut self) {
@@ -1296,79 +1058,6 @@ impl TurnStream {
 impl Drop for TurnStream {
     fn drop(&mut self) {
         self.finish();
-    }
-}
-
-/// A question as the chat keeps it: the agent's words, its options in its
-/// order (D108).
-fn chat_question(question: koru_session_protocol::AgentQuestion) -> koru_ai_core::AgentQuestion {
-    koru_ai_core::AgentQuestion {
-        id: question.id,
-        header: question.header,
-        question: question.question,
-        options: question
-            .options
-            .into_iter()
-            .map(|option| koru_ai_core::AgentQuestionOption {
-                label: option.label,
-                description: option.description,
-            })
-            .collect(),
-        allow_other: question.allow_other,
-        secret: question.secret,
-    }
-}
-
-/// An answer as the chat keeps it; a secret's arrives withheld.
-fn chat_answer(answer: koru_session_protocol::QuestionAnswer) -> koru_ai_core::AgentAnswer {
-    use koru_ai_core::AgentAnswerValue;
-    use koru_session_protocol::QuestionAnswerValue;
-    koru_ai_core::AgentAnswer {
-        question_id: answer.question_id,
-        value: match answer.value {
-            QuestionAnswerValue::Option { label } => AgentAnswerValue::Option { label },
-            QuestionAnswerValue::Text { text } => AgentAnswerValue::Text { text },
-            QuestionAnswerValue::Withheld => AgentAnswerValue::Withheld,
-        },
-    }
-}
-
-fn agent_tool_kind(kind: Option<ToolKind>) -> AgentToolKind {
-    match kind {
-        Some(ToolKind::CommandExecution) => AgentToolKind::Command,
-        Some(ToolKind::FileChange) => AgentToolKind::FileChange,
-        Some(ToolKind::WebSearch) => AgentToolKind::Search,
-        Some(ToolKind::McpTool) => AgentToolKind::Mcp,
-        Some(_) | None => AgentToolKind::Other,
-    }
-}
-
-fn choice_intent(intent: ApprovalIntent) -> ChoiceIntent {
-    match intent {
-        ApprovalIntent::Allow => ChoiceIntent::AllowOnce,
-        ApprovalIntent::AllowRemembered => ChoiceIntent::AllowAlways,
-        ApprovalIntent::Reject => ChoiceIntent::RejectOnce,
-        ApprovalIntent::RejectRemembered => ChoiceIntent::RejectAlways,
-    }
-}
-
-fn ai_usage(usage: &AgentUsage) -> AiUsage {
-    let reported = usage.input_tokens.is_some() || usage.output_tokens.is_some();
-    AiUsage {
-        prompt_tokens: usage.input_tokens,
-        cached_prompt_tokens: usage.cached_input_tokens,
-        completion_tokens: usage.output_tokens,
-        reasoning_tokens: None,
-        total_tokens: match (usage.input_tokens, usage.output_tokens) {
-            (Some(input), Some(output)) => Some(input.saturating_add(output)),
-            (Some(only), None) | (None, Some(only)) => Some(only),
-            (None, None) => None,
-        },
-        source: if reported {
-            UsageSource::ProviderReported
-        } else {
-            UsageSource::Unavailable
-        },
     }
 }
 
@@ -1528,40 +1217,6 @@ mod tests {
         assert_eq!(
             high.and_then(applied_choice),
             Some(ReasoningChoice::Level(ReasoningLevel::High))
-        );
-    }
-
-    #[test]
-    fn usage_is_a_replacing_total_mapped_once() {
-        let usage = ai_usage(&AgentUsage {
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            cached_input_tokens: Some(2),
-            cached_input: Default::default(),
-            model: None,
-        });
-        assert_eq!(usage.total_tokens, Some(15));
-        assert_eq!(usage.source, UsageSource::ProviderReported);
-        let none = ai_usage(&AgentUsage {
-            input_tokens: None,
-            output_tokens: None,
-            cached_input_tokens: None,
-            cached_input: Default::default(),
-            model: None,
-        });
-        assert_eq!(none.source, UsageSource::Unavailable);
-    }
-
-    #[test]
-    fn tool_kinds_and_choice_intents_map_onto_closed_tokens() {
-        assert_eq!(
-            agent_tool_kind(Some(ToolKind::CommandExecution)),
-            AgentToolKind::Command
-        );
-        assert_eq!(agent_tool_kind(None), AgentToolKind::Other);
-        assert_eq!(
-            choice_intent(ApprovalIntent::AllowRemembered),
-            ChoiceIntent::AllowAlways
         );
     }
 

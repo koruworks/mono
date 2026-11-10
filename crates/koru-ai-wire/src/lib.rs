@@ -356,6 +356,10 @@ pub struct BranchChatResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetryTurnRequest {
+    /// Explicit submission destination for a Bot conversation. Ordinary chats
+    /// omit it; a Bot never infers this grant from its home workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_workspace: Option<WorkspaceId>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub message_id: MessageId,
@@ -423,6 +427,10 @@ pub const MAX_CONTEXT_REFS: usize = 16;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SendTurnRequest {
+    /// Explicit submission destination for a Bot conversation. Ordinary chats
+    /// omit it; a Bot never infers this grant from its home workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_workspace: Option<WorkspaceId>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub chat_id: ChatId,

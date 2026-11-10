@@ -12210,6 +12210,20 @@
       "RetryTurnRequest": {
         "additionalProperties": false,
         "properties": {
+          "destination_workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Explicit submission destination for a Bot conversation. Ordinary chats\nomit it; a Bot never infers this grant from its home workspace."
+          },
           "explicit_refs": {
             "default": [],
             "items": {
@@ -14347,6 +14361,20 @@
           },
           "chat_id": {
             "$ref": "#/components/schemas/ChatId"
+          },
+          "destination_workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Explicit submission destination for a Bot conversation. Ordinary chats\nomit it; a Bot never infers this grant from its home workspace."
           },
           "explicit_refs": {
             "default": [],

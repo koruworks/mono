@@ -130,6 +130,7 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
     let mut stream = client
         .ai()
         .send_turn(&SendTurnRequest {
+            destination_workspace: None,
             operation_id,
             chat_id,
             surface: AiSurface::Standalone,
@@ -177,6 +178,7 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
     let replay = client
         .ai()
         .send_turn(&SendTurnRequest {
+            destination_workspace: None,
             operation_id,
             chat_id,
             surface: AiSurface::Standalone,
@@ -197,6 +199,7 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
     let mut dropped = client
         .ai()
         .send_turn(&SendTurnRequest {
+            destination_workspace: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -256,6 +259,7 @@ fn public_stream_disconnect_then_cancel_is_durable_and_not_duplicated() {
     let mut stream = client
         .ai()
         .send_turn(&SendTurnRequest {
+            destination_workspace: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -313,6 +317,7 @@ fn an_existing_client_recovers_interrupted_history_after_gateway_restart() {
     let mut stream = client
         .ai()
         .send_turn(&SendTurnRequest {
+            destination_workspace: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -416,6 +421,7 @@ fn every_in_flight_stream_reaches_one_terminal_outcome_when_the_host_dies() {
             client
                 .ai()
                 .send_turn(&SendTurnRequest {
+                    destination_workspace: None,
                     operation_id: Uuid::new_v4(),
                     chat_id,
                     surface: AiSurface::Standalone,
