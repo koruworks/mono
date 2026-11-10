@@ -112,6 +112,7 @@ pub fn protocol_offer() -> koru_session_protocol::ProtocolOffer {
         capability::MANAGED_QUESTIONS,
         capability::AGENT_COMMANDS,
         capability::PATH_REFERENCES,
+        capability::CONDITIONAL_TURN_STEERING,
     ]
     .into_iter()
     .map(|name| CapabilityName::from_str(name).expect("built-in capability"));

@@ -410,3 +410,59 @@ fn path_references_are_refused_before_a_v23_wire() {
     ));
     assert!(bytes.lock().unwrap().is_empty(), "refused before the wire");
 }
+
+#[test]
+fn conditional_steering_never_downgrades_or_writes_unsupported_input() {
+    let input = PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        text: "amend".into(),
+        attachment_ids: vec![],
+        references: vec![],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: vec![],
+        model: None,
+    };
+    for version in [24, 25] {
+        for enabled in [false, true] {
+            let (mut client, bytes) = approval_client(version, true, false);
+            if enabled {
+                client.host.agreement.capabilities = koru_session_protocol::CapabilitySet::new([
+                    koru_session_protocol::capability::CONDITIONAL_TURN_STEERING
+                        .parse()
+                        .unwrap(),
+                ]);
+            }
+            let result = client.steer_pending_input(
+                SessionId::mint(),
+                ControllerLeaseToken::mint(),
+                koru_session_protocol::AgentTurnId::mint(),
+                input.clone(),
+            );
+            if version == 25 && enabled {
+                assert!(matches!(result, Err(ClientError::UnexpectedResponse)));
+                let sent = bytes.lock().unwrap();
+                assert!(String::from_utf8_lossy(&sent).contains("steer_pending_input"));
+                assert!(String::from_utf8_lossy(&sent).contains("expected_turn"));
+            } else {
+                assert!(
+                    matches!(result, Err(ClientError::Session(ref error)) if error.code == ErrorCode::CapabilityNotNegotiated)
+                );
+                assert!(bytes.lock().unwrap().is_empty());
+            }
+        }
+    }
+    let (mut client, bytes) = approval_client(25, true, false);
+    client.host.agreement.capabilities = koru_session_protocol::CapabilitySet::new([
+        koru_session_protocol::capability::CONDITIONAL_TURN_STEERING
+            .parse()
+            .unwrap(),
+    ]);
+    let mut unsupported = input;
+    unsupported.fast = Some(false);
+    assert!(
+        matches!(client.steer_pending_input(SessionId::mint(), ControllerLeaseToken::mint(), koru_session_protocol::AgentTurnId::mint(), unsupported), Err(ClientError::Session(ref error)) if error.code == ErrorCode::DeliveryUnsupported)
+    );
+    assert!(bytes.lock().unwrap().is_empty());
+}

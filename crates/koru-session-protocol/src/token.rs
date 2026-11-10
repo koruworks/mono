@@ -203,6 +203,9 @@ pub mod capability {
     /// v23 local file and folder paths delivered without copying bytes.
     pub const PATH_REFERENCES: &str = "path-references";
 
+    /// v25: the owner and native adapter fence steering to one active turn.
+    pub const CONDITIONAL_TURN_STEERING: &str = "conditional-turn-steering";
+
     pub const ALL: &[&str] = &[
         CONTROLLER_LEASES,
         RENDER_DELTAS,
@@ -238,5 +241,6 @@ pub mod capability {
         MANAGED_QUESTIONS,
         AGENT_COMMANDS,
         PATH_REFERENCES,
+        CONDITIONAL_TURN_STEERING,
     ];
 }
