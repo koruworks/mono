@@ -325,6 +325,12 @@ fn guard_command(
         let Some(context) = command.bot_context() else {
             return Ok(());
         };
+        if let WorkerCommand::BranchChat { request, .. } = &command {
+            super::attachments::require_ordinary_branch_destination(
+                repository,
+                request.branch_chat_id,
+            )?;
+        }
         let operation = match &command {
             WorkerCommand::SendTurn { request, .. } => {
                 Some((request.operation_id, request.chat_id))

@@ -33,6 +33,68 @@ pub(super) enum BranchPlan {
     Copy(Box<BranchCopy>, Vec<BranchFolder>),
 }
 
+/// Visibility-filtered reads cannot establish that a destination is unused.
+pub(super) fn require_ordinary_branch_destination(
+    repository: &Repository,
+    destination: ChatId,
+) -> ApiResult<()> {
+    if repository
+        .bot_for_chat(destination)
+        .map_err(super::bots::bot_failure)?
+        .is_some()
+    {
+        return Err(branch_identity_conflict());
+    }
+    Ok(())
+}
+
+fn branch_identity_conflict() -> Failure {
+    failure(
+        "idempotency_conflict",
+        "This chat identity was already used for another branch.",
+        false,
+    )
+}
+
+pub(super) fn require_unreserved_branch(
+    branching: &HashSet<ChatId>,
+    chat: ChatId,
+) -> ApiResult<()> {
+    if branching.contains(&chat) {
+        return Err(failure(
+            "chat_busy",
+            "This branch is still being made.",
+            true,
+        ));
+    }
+    Ok(())
+}
+
+/// Only this copy's fresh attachment identities belong to its rollback.
+pub(super) fn commit_branch_copy(
+    repository: &mut Repository,
+    cleanup: &Cleanup,
+    copy: &BranchCopy,
+) -> ApiResult<()> {
+    let committed = (|| {
+        require_ordinary_branch_destination(repository, copy.chat.id)?;
+        if repository.chat(copy.chat.id).map_err(ai_failure)?.is_some() {
+            return Err(branch_identity_conflict());
+        }
+        repository.create_branch(copy).map_err(ai_failure)
+    })();
+    if committed.is_err() {
+        cleanup.submit(CleanupJob::RemoveAttachments(
+            copy.attachments
+                .iter()
+                .filter(|record| record.attachment.source != AttachmentSource::Path)
+                .map(|record| (record.chat_id, record.attachment.id))
+                .collect(),
+        ));
+    }
+    committed
+}
+
 impl WorkerState {
     // ----- rows, for the caller's thread --------------------------------
 
@@ -331,12 +393,8 @@ impl WorkerState {
         request: BranchChatRequest,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     ) {
-        if self.branching.contains(&request.branch_chat_id) {
-            let _ = reply.send(Err(failure(
-                "chat_busy",
-                "This branch is still being made.",
-                true,
-            )));
+        if let Err(error) = require_unreserved_branch(&self.branching, request.branch_chat_id) {
+            let _ = reply.send(Err(error));
             return;
         }
         match self.branch_chat(context.clone(), source, request) {
@@ -384,14 +442,11 @@ impl WorkerState {
             )));
             return;
         }
-        let answer = match self.repository.create_branch(&copy) {
+        let answer = match commit_branch_copy(&mut self.repository, &self.cleanup, &copy) {
             Ok(()) => self
                 .read_chat(context, branch)
                 .map(|transcript| BranchChatResponse { transcript }),
-            Err(error) => {
-                self.cleanup.submit(CleanupJob::RemoveChat(branch));
-                Err(ai_failure(error))
-            }
+            Err(error) => Err(error),
         };
         let _ = reply.send(answer);
     }
