@@ -85,6 +85,9 @@ pub(crate) struct ChatQueue {
     pub(crate) items: VecDeque<Queued>,
     /// Waiting for *Send next* or a send by hand, after a Stop or a failure.
     pub(crate) paused: bool,
+    /// A bounded uncertainty explanation that passive stream updates cannot
+    /// clear. It belongs to the preserved head item, not transient UI status.
+    pub(crate) pause_reason: Option<String>,
     /// The visible card keeps its header while its rows are folded.
     pub(crate) collapsed: bool,
 }
@@ -124,6 +127,9 @@ impl Queues {
     pub(crate) fn remove(&mut self, chat: ChatId, index: usize) -> Option<Queued> {
         let queue = self.by_chat.get_mut(&chat)?;
         let item = queue.items.remove(index);
+        if index == 0 && item.is_some() {
+            queue.pause_reason = None;
+        }
         self.forget_if_empty(chat);
         item
     }
@@ -140,11 +146,18 @@ impl Queues {
     pub(crate) fn resume(&mut self, chat: ChatId) {
         if let Some(queue) = self.by_chat.get_mut(&chat) {
             queue.paused = false;
+            queue.pause_reason = None;
         }
     }
 
     pub(crate) fn is_paused(&self, chat: ChatId) -> bool {
         self.get(chat).is_some_and(|queue| queue.paused)
+    }
+
+    pub(crate) fn pause_reason(&self, chat: ChatId) -> Option<&str> {
+        self.get(chat)
+            .filter(|queue| queue.paused)
+            .and_then(|queue| queue.pause_reason.as_deref())
     }
 
     fn forget_if_empty(&mut self, chat: ChatId) {
@@ -364,7 +377,9 @@ impl ChatSurface {
                 }
             }
             ReplyEnd::Stopped if steering => {
-                self.send_queue_head();
+                if !self.queues.is_paused(chat) {
+                    self.send_queue_head();
+                }
             }
             ReplyEnd::Stopped | ReplyEnd::Failed => self.queues.pause(chat),
         }
@@ -443,6 +458,11 @@ impl ChatSurface {
     /// to an agent that takes it; otherwise the reply is stopped and the item
     /// sent first. With no reply running it is simply sent now.
     fn steer_queued(&mut self, chat: ChatId, index: usize) -> bool {
+        // There is one acknowledgment slot. Do not remove or overwrite a
+        // second item while the first native steer still owns that slot.
+        if self.steering.is_some() {
+            return false;
+        }
         let Some(item) = self.queues.remove(chat, index) else {
             return false;
         };
@@ -472,9 +492,8 @@ impl ChatSurface {
 
     /// Hand the item's text to the running turn. The item waits beside the
     /// request until the service answers: accepted, it shows as a sent
-    /// message under the question, above the reply (D99); refused, it goes
-    /// back to the head of the queue, unpaused, and is sent when the reply
-    /// ends.
+    /// message under the question, above the reply (D99). A safe refusal
+    /// queues it for after the reply; uncertain delivery preserves it paused.
     fn steer_natively(&mut self, chat: ChatId, attempt: InferenceAttemptId, item: Queued) -> bool {
         let request = koru_ai_wire::SteerAttemptRequest {
             operation_id: uuid::Uuid::new_v4(),
@@ -506,17 +525,31 @@ impl ChatSurface {
         }
     }
 
-    /// The service would not take the steer — the turn ended first, or its
-    /// agent took no text just then: the item is first in line, sent when
-    /// the reply ends.
+    /// Safe refusal keeps the item first in line for after the reply.
+    /// Uncertain delivery keeps it paused for deliberate review instead.
     pub(crate) fn steer_refused(&mut self, failure: &koru_ai_wire::Failure) {
+        // Delivery may have happened before an acknowledgment was lost. A
+        // fresh queued send would repeat it with a different identity.
+        let uncertain = failure.code == "steer_failed" && !failure.retryable;
         if let Some((chat, item)) = self.steering.take() {
             self.queues.push_front(chat, item);
+            if uncertain {
+                self.queues.pause(chat);
+                if self.steer_after_cancel == Some(chat) {
+                    self.steer_after_cancel = None;
+                }
+                if let Some(queue) = self.queues.by_chat.get_mut(&chat) {
+                    let detail = super::failure_text(failure, self.lang);
+                    let reason = fill(t(self.lang, Key::AiSteerDeliveryUncertain), &[&detail]);
+                    queue.pause_reason = Some(koru_ai_core::bound_live_text(&reason));
+                }
+            }
         }
         tracing::info!(
             target: "koru_ai::ui",
             code = failure.code,
-            "AI UI steer was not taken; the message is first in the queue"
+            uncertain,
+            "AI UI steer was not confirmed; the message is preserved in the queue"
         );
     }
 

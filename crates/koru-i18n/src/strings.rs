@@ -507,6 +507,7 @@ pub enum Key {
     AiFailureContextTooLarge,
     AiFailureModelUnavailable,
     AiFailureNetwork,
+    AiSteerDeliveryUncertain,
     AiFailureProvider,
     AiFailureCancelled,
     AiFailureStorage,
@@ -3175,7 +3176,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2218] = [
+    pub const ALL: [Key; 2219] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3569,6 +3570,7 @@ impl Key {
         Key::AiFailureContextTooLarge,
         Key::AiFailureModelUnavailable,
         Key::AiFailureNetwork,
+        Key::AiSteerDeliveryUncertain,
         Key::AiFailureProvider,
         Key::AiFailureCancelled,
         Key::AiFailureStorage,
@@ -9528,6 +9530,17 @@ pub const ROWS: &[Row] = &[
         ar: "تعذّر على Koru الوصول إلى المزوّد",
         zh_hans: "Koru 无法连接提供商",
         ja: "Koru はプロバイダーに接続できませんでした",
+    },
+    Row {
+        key: Key::AiSteerDeliveryUncertain,
+        en: "Delivery is uncertain. Review the conversation before sending again. {}",
+        es: "No se puede confirmar la entrega. Revisa la conversación antes de enviar de nuevo. {}",
+        pt_br: "Não foi possível confirmar a entrega. Revise a conversa antes de enviar novamente. {}",
+        de: "Die Zustellung ist ungewiss. Prüfe den Chat, bevor du erneut sendest. {}",
+        fr: "La réception du message est incertaine. Vérifiez la conversation avant de l’envoyer à nouveau. {}",
+        ar: "تعذّر التأكد من تسليم الرسالة. راجع المحادثة قبل إرسالها مجددًا. {}",
+        zh_hans: "无法确认消息是否已送达。再次发送前，请检查对话。{}",
+        ja: "メッセージが届いたか確認できません。再送信する前に会話を確認してください。{}",
     },
     Row {
         key: Key::AiFailureProvider,

@@ -13,10 +13,14 @@ mod controls;
 mod preparation;
 mod replay;
 mod runtime;
+mod steering;
 pub(in crate::worker) use controls::{
     ControlJob, ControlReadJob, ControlReadResult, ControlResult,
 };
 pub(in crate::worker) use runtime::{LiveChat, StepJob, StepResult};
+pub(in crate::worker) use steering::{
+    SteerBinding, SteerJob, SteerReadJob, SteerReadResult, SteerResult,
+};
 
 pub(in crate::worker) use preparation::{chat_capture, retry_anchor, retry_input};
 

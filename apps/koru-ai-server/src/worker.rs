@@ -1116,6 +1116,8 @@ enum Envelope {
     BotChatStep(bots::chat::StepResult),
     BotInteraction(bots::chat::ControlResult),
     BotInteractionRead(bots::chat::ControlReadResult),
+    BotSteer(bots::chat::SteerResult),
+    BotSteerRead(bots::chat::SteerReadResult),
     BotChatRecover,
     BotRecover,
     BotPrepared {
@@ -1512,6 +1514,7 @@ struct WorkerState {
     bot_policy_recovery: bots::policy::PolicyRecovery,
     bot_chats: HashMap<InferenceAttemptId, bots::chat::LiveChat>,
     bot_interactions: HashSet<ToolInvocationId>,
+    bot_steers: HashMap<Uuid, bots::chat::SteerBinding>,
     bot_chat_recovery: Option<Option<InferenceAttemptId>>,
     bot_coordination: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
     bot_recovery_after: Option<i64>,
@@ -1759,6 +1762,7 @@ fn run_worker(
     let mut state = WorkerState {
         bot_chats: HashMap::new(),
         bot_interactions: HashSet::new(),
+        bot_steers: HashMap::new(),
         bot_chat_recovery: Some(None),
         bot_coordination: HashSet::new(),
         bot_policy_pending: HashSet::new(),
@@ -1853,6 +1857,8 @@ fn run_worker(
             Ok(Envelope::BotChatStep(result)) => state.complete_bot_chat_step(result),
             Ok(Envelope::BotInteraction(result)) => state.complete_bot_interaction(result),
             Ok(Envelope::BotInteractionRead(result)) => state.complete_bot_interaction_read(result),
+            Ok(Envelope::BotSteer(result)) => state.complete_bot_steer(result),
+            Ok(Envelope::BotSteerRead(result)) => state.complete_bot_steer_read(result),
             Ok(Envelope::BotChatRecover) => state.recover_bot_chats(),
             Ok(Envelope::BotRecover) => state.recover_bot_operations(),
             Ok(Envelope::BotPrepared { command, proof }) => {
@@ -1960,6 +1966,9 @@ impl WorkerState {
             return;
         };
         let Some(command) = self.handle_bot_interaction(command) else {
+            return;
+        };
+        let Some(command) = self.handle_bot_steering(command) else {
             return;
         };
         match command {
@@ -5383,6 +5392,8 @@ enum ProviderAdminJob {
     BotChatControl(bots::chat::StepJob),
     BotInteraction(bots::chat::ControlJob),
     BotInteractionRead(bots::chat::ControlReadJob),
+    BotSteer(bots::chat::SteerJob),
+    BotSteerRead(bots::chat::SteerReadJob),
     BotCoordinate(bots::BotCoordinationJob),
     BotPrepare(bots::BotPreparationJob),
     Validate {
@@ -5406,7 +5417,7 @@ struct ProviderAdminPool {
     sender: Option<SyncSender<ProviderAdminJob>>,
     thread: Option<JoinHandle<()>>,
     control_sender: Option<SyncSender<bots::chat::StepJob>>,
-    interactive_sender: Option<SyncSender<bots::chat::ControlJob>>,
+    interactive_sender: Option<SyncSender<ProviderAdminJob>>,
     control_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
 }
@@ -5446,6 +5457,13 @@ impl ProviderAdminPool {
                                 &thread_shutdown,
                             );
                         }
+                        ProviderAdminJob::BotSteerRead(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotSteerRead(job.run()),
+                                &thread_shutdown,
+                            );
+                        }
                         #[cfg(test)]
                         ProviderAdminJob::BlockForFixture { entered, release } => {
                             let _ = entered.send(());
@@ -5460,7 +5478,8 @@ impl ProviderAdminPool {
                             );
                         }
                         ProviderAdminJob::BotChatControl(_)
-                        | ProviderAdminJob::BotInteraction(_) => {
+                        | ProviderAdminJob::BotInteraction(_)
+                        | ProviderAdminJob::BotSteer(_) => {
                             unreachable!("control lane dispatch")
                         }
                         ProviderAdminJob::BotPrepare(job) => {
@@ -5573,7 +5592,7 @@ impl ProviderAdminPool {
         let (control_sender, control_receiver) =
             sync_channel::<bots::chat::StepJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
         let (interactive_sender, interactive_receiver) =
-            sync_channel::<bots::chat::ControlJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
+            sync_channel::<ProviderAdminJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
         let control_shutdown = Arc::clone(&shutdown);
         let control_thread = match std::thread::Builder::new()
             .name("koru-ai-provider-control".into())
@@ -5591,11 +5610,14 @@ impl ProviderAdminPool {
                         continue;
                     }
                     if let Ok(job) = interactive_receiver.try_recv() {
-                        send_admin_envelope(
-                            &control_output,
-                            Envelope::BotInteraction(job.run()),
-                            &control_shutdown,
-                        );
+                        let event = match job {
+                            ProviderAdminJob::BotInteraction(job) => {
+                                Envelope::BotInteraction(job.run())
+                            }
+                            ProviderAdminJob::BotSteer(job) => Envelope::BotSteer(job.run()),
+                            _ => unreachable!("interactive queue dispatch"),
+                        };
+                        send_admin_envelope(&control_output, event, &control_shutdown);
                         continue;
                     }
                     let job = match control_receiver.recv_timeout(LOOP_INTERVAL) {
@@ -5631,24 +5653,27 @@ impl ProviderAdminPool {
     }
 
     fn try_submit(&self, job: ProviderAdminJob) -> Result<(), AdminSubmitError> {
-        if let ProviderAdminJob::BotInteraction(control) = job {
+        if matches!(
+            &job,
+            ProviderAdminJob::BotInteraction(_) | ProviderAdminJob::BotSteer(_)
+        ) {
             let Some(sender) = &self.interactive_sender else {
                 return Err(AdminSubmitError {
-                    job: ProviderAdminJob::BotInteraction(control),
+                    job,
                     failure: unavailable_failure(),
                 });
             };
-            return sender.try_send(control).map_err(|error| match error {
-                TrySendError::Full(control) => AdminSubmitError {
-                    job: ProviderAdminJob::BotInteraction(control),
+            return sender.try_send(job).map_err(|error| match error {
+                TrySendError::Full(job) => AdminSubmitError {
+                    job,
                     failure: failure(
                         "ai_worker_saturated",
                         "The Bot interaction queue is busy. Try again.",
                         true,
                     ),
                 },
-                TrySendError::Disconnected(control) => AdminSubmitError {
-                    job: ProviderAdminJob::BotInteraction(control),
+                TrySendError::Disconnected(job) => AdminSubmitError {
+                    job,
                     failure: unavailable_failure(),
                 },
             });

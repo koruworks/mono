@@ -792,7 +792,7 @@ Returns: The current terminal state; cancelling an already-terminal attempt is a
 
 Send a message into a running agent reply
 
-Returns: The person's message as recorded after the running reply, once the local agent took it. A reply that cannot take text now (ended, not an agent's, or an agent with no mid-turn input) answers 409 steer_unavailable; the client then sends the message after the reply. Repeating an operation_id is an idempotent read of the first answer.
+Returns: The person's message as recorded after the running reply, once the local agent took it. A safe refusal to take text now answers 409 steer_unavailable; the client may then send after the reply. Nonretryable steer_failed means delivery is uncertain: preserve the input paused for deliberate review, never automatically send it with a new identity. Bot retries require the same live operation, payload and execution fence; restart or a saved message alone cannot recreate that binding. An exact acknowledged live retry returns the saved message without sending again.
 
 ## POST `/v1/ai/tool-calls/{tool}/approve`
 

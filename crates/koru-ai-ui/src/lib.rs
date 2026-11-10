@@ -2042,7 +2042,9 @@ impl ChatSurface {
                 koru_i18n::Key::AiPressEscAgainToStop,
             ));
         }
-        self.status.as_deref()
+        self.shown_chat_id()
+            .and_then(|chat| self.queues.pause_reason(chat))
+            .or(self.status.as_deref())
     }
 
     /// The document *Open* opens (D78): the one just stored, while the
@@ -15750,7 +15752,14 @@ mod tests {
             .find(|record| record.name == "KoruLogo")
             .unwrap();
         let rect = logo.rect();
-        assert_eq!(rect.width() as f32, role::title().metrics.size);
+        // Inspector bounds subtract translated f32 coordinates; the centered
+        // greeting can introduce subpixel rounding without changing its size.
+        let actual = rect.width() as f32;
+        let expected = role::title().metrics.size;
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "logo width {actual}, title size {expected}"
+        );
         assert!(rect.y1 <= surface.composer_hit_rect.y as f64);
     }
 

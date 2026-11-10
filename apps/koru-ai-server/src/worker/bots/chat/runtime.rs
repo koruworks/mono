@@ -144,6 +144,7 @@ impl WorkerState {
         Ok(())
     }
     pub(in crate::worker) fn schedule_bot_chat_step(&mut self) {
+        self.prune_bot_steers();
         // At most one finite Bot IO job occupies this pool at once. Native
         // waiting happens in the host, not on either AI provider thread.
         let Some(port) = self.bot_delegate.clone() else {

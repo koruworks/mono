@@ -268,6 +268,10 @@ pub trait AiServerPort: Send + Sync {
     /// Send text into a running local agent reply (a steer). Answered once
     /// the agent took it, with the person's message as recorded after the
     /// reply; `steer_unavailable` when the reply cannot take text now.
+    /// A nonretryable `steer_failed` means delivery is uncertain: preserve
+    /// the input for deliberate review, never automatically send it anew.
+    /// Bot retries require the original live operation/fence binding; a
+    /// restart does not reconstruct that binding from a saved message alone.
     fn steer_attempt(
         &self,
         context: RequestContext,

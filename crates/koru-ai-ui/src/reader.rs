@@ -715,7 +715,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
             Command::Steer(attempt, request) => {
                 let update = match client.ai().steer_attempt(attempt, &request) {
                     Ok(response) => Update::Steered(response),
-                    Err(failure) => Update::SteerFailed(failure),
+                    Err(failure) => Update::SteerFailed(steer_failure(failure)),
                 };
                 let _ = updates.send(update);
             }
@@ -928,6 +928,23 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
         }
     }
 }
+
+/// Only a definite safe refusal permits a new queued send. A missing HTTP
+/// acknowledgment may follow native acceptance and must preserve uncertainty.
+pub(super) fn steer_failure(mut failure: koru_ai_wire::Failure) -> koru_ai_wire::Failure {
+    if failure.code == "steer_unavailable" || (failure.code == "steer_failed" && !failure.retryable)
+    {
+        return failure;
+    }
+    failure.code = "steer_failed".into();
+    failure.retryable = false;
+    // Preserve the sanitized detail. The surface adds the uncertainty notice
+    // in its current language when it pauses the affected queue item.
+    failure
+}
+
+#[cfg(test)]
+mod steer_tests;
 
 fn workspace_catalog_failure() -> koru_ai_wire::Failure {
     koru_ai_wire::Failure {

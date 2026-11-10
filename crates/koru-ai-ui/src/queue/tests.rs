@@ -614,6 +614,165 @@ fn a_refused_steer_stays_a_new_turn() {
     );
 }
 
+#[test]
+fn uncertain_steer_stays_paused_after_terminal_updates_until_deliberate_send() {
+    let (mut surface, mut transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "possibly delivered");
+    press(&mut surface, NamedKey::Enter);
+    surface.queue_action(QueueHit::Steer(0));
+    surface.apply_update(Update::SteerFailed(crate::reader::steer_failure(Failure {
+        code: "ai_network".into(),
+        message: "The HTTP acknowledgment was lost.".into(),
+        retryable: true,
+        details: Default::default(),
+    })));
+    let chat = surface.shown_chat_id().unwrap();
+    assert_eq!(queued_texts(&surface), ["possibly delivered"]);
+    assert!(surface.queues.is_paused(chat));
+    assert!(
+        surface
+            .footer_line()
+            .is_some_and(|value| value.contains("uncertain"))
+    );
+    transcript.messages = vec![
+        stored(&transcript, 0, ChatRole::User, "first"),
+        stored(&transcript, 1, ChatRole::Assistant, "first reply"),
+    ];
+    end_reply(&mut surface, &transcript, completed(attempt));
+    surface.apply_update(Update::Transcript(transcript.clone()));
+    assert!(
+        surface
+            .footer_line()
+            .is_some_and(|value| value.contains("uncertain"))
+    );
+    assert!(
+        sends(&drain(&commands)).is_empty(),
+        "uncertainty must not become a fresh automatic send"
+    );
+    assert!(surface.queues.is_paused(chat));
+    assert_eq!(queued_texts(&surface), ["possibly delivered"]);
+    assert!(surface.queue_action(QueueHit::SendNext));
+    assert_eq!(sends(&drain(&commands)), ["possibly delivered"]);
+    assert!(!surface.queues.is_paused(chat));
+    assert!(surface.queues.pause_reason(chat).is_none());
+}
+
+#[test]
+fn paused_steer_footer_uses_each_surface_language_and_keeps_transport_detail() {
+    for lang in koru_i18n::Lang::ALL {
+        let (mut surface, _, commands) = agent_surface("agent-codex", &[("agent-codex", true)]);
+        surface.lang = lang;
+        send_and_accept(&mut surface, &commands, "first");
+        type_into(&mut surface, "possibly delivered");
+        press(&mut surface, NamedKey::Enter);
+        surface.queue_action(QueueHit::Steer(0));
+        let detail = "The HTTP acknowledgment was lost";
+        surface.apply_update(Update::SteerFailed(crate::reader::steer_failure(Failure {
+            code: "ai_network".into(),
+            message: detail.into(),
+            retryable: true,
+            details: Default::default(),
+        })));
+        surface.status = None;
+        let expected = fill(t(lang, Key::AiSteerDeliveryUncertain), &[detail]);
+        assert_eq!(surface.footer_line().as_deref(), Some(expected.as_str()));
+        assert!(!expected.contains("{}"));
+        assert!(expected.contains(detail));
+        if lang != koru_i18n::Lang::En {
+            assert!(!expected.contains("Delivery is uncertain"));
+        }
+    }
+}
+
+#[test]
+fn recovered_reply_keeps_paused_uncertainty_visible_until_its_item_is_removed() {
+    let (mut surface, mut transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "possibly delivered");
+    press(&mut surface, NamedKey::Enter);
+    surface.queue_action(QueueHit::Steer(0));
+    surface.apply_update(Update::SteerFailed(Failure {
+        code: "steer_failed".into(),
+        message: "Delivery is uncertain.".into(),
+        retryable: false,
+        details: Default::default(),
+    }));
+    transcript.messages = vec![
+        stored(&transcript, 0, ChatRole::User, "first"),
+        stored(&transcript, 1, ChatRole::Assistant, "reply"),
+    ];
+    surface.apply_update(Update::Recovered {
+        attempt,
+        status: koru_ai_core::AttemptStatus::Complete,
+        transcript,
+    });
+    assert!(surface.status.is_none(), "recovery clears transient status");
+    assert!(
+        surface
+            .footer_line()
+            .is_some_and(|line| line.contains("uncertain"))
+    );
+    assert!(sends(&drain(&commands)).is_empty());
+    let chat = surface.shown_chat_id().unwrap();
+    assert!(surface.queues.is_paused(chat));
+    surface.queue_action(QueueHit::Remove(0));
+    assert!(surface.queues.pause_reason(chat).is_none());
+    assert!(
+        !surface
+            .footer_line()
+            .is_some_and(|line| line.contains("uncertain"))
+    );
+}
+
+#[test]
+fn pending_steer_keeps_second_item_and_late_cancel_cannot_send_uncertain_input() {
+    let (mut surface, mut transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "A uncertain");
+    press(&mut surface, NamedKey::Enter);
+    surface.queue_action(QueueHit::Steer(0));
+    type_into(&mut surface, "B next");
+    press(&mut surface, NamedKey::Enter);
+    drain(&commands);
+    assert!(
+        !surface.queue_action(QueueHit::Steer(0)),
+        "one native steer owns the acknowledgment slot"
+    );
+    assert_eq!(queued_texts(&surface), ["B next"]);
+    assert_eq!(surface.steering.as_ref().unwrap().1.markdown, "A uncertain");
+    assert!(drain(&commands).is_empty());
+    let chat = surface.shown_chat_id().unwrap();
+    // Arm a cancel-send already in flight (for example a late callback from
+    // before uncertainty arrived). Neither terminal spelling may bypass pause.
+    surface.steer_after_cancel = Some(chat);
+    surface.apply_update(Update::SteerFailed(Failure {
+        code: "steer_failed".into(),
+        message: "Delivery is uncertain.".into(),
+        retryable: false,
+        details: Default::default(),
+    }));
+    assert_eq!(surface.steer_after_cancel, None);
+    assert_eq!(queued_texts(&surface), ["A uncertain", "B next"]);
+    transcript.messages = vec![
+        stored(&transcript, 0, ChatRole::User, "first"),
+        stored(&transcript, 1, ChatRole::Assistant, "reply"),
+    ];
+    // A stale cancel-send flag arriving late is also fenced by the pause check.
+    surface.steer_after_cancel = Some(chat);
+    end_reply(&mut surface, &transcript, cancelled(attempt));
+    end_reply(&mut surface, &transcript, completed(attempt));
+    assert!(sends(&drain(&commands)).is_empty());
+    assert!(surface.queues.is_paused(chat));
+    assert_eq!(queued_texts(&surface), ["A uncertain", "B next"]);
+    assert!(surface.queue_action(QueueHit::SendNext));
+    assert_eq!(sends(&drain(&commands)), ["A uncertain"]);
+    assert_eq!(queued_texts(&surface), ["B next"]);
+}
+
 /// **The NEW divider counts what was written, not where it reads** (D84,
 /// D99): the newest message seen can be a steer, which reads above its
 /// reply; the divider still goes above the turn that came after, not above

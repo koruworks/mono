@@ -388,6 +388,7 @@ fn guard_command(
                     | WorkerCommand::RetryTurn { .. }
                     | WorkerCommand::ApproveToolCall { .. }
                     | WorkerCommand::DenyToolCall { .. }
+                    | WorkerCommand::SteerAttempt { .. }
             ) || matches!(&command,WorkerCommand::CancelAttempt {attempt,..}
                     if repository.bot_submission_for_attempt(*attempt).map_err(ai_failure)?.is_some());
             if !command.bot_read_only() && !implemented {

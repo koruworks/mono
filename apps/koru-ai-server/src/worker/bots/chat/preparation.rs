@@ -297,6 +297,9 @@ impl WorkerState {
             .as_ref()
             .ok_or_else(|| bot_failure(BotError::Unavailable))?;
         validate_owner(&proof.authority, &bot)?;
+        // read_through associates a standalone steer with the preceding reply.
+        // A newer task must not overtake its acknowledged history insert.
+        self.require_bot_steering_settled(chat.id)?;
         proof.runtime.clone()?;
         let Some(snapshot) = &proof.chat_snapshot else {
             return Err(bot_failure(BotError::Unavailable));

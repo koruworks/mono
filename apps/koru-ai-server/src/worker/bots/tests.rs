@@ -144,6 +144,7 @@ pub(super) struct Authority {
     workspace: WorkspaceId,
     profile: koru_ai_core::ProfileId,
     allowed: AtomicBool,
+    inspect_gate: std::sync::Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
 }
 impl BotAuthority for Authority {
     fn owner(&self) -> Result<BotOwner, BotError> {
@@ -159,6 +160,27 @@ impl BotAuthority for Authority {
     fn page(&self, page: &BotPage) -> Result<(), BotError> {
         self.workspace(page.workspace).map(|_| ())
     }
+    fn inspect(
+        &self,
+        workspaces: &[WorkspaceId],
+        pages: &[BotPage],
+    ) -> Result<koru_ai_core::bots::BotAuthoritySnapshot, BotError> {
+        if let Some((entered, release)) = self.inspect_gate.lock().unwrap().take() {
+            entered.send(()).unwrap();
+            release.recv().unwrap();
+        }
+        Ok(koru_ai_core::bots::BotAuthoritySnapshot {
+            owner: self.owner()?,
+            workspaces: workspaces
+                .iter()
+                .map(|id| (*id, self.workspace(*id)))
+                .collect(),
+            pages: pages
+                .iter()
+                .map(|page| (page.clone(), self.page(page)))
+                .collect(),
+        })
+    }
 }
 pub(super) fn fixture() -> (Repository, Arc<Authority>, BotCommand) {
     let authority = Arc::new(Authority {
@@ -169,6 +191,7 @@ pub(super) fn fixture() -> (Repository, Arc<Authority>, BotCommand) {
         workspace: WorkspaceId::new(),
         profile: koru_ai_core::ProfileId::new(),
         allowed: AtomicBool::new(true),
+        inspect_gate: Default::default(),
     });
     let command = BotCommand::Create {
         request_id: BotRequestId::mint(),
