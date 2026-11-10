@@ -1087,6 +1087,8 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
+    BotCoordinated(bots::BotCoordinationResult),
+    BotRecover,
     BotPrepared {
         command: Box<WorkerCommand>,
         proof: ApiResult<bots::PreparedBotCommand>,
@@ -1477,6 +1479,8 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    bot_coordination: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
+    bot_recovery_after: Option<i64>,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
@@ -1705,6 +1709,8 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        bot_coordination: HashSet::new(),
+        bot_recovery_after: Some(0),
         bot_delegate: config.bot_delegate,
         bot_authority: config.bot_authority,
         repository,
@@ -1754,6 +1760,7 @@ fn run_worker(
     // already reads documents through; a Store that does not answer leaves
     // them for the next pass.
     state.place_unplaced_chats();
+    state.recover_bot_operations();
     while !shutdown.load(Ordering::Acquire) {
         state.drain_agent_commands();
         match receiver.recv_timeout(LOOP_INTERVAL) {
@@ -1776,6 +1783,8 @@ fn run_worker(
                 );
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
+            Ok(Envelope::BotCoordinated(result)) => state.complete_bot_coordination(result),
+            Ok(Envelope::BotRecover) => state.recover_bot_operations(),
             Ok(Envelope::BotPrepared { command, proof }) => {
                 state.complete_bot_preparation(*command, proof)
             }
@@ -5166,6 +5175,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    BotCoordinate(bots::BotCoordinationJob),
     BotPrepare(bots::BotPreparationJob),
     Validate {
         provider: AiProviderId,
@@ -5209,6 +5219,14 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
+                        ProviderAdminJob::BotCoordinate(job) => {
+                            let result = job.run();
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotCoordinated(result),
+                                &thread_shutdown,
+                            );
+                        }
                         ProviderAdminJob::BotPrepare(job) => {
                             let (command, proof) = job.run(agents.as_ref());
                             send_admin_envelope(
@@ -5302,6 +5320,9 @@ impl ProviderAdminPool {
                             );
                         }
                     }
+                    // Admission recovery may have yielded to a full bounded
+                    // admin queue. A freed slot, rather than a timer, retries it.
+                    send_admin_envelope(&output, Envelope::BotRecover, &thread_shutdown);
                 }
             })
             .map_err(|error| error.to_string())?;

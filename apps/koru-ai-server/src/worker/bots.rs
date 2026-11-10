@@ -13,7 +13,9 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
     )
 }
 
+mod admission;
 mod preparation;
+pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
 impl WorkerState {
     pub(super) fn bot_read_access(&self, context: &CommandContext) -> ApiResult<ChatReadAccess> {
@@ -41,6 +43,9 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
+        if let Some(result) = self.bot_admission_command(&context, &request) {
+            return result;
+        }
         let proof = context
             .prepared
             .as_ref()
@@ -140,6 +145,12 @@ fn execute_bot_command(
     let owner = authority.owner().map_err(bot_failure)?;
     let now = Timestamp::now().millis();
     match &mut request {
+        BotCommand::Start { .. }
+        | BotCommand::Continue { .. }
+        | BotCommand::Pause { .. }
+        | BotCommand::Resume { .. }
+        | BotCommand::ReadOperation { .. }
+        | BotCommand::ReconcileOperation { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

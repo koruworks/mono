@@ -5237,6 +5237,7 @@ dependencies = [
  "koru-ai-wire",
  "koru-core",
  "koru-delegate-api",
+ "koru-delegate-core",
  "koru-env",
  "koru-export",
  "koru-export-markdown",

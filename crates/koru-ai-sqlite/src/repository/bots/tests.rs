@@ -103,7 +103,7 @@ fn populated_bot_history_is_filtered_before_search_paging_context_tools_and_usag
     assert_eq!(repo.messages(bot.main_chat).unwrap().len(), 2);
 }
 
-fn fixture_bot() -> Bot {
+pub(super) fn fixture_bot() -> Bot {
     let workspace = WorkspaceId::new();
     Bot {
         id: BotId::mint(),

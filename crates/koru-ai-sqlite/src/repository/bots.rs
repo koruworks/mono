@@ -2,6 +2,7 @@
 
 use super::*;
 use koru_ai_core::bots::*;
+pub(crate) mod admission;
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage
