@@ -28,12 +28,28 @@ use koru_store_core::service::JoinUnit;
 /// principal union at the edge below it; the bridge advances to 2 in the same
 /// step. Framing stays 1 and bilateral peer protocol stays 5 (D180).
 ///
+/// 8 carries the bootstrap repair (root-catalog QUESTIONS.md Q10) as an
+/// optional field on the existing root-inventory read rather than a new
+/// request, so an ordinary read re-encodes byte-identically and the frozen
+/// vectors are unchanged.
+///
 /// A local Agent and gateway on different numbers refuse each other visibly,
 /// on that machine, through [`ControlGreeting::Refused`]. That is not a sync
 /// failure and it is not a remote compatibility rule: the Cloud ALPN, the
 /// handshake version and [`PEER_PROTOCOL_VERSION`] govern what crosses a
 /// network (D233).
-pub const CONTROL_PROTOCOL_VERSION: u32 = 7;
+///
+/// **Why 8 rather than leaving it at 7.** The gateway child is spawned from
+/// the Agent's own image (`gateway_host.rs`: "this image, from
+/// `current_exe()`"), so the two halves are normally one build and an
+/// optional field would never reach a gateway that lacks it. The case the
+/// number exists for is the other one: a gateway process left running by a
+/// previous install. At the same number that stale pair passes the greeting
+/// and then fails inside `ControlRequest`, which is `deny_unknown_fields`,
+/// as an opaque decode error on one request. Bumping makes the same mismatch
+/// surface at the greeting, which is where it was designed to surface and
+/// where it says what it is.
+pub const CONTROL_PROTOCOL_VERSION: u32 = 8;
 pub const CONTROL_FRAME_VERSION: u8 = 1;
 pub mod cloud;
 pub const CONTROL_SERVICE: &str = "koru-store-sync";
@@ -275,6 +291,17 @@ pub enum PairingEvent {
     },
 }
 
+/// `skip_serializing_if` for an additive flag or count whose default is the
+/// behaviour the message always had, so the key is written only by a sender
+/// that means something by it and a frozen sequence re-encodes unchanged.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
 /// **An unknown field or an unknown variant closes admission.** Control 7 is
 /// exact on this wire: both halves are one local build, so a field this
 /// decoder does not know is a mismatch to refuse rather than a forward
@@ -440,6 +467,24 @@ pub enum ControlRequest {
     /// count of units held back.
     ReadCloudRootInventory {
         control_session_id: ControlSessionId,
+        /// Publish the Workspace unit the v1 Cloud window withheld before
+        /// building the inventory (root-catalog QUESTIONS.md Q10, case 1):
+        /// `Store::repair_bootstrap_units`, then the publication job and the
+        /// read, so the pass that established the precondition can push what
+        /// it just created without a second round trip.
+        ///
+        /// **An optional field rather than a request of its own.** A new
+        /// variant would be refused outright by an older gateway; an absent
+        /// key is `false`, which is exactly the read this request has always
+        /// been. The key is omitted when it is false so an ordinary inventory
+        /// read re-encodes byte-for-byte against the frozen
+        /// `host-control-v1` sequences.
+        ///
+        /// The *decision* is never the Store's: only the coordinator knows
+        /// that the pass ran under the v2 contract, read the service's whole
+        /// catalog and finished its pulls.
+        #[serde(default, skip_serializing_if = "is_false")]
+        repair_unitless: bool,
     },
     /// The frontier this device holds for one unit, for a pull request.
     ReadCloudRootFrontier {
@@ -537,6 +582,11 @@ pub enum ControlResponse {
         control_session_id: ControlSessionId,
         units: Vec<CloudRootUnitState>,
         held: u32,
+        /// How many Workspaces gained the unit the v1 window withheld, when
+        /// the request asked for the repair (Q10). A count, never an id.
+        /// Omitted when zero, so an ordinary read's answer is unchanged.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        repaired: u32,
     },
     CloudRootFrontier {
         control_session_id: ControlSessionId,
@@ -1123,7 +1173,9 @@ impl ControlHost {
                     binding: None,
                 }
             }
-            ControlRequest::ReadCloudRootInventory { control_session_id } => {
+            ControlRequest::ReadCloudRootInventory {
+                control_session_id, ..
+            } => {
                 if control_session_id != session_id {
                     return rejected(HostError::StaleSession);
                 }
@@ -1131,6 +1183,7 @@ impl ControlHost {
                     control_session_id: session_id,
                     units: Vec::new(),
                     held: 0,
+                    repaired: 0,
                 }
             }
             ControlRequest::ReadCloudRootFrontier {

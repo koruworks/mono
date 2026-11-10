@@ -24,13 +24,14 @@ use koru_ai_wire::{
     CancelAttemptResponse, CancelModelPullResponse, ChatAttachmentResponse, ChatToolPolicyResponse,
     ChatTranscript, ClearHistoryResponse, ClearUsageResponse, CreateChatRequest,
     CreateChatResponse, DeleteChatResponse, ExportChatRequest, ExportChatResponse, Failure,
-    FeedbackRequest, FeedbackResponse, ListChatsResponse, ListChatsToolRequest,
-    ListChatsToolResponse, ModelPullEvent, OllamaSettingsView, OpenAiSettingsView,
-    ProviderSettingsResponse, ProviderValidationResponse, PullOllamaModelAccepted,
-    PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse, RemoveAttachmentResponse,
-    RenameChatRequest, RenameChatResponse, RetryTurnRequest, SearchChatsToolRequest,
-    SearchChatsToolResponse, SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent,
-    ToolDecisionRequest, ToolDecisionResponse, UpdateChatModelRequest, UpdateChatModelResponse,
+    FeedbackRequest, FeedbackResponse, FromWorkspaceAttachmentRequest, ListChatsResponse,
+    ListChatsToolRequest, ListChatsToolResponse, ModelPullEvent, OllamaSettingsView,
+    OpenAiSettingsView, ProviderSettingsResponse, ProviderValidationResponse,
+    PullOllamaModelAccepted, PullOllamaModelRequest, ReadChatToolRequest, ReadChatToolResponse,
+    ReferenceAttachmentRequest, RemoveAttachmentResponse, RenameChatRequest, RenameChatResponse,
+    RestageAttachmentRequest, RetryTurnRequest, SearchChatsToolRequest, SearchChatsToolResponse,
+    SelectProviderRequest, SendTurnAccepted, SendTurnRequest, StreamEvent, ToolDecisionRequest,
+    ToolDecisionResponse, UpdateChatModelRequest, UpdateChatModelResponse,
     UpdateChatPrivacyRequest, UpdateChatPrivacyResponse, UpdateChatToolPolicyRequest,
     UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest, UsageResponse,
 };
@@ -398,6 +399,21 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &["chat"],
     },
     AiRoute {
+        operation_id: "ai_add_chat_workspace_grants",
+        method: "POST",
+        path: "/v1/ai/chats/{chat}/tool-policy/grants",
+        scope: AiScope::Chat,
+        summary: "Add workspace grants to a chat atomically",
+        returns: "The durable policy with all existing and newly granted workspaces; the mode is unchanged.",
+        handler: || post(add_chat_workspace_grants),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::AddChatWorkspaceGrantsRequest>()
+        }),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatToolPolicyResponse>()),
+        stream: false,
+        path_parameters: &["chat"],
+    },
+    AiRoute {
         operation_id: "ai_delete_chat",
         method: "DELETE",
         path: "/v1/ai/chats/{chat}",
@@ -633,6 +649,47 @@ pub const ROUTES: &[AiRoute] = &[
             axum::routing::put(put_attachment).layer(DefaultBodyLimit::max(ATTACHMENT_BODY_LIMIT))
         },
         request: AiBody::Bytes("application/octet-stream"),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat", "attachment"],
+    },
+    AiRoute {
+        operation_id: "ai_reference_attachment",
+        method: "POST",
+        path: "/v1/ai/chats/{chat}/attachments/reference",
+        scope: AiScope::Chat,
+        summary: "Stage a local file or folder path for a local agent chat",
+        returns: "The staged path reference. No file or folder contents are read or copied.",
+        handler: || post(reference_attachment),
+        request: AiBody::Json(|generator| generator.subschema_for::<ReferenceAttachmentRequest>()),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat"],
+    },
+    AiRoute {
+        operation_id: "ai_from_workspace_attachment",
+        method: "POST",
+        path: "/v1/ai/chats/{chat}/attachments/from-workspace",
+        scope: AiScope::Chat,
+        summary: "Copy a granted workspace file into a local agent chat",
+        returns: "The staged copy with workspace provenance. The source grant is checked before reading bytes.",
+        handler: || post(from_workspace_attachment),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<FromWorkspaceAttachmentRequest>()
+        }),
+        response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
+        stream: false,
+        path_parameters: &["chat"],
+    },
+    AiRoute {
+        operation_id: "ai_restage_attachment",
+        method: "POST",
+        path: "/v1/ai/chats/{chat}/attachments/{attachment}/restage",
+        scope: AiScope::Chat,
+        summary: "Copy a sent attachment into a fresh staged attachment for recall",
+        returns: "The new staged attachment. Deleting its id during the copy cancels publication.",
+        handler: || post(restage_attachment),
+        request: AiBody::Json(|generator| generator.subschema_for::<RestageAttachmentRequest>()),
         response: AiBody::Json(|generator| generator.subschema_for::<ChatAttachmentResponse>()),
         stream: false,
         path_parameters: &["chat", "attachment"],
@@ -1245,6 +1302,26 @@ async fn read_chat_tool_policy(
     answer(call(move || client.read_chat_tool_policy(context, chat)).await)
 }
 
+async fn add_chat_workspace_grants(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    payload: Result<Json<koru_ai_wire::AddChatWorkspaceGrantsRequest>, JsonRejection>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let request = match json_request(payload) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.add_chat_workspace_grants(context, chat, request)).await)
+}
+
 async fn delete_chat(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,
@@ -1597,7 +1674,9 @@ async fn put_attachment(
         return invalid_request("The upload names no file name or source.");
     };
     let source = match AttachmentSource::parse(&query.source) {
-        Some(source) if source != AttachmentSource::Workspace => source,
+        Some(source) if !matches!(source, AttachmentSource::Workspace | AttachmentSource::Path) => {
+            source
+        }
         _ => return invalid_request("The upload source is not one a person adds a file by."),
     };
     let (client, context) = match admitted(&state, principal, AiScope::Chat) {
@@ -1628,6 +1707,57 @@ async fn remove_attachment(
         Err(response) => return response,
     };
     answer(call(move || client.remove_attachment(context, chat, attachment)).await)
+}
+
+async fn reference_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    Json(request): Json<ReferenceAttachmentRequest>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.reference_attachment(context, chat, request)).await)
+}
+
+async fn from_workspace_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path(chat): Path<String>,
+    Json(request): Json<FromWorkspaceAttachmentRequest>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.from_workspace_attachment(context, chat, request)).await)
+}
+
+async fn restage_attachment(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    Path((chat, attachment)): Path<(String, String)>,
+    Json(request): Json<RestageAttachmentRequest>,
+) -> Response {
+    let Some(chat) = ChatId::parse(&chat) else {
+        return invalid_identity("chat");
+    };
+    let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
+        return invalid_identity("attachment");
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.restage_attachment(context, chat, attachment, request)).await)
 }
 
 async fn read_attachment(

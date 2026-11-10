@@ -372,6 +372,7 @@ impl Sessions for HostSessions {
                     idempotency_key: IdempotencyKey::mint(),
                     text,
                     attachment_ids: Vec::new(),
+                    references: Vec::new(),
                     mode: None,
                     fast: None,
                     reasoning: None,

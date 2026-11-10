@@ -28,6 +28,7 @@ use crate::identity::AccountOwner;
 use crate::ports::{Clock, Entropy};
 
 mod discovery;
+mod root_repair;
 
 // ----- fixtures -----------------------------------------------------------
 
@@ -326,6 +327,11 @@ struct World {
     /// Which contract the service speaks: `V2` answers the binding route,
     /// `V1` answers it with 404 and serves the pair routes.
     v1_service: bool,
+    /// Answer the binding route over the *real* account client and the real
+    /// hosted mapping, with this HTTP status and a body that is not Koru's
+    /// error envelope — which is what the live v1 service answers. Set, no
+    /// `Failure` is injected for the binding at all.
+    hosted_binding_status: Option<u16>,
     /// The service refuses the binding: this device belongs to another
     /// account.
     binding_conflict: bool,
@@ -345,6 +351,16 @@ struct World {
     pushed: Vec<CloudUnitRefV2>,
     /// The host's eligible inventory, frontiers and exports.
     local_units: Vec<CloudRootUnitState>,
+    /// Workspace units the v1 Cloud window withheld (QUESTIONS.md Q7): this
+    /// device holds the content and no unit, so they are absent from the
+    /// eligible inventory until Q10's repair publishes them, at which point
+    /// they join `local_units`.
+    withheld: Vec<CloudRootUnitState>,
+    /// The catalog answers one page and names this cursor as its `next`, so
+    /// the pagination loop goes round again.
+    catalog_next: Option<CloudUnitRefV2>,
+    /// Request cancellation while that first catalog page is in flight.
+    cancel_catalog_page: Option<Cancel>,
     local_frontiers: HashMap<String, Vec<u8>>,
     exports: HashMap<String, CloudRootExport>,
     joined: Vec<String>,
@@ -412,6 +428,37 @@ struct FakeHost(Arc<Mutex<World>>);
 
 fn lock(world: &Arc<Mutex<World>>) -> std::sync::MutexGuard<'_, World> {
     world.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// The real hosted API over a transport that answers one HTTP status with a
+/// body that is **not** a `DeveloperErrorV1` — a deployment refusing in its
+/// own words, which is what a route it does not serve looks like from here.
+/// Every request is recorded, so a test can say the answer came from the
+/// route rather than from a shortcut.
+fn codeless_hosted_api(world: Arc<Mutex<World>>, status: u16) -> HostedApi {
+    struct Codeless {
+        world: Arc<Mutex<World>>,
+        status: u16,
+    }
+    impl koru_account_client::Transport for Codeless {
+        fn send(
+            &self,
+            request: koru_account_client::HttpRequest,
+        ) -> Result<koru_account_client::HttpResponse, koru_account_client::TransportError>
+        {
+            lock(&self.world).note(format!(
+                "http:{:?}:{}:{}",
+                request.method, request.path_and_query, self.status
+            ));
+            Ok(koru_account_client::HttpResponse {
+                status: self.status,
+                body: br#"{"detail":"this deployment does not serve that route"}"#.to_vec(),
+            })
+        }
+    }
+    HostedApi::new(koru_account_client::AccountClient::with_transport(
+        Arc::new(Codeless { world, status }),
+    ))
 }
 
 impl Api for FakeApi {
@@ -505,11 +552,20 @@ impl Api for FakeApi {
 
     fn bind_catalog(
         &mut self,
-        _authority: &EnrollmentAuthorization,
+        authority: &EnrollmentAuthorization,
         held: Option<CloudCatalogBindingRefV2>,
     ) -> Result<CloudCatalogBindingV2, Failure> {
         let mut world = lock(&self.0);
         world.note("bind");
+        // Nothing is injected on this path: the answer is an HTTP response,
+        // read by the real client and classified by the real hosted
+        // mapping, so a status the client throws away cannot pass as a
+        // window here.
+        if let Some(status) = world.hosted_binding_status {
+            let shared = self.0.clone();
+            drop(world);
+            return codeless_hosted_api(shared, status).bind_catalog(authority, held);
+        }
         if world.v1_service {
             return Err(Failure::RouteNotFound);
         }
@@ -528,10 +584,24 @@ impl Api for FakeApi {
     fn root_catalog(
         &mut self,
         _authority: &EnrollmentAuthorization,
-        _after: Option<CloudUnitRefV2>,
+        after: Option<CloudUnitRefV2>,
     ) -> Result<CloudRootCatalogV2, Failure> {
         let mut world = lock(&self.0);
         world.note("catalog");
+        // A paged catalog: the first page names a cursor, a continuation
+        // answers the last page. A test may cancel while the first is in
+        // flight, which is the only way this loop ends without reading
+        // everything.
+        let next = if after.is_none() {
+            world.catalog_next
+        } else {
+            None
+        };
+        if next.is_some() {
+            if let Some(cancel) = world.cancel_catalog_page.take() {
+                cancel.request();
+            }
+        }
         Ok(CloudRootCatalogV2 {
             version: Version2,
             digest: Vec::new(),
@@ -544,7 +614,7 @@ impl Api for FakeApi {
                     projection_watermark: 1,
                 })
                 .collect(),
-            next: None,
+            next,
         })
     }
 
@@ -880,6 +950,22 @@ impl Host for FakeHost {
         })
     }
 
+    fn repair_bootstrap_units(&self) -> Result<RootRepairOutcome, Failure> {
+        let mut world = lock(&self.0);
+        world.note("repair");
+        let published: Vec<CloudRootUnitState> = world.withheld.drain(..).collect();
+        let repaired = u32::try_from(published.len()).unwrap_or(u32::MAX);
+        // The Store published them, so they are eligible from now on.
+        world.local_units.extend(published);
+        Ok(RootRepairOutcome {
+            repaired,
+            inventory: RootInventory {
+                units: world.local_units.clone(),
+                held: 0,
+            },
+        })
+    }
+
     fn root_unit_frontier(&self, unit: JoinUnit) -> Result<Option<Vec<u8>>, Failure> {
         Ok(lock(&self.0)
             .local_frontiers
@@ -1069,6 +1155,11 @@ fn a_fresh_device_binds_joins_root_units_then_admits_content_and_profile_units()
         "token:user_catalog".to_owned(),
         "inventory".to_owned(),
         "catalog".to_owned(),
+        // Q10's exit: once the whole v2 catalog has been read and its pulls
+        // are done, a row still holding no unit proves none exists anywhere,
+        // so the unit the v1 window withheld is published here. On this
+        // device nothing is withheld and the answer is zero.
+        "repair".to_owned(),
         "discover".to_owned(),
         "jwks".to_owned(),
         "token:workspace:1".to_owned(),
@@ -1485,8 +1576,8 @@ fn a_v1_service_runs_the_pair_path_once_and_yields_the_same_two_scopes() {
     assert_eq!(&log[..expected.len()], &expected[..], "{log:?}");
     assert!(
         !log.iter()
-            .any(|entry| entry == "inventory" || entry == "catalog"),
-        "no root exchange against a v1 service: {log:?}"
+            .any(|entry| entry == "inventory" || entry == "catalog" || entry == "repair"),
+        "no root exchange against a v1 service, and no Q10 repair either — the          window is where the unit is withheld, not where it is published: {log:?}"
     );
     let state = lock(&harness.world);
     assert!(state.bound.is_empty());
@@ -1519,6 +1610,103 @@ fn a_v1_service_runs_the_pair_path_once_and_yields_the_same_two_scopes() {
     drop(state);
     harness.wait_snapshot(|snapshot| snapshot.contract == Some(CloudContract::V1));
     assert!(harness.control.snapshot().catalog_scope_id.is_none());
+}
+
+/// The same window, driven the way the live service drives it: a genuine
+/// 404 HTTP answer whose body is not Koru's error envelope, through the real
+/// account client and the real hosted mapping. No `Failure` is injected —
+/// the fake's own `RouteNotFound` is never reached — because the defect this
+/// covers lived entirely between the status and that enum. The client
+/// discarded the status of any non-2xx it could not read as a
+/// `DeveloperErrorV1`, the mapping saw `InvalidResponse` and called it
+/// unavailable, the contract probe never chose `V1`, and the pass settled
+/// with no records at all: Cloud unavailable on every Profile, with nothing
+/// syncing, against a service the window exists to keep working with.
+#[test]
+fn a_404_in_the_services_own_words_engages_the_v1_window() {
+    let world = World::shared();
+    {
+        let mut state = lock(&world);
+        state.hosted_binding_status = Some(404);
+        state.pages = vec![page(vec![candidate(1)], None)];
+        state.descriptors.insert(workspace(1), descriptor(1));
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_for(|world| world.opened.len() == 2);
+    harness.wait_snapshot(|snapshot| snapshot.contract == Some(CloudContract::V1));
+    let log = harness.log();
+    assert!(
+        log.contains(&"http:Put:/v1/account/cloud/catalog/binding:404".to_owned()),
+        "the window came from a 404 on the binding route itself: {log:?}"
+    );
+    // The pair path, unchanged, with the HTTP exchange of the binding route
+    // taken out of the sequence it is interleaved with.
+    let hosted: Vec<String> = log
+        .iter()
+        .filter(|entry| !entry.starts_with("http:"))
+        .cloned()
+        .collect();
+    let expected = [
+        "bind".to_owned(),
+        "discover".to_owned(),
+        "jwks".to_owned(),
+        format!("select:{}", workspace(1).to_storage()),
+        format!("token:{}", workspace(1).to_storage()),
+        format!("local:{}", workspace(1).to_storage()),
+        format!("describe:{}", workspace(1).to_storage()),
+        format!("profile:{}:{}", profile(1).to_storage(), account()),
+        format!("workspace:{}:{}", workspace(1).to_storage(), manifest(1)),
+        "context:1:2".to_owned(),
+    ];
+    assert_eq!(&hosted[..expected.len()], &expected[..], "{hosted:?}");
+    assert!(
+        !log.iter()
+            .any(|entry| entry == "inventory" || entry == "catalog"),
+        "no root exchange against a v1 service: {log:?}"
+    );
+    let state = lock(&harness.world);
+    assert!(state.bound.is_empty(), "nothing is bound in the window");
+    assert_eq!(
+        state.permits().len(),
+        2,
+        "content and Profile units admitted"
+    );
+    drop(state);
+    let snapshot = harness.control.snapshot();
+    assert_eq!(snapshot.failure_code, None);
+    assert_eq!(snapshot.records.len(), 2);
+}
+
+/// A missing route is a 404 and nothing else. A service that is simply
+/// unwell answers 503 in its own words too, and that is not a contract
+/// reading: the pass reports it and retries, the generation keeps no
+/// contract, and no content is admitted under a window the service never
+/// asked for.
+#[test]
+fn another_codeless_status_is_not_read_as_a_missing_route() {
+    let world = World::shared();
+    {
+        let mut state = lock(&world);
+        state.hosted_binding_status = Some(503);
+        state.pages = vec![page(vec![candidate(1)], None)];
+        state.descriptors.insert(workspace(1), descriptor(1));
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(CLOUD_UNAVAILABLE));
+    let snapshot = harness.control.snapshot();
+    assert_eq!(snapshot.contract, None);
+    assert!(snapshot.records.is_empty());
+    let log = harness.log();
+    assert!(
+        log.contains(&"http:Put:/v1/account/cloud/catalog/binding:503".to_owned()),
+        "{log:?}"
+    );
+    assert!(
+        !log.iter().any(|entry| entry == "discover"),
+        "a pass that cannot read the contract admits nothing: {log:?}"
+    );
 }
 
 /// The root-unit join runs before any admission: Profile units then

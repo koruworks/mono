@@ -290,6 +290,7 @@ fn turn(mode: Option<&str>) -> AgentInput {
         turn_id: AgentTurnId::mint(),
         text: "<prompt>".into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: mode.map(|mode| mode.parse().unwrap()),
         fast: None,
         reasoning: None,

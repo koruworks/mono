@@ -9,7 +9,7 @@ description = "Versioned public request, response, error, and event DTOs for Kor
 
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core", features = ["schema"] }
-schemars.workspace = true
+schemars = { workspace = true, features = ["uuid1"] }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

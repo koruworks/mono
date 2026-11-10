@@ -869,3 +869,58 @@ fn workspace_cloud_lifecycle_surfaces_the_hosted_refusal_code() {
         ClientError::Api { status: 409, ref code } if code.as_str() == "workspace_version_mismatch"
     ));
 }
+
+/// A deployment that does not serve a route answers in its own words, not in
+/// Koru's: the live v1 service's 404 on the binding route carries no
+/// `DeveloperErrorV1`. The status survives that, because it is the only
+/// thing such an answer says — and the whole v1 compatibility window turns
+/// on reading it. A body that claimed to succeed is still an invalid
+/// response: the envelope is only required of a refusal.
+#[test]
+fn a_refusal_without_the_error_envelope_keeps_its_status() {
+    let access = AccessToken("access-sentinel".into());
+    let bodies: [&[u8]; 4] = [
+        b"<html><head><title>404 Not Found</title></head></html>",
+        b"",
+        br#"{"detail":"Not Found"}"#,
+        br#"{"code":"not a code","message":"x"}"#,
+    ];
+    for body in bodies {
+        let transport = FakeTransport::empty();
+        transport.responses.lock().unwrap().push_back(HttpResponse {
+            status: 404,
+            body: body.to_vec(),
+        });
+        let error = AccountClient::with_transport(transport)
+            .bind_cloud_catalog(
+                &CloudCatalogBindingRequestV2 {
+                    version: Version2,
+                    held: None,
+                },
+                &AccountAuthorization::Bearer(&access),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ClientError::ApiWithoutCode { status: 404 },
+            "a 404 answered as {body:?} must keep its status"
+        );
+    }
+    let transport = FakeTransport::empty();
+    transport.responses.lock().unwrap().push_back(HttpResponse {
+        status: 200,
+        body: b"<html>not a binding</html>".to_vec(),
+    });
+    assert_eq!(
+        AccountClient::with_transport(transport)
+            .bind_cloud_catalog(
+                &CloudCatalogBindingRequestV2 {
+                    version: Version2,
+                    held: None,
+                },
+                &AccountAuthorization::Bearer(&access),
+            )
+            .unwrap_err(),
+        ClientError::InvalidResponse
+    );
+}

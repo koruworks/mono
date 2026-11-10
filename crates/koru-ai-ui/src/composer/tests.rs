@@ -59,6 +59,94 @@ fn a_chosen_document_sits_in_the_text_as_a_chip_and_leaves_as_its_link() {
 }
 
 #[test]
+fn an_inline_document_pill_is_a_control_under_the_pointer() {
+    let mut composer = ChatComposer::new(None);
+    assert!(composer.insert_document(DocumentId::new(), "Top Priorities"));
+    let text = Rect::new(20.0, 80.0, 400.0, 50.0);
+    composer.text_height(text.w - 2.0 * PAD_X, 1, 8);
+    composer.place(text, Rect::new(0.0, 0.0, 500.0, 500.0));
+    let row = &composer.editor.body.rows[0];
+    let step = row.type_step();
+    let style = koru_draw::pill::PillTextStyle::new(step.size, step.size * step.line_height)
+        .with_stack(row.font_choice().stack());
+    assert_eq!(style.size, koru_draw::theme::role::ui().metrics.size);
+    assert_eq!(style.stack, koru_draw::theme::chat_stack());
+    let info = row.pills.values().next().expect("document pill");
+    assert!(
+        composer
+            .editor
+            .view
+            .engine
+            .pills
+            .get_with_style(info.kind, &info.label, info.url.as_deref(), style)
+            .is_some()
+    );
+    let x = composer.origin.0 + composer.editor.view.content_x + row.text_x() + 6.0;
+    let y = composer.origin.1 + row.y - composer.editor.view.scroll + row.height * 0.5;
+    composer.mouse_move(x, y);
+    assert!(
+        composer.over_inline_pill(),
+        "{:?}",
+        composer.editor.view.hover
+    );
+}
+
+#[test]
+fn alt_click_on_an_inline_document_pill_asks_for_a_place() {
+    let mut composer = ChatComposer::new(None);
+    let document = DocumentId::new();
+    assert!(composer.insert_document(document, "Top Priorities"));
+    let text = Rect::new(20.0, 80.0, 400.0, 50.0);
+    composer.text_height(text.w - 2.0 * PAD_X, 1, 8);
+    composer.place(text, Rect::new(0.0, 0.0, 500.0, 500.0));
+    let row = &composer.editor.body.rows[0];
+    let x = composer.origin.0 + composer.editor.view.content_x + row.text_x() + 6.0;
+    let y = composer.origin.1 + row.y - composer.editor.view.scroll + row.height * 0.5;
+
+    composer.set_mods(ModifiersState::ALT);
+    assert!(composer.mouse_down(x, y));
+    assert_eq!(
+        composer.take_place_request(),
+        Some(koru_link::KoruLink::Document {
+            document: document.as_uuid(),
+            node: None,
+        })
+    );
+    assert_eq!(composer.take_open_request(), None);
+}
+
+#[test]
+fn selected_task_keeps_its_node_link_and_containing_document_context() {
+    let document = DocumentId::new();
+    let node = NodeId::new();
+    let mut composer = ChatComposer::new(None);
+    typed(&mut composer, "@ship");
+    assert!(composer.editor.set_entity_search_results(
+        vec![DocumentChoice {
+            target: DocumentTarget {
+                document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                node: Some(node)
+            },
+            title: "Ship café".into(),
+            breadcrumb: "Workspace / Plan".into(),
+            is_file: false,
+        }],
+        false
+    ));
+    assert!(press(&mut composer, NamedKey::Enter));
+    let message = composer.message();
+    assert_eq!(
+        message.markdown,
+        format!("[[koru://doc/{document}#{node}]] ")
+    );
+    assert_eq!(message.documents, vec![(document, "Ship café".into())]);
+    let mut recalled = ChatComposer::new(None);
+    recalled.set_message(&message.markdown, |_| "Ship café".into());
+    assert_eq!(recalled.message().markdown, message.markdown);
+    assert_eq!(recalled.message().documents, message.documents);
+}
+
+#[test]
 fn at_inside_a_word_does_nothing() {
     let mut composer = ChatComposer::new(None);
     typed(&mut composer, "mail@example");
@@ -74,6 +162,63 @@ fn escape_closes_the_picker_and_leaves_the_text() {
     assert!(press(&mut composer, NamedKey::Escape));
     assert!(!composer.picker_open());
     assert_eq!(composer.text(), "ask @bud");
+}
+
+#[test]
+fn chat_picker_shows_window_recents_and_keeps_query_when_scope_widens() {
+    let current = koru_ai_core::WorkspaceId::new();
+    let other = koru_core::WorkspaceId::new();
+    let profile = koru_core::ProfileId::new();
+    let document = koru_core::DocumentId::new();
+    let mut composer = ChatComposer::new(None);
+    composer.set_context(Some(current), None);
+    composer.workspaces = vec![
+        WorkspaceChoice {
+            profile,
+            profile_name: String::new(),
+            id: koru_core::WorkspaceId::from_uuid(current.as_uuid()),
+            name: "Current".into(),
+        },
+        WorkspaceChoice {
+            profile,
+            profile_name: String::new(),
+            id: other,
+            name: "Other".into(),
+        },
+    ];
+    composer.set_recent_documents(vec![(document, "Recent plan".into())]);
+    typed(&mut composer, "@");
+    let Overlay::Entity(picker) = &composer.editor.view.overlay else {
+        panic!("@ picker open");
+    };
+    assert_eq!(picker.hits[0].target.document, document);
+    assert_eq!(
+        picker.selected_workspaces,
+        [koru_core::WorkspaceId::from_uuid(current.as_uuid())]
+    );
+
+    typed(&mut composer, "plan");
+    assert!(composer.key(&Key::Named(NamedKey::Space), None, ModifiersState::CONTROL));
+    let Overlay::Entity(picker) = &composer.editor.view.overlay else {
+        panic!("@ picker remains open");
+    };
+    assert_eq!(picker.query, "plan");
+    assert_eq!(picker.selected_workspaces.len(), 2);
+}
+
+#[test]
+fn chat_picker_requests_documents_when_this_window_has_no_recents() {
+    let current = koru_ai_core::WorkspaceId::new();
+    let mut composer = ChatComposer::new(None);
+    composer.set_context(Some(current), None);
+    typed(&mut composer, "@");
+    assert!(composer.picker_open());
+    assert!(
+        composer
+            .search
+            .as_ref()
+            .is_some_and(|search| search.pending())
+    );
 }
 
 #[test]
@@ -233,6 +378,20 @@ fn the_picker_floats_above_a_one_line_composer() {
 }
 
 #[test]
+fn the_picker_floats_above_the_whole_multiline_composer() {
+    let mut composer = ChatComposer::new(None);
+    let text = Rect::new(20.0, 520.0, 400.0, 118.0);
+    let room = Rect::new(0.0, 46.0, 460.0, 592.0);
+    composer.place(text, room);
+    typed(&mut composer, "@");
+    let panel = composer.picker_rect().expect("the picker is open");
+    assert!(
+        panel.y + panel.h <= text.y - 4.0,
+        "{panel:?} above {text:?}"
+    );
+}
+
+#[test]
 fn the_composer_grows_line_by_line_and_stops_at_the_cap() {
     let mut composer = ChatComposer::new(None);
     let one = composer.text_height(300.0, 1, 8);
@@ -336,18 +495,55 @@ fn a_sent_message_comes_back_with_its_chips() {
     });
 
     let message = composer.message();
-    assert_eq!(message.markdown, sent, "it leaves as it was sent");
+    let canonical = sent.replace("[[koru://chat/", r"\[[koru://chat/");
+    assert_eq!(message.markdown, canonical, "a text link stays literal");
     assert_eq!(
         message.documents,
         vec![(budget, "Budget".to_owned()), (plan, "Plan".to_owned())]
     );
     typed(&mut composer, "!");
-    assert_eq!(composer.text(), format!("{sent}!"), "edited at its end");
+    assert_eq!(
+        composer.text(),
+        format!("{canonical}!"),
+        "edited at its end"
+    );
 
     // Undo takes the whole recall back in one step.
     assert!(ctrl(&mut composer, "z"));
     assert!(ctrl(&mut composer, "z"));
     assert!(composer.is_blank());
+}
+
+#[test]
+fn selected_agent_pills_and_literal_marker_recall_without_reclassification() {
+    let mut composer = ChatComposer::new(None);
+    let sent = r"literal $review-pr and \[[koru://skill/review-pr]] then [[koru://skill/review-pr]] with [[koru://command/issue%2342]]";
+    composer.set_message(sent, |_| String::new());
+    let message = composer.message();
+    assert_eq!(message.markdown, sent);
+    assert_eq!(message.skills, vec!["review-pr"]);
+    let row = composer.ws.children(Parent::Node(composer.root)).unwrap()[0];
+    let node = composer.ws.read(row).unwrap();
+    let roles: Vec<_> = node
+        .content
+        .attrs()
+        .iter()
+        .map(|attr| attr.role.as_str())
+        .collect();
+    assert_eq!(
+        roles
+            .iter()
+            .filter(|role| **role == koru_core::attributes::ROLE_SKILL)
+            .count(),
+        1,
+    );
+    assert_eq!(
+        roles
+            .iter()
+            .filter(|role| **role == koru_core::attributes::ROLE_COMMAND)
+            .count(),
+        1,
+    );
 }
 
 // ----- quotes (koru-ai D88) ---------------------------------------------------

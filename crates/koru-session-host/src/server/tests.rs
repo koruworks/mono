@@ -101,8 +101,27 @@ fn a_turns_model_needs_protocol_twenty_two() {
     );
     assert_eq!(
         crate::protocol_offer().versions.max,
-        koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION,
+        koru_session_protocol::PATH_REFERENCES_PROTOCOL_VERSION,
         "the host offers it"
+    );
+}
+
+#[test]
+fn path_references_need_protocol_twenty_three_and_capability() {
+    let with_references = |version: u32| {
+        let mut peer = protocol(version, true, false);
+        peer.capabilities = CapabilitySet::new(vec![
+            CapabilityName::from_str(capability::PATH_REFERENCES).unwrap(),
+        ]);
+        peer
+    };
+    assert!(with_references(23).path_references());
+    assert!(!with_references(22).path_references());
+    assert!(!protocol(23, true, false).path_references());
+    assert!(
+        crate::protocol_offer()
+            .capabilities
+            .supports(capability::PATH_REFERENCES)
     );
 }
 
@@ -155,6 +174,8 @@ async fn written_frames(dynamic: bool) -> Vec<serde_json::Value> {
                         events: retained.clone(),
                         cursor: StreamSequence::new(11).unwrap(),
                         earlier_truncated: true,
+                        commands: None,
+                        session_cursor: None,
                     },
                 }),
             },

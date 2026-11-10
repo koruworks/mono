@@ -12,6 +12,30 @@ pub enum AttachmentKind {
     File,
 }
 
+/// A path hint names one file or folder, without copying its contents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PathReferenceKind {
+    File,
+    Folder,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PathReference {
+    pub kind: PathReferenceKind,
+    pub path: String,
+}
+
+impl PathReference {
+    pub fn valid(&self) -> bool {
+        !self.path.is_empty()
+            && self.path.chars().count() <= 4096
+            && !self.path.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n'))
+            && std::path::Path::new(&self.path).is_absolute()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AttachmentSource {
@@ -143,6 +167,10 @@ pub struct PendingInput {
     pub text: String,
     /// Ordered by the person composing the input.
     pub attachment_ids: Vec<AttachmentId>,
+    /// v23: local paths named to an agent without copied bytes. These ride
+    /// only on the initial turn, never on a steering input.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<PathReference>,
     /// v19 (koru-ai D7): the approval mode this turn runs in. The adapter
     /// moves the session to it before the prompt when it is elsewhere, and
     /// refuses the turn visibly when it cannot. `None` leaves the mode as
@@ -180,6 +208,10 @@ pub struct PendingInput {
 }
 
 impl PendingInput {
+    pub fn needs_path_references(&self) -> bool {
+        !self.references.is_empty()
+    }
+
     /// Whether only an `agent-commands` host can honor it.
     pub fn needs_agent_commands(&self) -> bool {
         !self.skills.is_empty()

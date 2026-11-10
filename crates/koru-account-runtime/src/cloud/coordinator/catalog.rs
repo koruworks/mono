@@ -137,7 +137,12 @@ impl<A: Api, H: Host> Coordinator<A, H> {
 
         let mut remote = BTreeMap::new();
         let mut after = None;
-        loop {
+        // Whether this loop read the service's **whole** catalog. Q10's
+        // repair turns on it, so the loop says it rather than leaving it to
+        // be inferred from control having reached the next line: a cancelled
+        // pass returns from inside, and a `break` added later for any other
+        // reason has to name its own answer.
+        let complete = loop {
             if self.cancel.cancelled() {
                 return Ok(());
             }
@@ -147,9 +152,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
             match page.next {
                 Some(cursor) => after = Some(cursor),
-                None => break,
+                None => break true,
             }
-        }
+        };
         self.service_units = remote;
 
         // Pull: what Cloud holds that this device does not have yet, root
@@ -171,6 +176,14 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 self.pull_unit(account, unit, &theirs, clock)?;
             }
         }
+        // Q10's exit from the v1 window, after the pulls and before the push.
+        // Here, and only here, three things are true at once: the service
+        // answered the v2 contract, its whole catalog has been read, and any
+        // unit it holds has already been joined. A Workspace this device holds
+        // with no unit at all therefore proves no unit exists on the service
+        // or here, and the unit Q7 withheld is published at once — so the
+        // push below carries it in this same pass.
+        self.repair_withheld_units(complete);
         // Push: what this device may export that Cloud does not hold at
         // this frontier.
         for kind in [
@@ -191,6 +204,61 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
         }
         Ok(())
+    }
+
+    /// Publish the Workspace unit the v1 Cloud window withheld, for every
+    /// Workspace this device holds with no unit at all (QUESTIONS.md Q10,
+    /// case 1 of the decision; Q7 is what withheld it).
+    ///
+    /// The three conditions are all checked here rather than in the host, so
+    /// the one place that knows them is the one that decides:
+    ///
+    /// - `complete` — the pagination loop ended because the next cursor was
+    ///   absent. A partial read cannot establish that the service holds no
+    ///   unit for a Workspace, only that none has been seen yet.
+    /// - the service answered [`CloudContract::V2`]. The account-scope
+    ///   binding is not a substitute: a 404 never unsets it, so a bound device
+    ///   can still be running the v1 pair path for this generation.
+    /// - the pass was not cancelled. A cancelled pass returns before the
+    ///   pulls finish, so reaching here already implies it; saying it again
+    ///   costs one comparison and makes a cancelled pass unable to repair
+    ///   even if the loops above are ever restructured.
+    ///
+    /// A Store refusal is logged and the pass carries on, as every other
+    /// Store refusal in this module is: the repair is a repair, and the next
+    /// pass asks again under the same three conditions.
+    fn repair_withheld_units(&mut self, complete: bool) {
+        if !complete || self.contract != Some(CloudContract::V2) || self.cancel.cancelled() {
+            return;
+        }
+        match self.host.repair_bootstrap_units() {
+            Ok(outcome) => {
+                if outcome.repaired == 0 {
+                    return;
+                }
+                tracing::info!(
+                    target: "koru_cloud",
+                    repaired = outcome.repaired,
+                    "cloud pass: root units withheld by the v1 window published"
+                );
+                // The push below reads `local_units`, which was captured
+                // before the repair: without this the new units would wait a
+                // whole pass for no reason.
+                self.local_units = outcome
+                    .inventory
+                    .units
+                    .iter()
+                    .map(|state| (unit_ref(state.unit), state.frontier.clone()))
+                    .collect();
+            }
+            Err(error) => {
+                tracing::info!(
+                    target: "koru_cloud",
+                    code = error.code(),
+                    "cloud pass: withheld root units not published"
+                );
+            }
+        }
     }
 
     /// Personal units after content (§7.3): for every admitted Workspace

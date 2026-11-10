@@ -497,7 +497,7 @@ fn host_on(session_id: ControlSessionId) -> ControlHost {
 
 #[test]
 fn the_control_protocol_is_seven_and_the_greeting_refuses_every_other_number() {
-    assert_eq!(CONTROL_PROTOCOL_VERSION, 7);
+    assert_eq!(CONTROL_PROTOCOL_VERSION, 8);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
     // A different number, and its own: the peer protocol went 5 -> 6 for the
     // root-catalog exchange while the control protocol stayed 7.
@@ -1274,4 +1274,85 @@ fn the_worse_root_sync_reading_wins() {
     assert_eq!(Held.worse(PausedBySettings), PausedBySettings);
     assert_eq!(PausedBySettings.worse(BlockedByMismatch), BlockedByMismatch);
     assert_eq!(BlockedByMismatch.worse(UpToDate), BlockedByMismatch);
+}
+
+// ------------------------------------- Q10's additive field on an old request
+
+/// **The repair trigger is a field, not a variant.** Root-catalog QUESTIONS.md
+/// Q10 needs the Cloud pass to tell the Store "publish the unit the v1 window
+/// withheld", and this round's two frozen-contract regressions are why it is
+/// carried on the inventory request that already exists: a new variant is a
+/// refusal on an older gateway, while an absent key is the read this request
+/// has always been.
+///
+/// Both halves are asserted, because only the pair is the compatibility
+/// claim: an ordinary read writes no key at all, and a message written
+/// without the key decodes as the ordinary read.
+#[test]
+fn an_ordinary_root_inventory_read_carries_no_repair_key_and_an_old_one_decodes() {
+    let session_id = ControlSessionId::new();
+    let plain = ControlRequest::ReadCloudRootInventory {
+        control_session_id: session_id,
+        repair_unitless: false,
+    };
+    let rendered = serde_json::to_string(&plain).unwrap();
+    assert!(
+        !rendered.contains("repair_unitless"),
+        "a plain read must re-encode exactly as it always did: {rendered}"
+    );
+
+    let old = format!(
+        r#"{{"kind":"read_cloud_root_inventory","control_session_id":"{}"}}"#,
+        session_id.as_uuid()
+    );
+    match serde_json::from_str::<ControlRequest>(&old).unwrap() {
+        ControlRequest::ReadCloudRootInventory {
+            repair_unitless, ..
+        } => assert!(!repair_unitless, "absent is the ordinary read"),
+        other => panic!("{other:?}"),
+    }
+
+    let repairing = ControlRequest::ReadCloudRootInventory {
+        control_session_id: session_id,
+        repair_unitless: true,
+    };
+    let rendered = serde_json::to_string(&repairing).unwrap();
+    assert!(rendered.contains(r#""repair_unitless":true"#), "{rendered}");
+    match serde_json::from_str::<ControlRequest>(&rendered).unwrap() {
+        ControlRequest::ReadCloudRootInventory {
+            repair_unitless, ..
+        } => assert!(repair_unitless),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The answer is additive the same way: a count only when there is one.
+#[test]
+fn an_inventory_answer_omits_the_repaired_count_when_nothing_was_repaired() {
+    let session_id = ControlSessionId::new();
+    let none = ControlResponse::CloudRootInventory {
+        control_session_id: session_id,
+        units: Vec::new(),
+        held: 0,
+        repaired: 0,
+    };
+    let rendered = serde_json::to_string(&none).unwrap();
+    assert!(!rendered.contains("repaired"), "{rendered}");
+    assert_eq!(
+        serde_json::from_str::<ControlResponse>(&rendered).unwrap(),
+        none
+    );
+
+    let some = ControlResponse::CloudRootInventory {
+        control_session_id: session_id,
+        units: Vec::new(),
+        held: 0,
+        repaired: 3,
+    };
+    let rendered = serde_json::to_string(&some).unwrap();
+    assert!(rendered.contains(r#""repaired":3"#), "{rendered}");
+    assert_eq!(
+        serde_json::from_str::<ControlResponse>(&rendered).unwrap(),
+        some
+    );
 }

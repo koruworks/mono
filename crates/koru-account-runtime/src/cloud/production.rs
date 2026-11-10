@@ -204,8 +204,12 @@ impl Api for HostedApi {
 
 /// A transport problem is offline and retried; a revoked session or a denied
 /// principal is not, because only a new authorization can change it. A 404
-/// is a route the service does not serve; the two binding refusals are
-/// terminal for the account and keep their words.
+/// is a route the service does not serve, whether or not it was answered in
+/// Koru's words — the live v1 service answers the binding route from its own
+/// framework, not with a `DeveloperErrorV1` — and the two binding refusals
+/// are terminal for the account and keep their words. Nothing *but* a 404 is
+/// read as a missing route: every other codeless status keeps the reading it
+/// had while the status was being thrown away.
 fn failure(error: ClientError) -> Failure {
     match error {
         ClientError::Transport(_) => Failure::Offline,
@@ -221,7 +225,9 @@ fn failure(error: ClientError) -> Failure {
             (_, ErrorCode::SERVER_UNAVAILABLE) => Failure::NotReady,
             _ => Failure::Unavailable,
         },
-        ClientError::InvalidRequest
+        ClientError::ApiWithoutCode { status: 404 } => Failure::RouteNotFound,
+        ClientError::ApiWithoutCode { .. }
+        | ClientError::InvalidRequest
         | ClientError::MissingBrowserOrigin
         | ClientError::InvalidResponse
         | ClientError::ContractMismatch => Failure::Unavailable,

@@ -4975,11 +4975,10 @@ mod note {
         let picked = hit.target.document;
         view.set_link_results(vec![hit], false);
         let panel = view.link_rect_for_test();
-        // The first result row: past the field, the scope chip and padding.
+        // The first result row: past the field and padding, above the footer.
         let y = panel.y
             + koru_editor::components::entity_picker::FIELD_H
             + koru_draw::theme::PANEL_PAD
-            + koru_editor::components::entity_picker::HEADER_H
             + koru_draw::theme::ROW_H * 0.5;
         assert!(view.mouse_move(panel.x + 20.0, y), "the row lights");
         assert!(view.mouse_down(&mut doc, panel.x + 20.0, y, false));

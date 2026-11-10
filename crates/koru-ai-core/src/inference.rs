@@ -389,6 +389,13 @@ pub enum AiEvent {
         attempt_id: InferenceAttemptId,
         usage: AiUsage,
     },
+    /// Current context occupancy as the agent reported it; separate from
+    /// per-turn usage and never inferred from lifetime token totals.
+    ContextUsage {
+        attempt_id: InferenceAttemptId,
+        used: u64,
+        size: u64,
+    },
     ToolCalls {
         attempt_id: InferenceAttemptId,
         calls: Vec<AiToolCall>,
@@ -454,6 +461,7 @@ impl AiEvent {
             | Self::TextDelta { attempt_id, .. }
             | Self::ReasoningDelta { attempt_id, .. }
             | Self::Usage { attempt_id, .. }
+            | Self::ContextUsage { attempt_id, .. }
             | Self::ToolCalls { attempt_id, .. }
             | Self::ToolActivity { attempt_id, .. }
             | Self::AgentNotice { attempt_id, .. }

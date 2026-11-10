@@ -302,8 +302,13 @@ pub(crate) fn search(
     // query" — and this guard returned before it could. The tests did not
     // catch it because every one of them passes a word beside the filter, so
     // the filter-only query, which is the ordinary way to ask *what is due
-    // this month*, was the one shape nothing tried.
-    if terms.is_empty() && tag_filters.is_empty() && query.attributes.is_empty() {
+    // this month*, was the one shape nothing tried. An entity picker's explicit
+    // document-kind filter likewise asks for title rows without a typed term.
+    if terms.is_empty()
+        && tag_filters.is_empty()
+        && query.attributes.is_empty()
+        && !(query.entity_picker && !query.kinds.is_empty())
+    {
         return Ok(SearchPage {
             hits: Vec::new(),
             next_offset: None,
@@ -353,6 +358,17 @@ pub(crate) fn search(
             kinds.push_str(&format!("?{}", values.len()));
         }
         kinds.push(')');
+    }
+    if query.entity_picker {
+        // The typed task model is marker OR due. Primary fragments carry the
+        // authored task label; attribute fragments would show a token instead.
+        // A title remains a document/file choice. This reads existing tables.
+        kinds.push_str(
+            " AND ((f.field='title' AND f.node_id IS NULL) OR \
+            (f.node_id IS NOT NULL AND f.stable_key LIKE 'node:%:primary' AND EXISTS (\
+                SELECT 1 FROM attr_values task WHERE task.document_id=f.document_id \
+                AND task.node_id=f.node_id AND task.role IN ('koru.task','koru.due'))))",
+        );
     }
     // **The semi-join, and the whole of the feature.** Correlated on the node
     // rather than the document, so a tag qualifies the line that carries it;
@@ -570,9 +586,13 @@ pub(crate) fn search(
             }),
         );
         hits.push(SearchHit {
-            title: listed
-                .map(|l| l.title.clone())
-                .unwrap_or_else(|| workspace_name.clone()),
+            title: if query.entity_picker && row.node.is_some() {
+                row.text.clone()
+            } else {
+                listed
+                    .map(|l| l.title.clone())
+                    .unwrap_or_else(|| workspace_name.clone())
+            },
             workspace_name,
             workspace: row.workspace,
             document: row.document,
@@ -781,7 +801,7 @@ mod tests {
     use super::*;
     use crate::model::Fragment;
     use koru_projection::model::ListedDocument;
-    use koru_store_core::ids::DocumentId;
+    use koru_store_core::ids::{DocumentId, WorkspaceId};
 
     // ------------------------------------------------------- the parse
 
@@ -1026,6 +1046,190 @@ mod tests {
             1
         );
         assert_eq!(filtered(&index, "Ship", Vec::new()).len(), 3, "unfiltered");
+    }
+
+    #[test]
+    fn entity_picker_finds_marked_and_due_tasks_with_node_identity() {
+        let index = with_values(&[
+            ("Ship café", &[("koru.task", "text", "explicit")]),
+            ("Ship café", &[("koru.due", "date", "2026-11-07")]),
+            ("Ship café", &[]),
+        ]);
+        let page = index
+            .query(
+                &SearchQuery {
+                    text: "cafe".into(),
+                    entity_picker: true,
+                    ..SearchQuery::default()
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(page.hits.len(), 2);
+        assert_eq!(
+            page.hits
+                .iter()
+                .map(|h| h.node.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("n0"), Some("n1")]
+        );
+        assert!(page.hits.iter().all(|hit| hit.title == "Ship café"));
+    }
+
+    #[test]
+    fn document_picker_can_list_titles_without_a_typed_term() {
+        let index = with_values(&[("A task", &[("koru.task", "text", "explicit")])]);
+        let listed = index
+            .query(
+                &SearchQuery {
+                    kinds: vec!["document".into()],
+                    entity_picker: true,
+                    ..SearchQuery::default()
+                },
+                &[],
+            )
+            .unwrap()
+            .hits;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "Roadmap");
+        assert_eq!(listed[0].node, None, "a task is not a document row");
+        assert!(
+            index
+                .query(&SearchQuery::default(), &[])
+                .unwrap()
+                .hits
+                .is_empty(),
+            "an ordinary blank search still lists nothing"
+        );
+    }
+
+    #[test]
+    fn task_edit_and_marker_removal_update_the_entity_picker_index() {
+        let mut index = with_values(&[("Ship café", &[("koru.task", "text", "explicit")])]);
+        let query = SearchQuery {
+            text: "cafe".into(),
+            entity_picker: true,
+            ..SearchQuery::default()
+        };
+        let first = index.query(&query, &[]).unwrap().hits;
+        assert_eq!(first.len(), 1);
+        let document = first[0].document.as_ref().unwrap();
+        let mut fragment = Fragment {
+            key: format!("node:{document}:n0:primary"),
+            workspace: WORKSPACE.into(),
+            document: Some(document.clone()),
+            node: Some("n0".into()),
+            seq: 1,
+            kind: "paragraph".into(),
+            field: field::BODY.into(),
+            text: "Ship café".into(),
+        };
+        fragment.text = "Launch runway".into();
+        let marker = crate::model::AttrRow {
+            workspace: WORKSPACE.into(),
+            document: document.clone(),
+            node: "n0".into(),
+            role: "koru.task".into(),
+            kind: "text".into(),
+            value: "explicit".into(),
+            num: None,
+            zone: None,
+        };
+        index
+            .replace_document(
+                WORKSPACE,
+                document,
+                &[fragment.clone()],
+                &[marker],
+                b"r2",
+                20,
+            )
+            .unwrap();
+        assert!(index.query(&query, &[]).unwrap().hits.is_empty());
+        let renamed = SearchQuery {
+            text: "launch".into(),
+            ..query.clone()
+        };
+        assert_eq!(index.query(&renamed, &[]).unwrap().hits.len(), 1);
+        index
+            .replace_document(WORKSPACE, document, &[fragment], &[], b"r3", 30)
+            .unwrap();
+        assert!(index.query(&renamed, &[]).unwrap().hits.is_empty());
+
+        index
+            .replace_document(WORKSPACE, document, &[], &[], b"r4", 40)
+            .unwrap();
+        assert!(index.query(&renamed, &[]).unwrap().hits.is_empty());
+    }
+
+    #[test]
+    fn task_entity_query_obeys_current_and_widened_workspace_scope() {
+        let mut index = SearchIndex::in_memory().unwrap();
+        let first = WorkspaceId::new();
+        let second = WorkspaceId::new();
+        for (workspace, label) in [(first, "First"), (second, "Second")] {
+            let workspace_id = workspace.to_storage();
+            let document = DocumentId::new();
+            let document_id = document.to_storage();
+            index
+                .set_listing(
+                    &workspace_id,
+                    label,
+                    b"r1",
+                    &[ListedDocument {
+                        document,
+                        parent: None,
+                        ordinal: 0,
+                        title: "Plan".into(),
+                        kind: "page".into(),
+                        mime: None,
+                        trashed_at: None,
+                        trashed_by: None,
+                    }],
+                )
+                .unwrap();
+            let fragment = Fragment {
+                key: format!("node:{document_id}:task:primary"),
+                workspace: workspace_id.clone(),
+                document: Some(document_id.clone()),
+                node: Some("task".into()),
+                seq: 1,
+                kind: "paragraph".into(),
+                field: field::BODY.into(),
+                text: "Ship release".into(),
+            };
+            let marker = crate::model::AttrRow {
+                workspace: workspace_id.clone(),
+                document: document_id.clone(),
+                node: "task".into(),
+                role: "koru.task".into(),
+                kind: "text".into(),
+                value: "explicit".into(),
+                num: None,
+                zone: None,
+            };
+            index
+                .replace_document(
+                    &workspace_id,
+                    &document_id,
+                    &[fragment],
+                    &[marker],
+                    b"r1",
+                    10,
+                )
+                .unwrap();
+        }
+        let mut query = SearchQuery {
+            text: "ship".into(),
+            entity_picker: true,
+            workspaces: vec![first],
+            ..SearchQuery::default()
+        };
+        let current = index.query(&query, &[]).unwrap().hits;
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].workspace, first.to_storage());
+        query.workspaces.push(second);
+        assert_eq!(index.query(&query, &[]).unwrap().hits.len(), 2);
     }
 
     /// Equality folds the way the text search folds, so the filter and the box

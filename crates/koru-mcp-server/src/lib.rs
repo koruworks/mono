@@ -3390,6 +3390,7 @@ impl Backend for LocalBackend {
                 let request = SearchRequest {
                     query: SearchQuery {
                         text: a.query,
+                        entity_picker: false,
                         workspaces,
                         excluded_workspaces: Vec::new(),
                         kinds: a.kinds,

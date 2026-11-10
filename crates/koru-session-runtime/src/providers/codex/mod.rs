@@ -88,6 +88,8 @@ pub struct CodexControl {
     /// The thread's cumulative usage as last reported. An ephemeral thread
     /// starts at zero, which is what makes the first turn's baseline true.
     thread_usage: normalize::UsageTotals,
+    /// Latest active-window report, separate from cumulative thread usage.
+    context_usage: Option<(u64, u64)>,
     /// Each turn's baseline: the thread total when the turn was submitted.
     /// A turn's usage is the thread total now minus this, so a missed
     /// intermediate update loses nothing (§17.2).
@@ -183,6 +185,7 @@ impl CodexControl {
             events: VecDeque::new(),
             diagnostics: ProviderDiagnostics::default(),
             thread_usage: normalize::UsageTotals::ZERO,
+            context_usage: None,
             usage_baselines: BTreeMap::new(),
             thread_model: None,
             rerouted_models: BTreeMap::new(),
@@ -442,6 +445,10 @@ impl CodexControl {
         if !input.text.is_empty() {
             provider_input.push(json!({ "type": "text", "text": input.text }));
         }
+        for reference in &input.references {
+            provider_input
+                .push(json!({"type": "text", "text": super::contract::reference_line(reference)}));
+        }
         // Each picked skill beside the text that says `$name` for it.
         provider_input.extend(skill_items);
         for attachment in &input.attachments {
@@ -535,6 +542,9 @@ impl CodexControl {
         if let Some(effort) = effort {
             params["effort"] = json!(effort);
         }
+        if switch.is_some() {
+            self.context_usage = None;
+        }
         let response = self.call("turn/start", params, ProviderStage::Submit)?;
         self.effort = effort;
         if let Some(model) = switch {
@@ -557,6 +567,9 @@ impl CodexControl {
         self.queue(AgentEvent::TurnStarted {
             turn_id: input.turn_id,
         })?;
+        if let Some((used, size)) = self.context_usage {
+            self.queue(AgentEvent::ContextUsage { used, size })?;
+        }
         self.queue(AgentEvent::ProviderState {
             provider: provider_kind(),
             state: koru_session_protocol::ManagedState::Running,
@@ -981,6 +994,15 @@ fn input_fingerprint(input: &AgentInput) -> blake3::Hash {
         }]);
         hasher.update(&(attachment.media_type.len() as u64).to_le_bytes());
         hasher.update(attachment.media_type.as_bytes());
+    }
+    for reference in &input.references {
+        hasher.update(b"reference\0");
+        hasher.update(&[match reference.kind {
+            koru_session_protocol::PathReferenceKind::File => 1,
+            koru_session_protocol::PathReferenceKind::Folder => 2,
+        }]);
+        hasher.update(&(reference.path.len() as u64).to_le_bytes());
+        hasher.update(reference.path.as_bytes());
     }
     // The skills a turn names are part of what it asks (koru-ai D121).
     for skill in &input.skills {

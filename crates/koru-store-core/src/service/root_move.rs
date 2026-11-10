@@ -52,8 +52,10 @@
 //! is in this state. Such a row is read from the projection, as the only
 //! evidence there is, and gains its unit on a move that places it under a
 //! different Profile, or on a lifecycle write. A move to the Profile it
-//! already reads as writes nothing (`already_placed_under`), so nothing
-//! repairs it on its own — see QUESTIONS.md Q10.
+//! already reads as writes nothing (`already_placed_under`), so the person
+//! re-filing it where it already looks filed is not the way out — which is
+//! why `root_repair.rs` publishes the withheld unit at the one moment the
+//! device can honestly conclude no unit exists anywhere (QUESTIONS.md Q10).
 
 use super::*;
 use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootUnitWrite};

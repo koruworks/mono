@@ -1153,7 +1153,8 @@ point at it**, so the strip is labels until you want to close something.
 **Clicking a document in the pane opens it in this tab**, replacing what was
 there. If that page is already open, that tab comes forward instead. A pin is
 left alone: the page opens in your last unpinned tab, or a new one if you have
-none. Right-click (or the row `…`) offers **Open in new tab** and **Open in new
+none. From a chat tab, the document opens in a new tab and the chat stays open.
+Right-click (or the row `…`) offers **Open in new tab** and **Open in new
 window**. **Clicking a
 document pill** follows the link in this tab the same way, unless this tab is
 pinned — then the link opens in a new unpinned tab (or focuses one that already
@@ -1384,6 +1385,18 @@ the search box, the agents, the list, the effort strip and the toggles,
 Left and Right to move the level on the strip, Space or Enter to flip a
 toggle, Esc to clear the search or close.
 
+In an open chat, the model mark at the left of the model chip opens the
+**Context window** panel. Its ring, token counts and progress bar show the
+latest used and limit pair when the agent reports both values. Otherwise the
+panel says the usage is unavailable. The panel can still show the
+last reported input tokens and the total tokens processed across replies;
+these are different from the current context window. Click the mark again,
+click outside, or press Esc to close the panel.
+The ring follows the latest report from the agent. After reopening Koru, the
+last reported pair for that reply appears if the chat still uses the same
+model. Older replies without a stored report remain unavailable until the
+agent sends another pair. Starting a new reply waits for its own report.
+
 When you scroll up in a chat, a round ↓ button appears above the message
 box; click it, or press `Ctrl+End`, to jump to the newest message and keep
 following a reply as it arrives. If you have typed something, `Ctrl+End`
@@ -1453,12 +1466,14 @@ that pictures go to local agents only.
 **Send a file.** Copy files in Explorer or Finder and paste them into the
 chat: a PDF, a Word, Excel or PowerPoint file, an OpenDocument or EPUB, RTF,
 an MP4 or MOV, text, Markdown, CSV, JSON and the like, or source code. Each
-shows as a chip with its icon, name and size, and the agent is told where it
-is. Click a chip to open the file in the app your system uses for it; text and
-source code always open in your text editor, so a script never runs from the
-chat. Any other type — an `.exe`, a `.zip` — is refused, with one line naming
-it, and a file that only claims an allowed type is refused when Koru stores
-it. Pasting files is not available on Linux yet.
+shows as a one-line chip with its icon and name, and the agent is told where it
+is. Click a sent file tile to open a preview over the Koru window. Plain text
+and source code appear there, with **Save as…** to keep a copy. PDFs, Office
+files and other types without an in-app preview offer **Save as…** and
+**Open externally**. Source code is shown as text in Koru, so a script never
+runs from the chat. Any other type — an `.exe`, a `.zip` — is refused, with one
+line naming it, and a file that only claims an allowed type is refused when
+Koru stores it. Pasting files is not available on Linux yet.
 
 **Look at a picture closely.** Click a picture on a message, or in the strip
 above the text, and it opens over the whole window — at its own size when it
@@ -1485,23 +1500,32 @@ even if the document or Explore last held focus;
 `Alt+Down` walks forward again, and one step past the newest question returns
 the caret to the composer.
 
-Each chat has its own workspace authority in the left control at the bottom of
-the composer, immediately after the web-search globe when search is available.
-Open it to select only the workspaces this chat may read or change; lists with
-more than five workspaces add a filter field above the rows. Selecting none
-means no workspace access. In an embedded AI pane, the
-workspace shown by that window is always the first row and is selected when the
-chat is opened there. You may remove that grant while the chat remains open;
-opening it again in the embedded pane initializes it from the current workspace
-again.
+The composer shows the open document and attachments as removable context
+chips inside the message box. Use **+ → Recent** to insert a recent document
+or **+ → Koru context** to open the same document picker as `@`. The band wraps
+up to three lines and then scrolls. When you send from a workspace or mention
+another workspace's document, Koru grants the needed workspace before it sends
+the message. A refused grant leaves the draft and its attachments in place.
+**+ → Upload or add files** opens the file picker directly; after choosing a
+file, choose whether to add it to the current workspace or attach a reference.
+**+ → Add folder** opens the folder picker directly and attaches the selected
+folder as context. To import a file into the current workspace, use **+ →
+Upload or add files** and choose **Add to workspace** after selecting it.
 
-The approval control is independent and sits immediately left of the model
-control. **Manual approval** lets reads proceed but pauses every proposed
-change for an explicit decision. **Automatic** allows both reads and changes
-within the selected workspaces. A chat with a local agent has the agent's own
-**approval modes** there instead: the chip shows the current mode's icon and
-name, and opens a list upward of every mode the agent offers, each with a line
-saying what it does and a check on the current one. Claude Code offers **Ask
+Type `@` to find a document or a task by name. A selected task links to its
+place in the document; when you send it to AI, the containing document supplies
+context. The picker opens above the message box with recent documents. If this
+window has no recent documents, it lists documents in the current workspace.
+Its footer names the search scope. Press `Ctrl+Space` while it is open to search
+your other workspaces too.
+
+On a chat with a local agent, the send button carries the agent's current
+approval mode: its color and icon identify the mode, and its chevron appears
+on hover or keyboard focus. The chevron opens a list above the composer with
+each mode's name, explanation and a check on the current one. The menu footer
+says the choice applies to this chat; **Change default** opens **Settings →
+Coding → Agent providers**. The chevron remains available when Send is
+disabled. While Stop shows, the chevron is hidden. Claude Code offers **Ask
 first** (its default: it asks before every change), **Accept edits** (it edits
 files without asking, and still asks before commands), **Plan** (it reads and
 plans, and changes nothing until you approve the plan), **Auto** (Claude
@@ -1510,13 +1534,13 @@ asking). Codex offers **Ask for approval** (the default), **Approve for me**
 (Codex edits in the chat's folder and its reviewer decides anything that needs
 more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 **Plan**. Full access is shown in the warning color. `Shift+Tab` in the
-composer steps to the next mode, which the chip then names; it never steps
+composer steps to the next mode, which the send button then shows; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
 change inside a chat applies to that chat only, and a new chat starts from the
 **default permission** you set on **Settings → Coding → Agent providers** —
 Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
-applies to your next message, and the note beside the chip says so. When the
-agent leaves a mode by itself — Claude after you approve its plan — the chip
+applies to your next message, and the note beside the send button says so. When the
+agent leaves a mode by itself — Claude after you approve its plan — the send button
 follows. Whatever the mode, the agent asks for permission with its own choices,
 on a card in the reply. A proposed change waits on a card with **Approve** and
 **Deny**. In the agent's work above a reply, a change to a file shows the
@@ -1530,9 +1554,8 @@ chat's working folder. When an agent opens a
 picture — a PNG, JPEG, GIF, WebP or BMP file — open that step to see the
 picture itself under the file's name; Koru shows it straight from the file,
 so if the file has since been moved or deleted the step shows just its name. The
-composer footer keeps the
-globe and workspace controls against its left edge and approval plus
-model controls against its right edge. The send action is an arrow inside the
+composer toolbar keeps the plus and available web-search controls against its left edge,
+and the model control and send button at its right edge. The send action is an arrow inside the
 composer; it is disabled while the composer is empty and becomes a stop control
 during an active response. Pressing `Esc` twice does the same as the stop
 control: the first press shows *Press Esc again to stop* above the composer,
@@ -1543,15 +1566,18 @@ whatever the composer holds.
 the send button, which reads **Queue** while a reply runs and you have typed
 something, and **Stop** when the composer is empty) and the message is queued:
 the composer clears for the next one, and the message waits in a **pending**
-list above the composer, one line each, with everything it carries — document
+card above the composer, one line each, with everything it carries — document
 chips, quotes and attachments. When the reply finishes, the first queued
 message is sent, then the next after its reply, and so on. If you stop a reply,
 or it fails, the queue pauses and says *Queue paused · Send next*: **Send next**
 sends the first one, and so does sending a message yourself. A queued message
 the chat would not take goes back to the front of the queue rather than into
-the composer. Each queued message has three buttons: **Edit** puts it back in
+the composer. The card header shows the queue count and folds or unfolds its
+rows. Each queued message has three actions: **Edit** puts it back in
 the composer (anything you were typing takes its place in the queue),
 **Remove ×** drops it, and **Steer** sends it into the running reply right now.
+With an empty composer and queued messages, `Enter` steers the first queued
+message.
 With Codex and Claude, Steer hands your text to the agent mid-reply and the
 reply carries on with it; your message moves up under your question, above the
 reply's work and answer, and stays there when you reopen the chat. With every other agent — and for a message with attachments or
@@ -1587,7 +1613,10 @@ line returns after reopening the chat; unavailable usage is left blank rather
 than estimated. Markdown tables in responses use the same presentation as
 document tables: headers are bold, columns follow their content, delimiter
 alignment is honored, and inline emphasis, code, and links are rendered inside
-cells. If Koru cannot
+cells. A Codex file citation in an answer appears as a source or file link
+with its filename. Clicking a local file citation opens Koru's file preview;
+the link card shows and copies its path. Plain text files can be read there,
+while other file types offer Save As and Open externally. If Koru cannot
 load the available-workspace catalog, the composer access popover reports that
 failure instead of presenting an empty list; restart the local stack and try
 again. An empty list with no failure means this profile currently contains no
@@ -1601,8 +1630,13 @@ terminal. Those records include authored chat/document content and provider
 output, but never the provider credential; leave
 the switch off outside a trusted development session.
 
-A new chat opens on a short greeting with the composer in the middle; once the
-first message is sent the composer moves to the bottom and stays there. In the
+A new chat opens on a short greeting with the Koru logo beside it, both at
+the title size, and the composer in the middle. The message box has generous
+inner spacing and a soft shadow; at the bottom of an active chat, the shadow
+stays clear of the window edge. The +, model and permission
+menus open below the composer when they fit. Once the first message is sent,
+the composer moves to the bottom and those menus open above it. The `@`, `/`
+and `$` pickers always open above the composer. In the
 composer, `Up` on its first line brings back the messages you sent in this chat,
 newest first; keep pressing `Up` to go further back. Each comes back with the
 caret at its start and with its document chips and quotes. `Down` on its last
@@ -1610,14 +1644,15 @@ line walks forward again, back to whatever you were typing, and `Esc` takes you
 straight back to it. A message you steered into a reply is in the list; one
 still waiting in the queue is not.
 
-**Use a Codex skill.** In a chat with Codex, type `$` to list the skills Codex
-has for this workspace — yours, the project's and its own — and keep typing to
-narrow the list. `Enter` or `Tab` picks one and it becomes a chip in your
-message; `Esc` closes the list and leaves the `$` as text, and `Backspace`
-removes a chip whole. Send as usual: Codex is told exactly which skill you
-meant. A message with a skill is not slipped into a reply that is still being
-written; it waits and goes when the reply ends. With other agents `$` is just a
-character.
+**Use an agent skill or command.** In an agent chat, type `$` to list its
+skills, or `/` to list its commands and skills. The list opens as soon as you
+type the trigger; placeholder rows appear while the agent's list loads, and
+an empty list says when nothing matches. Keep typing to narrow the list.
+`Enter` or `Tab` picks an entry and it becomes a chip in your message; `Esc`
+closes the list and leaves the trigger as text, and `Backspace` removes a chip
+whole. Send as usual: the agent is told exactly which skill or command you
+meant. A message with a skill waits for a running reply to finish before it
+is sent. With a provider that has no local agent, `$` and `/` are characters.
 
 **Dictate a message.** Click the microphone beside the send button, or press
 `Ctrl+Shift+D` (hold it, or press once if you set dictation to toggle). The
@@ -1708,8 +1743,10 @@ right-click inside it for **Copy** with its `Ctrl+C` hint or **Add to chat**
 with its `Ctrl+L` hint. `Ctrl+L` adds the selection whenever the **Add to
 chat** button is showing, even while you are typing in the message box.
 Click any link in an answer, including one inside a table, to open it: a web
-page opens in your browser, a Koru document opens as a tab. A web address the
-answer writes out in full is a link too. Rest the pointer on a link and a
+page opens in your browser, a Koru document opens in a new tab and keeps the
+chat available. Alt+click a document link or a document chip in the message box
+to choose a split or a new tab. A web address the answer writes out in full is
+a link too. Rest the pointer on a link and a
 card shows where it goes — a long address shortened in the middle — with
 **Copy** to put the whole address on the clipboard
 and **Open** to open it; press Escape or move away to close it.
@@ -4422,12 +4459,14 @@ for you.
 
 Type `@` and start writing a document title. The text beside the caret filters
 the shared search index while the popover lists every matching document as a
-separate row. It searches every active workspace by default; archived and
-deleted workspaces stay out of both the filter and its results. Use the workspace
-filter to narrow the scope, then pick a result to insert the pill. **Clicking that
-pill opens the document.** The default list shows recent documents and always
-offers **Add new document**. With a typed query, that action creates the page with
-the query as its title, replaces the authored `@query` with its pill, and opens
+separate row. It starts in the current workspace. Press **Ctrl+Space** while the
+picker is open to include every active workspace without clearing your query;
+archived and deleted workspaces stay out of the results. Pick a result to insert
+the pill. **Clicking that pill opens the document.** The empty-query list shows
+this window's recent documents, or the current workspace's document list when
+there are no recents, and always offers **Add new document**. With a typed
+query, that action creates the page with the query as its title, replaces the
+authored `@query` with its pill, and opens
 the new page.
 
 **Type `#` to link to a heading rather than a whole page.** With a document
@@ -6417,7 +6456,7 @@ restart.
 
 Press **New chat** and open the model chip. Under **Local agents** are the
 coding agents installed on this computer — Codex, OpenCode, Claude, Kimi,
-Grok, Antigravity, Devin — each with a word when it is not ready (*Not installed*,
+Grok, GitHub Copilot, Qwen Code, Antigravity, Muse and Devin — each with a word when it is not ready (*Not installed*,
 *Signed out*, *Needs a supported version*). Pick one and the chip reads its
 name. Codex, OpenCode and Antigravity can also list their models: the small
 arrow at the end of the row expands them (OpenCode groups them by provider),
@@ -6457,17 +6496,18 @@ stopped, the chat stays and says so, and you can delete it again. If the agent
 had gone by the time you write again, Koru starts it fresh, hands it the
 conversation so far, and tells you.
 
-Before your first message, the folder under the composer, at its left edge
-(it reads *Home folder* until you choose), opens a picker for the folder the
-agent works in; the chosen folder stays named there, and a chat branched from
-this one keeps it. Once the first message is sent the folder is fixed — start
-a new chat to work somewhere else.
+Before your first message, **+ → Work in a project** opens a folder picker for
+where the agent works. A chat branched from this one keeps that folder. Once
+the first message is sent the folder is fixed — start a new chat to work
+somewhere else.
 
 **Effort.** For a model that offers levels — OpenAI's, the Koru model's
 thinking, an Ollama model — the chip reads the model and its effort
 (*gpt-5.6 · Medium*). Open the chip and pick a level on the effort strip; the chat keeps that level and the next message uses
 it. A coding agent's level is set the same way, on the strip at the foot
-of its model picker.
+of its model picker. When there are more agents than the picker's rail can
+show, use its chevrons to page through them; the remaining agents, including
+Muse and Devin when available, stay reachable without enlarging the panel.
 
 In Settings, the **Local agents** card lists the same agents; saving one makes
 it the default for new chats.
@@ -6536,10 +6576,23 @@ and Escape closes it and leaves what you typed. While the list is open, Enter
 chooses rather than sends. Type `#` after a document's name to link one of its
 headings. `@` inside a word — an email address — is just text.
 
+The empty chat picker shows this window's recent documents, or the document
+list when there are none. It opens above the composer and shows the current
+search scope in its footer; **Ctrl+Space** widens it to all active workspaces and
+keeps the query. A file selected through the chat's attachment menu is copied
+into the chat before sending, so it remains available if the workspace file
+moves.
+
+Sent images, files, and folder references appear as one-line pills matching
+the composer. Image pills open the in-app viewer; file pills open Koru's file
+preview, where supported, with Save As available. A picture attached as a
+local file reference also opens in the image viewer after sending.
+Double-click a sent folder pill to open that folder in your file manager.
+
 When you send, each document you mentioned goes with the message and stays
-pinned to the chat, and your message shows it by its title as a link; click it
-to open the document. Up to 16 documents go with one message; Koru says so if
-you mention more. Everything else in the box is plain text: Shift+Enter or
+pinned to the chat, and your message shows its document icon and title as a
+link; click it to open the document. Up to 16 documents go with one message;
+Koru says so if you mention more. Everything else in the box is plain text: Shift+Enter or
 Ctrl+J starts a new line, `#` and `-` at the start of a line stay characters,
 and a paste of several lines goes in where the caret is.
 

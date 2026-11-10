@@ -146,7 +146,10 @@ impl SessionHandle {
         input: PendingInput,
         answers: QuestionsReply,
     ) -> Result<SendPendingInputResult, ErrorCode> {
-        if !input.text.is_empty() || !input.attachment_ids.is_empty() {
+        if !input.text.is_empty()
+            || !input.attachment_ids.is_empty()
+            || !input.references.is_empty()
+        {
             return Err(ErrorCode::InvalidRequest);
         }
         if !matches!(self.shared.lock().summary.mode, SessionMode::Managed { .. }) {
@@ -162,6 +165,11 @@ impl SessionHandle {
         answers: Option<QuestionsReply>,
     ) -> Result<SendPendingInputResult, ErrorCode> {
         validate_input(&input, answers.is_some())?;
+        if !input.references.is_empty()
+            && !matches!(self.shared.lock().summary.mode, SessionMode::Managed { .. })
+        {
+            return Err(ErrorCode::DeliveryUnsupported);
+        }
         if let Some(result) = self.steer_running_turn(lease, &input, answers.as_ref())? {
             return Ok(result);
         }
@@ -199,7 +207,11 @@ impl SessionHandle {
             ResolvedDelivery::Unsupported { raw_text: true } => {
                 self.deliver_raw(lease, &input, turn_id, None)
             }
-            ResolvedDelivery::Unsupported { raw_text: false } if input.text.is_empty() => Ok(()),
+            ResolvedDelivery::Unsupported { raw_text: false }
+                if input.text.is_empty() && input.references.is_empty() =>
+            {
+                Ok(())
+            }
             ResolvedDelivery::Unsupported { raw_text: false } => {
                 // Image support does not gate text. The structured submit path
                 // includes only attachments whose delivery mode is native.
@@ -237,6 +249,7 @@ impl SessionHandle {
                 Some(active)
                     if running
                         && input.attachment_ids.is_empty()
+                        && input.references.is_empty()
                         && input.skills.is_empty()
                         && input.model.is_none()
                         && !state.pending_inputs.contains_key(&input.idempotency_key) =>
@@ -255,6 +268,7 @@ impl SessionHandle {
                 turn_id: active,
                 text: input.text.clone(),
                 attachments: Vec::new(),
+                references: Vec::new(),
                 mode: None,
                 fast: None,
                 reasoning: None,
@@ -542,6 +556,7 @@ impl SessionHandle {
                 turn_id,
                 text: input.text.clone(),
                 attachments: candidates.clone(),
+                references: input.references.clone(),
                 mode: input.mode.clone(),
                 fast: input.fast,
                 reasoning: input.reasoning,
@@ -657,7 +672,11 @@ impl SessionHandle {
 /// An input says something: text, attachments, or — with nothing of its
 /// own — a set's answers (D108).
 fn validate_input(input: &PendingInput, answers: bool) -> Result<(), ErrorCode> {
-    if input.text.is_empty() && input.attachment_ids.is_empty() && !answers {
+    if input.text.is_empty()
+        && input.attachment_ids.is_empty()
+        && input.references.is_empty()
+        && !answers
+    {
         return Err(ErrorCode::InvalidRequest);
     }
     if input.text.len() > crate::MAX_QUEUED_WRITE_BYTES {
@@ -666,11 +685,19 @@ fn validate_input(input: &PendingInput, answers: bool) -> Result<(), ErrorCode> 
     if !koru_session_protocol::valid_input_skills(&input.skills) {
         return Err(ErrorCode::InvalidRequest);
     }
+    if input.attachment_ids.len() + input.references.len() > 10
+        || input.references.iter().any(|reference| !reference.valid())
+    {
+        return Err(ErrorCode::InvalidRequest);
+    }
     Ok(())
 }
 
 fn input_kind(input: &PendingInput, answers: bool) -> TerminalInputKind {
-    match (input.text.is_empty(), input.attachment_ids.is_empty()) {
+    match (
+        input.text.is_empty() && input.references.is_empty(),
+        input.attachment_ids.is_empty(),
+    ) {
         (false, true) => TerminalInputKind::Text,
         (true, false) => TerminalInputKind::Image,
         (false, false) => TerminalInputKind::Mixed,
@@ -740,6 +767,15 @@ fn input_fingerprint(input: &PendingInput, answers: Option<&QuestionsReply>) -> 
     hasher.update(&(input.attachment_ids.len() as u64).to_le_bytes());
     for attachment_id in &input.attachment_ids {
         hasher.update(attachment_id.as_uuid().as_bytes());
+    }
+    for reference in &input.references {
+        hasher.update(b"reference\0");
+        hasher.update(match reference.kind {
+            koru_session_protocol::PathReferenceKind::File => b"file",
+            koru_session_protocol::PathReferenceKind::Folder => b"folder",
+        });
+        hasher.update(&(reference.path.len() as u64).to_le_bytes());
+        hasher.update(reference.path.as_bytes());
     }
     // The skills it names are part of what it asks (koru-ai D121). An input
     // with none hashes as it always has.

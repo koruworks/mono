@@ -692,6 +692,12 @@ Read a chat's workspace-tool policy
 
 Returns: The durable Manual or Auto mode and complete selected-workspace grant set.
 
+## POST `/v1/ai/chats/{chat}/tool-policy/grants`
+
+Add workspace grants to a chat atomically
+
+Returns: The durable policy with all existing and newly granted workspaces; the mode is unchanged.
+
 ## DELETE `/v1/ai/chats/{chat}`
 
 Delete an AI chat while retaining anonymous usage
@@ -799,6 +805,24 @@ Returns: The durable denied activity. The provider receives a structured permiss
 Store a picture or file for a local agent chat's next message
 
 Returns: The stored attachment's metadata, staged until a send names it. Idempotent by id: the same content answers the same attachment, different content answers attachment_conflict.
+
+## POST `/v1/ai/chats/{chat}/attachments/reference`
+
+Stage a local file or folder path for a local agent chat
+
+Returns: The staged path reference. No file or folder contents are read or copied.
+
+## POST `/v1/ai/chats/{chat}/attachments/from-workspace`
+
+Copy a granted workspace file into a local agent chat
+
+Returns: The staged copy with workspace provenance. The source grant is checked before reading bytes.
+
+## POST `/v1/ai/chats/{chat}/attachments/{attachment}/restage`
+
+Copy a sent attachment into a fresh staged attachment for recall
+
+Returns: The new staged attachment. Deleting its id during the copy cancels publication.
 
 ## DELETE `/v1/ai/chats/{chat}/attachments/{attachment}`
 

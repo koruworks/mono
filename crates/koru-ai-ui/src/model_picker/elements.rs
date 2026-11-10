@@ -90,6 +90,8 @@ pub(crate) const CONTENT: &str = "Picker content";
 pub(crate) const MARK: &str = "Rail mark";
 pub(crate) const MARK_GLYPH: &str = "Rail mark glyph";
 pub(crate) const MANAGE_NAME: &str = "Manage agent providers";
+pub(crate) const RAIL_PREVIOUS: &str = "Previous agent page";
+pub(crate) const RAIL_NEXT: &str = "Next agent page";
 pub(crate) const SEARCH_ROW: &str = "Search row";
 pub(crate) const SEARCH_BOX: &str = "Search box";
 pub(crate) const SEARCH_FIELD: &str = "Search field";
@@ -113,6 +115,8 @@ pub(crate) const READOUT: &str = "Effort readout";
 pub(crate) const SURFACE: &str = "model-picker";
 pub(crate) const FAVORITES_KEY: Key = Key::surface(SURFACE, "favorites");
 pub(crate) const MANAGE_KEY: Key = Key::surface(SURFACE, "manage-agents");
+pub(crate) const RAIL_PREVIOUS_KEY: Key = Key::surface(SURFACE, "previous-agents");
+pub(crate) const RAIL_NEXT_KEY: Key = Key::surface(SURFACE, "next-agents");
 pub(crate) const SEARCH_KEY: Key = Key::surface(SURFACE, "search");
 pub(crate) const REFRESH_KEY: Key = Key::surface(SURFACE, "refresh");
 pub(crate) const LIST_KEY: Key = Key::surface(SURFACE, "list");
@@ -227,6 +231,8 @@ pub(crate) struct Spec {
     pub(crate) marks: Vec<MarkSpec>,
     /// The **+** at the rail's end (D29).
     pub(crate) manage: bool,
+    pub(crate) rail_previous: bool,
+    pub(crate) rail_next: bool,
     /// ↻, while an agent is selected, and whether it is disabled now.
     pub(crate) refresh: Option<bool>,
     /// The footer under the list (D76), while the model offers a part.
@@ -777,9 +783,31 @@ fn list(spec: &Spec) -> El {
 /// **The picker as one tree.** `painted` is what its adapters draw; a tree
 /// laid out only for its geometry hands them nothing.
 pub(crate) fn tree(spec: &Spec, painted: Painted) -> El {
-    let mut slots = Vec::with_capacity(spec.marks.len() + 1);
+    let mut slots = Vec::with_capacity(spec.marks.len() + 3);
+    if spec.rail_previous {
+        slots.push((
+            rail_page_button(
+                RAIL_PREVIOUS,
+                RAIL_PREVIOUS_KEY,
+                icons::CARET_UP,
+                koru_i18n::Key::AiPickerPreviousAgents,
+            ),
+            false,
+        ));
+    }
     for spec in &spec.marks {
         slots.push((mark(spec, mark_glyph(spec)), spec.divider_after));
+    }
+    if spec.rail_next {
+        slots.push((
+            rail_page_button(
+                RAIL_NEXT,
+                RAIL_NEXT_KEY,
+                icons::CARET_DOWN,
+                koru_i18n::Key::AiPickerNextAgents,
+            ),
+            false,
+        ));
     }
     if spec.manage {
         // No tooltip (D25): it is named for a screen reader instead.
@@ -859,6 +887,20 @@ pub(crate) fn tree(spec: &Spec, painted: Painted) -> El {
         .gap(CONTENT_GAP)
         .child(rail_column(slots))
         .child(content)
+}
+
+fn rail_page_button(name: &'static str, key: Key, glyph: char, label: koru_i18n::Key) -> El {
+    boxed(name)
+        .w(RAIL_MARK)
+        .h(RAIL_MARK)
+        .radius(Radius::M)
+        .states(&MANAGE_STATES)
+        .id(key)
+        .hit()
+        .action(Action::Click)
+        .semantics(Role::Button)
+        .name(label)
+        .child(icon(glyph, IconSize::M).decorative().fill())
 }
 
 thread_local! {

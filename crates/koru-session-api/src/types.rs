@@ -144,6 +144,8 @@ pub struct SendPendingInputRequest {
     pub text: String,
     /// Ordered by the caller composing this logical input.
     pub attachment_ids: Vec<AttachmentId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<koru_session_protocol::PathReference>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
