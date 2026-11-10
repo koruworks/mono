@@ -142,6 +142,10 @@ pub enum BotCommand {
         #[serde(deserialize_with = "koru_delegate_core::bot_wire::deserialize_answers")]
         answers: Vec<QuestionAnswer>,
     },
+    SkipQuestions {
+        fence: BotExecutionFence,
+        request: QuestionRequestId,
+    },
     TakeOver {
         fence: BotExecutionFence,
     },
@@ -192,6 +196,7 @@ impl BotCommand {
             | Self::ListAttachments { fence }
             | Self::AnswerApproval { fence, .. }
             | Self::AnswerQuestions { fence, .. }
+            | Self::SkipQuestions { fence, .. }
             | Self::TakeOver { fence }
             | Self::HandBack { fence }
             | Self::EffectFence { fence } => Some(&fence.owner),

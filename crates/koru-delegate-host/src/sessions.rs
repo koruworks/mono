@@ -475,6 +475,23 @@ impl Sessions for HostSessions {
             )
             .map_err(|error| session_error("bot_questions", error))
     }
+    fn bot_skip_questions(
+        &mut self,
+        session: SessionId,
+        request: koru_session_protocol::QuestionRequestId,
+    ) -> PortResult<()> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .answer_questions(
+                session,
+                controller.lease,
+                IdempotencyKey::mint(),
+                request,
+                None,
+            )
+            .map_err(|error| session_error("bot_questions", error))
+    }
     fn bot_ingest_attachment(
         &mut self,
         session: SessionId,

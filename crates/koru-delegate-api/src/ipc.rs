@@ -28,6 +28,7 @@ use koru_delegate_core::ArtifactDisposition;
 
 /// The frame version. Both sides are this same executable's build, so a
 /// mismatch is a stale worker, and it is refused rather than reinterpreted.
+// Version 9 adds an explicit fenced skip for a pending native question set.
 // Version 8 adds private, positively classified Run tool authority.
 // Version 7 adds the separate authenticated Bot-owner command channel.
 // Version 6 adds the complete schedule-management vocabulary and named
@@ -35,7 +36,7 @@ use koru_delegate_core::ArtifactDisposition;
 // create/list/watch frames. Version 3 added the
 // authenticated, content-free native schedule wake. Version 2 preserved
 // explicit model intent on creation and every later start.
-pub const WIRE_VERSION: u8 = 8;
+pub const WIRE_VERSION: u8 = 9;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

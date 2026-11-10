@@ -211,6 +211,119 @@ fn count_submits(h: &Harness) -> usize {
         .filter(|call| matches!(call, Call::Submit { .. }))
         .count()
 }
+
+#[test]
+fn native_question_skip_requires_current_owner_turn_prompt_and_controller() {
+    use koru_session_protocol::{HandoverState, QuestionsDelivery, QuestionsOutcome};
+    let mut h = bot_harness();
+    let s = submission(41);
+    let mut fence = prepared(&mut h, &s);
+    observe(&mut h, &fence);
+    let turn = h
+        .orchestrator
+        .bot_begin_turn(&fence, fence.owner.device, s.input.clone())
+        .unwrap();
+    fence.turn = Some(turn);
+    h.agent(fence.run, AgentEvent::TurnStarted { turn_id: turn });
+    let request = QuestionRequestId::mint();
+    h.agent(
+        fence.run,
+        AgentEvent::QuestionsRequired {
+            turn_id: turn,
+            request_id: request,
+            questions: vec![],
+            blocking: true,
+            delivery: QuestionsDelivery::InTurn,
+        },
+    );
+    let mut wrong = Vec::new();
+    let mut value = fence.clone();
+    value.owner.user_scope = serde_json::from_value(serde_json::json!(v4(0x42))).unwrap();
+    wrong.push(value);
+    let mut value = fence.clone();
+    value.bot = BotId::mint();
+    wrong.push(value);
+    let mut value = fence.clone();
+    value.attempt = RunAttemptId::mint();
+    wrong.push(value);
+    let mut value = fence.clone();
+    value.generation = AttemptGeneration::from_raw(2).unwrap();
+    wrong.push(value);
+    let mut value = fence.clone();
+    value.session = SessionId::mint();
+    wrong.push(value);
+    let mut value = fence.clone();
+    value.turn = Some(AgentTurnId::mint());
+    wrong.push(value);
+    for stale in wrong {
+        assert!(
+            h.orchestrator
+                .bot_skip_questions(&stale, fence.owner.device, request)
+                .is_err()
+        );
+    }
+    assert!(
+        h.orchestrator
+            .bot_skip_questions(&fence, DeviceId::from_uuid(v4(0x43)), request)
+            .is_err()
+    );
+    assert!(
+        h.orchestrator
+            .bot_skip_questions(&fence, fence.owner.device, QuestionRequestId::mint())
+            .is_err()
+    );
+    assert!(h.sessions.lock().unwrap().bot_skips.is_empty());
+    h.orchestrator
+        .bot_skip_questions(&fence, fence.owner.device, request)
+        .unwrap();
+    assert_eq!(
+        h.sessions.lock().unwrap().bot_skips,
+        vec![(fence.session, request)]
+    );
+    // Acknowledgment alone does not invent a native resolution.
+    h.agent(
+        fence.run,
+        AgentEvent::QuestionsResolved {
+            turn_id: turn,
+            request_id: request,
+            outcome: QuestionsOutcome::Skipped,
+        },
+    );
+    assert!(
+        h.orchestrator
+            .bot_skip_questions(&fence, fence.owner.device, request)
+            .is_err()
+    );
+    let next = QuestionRequestId::mint();
+    h.agent(
+        fence.run,
+        AgentEvent::QuestionsRequired {
+            turn_id: turn,
+            request_id: next,
+            questions: vec![],
+            blocking: true,
+            delivery: QuestionsDelivery::InTurn,
+        },
+    );
+    h.session_event(
+        fence.run,
+        SessionEvent::HandoverChanged {
+            handover: HandoverState::Requested,
+        },
+    );
+    h.session_event(
+        fence.run,
+        SessionEvent::HandoverChanged {
+            handover: HandoverState::Taken,
+        },
+    );
+    assert!(
+        h.orchestrator
+            .bot_skip_questions(&fence, fence.owner.device, next)
+            .is_err()
+    );
+    assert_eq!(h.sessions.lock().unwrap().bot_skips.len(), 1);
+}
 #[test]
 fn bot_start_requires_observation_and_retries_one_exact_transient_input() {
     let mut h = bot_harness();

@@ -933,6 +933,17 @@ pub trait Sessions {
             "Session attachment staging is unsupported.",
         ))
     }
+    fn bot_skip_questions(
+        &mut self,
+        _session: SessionId,
+        _request: koru_delegate_core::QuestionRequestId,
+    ) -> PortResult<()> {
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_control_unsupported",
+            "Native question skips are unsupported.",
+        ))
+    }
     fn bot_remove_attachment(
         &mut self,
         _session: SessionId,

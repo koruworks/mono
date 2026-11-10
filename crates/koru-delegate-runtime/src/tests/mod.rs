@@ -663,6 +663,7 @@ pub(crate) struct SessionScript {
     pub cancel_refused: Option<&'static str>,
     pub bot_inputs: HashMap<IdempotencyKey, (koru_delegate_core::PendingInput, AgentTurnId)>,
     pub bot_reply_lost: bool,
+    pub bot_skips: Vec<(SessionId, koru_delegate_core::QuestionRequestId)>,
 }
 
 impl Default for SessionScript {
@@ -696,6 +697,7 @@ impl Default for SessionScript {
             cancel_refused: None,
             bot_inputs: HashMap::new(),
             bot_reply_lost: false,
+            bot_skips: Vec::new(),
         }
     }
 }
@@ -714,6 +716,18 @@ impl SessionEvents for NoEvents {
 }
 
 impl Sessions for ScriptedSessions {
+    fn bot_skip_questions(
+        &mut self,
+        session: SessionId,
+        request: koru_delegate_core::QuestionRequestId,
+    ) -> PortResult<()> {
+        self.script
+            .lock()
+            .unwrap()
+            .bot_skips
+            .push((session, request));
+        Ok(())
+    }
     fn bot_submit(
         &mut self,
         session: SessionId,

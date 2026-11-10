@@ -309,6 +309,32 @@ impl Orchestrator {
         request: koru_delegate_core::QuestionRequestId,
         answers: Vec<koru_delegate_core::QuestionAnswer>,
     ) -> Result<(), RunError> {
+        self.bot_question_fence(fence, device, request)?;
+        Ok(self
+            .ports
+            .sessions
+            .bot_answer_questions(fence.session, request, answers)?)
+    }
+
+    pub fn bot_skip_questions(
+        &mut self,
+        fence: &BotExecutionFence,
+        device: DeviceId,
+        request: koru_delegate_core::QuestionRequestId,
+    ) -> Result<(), RunError> {
+        self.bot_question_fence(fence, device, request)?;
+        Ok(self
+            .ports
+            .sessions
+            .bot_skip_questions(fence.session, request)?)
+    }
+
+    fn bot_question_fence(
+        &mut self,
+        fence: &BotExecutionFence,
+        device: DeviceId,
+        request: koru_delegate_core::QuestionRequestId,
+    ) -> Result<(), RunError> {
         self.bot_live_fence(fence, device, true, true)?;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
         if self
@@ -322,10 +348,7 @@ impl Orchestrator {
         {
             return Err(refused("bot_question_stale"));
         }
-        Ok(self
-            .ports
-            .sessions
-            .bot_answer_questions(fence.session, request, answers)?)
+        Ok(())
     }
 }
 

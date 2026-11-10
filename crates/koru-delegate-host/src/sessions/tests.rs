@@ -179,6 +179,121 @@ struct OwnedWriter {
     pending: Vec<u8>,
     observed: Arc<std::sync::Mutex<Vec<SessionCommand>>>,
 }
+
+#[test]
+fn bot_question_skip_forwards_none_with_the_current_controller_lease() {
+    type Seen = (
+        SessionId,
+        ControllerLeaseToken,
+        koru_session_protocol::QuestionRequestId,
+        Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    );
+    struct QuestionWriter {
+        frames: mpsc::Sender<Vec<u8>>,
+        pending: Vec<u8>,
+        seen: Arc<std::sync::Mutex<Vec<Seen>>>,
+    }
+    impl Write for QuestionWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.pending.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            let (_, frame): (_, RequestFrame) =
+                koru_ipc::frame::read_frame(&mut self.pending.as_slice())?;
+            self.pending.clear();
+            match frame.request {
+                Request::AnswerQuestions {
+                    session_id,
+                    controller_lease,
+                    request_id,
+                    answers,
+                    ..
+                } => {
+                    self.seen.lock().unwrap().push((
+                        session_id,
+                        controller_lease,
+                        request_id,
+                        answers,
+                    ));
+                }
+                Request::Disconnect => return Ok(()),
+                _ => panic!("skip must use the native optional-answer path"),
+            }
+            let response = FromHost::Response {
+                frame: ResponseFrame {
+                    id: frame.id,
+                    result: Ok(koru_session_wire::Response::Ok),
+                },
+            };
+            let mut bytes = Vec::new();
+            koru_ipc::frame::write_frame(&mut bytes, FRAME_VERSION, &response)?;
+            self.frames.send(bytes).unwrap();
+            Ok(())
+        }
+    }
+    let offered = bot_offer();
+    let agreement = koru_session_protocol::negotiate(&offered, &offered).unwrap();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = || {
+        let (frames, reader) = mpsc::channel();
+        SessionClient::from_test_transport(
+            HostHello {
+                product: "fixture".into(),
+                product_version: "fixture".into(),
+                instance_id: "fixture".into(),
+                supervisor_launch_id: "fixture".into(),
+                agreement: agreement.clone(),
+            },
+            Reader {
+                frames: reader,
+                current: Cursor::new(vec![]),
+            },
+            QuestionWriter {
+                frames,
+                pending: vec![],
+                seen: seen.clone(),
+            },
+        )
+        .unwrap()
+    };
+    let session = SessionId::mint();
+    let lease = ControllerLeaseToken::mint();
+    let mut sessions = HostSessions {
+        endpoint: koru_ipc::Endpoint::for_service("session", "internal-debug").unwrap(),
+        unary: client(),
+        controllers: HashMap::from([(
+            session,
+            Controller {
+                client: client(),
+                lease,
+            },
+        )]),
+        provider_readiness: vec![],
+        provider_subscription: None,
+    };
+    let request = koru_session_protocol::QuestionRequestId::mint();
+    sessions.bot_skip_questions(session, request).unwrap();
+    let answers = vec![koru_session_protocol::QuestionAnswer {
+        question_id: "one".into(),
+        value: koru_session_protocol::QuestionAnswerValue::Text {
+            text: "fixture answer".into(),
+        },
+    }];
+    sessions
+        .bot_answer_questions(session, request, answers.clone())
+        .unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            (session, lease, request, None),
+            (session, lease, request, Some(answers))
+        ]
+    );
+    sessions.controllers.remove(&session);
+    assert!(sessions.bot_skip_questions(session, request).is_err());
+    assert_eq!(seen.lock().unwrap().len(), 2);
+}
 impl Write for OwnedWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.pending.extend_from_slice(bytes);

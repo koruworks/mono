@@ -531,28 +531,7 @@ impl LiveTurns {
             .pending
             .get(&invocation)
             .ok_or(AnswerError::NoSuchApproval)?;
-        let (decision, chosen) = if pending.choices.is_empty() {
-            (
-                if approve {
-                    ApprovalDecision::Approve
-                } else {
-                    ApprovalDecision::Reject
-                },
-                None,
-            )
-        } else {
-            let choice = choice.ok_or(AnswerError::ChoiceRequired)?;
-            let (id, decision) = pending
-                .choices
-                .iter()
-                .find(|(id, _)| id.to_string() == choice)
-                .copied()
-                .ok_or(AnswerError::UnknownChoice)?;
-            if (decision == ApprovalDecision::Approve) != approve {
-                return Err(AnswerError::UnknownChoice);
-            }
-            (decision, Some(id))
-        };
+        let (decision, chosen) = select_approval_choice(&pending.choices, choice, approve)?;
         let answer = TurnAnswer::Approval(ApprovalAnswer {
             approval: pending.approval,
             decision,
@@ -571,10 +550,38 @@ impl LiveTurns {
     }
 }
 
+/// Validate a shared Chat approval against the exact currently offered native
+/// choices. Both ordinary and delegated conversations use this rule.
+pub fn select_approval_choice(
+    choices: &[(ApprovalChoiceId, ApprovalDecision)],
+    choice: Option<&str>,
+    approve: bool,
+) -> Result<(ApprovalDecision, Option<ApprovalChoiceId>), AnswerError> {
+    Ok(if choices.is_empty() {
+        (
+            if approve {
+                ApprovalDecision::Approve
+            } else {
+                ApprovalDecision::Reject
+            },
+            None,
+        )
+    } else {
+        let choice = choice.ok_or(AnswerError::ChoiceRequired)?;
+        let (id, decision) = choices
+            .iter()
+            .find(|(id, _)| id.to_string() == choice)
+            .copied()
+            .ok_or(AnswerError::UnknownChoice)?;
+        if (decision == ApprovalDecision::Approve) != approve {
+            return Err(AnswerError::UnknownChoice);
+        }
+        (decision, Some(id))
+    })
+}
+
 /// A chat's answer in the session protocol's terms.
-pub(crate) fn protocol_answer(
-    answer: koru_ai_core::AgentAnswer,
-) -> koru_session_protocol::QuestionAnswer {
+pub fn protocol_answer(answer: koru_ai_core::AgentAnswer) -> koru_session_protocol::QuestionAnswer {
     use koru_ai_core::AgentAnswerValue;
     use koru_session_protocol::QuestionAnswerValue;
     koru_session_protocol::QuestionAnswer {

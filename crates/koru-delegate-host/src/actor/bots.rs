@@ -227,6 +227,12 @@ impl Actor {
                 self.notify(key.run);
                 BotReply::Applied
             }
+            BotCommand::SkipQuestions { fence, request } => {
+                self.orchestrator
+                    .bot_skip_questions(&fence, device, request)
+                    .map_err(bot_failure)?;
+                BotReply::Applied
+            }
             BotCommand::IngestAttachment {
                 fence,
                 attachment_id,

@@ -35,6 +35,14 @@ fn begin_turn_uses_the_strict_nested_input_adapter() {
     answer["answers"] =
         serde_json::json!([{"question_id":"one","value":{"kind":"text","text":"answer"}}]);
     assert!(serde_json::from_value::<BotCommand>(answer.clone()).is_ok());
+    let mut skip = answer.clone();
+    skip["command"] = serde_json::json!("skip_questions");
+    skip.as_object_mut().unwrap().remove("answers");
+    let decoded: BotCommand = serde_json::from_value(skip.clone()).unwrap();
+    assert!(matches!(decoded, BotCommand::SkipQuestions { .. }));
+    assert!(decoded.owner().is_some());
+    skip["answers"] = serde_json::json!([]);
+    assert!(serde_json::from_value::<BotCommand>(skip).is_err());
     for pointer in ["/answers/0", "/answers/0/value"] {
         let mut changed = answer.clone();
         changed.pointer_mut(pointer).unwrap()["undeclared_authority"] = serde_json::json!(true);
