@@ -354,6 +354,21 @@ impl WorkerState {
                 let _ = reply.send(value);
             }
             PolicyWork::Coordinate(receipt) => {
+                if let Ok((_, Some(observed))) = &result.result
+                    && observed.state == BotPolicyBarrierState::Pending
+                {
+                    if !self.queue_native_recovery(
+                        observed.barrier.key.owner,
+                        observed.barrier.key.bot,
+                        None,
+                        None,
+                        koru_delegate_core::NativeDrainReason::PolicyPending {
+                            key: observed.barrier.key.clone(),
+                        },
+                    ) {
+                        self.bot_policy_recovery.defer(Instant::now());
+                    }
+                }
                 self.bot_policy_pending
                     .remove(&(receipt.bot.id, receipt.request));
                 if !acknowledge_policy_result(&mut self.repository, &receipt, same, result.result) {

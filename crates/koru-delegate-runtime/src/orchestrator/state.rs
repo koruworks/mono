@@ -92,6 +92,8 @@ pub struct Attempt {
     pub is_bot: bool,
     /// Provider completion is not durable chat delivery. P1.5 acknowledges it.
     pub bot_terminal_turn: Option<AgentTurnId>,
+    /// Retry only already-interrupted/terminal Bot cleanup, never healthy work.
+    pub bot_cleanup: Option<BotCleanupRetry>,
     pub pending_questions: HashMap<koru_delegate_core::QuestionRequestId, AgentTurnId>,
     /// The admitted working directory.
     pub run_workspace: PathBuf,
@@ -114,6 +116,7 @@ impl Attempt {
             bot_observed: false,
             is_bot: false,
             bot_terminal_turn: None,
+            bot_cleanup: None,
             pending_questions: HashMap::new(),
             run_workspace: PathBuf::new(),
             captured: CapturedContext::default(),
@@ -140,6 +143,11 @@ impl Attempt {
             TurnOriginator::Human
         }
     }
+}
+
+pub struct BotCleanupRetry {
+    pub due: std::time::Instant,
+    pub round: u8,
 }
 
 /// One turn's running tally: who asked, and the tool completions not yet

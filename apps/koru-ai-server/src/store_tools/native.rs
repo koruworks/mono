@@ -6,7 +6,9 @@ use koru_mcp_server::native::{NativeStoreIdentity, NativeWriteError};
 use koru_store_core::ids::{ProfileId, UserScopeId};
 use koru_store_core::ports::DocumentVersion;
 use koru_store_core::service::NativeUpdateError;
-use koru_store_core::{CreationOriginLookup, ProvenSeededCreation};
+use koru_store_core::{
+    CreationOriginLookup, NativeEffectBinding, NativeEffectKind, ProvenSeededCreation,
+};
 use koru_store_server::WorkerStore;
 
 /// Supplied only by trusted Run classification and current AI owner evidence.
@@ -67,6 +69,12 @@ fn unsupported() -> ToolError {
         details: None,
     }
 }
+fn native_update_error(error: NativeUpdateError) -> NativeWriteError {
+    match error {
+        NativeUpdateError::Refused(error) => NativeWriteError::Refused(error.into()),
+        NativeUpdateError::Unconfirmed(error) => NativeWriteError::Unconfirmed(error.into()),
+    }
+}
 impl NativeStoreAuthority {
     fn check(&self, store: &mut WorkerStore, workspace: WorkspaceId) -> Result<(), ToolError> {
         if workspace != self.workspace
@@ -101,14 +109,17 @@ impl NativeStore {
     }
     fn effect<T: Send + 'static>(
         &self,
-        workspace: WorkspaceId,
+        binding: NativeEffectBinding,
         operation: impl FnOnce(&mut WorkerStore) -> Result<T, NativeWriteError> + Send + 'static,
     ) -> Result<T, NativeWriteError> {
         let authority = self.authority.clone();
         self.client
             .with_store(move |store| {
+                store
+                    .check_native_effect(&binding)
+                    .map_err(|error| NativeWriteError::Refused(error.into()))?;
                 authority
-                    .check(store, workspace)
+                    .check(store, binding.workspace)
                     .map_err(NativeWriteError::Refused)?;
                 operation(store)
             })
@@ -201,7 +212,16 @@ impl EmbeddedStore for NativeStore {
         request: EmbeddedSeedDocument,
         identity: NativeStoreIdentity,
     ) -> Result<ProvenSeededCreation, NativeWriteError> {
-        self.effect(request.workspace, move |store| {
+        let fingerprint = *blake3::Hash::from_hex(&request.request_hash)
+            .map_err(|_| NativeWriteError::Refused(invalid("invalid native fingerprint")))?
+            .as_bytes();
+        let binding = identity.binding(
+            self.authority.owner_scope,
+            request.workspace,
+            NativeEffectKind::CreateDocument,
+            fingerprint,
+        )?;
+        self.effect(binding.clone(), move |store| {
             if request.parent.is_some()
                 || request.index.is_some()
                 || request.kind != "page"
@@ -212,21 +232,14 @@ impl EmbeddedStore for NativeStore {
             // Once the Store seed/publication begins, any returned error may
             // follow durable bytes. Its original-origin proof resolves retries.
             store
-                .create_seeded_document_with_origin(
-                    request.workspace,
+                .create_native_document(
+                    &binding,
                     &request.title,
-                    &request.kind,
-                    None,
-                    None,
-                    &identity.scope,
-                    &identity.request_key,
-                    &request.request_hash,
-                    identity.candidate,
                     request.initial_update,
                     request.attribution.as_deref(),
                     Timestamp::now(),
                 )
-                .map_err(|error| NativeWriteError::Unconfirmed(ToolError::from(error)))
+                .map_err(native_update_error)
         })
     }
     fn persist_update_at_version(
@@ -235,24 +248,29 @@ impl EmbeddedStore for NativeStore {
         document: DocumentId,
         expected_version: Vec<u8>,
         update: Vec<u8>,
+        identity: NativeStoreIdentity,
+        request_fingerprint: [u8; 32],
     ) -> Result<DocumentVersion, NativeWriteError> {
-        self.effect(workspace, move |store| {
+        if identity.candidate != document {
+            return Err(NativeWriteError::Refused(denied()));
+        }
+        let binding = identity.binding(
+            self.authority.owner_scope,
+            workspace,
+            NativeEffectKind::EditDocument,
+            request_fingerprint,
+        )?;
+        self.effect(binding.clone(), move |store| {
             live_entry(store, workspace, document, true).map_err(NativeWriteError::Refused)?;
             store
-                .apply_update_at_version(
-                    workspace,
-                    document,
+                .apply_native_update_at_version(
+                    &binding,
                     &expected_version,
                     update,
                     Timestamp::now(),
                     koru_store_core::ports::UpdateOrigin::Store,
                 )
-                .map_err(|error| match error {
-                    NativeUpdateError::Refused(error) => NativeWriteError::Refused(error.into()),
-                    NativeUpdateError::Unconfirmed(error) => {
-                        NativeWriteError::Unconfirmed(error.into())
-                    }
-                })
+                .map_err(native_update_error)
         })
     }
     fn retain_creation_version(

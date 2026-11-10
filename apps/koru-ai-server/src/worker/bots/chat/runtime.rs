@@ -254,6 +254,46 @@ impl WorkerState {
             self.bot_chats.insert(step.attempt, chat);
             return;
         }
+        let recovery = match &step.phase {
+            Phase::Stop => Some(koru_delegate_core::NativeDrainReason::OwnerStop),
+            Phase::Delivery => Some(koru_delegate_core::NativeDrainReason::TerminalTurn),
+            Phase::Admission => Some(koru_delegate_core::NativeDrainReason::RunRecovery),
+            _ => None,
+        };
+        let mut recovery_admitted = true;
+        if let Some(reason) = recovery {
+            let provenance = &chat.submission.provenance;
+            recovery_admitted = self.queue_native_recovery(
+                provenance.owner,
+                provenance.bot,
+                Some(chat.submission.request.run),
+                None,
+                reason,
+            );
+        }
+        if matches!(&step.phase, Phase::Delivery) {
+            let provenance = &chat.submission.provenance;
+            recovery_admitted &= self.queue_native_recovery(
+                provenance.owner,
+                provenance.bot,
+                Some(chat.submission.request.run),
+                None,
+                koru_delegate_core::NativeDrainReason::RunRecovery,
+            );
+        }
+        if self.native_recovery.is_some()
+            && !recovery_admitted
+            && matches!(&step.phase, Phase::Delivery)
+            && matches!(&step.result, Ok(BotReply::Applied))
+        {
+            // An absorbing Run may acknowledge delivery history while Held
+            // effects still need drain. Keep its durable AI delivery outbox
+            // unacknowledged until the scoped recovery trigger is retained.
+            self.bot_chats.insert(step.attempt, chat);
+            return;
+        }
+        // Stop Applied is different: the actor's Bot retirement guard already
+        // proved no Held/Verified effect and canonical durability before reply.
         let outcome = self.apply_bot_chat_step(step.attempt, &mut chat, step.phase, step.result);
         match outcome {
             Ok(true) => {

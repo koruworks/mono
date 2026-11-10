@@ -4,6 +4,12 @@ use super::*;
 mod drain;
 
 impl NativeResultLedger for RecordingStore {
+    fn verified_native_result(
+        &self,
+        run: RunId,
+    ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
+        self.inner.lock().unwrap().verified_native_result(run)
+    }
     fn pending_native_effects(
         &self,
         owner: BotOwner,

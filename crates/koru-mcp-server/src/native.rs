@@ -19,6 +19,32 @@ pub struct NativeStoreIdentity {
     pub scope: String,
     pub request_key: String,
 }
+impl NativeStoreIdentity {
+    /// The trusted adapter supplies its vouched local owner, never tool input.
+    pub fn binding(
+        &self,
+        owner: koru_store_core::UserScopeId,
+        workspace: StoreWorkspaceId,
+        kind: koru_store_core::NativeEffectKind,
+        request_fingerprint: [u8; 32],
+    ) -> Result<koru_store_core::NativeEffectBinding, ToolError> {
+        validate_identity(self)?;
+        let binding = koru_store_core::NativeEffectBinding {
+            user_scope: owner,
+            scope: self.scope.clone(),
+            request_key: uuid::Uuid::parse_str(&self.request_key)
+                .map_err(|_| ToolError::invalid("invalid native Store identity"))?,
+            workspace,
+            document: self.candidate,
+            kind,
+            request_fingerprint,
+        };
+        if !binding.valid() {
+            return Err(ToolError::invalid("invalid native Store binding"));
+        }
+        Ok(binding)
+    }
+}
 #[derive(Clone)]
 pub struct NativeWriteDescription {
     pub kind: NativeWriteKind,
@@ -140,6 +166,17 @@ fn validate_identity(identity: &NativeStoreIdentity) -> Result<(), ToolError> {
         return Err(ToolError::invalid("invalid native Store identity"));
     }
     Ok(())
+}
+fn fingerprint_bytes(raw: &str) -> Result<[u8; 32], ToolError> {
+    if raw.len() != 64 || !raw.is_ascii() {
+        return Err(ToolError::invalid("invalid native fingerprint"));
+    }
+    let mut bytes = [0; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&raw[index * 2..index * 2 + 2], 16)
+            .map_err(|_| ToolError::invalid("invalid native fingerprint"))?;
+    }
+    Ok(bytes)
 }
 fn origin_matches(origin: &CreationOrigin, identity: &NativeStoreIdentity, hash: &str) -> bool {
     origin.document == identity.candidate
@@ -418,6 +455,8 @@ impl LocalBackend {
                     id,
                     expected.clone(),
                     doc.export_updates_since(&before)?,
+                    identity,
+                    fingerprint_bytes(&prepared.description.fingerprint)?,
                 )?;
                 if retained.document != id
                     || strict_version(&retained.version_vector)

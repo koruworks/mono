@@ -1027,6 +1027,7 @@ pub struct GatewayState {
     delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::DelegatePort>>,
     /// Private bootstrap capability, never a provider or public request principal.
     bot_delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
+    native_mutations: std::sync::OnceLock<Arc<koru_ai_server::NativeMutationGate>>,
     artifacts: std::sync::OnceLock<Arc<dyn koru_artifact_api::ArtifactDomain>>,
     /// `http://127.0.0.1:<port>`, handed down by the host once its listener
     /// is bound: the base of the endpoint URL a run's authority names. Empty
@@ -1124,6 +1125,7 @@ impl GatewayState {
             artifacts: std::sync::OnceLock::new(),
             delegate: std::sync::OnceLock::new(),
             bot_delegate: std::sync::OnceLock::new(),
+            native_mutations: std::sync::OnceLock::new(),
             public_endpoint: std::sync::OnceLock::new(),
             openapi: public_openapi(),
             asyncapi: public_asyncapi(),
@@ -1188,6 +1190,15 @@ impl GatewayState {
 
     fn bot_delegate_port(&self) -> Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> {
         self.bot_delegate.get().cloned()
+    }
+
+    /// Same process-scoped gate given to AI recovery, composed before serving.
+    pub fn set_native_mutation_gate(&self, gate: Arc<koru_ai_server::NativeMutationGate>) -> bool {
+        self.native_mutations.set(gate).is_ok()
+    }
+
+    fn native_mutations_ready(&self) -> bool {
+        self.native_mutations.get().is_some_and(|gate| gate.ready())
     }
 
     /// Tell the state where it is listening, once, so an issued run

@@ -62,6 +62,7 @@ pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
 pub(crate) mod bots;
+pub(crate) mod native_recovery;
 mod removed;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
@@ -84,6 +85,7 @@ const PROMPT_TEMPLATE_VERSION: &str = "koru-chat-v1";
 const CHAT_PROMPT: &str = include_str!("../prompts/chat-v1.md");
 
 pub struct WorkerConfig {
+    native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     root: PathBuf,
@@ -106,6 +108,15 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
+    /// The process host shares this same gate across AI-thread restarts.
+    pub fn with_native_effect_recovery(
+        mut self,
+        store: koru_store_server::StoreWorkerClient,
+        gate: Arc<native_recovery::NativeMutationGate>,
+    ) -> Self {
+        self.native_recovery = Some(native_recovery::NativeRecoveryConfig { store, gate });
+        self
+    }
     pub fn with_bot_delegate(
         mut self,
         delegate: Arc<dyn koru_delegate_api::bots::BotDelegatePort>,
@@ -129,6 +140,7 @@ impl WorkerConfig {
             store_context: None,
             bot_authority: None,
             bot_delegate: None,
+            native_recovery: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -152,6 +164,7 @@ impl WorkerConfig {
             store_context: None,
             bot_authority: None,
             bot_delegate: None,
+            native_recovery: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -180,6 +193,7 @@ impl WorkerConfig {
             store_context: None,
             bot_authority: None,
             bot_delegate: None,
+            native_recovery: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -304,6 +318,11 @@ impl AiWorker {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
         let attachments = AttachmentStore::new(&self.config.root);
         let store_context = self.config.store_context.clone();
+        let native_mutations = self
+            .config
+            .native_recovery
+            .as_ref()
+            .map(|config| config.gate.clone());
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -346,6 +365,7 @@ impl AiWorker {
                     sender,
                     attachments,
                     store_context,
+                    native_mutations,
                     shutdown,
                     status,
                     join: Some(join),
@@ -372,6 +392,7 @@ impl AiWorker {
 }
 
 pub struct WorkerHandle {
+    native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
     attachments: AttachmentStore,
     store_context: Option<Arc<dyn StoreContextPort>>,
@@ -394,6 +415,7 @@ impl WorkerHandle {
             sender: self.sender.clone(),
             attachments: self.attachments.clone(),
             store_context: self.store_context.clone(),
+            native_mutations: self.native_mutations.clone(),
         }
     }
 
@@ -445,6 +467,7 @@ impl Drop for WorkerHandle {
 
 #[derive(Clone)]
 pub struct AiWorkerClient {
+    native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
     /// Where uploads are prepared and read, on the caller's own thread.
     attachments: AttachmentStore,
@@ -1103,6 +1126,8 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
+    NativeDrainWake,
+    NativeDrained(native_recovery::NativeDrainResult),
     NativePolicy {
         request: bots::policy::NativePolicyRequest,
         reply: SyncSender<ApiResult<bots::policy::NativePolicyEvidence>>,
@@ -1510,6 +1535,8 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    native_recovery: Option<native_recovery::NativeRecoveryConfig>,
+    native_drain_busy: bool,
     bot_policy_pending: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
     bot_policy_recovery: bots::policy::PolicyRecovery,
     bot_chats: HashMap<InferenceAttemptId, bots::chat::LiveChat>,
@@ -1762,6 +1789,8 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        native_recovery: config.native_recovery,
+        native_drain_busy: false,
         bot_chats: HashMap::new(),
         bot_interactions: HashSet::new(),
         bot_steers: HashMap::new(),
@@ -1823,13 +1852,17 @@ fn run_worker(
     state.recover_bot_operations();
     state.recover_bot_policy(false);
     state.recover_bot_chats();
+    state.schedule_native_recovery();
     while !shutdown.load(Ordering::Acquire) {
+        state.schedule_native_recovery();
         if state.bot_policy_recovery.due(Instant::now()) {
             state.recover_bot_policy(false);
         }
         state.drain_agent_commands();
         state.schedule_bot_chat_step();
         match receiver.recv_timeout(LOOP_INTERVAL) {
+            Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
+            Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
             Ok(Envelope::Command(command)) => {
                 let command_name = command.diagnostic_name();
                 let started = Instant::now();
@@ -5409,6 +5442,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    NativeDrain(native_recovery::NativeDrainJob),
     BotPolicy(bots::BotPolicyJob),
     #[cfg(test)]
     BlockForFixture {
@@ -5468,6 +5502,14 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
+                        ProviderAdminJob::NativeDrain(job) => {
+                            let result = job.run();
+                            send_admin_envelope(
+                                &output,
+                                Envelope::NativeDrained(result),
+                                &thread_shutdown,
+                            );
+                        }
                         ProviderAdminJob::BotPolicy(job) => {
                             let result = job.run();
                             send_admin_envelope(

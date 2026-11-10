@@ -142,6 +142,8 @@ impl EmbeddedStore for Embedded {
         id: StoreDocumentId,
         vv: Vec<u8>,
         update: Vec<u8>,
+        _identity: NativeStoreIdentity,
+        _request_fingerprint: [u8; 32],
     ) -> Result<DocumentVersion, NativeWriteError> {
         let mut store = self.store.lock().unwrap();
         if self.race_edit.swap(false, Ordering::SeqCst) {

@@ -16,6 +16,7 @@ struct Native {
     submit_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     stop_reports: Mutex<Option<SyncSender<()>>>,
     settled_reports: Mutex<Option<SyncSender<()>>>,
+    delivery_reports: Mutex<Option<SyncSender<()>>>,
 }
 #[derive(Default)]
 struct NativeState {
@@ -37,6 +38,13 @@ impl BotDelegatePort for Native {
                 .unwrap_or_default()
                 .starts_with("koru-ai-provider")
         );
+        if matches!(&command, D::PendingNativeEffects { .. }) {
+            return Err(koru_delegate_api::Failure::new(
+                "fixture_pending",
+                "fixture recovery stays pending",
+                true,
+            ));
+        }
         if matches!(&command, D::Submit { .. }) {
             if let Some((entered, release)) = self.submit_gate.lock().unwrap().take() {
                 entered.send(()).unwrap();
@@ -156,6 +164,9 @@ impl BotDelegatePort for Native {
                 );
                 state.delivered = true;
                 state.delivery = Some(receipt);
+                if let Some(report) = self.delivery_reports.lock().unwrap().as_ref() {
+                    let _ = report.try_send(());
+                }
                 Ok(BotReply::Applied)
             }
             D::Stop { key, fence } => {
@@ -234,6 +245,78 @@ fn request(bot: &Bot) -> SendTurnRequest {
         answers: None,
         skills: Vec::new(),
     }
+}
+
+#[test]
+fn applied_delivery_with_full_recovery_queue_keeps_its_durable_outbox_for_retry() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let chat = repository
+        .chat_with_access(
+            bot.main_chat,
+            &ChatReadAccess::authorized(vec![bot.main_chat]),
+        )
+        .unwrap()
+        .unwrap();
+    let context = proof(authority.clone(), &bot, chat);
+    let (delivery_tx, deliveries) = sync_channel(4);
+    let native = Arc::new(Native {
+        delivery_reports: Mutex::new(Some(delivery_tx)),
+        ..Native::default()
+    });
+    let gate = crate::worker::native_recovery::tests::saturated_gate(d::BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    });
+    let memory =
+        koru_store_server::memory::MemoryStore::open("delivery-saturation-memory").unwrap();
+    let (return_tx, returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-delivery-saturation"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(authority)
+    .with_bot_delegate(native)
+    .with_native_effect_recovery(memory.client(), gate);
+    config.test_repository = Some(repository);
+    config.test_repository_return = Some(return_tx);
+    let worker = AiWorker::new(config).spawn().unwrap();
+    let (reply, response) = sync_channel(1);
+    worker
+        .client()
+        .send(WorkerCommand::SendTurn {
+            context,
+            request: request(&bot),
+            reply,
+        })
+        .unwrap();
+    let stream = response
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    // A second exact delivery proves the first Applied reply was processed and
+    // retained for retry rather than acknowledging/removing its outbox entry.
+    deliveries.recv_timeout(Duration::from_secs(10)).unwrap();
+    deliveries.recv_timeout(Duration::from_secs(10)).unwrap();
+    worker.shutdown();
+    let _ = worker.join();
+    let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    let pending = repository
+        .pending_bot_deliveries(
+            BotOwner {
+                user_scope: bot.user_scope,
+                device: bot.owner_device,
+            },
+            None,
+            16,
+        )
+        .unwrap();
+    assert_eq!(pending.receipts.len(), 1);
+    assert_eq!(
+        pending.receipts[0].ai_attempt_id,
+        stream.accepted.attempt_id.as_uuid()
+    );
 }
 
 #[test]

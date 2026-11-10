@@ -202,6 +202,7 @@ impl Orchestrator {
         // Completion may have committed before a transport or cleanup failure.
         // A fresh summary is advisory; only the session owner's current lease
         // check can prevent takeover between that observation and termination.
+        self.arm_bot_cleanup(run)?;
         if !retired {
             if let Some(summary) = self.ports.sessions.summary(session)? {
                 if summary.id != session

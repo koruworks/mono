@@ -13,6 +13,7 @@ use koru_delegate_sqlite::{
     BotExecutionRecord, BotLedger, BotLedgerError, BotReservation, BotSettlement,
     QueuedBotAdmission,
 };
+mod cleanup;
 
 pub(crate) fn refused(code: &'static str) -> RunError {
     PortError::new(Port::Store, code, "The Bot operation cannot be admitted.").into()
@@ -345,6 +346,7 @@ impl Orchestrator {
         terminate: bool,
     ) -> Result<(), RunError> {
         use koru_delegate_sqlite::AttemptPhase;
+        self.arm_bot_cleanup(run)?;
         let Some(row) = self.ports.store.current_attempt(run)? else {
             return Ok(());
         };
@@ -495,6 +497,9 @@ impl Orchestrator {
     }
 
     pub fn bot_budget_tick(&mut self, run: RunId) -> Result<bool, RunError> {
+        if let Some(released) = self.bot_cleanup_tick(run)? {
+            return Ok(released);
+        }
         let Some(record) = self.bot_ledger()?.bot_execution(run)? else {
             return Ok(false);
         };
@@ -521,6 +526,22 @@ impl Orchestrator {
         let now = self.ports.clock.now_ms();
         let mut nearest = None;
         for run in self.bot_budget_runs() {
+            if let Some(retry) = self
+                .open(run)?
+                .attempt
+                .as_ref()
+                .and_then(|attempt| attempt.bot_cleanup.as_ref())
+            {
+                let delay = u64::try_from(
+                    retry
+                        .due
+                        .saturating_duration_since(std::time::Instant::now())
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX)
+                .max(1);
+                nearest = Some(nearest.map_or(delay, |old: u64| old.min(delay)));
+            }
             if let Some(record) = self.bot_ledger()?.bot_execution(run)? {
                 if record.active_since_ms.is_some() {
                     let delay = koru_delegate_sqlite::BOT_ACTIVE_BUDGET_MS

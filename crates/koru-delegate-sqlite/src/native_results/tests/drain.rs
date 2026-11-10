@@ -1,6 +1,54 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+#[test]
+fn exact_run_verified_retry_uses_existing_pk_and_registration_removes_each_candidate() {
+    let mut h = Harness::new();
+    for _ in 0..2 {
+        h.request.key.operation_id = Uuid::new_v4();
+        h.prepare();
+        h.lease();
+        let evidence = h.evidence();
+        h.confirm(NativeResultObservation::Durable { evidence });
+    }
+    let run = h.request.key.run;
+    assert!(
+        h.db.verified_native_result(RunId::mint())
+            .unwrap()
+            .is_none()
+    );
+    let pk: String =
+        h.db.conn()
+            .query_row(
+                "SELECT name FROM pragma_index_list('native_result_intents') WHERE origin='pk'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+    let plan =
+        h.db.conn()
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN {}",
+                super::super::repository::VERIFIED_RUN_QUERY
+            ))
+            .unwrap()
+            .query_map([run.to_storage()], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(" ");
+    assert!(plan.contains(&pk) && plan.contains("run_id=?"), "{plan}");
+    assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    let first = h.db.verified_native_result(run).unwrap().unwrap();
+    h.db.register_native_result(&first.key, first.verified.as_ref().unwrap())
+        .unwrap();
+    let second = h.db.verified_native_result(run).unwrap().unwrap();
+    assert_ne!(first.key, second.key);
+    h.db.register_native_result(&second.key, second.verified.as_ref().unwrap())
+        .unwrap();
+    assert!(h.db.verified_native_result(run).unwrap().is_none());
+}
+
 fn proof(h: &Harness) -> NativeEffectDrainReceipt {
     let r = h.db.native_result(&h.request.key).unwrap().unwrap();
     NativeEffectDrainReceipt {

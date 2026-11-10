@@ -2,7 +2,9 @@
 
 use super::{rows::*, *};
 use crate::{AttemptPhase, BotAdmissionRecord, BotLedger, RunsDb, WriteOp, attempts};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
+
+pub(super) const VERIFIED_RUN_QUERY: &str = "SELECT run_id,operation_id,attempt_id,generation,turn_id FROM native_result_intents WHERE run_id=?1 AND stage='verified' ORDER BY operation_id LIMIT 1";
 
 fn policy_digest(barrier: &BotPolicyBarrier) -> Result<[u8; 32], BotLedgerError> {
     if !barrier.policy.valid()
@@ -231,6 +233,18 @@ impl NativeResultLedger for RunsDb {
             })
         })
         .collect()
+    }
+    fn verified_native_result(
+        &self,
+        run: RunId,
+    ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
+        let key = self
+            .conn()
+            .query_row(VERIFIED_RUN_QUERY, [run.to_storage()], |row| Ok(key(row)))
+            .optional()
+            .map_err(sql)?
+            .transpose()?;
+        key.map(|key| required(self.conn(), &key)).transpose()
     }
     fn refuse_unleased_native_result(
         &mut self,

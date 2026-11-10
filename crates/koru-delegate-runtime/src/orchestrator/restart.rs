@@ -142,7 +142,15 @@ impl Orchestrator {
                 scope: header.scope.clone(),
             });
             if header.bot.is_some()
-                && (row.retired || row.phase.is_terminal() || header.status.is_terminal())
+                && (row.retired
+                    || row.phase.is_terminal()
+                    || header.status.is_terminal()
+                    || matches!(
+                        header.status,
+                        RunStatus::Interrupted {
+                            prior_attempt: PriorAttempt::Unknown
+                        }
+                    ))
             {
                 let mut attempt = Attempt::new(row.attempt, row.generation);
                 attempt.is_bot = true;
@@ -174,6 +182,7 @@ impl Orchestrator {
                         }),
                     )?;
                 }
+                self.arm_bot_cleanup(run)?;
                 let ended = if header.status == RunStatus::Cancelled {
                     self.bot_prove_end(run, true)
                 } else {
@@ -887,6 +896,7 @@ impl Orchestrator {
                     .store
                     .advance(run, row.generation, AttemptPhase::Unknown)?;
             }
+            self.arm_bot_cleanup(run)?;
             return Ok(());
         }
         if status.is_terminal() {

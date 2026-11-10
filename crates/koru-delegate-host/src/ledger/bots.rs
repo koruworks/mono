@@ -110,6 +110,12 @@ impl BotLedger for SharedLedger {
     }
 }
 impl NativeResultLedger for SharedLedger {
+    fn verified_native_result(
+        &self,
+        run: RunId,
+    ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
+        self.0.lock().unwrap().verified_native_result(run)
+    }
     fn pending_native_effects(
         &self,
         owner: BotOwner,

@@ -21,6 +21,14 @@ use uuid::Uuid;
 trait PolicySource {
     fn current(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure>;
     fn settled(&self);
+    fn uncertain(
+        &self,
+        _owner: BotOwner,
+        _bot: BotId,
+        _key: NativeResultKey,
+    ) -> Result<(), ToolFailure> {
+        Ok(())
+    }
 }
 impl PolicySource for AiWorkerClient {
     fn current(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
@@ -29,6 +37,16 @@ impl PolicySource for AiWorkerClient {
     }
     fn settled(&self) {
         self.wake_native_policy();
+    }
+    fn uncertain(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        key: NativeResultKey,
+    ) -> Result<(), ToolFailure> {
+        self.reconcile_native_operation(owner, bot, key)
+            .map(|_| ())
+            .map_err(|_| failure("native_recovery_pending"))
     }
 }
 fn failure(code: &'static str) -> ToolFailure {
@@ -59,6 +77,11 @@ pub(in crate::run_mcp) async fn call(
     captured: CapturedBotPolicy,
     params: CallToolRequestParams,
 ) -> CallToolResult {
+    if matches!(params.name.as_ref(), "create_document" | "edit_document")
+        && !state.native_mutations_ready()
+    {
+        return CallToolResult::structured_error(json!(failure("native_recovery_pending")));
+    }
     let Some(port) = state.bot_delegate_port() else {
         return CallToolResult::structured_error(json!(failure("native_owner_unavailable")));
     };
@@ -372,12 +395,13 @@ fn invoke(
                 port,
                 BotCommand::ConfirmNativeResult {
                     request: ConfirmNativeResult {
-                        key,
+                        key: key.clone(),
                         request_fingerprint: expected_hash,
                         observation: NativeResultObservation::Unconfirmed,
                     },
                 },
             );
+            policy.uncertain(provenance.owner, provenance.bot, key)?;
             Err(failure("save_status_unknown"))
         }
     }

@@ -2,6 +2,303 @@
 use super::*;
 use koru_session_protocol::HandoverState;
 
+fn delivery(s: &BotSubmission, fence: &BotExecutionFence) -> BotDeliveryReceipt {
+    BotDeliveryReceipt {
+        run: fence.run,
+        attempt: fence.attempt,
+        generation: fence.generation,
+        chat_id: s.provenance.chat_id,
+        ai_attempt_id: s.provenance.ai_attempt_id.unwrap(),
+        assistant_message_id: s.provenance.assistant_message_id.unwrap(),
+        confirmed_at_ms: 1000,
+    }
+}
+fn settle_unknown(h: &mut Harness, request: &PrepareNativeResult, device: DeviceId) {
+    let target = h
+        .orchestrator
+        .check_native_effect_drain(&request.key, &NativeDrainReason::GatewayStartup, device)
+        .unwrap()
+        .unwrap();
+    h.orchestrator
+        .confirm_native_result(
+            &ConfirmNativeResult {
+                key: request.key.clone(),
+                request_fingerprint: request.request_fingerprint,
+                observation: NativeResultObservation::DrainedUnknown {
+                    receipt: NativeEffectDrainReceipt {
+                        binding: target.binding,
+                        fenced_at: NativeEffectTimestamp::from_millis(100),
+                        drained_at: NativeEffectTimestamp::from_millis(90),
+                    },
+                },
+            },
+            device,
+        )
+        .unwrap();
+}
+fn cleanup_due(h: &mut Harness, run: RunId) {
+    h.orchestrator
+        .attempt_mut(run)
+        .unwrap()
+        .bot_cleanup
+        .as_mut()
+        .unwrap()
+        .due = std::time::Instant::now();
+}
+
+#[test]
+fn cleanup_republishes_late_durable_proof_after_failed_and_lost_canonical_ack_once() {
+    let (mut h, _, fence, policy, request) = active();
+    let native = h.attempt(fence.run).provider_session.unwrap().idempotency;
+    h.orchestrator
+        .synchronize_native_policy(policy, fence.owner.device)
+        .unwrap();
+    let intent = h
+        .orchestrator
+        .prepare_native_effect(&request, fence.owner.device)
+        .unwrap();
+    h.orchestrator
+        .apply(
+            fence.run,
+            &RunEvent::Interrupt {
+                prior_attempt: PriorAttempt::Unknown,
+            },
+        )
+        .unwrap();
+    settle_unknown(&mut h, &request, fence.owner.device);
+    let evidence = NativeResultReference {
+        operation_id: request.key.operation_id,
+        workspace: request.destination,
+        document: intent.target,
+        version: vec![1, 2],
+        title: "Late Saved proof".into(),
+        confirmed_at_ms: 900,
+        kind: NativeResultKind::CreatedPage,
+    };
+    h.documents.lock().unwrap().fail_commit = true;
+    assert!(
+        h.orchestrator
+            .confirm_native_result(
+                &ConfirmNativeResult {
+                    key: request.key.clone(),
+                    request_fingerprint: request.request_fingerprint,
+                    observation: NativeResultObservation::Durable {
+                        evidence: evidence.clone()
+                    },
+                },
+                fence.owner.device
+            )
+            .is_err()
+    );
+    cleanup_due(&mut h, fence.run);
+    assert!(h.orchestrator.bot_budget_tick(fence.run).is_err());
+    assert!(!h.attempt(fence.run).retired);
+    let mut ended = summary(ManagedState::Completed, None);
+    ended.process = ProcessState::Exited { code: Some(0) };
+    h.sessions.lock().unwrap().lookups.insert(
+        native,
+        (host(1), CreationLookup::KnownEnded { session: ended }),
+    );
+    {
+        let mut documents = h.documents.lock().unwrap();
+        documents.fail_commit = false;
+        documents.not_durable = true;
+        documents.hold_settle_ack = true;
+    }
+    cleanup_due(&mut h, fence.run);
+    assert!(h.orchestrator.bot_budget_tick(fence.run).is_err());
+    assert!(h.orchestrator.native_effects_pending(fence.run).unwrap());
+    assert!(!h.attempt(fence.run).retired);
+    h.documents.lock().unwrap().hold_settle_ack = false;
+    cleanup_due(&mut h, fence.run);
+    assert!(h.orchestrator.bot_budget_tick(fence.run).unwrap());
+    assert!(h.attempt(fence.run).retired);
+    assert_eq!(h.orchestrator.claims().len(), 0);
+    let header = h.orchestrator.header(fence.run).unwrap();
+    assert_eq!(
+        header.status,
+        RunStatus::Interrupted {
+            prior_attempt: PriorAttempt::Unknown
+        }
+    );
+    assert_eq!(header.native_results, vec![evidence]);
+    let retained = h
+        .orchestrator
+        .ports_mut()
+        .store
+        .native_results()
+        .unwrap()
+        .native_result(&request.key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.stage, NativeResultStage::Registered);
+    assert!(retained.drain.is_some());
+    assert_eq!(
+        retained.view().disposition,
+        NativeResultDisposition::AlreadyRegistered
+    );
+    assert!(!h.calls().contains(&Call::Terminate(fence.session)));
+}
+
+#[test]
+fn acknowledged_interruption_rebuilds_cleanup_and_releases_after_handback_without_ui() {
+    let (mut h, s, fence, policy, request) = active();
+    let native = h.attempt(fence.run).provider_session.unwrap().idempotency;
+    h.orchestrator
+        .synchronize_native_policy(policy, fence.owner.device)
+        .unwrap();
+    h.orchestrator
+        .prepare_native_effect(&request, fence.owner.device)
+        .unwrap();
+    h.orchestrator
+        .apply(
+            fence.run,
+            &RunEvent::Interrupt {
+                prior_attempt: PriorAttempt::Unknown,
+            },
+        )
+        .unwrap();
+    // Legacy delivery may already have acknowledged history while Held remained.
+    h.orchestrator
+        .bot_acknowledge_delivery(&key(&s), fence.owner.device, &delivery(&s, &fence))
+        .unwrap();
+    assert!(!h.attempt(fence.run).retired);
+    settle_unknown(&mut h, &request, fence.owner.device);
+    assert!(
+        h.orchestrator
+            .attempt_mut(fence.run)
+            .unwrap()
+            .bot_cleanup
+            .is_some()
+    );
+    let mut human = summary(ManagedState::Running, Some(fence.turn.unwrap()));
+    human.handover = HandoverState::Taken;
+    let lookup = CreationLookup::Known { session: human };
+    let mut h = restarted(h, (host(1), lookup.clone()));
+    {
+        let mut sessions = h.sessions.lock().unwrap();
+        sessions.lookups.insert(native, (host(1), lookup));
+        sessions.owned_termination_refused = true;
+    }
+    assert!(
+        h.orchestrator
+            .restart()
+            .unwrap()
+            .unresolved
+            .contains(&fence.run)
+    );
+    cleanup_due(&mut h, fence.run);
+    assert!(!h.orchestrator.bot_budget_tick(fence.run).unwrap());
+    assert!(!h.attempt(fence.run).retired);
+    assert_eq!(h.orchestrator.claims().len(), 1);
+    assert!(h.orchestrator.bot_budget_delay_ms().unwrap().is_some());
+    // Handback authorizes owned termination, but its acceptance alone is not end proof.
+    h.sessions.lock().unwrap().owned_termination_refused = false;
+    cleanup_due(&mut h, fence.run);
+    assert!(!h.orchestrator.bot_budget_tick(fence.run).unwrap());
+    let mut ended = summary(ManagedState::Completed, None);
+    ended.handover = HandoverState::Returned;
+    ended.process = ProcessState::Exited { code: Some(0) };
+    h.sessions.lock().unwrap().lookups.insert(
+        native,
+        (host(1), CreationLookup::KnownEnded { session: ended }),
+    );
+    {
+        let mut documents = h.documents.lock().unwrap();
+        documents.not_durable = true;
+        documents.hold_settle_ack = true;
+    }
+    cleanup_due(&mut h, fence.run);
+    assert!(h.orchestrator.bot_budget_tick(fence.run).is_err());
+    assert!(!h.attempt(fence.run).retired);
+    assert_eq!(h.orchestrator.claims().len(), 1);
+    h.documents.lock().unwrap().hold_settle_ack = false;
+    cleanup_due(&mut h, fence.run);
+    assert!(h.orchestrator.bot_budget_tick(fence.run).unwrap());
+    assert!(h.attempt(fence.run).retired);
+    assert_eq!(h.orchestrator.claims().len(), 0);
+    assert_eq!(
+        h.status(fence.run),
+        RunStatus::Interrupted {
+            prior_attempt: PriorAttempt::Unknown
+        }
+    );
+    assert!(!h.calls().contains(&Call::Terminate(fence.session)));
+    assert!(h.calls().contains(&Call::TerminateOwned(fence.session)));
+}
+
+#[test]
+fn drain_on_healthy_run_arms_cleanup_only_when_later_delivery_interrupts() {
+    let (mut h, s, fence, policy, request) = active();
+    let native = h.attempt(fence.run).provider_session.unwrap().idempotency;
+    h.orchestrator
+        .synchronize_native_policy(policy, fence.owner.device)
+        .unwrap();
+    h.orchestrator
+        .prepare_native_effect(&request, fence.owner.device)
+        .unwrap();
+    settle_unknown(&mut h, &request, fence.owner.device);
+    assert!(matches!(h.status(fence.run), RunStatus::Running { .. }));
+    assert!(
+        h.orchestrator
+            .attempt_mut(fence.run)
+            .unwrap()
+            .bot_cleanup
+            .is_none()
+    );
+    h.agent(
+        fence.run,
+        AgentEvent::TurnCompleted {
+            turn_id: fence.turn.unwrap(),
+        },
+    );
+    {
+        let mut sessions = h.sessions.lock().unwrap();
+        sessions
+            .summaries
+            .insert(fence.session, summary(ManagedState::Completed, None));
+        sessions.lookups.insert(
+            native,
+            (
+                host(1),
+                CreationLookup::Known {
+                    session: summary(ManagedState::Completed, None),
+                },
+            ),
+        );
+        sessions.observation.events.push(SequencedAgentEvent {
+            session_id: fence.session,
+            sequence: StreamSequence::new(50).unwrap(),
+            event: AgentEvent::TurnCompleted {
+                turn_id: fence.turn.unwrap(),
+            },
+        });
+        sessions.owned_termination_refused = true;
+    }
+    assert!(
+        h.orchestrator
+            .bot_acknowledge_delivery(&key(&s), fence.owner.device, &delivery(&s, &fence))
+            .is_err()
+    );
+    assert_eq!(
+        h.status(fence.run),
+        RunStatus::Interrupted {
+            prior_attempt: PriorAttempt::Unknown
+        }
+    );
+    assert!(
+        h.orchestrator
+            .attempt_mut(fence.run)
+            .unwrap()
+            .bot_cleanup
+            .is_some()
+    );
+    cleanup_due(&mut h, fence.run);
+    assert!(!h.orchestrator.bot_budget_tick(fence.run).unwrap());
+    assert!(!h.attempt(fence.run).retired);
+    assert!(!h.calls().contains(&Call::Terminate(fence.session)));
+}
+
 #[test]
 fn owned_cleanup_resolves_lost_creation_ack_through_exact_key() {
     let mut h = bot_harness();

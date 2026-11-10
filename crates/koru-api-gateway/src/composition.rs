@@ -179,7 +179,10 @@ pub(crate) fn open(
             ))
                 as Arc<dyn koru_delegate_api::bots::BotDelegatePort>)
         });
+    let native_mutations = Arc::new(koru_ai_server::NativeMutationGate::closed());
     let ai_config = ai_config.map(|ai_config| {
+        let ai_config =
+            ai_config.with_native_effect_recovery(store_client.clone(), native_mutations.clone());
         match config.bootstrap.as_ref().and_then(|b| {
             koru_ai_server::BotAuthorityAdapter::from_device(
                 store_client.clone(),
@@ -217,6 +220,7 @@ pub(crate) fn open(
     if let Some(delegate) = bot_delegate {
         state.set_bot_delegate_port(delegate);
     }
+    state.set_native_mutation_gate(native_mutations);
 
     // The Artifact Store, hosted here (D13) with its own database. Opening
     // it is a migration from empty on the first run and a stamp check on

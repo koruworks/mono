@@ -13,7 +13,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         Ok(())
     }
 
-    fn native_effect_open(&self, binding: &NativeEffectBinding) -> Result<()> {
+    /// Internal native adapter preflight, before placement or availability reads.
+    /// Effects must still use the identity-bound wrappers under this same owner.
+    pub fn check_native_effect(&self, binding: &NativeEffectBinding) -> Result<()> {
         self.native_effect_owner(binding)?;
         if self.catalog.native_effect_fence(binding)?.is_some() {
             return Err(Error::new(Code::Forbidden, "native operation is fenced"));
@@ -77,7 +79,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         attribution: Option<&str>,
         at: Timestamp,
     ) -> std::result::Result<ProvenSeededCreation, NativeUpdateError> {
-        self.native_effect_open(binding)?;
+        self.check_native_effect(binding)?;
         if binding.kind != NativeEffectKind::CreateDocument {
             return Err(Error::bare(Code::InvalidRequest).into());
         }
@@ -113,7 +115,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         at: Timestamp,
         origin: crate::ports::UpdateOrigin,
     ) -> std::result::Result<DocumentVersion, NativeUpdateError> {
-        self.native_effect_open(binding)?;
+        self.check_native_effect(binding)?;
         if binding.kind != NativeEffectKind::EditDocument {
             return Err(Error::bare(Code::InvalidRequest).into());
         }

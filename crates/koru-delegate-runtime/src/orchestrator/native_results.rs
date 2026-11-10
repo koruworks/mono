@@ -309,7 +309,21 @@ impl Orchestrator {
     ) -> Result<NativeResultIntentView, RunError> {
         self.native_record_for_device(&request.key, device)?;
         let record = self.native_ledger()?.confirm_native_result(request)?;
-        self.publish_native_result(record)
+        self.arm_bot_cleanup(request.key.run)?;
+        let view = self.publish_native_result(record)?;
+        Ok(view)
+    }
+
+    /// Retry one retained exact proof; this never calls the native Store effect.
+    pub(crate) fn reconcile_verified_native_for_run(
+        &mut self,
+        run: RunId,
+    ) -> Result<bool, RunError> {
+        let Some(record) = self.native_ledger()?.verified_native_result(run)? else {
+            return Ok(false);
+        };
+        self.publish_native_result(record)?;
+        Ok(true)
     }
 
     fn publish_native_result(

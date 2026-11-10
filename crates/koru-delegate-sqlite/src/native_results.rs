@@ -170,6 +170,11 @@ pub trait NativeResultLedger {
         after: Option<&NativeRecoveryCursor>,
         limit: u16,
     ) -> Result<Vec<PendingNativeResult>, BotLedgerError>;
+    /// One exact Run's retained proof awaiting canonical registration, by PK.
+    fn verified_native_result(
+        &self,
+        run: RunId,
+    ) -> Result<Option<NativeIntentRecord>, BotLedgerError>;
     fn refuse_unleased_native_result(
         &mut self,
         key: &NativeResultKey,

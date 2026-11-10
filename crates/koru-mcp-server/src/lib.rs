@@ -749,6 +749,8 @@ pub trait EmbeddedStore: Send + Sync {
         _document: StoreDocumentId,
         _expected_version: Vec<u8>,
         _update: Vec<u8>,
+        _identity: native::NativeStoreIdentity,
+        _request_fingerprint: [u8; 32],
     ) -> Result<koru_store_core::ports::DocumentVersion, native::NativeWriteError> {
         Err(native::NativeWriteError::Refused(native::unavailable()))
     }

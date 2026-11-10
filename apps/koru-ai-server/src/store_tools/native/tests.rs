@@ -2,6 +2,115 @@
 use super::*;
 use koru_store_server::memory::MemoryStore;
 
+#[test]
+fn drained_native_create_cannot_enqueue_late_or_change_its_binding() {
+    let (memory, authority, _) = setup();
+    let backend = native_store_backend(memory.client(), authority.clone());
+    let prepared = backend
+        .prepare_native_write(
+            "create_document",
+            serde_json::json!({
+                "workspace_id": authority.workspace, "title": "Late result"
+            }),
+        )
+        .unwrap();
+    let identity = NativeStoreIdentity {
+        candidate: DocumentId::new(),
+        scope: "native-drain-test".into(),
+        request_key: uuid::Uuid::new_v4().to_string(),
+    };
+    let fingerprint = *blake3::Hash::from_hex(&prepared.description().fingerprint)
+        .unwrap()
+        .as_bytes();
+    let binding = identity
+        .binding(
+            authority.owner_scope,
+            authority.workspace,
+            NativeEffectKind::CreateDocument,
+            fingerprint,
+        )
+        .unwrap();
+    let drain = binding.clone();
+    let receipt = memory
+        .with_store(move |store| store.drain_native_effect(&drain, Timestamp::now()).unwrap())
+        .unwrap();
+    assert_eq!(receipt.binding, binding);
+    assert!(matches!(
+        backend.execute_native_write(&prepared, identity.clone()),
+        Err(NativeWriteError::Refused(_))
+    ));
+    let mut changed = identity;
+    changed.candidate = DocumentId::new();
+    assert!(matches!(
+        backend.execute_native_write(&prepared, changed),
+        Err(NativeWriteError::Refused(_))
+    ));
+    let workspace = authority.workspace;
+    assert!(
+        memory
+            .with_store(move |store| store.documents(workspace).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn native_edit_checks_the_exact_fence_before_revision_or_update_validation() {
+    let (memory, authority, _) = setup();
+    let native = NativeStore {
+        client: memory.client(),
+        authority: authority.clone(),
+    };
+    let identity = NativeStoreIdentity {
+        candidate: DocumentId::new(),
+        scope: "native-drain-edit".into(),
+        request_key: uuid::Uuid::new_v4().to_string(),
+    };
+    let fingerprint = [7; 32];
+    let binding = identity
+        .binding(
+            authority.owner_scope,
+            authority.workspace,
+            NativeEffectKind::EditDocument,
+            fingerprint,
+        )
+        .unwrap();
+    memory
+        .with_store(move |store| {
+            store
+                .drain_native_effect(&binding, Timestamp::now())
+                .unwrap()
+        })
+        .unwrap();
+    // The target does not exist and the causal bytes are invalid. An exact deny
+    // still resolves the delayed effect before any document can be opened.
+    let error = native
+        .persist_update_at_version(
+            authority.workspace,
+            identity.candidate,
+            Vec::new(),
+            Vec::new(),
+            identity.clone(),
+            fingerprint,
+        )
+        .err()
+        .unwrap();
+    assert!(matches!(error, NativeWriteError::Refused(_)));
+    assert_eq!(error.error().code, "forbidden");
+    assert!(
+        native
+            .persist_update_at_version(
+                authority.workspace,
+                identity.candidate,
+                Vec::new(),
+                Vec::new(),
+                identity,
+                [8; 32]
+            )
+            .is_err()
+    );
+}
+
 fn setup() -> (MemoryStore, NativeStoreAuthority, ProfileId) {
     let memory = MemoryStore::open("native-authority-memory").unwrap();
     let (authority, other) = memory
