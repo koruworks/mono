@@ -4,7 +4,8 @@
 //! The AI writer supplies already normalized effects; native event bodies are not stored.
 
 use crate::{
-    AgentNotice, AiEvent, InferenceAttemptId, MessageBlock, ToolActivity, ToolInvocationId,
+    AgentNotice, AiEvent, AnswersRecord, InferenceAttempt, InferenceAttemptId, Message,
+    MessageBlock, PendingRetry, PendingTurn, ToolActivity, ToolInvocationId,
 };
 pub use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotDeliveryReceipt, BotExecutionFence, BotSubmission,
@@ -15,6 +16,63 @@ use serde::Serialize;
 pub const MAX_REPLAY_EVENTS: usize = 256;
 pub const MAX_REPLAY_EFFECTS: usize = 1024;
 pub const MAX_REPLAY_BYTES: usize = 4 * 1024 * 1024;
+
+/// An AI-owned preparation, never a public caller's admission authority.
+/// Retry and a terminal question answer preserve the shared assistant-only UI.
+#[derive(Clone)]
+pub enum BotChatPreparation {
+    Turn(PendingTurn),
+    Retry {
+        retry: PendingRetry,
+        prior_attempt: InferenceAttemptId,
+    },
+    AnsweredContinuation {
+        retry: PendingRetry,
+        question: BotQuestionContinuation,
+    },
+}
+
+#[derive(Clone)]
+pub struct BotQuestionContinuation {
+    pub prior_attempt: InferenceAttemptId,
+    pub invocation: ToolInvocationId,
+    pub source: BotToolSource,
+    /// Already validated by the live definition; secrets must be withheld.
+    pub answers: AnswersRecord,
+}
+
+impl BotChatPreparation {
+    pub fn attempt(&self) -> &InferenceAttempt {
+        match self {
+            Self::Turn(turn) => &turn.attempt,
+            Self::Retry { retry, .. } | Self::AnsweredContinuation { retry, .. } => &retry.attempt,
+        }
+    }
+    pub fn assistant(&self) -> &Message {
+        match self {
+            Self::Turn(turn) => &turn.assistant_message,
+            Self::Retry { retry, .. } | Self::AnsweredContinuation { retry, .. } => {
+                &retry.assistant_message
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum BotPreparationError {
+    Admission(super::BotError),
+    Persistence(crate::AiError),
+}
+impl From<super::BotError> for BotPreparationError {
+    fn from(value: super::BotError) -> Self {
+        Self::Admission(value)
+    }
+}
+impl From<crate::AiError> for BotPreparationError {
+    fn from(value: crate::AiError) -> Self {
+        Self::Persistence(value)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

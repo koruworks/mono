@@ -3,6 +3,38 @@
 //! Shared mutations: the caller owns the transaction and publication boundary.
 use super::*;
 
+pub(super) fn begin_retry_on(
+    transaction: &Connection,
+    retry: &PendingRetry,
+) -> Result<InferenceAttempt, AiError> {
+    if retry.assistant_message.role != ChatRole::Assistant
+        || retry.assistant_message.state != MessageState::Pending
+        || retry.attempt.assistant_message_id != Some(retry.assistant_message.id)
+        || retry.attempt.chat_id != Some(retry.assistant_message.chat_id)
+    {
+        return Err(invariant_failed());
+    }
+    if let Some(existing) = query_attempt(
+        transaction,
+        "operation_id",
+        &retry.attempt.operation_id.to_string(),
+    )? {
+        return Ok(existing);
+    }
+    insert_message(transaction, &retry.assistant_message)?;
+    insert_attempt(transaction, &retry.attempt)?;
+    transaction
+        .execute(
+            "UPDATE chats SET updated_at_ms = max(updated_at_ms, ?2) WHERE id = ?1",
+            params![
+                retry.assistant_message.chat_id.to_storage(),
+                retry.assistant_message.created_at.millis()
+            ],
+        )
+        .map_err(storage_failed)?;
+    Ok(retry.attempt.clone())
+}
+
 pub(super) fn begin_turn_on(
     transaction: &Connection,
     turn: &PendingTurn,
