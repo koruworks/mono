@@ -1,5 +1,12 @@
 # Test architecture
 
+A rejected account repair can preserve the stored credential and immediately
+restore it into a fresh held context, whose legitimate refresh changes those
+bytes. The switching fixture holds that account's existing inspection gate while
+checking cleanup's exact byte equality, then releases it and verifies restored
+sign-in. Receiving the repair result fences its cleanup, not later background
+restoration; sleeps or relaxed token comparisons do not establish that boundary.
+
 Warm-query counter tests wait for the projector's `pending == 0` and
 `sweeping == false` before taking their baseline, and refuse a failed
 projection. A sweep can make task rows visible while a commit is still in the
