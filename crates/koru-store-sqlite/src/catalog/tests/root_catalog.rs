@@ -15,7 +15,7 @@ use koru_store_core::root_catalog::seed::{seeded_deletion_id, seeded_move_id};
 use koru_store_core::root_catalog::{
     CatalogUnitKind, CatalogUnitRef, K_LOCAL_USER_SCOPE, ProfileCatalogUnit, WorkspaceCatalogUnit,
 };
-use koru_store_core::service::K_PEER_ID;
+use koru_store_core::service::{K_PEER_ID, indexed_version_is_current};
 use koru_store_core::temporal::ZonedDateTime;
 
 /// The one peer every legacy personal unit of an installation was written by.
@@ -354,10 +354,16 @@ fn a_twelve_upgrade_seeds_units_merges_personal_histories_and_drops_the_legacy_t
     assert!(merged.version().get(&STORE_PEER).is_none());
     assert!(state.writer_peer_id != STORE_PEER);
     assert!(merged.version().get(&state.writer_peer_id).is_some());
-    assert_eq!(
+    // The stamp names the merged version. Asserted decoded, never as bytes:
+    // the stamp was encoded off the assembled candidate and `merged` built its
+    // own map by importing the stored snapshot, and `VersionVector::encode`
+    // emits peer entries in its `HashMap`'s iteration order — so the same
+    // version came out of the two with entries transposed often enough to fail
+    // CI and never often enough to fail here.
+    assert!(indexed_version_is_current(
         state.indexed_version.as_deref(),
-        Some(merged.version().encode().as_slice())
-    );
+        &merged.version()
+    ));
     let mut due_rows = c.workspace_reminder_due(scope).unwrap();
     due_rows.retain(|row| row.workspace == live.id);
     due_rows.sort_by_key(|row| row.reminder);

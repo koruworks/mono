@@ -194,7 +194,7 @@ fn index(store: &mut Store<SqliteCatalog, FaultBackend>, profile: ProfileId) {
         let (version, rows) = build_reminder_index(&candidate).unwrap();
         assert!(
             store
-                .publish_reminder_index(&candidate, &version, &rows)
+                .publish_reminder_index(&candidate, &version.encode(), &rows)
                 .unwrap()
         );
     }

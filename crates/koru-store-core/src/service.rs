@@ -103,7 +103,9 @@ mod transport_modes;
 pub use transport_modes::TransportModeChoice;
 mod updates;
 mod welcome_progress;
-pub use profile_units::{build_reminder_index, read_personal_reminder_inputs};
+pub use profile_units::{
+    build_reminder_index, indexed_version_is_current, read_personal_reminder_inputs,
+};
 pub use welcome_progress::{WELCOME_QUERY_MAX, valid_welcome_row};
 
 /// A staged repository a Restore resumes: open, with the document rows it

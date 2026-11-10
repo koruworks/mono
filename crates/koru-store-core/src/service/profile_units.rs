@@ -253,11 +253,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             if doc.is_read_only() {
                 return Err(Error::bare(Code::SchemaTooNew));
             }
-            let indexed = state
-                .indexed_version
-                .as_deref()
-                .and_then(|v| loro::VersionVector::decode(v).ok());
-            if indexed.as_ref() != Some(&doc.version()) {
+            if !indexed_version_is_current(state.indexed_version.as_deref(), &doc.version()) {
                 return Err(Error::bare(Code::ReminderIndexUpdating));
             }
             let inputs = doc.reminder_reduction_inputs();
@@ -1026,7 +1022,16 @@ pub fn read_personal_reminder_inputs(
 /// Decode a bounded personal snapshot off the Store's answering thread.
 /// The index supplies lookup hints only; target/timezone-dependent reduction
 /// remains with the existing reconciliation service.
-pub fn build_reminder_index(source: &ProfileUnitState) -> Result<(Vec<u8>, Vec<ReminderDue>)> {
+///
+/// **Returns the version, not its encoding.** The bytes are only how the stamp
+/// is stored; the question every caller actually asks is whether a stored stamp
+/// still names this version, and that is
+/// [`indexed_version_is_current`] — never a comparison of two
+/// `VersionVector::encode()` results. Handing back the value keeps a caller
+/// from reaching for the bytes by accident; `encode` it where it is written.
+pub fn build_reminder_index(
+    source: &ProfileUnitState,
+) -> Result<(loro::VersionVector, Vec<ReminderDue>)> {
     let (owner, doc) = candidate_personal(source)?;
     let workspace = doc.workspace();
     let rows = doc
@@ -1039,5 +1044,35 @@ pub fn build_reminder_index(source: &ProfileUnitState) -> Result<(Vec<u8>, Vec<R
             due_at_ms,
         })
         .collect();
-    Ok((doc.version().encode(), rows))
+    Ok((doc.version(), rows))
+}
+
+/// Does a stored `indexed_version` stamp still name exactly `version`?
+///
+/// **Never compare two `VersionVector::encode()` results.** A
+/// `loro::VersionVector` is a `HashMap<PeerID, Counter>` and `encode` is
+/// `postcard` over that map, so the peer entries come out in the map's
+/// iteration order — which depends on the table's capacity, and so on how many
+/// inserts and removals happened to build it, not on what it holds. One version
+/// read two ways therefore encodes to the same bytes *in a different order*:
+/// equal values, unequal bytes. (Loro sorts in `Frontiers::encode` and does not
+/// here, so this is a property of the type rather than an oversight to wait out
+/// — and `loro` is pinned exactly in the workspace manifest.) A byte comparison
+/// reports a change that never happened, which costs an index rebuild the data
+/// did not need and, where the answer is fed back into an authority recheck, a
+/// spurious conflict.
+///
+/// Decoded, `VersionVector`'s own `PartialEq` compares the peer→counter mapping
+/// and normalises absent and zero counters, which is the property meant.
+///
+/// **A stamp this build cannot decode is not current.** `None` and undecodable
+/// bytes both answer `false`, so the caller rebuilds the index rather than
+/// panicking or failing the read: an index whose stamp nobody can read is an
+/// index nobody can vouch for, and rebuilding one that was in fact current
+/// wastes work, where trusting one is wrong.
+pub fn indexed_version_is_current(stamp: Option<&[u8]>, version: &loro::VersionVector) -> bool {
+    stamp
+        .and_then(|bytes| loro::VersionVector::decode(bytes).ok())
+        .as_ref()
+        == Some(version)
 }

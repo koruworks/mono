@@ -106,9 +106,11 @@ fn a_private_destination_forks_an_overlay_and_leaves_the_durable_bytes_alone() {
         plan_placement_write(workspace, Some(&held), None, false, STORE, placement).unwrap(),
     );
 
+    // Decoded: two independently built `VersionVector` maps encode their peer
+    // entries in their own iteration order, so only the value is the claim.
     assert_eq!(
-        overlay.base_vv,
-        read(&held.snapshot, workspace).version().encode(),
+        VersionVector::decode(&overlay.base_vv).unwrap(),
+        read(&held.snapshot, workspace).version(),
         "forked at the durable unit's version"
     );
     assert_ne!(overlay.writer_peer_id, STORE, "its own persisted writer");
