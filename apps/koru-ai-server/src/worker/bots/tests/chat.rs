@@ -9,6 +9,7 @@ mod attachments;
 mod controls;
 mod interruption;
 mod questions;
+mod refusal;
 
 #[derive(Default)]
 struct Native {
@@ -27,6 +28,8 @@ struct Native {
     replay_failure: bool,
     hold_observation: bool,
     native_cancel: Option<s::CancelReason>,
+    /// Answers for the next Begins, in order; a Begin past them succeeds.
+    begin_failures: Mutex<std::collections::VecDeque<koru_delegate_api::Failure>>,
 }
 #[derive(Default)]
 struct NativeState {
@@ -42,6 +45,7 @@ struct NativeState {
     interrupt_calls: usize,
     interrupt_settled: bool,
     stop_unconfirmed: bool,
+    begin_at: Vec<Instant>,
 }
 impl BotDelegatePort for Native {
     fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
@@ -199,10 +203,14 @@ impl BotDelegatePort for Native {
                 assert!(state.observed_before_begin);
                 assert_eq!(Some(&fence), state.fence.as_ref());
                 state.begin += 1;
+                state.begin_at.push(Instant::now());
                 if let Some(report) = self.begin_reports.lock().unwrap().as_ref() {
                     let _ = report.try_send(());
                 }
                 state.input = Some(input);
+                if let Some(failure) = self.begin_failures.lock().unwrap().pop_front() {
+                    return Err(failure);
+                }
                 let turn = s::AgentTurnId::mint();
                 state.fence.as_mut().unwrap().turn = Some(turn);
                 Ok(BotReply::Turn { turn })
@@ -264,7 +272,14 @@ impl BotDelegatePort for Native {
                     details: Default::default(),
                 })
             }
-            _ => panic!("unexpected owner command"),
+            other => panic!(
+                "unexpected owner command: {}",
+                serde_json::to_string(&other)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
+            ),
         }
     }
 }

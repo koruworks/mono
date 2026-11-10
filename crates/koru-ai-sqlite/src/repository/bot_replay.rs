@@ -6,6 +6,16 @@ use koru_ai_core::bots::replay::*;
 use std::io::Write;
 mod preparation;
 
+/// How a Bot attempt ends on the AI side before any native terminal arrives.
+enum LocalEnd<'a> {
+    Interrupted,
+    Cancelled,
+    Refused {
+        class: AiErrorClass,
+        reason: &'a str,
+    },
+}
+
 impl Repository {
     #[cfg(any(test, feature = "fixtures"))]
     pub fn fail_after_bot_replay_commit_for_fixture(&mut self) {
@@ -64,7 +74,21 @@ impl Repository {
         attempt: InferenceAttemptId,
         now: Timestamp,
     ) -> Result<(), AiError> {
-        self.finish_bot_locally(attempt, now, false)
+        self.finish_bot_locally(attempt, now, LocalEnd::Interrupted)
+    }
+    /// The owner definitely refused the task's strict initial input. The
+    /// attempt and its reply fail with the closed error class the person
+    /// reads, and the attempt's open `stop_reason` keeps the owner's stable
+    /// refusal code, so a later Retry can tell why without a schema change.
+    /// Like an interruption, this never asserts that the native worker stopped.
+    pub fn refuse_bot_input(
+        &mut self,
+        attempt: InferenceAttemptId,
+        class: AiErrorClass,
+        reason: &str,
+        now: Timestamp,
+    ) -> Result<(), AiError> {
+        self.finish_bot_locally(attempt, now, LocalEnd::Refused { class, reason })
     }
     /// Cancels AI presentation, not the delegate's reservation or Run. The
     /// caller still owes exact native Stop/refusal-fence reconciliation.
@@ -73,13 +97,13 @@ impl Repository {
         attempt: InferenceAttemptId,
         now: Timestamp,
     ) -> Result<(), AiError> {
-        self.finish_bot_locally(attempt, now, true)
+        self.finish_bot_locally(attempt, now, LocalEnd::Cancelled)
     }
     fn finish_bot_locally(
         &mut self,
         attempt: InferenceAttemptId,
         now: Timestamp,
-        cancelled: bool,
+        end: LocalEnd<'_>,
     ) -> Result<(), AiError> {
         self.bot_submission_for_attempt(attempt)?
             .ok_or_else(invariant_failed)?;
@@ -91,16 +115,33 @@ impl Repository {
         }
         tx.execute("UPDATE bot_run_replay SET stop_reason='owner_unavailable',updated_at_ms=?2 WHERE ai_attempt_id=?1 AND stop_reason IS NULL",
             params![attempt.to_storage(),now.millis()]).map_err(storage_failed)?;
-        tx.execute("UPDATE inference_attempts SET status=?3,completed_at_ms=max(queued_at_ms,?2) WHERE id=?1",
-            params![attempt.to_storage(),now.millis(),if cancelled {"cancelled"}else {"interrupted"}]).map_err(storage_failed)?;
+        let (status, message, class, reason) = match end {
+            LocalEnd::Interrupted => ("interrupted", MessageState::Interrupted, None, None),
+            LocalEnd::Cancelled => ("cancelled", MessageState::Interrupted, None, None),
+            LocalEnd::Refused { class, reason } => {
+                ("failed", MessageState::Failed, Some(class), Some(reason))
+            }
+        };
+        tx.execute(
+            "UPDATE inference_attempts SET status=?3,completed_at_ms=max(queued_at_ms,?2),
+            error_class=coalesce(?4,error_class),stop_reason=coalesce(?5,stop_reason) WHERE id=?1",
+            params![
+                attempt.to_storage(),
+                now.millis(),
+                status,
+                class.map(error_class_token),
+                reason
+            ],
+        )
+        .map_err(storage_failed)?;
         complete_message(
             &tx,
             current
                 .assistant_message_id
                 .map(MessageId::to_storage)
                 .as_deref(),
-            MessageState::Interrupted,
-            None,
+            message,
+            class,
             now,
         )?;
         finish_agent_rows_on(

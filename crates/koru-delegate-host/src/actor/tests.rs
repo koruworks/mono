@@ -658,5 +658,24 @@ fn bot_actor_rechecks_trusted_device_before_any_persistence_or_provider_use() {
     let result = actor.bot_command(koru_delegate_api::bots::BotCommand::Submit { submission: s });
     assert!(matches!(result,Err(failure) if failure.code=="bot_owner_mismatch"));
 }
+#[test]
+fn a_named_initial_input_refusal_reaches_the_ai_as_non_retryable_and_no_answer_stays_retryable() {
+    use koru_delegate_runtime::{Port, PortError};
+    for refusal in koru_delegate_core::BotInputRefusal::ALL {
+        let failure = bots::bot_failure(RunError::Port(PortError::new(
+            Port::Sessions,
+            refusal.code(),
+            "The session refused the initial input (input_too_large).",
+        )));
+        assert_eq!(failure.code, refusal.code());
+        assert!(!failure.retryable);
+    }
+    // A session code the owner did not name stays the generic retryable port.
+    for code in ["input_too_large", "disconnected", "timed_out"] {
+        let failure = bots::bot_failure(RunError::Port(PortError::new(Port::Sessions, code, "x")));
+        assert_eq!(failure.code, "port");
+        assert!(failure.retryable);
+    }
+}
 
 mod bot_delivery;

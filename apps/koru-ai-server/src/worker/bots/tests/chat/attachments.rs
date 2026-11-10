@@ -182,6 +182,55 @@ fn send(running: &Running) -> AiResponseStream {
         .unwrap()
 }
 
+fn retry(running: &Running, failed: MessageId) -> AiResponseStream {
+    let (reply, response) = sync_channel(1);
+    running
+        .worker
+        .client()
+        .send(WorkerCommand::RetryTurn {
+            context: running.context.clone(),
+            chat: running.request.chat_id,
+            request: RetryTurnRequest {
+                destination_workspace: running.request.destination_workspace,
+                operation_id: Uuid::new_v4(),
+                message_id: failed,
+                surface: AiSurface::Standalone,
+                explicit_refs: Vec::new(),
+                reasoning_override: None,
+                web_search: false,
+                replace_pinned_documents: false,
+            },
+            reply,
+        })
+        .unwrap();
+    response
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap()
+}
+
+/// The terminal event, and whether the images-as-files notice came first.
+fn terminal_with_notice(stream: &AiResponseStream) -> (PublicAiEvent, bool) {
+    let mut notice = false;
+    loop {
+        let event = stream
+            .events
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .event;
+        notice |= matches!(
+            event,
+            PublicAiEvent::Notice {
+                notice: koru_ai_core::AttemptNotice::ImagesAsFiles,
+                ..
+            }
+        );
+        if event.is_terminal() {
+            return (event, notice);
+        }
+    }
+}
+
 fn terminal(stream: &AiResponseStream) -> PublicAiEvent {
     loop {
         let event = stream
@@ -272,6 +321,54 @@ fn a_staging_refusal_selects_the_automatic_interrupt_lane_not_stop() {
     );
     assert!(state.interrupt_calls > 0);
     assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_retry_after_the_pictures_were_refused_sends_them_as_paths_and_stages_nothing() {
+    let running = start(Script::Native);
+    running
+        .port
+        .native
+        .begin_failures
+        .lock()
+        .unwrap()
+        .push_back(koru_delegate_api::Failure::new(
+            "bot_input_pictures_refused",
+            "The Bot operation was refused.",
+            false,
+        ));
+    let (reports, interrupted) = sync_channel(4);
+    *running.port.native.interrupt_reports.lock().unwrap() = Some(reports);
+    let first = send(&running);
+    assert!(matches!(terminal(&first), PublicAiEvent::Failed { .. }));
+    // A Retry waits for the refused task to settle, as any Retry does.
+    assert!(interrupted.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
+    let refused = running
+        .port
+        .native
+        .state
+        .lock()
+        .unwrap()
+        .input
+        .clone()
+        .unwrap();
+    assert_eq!(refused.attachment_ids.len(), 1, "the first went natively");
+    let second = retry(&running, first.accepted.assistant_message_id);
+    let (event, notice) = terminal_with_notice(&second);
+    assert!(
+        matches!(event, PublicAiEvent::Completed { .. }),
+        "{event:?}"
+    );
+    assert!(notice, "the picture went as its path with the notice");
+    // The refusal is read back from the failed attempt: nothing is staged
+    // into the new Run's session, and the input names the picture's path.
+    assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
+    let state = running.port.native.state.lock().unwrap();
+    let input = state.input.clone().unwrap();
+    assert!(input.attachment_ids.is_empty());
+    assert!(input.text.contains("picture.png"));
+    assert_eq!(state.begin, 2);
 }
 
 #[test]

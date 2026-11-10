@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Finite owner calls. No provider launch, repository handle, or idle wait in a job.
 use super::*;
-use koru_delegate_core::{BotRunKey, BotSubmission};
+use koru_delegate_core::{BotInputRefusal, BotRunKey, BotSubmission};
 #[cfg(test)]
 mod tests;
 
@@ -166,7 +166,8 @@ impl WorkerState {
         if input.text.len() > MAX_REPLAY_BYTES || self.bot_chats.len() >= PROVIDER_QUEUE_CAPACITY {
             return Err(context_too_large());
         }
-        let staging = super::attachments::plan(&request, &self.attachments);
+        let as_paths = self.retries_refused_pictures(id);
+        let staging = super::attachments::plan(&request, &self.attachments, as_paths);
         self.bot_chats.insert(
             id,
             LiveChat {
@@ -371,12 +372,27 @@ impl WorkerState {
         // The identical recovery scope was already retained by the first
         // stalled reply; a repeat would only churn the shared gate.
         let repeat = stalled && chat.retries > 0;
-        if stalled {
+        // A retryable Begin is re-issued with the same exact input, which the
+        // owner and session answer idempotently. It backs off the same way
+        // rather than asking four times a second until the active budget
+        // fences the attempt.
+        let begin_retry = !finishing
+            && matches!(step.phase, Phase::Begin)
+            && matches!(&step.result, Err(error) if error.retryable);
+        if stalled || begin_retry {
             chat.retries = (chat.retries + 1).min(FINISH_BACKOFF_MAX_ROUND);
             chat.due = Instant::now() + finishing_backoff(chat.retries);
-        } else if progressed {
+        } else if progressed || (!finishing && matches!(step.phase, Phase::Begin)) {
             chat.retries = 0;
         }
+        // A definite refusal of the task's first input. The owner names it;
+        // the task ends now instead of asking again for the same answer.
+        let refusal = match (&step.phase, &step.result) {
+            (Phase::Begin, Err(error)) if !finishing && !error.retryable => {
+                BotInputRefusal::from_code(&error.code)
+            }
+            _ => None,
+        };
         let recovery = match &step.phase {
             _ if repeat => None,
             Phase::Stop => Some(koru_delegate_core::NativeDrainReason::OwnerStop),
@@ -433,9 +449,16 @@ impl WorkerState {
             Err(_) => {
                 // An automatic failure never selects Stop, and it never
                 // replaces a person's Stop that is already in progress.
-                self.interrupt_bot_chat(step.attempt);
+                match refusal {
+                    Some(refusal) => self.refuse_bot_chat(step.attempt, refusal),
+                    None => self.interrupt_bot_chat(step.attempt),
+                }
                 chat.phase = Phase::Admission;
-                chat.finishing.get_or_insert(Finish::Interrupt);
+                if chat.finishing.is_none() {
+                    // Retries counted before finishing are not finishing stalls.
+                    chat.retries = 0;
+                    chat.finishing = Some(Finish::Interrupt);
+                }
                 self.bot_chats.insert(step.attempt, chat);
             }
         }
@@ -639,6 +662,40 @@ impl WorkerState {
             self.publish(AiEvent::Failed {
                 attempt_id: id,
                 error: bot_route_error(),
+                at: Timestamp::now(),
+            });
+            self.streams.remove(&id);
+            self.cancellations.remove(&id);
+            self.work_terminal(id);
+        }
+    }
+    /// The owner definitely refused the task's first input. The same
+    /// automatic end as [`Self::interrupt_bot_chat`], except that the attempt
+    /// fails with the reason in the existing failure vocabulary, and keeps
+    /// the owner's code for a later Retry.
+    pub(in crate::worker) fn refuse_bot_chat(
+        &mut self,
+        id: InferenceAttemptId,
+        refusal: BotInputRefusal,
+    ) {
+        if matches!(self.repository.attempt(id),Ok(Some(attempt)) if attempt.status.is_terminal()) {
+            return;
+        }
+        let error = super::refused_input_error(refusal);
+        tracing::info!(
+            target: "koru_ai::bots",
+            attempt = %id,
+            refusal = refusal.code(),
+            "Bot task's first input was refused; the task ends"
+        );
+        if self
+            .repository
+            .refuse_bot_input(id, error.class, refusal.code(), Timestamp::now())
+            .is_ok()
+        {
+            self.publish(AiEvent::Failed {
+                attempt_id: id,
+                error,
                 at: Timestamp::now(),
             });
             self.streams.remove(&id);

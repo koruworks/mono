@@ -9,7 +9,7 @@ use koru_delegate_core::{BotRunKey, WorkspaceScope};
 fn unavailable(code: &'static str) -> Failure {
     Failure::new(code, "The Bot operation is not available.", false)
 }
-fn bot_failure(error: RunError) -> Failure {
+pub(super) fn bot_failure(error: RunError) -> Failure {
     match error {
         RunError::Port(error)
             if matches!(

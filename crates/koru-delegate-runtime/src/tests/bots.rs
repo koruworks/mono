@@ -377,6 +377,72 @@ fn lost_initial_ack_reconciles_native_idempotency_without_second_turn() {
         .unwrap();
     assert_eq!(count_submits(&h), 1);
 }
+fn begin_refusal(h: &mut Harness, fence: &BotExecutionFence, s: &BotSubmission) -> PortError {
+    match h
+        .orchestrator
+        .bot_begin_turn(fence, fence.owner.device, s.input.clone())
+    {
+        Err(RunError::Port(error)) => error,
+        other => panic!("expected a port refusal, got {other:?}"),
+    }
+}
+#[test]
+fn a_definite_session_refusal_of_the_initial_input_names_its_reason_and_is_not_retryable() {
+    // The session pins its answer to the input's key, so asking again can only
+    // repeat it. Before this, every such answer surfaced as the generic
+    // retryable `port` code and the AI re-issued the same Begin until the
+    // ten-minute budget ended the task.
+    for (session, code) in [
+        ("input_too_large", "bot_input_too_large"),
+        ("unsupported_media", "bot_input_pictures_refused"),
+        ("invalid_image", "bot_input_pictures_refused"),
+        ("capability_not_negotiated", "bot_input_capability_refused"),
+        ("provider_model_unavailable", "bot_input_model_refused"),
+        ("invalid_transition", "bot_input_invalid"),
+    ] {
+        let mut h = bot_harness();
+        let s = submission(40);
+        let fence = prepared(&mut h, &s);
+        observe(&mut h, &fence);
+        h.sessions.lock().unwrap().bot_refusal = Some(session);
+        for _ in 0..2 {
+            let error = begin_refusal(&mut h, &fence, &s);
+            assert_eq!(error.code, code, "{session}");
+            assert_eq!(error.port, Port::Sessions);
+            assert!(!error.detail.contains("SECRET"), "no session text travels");
+        }
+        // Each repeat reached the session once and was refused again.
+        assert_eq!(count_submits(&h), 2);
+    }
+}
+#[test]
+fn no_answer_or_a_session_state_answer_to_the_initial_input_stays_uncertain_and_retryable() {
+    for session in [
+        "disconnected",
+        "timed_out",
+        "unavailable",
+        "backpressure",
+        "stale_lease",
+        "session_exited",
+        "provider_failed",
+        "internal",
+    ] {
+        let mut h = bot_harness();
+        let s = submission(41);
+        let fence = prepared(&mut h, &s);
+        observe(&mut h, &fence);
+        h.sessions.lock().unwrap().bot_refusal = Some(session);
+        let error = begin_refusal(&mut h, &fence, &s);
+        assert_eq!(error.code, session, "unchanged, so still retryable");
+        assert!(!error.code.starts_with("bot_"));
+        // The same exact input may still begin once the session answers.
+        h.sessions.lock().unwrap().bot_refusal = None;
+        h.orchestrator
+            .bot_begin_turn(&fence, fence.owner.device, s.input.clone())
+            .unwrap();
+        assert_eq!(count_submits(&h), 2);
+    }
+}
 #[test]
 fn pause_before_dispatch_keeps_queue_and_resume_uses_original_snapshot() {
     let mut h = bot_harness();

@@ -37,3 +37,27 @@ fn bot_route_error() -> AiError {
         false,
     )
 }
+
+/// What a person reads when the owner refused the task's first input, in the
+/// existing failure vocabulary only: the class picks the translated sentence
+/// and the message is one the ordinary agent route already shows. A refusal
+/// of the pictures has no sentence of its own yet, so it reads as the
+/// provider's error with no added words; its reason stays on the attempt.
+fn refused_input_error(refusal: koru_delegate_core::BotInputRefusal) -> AiError {
+    use koru_delegate_core::BotInputRefusal as R;
+    match refusal {
+        R::TooLarge => context_too_large(),
+        R::Pictures => AiError::new(AiErrorClass::Provider, "", false),
+        R::Capability => AiError::new(
+            AiErrorClass::Configuration,
+            "This Koru Agent is older than the app; restart Koru.",
+            false,
+        ),
+        R::Model => AiError::new(
+            AiErrorClass::ModelUnavailable,
+            "The agent refused that model.",
+            false,
+        ),
+        R::Invalid => bot_route_error(),
+    }
+}

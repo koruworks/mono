@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{Orchestrator, RunError, bots::refused};
-use crate::RunFact;
+use crate::{Port, PortError, RunFact};
 use koru_delegate_core::{
-    AgentEventObservation, AgentTurnId, BotExecutionFence, BotRunKey, ControlState, DeviceId,
-    PendingInput, RunEvent, RunStatus, StepKind, StreamSequence, TimelineRef, TimelineRefs,
+    AgentEventObservation, AgentTurnId, BotExecutionFence, BotInputRefusal, BotRunKey,
+    ControlState, DeviceId, PendingInput, RunEvent, RunStatus, StepKind, StreamSequence,
+    TimelineRef, TimelineRefs,
 };
 use koru_delegate_sqlite::{
     AttemptPhase, BOT_ACTIVE_BUDGET_MS, BotExecutionRecord, BotInitialSend,
 };
 
 mod native_prompt;
+
+/// The session's answer to a Bot's strict initial input. A definite refusal
+/// of that input is pinned to its key by the session, so asking again can
+/// only repeat it: it becomes the non-retryable `bot_input_*` code that names
+/// the reason. Anything else — a transport failure, a timeout, a lease or
+/// host answer — is returned unchanged and stays retryable and uncertain.
+fn initial_input_refusal(error: PortError) -> RunError {
+    match BotInputRefusal::of_session_code(&error.code) {
+        Some(refusal) if error.port == Port::Sessions => PortError::new(
+            Port::Sessions,
+            refusal.code(),
+            format!("The session refused the initial input ({}).", error.code),
+        )
+        .into(),
+        _ => error.into(),
+    }
+}
 
 impl Orchestrator {
     pub(crate) fn bot_live_fence(
@@ -198,7 +216,11 @@ impl Orchestrator {
         let turn = match durable.turn {
             Some(turn) => turn,
             None => {
-                let turn = self.ports.sessions.bot_submit(fence.session, input)?;
+                let turn = self
+                    .ports
+                    .sessions
+                    .bot_submit(fence.session, input)
+                    .map_err(initial_input_refusal)?;
                 durable.turn = Some(turn);
                 self.bot_ledger()?
                     .acknowledge_bot_initial_send(fence.run, &durable)?;

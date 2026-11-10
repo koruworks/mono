@@ -3,7 +3,9 @@
 //! Bot admission and result identities. Authority is supplied by the trusted AI
 //! owner, never inferred from these serializable values or a caller label.
 mod native;
+mod refusal;
 pub use native::*;
+pub use refusal::BotInputRefusal;
 
 use crate::{
     AgentTurnId, AttemptGeneration, BotId, BotRequestId, DeviceId, DocumentId, RunAttemptId, RunId,

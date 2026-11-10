@@ -747,6 +747,38 @@ fn restart_and_gap_interrupt_without_reopening_or_advancing() {
 }
 
 #[test]
+fn a_refused_initial_input_fails_the_attempt_with_its_class_and_keeps_the_reason() {
+    let mut repo = Repository::in_memory().unwrap();
+    let (_, turn, submission) = fixture(&mut repo);
+    repo.prepare_bot_turn(&turn, &submission, at(1)).unwrap();
+    let id = turn.attempt.id;
+    repo.refuse_bot_input(
+        id,
+        AiErrorClass::ContextTooLarge,
+        "bot_input_too_large",
+        at(3),
+    )
+    .unwrap();
+    let attempt = repo.attempt(id).unwrap().unwrap();
+    assert_eq!(attempt.status, AttemptStatus::Failed);
+    assert_eq!(attempt.error_class, Some(AiErrorClass::ContextTooLarge));
+    assert_eq!(attempt.stop_reason.as_deref(), Some("bot_input_too_large"));
+    let reply = repo.message(turn.assistant_message.id).unwrap().unwrap();
+    assert_eq!(reply.state, MessageState::Failed);
+    assert_eq!(reply.error_class, Some(AiErrorClass::ContextTooLarge));
+    // Replay stops as for any local end: nothing later reopens the reply.
+    assert_eq!(
+        repo.bot_replay_state(id).unwrap().stop_reason,
+        Some(BotReplayStop::OwnerUnavailable)
+    );
+    // Terminal is absorbing: a later interruption changes neither status nor reason.
+    repo.interrupt_bot_preparation(id, at(4)).unwrap();
+    let attempt = repo.attempt(id).unwrap().unwrap();
+    assert_eq!(attempt.status, AttemptStatus::Failed);
+    assert_eq!(attempt.stop_reason.as_deref(), Some("bot_input_too_large"));
+}
+
+#[test]
 fn bounded_batches_and_wrong_effect_owners_refuse_without_writes() {
     let (mut repo, turn, _, fence) = prepared();
     let mut too_many = batch(&turn, &fence, None, vec![]);

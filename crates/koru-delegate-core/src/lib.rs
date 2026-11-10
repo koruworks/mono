@@ -59,9 +59,9 @@ pub use attempt::{
 };
 pub use bots::{
     BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView, BotDeliveryReceipt,
-    BotExecutionFence, BotOwner, BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt,
-    BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
-    BotWorkingFolder, CapturedBotPolicy, ConfirmNativeResult, NativeDrainReason,
+    BotExecutionFence, BotInputRefusal, BotOwner, BotPolicyBarrier, BotPolicyBarrierKey,
+    BotPolicyBarrierReceipt, BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission,
+    BotSubmissionKey, BotWorkingFolder, CapturedBotPolicy, ConfirmNativeResult, NativeDrainReason,
     NativeEffectBinding, NativeEffectDrainReceipt, NativeEffectKind, NativeEffectTimestamp,
     NativePendingEffect, NativePendingEffects, NativePolicyRequestId, NativeRecoveryCursor,
     NativeResultDisposition, NativeResultIntentView, NativeResultKey, NativeResultKind,

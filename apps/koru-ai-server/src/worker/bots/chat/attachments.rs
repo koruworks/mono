@@ -117,13 +117,19 @@ pub(super) fn admit(records: &[AttachmentRecord]) -> ApiResult<()> {
 }
 
 /// Mint each native picture's session id once. Pure: no disk access.
-pub(super) fn plan(request: &AiRequest, store: &crate::attachments::AttachmentStore) -> Staging {
+/// `as_paths` sends every picture as its path instead, with the notice.
+pub(super) fn plan(
+    request: &AiRequest,
+    store: &crate::attachments::AttachmentStore,
+    as_paths: bool,
+) -> Staging {
     let mut staging = Staging::default();
     let (Some(chat), Some(last)) = (request.options.chat_id, request.messages.last()) else {
         return staging;
     };
     for attachment in koru_ai_provider_agent::native_pictures(&last.attachments) {
         match &attachment.path {
+            Some(_) if as_paths => staging.as_files = true,
             Some(original) => staging.pictures.push(Picture {
                 session: AttachmentId::mint(),
                 dir: store.attachment_dir(chat, attachment.id),
@@ -370,6 +376,46 @@ pub(super) fn read_contained(dir: &Path, file: &Path) -> Option<Vec<u8>> {
 }
 
 impl WorkerState {
+    /// Whether this attempt retries one whose first input the owner refused
+    /// for its pictures (or a frame they filled). That reason is kept on the
+    /// failed attempt, so the Retry sends them as paths rather than failing
+    /// the same way again. Any other prior outcome, or a failed read, keeps
+    /// native delivery: nothing here guesses a refusal.
+    pub(super) fn retries_refused_pictures(&self, id: InferenceAttemptId) -> bool {
+        let Ok(Some(attempt)) = self.repository.attempt(id) else {
+            return false;
+        };
+        let (Some(chat), Some(reply)) = (attempt.chat_id, attempt.assistant_message_id) else {
+            return false;
+        };
+        // Only a Retry's reply names the reply it replaces.
+        let Some(origin) = self
+            .repository
+            .message(reply)
+            .ok()
+            .flatten()
+            .and_then(|message| message.origin_message_id)
+        else {
+            return false;
+        };
+        self.repository
+            .attempts_for_chat(chat)
+            .ok()
+            .and_then(|attempts| {
+                attempts
+                    .into_iter()
+                    .find(|prior| prior.assistant_message_id == Some(origin))
+            })
+            .is_some_and(|prior| {
+                prior.status == AttemptStatus::Failed
+                    && prior
+                        .stop_reason
+                        .as_deref()
+                        .and_then(koru_delegate_core::BotInputRefusal::from_code)
+                        .is_some_and(koru_delegate_core::BotInputRefusal::concerns_pictures)
+            })
+    }
+
     /// Freeze the staged pictures into the initial input when settled.
     /// Returns whether the task may now Begin.
     pub(super) fn bot_stage_settled(

@@ -663,6 +663,9 @@ pub(crate) struct SessionScript {
     pub cancel_refused: Option<&'static str>,
     pub bot_inputs: HashMap<IdempotencyKey, (koru_delegate_core::PendingInput, AgentTurnId)>,
     pub bot_reply_lost: bool,
+    /// Every initial input is answered with this session code, as the host
+    /// pins a refusal to the input's key: a repeat gets the same answer.
+    pub bot_refusal: Option<&'static str>,
     pub bot_skips: Vec<(SessionId, koru_delegate_core::QuestionRequestId)>,
 }
 
@@ -698,6 +701,7 @@ impl Default for SessionScript {
             cancel_refused: None,
             bot_inputs: HashMap::new(),
             bot_reply_lost: false,
+            bot_refusal: None,
             bot_skips: Vec::new(),
         }
     }
@@ -735,6 +739,13 @@ impl Sessions for ScriptedSessions {
         input: koru_delegate_core::PendingInput,
     ) -> PortResult<AgentTurnId> {
         let mut script = self.script.lock().unwrap();
+        if let Some(code) = script.bot_refusal {
+            script.calls.push(Call::Submit {
+                session,
+                text: input.text.clone(),
+            });
+            return Err(PortError::new(Port::Sessions, code, "SECRET refusal"));
+        }
         if let Some((old, turn)) = script.bot_inputs.get(&input.idempotency_key) {
             return if old == &input {
                 Ok(*turn)
