@@ -66,7 +66,7 @@ impl ProviderWake for NativeWake {
         let mut inner = self.0.inner.lock().unwrap();
         inner.woken = true;
         drop(inner);
-        self.0.ready.notify_one();
+        self.0.ready.notify_all();
     }
 }
 
