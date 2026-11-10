@@ -7,6 +7,40 @@ use koru_ai_core::{
 };
 
 #[test]
+fn shared_settings_patch_requires_explicit_bot_read_access_before_mutation() {
+    let mut repo = Repository::in_memory().unwrap();
+    let bot = fixture_bot();
+    repo.save_bot(&bot, ProfileId::new(), BotRequestId::mint(), "create", None)
+        .unwrap();
+    let access = ChatReadAccess::authorized(vec![bot.main_chat]);
+    let original = repo
+        .chat_with_access(bot.main_chat, &access)
+        .unwrap()
+        .unwrap();
+    assert!(
+        repo.patch_chat_agent_settings(
+            bot.main_chat,
+            Some("safe"),
+            Some(true),
+            &ChatReadAccess::ordinary(),
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        repo.chat_with_access(bot.main_chat, &access).unwrap(),
+        Some(original.clone())
+    );
+    let changed = repo
+        .patch_chat_agent_settings(bot.main_chat, Some("safe"), Some(true), &access)
+        .unwrap()
+        .unwrap();
+    assert_eq!(changed.agent_mode.as_deref(), Some("safe"));
+    assert_eq!(changed.agent_fast, Some(true));
+    assert_eq!(changed.updated_at, original.updated_at);
+}
+
+#[test]
 fn populated_bot_history_is_filtered_before_search_paging_context_tools_and_usage() {
     let mut repo = Repository::in_memory().unwrap();
     let bot = fixture_bot();

@@ -90,6 +90,16 @@ pub trait AiPersistence: Send {
         chat: ChatId,
         fast: Option<bool>,
     ) -> Result<Option<Chat>, AiError>;
+    /// Apply the shared settings command atomically. An absent field is left
+    /// unchanged; unlike the individual setters this operation does not clear
+    /// a field to its runtime default. This is not conversation activity.
+    fn patch_chat_agent_settings(
+        &mut self,
+        chat: ChatId,
+        mode: Option<&str>,
+        fast: Option<bool>,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<Option<Chat>, AiError>;
     /// Pin the chat at `pinned_at`, or unpin it with `None` (AI schema 12).
     /// Like a rename, it leaves the chat where it is in the list.
     fn set_chat_pinned(

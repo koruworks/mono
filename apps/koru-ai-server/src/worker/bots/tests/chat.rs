@@ -204,6 +204,7 @@ fn proof(authority: Arc<Authority>, bot: &Bot, chat: Chat) -> CommandContext {
                 version: d::DocumentVersionId::new(),
             }],
             chat_snapshot: Some(chat),
+            settings: None,
         })),
     }
 }

@@ -401,6 +401,7 @@ impl WorkerState {
                     runtime: Ok(()),
                     pins: Vec::new(),
                     chat_snapshot: None,
+                    settings: None,
                 })),
             };
             let access = self.bot_read_access(&context)?;

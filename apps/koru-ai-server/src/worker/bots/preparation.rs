@@ -28,6 +28,7 @@ pub(in crate::worker) struct PreparedBotCommand {
     pub(in crate::worker) runtime: ApiResult<()>,
     pub(in crate::worker) pins: Vec<koru_delegate_core::RunContextItem>,
     pub(in crate::worker) chat_snapshot: Option<Chat>,
+    pub(in crate::worker) settings: Option<chat::SettingsProof>,
 }
 pub(in crate::worker) struct BotPreparationJob {
     command: WorkerCommand,
@@ -45,13 +46,28 @@ impl BotPreparationJob {
         agents: Option<&AgentSessions>,
     ) -> (WorkerCommand, ApiResult<PreparedBotCommand>) {
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let runtime = match &self.model {
+            let changing_settings = matches!(
+                &self.command,
+                WorkerCommand::UpdateChatModel { .. }
+                    | WorkerCommand::UpdateChatAgentSettings { .. }
+            );
+            let require_fast = matches!(&self.command,
+                WorkerCommand::UpdateChatAgentSettings { request, .. } if request.fast.is_some());
+            let validation = match &self.model {
                 Some(config) => {
                     validate_config(config, config.role.workspace).map_err(bot_failure)?;
-                    validate_model(agents, config)
+                    validate_model_evidence(agents, config, require_fast)
                 }
-                None => Ok(()),
+                None => Ok(None),
             };
+            let settings = changing_settings
+                .then(|| {
+                    self.model.as_ref().map(|config| {
+                        chat::SettingsProof::new(config, validation.clone().ok().flatten())
+                    })
+                })
+                .flatten();
+            let runtime = validation.map(|_| ());
             let authority: Arc<dyn BotAuthority> = Arc::new(
                 self.authority
                     .inspect(&self.workspaces, &self.pages)
@@ -75,6 +91,7 @@ impl BotPreparationJob {
                 runtime,
                 pins,
                 chat_snapshot: self.chat_snapshot.clone(),
+                settings,
             })
         }))
         .unwrap_or_else(|_| Err(bot_failure(BotError::Unavailable)));
@@ -214,6 +231,10 @@ impl WorkerState {
                 model = Some(chat.model);
                 capture = Some((chat.owner, chat.destination, chat.pages));
                 chat_snapshot = Some(chat.chat);
+            }
+            if let Some((chat, config)) = chat::settings_capture(&self.repository, &command)? {
+                model = Some(config);
+                chat_snapshot = Some(chat);
             }
             // Every referenced workspace is inspected, including invalid foreign-page requests.
             workspaces.extend(pages.iter().map(|p| p.workspace));

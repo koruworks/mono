@@ -3062,9 +3062,19 @@ fn an_agent_chats_mode_rides_each_message_and_follows_the_agent() {
 
     let agent = agent_chat(&client, "agent-claude");
     let bad = client
-        .update_chat_agent_settings(context(), agent, mode("two words"))
+        .update_chat_agent_settings(
+            context(),
+            agent,
+            UpdateChatAgentSettingsRequest {
+                mode: Some("two words".into()),
+                fast: Some(true),
+            },
+        )
         .unwrap_err();
     assert_eq!(bad.code, "invalid_request");
+    let untouched = client.read_chat(context(), agent).unwrap().chat;
+    assert_eq!(untouched.agent_mode, None);
+    assert_eq!(untouched.agent_fast, None);
     let chosen = client
         .update_chat_agent_settings(context(), agent, mode("plan"))
         .unwrap();

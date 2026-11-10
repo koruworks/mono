@@ -294,6 +294,28 @@ impl AiPersistence for Repository {
         query_chat(&self.connection, chat)
     }
 
+    fn patch_chat_agent_settings(
+        &mut self,
+        chat: ChatId,
+        mode: Option<&str>,
+        fast: Option<bool>,
+        access: &ChatReadAccess,
+    ) -> Result<Option<Chat>, AiError> {
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        if query_chat_with_access(&transaction, chat, access)?.is_none() {
+            return Ok(None);
+        }
+        transaction.execute(
+            "UPDATE chats SET agent_mode = COALESCE(?2, agent_mode), agent_fast = COALESCE(?3, agent_fast) WHERE id = ?1",
+            params![chat.to_storage(), mode, fast],
+        ).map_err(storage_failed)?;
+        let Some(chat) = query_chat_with_access(&transaction, chat, access)? else {
+            return Ok(None);
+        };
+        transaction.commit().map_err(storage_failed)?;
+        Ok(Some(chat))
+    }
+
     fn set_chat_pinned(
         &mut self,
         chat: ChatId,

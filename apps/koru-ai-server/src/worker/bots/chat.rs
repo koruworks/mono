@@ -13,6 +13,7 @@ mod controls;
 mod preparation;
 mod replay;
 mod runtime;
+mod settings;
 mod steering;
 pub(in crate::worker) use controls::{
     ControlJob, ControlReadJob, ControlReadResult, ControlResult,
@@ -23,6 +24,7 @@ pub(in crate::worker) use steering::{
 };
 
 pub(in crate::worker) use preparation::{chat_capture, retry_anchor, retry_input};
+pub(in crate::worker) use settings::{SettingsProof, settings_capture};
 
 fn bot_route_error() -> AiError {
     AiError::new(

@@ -97,7 +97,11 @@ impl WorkerCommand {
     }
 }
 
-fn validate_model(agents: Option<&AgentSessions>, config: &BotConfig) -> ApiResult<()> {
+fn validate_model_evidence(
+    agents: Option<&AgentSessions>,
+    config: &BotConfig,
+    require_fast: bool,
+) -> ApiResult<Option<ReasoningControl>> {
     let agent = agents.ok_or_else(|| {
         failure(
             "runtime_unavailable",
@@ -106,6 +110,17 @@ fn validate_model(agents: Option<&AgentSessions>, config: &BotConfig) -> ApiResu
         )
     })?;
     let catalog = agents::agent_models(agent, config.model.provider.clone(), false)?;
+    validate_model_catalog(config, &catalog, require_fast)
+}
+
+fn validate_model_catalog(
+    config: &BotConfig,
+    catalog: &koru_ai_wire::AgentModelsResponse,
+    require_fast: bool,
+) -> ApiResult<Option<ReasoningControl>> {
+    if catalog.provider != config.model.provider {
+        return Err(bot_failure(BotError::Unavailable));
+    }
     let model = catalog
         .models
         .iter()
@@ -129,7 +144,7 @@ fn validate_model(agents: Option<&AgentSessions>, config: &BotConfig) -> ApiResu
         .mode
         .as_ref()
         .is_some_and(|mode| !catalog.modes.iter().any(|m| &m.id == mode))
-        || (config.fast == Some(true) && model.fast.is_none())
+        || ((require_fast || config.fast == Some(true)) && model.fast.is_none())
     {
         return Err(failure(
             "unsupported_capability",
@@ -137,7 +152,7 @@ fn validate_model(agents: Option<&AgentSessions>, config: &BotConfig) -> ApiResu
             false,
         ));
     }
-    Ok(())
+    Ok(model.reasoning.clone())
 }
 
 fn execute_bot_command(
@@ -389,6 +404,8 @@ fn guard_command(
                     | WorkerCommand::ApproveToolCall { .. }
                     | WorkerCommand::DenyToolCall { .. }
                     | WorkerCommand::SteerAttempt { .. }
+                    | WorkerCommand::UpdateChatModel { .. }
+                    | WorkerCommand::UpdateChatAgentSettings { .. }
             ) || matches!(&command,WorkerCommand::CancelAttempt {attempt,..}
                     if repository.bot_submission_for_attempt(*attempt).map_err(ai_failure)?.is_some());
             if !command.bot_read_only() && !implemented {

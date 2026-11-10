@@ -2866,6 +2866,14 @@ impl WorkerState {
     ) -> ApiResult<UpdateChatModelResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat_id))?;
+        if self
+            .repository
+            .bot_for_chat(chat_id)
+            .map_err(bots::bot_failure)?
+            .is_some()
+        {
+            return self.update_bot_chat_model(&context, chat_id, &request);
+        }
         // A local agent's running reply took its model and level when it was
         // sent, so a chat that keeps its agent may change either while it
         // runs, from its next message (koru-ai D70). Anything else waits.
@@ -2977,11 +2985,20 @@ impl WorkerState {
             .chat(chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
-        let reasoning_control = self.reasoning_control(&chat.current_model);
-        Ok(UpdateChatModelResponse {
+        Ok(self.chat_model_response(chat, None))
+    }
+
+    fn chat_model_response(
+        &self,
+        chat: Chat,
+        validated: Option<Option<ReasoningControl>>,
+    ) -> UpdateChatModelResponse {
+        let reasoning_control =
+            validated.unwrap_or_else(|| self.reasoning_control(&chat.current_model));
+        UpdateChatModelResponse {
             chat,
             reasoning_control,
-        })
+        }
     }
 
     fn update_chat_privacy(
@@ -3122,7 +3139,15 @@ impl WorkerState {
     ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat_id))?;
-        let mut chat = self
+        if self
+            .repository
+            .bot_for_chat(chat_id)
+            .map_err(bots::bot_failure)?
+            .is_some()
+        {
+            return self.update_bot_chat_agent_settings(&context, chat_id, &request);
+        }
+        let chat = self
             .repository
             .chat(chat_id)
             .map_err(ai_failure)?
@@ -3142,19 +3167,17 @@ impl WorkerState {
                     false,
                 ));
             }
-            chat = self
-                .repository
-                .set_chat_agent_mode(chat_id, Some(mode))
-                .map_err(ai_failure)?
-                .ok_or_else(not_found)?;
         }
-        if let Some(fast) = request.fast {
-            chat = self
-                .repository
-                .set_chat_agent_fast(chat_id, Some(fast))
-                .map_err(ai_failure)?
-                .ok_or_else(not_found)?;
-        }
+        let chat = self
+            .repository
+            .patch_chat_agent_settings(
+                chat_id,
+                request.mode.as_deref(),
+                request.fast,
+                &koru_ai_core::bots::ChatReadAccess::ordinary(),
+            )
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
         Ok(koru_ai_wire::UpdateChatAgentSettingsResponse { chat })
     }
 

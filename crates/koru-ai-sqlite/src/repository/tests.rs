@@ -46,6 +46,53 @@ pub(super) fn chat(id: ChatId, offset: i64) -> Chat {
 }
 
 #[test]
+fn shared_agent_settings_patch_is_atomic_on_late_failure_and_keeps_omitted_fields() {
+    let mut repository = Repository::in_memory().unwrap();
+    let access = ChatReadAccess::ordinary();
+    let id = ChatId::new();
+    let original = chat(id, 0);
+    repository.create_chat(&original).unwrap();
+    repository.connection.execute_batch(
+        "CREATE TEMP TRIGGER reject_settings AFTER UPDATE OF agent_mode, agent_fast ON chats BEGIN SELECT RAISE(ABORT, 'fixture after settings write'); END;",
+    ).unwrap();
+    assert!(
+        repository
+            .patch_chat_agent_settings(id, Some("safe"), Some(true), &access)
+            .is_err()
+    );
+    assert_eq!(repository.chat(id).unwrap(), Some(original.clone()));
+    repository
+        .connection
+        .execute_batch("DROP TRIGGER reject_settings")
+        .unwrap();
+    let changed = repository
+        .patch_chat_agent_settings(id, Some("safe"), Some(true), &access)
+        .unwrap()
+        .unwrap();
+    assert_eq!(changed.agent_mode.as_deref(), Some("safe"));
+    assert_eq!(changed.agent_fast, Some(true));
+    assert_eq!(changed.updated_at, original.updated_at);
+    let partial = repository
+        .patch_chat_agent_settings(id, None, Some(false), &access)
+        .unwrap()
+        .unwrap();
+    assert_eq!(partial.agent_mode.as_deref(), Some("safe"));
+    assert_eq!(partial.agent_fast, Some(false));
+    assert_eq!(
+        repository
+            .patch_chat_agent_settings(id, None, None, &access)
+            .unwrap(),
+        Some(partial)
+    );
+    assert!(
+        repository
+            .patch_chat_agent_settings(ChatId::new(), Some("safe"), Some(true), &access)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn a_chats_working_folder_is_durable_listed_and_unset_by_none() {
     let mut repository = Repository::in_memory().unwrap();
     let chat_id = ChatId::new();
