@@ -162,4 +162,14 @@ fn bot_creation_offers_interactive_controls_without_enabling_ordinary_questions(
             .supports("conditional-turn-steering")
     );
     assert!(bot_offer().capabilities.supports(capability::DELEGATION));
+    assert!(
+        bot_offer()
+            .capabilities
+            .supports(capability::BEGIN_PENDING_INPUT)
+    );
+    assert!(
+        !offer()
+            .capabilities
+            .supports(capability::BEGIN_PENDING_INPUT)
+    );
 }

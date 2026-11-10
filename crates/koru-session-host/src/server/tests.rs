@@ -438,3 +438,22 @@ fn conditional_steering_needs_both_version_twenty_five_and_explicit_capability()
             .supports(capability::CONDITIONAL_TURN_STEERING)
     );
 }
+
+#[test]
+fn initial_input_requires_version_twenty_six_and_explicit_capability() {
+    for version in [25, 26] {
+        for enabled in [false, true] {
+            let mut peer = protocol(version, true, false);
+            if enabled {
+                peer.capabilities =
+                    CapabilitySet::new([capability::BEGIN_PENDING_INPUT.parse().unwrap()]);
+            }
+            assert_eq!(peer.begin_pending_input(), version >= 26 && enabled);
+        }
+    }
+    assert!(
+        crate::protocol_offer()
+            .capabilities
+            .supports(capability::BEGIN_PENDING_INPUT)
+    );
+}

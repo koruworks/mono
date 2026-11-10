@@ -466,3 +466,46 @@ fn conditional_steering_never_downgrades_or_writes_unsupported_input() {
     );
     assert!(bytes.lock().unwrap().is_empty());
 }
+
+#[test]
+fn initial_input_never_downgrades_to_ordinary_send() {
+    let input = PendingInput {
+        idempotency_key: IdempotencyKey::mint(),
+        text: "first".into(),
+        attachment_ids: vec![],
+        references: vec![],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: vec![],
+        model: None,
+    };
+    for version in [25, 26] {
+        for enabled in [false, true] {
+            let (mut client, bytes) = approval_client(version, true, false);
+            if enabled {
+                client.host.agreement.capabilities = koru_session_protocol::CapabilitySet::new([
+                    koru_session_protocol::capability::BEGIN_PENDING_INPUT
+                        .parse()
+                        .unwrap(),
+                ]);
+            }
+            let result = client.begin_pending_input(
+                SessionId::mint(),
+                ControllerLeaseToken::mint(),
+                input.clone(),
+            );
+            if version == 26 && enabled {
+                assert!(matches!(result, Err(ClientError::UnexpectedResponse)));
+                let sent = bytes.lock().unwrap();
+                assert!(String::from_utf8_lossy(&sent).contains("begin_pending_input"));
+                assert!(!String::from_utf8_lossy(&sent).contains("send_pending_input"));
+            } else {
+                assert!(
+                    matches!(result, Err(ClientError::Session(ref error)) if error.code == ErrorCode::CapabilityNotNegotiated)
+                );
+                assert!(bytes.lock().unwrap().is_empty());
+            }
+        }
+    }
+}

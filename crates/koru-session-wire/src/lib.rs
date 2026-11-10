@@ -7,7 +7,7 @@
 //! bytes therefore cannot drift into `koru-agent-wire` by convenience.
 
 mod steering;
-pub use steering::SteerPendingInput;
+pub use steering::{BeginPendingInput, SteerPendingInput};
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -286,6 +286,7 @@ impl SubscriptionId {
 pub enum Request {
     /// Protocol25: strictly join expected_turn, never start a turn.
     SteerPendingInput(SteerPendingInput),
+    BeginPendingInput(BeginPendingInput),
     /// End only this client connection, releasing its controller lease while
     /// leaving every session process alive.
     Disconnect,

@@ -99,9 +99,13 @@ fn bot_offer() -> ProtocolOffer {
     let mut offered = offer();
     let mut capabilities: Vec<_> = offered.capabilities.iter().cloned().collect();
     capabilities.extend(
-        [capability::MANAGED_QUESTIONS, "conditional-turn-steering"]
-            .into_iter()
-            .map(|name| CapabilityName::from_str(name).expect("built-in capability")),
+        [
+            capability::MANAGED_QUESTIONS,
+            capability::CONDITIONAL_TURN_STEERING,
+            capability::BEGIN_PENDING_INPUT,
+        ]
+        .into_iter()
+        .map(|name| CapabilityName::from_str(name).expect("built-in capability")),
     );
     offered.capabilities = CapabilitySet::new(capabilities);
     offered
@@ -410,14 +414,27 @@ impl Sessions for HostSessions {
         Ok(result.turn_id)
     }
 
-    fn bot_submit(&mut self, _session: SessionId, _input: PendingInput) -> PortResult<AgentTurnId> {
-        // Protocol26's initial-only owner primitive is the required consumer.
-        // Ordinary send_pending_input may steer and is not a safe fallback.
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_initial_input_unavailable",
-            "Initial-only Bot input requires the session owner contract.",
-        ))
+    fn bot_submit(&mut self, session: SessionId, input: PendingInput) -> PortResult<AgentTurnId> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .begin_pending_input(session, controller.lease, input)
+            .map(|result| result.turn_id)
+            .map_err(|error| session_error("bot_begin", error))
+    }
+
+    fn bot_steer(
+        &mut self,
+        session: SessionId,
+        turn: AgentTurnId,
+        input: PendingInput,
+    ) -> PortResult<AgentTurnId> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .steer_pending_input(session, controller.lease, turn, input)
+            .map(|result| result.turn_id)
+            .map_err(|error| session_error("bot_steer", error))
     }
 
     fn bot_answer_approval(

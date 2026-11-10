@@ -91,15 +91,21 @@ impl Orchestrator {
         // A Bot's unretired row still owns capacity and its folder. This is a
         // one-time startup intent scan, never a timer or queue payload scan.
         for intent in self.ports.store.intents()? {
-            if !self
+            let Some(record) = self
                 .ports
                 .store
                 .bots()
                 .map(|ledger| ledger.bot_execution(intent.run))
                 .transpose()?
                 .flatten()
-                .is_some()
-            {
+            else {
+                continue;
+            };
+            if matches!(
+                record.state,
+                koru_delegate_core::BotAdmissionState::Settled
+                    | koru_delegate_core::BotAdmissionState::Refused
+            ) {
                 continue;
             }
             if let Some(row) = self.ports.store.current_attempt(intent.run)? {
@@ -641,6 +647,9 @@ impl Orchestrator {
             }
             Err(error) if error.code == CONTROLLER_CONFLICT => {
                 self.attempt_mut(run)?.holds_lease = false;
+                if is_bot && matches!(status, RunStatus::Starting) {
+                    self.bot_mark_started(run)?;
+                }
                 if !matches!(
                     status.control(),
                     Some(koru_delegate_core::ControlState::Human { .. })

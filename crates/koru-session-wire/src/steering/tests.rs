@@ -81,3 +81,27 @@ fn text_only_validation_refuses_every_unsupported_field_without_dropping_it() {
         Err(ErrorCode::InvalidRequest)
     );
 }
+
+#[test]
+fn initial_command_roundtrips_and_rejects_unknown_nested_fields() {
+    let Request::SteerPendingInput(command) = request() else {
+        unreachable!()
+    };
+    let command = Request::BeginPendingInput(BeginPendingInput {
+        session_id: command.session_id,
+        controller_lease: command.controller_lease,
+        input: command.input,
+    });
+    let value = serde_json::to_value(command).unwrap();
+    assert_eq!(value["kind"], "begin_pending_input");
+    assert_eq!(
+        serde_json::to_value(serde_json::from_value::<Request>(value.clone()).unwrap()).unwrap(),
+        value
+    );
+    let mut outer = value.clone();
+    outer["expected_turn"] = serde_json::json!(AgentTurnId::mint());
+    assert!(serde_json::from_value::<Request>(outer).is_err());
+    let mut nested = value;
+    nested["input"]["extra"] = true.into();
+    assert!(serde_json::from_value::<Request>(nested).is_err());
+}

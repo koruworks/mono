@@ -125,7 +125,14 @@ enum ConditionalOutcome {
     Finished(Result<(), ErrorCode>),
 }
 
+#[derive(Clone)]
+enum InitialOutcome {
+    InFlight,
+    Finished(Result<SendPendingInputResult, ErrorCode>),
+}
+
 pub(super) struct PendingSubmission {
+    initial: Option<InitialOutcome>,
     conditional: Option<ConditionalOutcome>,
     fingerprint: blake3::Hash,
     turn_id: AgentTurnId,
@@ -204,6 +211,7 @@ impl SessionHandle {
             state.pending_inputs.insert(
                 input.idempotency_key,
                 PendingSubmission {
+                    initial: None,
                     fingerprint,
                     turn_id: expected_turn,
                     command_sent: true,
@@ -253,6 +261,39 @@ impl SessionHandle {
         })
     }
 
+    /// Begin an idle managed turn exactly once. Current lease authority is
+    /// checked on every replay, independently of the immutable input identity.
+    /// A native failure remains pinned; it is never retried as a new submit.
+    pub fn begin_pending_input(
+        &self,
+        lease: ControllerLeaseToken,
+        input: PendingInput,
+    ) -> Result<SendPendingInputResult, ErrorCode> {
+        validate_input(&input, false)?;
+        let (turn_id, report, cached) = self.reserve_pending_input(lease, &input, None, true)?;
+        if let Some(result) = cached {
+            return result;
+        }
+        if report {
+            let event = InputSubmittedFact {
+                session_id: self.shared.id,
+                input_kind: input_kind(&input, false),
+            }
+            .commit(self.shared.trace);
+            self.shared.lifecycle.publish(event.into());
+        }
+        let provider = match &self.shared.lock().summary.mode {
+            SessionMode::Managed { provider } => provider.clone(),
+            SessionMode::RawPty => unreachable!("initial reservation requires managed mode"),
+        };
+        let operation = self.deliver_native(lease, &input, turn_id, provider, None);
+        let result = self.finish_pending_input(&input, turn_id, operation);
+        let mut state = self.shared.lock();
+        let reservation = submission_mut(&mut state, input.idempotency_key)?;
+        reservation.initial = Some(InitialOutcome::Finished(result.clone()));
+        result
+    }
+
     pub fn send_pending_input(
         &self,
         lease: ControllerLeaseToken,
@@ -299,7 +340,8 @@ impl SessionHandle {
         if let Some(result) = self.steer_running_turn(lease, &input, answers.as_ref())? {
             return Ok(result);
         }
-        let (turn_id, report_input) = self.begin_pending_input(lease, &input, answers.as_ref())?;
+        let (turn_id, report_input, _) =
+            self.reserve_pending_input(lease, &input, answers.as_ref(), false)?;
         if report_input {
             let input_kind = input_kind(&input, answers.is_some());
             let event = InputSubmittedFact {
@@ -387,6 +429,7 @@ impl SessionHandle {
             state.pending_inputs.insert(
                 input.idempotency_key,
                 PendingSubmission {
+                    initial: None,
                     fingerprint: input_fingerprint(input, answers),
                     turn_id: active,
                     command_sent: false,
@@ -454,20 +497,70 @@ impl SessionHandle {
         }))
     }
 
-    fn begin_pending_input(
+    fn reserve_pending_input(
         &self,
         lease: ControllerLeaseToken,
         input: &PendingInput,
         answers: Option<&QuestionsReply>,
-    ) -> Result<(AgentTurnId, bool), ErrorCode> {
+        initial: bool,
+    ) -> Result<
+        (
+            AgentTurnId,
+            bool,
+            Option<Result<SendPendingInputResult, ErrorCode>>,
+        ),
+        ErrorCode,
+    > {
         let mut state = self.shared.lock();
         require_lease(&state, lease)?;
+        if initial && !matches!(state.summary.mode, SessionMode::Managed { .. }) {
+            return Err(ErrorCode::DeliveryUnsupported);
+        }
+        let fingerprint = if initial {
+            let mut hash = blake3::Hasher::new();
+            hash.update(b"koru-begin-pending-input-v1");
+            hash.update(self.shared.id.as_uuid().as_bytes());
+            hash.update(&serde_json::to_vec(input).map_err(|_| ErrorCode::InvalidRequest)?);
+            hash.finalize()
+        } else {
+            input_fingerprint(input, answers)
+        };
+        if initial {
+            if let Some(previous) = state.pending_inputs.get(&input.idempotency_key) {
+                if previous.fingerprint != fingerprint {
+                    return Err(ErrorCode::IdempotencyConflict);
+                }
+                return match &previous.initial {
+                    Some(InitialOutcome::Finished(outcome)) => {
+                        Ok((previous.turn_id, false, Some(outcome.clone())))
+                    }
+                    Some(InitialOutcome::InFlight) => Err(ErrorCode::Backpressure),
+                    None => Err(ErrorCode::IdempotencyConflict),
+                };
+            }
+            if state
+                .failed_ordinary_steers
+                .contains(&input.idempotency_key)
+            {
+                return Err(ErrorCode::IdempotencyConflict);
+            }
+            if state
+                .pending_inputs
+                .len()
+                .saturating_add(state.failed_ordinary_steers.len())
+                >= 4096
+            {
+                return Err(ErrorCode::Backpressure);
+            }
+        }
         if state.summary.process != koru_session_protocol::ProcessState::Running {
             return Err(ErrorCode::SessionExited);
         }
-        let fingerprint = input_fingerprint(input, answers);
         if let Some(submission) = state.pending_inputs.get_mut(&input.idempotency_key) {
-            if submission.fingerprint != fingerprint {
+            if submission.initial.is_some()
+                || submission.conditional.is_some()
+                || submission.fingerprint != fingerprint
+            {
                 return Err(ErrorCode::IdempotencyConflict);
             }
             if submission.in_flight {
@@ -486,7 +579,7 @@ impl SessionHandle {
                 state.summary.active_turn_id = Some(turn_id);
             }
             submission_mut(&mut state, input.idempotency_key)?.in_flight = true;
-            return Ok((turn_id, false));
+            return Ok((turn_id, false, None));
         }
 
         if matches!(state.summary.mode, SessionMode::Managed { .. })
@@ -522,6 +615,7 @@ impl SessionHandle {
         state.pending_inputs.insert(
             input.idempotency_key,
             PendingSubmission {
+                initial: initial.then_some(InitialOutcome::InFlight),
                 fingerprint,
                 turn_id,
                 command_sent: false,
@@ -530,7 +624,7 @@ impl SessionHandle {
                 conditional: None,
             },
         );
-        Ok((turn_id, true))
+        Ok((turn_id, true, None))
     }
 
     fn deliver_raw(
@@ -746,7 +840,11 @@ impl SessionHandle {
                         };
                     }
                 }
-                if answered || !input.text.is_empty() || input.attachment_ids.is_empty() {
+                if submission(&state, input.idempotency_key)?.initial.is_some()
+                    || answered
+                    || !input.text.is_empty()
+                    || input.attachment_ids.is_empty()
+                {
                     Err(code)
                 } else {
                     Ok(())
@@ -794,6 +892,7 @@ impl SessionHandle {
                 }
             }
             if !command_sent
+                && submission.initial.is_none()
                 && matches!(state.summary.mode, SessionMode::Managed { .. })
                 && state.summary.active_turn_id == Some(turn_id)
             {
