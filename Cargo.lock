@@ -5236,6 +5236,7 @@ dependencies = [
  "koru-ai-sqlite",
  "koru-ai-wire",
  "koru-core",
+ "koru-delegate-api",
  "koru-env",
  "koru-export",
  "koru-export-markdown",

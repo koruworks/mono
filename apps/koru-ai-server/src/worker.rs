@@ -84,6 +84,7 @@ const PROMPT_TEMPLATE_VERSION: &str = "koru-chat-v1";
 const CHAT_PROMPT: &str = include_str!("../prompts/chat-v1.md");
 
 pub struct WorkerConfig {
+    bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     root: PathBuf,
     channel: String,
@@ -101,6 +102,13 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
+    pub fn with_bot_delegate(
+        mut self,
+        delegate: Arc<dyn koru_delegate_api::bots::BotDelegatePort>,
+    ) -> Self {
+        self.bot_delegate = Some(delegate);
+        self
+    }
     pub fn with_bot_authority(
         mut self,
         authority: Arc<dyn koru_ai_core::bots::BotAuthority>,
@@ -116,6 +124,7 @@ impl WorkerConfig {
             provider_runtime: None,
             store_context: None,
             bot_authority: None,
+            bot_delegate: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -134,6 +143,7 @@ impl WorkerConfig {
             provider_runtime: Some(runtime),
             store_context: None,
             bot_authority: None,
+            bot_delegate: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -157,6 +167,7 @@ impl WorkerConfig {
             provider_runtime: Some(runtime),
             store_context: None,
             bot_authority: None,
+            bot_delegate: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -1466,6 +1477,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
     /// The worker's stop flag, the one the pools' threads watch too.
@@ -1693,6 +1705,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        bot_delegate: config.bot_delegate,
         bot_authority: config.bot_authority,
         repository,
         shutdown: Arc::clone(&shutdown),
