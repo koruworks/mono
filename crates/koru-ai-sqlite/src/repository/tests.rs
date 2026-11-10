@@ -28,7 +28,7 @@ fn model() -> ModelSelection {
     }
 }
 
-fn chat(id: ChatId, offset: i64) -> Chat {
+pub(super) fn chat(id: ChatId, offset: i64) -> Chat {
     Chat {
         id,
         title: "Test chat".into(),
@@ -414,7 +414,7 @@ fn a_chats_pin_is_durable_listed_and_leaves_its_place() {
     );
 }
 
-fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
+pub(super) fn turn(chat_id: ChatId, operation_id: Uuid, offset: i64) -> PendingTurn {
     let user_id = MessageId::new();
     let assistant_id = MessageId::new();
     PendingTurn {
@@ -535,7 +535,7 @@ fn reported_context_is_durable_and_separate_from_response_usage() {
     assert_eq!(saved.usage.prompt_tokens, Some(56_000));
 }
 
-fn complete_turn(
+pub(super) fn complete_turn(
     repository: &mut Repository,
     chat_id: ChatId,
     ordinal: u32,

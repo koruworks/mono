@@ -126,7 +126,7 @@ pub(crate) fn open(
         store_client.clone(),
     ));
     let tools = Arc::new(koru_ai_server::AiToolDispatcher::new(
-        koru_ai_server::StoreToolAdapter::new(store_client),
+        koru_ai_server::StoreToolAdapter::new(store_client.clone()),
         koru_ai_server::ChatToolAdapter::new(ai_root.clone()),
     ));
     let ai_config = if config.deterministic_ai_test {
@@ -161,6 +161,17 @@ pub(crate) fn open(
             })
             .map_err(|error| error.public_message)
     };
+    let ai_config = ai_config.map(|ai_config| {
+        match config.bootstrap.as_ref().and_then(|b| {
+            koru_ai_server::BotAuthorityAdapter::from_device(
+                store_client.clone(),
+                b.device_id.as_deref()?,
+            )
+        }) {
+            Some(authority) => ai_config.with_bot_authority(Arc::new(authority)),
+            None => ai_config,
+        }
+    });
     let state = match ai_config.and_then(|ai_config| {
         koru_ai_server::AiWorker::new(ai_config)
             .spawn()

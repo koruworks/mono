@@ -6,6 +6,7 @@ fn bootstrap(
     session_lifecycle: Option<koru_network_bridge::SessionLifecycleAuthority>,
 ) -> koru_network_bridge::LaunchBootstrap {
     koru_network_bridge::LaunchBootstrap {
+        device_id: None,
         launch_id: "launch".into(),
         bridge_version: koru_network_bridge::BRIDGE_VERSION,
         channel: koru_channel::segment().into(),

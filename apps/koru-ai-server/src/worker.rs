@@ -61,6 +61,7 @@ pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
+mod bots;
 mod removed;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
@@ -83,6 +84,7 @@ const PROMPT_TEMPLATE_VERSION: &str = "koru-chat-v1";
 const CHAT_PROMPT: &str = include_str!("../prompts/chat-v1.md");
 
 pub struct WorkerConfig {
+    bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     root: PathBuf,
     channel: String,
     providers: ProviderRegistry,
@@ -99,6 +101,13 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
+    pub fn with_bot_authority(
+        mut self,
+        authority: Arc<dyn koru_ai_core::bots::BotAuthority>,
+    ) -> Self {
+        self.bot_authority = Some(authority);
+        self
+    }
     pub fn new(root: PathBuf, channel: impl Into<String>, providers: ProviderRegistry) -> Self {
         Self {
             root,
@@ -106,6 +115,7 @@ impl WorkerConfig {
             providers,
             provider_runtime: None,
             store_context: None,
+            bot_authority: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -123,6 +133,7 @@ impl WorkerConfig {
             providers: runtime.registry(),
             provider_runtime: Some(runtime),
             store_context: None,
+            bot_authority: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -145,6 +156,7 @@ impl WorkerConfig {
             providers: runtime.registry(),
             provider_runtime: Some(runtime),
             store_context: None,
+            bot_authority: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -421,9 +433,25 @@ impl AiWorkerClient {
 }
 
 impl AiServerPort for AiWorkerClient {
+    fn bots(
+        &self,
+        context: RequestContext,
+        request: koru_ai_wire::BotCommand,
+    ) -> ApiResult<koru_ai_wire::BotResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::Bots {
+            context: context.into(),
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
     fn provider_settings(&self, context: RequestContext) -> ApiResult<ProviderSettingsResponse> {
         let (reply, response) = sync_channel(1);
-        self.send(WorkerCommand::ProviderSettings { context, reply })?;
+        self.send(WorkerCommand::ProviderSettings {
+            context: context.into(),
+            reply,
+        })?;
         receive_api(response)
     }
 
@@ -434,7 +462,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ProviderSettingsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::SelectProvider {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -448,7 +476,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<OpenAiSettingsView> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateOpenAiSettings {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -462,7 +490,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<OllamaSettingsView> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateOllamaSettings {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -476,7 +504,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ProviderValidationResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ValidateProvider {
-            context,
+            context: context.into(),
             provider,
             reply,
         })?;
@@ -491,7 +519,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<koru_ai_wire::AgentModelsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::DiscoverAgentModels {
-            context,
+            context: context.into(),
             provider,
             refresh: request.refresh,
             reply,
@@ -507,7 +535,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<koru_ai_wire::AgentCommandsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::DiscoverAgentCommands {
-            context,
+            context: context.into(),
             provider,
             folder: request.folder,
             reply,
@@ -522,7 +550,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ModelPullResponseStream> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::PullOllamaModel {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -531,7 +559,10 @@ impl AiServerPort for AiWorkerClient {
 
     fn cancel_ollama_pull(&self, context: RequestContext) -> ApiResult<CancelModelPullResponse> {
         let (reply, response) = sync_channel(1);
-        self.send(WorkerCommand::CancelOllamaPull { context, reply })?;
+        self.send(WorkerCommand::CancelOllamaPull {
+            context: context.into(),
+            reply,
+        })?;
         receive_api(response)
     }
 
@@ -542,7 +573,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<CreateChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::CreateChat {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -556,7 +587,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ListChatsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ListChats {
-            context,
+            context: context.into(),
             profile,
             reply,
         })?;
@@ -566,7 +597,7 @@ impl AiServerPort for AiWorkerClient {
     fn read_chat(&self, context: RequestContext, chat: ChatId) -> ApiResult<ChatTranscript> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ReadChat {
-            context,
+            context: context.into(),
             chat,
             reply,
         })?;
@@ -581,7 +612,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<RenameChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::RenameChat {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -597,7 +628,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<koru_ai_wire::PinChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::PinChat {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -613,7 +644,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<UpdateChatModelResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateChatModel {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -629,7 +660,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<UpdateChatPrivacyResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateChatPrivacy {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -645,7 +676,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateChatAgentSettings {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -661,7 +692,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<koru_ai_wire::UpdateChatFolderResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateChatFolder {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -676,7 +707,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ListChatsToolResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ToolListChats {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -690,7 +721,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<SearchChatsToolResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ToolSearchChats {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -704,7 +735,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ReadChatToolResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ToolReadChat {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -718,7 +749,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ChatToolPolicyResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ReadChatToolPolicy {
-            context,
+            context: context.into(),
             chat,
             reply,
         })?;
@@ -733,7 +764,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ChatToolPolicyResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::UpdateChatToolPolicy {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -749,7 +780,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ChatToolPolicyResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::AddChatWorkspaceGrants {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -760,7 +791,7 @@ impl AiServerPort for AiWorkerClient {
     fn usage(&self, context: RequestContext, chat: Option<ChatId>) -> ApiResult<UsageResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::Usage {
-            context,
+            context: context.into(),
             chat,
             reply,
         })?;
@@ -770,7 +801,7 @@ impl AiServerPort for AiWorkerClient {
     fn delete_chat(&self, context: RequestContext, chat: ChatId) -> ApiResult<DeleteChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::DeleteChat {
-            context,
+            context: context.into(),
             chat,
             reply,
         })?;
@@ -779,13 +810,19 @@ impl AiServerPort for AiWorkerClient {
 
     fn clear_history(&self, context: RequestContext) -> ApiResult<ClearHistoryResponse> {
         let (reply, response) = sync_channel(1);
-        self.send(WorkerCommand::ClearHistory { context, reply })?;
+        self.send(WorkerCommand::ClearHistory {
+            context: context.into(),
+            reply,
+        })?;
         receive_api(response)
     }
 
     fn clear_usage(&self, context: RequestContext) -> ApiResult<ClearUsageResponse> {
         let (reply, response) = sync_channel(1);
-        self.send(WorkerCommand::ClearUsage { context, reply })?;
+        self.send(WorkerCommand::ClearUsage {
+            context: context.into(),
+            reply,
+        })?;
         receive_api(response)
     }
 
@@ -796,7 +833,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<AiSearchResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::Search {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -811,7 +848,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<FeedbackResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::Feedback {
-            context,
+            context: context.into(),
             message,
             request,
             reply,
@@ -827,7 +864,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<BranchChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::BranchChat {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -840,10 +877,10 @@ impl AiServerPort for AiWorkerClient {
         context: RequestContext,
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
-        attachments::check_files_for_send(self, context.clone(), &request)?;
+        attachments::check_files_for_send(self, context.clone().into(), &request)?;
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::SendTurn {
-            context,
+            context: context.into(),
             request,
             reply,
         })?;
@@ -857,7 +894,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<AttemptResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ReadAttempt {
-            context,
+            context: context.into(),
             attempt,
             reply,
         })?;
@@ -871,7 +908,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<CancelAttemptResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::CancelAttempt {
-            context,
+            context: context.into(),
             attempt,
             reply,
         })?;
@@ -886,7 +923,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<koru_ai_wire::SteerAttemptResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::SteerAttempt {
-            context,
+            context: context.into(),
             attempt,
             request,
             reply,
@@ -902,7 +939,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ToolDecisionResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ApproveToolCall {
-            context,
+            context: context.into(),
             tool,
             decision,
             reply,
@@ -918,7 +955,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ToolDecisionResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::DenyToolCall {
-            context,
+            context: context.into(),
             tool,
             choice,
             reply,
@@ -934,7 +971,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<AiResponseStream> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::RetryTurn {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -950,7 +987,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ExportChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ExportChat {
-            context,
+            context: context.into(),
             chat,
             request,
             reply,
@@ -965,7 +1002,7 @@ impl AiServerPort for AiWorkerClient {
     ) -> ApiResult<ExportChatResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ReadExport {
-            context,
+            context: context.into(),
             export,
             reply,
         })?;
@@ -979,7 +1016,7 @@ impl AiServerPort for AiWorkerClient {
         attachment: ChatAttachmentId,
         upload: koru_ai_api::AttachmentUpload,
     ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
-        attachments::put_attachment(self, context, chat, attachment, upload)
+        attachments::put_attachment(self, context.into(), chat, attachment, upload)
     }
 
     fn reference_attachment(
@@ -988,7 +1025,7 @@ impl AiServerPort for AiWorkerClient {
         chat: ChatId,
         request: koru_ai_wire::ReferenceAttachmentRequest,
     ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
-        attachments::reference_attachment(self, context, chat, request)
+        attachments::reference_attachment(self, context.into(), chat, request)
     }
 
     fn from_workspace_attachment(
@@ -997,7 +1034,7 @@ impl AiServerPort for AiWorkerClient {
         chat: ChatId,
         request: koru_ai_wire::FromWorkspaceAttachmentRequest,
     ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
-        attachments::from_workspace_attachment(self, context, chat, request)
+        attachments::from_workspace_attachment(self, context.into(), chat, request)
     }
 
     fn restage_attachment(
@@ -1007,7 +1044,7 @@ impl AiServerPort for AiWorkerClient {
         source: ChatAttachmentId,
         request: koru_ai_wire::RestageAttachmentRequest,
     ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
-        attachments::restage_attachment(self, context, chat, source, request.new_id)
+        attachments::restage_attachment(self, context.into(), chat, source, request.new_id)
     }
 
     fn remove_attachment(
@@ -1016,7 +1053,7 @@ impl AiServerPort for AiWorkerClient {
         chat: ChatId,
         attachment: ChatAttachmentId,
     ) -> ApiResult<koru_ai_wire::RemoveAttachmentResponse> {
-        attachments::remove_attachment(self, context, chat, attachment)
+        attachments::remove_attachment(self, context.into(), chat, attachment)
     }
 
     fn read_attachment(
@@ -1025,7 +1062,7 @@ impl AiServerPort for AiWorkerClient {
         chat: ChatId,
         attachment: ChatAttachmentId,
     ) -> ApiResult<koru_ai_api::AttachmentContent> {
-        attachments::read_attachment(self, context, chat, attachment)
+        attachments::read_attachment(self, context.into(), chat, attachment)
     }
 
     fn read_attachment_thumbnail(
@@ -1034,11 +1071,15 @@ impl AiServerPort for AiWorkerClient {
         chat: ChatId,
         attachment: ChatAttachmentId,
     ) -> ApiResult<Vec<u8>> {
-        attachments::read_thumbnail(self, context, chat, attachment)
+        attachments::read_thumbnail(self, context.into(), chat, attachment)
     }
 }
 
 enum Envelope {
+    BotPrepared {
+        command: Box<WorkerCommand>,
+        proof: ApiResult<bots::PreparedBotCommand>,
+    },
     Command(WorkerCommand),
     Context(ContextResolution),
     Provider(AiEvent),
@@ -1064,7 +1105,7 @@ enum Envelope {
     /// The cleanup thread copied (or could not copy) a branch's attachment
     /// folders; the branch is committed or dropped on this.
     BranchCopied {
-        context: RequestContext,
+        context: bots::CommandContext,
         copy: Box<BranchCopy>,
         copied: bool,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
@@ -1072,34 +1113,39 @@ enum Envelope {
 }
 
 enum WorkerCommand {
+    Bots {
+        context: bots::CommandContext,
+        request: koru_ai_wire::BotCommand,
+        reply: SyncSender<ApiResult<koru_ai_wire::BotResponse>>,
+    },
     Ping(SyncSender<()>),
     Info(SyncSender<AiWorkerInfo>),
     ProviderSettings {
-        context: RequestContext,
+        context: bots::CommandContext,
         reply: SyncSender<ApiResult<ProviderSettingsResponse>>,
     },
     SelectProvider {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: SelectProviderRequest,
         reply: SyncSender<ApiResult<ProviderSettingsResponse>>,
     },
     UpdateOpenAiSettings {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: UpdateOpenAiSettingsRequest,
         reply: SyncSender<ApiResult<OpenAiSettingsView>>,
     },
     UpdateOllamaSettings {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: UpdateOllamaSettingsRequest,
         reply: SyncSender<ApiResult<OllamaSettingsView>>,
     },
     ValidateProvider {
-        context: RequestContext,
+        context: bots::CommandContext,
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
     },
     DiscoverAgentModels {
-        context: RequestContext,
+        context: bots::CommandContext,
         provider: AiProviderId,
         /// Rebuild the agent's list before answering (the manual refresh).
         refresh: bool,
@@ -1107,214 +1153,214 @@ enum WorkerCommand {
     },
     /// What a local agent can be told to do by name in a folder (D121).
     DiscoverAgentCommands {
-        context: RequestContext,
+        context: bots::CommandContext,
         provider: AiProviderId,
         folder: Option<String>,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
     },
     PullOllamaModel {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: PullOllamaModelRequest,
         reply: SyncSender<ApiResult<ModelPullResponseStream>>,
     },
     CancelOllamaPull {
-        context: RequestContext,
+        context: bots::CommandContext,
         reply: SyncSender<ApiResult<CancelModelPullResponse>>,
     },
     CreateChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: CreateChatRequest,
         reply: SyncSender<ApiResult<CreateChatResponse>>,
     },
     ListChats {
-        context: RequestContext,
+        context: bots::CommandContext,
         profile: Option<koru_ai_core::ProfileId>,
         reply: SyncSender<ApiResult<ListChatsResponse>>,
     },
     ReadChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         reply: SyncSender<ApiResult<ChatTranscript>>,
     },
     RenameChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: RenameChatRequest,
         reply: SyncSender<ApiResult<RenameChatResponse>>,
     },
     PinChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: koru_ai_wire::PinChatRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::PinChatResponse>>,
     },
     UpdateChatModel {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: UpdateChatModelRequest,
         reply: SyncSender<ApiResult<UpdateChatModelResponse>>,
     },
     UpdateChatPrivacy {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: UpdateChatPrivacyRequest,
         reply: SyncSender<ApiResult<UpdateChatPrivacyResponse>>,
     },
     UpdateChatFolder {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: koru_ai_wire::UpdateChatFolderRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatFolderResponse>>,
     },
     UpdateChatAgentSettings {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: koru_ai_wire::UpdateChatAgentSettingsRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse>>,
     },
     ToolListChats {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: ListChatsToolRequest,
         reply: SyncSender<ApiResult<ListChatsToolResponse>>,
     },
     ToolSearchChats {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: SearchChatsToolRequest,
         reply: SyncSender<ApiResult<SearchChatsToolResponse>>,
     },
     ToolReadChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: ReadChatToolRequest,
         reply: SyncSender<ApiResult<ReadChatToolResponse>>,
     },
     UpdateChatToolPolicy {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: UpdateChatToolPolicyRequest,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
     AddChatWorkspaceGrants {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
     ReadChatToolPolicy {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
     Usage {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: Option<ChatId>,
         reply: SyncSender<ApiResult<UsageResponse>>,
     },
     DeleteChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         reply: SyncSender<ApiResult<DeleteChatResponse>>,
     },
     ClearHistory {
-        context: RequestContext,
+        context: bots::CommandContext,
         reply: SyncSender<ApiResult<ClearHistoryResponse>>,
     },
     ClearUsage {
-        context: RequestContext,
+        context: bots::CommandContext,
         reply: SyncSender<ApiResult<ClearUsageResponse>>,
     },
     Search {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: AiSearchRequest,
         reply: SyncSender<ApiResult<AiSearchResponse>>,
     },
     Feedback {
-        context: RequestContext,
+        context: bots::CommandContext,
         message: MessageId,
         request: FeedbackRequest,
         reply: SyncSender<ApiResult<FeedbackResponse>>,
     },
     BranchChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: BranchChatRequest,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
     SendTurn {
-        context: RequestContext,
+        context: bots::CommandContext,
         request: SendTurnRequest,
         reply: SyncSender<ApiResult<AiResponseStream>>,
     },
     ReadAttempt {
-        context: RequestContext,
+        context: bots::CommandContext,
         attempt: InferenceAttemptId,
         reply: SyncSender<ApiResult<AttemptResponse>>,
     },
     CancelAttempt {
-        context: RequestContext,
+        context: bots::CommandContext,
         attempt: InferenceAttemptId,
         reply: SyncSender<ApiResult<CancelAttemptResponse>>,
     },
     SteerAttempt {
-        context: RequestContext,
+        context: bots::CommandContext,
         attempt: InferenceAttemptId,
         request: koru_ai_wire::SteerAttemptRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::SteerAttemptResponse>>,
     },
     ApproveToolCall {
-        context: RequestContext,
+        context: bots::CommandContext,
         tool: ToolInvocationId,
         decision: koru_ai_wire::ToolDecisionRequest,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     },
     DenyToolCall {
-        context: RequestContext,
+        context: bots::CommandContext,
         tool: ToolInvocationId,
         choice: Option<String>,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     },
     RetryTurn {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: RetryTurnRequest,
         reply: SyncSender<ApiResult<AiResponseStream>>,
     },
     ExportChat {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         request: ExportChatRequest,
         reply: SyncSender<ApiResult<ExportChatResponse>>,
     },
     ReadExport {
-        context: RequestContext,
+        context: bots::CommandContext,
         export: DocumentExportId,
         reply: SyncSender<ApiResult<ExportChatResponse>>,
     },
     AttachmentAdmission {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         reply: SyncSender<ApiResult<Option<AttachmentRecord>>>,
     },
     WorkspaceCopyAdmission {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         workspace: WorkspaceId,
         reply: SyncSender<ApiResult<koru_ai_core::ProfileId>>,
     },
     StageAttachment {
-        context: RequestContext,
+        context: bots::CommandContext,
         record: Box<AttachmentRecord>,
         reply: SyncSender<ApiResult<StageAnswer>>,
     },
     RemoveStagedAttachment {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         reply: SyncSender<ApiResult<koru_ai_sqlite::RemovedAttachment>>,
     },
     ResolveAttachments {
-        context: RequestContext,
+        context: bots::CommandContext,
         chat: ChatId,
         attachments: Vec<ChatAttachmentId>,
         reply: SyncSender<ApiResult<Vec<AttachmentRecord>>>,
@@ -1331,6 +1377,7 @@ enum WorkerCommand {
 impl WorkerCommand {
     fn diagnostic_name(&self) -> &'static str {
         match self {
+            Self::Bots { .. } => "bots",
             Self::Ping(_) => "ping",
             Self::Info(_) => "info",
             Self::ProviderSettings { .. } => "provider_settings",
@@ -1419,6 +1466,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
     /// The worker's stop flag, the one the pools' threads watch too.
     shutdown: Arc<AtomicBool>,
@@ -1569,7 +1617,7 @@ fn run_worker(
     };
     let mut providers: Vec<String> = registry.ids().map(ToString::to_string).collect();
     providers.sort();
-    let capabilities = if registry.is_empty() {
+    let mut capabilities = if registry.is_empty() {
         Vec::new()
     } else {
         vec![
@@ -1579,6 +1627,9 @@ fn run_worker(
             "ai.usage".into(),
         ]
     };
+    if config.bot_authority.is_some() {
+        capabilities.push("bots.config.v1".into());
+    }
     let provider_pool = ProviderPool::spawn(
         Arc::new(registry),
         provider_output.clone(),
@@ -1608,18 +1659,16 @@ fn run_worker(
         provider_output.clone(),
         Arc::clone(&shutdown),
     )?;
-    let provider_admin = config
-        .provider_runtime
-        .as_ref()
-        .map(|runtime| {
-            ProviderAdminPool::spawn(
-                runtime.clone(),
-                agents.clone(),
-                provider_output.clone(),
-                Arc::clone(&shutdown),
-            )
-        })
-        .transpose()?;
+    let provider_admin = if config.provider_runtime.is_some() || config.bot_authority.is_some() {
+        Some(ProviderAdminPool::spawn(
+            config.provider_runtime.clone(),
+            agents.clone(),
+            provider_output.clone(),
+            Arc::clone(&shutdown),
+        )?)
+    } else {
+        None
+    };
     let info = AiWorkerInfo {
         api_version: AI_WIRE_VERSION,
         schema_version: repository
@@ -1644,6 +1693,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        bot_authority: config.bot_authority,
         repository,
         shutdown: Arc::clone(&shutdown),
         provider_runtime: config.provider_runtime,
@@ -1713,6 +1763,9 @@ fn run_worker(
                 );
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
+            Ok(Envelope::BotPrepared { command, proof }) => {
+                state.complete_bot_preparation(*command, proof)
+            }
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
             Ok(Envelope::Tools(resolution)) => state.handle_tool_resolution(resolution),
@@ -1799,12 +1852,25 @@ fn grant_targets_in_profile(
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
+        let Some(command) = self.prepare_bot_command(command) else {
+            return;
+        };
+        let Some(command) = self.guard_bot_command(command) else {
+            return;
+        };
         // **A removed profile's chats are hidden**: a command that names
         // one is answered here as a missing chat is, before it is served.
         let Some(command) = self.hide_removed_profiles(command) else {
             return;
         };
         match command {
+            WorkerCommand::Bots {
+                context,
+                request,
+                reply,
+            } => {
+                let _ = reply.send(self.bots(context, request));
+            }
             WorkerCommand::Ping(reply) => {
                 let _ = reply.send(());
             }
@@ -1986,9 +2052,9 @@ impl WorkerState {
                 context,
                 chat,
                 reply,
-            } => self.begin_delete_chat(context, chat, reply),
+            } => self.begin_delete_chat(context.request, chat, reply),
             WorkerCommand::ClearHistory { context, reply } => {
-                self.begin_clear_history(context, reply)
+                self.begin_clear_history(context.request, reply)
             }
             WorkerCommand::ClearUsage { context, reply } => {
                 let _ = reply.send(self.clear_usage(context));
@@ -2040,7 +2106,7 @@ impl WorkerState {
                 attempt,
                 request,
                 reply,
-            } => self.begin_steer_attempt(context, attempt, request, reply),
+            } => self.begin_steer_attempt(context.request, attempt, request, reply),
             WorkerCommand::ApproveToolCall {
                 context,
                 tool,
@@ -2134,7 +2200,10 @@ impl WorkerState {
         }
     }
 
-    fn provider_settings(&self, context: RequestContext) -> ApiResult<ProviderSettingsResponse> {
+    fn provider_settings(
+        &self,
+        context: bots::CommandContext,
+    ) -> ApiResult<ProviderSettingsResponse> {
         authorize(&context, AiScope::ManageProviders)?;
         self.require_provider_runtime()?;
         Ok(settings_view(&self.current_settings()?, &self.agent_views))
@@ -2142,7 +2211,7 @@ impl WorkerState {
 
     fn select_provider(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: SelectProviderRequest,
     ) -> ApiResult<ProviderSettingsResponse> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -2170,7 +2239,7 @@ impl WorkerState {
 
     fn update_openai_settings(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: UpdateOpenAiSettingsRequest,
     ) -> ApiResult<OpenAiSettingsView> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -2199,7 +2268,7 @@ impl WorkerState {
 
     fn update_ollama_settings(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: UpdateOllamaSettingsRequest,
     ) -> ApiResult<OllamaSettingsView> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -2233,7 +2302,7 @@ impl WorkerState {
 
     fn validate_provider(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
     ) {
@@ -2261,7 +2330,7 @@ impl WorkerState {
     /// dispatcher never waits on it.
     fn discover_agent_models(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         provider: AiProviderId,
         refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
@@ -2303,7 +2372,7 @@ impl WorkerState {
     /// this runs on a thread of its own and answers through the held reply.
     fn discover_agent_commands(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         provider: AiProviderId,
         folder: Option<String>,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
@@ -2332,7 +2401,7 @@ impl WorkerState {
 
     fn pull_ollama_model(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: PullOllamaModelRequest,
     ) -> ApiResult<ModelPullResponseStream> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -2378,7 +2447,7 @@ impl WorkerState {
 
     fn cancel_ollama_pull(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
     ) -> ApiResult<CancelModelPullResponse> {
         authorize(&context, AiScope::ManageProviders)?;
         let cancelled = self.ollama_pull.take().is_some_and(|(_, _, cancellation)| {
@@ -2432,7 +2501,7 @@ impl WorkerState {
 
     fn create_chat(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: CreateChatRequest,
     ) -> ApiResult<CreateChatResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -2547,11 +2616,16 @@ impl WorkerState {
         );
     }
 
-    fn read_chat(&self, context: RequestContext, chat_id: ChatId) -> ApiResult<ChatTranscript> {
+    fn read_chat(
+        &self,
+        context: bots::CommandContext,
+        chat_id: ChatId,
+    ) -> ApiResult<ChatTranscript> {
         authorize(&context, AiScope::Chat)?;
+        let access = self.bot_read_access(&context)?;
         let chat = self
             .repository
-            .chat(chat_id)
+            .chat_with_access(chat_id, &access)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let messages = self.repository.messages(chat_id).map_err(ai_failure)?;
@@ -2615,7 +2689,7 @@ impl WorkerState {
 
     fn rename_chat(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: RenameChatRequest,
     ) -> ApiResult<RenameChatResponse> {
@@ -2654,7 +2728,7 @@ impl WorkerState {
     /// activity: the chat keeps its place among the others.
     fn pin_chat(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: koru_ai_wire::PinChatRequest,
     ) -> ApiResult<koru_ai_wire::PinChatResponse> {
@@ -2677,7 +2751,7 @@ impl WorkerState {
 
     fn update_chat_model(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: UpdateChatModelRequest,
     ) -> ApiResult<UpdateChatModelResponse> {
@@ -2803,7 +2877,7 @@ impl WorkerState {
 
     fn update_chat_privacy(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: UpdateChatPrivacyRequest,
     ) -> ApiResult<UpdateChatPrivacyResponse> {
@@ -2875,7 +2949,7 @@ impl WorkerState {
     /// conversation that already happened elsewhere would be misdescribed.
     fn update_chat_folder(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: koru_ai_wire::UpdateChatFolderRequest,
     ) -> ApiResult<koru_ai_wire::UpdateChatFolderResponse> {
@@ -2933,7 +3007,7 @@ impl WorkerState {
     /// the agent's to say; one it does not offer is refused when sent.
     fn update_chat_agent_settings(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: koru_ai_wire::UpdateChatAgentSettingsRequest,
     ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
@@ -2977,12 +3051,13 @@ impl WorkerState {
 
     fn tool_list_chats(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: ListChatsToolRequest,
     ) -> ApiResult<ListChatsToolResponse> {
         authorize(&context, AiScope::Chat)?;
-        koru_ai_core::chat_tools::list_chats(
+        koru_ai_core::chat_tools::list_chats_with_access(
             &self.repository,
+            &self.bot_read_access(&context)?,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
             &self.removed_profiles(),
@@ -2992,12 +3067,13 @@ impl WorkerState {
 
     fn tool_search_chats(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: SearchChatsToolRequest,
     ) -> ApiResult<SearchChatsToolResponse> {
         authorize(&context, AiScope::Chat)?;
-        koru_ai_core::chat_tools::search_chats(
+        koru_ai_core::chat_tools::search_chats_with_access(
             &self.repository,
+            &self.bot_read_access(&context)?,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
             &self.removed_profiles(),
@@ -3007,12 +3083,13 @@ impl WorkerState {
 
     fn tool_read_chat(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: ReadChatToolRequest,
     ) -> ApiResult<ReadChatToolResponse> {
         authorize(&context, AiScope::Chat)?;
-        koru_ai_core::chat_tools::read_chat(
+        koru_ai_core::chat_tools::read_chat_with_access(
             &self.repository,
+            &self.bot_read_access(&context)?,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
         )
@@ -3027,7 +3104,7 @@ impl WorkerState {
 
     fn update_chat_tool_policy(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: UpdateChatToolPolicyRequest,
     ) -> ApiResult<ChatToolPolicyResponse> {
@@ -3050,7 +3127,7 @@ impl WorkerState {
 
     fn read_chat_tool_policy(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
     ) -> ApiResult<ChatToolPolicyResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -3064,7 +3141,7 @@ impl WorkerState {
 
     fn add_chat_workspace_grants(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
     ) -> ApiResult<ChatToolPolicyResponse> {
@@ -3095,19 +3172,31 @@ impl WorkerState {
         Ok(ChatToolPolicyResponse { policy })
     }
 
-    fn usage(&self, context: RequestContext, chat_id: Option<ChatId>) -> ApiResult<UsageResponse> {
+    fn usage(
+        &self,
+        context: bots::CommandContext,
+        chat_id: Option<ChatId>,
+    ) -> ApiResult<UsageResponse> {
         authorize(&context, AiScope::ReadUsage)?;
+        let access = self.bot_read_access(&context)?;
         if let Some(chat_id) = chat_id
-            && self.repository.chat(chat_id).map_err(ai_failure)?.is_none()
+            && self
+                .repository
+                .chat_with_access(chat_id, &access)
+                .map_err(ai_failure)?
+                .is_none()
         {
             return Err(not_found());
         }
         Ok(UsageResponse {
-            report: self.repository.usage(chat_id).map_err(ai_failure)?,
+            report: self
+                .repository
+                .usage_with_access(chat_id, &access)
+                .map_err(ai_failure)?,
         })
     }
 
-    fn clear_usage(&mut self, context: RequestContext) -> ApiResult<ClearUsageResponse> {
+    fn clear_usage(&mut self, context: bots::CommandContext) -> ApiResult<ClearUsageResponse> {
         authorize(&context, AiScope::ReadUsage)?;
         if !self.active_work.is_empty() {
             return Err(active_history_conflict());
@@ -3135,10 +3224,11 @@ impl WorkerState {
 
     fn search(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: AiSearchRequest,
     ) -> ApiResult<AiSearchResponse> {
         authorize(&context, AiScope::Chat)?;
+        let access = self.bot_read_access(&context)?;
         if request.profile.is_some() {
             self.retire_removed_profiles();
             self.place_unplaced_chats();
@@ -3170,14 +3260,17 @@ impl WorkerState {
         }
         let page = self
             .repository
-            .search(&AiSearchQuery {
-                text: request.text,
-                limit: request.limit,
-                cursor: request.cursor,
-                visibility: ChatAccessLens::UserSurface,
-                profile: request.profile,
-                removed_profiles: self.removed_profiles(),
-            })
+            .search_with_access(
+                &AiSearchQuery {
+                    text: request.text,
+                    limit: request.limit,
+                    cursor: request.cursor,
+                    visibility: ChatAccessLens::UserSurface,
+                    profile: request.profile,
+                    removed_profiles: self.removed_profiles(),
+                },
+                &access,
+            )
             .map_err(ai_failure)?;
         Ok(AiSearchResponse {
             page,
@@ -3187,7 +3280,7 @@ impl WorkerState {
 
     fn feedback(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         message_id: MessageId,
         request: FeedbackRequest,
     ) -> ApiResult<FeedbackResponse> {
@@ -3238,7 +3331,7 @@ impl WorkerState {
 
     fn branch_chat(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         source_chat: ChatId,
         request: BranchChatRequest,
     ) -> ApiResult<BranchPlan> {
@@ -3389,11 +3482,12 @@ impl WorkerState {
 
     fn export_chat(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: ExportChatRequest,
     ) -> ApiResult<ExportChatResponse> {
         authorize(&context, AiScope::Chat)?;
+        let access = self.bot_read_access(&context)?;
         if request.destination.title.trim().is_empty() {
             return Err(failure(
                 "invalid_request",
@@ -3403,7 +3497,7 @@ impl WorkerState {
         }
         let chat = self
             .repository
-            .chat(chat_id)
+            .chat_with_access(chat_id, &access)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         // A reply is kept as a document in its chat's own profile, as it
@@ -3483,7 +3577,7 @@ impl WorkerState {
 
     fn read_export(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         export: DocumentExportId,
     ) -> ApiResult<ExportChatResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -3535,15 +3629,19 @@ impl WorkerState {
     /// profile's chats are in neither.
     fn list_chats(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         profile: Option<koru_ai_core::ProfileId>,
     ) -> ApiResult<ListChatsResponse> {
         authorize(&context, AiScope::Chat)?;
+        let access = self.bot_read_access(&context)?;
         if profile.is_some() {
             self.retire_removed_profiles();
             self.place_unplaced_chats();
         }
-        let mut chats = self.repository.chats().map_err(ai_failure)?;
+        let mut chats = self
+            .repository
+            .chats_with_access(&access)
+            .map_err(ai_failure)?;
         if let Some(profile) = profile {
             chats.retain(|chat| chat.profile_id == Some(profile));
         }
@@ -3553,16 +3651,24 @@ impl WorkerState {
 
     fn send_turn(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
+        let bot_access = self.bot_read_access(&context)?;
         self.admit_chat_work(Some(request.chat_id))?;
         if let Some(existing) = self
             .repository
             .attempt_by_operation(request.operation_id)
             .map_err(ai_failure)?
         {
+            if existing.chat_id != Some(request.chat_id) {
+                return Err(failure(
+                    "request_conflict",
+                    "The operation belongs to another conversation.",
+                    false,
+                ));
+            }
             return replay_stream(&self.repository, existing);
         }
         // A set's answers sent as the next message (D108): a reply of its
@@ -3794,6 +3900,7 @@ impl WorkerState {
             chat.id,
             base_request,
             request.explicit_refs,
+            &bot_access,
             request.replace_pinned_documents,
             context_started_at,
             cancellation,
@@ -3819,16 +3926,24 @@ impl WorkerState {
 
     fn retry_turn(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         chat_id: ChatId,
         request: RetryTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
+        let bot_access = self.bot_read_access(&context)?;
         if let Some(existing) = self
             .repository
             .attempt_by_operation(request.operation_id)
             .map_err(ai_failure)?
         {
+            if existing.chat_id != Some(chat_id) {
+                return Err(failure(
+                    "request_conflict",
+                    "The operation belongs to another conversation.",
+                    false,
+                ));
+            }
             return replay_stream(&self.repository, existing);
         }
         if request.explicit_refs.len() > MAX_CONTEXT_REFS {
@@ -4001,6 +4116,7 @@ impl WorkerState {
             chat_id,
             base_request,
             request.explicit_refs,
+            &bot_access,
             request.replace_pinned_documents,
             context_started_at,
             cancellation,
@@ -4030,6 +4146,7 @@ impl WorkerState {
         chat_id: ChatId,
         request: AiRequest,
         explicit_refs: Vec<ContextRef>,
+        bot_access: &koru_ai_core::bots::ChatReadAccess,
         replace_pinned_documents: bool,
         started_at: Timestamp,
         cancellation: Cancellation,
@@ -4082,7 +4199,7 @@ impl WorkerState {
                     if seen_blocks.insert(block_id) {
                         let block = self
                             .repository
-                            .message_block_context(block_id)?
+                            .message_block_context_with_access(block_id, bot_access)?
                             .ok_or_else(|| {
                                 AiError::new(
                                     AiErrorClass::Storage,
@@ -4238,7 +4355,7 @@ impl WorkerState {
 
     fn read_attempt(
         &self,
-        context: RequestContext,
+        context: bots::CommandContext,
         attempt: InferenceAttemptId,
     ) -> ApiResult<AttemptResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -4253,7 +4370,7 @@ impl WorkerState {
 
     fn cancel_attempt(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         attempt_id: InferenceAttemptId,
     ) -> ApiResult<CancelAttemptResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -4688,7 +4805,7 @@ impl WorkerState {
 
     fn approve_tool_call(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         invocation_id: ToolInvocationId,
         decision: koru_ai_wire::ToolDecisionRequest,
     ) -> ApiResult<ToolDecisionResponse> {
@@ -4793,7 +4910,7 @@ impl WorkerState {
 
     fn deny_tool_call(
         &mut self,
-        context: RequestContext,
+        context: bots::CommandContext,
         invocation_id: ToolInvocationId,
         choice: Option<String>,
     ) -> ApiResult<ToolDecisionResponse> {
@@ -5034,6 +5151,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    BotPrepare(bots::BotPreparationJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -5059,7 +5177,7 @@ struct ProviderAdminPool {
 
 impl ProviderAdminPool {
     fn spawn(
-        runtime: ProviderRuntime,
+        runtime: Option<ProviderRuntime>,
         agents: Option<AgentSessions>,
         output: SyncSender<Envelope>,
         shutdown: Arc<AtomicBool>,
@@ -5076,6 +5194,17 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
+                        ProviderAdminJob::BotPrepare(job) => {
+                            let (command, proof) = job.run(agents.as_ref());
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotPrepared {
+                                    command: Box::new(command),
+                                    proof,
+                                },
+                                &thread_shutdown,
+                            );
+                        }
                         ProviderAdminJob::Validate { provider, reply } => {
                             let started = Instant::now();
                             let diagnostic_provider = provider.clone();
@@ -5083,7 +5212,11 @@ impl ProviderAdminPool {
                                 if is_agent_provider(&provider) {
                                     agent_validation(agents.as_ref(), provider)
                                 } else {
-                                    validate_provider_configuration(&runtime, provider)
+                                    runtime.as_ref().ok_or_else(unavailable_failure).and_then(
+                                        |runtime| {
+                                            validate_provider_configuration(runtime, provider)
+                                        },
+                                    )
                                 }
                             }))
                             .unwrap_or_else(|_| {
@@ -5124,8 +5257,14 @@ impl ProviderAdminPool {
                             events,
                         } => {
                             let outcome = catch_unwind(AssertUnwindSafe(|| {
+                                let Some(runtime) = runtime.as_ref() else {
+                                    let _ = events.try_send(ModelPullEvent::Failed {
+                                        failure: unavailable_failure(),
+                                    });
+                                    return;
+                                };
                                 run_model_pull(
-                                    &runtime,
+                                    runtime,
                                     &model,
                                     cancellation,
                                     &events,
@@ -6879,3 +7018,111 @@ fn lock_status(status: &Mutex<WorkerStatus>) -> std::sync::MutexGuard<'_, Worker
 
 #[cfg(test)]
 mod tests;
+
+impl WorkerCommand {
+    fn bot_context(&self) -> Option<&bots::CommandContext> {
+        match self {
+            Self::ProviderSettings { context, .. } => Some(context),
+            Self::SelectProvider { context, .. } => Some(context),
+            Self::UpdateOpenAiSettings { context, .. } => Some(context),
+            Self::UpdateOllamaSettings { context, .. } => Some(context),
+            Self::ValidateProvider { context, .. } => Some(context),
+            Self::DiscoverAgentModels { context, .. } => Some(context),
+            Self::DiscoverAgentCommands { context, .. } => Some(context),
+            Self::PullOllamaModel { context, .. } => Some(context),
+            Self::CancelOllamaPull { context, .. } => Some(context),
+            Self::CreateChat { context, .. } => Some(context),
+            Self::ListChats { context, .. } => Some(context),
+            Self::ReadChat { context, .. } => Some(context),
+            Self::RenameChat { context, .. } => Some(context),
+            Self::PinChat { context, .. } => Some(context),
+            Self::UpdateChatModel { context, .. } => Some(context),
+            Self::UpdateChatPrivacy { context, .. } => Some(context),
+            Self::UpdateChatFolder { context, .. } => Some(context),
+            Self::UpdateChatAgentSettings { context, .. } => Some(context),
+            Self::ToolListChats { context, .. } => Some(context),
+            Self::ToolSearchChats { context, .. } => Some(context),
+            Self::ToolReadChat { context, .. } => Some(context),
+            Self::UpdateChatToolPolicy { context, .. } => Some(context),
+            Self::AddChatWorkspaceGrants { context, .. } => Some(context),
+            Self::ReadChatToolPolicy { context, .. } => Some(context),
+            Self::Usage { context, .. } => Some(context),
+            Self::DeleteChat { context, .. } => Some(context),
+            Self::ClearHistory { context, .. } => Some(context),
+            Self::ClearUsage { context, .. } => Some(context),
+            Self::Search { context, .. } => Some(context),
+            Self::Feedback { context, .. } => Some(context),
+            Self::BranchChat { context, .. } => Some(context),
+            Self::SendTurn { context, .. } => Some(context),
+            Self::ReadAttempt { context, .. } => Some(context),
+            Self::CancelAttempt { context, .. } => Some(context),
+            Self::SteerAttempt { context, .. } => Some(context),
+            Self::ApproveToolCall { context, .. } => Some(context),
+            Self::DenyToolCall { context, .. } => Some(context),
+            Self::RetryTurn { context, .. } => Some(context),
+            Self::ExportChat { context, .. } => Some(context),
+            Self::ReadExport { context, .. } => Some(context),
+            Self::AttachmentAdmission { context, .. } => Some(context),
+            Self::WorkspaceCopyAdmission { context, .. } => Some(context),
+            Self::StageAttachment { context, .. } => Some(context),
+            Self::RemoveStagedAttachment { context, .. } => Some(context),
+            Self::ResolveAttachments { context, .. } => Some(context),
+            Self::Bots { context, .. } => Some(context),
+            _ => None,
+        }
+    }
+}
+
+impl WorkerCommand {
+    fn bot_context_mut(&mut self) -> Option<&mut bots::CommandContext> {
+        match self {
+            Self::ProviderSettings { context, .. } => Some(context),
+            Self::SelectProvider { context, .. } => Some(context),
+            Self::UpdateOpenAiSettings { context, .. } => Some(context),
+            Self::UpdateOllamaSettings { context, .. } => Some(context),
+            Self::ValidateProvider { context, .. } => Some(context),
+            Self::DiscoverAgentModels { context, .. } => Some(context),
+            Self::DiscoverAgentCommands { context, .. } => Some(context),
+            Self::PullOllamaModel { context, .. } => Some(context),
+            Self::CancelOllamaPull { context, .. } => Some(context),
+            Self::CreateChat { context, .. } => Some(context),
+            Self::ListChats { context, .. } => Some(context),
+            Self::ReadChat { context, .. } => Some(context),
+            Self::RenameChat { context, .. } => Some(context),
+            Self::PinChat { context, .. } => Some(context),
+            Self::UpdateChatModel { context, .. } => Some(context),
+            Self::UpdateChatPrivacy { context, .. } => Some(context),
+            Self::UpdateChatFolder { context, .. } => Some(context),
+            Self::UpdateChatAgentSettings { context, .. } => Some(context),
+            Self::ToolListChats { context, .. } => Some(context),
+            Self::ToolSearchChats { context, .. } => Some(context),
+            Self::ToolReadChat { context, .. } => Some(context),
+            Self::UpdateChatToolPolicy { context, .. } => Some(context),
+            Self::AddChatWorkspaceGrants { context, .. } => Some(context),
+            Self::ReadChatToolPolicy { context, .. } => Some(context),
+            Self::Usage { context, .. } => Some(context),
+            Self::DeleteChat { context, .. } => Some(context),
+            Self::ClearHistory { context, .. } => Some(context),
+            Self::ClearUsage { context, .. } => Some(context),
+            Self::Search { context, .. } => Some(context),
+            Self::Feedback { context, .. } => Some(context),
+            Self::BranchChat { context, .. } => Some(context),
+            Self::SendTurn { context, .. } => Some(context),
+            Self::ReadAttempt { context, .. } => Some(context),
+            Self::CancelAttempt { context, .. } => Some(context),
+            Self::SteerAttempt { context, .. } => Some(context),
+            Self::ApproveToolCall { context, .. } => Some(context),
+            Self::DenyToolCall { context, .. } => Some(context),
+            Self::RetryTurn { context, .. } => Some(context),
+            Self::ExportChat { context, .. } => Some(context),
+            Self::ReadExport { context, .. } => Some(context),
+            Self::AttachmentAdmission { context, .. } => Some(context),
+            Self::WorkspaceCopyAdmission { context, .. } => Some(context),
+            Self::StageAttachment { context, .. } => Some(context),
+            Self::RemoveStagedAttachment { context, .. } => Some(context),
+            Self::ResolveAttachments { context, .. } => Some(context),
+            Self::Bots { context, .. } => Some(context),
+            _ => None,
+        }
+    }
+}

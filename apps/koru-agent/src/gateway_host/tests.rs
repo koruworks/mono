@@ -1009,7 +1009,10 @@ fn the_launch_fingerprints_the_store_root_the_gateway_checks() {
 fn the_worker_role_is_dispatched_by_this_executable() {
     assert_eq!(crate::gateway_worker::role().name, "gateway");
     let paths = Paths::for_root(std::path::PathBuf::from("X:/never-created"));
-    assert_eq!(gateway_spec(&paths).role, "gateway");
+    assert_eq!(
+        gateway_spec(&paths, koru_device::DeviceId::new()).role,
+        "gateway"
+    );
 }
 
 /// Startup does not wait: the spec's readiness patience is the supervisor's
@@ -1018,7 +1021,7 @@ fn the_worker_role_is_dispatched_by_this_executable() {
 #[test]
 fn a_consumer_waits_for_less_time_than_the_supervisor_gives_a_child() {
     let paths = Paths::for_root(std::path::PathBuf::from("X:/never-created"));
-    let spec = gateway_spec(&paths);
+    let spec = gateway_spec(&paths, koru_device::DeviceId::new());
     assert!(
         ENSURE_DEADLINE < spec.ready_deadline,
         "a consumer would time out only after the supervisor had killed the child"

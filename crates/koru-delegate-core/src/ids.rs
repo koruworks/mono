@@ -125,6 +125,11 @@ macro_rules! uuid_id {
     };
 }
 
+uuid_id!(/// A user-created Bot, independent of its conversations and Runs.
+    BotId, "Bot");
+uuid_id!(/// One stable Bot command identity, retained across lost replies.
+    BotRequestId, "BotRequest");
+
 uuid_id!(
     /// One delegated run, from the creation intent to the last rating.
     ///

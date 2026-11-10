@@ -38,7 +38,7 @@ impl WorkerState {
 
     pub(super) fn workspace_copy_admission(
         &self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         workspace: WorkspaceId,
@@ -73,7 +73,7 @@ impl WorkerState {
     /// caller can tell a repeat from a conflict without storing anything.
     pub(super) fn attachment_admission(
         &self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         chat: ChatId,
         id: ChatAttachmentId,
     ) -> ApiResult<Option<AttachmentRecord>> {
@@ -94,7 +94,7 @@ impl WorkerState {
     /// Record a staged attachment whose folder is already published.
     pub(super) fn stage_attachment(
         &mut self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         record: AttachmentRecord,
     ) -> ApiResult<StageAnswer> {
         authorize(&context, AiScope::Chat)?;
@@ -128,7 +128,7 @@ impl WorkerState {
 
     pub(super) fn remove_staged_attachment(
         &mut self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         chat: ChatId,
         id: ChatAttachmentId,
     ) -> ApiResult<RemovedAttachment> {
@@ -143,12 +143,20 @@ impl WorkerState {
     /// chat that takes no attachments says so, rather than "not found".
     pub(super) fn resolve_attachments(
         &self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         chat: ChatId,
         ids: &[ChatAttachmentId],
     ) -> ApiResult<Vec<AttachmentRecord>> {
         authorize(&context, AiScope::Chat)?;
-        self.require_attachment_chat(chat)?;
+        let access = self.bot_read_access(&context)?;
+        let stored = self
+            .repository
+            .chat_with_access(chat, &access)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if !is_agent_provider(&stored.current_model.provider) {
+            return Err(attachments_unsupported());
+        }
         ids.iter()
             .map(|id| {
                 self.repository
@@ -318,7 +326,7 @@ impl WorkerState {
     /// the cleanup thread first and the reply is held until that reports.
     pub(super) fn begin_branch_chat(
         &mut self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         source: ChatId,
         request: BranchChatRequest,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
@@ -361,7 +369,7 @@ impl WorkerState {
     /// give up and leave nothing behind.
     pub(super) fn on_branch_copied(
         &mut self,
-        context: RequestContext,
+        context: super::bots::CommandContext,
         copy: Box<BranchCopy>,
         copied: bool,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
@@ -431,7 +439,7 @@ impl WorkerState {
 /// and publish the folder, then record the row.
 pub(super) fn put_attachment(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     id: ChatAttachmentId,
     upload: koru_ai_api::AttachmentUpload,
@@ -502,7 +510,7 @@ pub(super) fn put_attachment(
 /// on the staged row for the send's second authorization check.
 pub(super) fn from_workspace_attachment(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     request: koru_ai_wire::FromWorkspaceAttachmentRequest,
 ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
@@ -606,7 +614,7 @@ pub(super) fn from_workspace_attachment(
 /// directory enumeration occurs on this route.
 pub(super) fn reference_attachment(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     request: koru_ai_wire::ReferenceAttachmentRequest,
 ) -> ApiResult<koru_ai_wire::ChatAttachmentResponse> {
@@ -702,7 +710,7 @@ pub(super) fn reference_attachment(
 
 pub(super) fn remove_attachment(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     id: ChatAttachmentId,
 ) -> ApiResult<koru_ai_wire::RemoveAttachmentResponse> {
@@ -738,7 +746,7 @@ pub(super) fn remove_attachment(
 /// publication of the row. Deletion during the copy marks it cancelled.
 pub(super) fn restage_attachment(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     source: ChatAttachmentId,
     new_id: ChatAttachmentId,
@@ -843,7 +851,7 @@ pub(super) fn restage_attachment(
 /// The rows of these attachments, asked of the dispatcher.
 pub(super) fn resolve(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     ids: Vec<ChatAttachmentId>,
 ) -> ApiResult<Vec<AttachmentRecord>> {
@@ -859,7 +867,7 @@ pub(super) fn resolve(
 
 pub(super) fn read_attachment(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     id: ChatAttachmentId,
 ) -> ApiResult<koru_ai_api::AttachmentContent> {
@@ -888,7 +896,7 @@ pub(super) fn read_attachment(
 
 pub(super) fn read_thumbnail(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     chat: ChatId,
     id: ChatAttachmentId,
 ) -> ApiResult<Vec<u8>> {
@@ -911,7 +919,7 @@ pub(super) fn read_thumbnail(
 /// stays with rows; the dispatcher checks the rows themselves.
 pub(super) fn check_files_for_send(
     client: &AiWorkerClient,
-    context: RequestContext,
+    context: super::bots::CommandContext,
     request: &SendTurnRequest,
 ) -> ApiResult<()> {
     if request.attachment_ids.is_empty() {

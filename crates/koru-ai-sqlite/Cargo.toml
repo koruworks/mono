@@ -17,6 +17,7 @@ koru-ai-core = { path = "../koru-ai-core" }
 # Opening and versioning the file: the one policy every Koru database shares.
 koru-sqlite = { path = "../koru-sqlite" }
 rusqlite.workspace = true
+serde_json.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 url.workspace = true

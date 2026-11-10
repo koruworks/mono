@@ -2609,6 +2609,363 @@
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
       },
+      "Bot": {
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/BotAccess"
+          },
+          "config": {
+            "$ref": "#/components/schemas/BotConfig"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "folder_frozen_at_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "folder_lock_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "home_workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "main_chat": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "owner_device": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "policy_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_pages": {
+            "items": {
+              "$ref": "#/components/schemas/BotPage"
+            },
+            "type": "array"
+          },
+          "updated_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "user_scope": {
+            "$ref": "#/components/schemas/UserScopeId"
+          }
+        },
+        "required": [
+          "id",
+          "home_workspace",
+          "user_scope",
+          "owner_device",
+          "config",
+          "access",
+          "selected_pages",
+          "revision",
+          "policy_revision",
+          "main_chat",
+          "paused",
+          "created_at_ms",
+          "updated_at_ms"
+        ],
+        "type": "object"
+      },
+      "BotAccess": {
+        "enum": [
+          "default",
+          "workspace"
+        ],
+        "type": "string"
+      },
+      "BotCommand": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/BotAccess"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "create"
+                ],
+                "type": "string"
+              },
+              "config": {
+                "$ref": "#/components/schemas/BotConfig"
+              },
+              "home_workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "selected_pages": {
+                "items": {
+                  "$ref": "#/components/schemas/BotPage"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "home_workspace",
+              "config",
+              "access",
+              "selected_pages"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "enum": [
+                  "list"
+                ],
+                "type": "string"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "command",
+              "workspace"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "update"
+                ],
+                "type": "string"
+              },
+              "config": {
+                "$ref": "#/components/schemas/BotConfig"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision",
+              "config"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/BotAccess"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "update_access"
+                ],
+                "type": "string"
+              },
+              "expected_policy_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "selected_pages": {
+                "items": {
+                  "$ref": "#/components/schemas/BotPage"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision",
+              "expected_policy_revision",
+              "access",
+              "selected_pages"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "fast": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "mode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/StrictModel"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/BotPage"
+          },
+          "working_folder": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "role",
+          "working_folder",
+          "model"
+        ],
+        "type": "object"
+      },
+      "BotId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "BotPage": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "document"
+        ],
+        "type": "object"
+      },
+      "BotRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "BotResponse": {
+        "oneOf": [
+          {
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/Bot"
+              },
+              "result": {
+                "enum": [
+                  "bot"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "bot"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bots": {
+                "items": {
+                  "$ref": "#/components/schemas/Bot"
+                },
+                "type": "array"
+              },
+              "result": {
+                "enum": [
+                  "list"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "bots"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "BranchChatRequest": {
         "additionalProperties": false,
         "properties": {
@@ -15067,6 +15424,26 @@
         "minimum": 1,
         "type": "integer"
       },
+      "StrictModel": {
+        "additionalProperties": false,
+        "properties": {
+          "default_reasoning": {
+            "$ref": "#/components/schemas/ReasoningChoice"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AiProviderId"
+          },
+          "requested_model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "requested_model",
+          "default_reasoning"
+        ],
+        "type": "object"
+      },
       "Subject": {
         "description": "What the event is about, when it is about one thing. A reference, never\ncontent: the consumer fetches the thing through the store.",
         "properties": {
@@ -17650,6 +18027,11 @@
         ],
         "type": "object"
       },
+      "UserScopeId": {
+        "description": "UserScopeId — a client-minted v4 UUID, hyphenated and lowercase. Immutable, and never derived from a name or a path.",
+        "format": "uuid",
+        "type": "string"
+      },
       "ViewModeChoice": {
         "description": "`view_mode=` — the default view mode for a newly opened document.\n\n**Narrow until somebody chooses** (the user's call, 2026-10-31): a\nreadable column is what a new page should look like. Unknown input\nbecomes the default too.",
         "enum": [
@@ -18763,6 +19145,92 @@
           }
         ],
         "summary": "Send a message into a running agent reply"
+      }
+    },
+    "/v1/ai/bots": {
+      "post": {
+        "description": "A durable Bot configuration or authorized listing; never starts work.",
+        "operationId": "ai_bot_command",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotResponse"
+                }
+              }
+            },
+            "description": "A durable Bot configuration or authorized listing; never starts work."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.manage"
+            ]
+          }
+        ],
+        "summary": "Read or configure an engine-owned Bot"
       }
     },
     "/v1/ai/chats": {

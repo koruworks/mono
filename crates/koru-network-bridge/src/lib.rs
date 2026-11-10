@@ -74,6 +74,10 @@ impl fmt::Debug for SessionLifecycleAuthority {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchBootstrap {
+    /// Agent-owned device identity. Older Agents omit it; Bots remain unavailable.
+    /// This is launch metadata, not part of the bridge handshake identity.
+    #[serde(default)]
+    pub device_id: Option<String>,
     pub launch_id: String,
     pub bridge_version: u32,
     pub channel: String,
@@ -204,6 +208,7 @@ mod tests {
 
     fn bootstrap() -> LaunchBootstrap {
         LaunchBootstrap {
+            device_id: None,
             launch_id: uuid::Uuid::new_v4().to_string(),
             bridge_version: BRIDGE_VERSION,
             channel: "internal-debug".into(),
@@ -214,6 +219,18 @@ mod tests {
                 uuid::Uuid::new_v4().to_string(),
             )),
         }
+    }
+
+    #[test]
+    fn old_bootstrap_omits_bot_identity_without_changing_bridge_identity() {
+        let original = bootstrap();
+        let mut encoded = serde_json::to_value(&original).unwrap();
+        encoded.as_object_mut().unwrap().remove("device_id");
+        let legacy: LaunchBootstrap = serde_json::from_value(encoded).unwrap();
+        assert_eq!(legacy.device_id, None);
+        let mut current = legacy.clone();
+        current.device_id = Some(uuid::Uuid::new_v4().to_string());
+        assert_eq!(legacy.identity(), current.identity());
     }
 
     fn principal() -> NetworkPrincipal {

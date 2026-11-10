@@ -9,6 +9,7 @@
 pub mod agent;
 pub mod attachments;
 pub mod blocks;
+pub mod bots;
 pub mod chat_tools;
 pub mod conversion;
 pub mod ids;
