@@ -556,9 +556,9 @@ Returns: nothing. Machine-local and derived: it feeds recent queries and a works
 
 ## POST `/v1/ai/bots`
 
-Read or configure an engine-owned Bot
+Read, configure or request admission for an engine-owned Bot
 
-Returns: A durable Bot configuration or authorized listing; never starts work.
+Returns: A durable configuration, authorized listing or content-free admission operation. Conversation execution is coordinated separately.
 
 ## GET `/v1/ai/providers/settings`
 

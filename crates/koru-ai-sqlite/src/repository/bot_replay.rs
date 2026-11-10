@@ -449,9 +449,9 @@ fn validate_prepared_submission(
     {
         return Err(invariant_failed());
     }
-    // Read-side only. Replace this strict wrapper decode with P1.3's committed
-    // read_bot_submission_on helper when the admission slice is integrated.
-    let raw: String=connection.query_row("SELECT r.submission_json FROM bot_command_receipts r
+    // Retain the replay owner's current association/placement guards; the
+    // admission owner supplies the sole strict receipt decoder below.
+    let _:i64=connection.query_row("SELECT 1 FROM bot_command_receipts r
         JOIN bots b ON b.bot_id=r.bot_id JOIN bot_chats c ON c.bot_id=b.bot_id
         WHERE r.user_scope_id=?1 AND r.request_id=?2 AND r.bot_id=?3 AND r.planned_run_id=?4
         AND r.command_kind IN ('start','continue') AND r.stage IN ('prepared','accepted','completed')
@@ -461,22 +461,14 @@ fn validate_prepared_submission(
         params![p.owner.user_scope.to_string(),p.submission.to_storage(),p.bot.to_storage(),submission.request.run.to_storage(),
             required_u64(p.config_revision)?,required_u64(p.policy_revision)?,p.owner.device.to_string(),submission.workspace.to_string(),p.chat_id.to_string()],
         |r|r.get(0)).map_err(storage_failed)?;
-    if raw.len() > 4 * 1024 * 1024 {
-        return Err(invariant_failed());
-    }
-    let wrapper: serde_json::Value = serde_json::from_str(&raw).map_err(|_| invariant_failed())?;
-    let object = wrapper.as_object().ok_or_else(invariant_failed)?;
-    if object.len() != 2 || object.get("version").and_then(|v| v.as_u64()) != Some(1) {
-        return Err(invariant_failed());
-    }
-    let stored: BotSubmission = serde_json::from_value(
-        object
-            .get("submission")
-            .ok_or_else(invariant_failed)?
-            .clone(),
+    let stored = super::bots::admission::read_bot_submission_on(
+        connection,
+        p.owner.user_scope,
+        p.submission,
     )
-    .map_err(|_| invariant_failed())?;
-    if stored != *submission {
+    .map_err(|_| invariant_failed())?
+    .ok_or_else(invariant_failed)?;
+    if stored.intent.submission != *submission {
         return Err(invariant_failed());
     }
     Ok(())
