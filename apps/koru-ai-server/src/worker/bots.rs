@@ -33,7 +33,7 @@ impl WorkerState {
             if let Ok(Some(bot)) = self.repository.bot(*id)
                 && bot.revision == *revision
                 && bot.policy_revision == *policy
-                && bot.main_chat == *chat
+                && self.repository.bot_for_chat(*chat).map_err(bot_failure)? == Some(*id)
                 && validate_owner(&proof.authority, &bot).is_ok()
             {
                 allowed.push(*chat);
@@ -46,6 +46,19 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
+        if let BotCommand::CreateChat { request_id, bot_id } = &request {
+            let proof = context
+                .prepared
+                .as_ref()
+                .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+            return create_bot_chat(
+                &mut self.repository,
+                &proof.authority,
+                &context,
+                *request_id,
+                *bot_id,
+            );
+        }
         if let Some(result) = self.bot_policy_command(&context, &request) {
             return result;
         }
@@ -79,6 +92,33 @@ fn next_revision(revision: u64) -> ApiResult<u64> {
         return Err(bot_failure(BotError::RevisionConflict));
     }
     Ok(revision + 1)
+}
+
+fn create_bot_chat(
+    repository: &mut Repository,
+    authority: &Arc<dyn BotAuthority>,
+    context: &RequestContext,
+    request_id: BotRequestId,
+    bot_id: BotId,
+) -> ApiResult<BotResponse> {
+    authorize(context, AiScope::ManageBots)?;
+    let bot = repository
+        .bot(bot_id)
+        .map_err(bot_failure)?
+        .ok_or_else(not_found)?;
+    validate_owner(authority, &bot)?;
+    let profile = authority
+        .workspace(bot.home_workspace)
+        .map_err(bot_failure)?;
+    let request = BotCommand::CreateChat { request_id, bot_id };
+    let fingerprint =
+        blake3::hash(&serde_json::to_vec(&request).map_err(|_| bot_failure(BotError::Invalid))?)
+            .to_hex()
+            .to_string();
+    let reference = repository
+        .create_bot_chat(&bot, profile, request_id, &fingerprint, Timestamp::now())
+        .map_err(bot_failure)?;
+    Ok(BotResponse::Chat { reference })
 }
 
 impl WorkerCommand {
@@ -166,7 +206,8 @@ fn execute_bot_command(
     let owner = authority.owner().map_err(bot_failure)?;
     let now = Timestamp::now().millis();
     match &mut request {
-        BotCommand::Start { .. }
+        BotCommand::CreateChat { .. }
+        | BotCommand::Start { .. }
         | BotCommand::Continue { .. }
         | BotCommand::Pause { .. }
         | BotCommand::Resume { .. }

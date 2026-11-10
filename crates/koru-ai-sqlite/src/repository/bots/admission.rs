@@ -7,11 +7,12 @@ use rusqlite::{Transaction, TransactionBehavior};
 #[cfg(test)]
 mod tests;
 
-struct Raw {
-    bot: String,
-    fingerprint: String,
-    kind: String,
-    stage: String,
+/// One raw ai16 receipt row, decoded by the reader for its command kind.
+pub(super) struct Raw {
+    pub(super) bot: String,
+    pub(super) fingerprint: String,
+    pub(super) kind: String,
+    pub(super) stage: String,
     run: Option<String>,
     config: Option<u64>,
     policy: Option<u64>,
@@ -20,9 +21,9 @@ struct Raw {
     desired: Option<bool>,
     expected: Option<u64>,
     ack: Option<String>,
-    outcome: Option<String>,
+    pub(super) outcome: Option<String>,
 }
-fn raw(
+pub(super) fn raw(
     conn: &Connection,
     scope: UserScopeId,
     request: BotRequestId,
@@ -185,16 +186,17 @@ pub(super) fn require_pause_settled(
         Ok(())
     }
 }
-struct Guard {
-    revision: u64,
-    policy: u64,
+/// Current owner, lifecycle and revisions of a Bot, read inside the caller's transaction.
+pub(super) struct Guard {
+    pub(super) revision: u64,
+    pub(super) policy: u64,
     paused: bool,
     folder: String,
     lock: Option<String>,
     frozen: Option<i64>,
-    home: WorkspaceId,
+    pub(super) home: WorkspaceId,
 }
-fn guard(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<Guard, BotError> {
+pub(super) fn guard(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<Guard, BotError> {
     let r:Option<(String,String,String,u64,u64,bool,String,Option<String>,Option<i64>,String)>=conn.query_row("SELECT user_scope_id,owner_device_id,lifecycle,revision,policy_revision,paused,working_folder,folder_lock_request_id,folder_frozen_at_ms,home_workspace_id FROM bots WHERE bot_id=?1",
         [bot.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional().map_err(bad)?;
     let r = r.ok_or(BotError::NotFound)?;

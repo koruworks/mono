@@ -139,6 +139,10 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    CreateChat {
+        request_id: BotRequestId,
+        bot_id: BotId,
+    },
     Start {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -208,9 +212,19 @@ pub enum BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    Chat { reference: BotChatReference },
     Operation { operation: BotOperation },
     Bot { bot: Bot },
     List { bots: Vec<Bot> },
+}
+
+/// A durable conversation identity; history remains behind normal Chat reads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotChatReference {
+    pub bot_id: BotId,
+    pub chat_id: ChatId,
 }
 
 /// Closed, bounded receipt vocabulary. Role creation is coordinated in the UI plan;
@@ -218,6 +232,10 @@ pub enum BotResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReceiptOutcome {
+    ChatCreated {
+        version: u32,
+        reference: BotChatReference,
+    },
     AccessPolicy {
         version: u32,
         bot: Bot,
@@ -241,6 +259,7 @@ pub enum BotReceiptOutcome {
 impl BotReceiptOutcome {
     pub fn validate(&self) -> Result<(), BotError> {
         match self {
+            Self::ChatCreated { version: 1, .. } => Ok(()),
             Self::AccessPolicy {
                 version: 1,
                 bot,

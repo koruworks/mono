@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 mod chat;
+mod conversations;
 
 #[test]
 fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {

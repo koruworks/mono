@@ -556,9 +556,9 @@ Returns: nothing. Machine-local and derived: it feeds recent queries and a works
 
 ## POST `/v1/ai/bots`
 
-Read, configure or request admission for an engine-owned Bot
+Read, configure, add a conversation to or request admission for an engine-owned Bot
 
-Returns: A durable configuration, authorized listing or content-free admission operation. Conversation execution is coordinated separately.
+Returns: A durable configuration, authorized listing, new conversation reference or content-free admission operation. Conversation history uses the Chat reads; execution is coordinated separately.
 
 ## GET `/v1/ai/providers/settings`
 

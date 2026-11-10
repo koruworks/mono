@@ -2703,8 +2703,48 @@
         ],
         "type": "string"
       },
+      "BotChatReference": {
+        "additionalProperties": false,
+        "description": "A durable conversation identity; history remains behind normal Chat reads.",
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          }
+        },
+        "required": [
+          "bot_id",
+          "chat_id"
+        ],
+        "type": "object"
+      },
       "BotCommand": {
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "create_chat"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {
@@ -3288,6 +3328,24 @@
       },
       "BotResponse": {
         "oneOf": [
+          {
+            "properties": {
+              "reference": {
+                "$ref": "#/components/schemas/BotChatReference"
+              },
+              "result": {
+                "enum": [
+                  "chat"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "reference"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "operation": {
@@ -19683,7 +19741,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, authorized listing or content-free admission operation. Conversation execution is coordinated separately.",
+        "description": "A durable configuration, authorized listing, new conversation reference or content-free admission operation. Conversation history uses the Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -19704,7 +19762,7 @@
                 }
               }
             },
-            "description": "A durable configuration, authorized listing or content-free admission operation. Conversation execution is coordinated separately."
+            "description": "A durable configuration, authorized listing, new conversation reference or content-free admission operation. Conversation history uses the Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -19764,7 +19822,7 @@
             ]
           }
         ],
-        "summary": "Read, configure or request admission for an engine-owned Bot"
+        "summary": "Read, configure, add a conversation to or request admission for an engine-owned Bot"
       }
     },
     "/v1/ai/chats": {

@@ -226,7 +226,8 @@ impl WorkerState {
                             capture = Some((owner, *destination, captured));
                         }
                     }
-                    BotCommand::Read { .. }
+                    BotCommand::CreateChat { .. }
+                    | BotCommand::Read { .. }
                     | BotCommand::Pause { .. }
                     | BotCommand::Resume { .. }
                     | BotCommand::ReadOperation { .. }
@@ -324,7 +325,7 @@ impl WorkerState {
         for (id, chat, revision, policy) in &proof.chats {
             match self.repository.bot(*id) {
                 Ok(Some(bot))
-                    if bot.main_chat == *chat
+                    if self.repository.bot_for_chat(*chat).ok().flatten() == Some(*id)
                         && bot.revision == *revision
                         && bot.policy_revision == *policy => {}
                 _ => {
@@ -374,10 +375,11 @@ pub(super) fn bot_targets(
         }
         return Ok(Some(rows));
     }
-    let mut ids = BTreeSet::new();
+    let mut rows = BTreeSet::new();
     if let WorkerCommand::Bots { request, .. } = command {
-        match request {
+        let id = match request {
             BotCommand::Create { bot_id, .. }
+            | BotCommand::CreateChat { bot_id, .. }
             | BotCommand::Read { bot_id }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
@@ -386,16 +388,32 @@ pub(super) fn bot_targets(
             | BotCommand::Pause { bot_id, .. }
             | BotCommand::Resume { bot_id, .. }
             | BotCommand::ReadOperation { bot_id, .. }
-            | BotCommand::ReconcileOperation { bot_id, .. } => {
-                ids.insert(*bot_id);
-            }
+            | BotCommand::ReconcileOperation { bot_id, .. } => *bot_id,
             BotCommand::List { .. } => unreachable!(),
+        };
+        match repository.bot(id) {
+            Ok(Some(bot)) => {
+                let chat = match request {
+                    // A named conversation must already belong to this Bot; refusing here
+                    // keeps a foreign Chat from reading as a retryable revision race.
+                    BotCommand::Start { chat_id, .. } | BotCommand::Continue { chat_id, .. } => {
+                        if repository.bot_for_chat(*chat_id).map_err(bot_failure)? != Some(id) {
+                            return Err(bot_failure(BotError::Forbidden));
+                        }
+                        *chat_id
+                    }
+                    _ => bot.main_chat,
+                };
+                rows.insert((id, chat));
+            }
+            Ok(None) | Err(BotError::Forbidden | BotError::NotFound) => {}
+            Err(error) => return Err(bot_failure(error)),
         }
     }
     if let Some(chat) = command_chat(repository, command)?
         && let Some(id) = repository.bot_for_chat(chat).map_err(bot_failure)?
     {
-        ids.insert(id);
+        rows.insert((id, chat));
     }
     let refs = match command {
         WorkerCommand::SendTurn { request, .. } => Some(&request.explicit_refs),
@@ -405,22 +423,16 @@ pub(super) fn bot_targets(
     if let Some(refs) = refs {
         for reference in refs {
             if let ContextRef::MessageBlock { block_id } = reference
-                && let Some(id) = repository.bot_for_block(*block_id).map_err(bot_failure)?
+                && let Some(pair) = repository
+                    .bot_chat_for_block(*block_id)
+                    .map_err(bot_failure)?
             {
-                ids.insert(id);
+                rows.insert(pair);
             }
         }
     }
-    if ids.is_empty() && !matches!(command, WorkerCommand::Bots { .. }) {
+    if rows.is_empty() && !matches!(command, WorkerCommand::Bots { .. }) {
         return Ok(None);
     }
-    let mut rows = Vec::new();
-    for id in ids {
-        match repository.bot(id) {
-            Ok(Some(bot)) => rows.push((id, bot.main_chat)),
-            Ok(None) | Err(BotError::Forbidden | BotError::NotFound) => {}
-            Err(error) => return Err(bot_failure(error)),
-        }
-    }
-    Ok(Some(rows))
+    Ok(Some(rows.into_iter().collect()))
 }

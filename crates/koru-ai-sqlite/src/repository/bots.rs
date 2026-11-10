@@ -10,13 +10,111 @@ fn bad(_: impl std::fmt::Display) -> BotError {
 }
 
 impl Repository {
+    /// Resolve both identities without reading the selected block's contents.
+    pub fn bot_chat_for_block(
+        &self,
+        block: koru_ai_core::MessageBlockId,
+    ) -> Result<Option<(BotId, ChatId)>, BotError> {
+        let value: Option<(String, String)> = self.connection.query_row(
+            "SELECT bc.bot_id,bc.chat_id FROM message_blocks b JOIN messages m ON m.id=b.message_id JOIN bot_chats bc ON bc.chat_id=m.chat_id WHERE b.id=?1",
+            [block.to_storage()], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional().map_err(bad)?;
+        value
+            .map(|(bot, chat)| {
+                Ok((
+                    bot.parse().map_err(bad)?,
+                    ChatId::parse(&chat).ok_or(BotError::Storage)?,
+                ))
+            })
+            .transpose()
+    }
+
+    /// Additional conversations use the same writer and existing ai16 receipt.
+    /// The caller supplies fresh authority; the transaction fences its Bot snapshot.
+    pub fn create_bot_chat(
+        &mut self,
+        bot: &Bot,
+        profile: ProfileId,
+        request: BotRequestId,
+        fingerprint: &str,
+        now: Timestamp,
+    ) -> Result<BotChatReference, BotError> {
+        let tx = self.connection.transaction().map_err(bad)?;
+        let owner = BotOwner {
+            user_scope: bot.user_scope,
+            device: bot.owner_device,
+        };
+        // Foreign or inactive refuses; a changed configuration/policy retries visibly.
+        let current = admission::guard(&tx, owner, bot.id)?;
+        if (current.revision, current.policy, current.home)
+            != (bot.revision, bot.policy_revision, bot.home_workspace)
+        {
+            return Err(BotError::RevisionConflict);
+        }
+        if let Some(prior) = admission::raw(&tx, bot.user_scope, request)? {
+            if prior.bot != bot.id.to_storage()
+                || prior.fingerprint != fingerprint
+                || prior.kind != "create_chat"
+            {
+                return Err(BotError::Conflict);
+            }
+            let json = prior.outcome.ok_or(BotError::Storage)?;
+            if prior.stage != "completed" || json.len() > 1024 * 1024 {
+                return Err(BotError::Storage);
+            }
+            let outcome: BotReceiptOutcome = serde_json::from_str(&json).map_err(bad)?;
+            outcome.validate()?;
+            let BotReceiptOutcome::ChatCreated { reference, .. } = outcome else {
+                return Err(BotError::Storage);
+            };
+            let associated: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM bot_chats bc JOIN chats c ON c.id=bc.chat_id WHERE bc.chat_id=?1 AND bc.bot_id=?2 AND bc.purpose='additional' AND c.profile_id=?3)",
+                params![reference.chat_id.to_storage(), bot.id.to_storage(), profile.to_storage()],
+                |row| row.get(0)).map_err(bad)?;
+            if reference.bot_id != bot.id || !associated {
+                return Err(BotError::NotFound);
+            }
+            return Ok(reference);
+        }
+        validate_config(&bot.config, bot.home_workspace)?;
+        let chat = Chat {
+            id: ChatId::new(),
+            title: bot.config.name.clone(),
+            private: false,
+            current_model: bot.config.model.clone(),
+            branched_from: None,
+            agent_working_folder: Some(bot.config.working_folder.clone()),
+            agent_mode: bot.config.mode.clone(),
+            agent_fast: bot.config.fast,
+            pinned_at: None,
+            profile_id: Some(profile),
+            created_at: now,
+            updated_at: now,
+        };
+        insert_chat(&tx, &chat).map_err(|_| BotError::Storage)?;
+        tx.execute("INSERT INTO bot_chats(chat_id,bot_id,purpose,created_at_ms) VALUES(?1,?2,'additional',?3)",
+            params![chat.id.to_storage(),bot.id.to_storage(),now.millis()]).map_err(bad)?;
+        let reference = BotChatReference {
+            bot_id: bot.id,
+            chat_id: chat.id,
+        };
+        let outcome = BotReceiptOutcome::ChatCreated {
+            version: 1,
+            reference: reference.clone(),
+        };
+        tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,'create_chat','completed',?5,?6,?6)",
+            params![bot.user_scope.to_storage(), request.to_storage(),bot.id.to_storage(),fingerprint,
+                serde_json::to_string(&outcome).map_err(bad)?,now.millis()]).map_err(bad)?;
+        tx.commit().map_err(bad)?;
+        Ok(reference)
+    }
+
     /// Resolve a selected context block's Bot association without exposing its content.
     pub fn bot_for_block(
         &self,
         block: koru_ai_core::MessageBlockId,
     ) -> Result<Option<BotId>, BotError> {
-        let value:Option<String>=self.connection.query_row("SELECT bc.bot_id FROM message_blocks b JOIN messages m ON m.id=b.message_id JOIN bot_chats bc ON bc.chat_id=m.chat_id WHERE b.id=?1",[block.to_storage()],|row|row.get(0)).optional().map_err(bad)?;
-        value.map(|value| value.parse().map_err(bad)).transpose()
+        Ok(self.bot_chat_for_block(block)?.map(|(bot, _)| bot))
     }
 
     pub fn bot_for_chat(&self, chat: ChatId) -> Result<Option<BotId>, BotError> {
