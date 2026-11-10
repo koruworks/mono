@@ -136,7 +136,7 @@ fn a_workspace(c: &mut SqliteCatalog, owner: ProfileId) -> WorkspaceId {
 fn a_fresh_catalog_has_the_root_tables_one_scope_and_no_legacy_personal_tables() {
     let c = catalog();
     assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
-    assert_eq!(CATALOG_SCHEMA_VERSION, 13);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 14);
     for table in [
         "root_catalog_units",
         "root_catalog_overlays",
@@ -237,7 +237,7 @@ fn a_twelve_upgrade_seeds_units_merges_personal_histories_and_drops_the_legacy_t
 
     let c = SqliteCatalog::from_connection(connection).unwrap();
 
-    assert_eq!(c.schema_version().unwrap(), 13);
+    assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
     assert!(!table_exists(&c.connection, "profile_personal_crdts"));
     assert!(!table_exists(&c.connection, "profile_reminder_due"));
     assert_eq!(c.state(K_PEER_ID).unwrap(), Some(STORE_PEER.to_string()));
@@ -416,7 +416,7 @@ fn a_twelve_upgrade_seeds_units_merges_personal_histories_and_drops_the_legacy_t
     );
     // Reopening is a no-op: same stamp, same rows, same scope.
     let again = SqliteCatalog::from_connection(db::open_shared_in_memory(&name).unwrap()).unwrap();
-    assert_eq!(again.schema_version().unwrap(), 13);
+    assert_eq!(again.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
     assert_eq!(again.local_user_scope().unwrap(), scope);
     assert_eq!(
         again
@@ -508,7 +508,7 @@ fn a_corrupt_personal_source_rolls_the_whole_step_back_and_the_next_open_retries
         )
         .unwrap();
     let c = SqliteCatalog::from_connection(db::open_shared_in_memory(&name).unwrap()).unwrap();
-    assert_eq!(c.schema_version().unwrap(), 13);
+    assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
     let scope = c.local_user_scope().unwrap();
     assert!(
         c.workspace_personal_unit(scope, workspace.id)

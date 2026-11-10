@@ -46,6 +46,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::db::{self, Migration, sql_failed};
 
+mod native_effect;
 mod profile_removal;
 mod root_catalog;
 pub use root_catalog::inspection::{
@@ -59,7 +60,7 @@ pub use root_catalog::inspection::{
 /// **This table ends at 12.** Catalog 13 is the root-catalog step, half SQL
 /// and half Rust in one transaction, which a SQL-only row cannot express; it
 /// runs from [`SqliteCatalog::from_connection`] after these steps, and
-/// `CATALOG_SCHEMA_VERSION` names 13. See [`root_catalog`].
+/// Catalog 14 follows that conversion through `AFTER_ROOT_MIGRATIONS`.
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         to: 1,
@@ -230,6 +231,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
 pub struct SqliteCatalog {
     connection: Connection,
 }
+const AFTER_ROOT_MIGRATIONS: &[Migration] = &[Migration {
+    to: 14,
+    name: "026_catalog_native_effect_fences_migration.sql",
+    sql: include_str!("../migrations/026_catalog_native_effect_fences_migration.sql"),
+    columns: &[],
+}];
 
 impl SqliteCatalog {
     pub fn open(path: &std::path::Path) -> Result<Self> {
@@ -275,7 +282,8 @@ impl SqliteCatalog {
 
     fn from_connection(mut connection: Connection) -> Result<Self> {
         // The SQL-only steps bring the file to 12, or refuse one stamped
-        // above 13. Then the one step that needs Rust inside its transaction.
+        // above the understood version. Then the step needing Rust, followed
+        // by ordinary later steps; never run 14 before the 12 -> 13 conversion.
         let reached = db::migrate(
             &mut connection,
             "catalog.db",
@@ -285,6 +293,12 @@ impl SqliteCatalog {
         if reached == root_catalog::FROM {
             root_catalog::migrate_to_root_catalog(&mut connection)?;
         }
+        db::migrate(
+            &mut connection,
+            "catalog.db",
+            AFTER_ROOT_MIGRATIONS,
+            CATALOG_SCHEMA_VERSION,
+        )?;
         Ok(Self { connection })
     }
 
@@ -302,6 +316,26 @@ impl SqliteCatalog {
 }
 
 impl Catalog for SqliteCatalog {
+    fn native_effect_fence(
+        &self,
+        binding: &koru_store_core::NativeEffectBinding,
+    ) -> Result<Option<koru_store_core::NativeEffectFence>> {
+        native_effect::read(self, binding)
+    }
+    fn fence_native_effect(
+        &mut self,
+        binding: &koru_store_core::NativeEffectBinding,
+        at: Timestamp,
+    ) -> Result<koru_store_core::NativeEffectFence> {
+        native_effect::fence(self, binding, at)
+    }
+    fn complete_native_effect_drain(
+        &mut self,
+        binding: &koru_store_core::NativeEffectBinding,
+        at: Timestamp,
+    ) -> Result<koru_store_core::NativeEffectDrainReceipt> {
+        native_effect::complete(self, binding, at)
+    }
     // -------------------------------------------------------------- profiles
 
     fn put_profile(&mut self, profile: &Profile) -> Result<()> {

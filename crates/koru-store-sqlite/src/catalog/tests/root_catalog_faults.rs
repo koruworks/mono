@@ -291,8 +291,12 @@ impl Twelve {
     /// The post-state is complete: what an unfaulted upgrade of `legacy`
     /// produces, down to the receipt counts.
     fn assert_migrated(&self, c: &SqliteCatalog, legacy: &Legacy, what: &str) {
-        assert_eq!(c.schema_version().unwrap(), 13, "{what}");
-        assert_eq!(user_version(&self.keeper), 13, "{what}");
+        assert_eq!(
+            c.schema_version().unwrap(),
+            CATALOG_SCHEMA_VERSION,
+            "{what}"
+        );
+        assert_eq!(user_version(&self.keeper), CATALOG_SCHEMA_VERSION, "{what}");
         for table in LEGACY_TABLES {
             assert!(!table_exists(&self.keeper, table), "{what}: {table}");
         }
@@ -448,7 +452,7 @@ fn a_fault_minting_the_scope_or_the_peer_leaves_a_twelve_with_neither() {
     );
     twelve.recover();
     let c = twelve.open().unwrap();
-    assert_eq!(c.schema_version().unwrap(), 13);
+    assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
     let minted: u64 = c.state(K_PEER_ID).unwrap().unwrap().parse().unwrap();
     assert_ne!(minted, 0);
     let scope = c.local_user_scope().unwrap();
@@ -596,7 +600,7 @@ fn a_fault_writing_a_personal_v2_row_keeps_the_legacy_source_and_every_seed_roll
         )
         .unwrap();
     let c = twelve.open().unwrap();
-    assert_eq!(c.schema_version().unwrap(), 13);
+    assert_eq!(c.schema_version().unwrap(), CATALOG_SCHEMA_VERSION);
     let scope = c.local_user_scope().unwrap();
     assert_eq!(c.workspace_personal_units(scope).unwrap().len(), 2);
     let recovered = c
@@ -845,7 +849,7 @@ fn the_inspection_report_carries_ids_and_counts_and_never_a_name() {
     );
     let c = twelve.open().unwrap();
     let report = inspection::inspect(&twelve.keeper).unwrap();
-    assert_eq!(report.schema_version, 13);
+    assert_eq!(report.schema_version, CATALOG_SCHEMA_VERSION);
     assert_eq!(report.scope, c.local_user_scope().unwrap().to_storage());
     assert_eq!(report.profile_units.len(), 2);
     assert_eq!(report.workspace_units.len(), 2);

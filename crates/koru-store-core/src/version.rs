@@ -62,7 +62,9 @@ pub const API_VERSION: u32 = 1;
 /// and drops `profile_personal_crdts` and `profile_reminder_due` — all in one
 /// transaction, so a failure leaves a 12 that the next open retries
 /// (migration 025, part SQL and part Rust).
-pub const CATALOG_SCHEMA_VERSION: i64 = 13;
+/// `14` adds local native effect deny/drain fences, retained across content purge
+/// (migration 026), after the special root-catalog conversion to 13.
+pub const CATALOG_SCHEMA_VERSION: i64 = 14;
 
 /// `workspace.db`, held in SQLite's `PRAGMA user_version`.
 ///

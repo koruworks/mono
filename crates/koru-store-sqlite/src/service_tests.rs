@@ -16,6 +16,7 @@ mod account_provisioning;
 mod cloud_restart;
 mod creation_origin;
 mod manifest_origin;
+mod native_drain;
 mod objects;
 mod profile_projection;
 mod replica_discard;

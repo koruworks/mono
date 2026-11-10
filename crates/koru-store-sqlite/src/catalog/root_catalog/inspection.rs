@@ -187,10 +187,13 @@ pub fn inspect(connection: &Connection) -> Result<RootCatalogInventoryReport> {
             format!("catalog is at {version}; the root catalog arrives with {TO}"),
         ));
     }
-    if version > TO {
+    if version > koru_store_core::version::CATALOG_SCHEMA_VERSION {
         return Err(Error::new(
             Code::SchemaTooNew,
-            format!("catalog is at {version}; this build understands {TO}"),
+            format!(
+                "catalog is at {version}; this build understands {}",
+                koru_store_core::version::CATALOG_SCHEMA_VERSION
+            ),
         ));
     }
     let scope = super::local_user_scope(connection)?;

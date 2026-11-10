@@ -54,6 +54,10 @@ pub mod ids;
 pub mod lifecycle;
 pub mod manifest;
 pub mod model;
+pub mod native_effect;
+pub use native_effect::{
+    NativeEffectBinding, NativeEffectDrainReceipt, NativeEffectFence, NativeEffectKind,
+};
 pub mod personal_attributes;
 pub mod ports;
 pub mod profile_account;

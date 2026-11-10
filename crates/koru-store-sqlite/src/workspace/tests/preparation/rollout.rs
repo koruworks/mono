@@ -203,12 +203,17 @@ fn rollback_cannot_restore_old_owner_lifecycle_or_personal_writers() {
     f.store.create_reminder(a, &rule).unwrap();
 
     // 1. The older build meets the file: refused, and the file is untouched.
+    let schema_before = count(&f, "PRAGMA user_version");
     let refused = match SqliteCatalog::open_named_memory_as_twelve(&f.catalog) {
-        Ok(_) => panic!("a 12 build opened a 13 catalog"),
+        Ok(_) => panic!("a 12 build opened a newer catalog"),
         Err(error) => error,
     };
     assert_eq!(refused.code(), Code::SchemaTooNew);
-    assert_eq!(count(&f, "PRAGMA user_version"), 13, "never rewritten");
+    assert_eq!(
+        count(&f, "PRAGMA user_version"),
+        schema_before,
+        "never rewritten"
+    );
     assert_eq!(
         count(
             &f,

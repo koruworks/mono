@@ -297,6 +297,34 @@ pub struct SyncStateEvent {
 /// this is the only thing opened at startup, and opening anything else is a
 /// response to a request.
 pub trait Catalog {
+    /// Local deny evidence, retained independently of content lifecycle.
+    fn native_effect_fence(
+        &self,
+        _binding: &crate::NativeEffectBinding,
+    ) -> Result<Option<crate::NativeEffectFence>> {
+        Err(crate::errors::Error::bare(
+            crate::errors::Code::VersionUnavailable,
+        ))
+    }
+    fn fence_native_effect(
+        &mut self,
+        _binding: &crate::NativeEffectBinding,
+        _at: Timestamp,
+    ) -> Result<crate::NativeEffectFence> {
+        Err(crate::errors::Error::bare(
+            crate::errors::Code::VersionUnavailable,
+        ))
+    }
+    /// Only the Store owner may call this after settling relevant live windows.
+    fn complete_native_effect_drain(
+        &mut self,
+        _binding: &crate::NativeEffectBinding,
+        _at: Timestamp,
+    ) -> Result<crate::NativeEffectDrainReceipt> {
+        Err(crate::errors::Error::bare(
+            crate::errors::Code::VersionUnavailable,
+        ))
+    }
     fn put_profile(&mut self, profile: &Profile) -> Result<()>;
     fn profile(&self, id: ProfileId) -> Result<Option<Profile>>;
     /// Exact retained row, including one hidden by local Profile removal.

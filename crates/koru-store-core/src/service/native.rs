@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Trusted local native writes. No public transport can opt into this seam.
 use super::*;
+mod drain;
 
 /// Whether a failed conditional write reached its effect-bearing phase.
 #[derive(Debug)]
