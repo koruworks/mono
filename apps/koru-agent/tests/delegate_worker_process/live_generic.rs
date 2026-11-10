@@ -949,8 +949,16 @@ fn print_diagnostic(
         RunStatus::Running { attention, .. } => attention.iter().collect(),
         _ => Vec::new(),
     };
+    // Both values are closed, content-free vocabularies. Keep startup causes
+    // observable even when no provider session was created; never print the
+    // native failure payload, objective, working directory or provider stderr.
+    let failure_stage = match &view.header.status {
+        RunStatus::Failed { stage } => Some(*stage),
+        _ => None,
+    };
     let value = serde_json::json!({
         "run_state":view.header.status.name(), "attention":attention,
+        "failure_stage":failure_stage, "failure_reason":view.header.failure_reason,
         "managed_state":summary.as_ref().and_then(|row| row.managed.clone()),
         "active_turn":summary.as_ref().is_some_and(|row| row.active_turn_id.is_some()),
         "session_present":summary.is_some(), "events":events,
