@@ -186,6 +186,7 @@ pub enum ScopeKind {
     ProjectRoot,
     ProjectFolder,
     Temporary,
+    BotFolder,
 }
 
 impl ScopeKind {
@@ -194,6 +195,7 @@ impl ScopeKind {
         Self::ProjectRoot,
         Self::ProjectFolder,
         Self::Temporary,
+        Self::BotFolder,
     ];
 
     pub fn of(scope: &WorkspaceScope) -> Self {
@@ -202,6 +204,7 @@ impl ScopeKind {
             WorkspaceScope::ProjectRoot { .. } => Self::ProjectRoot,
             WorkspaceScope::ProjectFolder { .. } => Self::ProjectFolder,
             WorkspaceScope::Temporary => Self::Temporary,
+            WorkspaceScope::BotFolder { .. } => Self::BotFolder,
         }
     }
 }
@@ -213,6 +216,7 @@ impl RowToken for ScopeKind {
             Self::ProjectRoot => "project_root",
             Self::ProjectFolder => "project_folder",
             Self::Temporary => "temporary",
+            Self::BotFolder => "bot_folder",
         }
     }
 }

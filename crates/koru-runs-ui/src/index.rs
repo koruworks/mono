@@ -742,6 +742,9 @@ mod tests {
 
     fn header(status: RunStatus) -> RunHeader {
         RunHeader {
+            bot: None,
+            native_results: Vec::new(),
+            chat_delivery: None,
             run: RunId::from_uuid(uuid::Uuid::from_u128(0x51)),
             created_at_ms: 10,
             requested_by: ActorRef::Person {

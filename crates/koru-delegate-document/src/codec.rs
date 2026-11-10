@@ -56,6 +56,9 @@ fn field_name(stored: &str) -> &str {
 pub(crate) fn header_to_keys(
     header: &RunHeader,
 ) -> Result<Vec<(String, LoroValue)>, RunDocumentError> {
+    if !header.bot_fields_valid() {
+        return Err(RunDocumentError::Malformed { part: Part::Header });
+    }
     let serde_json::Value::Object(fields) = serde_json::to_value(header)
         .map_err(|_| RunDocumentError::Malformed { part: Part::Header })?
     else {
@@ -84,8 +87,12 @@ pub(crate) fn header_from_map(map: &LoroValue) -> Result<RunHeader, RunDocumentE
             )
         })
         .collect();
-    serde_json::from_value(serde_json::Value::Object(object))
-        .map_err(|_| RunDocumentError::Malformed { part: Part::Header })
+    let header: RunHeader = serde_json::from_value(serde_json::Value::Object(object))
+        .map_err(|_| RunDocumentError::Malformed { part: Part::Header })?;
+    if !header.bot_fields_valid() {
+        return Err(RunDocumentError::Malformed { part: Part::Header });
+    }
+    Ok(header)
 }
 
 /// Any serializable value, as the document stores it.

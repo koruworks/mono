@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: MPL-2.0
+use super::*;
+
+#[test]
+fn bootstrap_authority_is_redacted_and_requires_an_exact_match() {
+    let secret = "PRIVATE-CAPABILITY-SENTINEL-0123456789";
+    let authority = BotDelegateAuthority::new(secret.into()).unwrap();
+    assert!(!format!("{authority:?}").contains(secret));
+    assert!(authority.matches(&authority.clone()));
+    assert!(!authority.matches(
+        &BotDelegateAuthority::new("different-capability-01234567890123456789".into()).unwrap()
+    ));
+    assert!(BotDelegateAuthority::new("short".into()).is_none());
+    assert!(serde_json::from_str::<BotDelegateAuthority>("\"short\"").is_err());
+}
+
+#[test]
+fn begin_turn_uses_the_strict_nested_input_adapter() {
+    let mut value = serde_json::json!({
+        "command":"begin_turn",
+        "fence": {
+            "owner":{"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()},
+            "bot":Uuid::new_v4(),"run":Uuid::new_v4(),"attempt":Uuid::new_v4(),
+            "generation":1,"session":Uuid::new_v4(),"turn":null
+        },
+        "input":{"idempotency_key":Uuid::new_v4(),"text":"private","attachment_ids":[]}
+    });
+    assert!(serde_json::from_value::<BotCommand>(value.clone()).is_ok());
+    let mut answer = value.clone();
+    answer["command"] = serde_json::json!("answer_questions");
+    answer.as_object_mut().unwrap().remove("input");
+    answer["request"] = serde_json::json!(Uuid::new_v4());
+    answer["answers"] =
+        serde_json::json!([{"question_id":"one","value":{"kind":"text","text":"answer"}}]);
+    assert!(serde_json::from_value::<BotCommand>(answer.clone()).is_ok());
+    for pointer in ["/answers/0", "/answers/0/value"] {
+        let mut changed = answer.clone();
+        changed.pointer_mut(pointer).unwrap()["undeclared_authority"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<BotCommand>(changed).is_err());
+    }
+    value["input"]["undeclared_authority"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<BotCommand>(value).is_err());
+}
+
+fn prepare() -> PrepareNativeResult {
+    PrepareNativeResult {
+        key: NativeResultKey {
+            run: RunId::mint(),
+            attempt: RunAttemptId::mint(),
+            generation: AttemptGeneration::FIRST,
+            turn: Uuid::new_v4().to_string().parse().unwrap(),
+            operation_id: Uuid::new_v4(),
+        },
+        kind: NativeResultOperation::CreatePage,
+        destination: WorkspaceId::from_uuid(Uuid::new_v4()),
+        target: None,
+        request_fingerprint: [7; 32],
+        expected_revision: None,
+        config_revision: 1,
+        policy_revision: 1,
+        title: "PRIVATE-TITLE-SENTINEL".into(),
+    }
+}
+
+#[test]
+fn native_result_shapes_are_closed_bounded_and_redacted() {
+    let mut value = prepare();
+    assert!(value.valid());
+    assert!(!format!("{value:?}").contains(&value.title));
+    let mut wire = serde_json::to_value(&value).unwrap();
+    wire["authority"] = serde_json::json!("forged");
+    assert!(serde_json::from_value::<PrepareNativeResult>(wire).is_err());
+    value.kind = NativeResultOperation::EditPage;
+    assert!(!value.valid());
+    value.target = Some(DocumentId::from_uuid(Uuid::new_v4()));
+    value.expected_revision = Some(vec![1; 65536]);
+    assert!(value.valid());
+    value.expected_revision.as_mut().unwrap().push(1);
+    assert!(!value.valid());
+    value = prepare();
+    value.title = "x".repeat(257);
+    assert!(!value.valid());
+    value = prepare();
+    value.key.operation_id = Uuid::nil();
+    assert!(!value.valid());
+}
+
+#[test]
+fn reserved_commands_refuse_arbitrary_fields() {
+    let command = BotCommand::PrepareNativeResult { request: prepare() };
+    let mut wire = serde_json::to_value(command).unwrap();
+    wire["extra"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<BotCommand>(wire).is_err());
+}

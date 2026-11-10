@@ -67,6 +67,9 @@ const STARTED: i64 = 1_700_000_000_000;
 
 fn header(status: RunStatus) -> RunHeader {
     RunHeader {
+        bot: None,
+        native_results: Vec::new(),
+        chat_delivery: None,
         run: run_id(),
         created_at_ms: STARTED,
         requested_by: ActorRef::Person { profile: profile() },

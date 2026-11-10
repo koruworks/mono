@@ -613,6 +613,7 @@ pub(crate) fn scope_directory(
 ) -> Result<PathBuf, ScopeRefusal> {
     match scope {
         WorkspaceScope::None => Err(ScopeRefusal::NotAdmissible),
+        WorkspaceScope::BotFolder { folder } => Ok(PathBuf::from(folder.as_str())),
         WorkspaceScope::ProjectRoot { project } => match roots.project_root(*project) {
             RootLookup::Directory(root) => Ok(root),
             RootLookup::NoRoot => Err(ScopeRefusal::ProjectHasNoRoot),

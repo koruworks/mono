@@ -36,6 +36,7 @@
 //! ledger as rows, and one run in as much detail as this file holds.
 
 mod attempts;
+mod bots;
 mod claims;
 mod clock;
 mod crash;
@@ -52,6 +53,10 @@ mod restart;
 mod schedule_publications;
 
 pub use attempts::AttemptRow;
+pub use bots::{
+    BOT_ACTIVE_BUDGET_MS, BOT_HOST_EXECUTION_LIMIT, BOT_PENDING_LIMIT, BotAdmissionRecord,
+    BotInitialSend, BotLedger, BotLedgerError, BotReservation, BotSettlement, QueuedBotAdmission,
+};
 pub use claims::{ClaimedSlot, SkippedSlot, SlotClaim};
 pub use clock::{Clock, SystemClock};
 pub use crash::WriteOp;

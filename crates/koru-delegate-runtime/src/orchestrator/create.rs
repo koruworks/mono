@@ -40,6 +40,7 @@ impl Orchestrator {
         request: &DelegationRequest,
         workspace: WorkspaceId,
     ) -> Result<CreateIntentStatus, CreateError> {
+        refuse_untrusted_bot_folder(request)?;
         let Some(record) = self.ports.store.validate_intent(request, workspace)? else {
             return Ok(CreateIntentStatus::Absent);
         };
@@ -72,6 +73,7 @@ impl Orchestrator {
         request: DelegationRequest,
         workspace: WorkspaceId,
     ) -> Result<Created, CreateError> {
+        refuse_untrusted_bot_folder(&request)?;
         let run = request.run;
         // Step 1. Durable before anything else, and idempotent by run id.
         self.ports.store.record_intent(&request, workspace)?;
@@ -231,4 +233,18 @@ impl Orchestrator {
             document,
         })
     }
+}
+
+fn refuse_untrusted_bot_folder(request: &DelegationRequest) -> Result<(), CreateError> {
+    if matches!(
+        request.scope,
+        koru_delegate_core::WorkspaceScope::BotFolder { .. }
+    ) {
+        return Err(CreateError::Port(crate::PortError::new(
+            crate::Port::Store,
+            "bot_admission_required",
+            "Bot work requires trusted admission",
+        )));
+    }
+    Ok(())
 }

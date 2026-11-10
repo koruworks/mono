@@ -27,6 +27,9 @@ use crate::{DeviceId, ProjectId, RelativeFolder};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkspaceScope {
+    /// Fixed engine-owned Bot binding. Only authenticated Bot admission may
+    /// resolve it; deleting a Run never deletes this persistent folder.
+    BotFolder { folder: crate::BotWorkingFolder },
     /// No scope chosen. Refused at admission (P1.5), never started.
     None,
     /// The root of a session project.
@@ -46,7 +49,7 @@ impl WorkspaceScope {
     pub fn project(&self) -> Option<ProjectId> {
         match self {
             Self::ProjectRoot { project } | Self::ProjectFolder { project, .. } => Some(*project),
-            Self::None | Self::Temporary => None,
+            Self::None | Self::Temporary | Self::BotFolder { .. } => None,
         }
     }
 
@@ -79,7 +82,10 @@ impl WorkspaceScope {
     pub fn is_koru_owned(&self) -> bool {
         match self {
             Self::Temporary => true,
-            Self::None | Self::ProjectRoot { .. } | Self::ProjectFolder { .. } => false,
+            Self::None
+            | Self::ProjectRoot { .. }
+            | Self::ProjectFolder { .. }
+            | Self::BotFolder { .. } => false,
         }
     }
 }

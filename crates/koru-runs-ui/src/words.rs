@@ -88,6 +88,7 @@ pub(crate) fn scope(lang: Lang, scope: &WorkspaceScope) -> &'static str {
             WorkspaceScope::ProjectRoot { .. } => Key::RunScopeProjectRoot,
             WorkspaceScope::ProjectFolder { .. } => Key::RunScopeProjectFolder,
             WorkspaceScope::Temporary => Key::RunScopeTemporary,
+            WorkspaceScope::BotFolder { .. } => Key::RunScopeBotFolder,
         },
     )
 }

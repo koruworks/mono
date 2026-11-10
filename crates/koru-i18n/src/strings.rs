@@ -1355,6 +1355,7 @@ pub enum Key {
     RunScopeProjectRoot,
     RunScopeProjectFolder,
     RunScopeTemporary,
+    RunScopeBotFolder,
     RunScopeNone,
     /// The control beside a run's working folder: show it in Explorer or
     /// Finder. Absent where the folder is gone or was never resolved here.
@@ -3174,7 +3175,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2217] = [
+    pub const ALL: [Key; 2218] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4138,6 +4139,7 @@ impl Key {
         Key::RunScopeProjectRoot,
         Key::RunScopeProjectFolder,
         Key::RunScopeTemporary,
+        Key::RunScopeBotFolder,
         Key::RunScopeNone,
         Key::RunOpenLocation,
         Key::RunFolderGone,
@@ -11822,6 +11824,17 @@ pub const ROWS: &[Row] = &[
         ar: "مجلد أنشأه Koru لهذا التشغيل",
         zh_hans: "Koru 为这次运行创建的文件夹",
         ja: "この実行のために Koru が作ったフォルダー",
+    },
+    Row {
+        key: Key::RunScopeBotFolder,
+        en: "The Bot's persistent folder",
+        es: "La carpeta persistente del Bot",
+        pt_br: "A pasta persistente do Bot",
+        de: "Der dauerhafte Ordner des Bots",
+        fr: "Le dossier persistant du Bot",
+        ar: "مجلد البوت الدائم",
+        zh_hans: "Bot 的持久文件夹",
+        ja: "Bot の永続フォルダー",
     },
     Row {
         key: Key::RunScopeNone,

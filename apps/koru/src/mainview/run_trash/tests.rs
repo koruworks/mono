@@ -39,6 +39,9 @@ fn document(n: u128) -> DocumentId {
 
 fn header(run: RunId, status: RunStatus, results: usize) -> RunHeader {
     RunHeader {
+        bot: None,
+        native_results: Vec::new(),
+        chat_delivery: None,
         requested_model: None,
         run,
         origin: RunOrigin::Manual,
