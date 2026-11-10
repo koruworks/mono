@@ -78,6 +78,7 @@ pub fn offer() -> ProtocolOffer {
         capability::MANAGED_USAGE,
         capability::PROJECTS,
         capability::DELEGATION,
+        capability::LAUNCH_SELECTION,
         capability::PROVIDER_MODELS,
         capability::PROVIDER_READINESS,
     ]

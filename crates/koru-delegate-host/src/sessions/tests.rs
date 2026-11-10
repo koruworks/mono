@@ -57,7 +57,7 @@ impl Read for Reader {
 struct Writer {
     frames: mpsc::Sender<Vec<u8>>,
     pending: Vec<u8>,
-    observed: Arc<std::sync::Mutex<Option<DelegationLaunch>>>,
+    observed: Arc<std::sync::Mutex<Option<koru_session_wire::CreateProfileSession>>>,
 }
 impl Write for Writer {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -70,7 +70,7 @@ impl Write for Writer {
         self.pending.clear();
         match frame.request {
             Request::CreateProfileSession { create } => {
-                *self.observed.lock().unwrap() = create.delegation
+                *self.observed.lock().unwrap() = Some(create)
             }
             Request::Disconnect => return Ok(()),
             _ => panic!("unexpected request"),
@@ -144,7 +144,18 @@ fn production_worker_offer_allows_selected_model_to_reach_session_host() {
             ..
         }))
     ));
-    assert_eq!(*observed.lock().unwrap(), Some(selection));
+    let created = observed.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        created
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.model.clone()),
+        selection.model
+    );
+    let mut expected = selection;
+    expected.model = None;
+    assert_eq!(created.delegation, Some(expected));
+    assert_eq!(created.origin, koru_session_protocol::SessionOrigin::Manual);
 }
 
 #[test]

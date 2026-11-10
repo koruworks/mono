@@ -1207,7 +1207,9 @@ impl SessionClient {
 
     /// Protocol v14. Create a delegated managed session: a managed profile
     /// launched with Koru's MCP endpoint and tool allowlist, and optionally
-    /// resuming a provider session.
+    /// resuming a provider session. An explicit model uses the existing v16
+    /// launch selection; the legacy delegation model slot is cleared so every
+    /// managed adapter receives the same selection vocabulary.
     ///
     /// **Refused locally on a connection without the capability**, before
     /// any frame is written. A v13 host would read the create, ignore the
@@ -1220,17 +1222,26 @@ impl SessionClient {
         profile: SessionProfileKey,
         provider: koru_session_protocol::ProviderKind,
         project_id: Option<ProjectId>,
-        delegation: koru_session_protocol::DelegationLaunch,
+        mut delegation: koru_session_protocol::DelegationLaunch,
         working_directory: PathBuf,
         size: GridSize,
     ) -> Result<SessionSummary, ClientError> {
         if !self.supports_delegation()
-            || (delegation.model.is_some() && !self.supports_provider_models())
+            || (delegation.model.is_some()
+                && (!self.supports_provider_models() || !self.supports_launch_selection()))
         {
             return Err(ClientError::Session(failure(
                 ErrorCode::CapabilityNotNegotiated,
             )));
         }
+        let selection =
+            delegation
+                .model
+                .take()
+                .map(|model| koru_session_protocol::LaunchSelection {
+                    model: Some(model),
+                    ..Default::default()
+                });
         match self.request(Request::CreateProfileSession {
             create: CreateProfileSession {
                 idempotency_key,
@@ -1240,7 +1251,7 @@ impl SessionClient {
                 project_id,
                 delegation: Some(delegation),
                 origin: Default::default(),
-                selection: None,
+                selection,
                 resume: false,
                 working_directory,
                 size,
