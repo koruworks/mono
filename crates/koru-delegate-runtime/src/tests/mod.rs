@@ -43,6 +43,7 @@ use uuid::Uuid;
 use crate::*;
 
 mod authority;
+mod bots;
 mod creation;
 mod deletion;
 mod dependency;
@@ -192,6 +193,10 @@ impl RecordingStore {
 }
 
 impl RunStore for RecordingStore {
+    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
+        Some(self)
+    }
+
     fn validate_intent(
         &self,
         request: &DelegationRequest,
@@ -645,6 +650,8 @@ pub(crate) struct SessionScript {
     pub resume_tokens: HashMap<SessionId, ProviderResumeToken>,
     /// The next `cancel_turn` is refused with this code.
     pub cancel_refused: Option<&'static str>,
+    pub bot_inputs: HashMap<IdempotencyKey, (koru_delegate_core::PendingInput, AgentTurnId)>,
+    pub bot_reply_lost: bool,
 }
 
 impl Default for SessionScript {
@@ -675,6 +682,8 @@ impl Default for SessionScript {
             lookup_sequence: VecDeque::new(),
             resume_tokens: HashMap::new(),
             cancel_refused: None,
+            bot_inputs: HashMap::new(),
+            bot_reply_lost: false,
         }
     }
 }
@@ -693,6 +702,33 @@ impl SessionEvents for NoEvents {
 }
 
 impl Sessions for ScriptedSessions {
+    fn bot_submit(
+        &mut self,
+        session: SessionId,
+        input: koru_delegate_core::PendingInput,
+    ) -> PortResult<AgentTurnId> {
+        let mut script = self.script.lock().unwrap();
+        if let Some((old, turn)) = script.bot_inputs.get(&input.idempotency_key) {
+            return if old == &input {
+                Ok(*turn)
+            } else {
+                Err(PortError::new(Port::Sessions, "conflict", "changed input"))
+            };
+        }
+        let turn = script.turns.pop_front().unwrap();
+        script.calls.push(Call::Submit {
+            session,
+            text: input.text.clone(),
+        });
+        script
+            .bot_inputs
+            .insert(input.idempotency_key, (input, turn));
+        if std::mem::take(&mut script.bot_reply_lost) {
+            return Err(PortError::new(Port::Sessions, "unavailable", "reply lost"));
+        }
+        Ok(turn)
+    }
+
     fn supports_delegation(&self) -> bool {
         self.script.lock().unwrap().supports_delegation
     }
@@ -1005,6 +1041,20 @@ pub(crate) struct FakeRoots {
 }
 
 impl ScopeRoots for FakeRoots {
+    fn bot_folder(
+        &self,
+        folder: &koru_delegate_core::BotWorkingFolder,
+    ) -> Result<koru_delegate_scope::ResolvedScope, koru_delegate_scope::ScopeRefusal> {
+        if folder.as_str().ends_with("/missing") {
+            return Err(koru_delegate_scope::ScopeRefusal::NotFound);
+        }
+        let directory = PathBuf::from(folder.as_str());
+        Ok(koru_delegate_scope::ResolvedScope {
+            identity: koru_delegate_scope::ScopeIdentity::fixture_canonical(&directory),
+            directory,
+        })
+    }
+
     fn project_root(&self, project: ProjectId) -> RootLookup {
         match self.projects.get(&project) {
             Some(root) => RootLookup::Directory(root.clone()),

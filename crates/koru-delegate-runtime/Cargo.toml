@@ -18,6 +18,7 @@ description = "Drives a delegated run from request to terminal state through the
 # `src/tests/dependency.rs` is the fence.
 
 [dependencies]
+blake3.workspace = true
 # `RunId`, `RunStatus`, `transition`, `RunHeader`, `TimelineEntry`,
 # `UsageFact` — what the orchestrator moves and records.
 koru-delegate-core = { path = "../koru-delegate-core" }
@@ -46,5 +47,6 @@ tracing = { workspace = true }
 koru-core = { path = "../koru-core" }
 
 [dev-dependencies]
+koru-delegate-scope = { path = "../koru-delegate-scope", features = ["fixtures"] }
 koru-time-zone = { path = "../koru-time-zone" }
 uuid = { workspace = true }

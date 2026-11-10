@@ -5834,6 +5834,7 @@ dependencies = [
 name = "koru-delegate-runtime"
 version = "0.0.3"
 dependencies = [
+ "blake3",
  "koru-core",
  "koru-delegate-core",
  "koru-delegate-document",

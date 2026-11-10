@@ -62,6 +62,7 @@ const PAGE: usize = 200;
 const WATCH_POLL: Duration = Duration::from_secs(1);
 
 pub enum Command {
+    BotDrain,
     Bot {
         command: koru_delegate_api::bots::BotCommand,
         reply: mpsc::SyncSender<Response>,
@@ -155,6 +156,7 @@ pub enum Command {
     },
 }
 
+mod bots;
 #[cfg(test)]
 mod tests;
 
@@ -204,6 +206,8 @@ pub struct Actor {
     deferred_starts: VecDeque<Command>,
     commands: mpsc::Sender<Command>,
     device: DeviceId,
+    bot_queue_cursor: u64,
+    bot_drain_pending: bool,
     pumps: HashMap<RunId, Pump>,
     watchers: HashMap<RunId, Vec<Watcher>>,
     active: Arc<AtomicU32>,
@@ -228,6 +232,8 @@ impl Actor {
             deferred_starts: VecDeque::new(),
             commands,
             device,
+            bot_queue_cursor: 0,
+            bot_drain_pending: false,
             pumps: HashMap::new(),
             watchers: HashMap::new(),
             active: Arc::new(AtomicU32::new(0)),
@@ -383,6 +389,7 @@ impl Actor {
             }
         }
         self.count_active();
+        self.wake_bots();
     }
 
     fn reserve_restart_claims(&mut self, claims: &mut Vec<ScheduledScopeReservation>) {
@@ -434,6 +441,7 @@ impl Actor {
             .orchestrator
             .has_unsettled()
             .then(|| Instant::now() + SETTLE_POLL);
+        let mut bot_budget_at: Option<Instant> = None;
         let mut stopping = false;
         let mut stop_requested = false;
         let mut scheduler_stopped = false;
@@ -466,7 +474,26 @@ impl Actor {
                 publication_at = self.publications_pending().then(|| Instant::now() + TICK);
             }
 
+            if bot_budget_at.is_some_and(|deadline| deadline <= now) {
+                let mut released = false;
+                for run in self.orchestrator.bot_budget_runs() {
+                    released |= self.orchestrator.bot_budget_tick(run).unwrap_or(false);
+                }
+                bot_budget_at = None;
+                if released {
+                    self.wake_bots();
+                }
+            }
+            if bot_budget_at.is_none() {
+                bot_budget_at = self
+                    .orchestrator
+                    .bot_budget_delay_ms()
+                    .ok()
+                    .flatten()
+                    .map(|delay| Instant::now() + Duration::from_millis(delay));
+            }
             let wait = [
+                bot_budget_at,
                 publication_at,
                 watched_at,
                 settle_at,
@@ -506,6 +533,7 @@ impl Actor {
                 }
                 Ok(command) => {
                     self.handle(command);
+                    bot_budget_at = None;
                     if !self.watchers.is_empty() && watched_at.is_none() {
                         watched_at = Some(Instant::now() + WATCH_POLL);
                     }
@@ -541,13 +569,26 @@ impl Actor {
     }
 
     fn handle(&mut self, command: Command) {
+        if self.refuse_ordinary_bot_route(&command) {
+            return;
+        }
         match command {
-            Command::Bot { command: _, reply } => {
-                let _ = reply.send(Response::Failure(Failure::new(
-                    "bot_execution_unavailable",
-                    "Bot execution is not available.",
-                    false,
-                )));
+            Command::BotDrain => self.drain_one_bot(),
+            Command::Bot { command, reply } => {
+                let queue_changed = matches!(
+                    command,
+                    koru_delegate_api::bots::BotCommand::Submit { .. }
+                        | koru_delegate_api::bots::BotCommand::Barrier { .. }
+                        | koru_delegate_api::bots::BotCommand::Stop { .. }
+                );
+                let response = match self.bot_command(command) {
+                    Ok(reply) => Response::Bot(reply),
+                    Err(failure) => Response::Failure(failure),
+                };
+                let _ = reply.send(response);
+                if queue_changed {
+                    self.wake_bots();
+                }
             }
             Command::Stop { .. } | Command::ScheduleStopped => {}
             Command::ScheduleBegin {
@@ -616,11 +657,13 @@ impl Actor {
                 let _ = reply.send(result);
                 self.drain_deferred_starts();
                 self.drain_deferred_restart_starts();
+                self.wake_bots();
             }
             Command::ScheduleAbort { run } => {
                 if self.schedule_admission == Some(run) {
                     self.schedule_admission = None;
                     self.drain_deferred_starts();
+                    self.wake_bots();
                 }
             }
             Command::ScheduleReconcile {
@@ -649,6 +692,7 @@ impl Actor {
                 };
                 let _ = reply.send(result);
                 self.drain_deferred_restart_starts();
+                self.wake_bots();
             }
             Command::Create { request, reply } => {
                 if self.schedule_admission.is_some() {
@@ -723,6 +767,23 @@ impl Actor {
                     }
                 };
                 let run = request.run;
+                // Scope/schedule refusal above stays cheap. Before an actual
+                // create, also reject an imported Bot Run with no local ledger.
+                match self.orchestrator.is_bot_run(run, Some(request.workspace)) {
+                    Ok(true) => {
+                        let _ = reply.send(Response::Failure(Failure::new(
+                            "bot_private_route_required",
+                            "Bot records require the private owner route.",
+                            false,
+                        )));
+                        return;
+                    }
+                    Ok(false) | Err(RunError::UnknownRun) => {}
+                    Err(error) => {
+                        let _ = reply.send(Response::Failure(failure_of(&error)));
+                        return;
+                    }
+                }
                 let scope = request.scope.clone();
                 let response = match self.create(request) {
                     Ok(created) => Response::Created(created),
@@ -897,6 +958,7 @@ impl Actor {
                 self.notify(run);
             }
             Command::Update { run, update } => {
+                let was_active = self.orchestrator.bot_budget_runs().contains(&run);
                 match self.orchestrator.handle(run, update) {
                     Ok(HandleOutcome::Continue) => {}
                     Ok(HandleOutcome::Ended) => self.stop_pump(run),
@@ -905,10 +967,14 @@ impl Actor {
                     }
                 }
                 self.notify(run);
+                if was_active && !self.orchestrator.bot_budget_runs().contains(&run) {
+                    self.wake_bots();
+                }
             }
             Command::PumpEnded { run } => {
                 self.pumps.remove(&run);
                 self.count_active();
+                self.wake_bots();
             }
         }
     }
@@ -1240,6 +1306,9 @@ impl Actor {
         let mut documents = std::collections::BTreeMap::new();
         let mut sessions = std::collections::BTreeMap::new();
         for entry in listed {
+            if entry.header.bot.is_some() {
+                continue;
+            }
             documents.insert(entry.header.run, entry.document);
             match entry.trashed_at_ms {
                 Some(trashed_at_ms) => trashed.push(TrashedRun {

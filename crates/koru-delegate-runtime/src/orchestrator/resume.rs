@@ -66,6 +66,9 @@ impl Orchestrator {
         run: RunId,
         confirm: bool,
     ) -> Result<koru_delegate_core::WorkspaceScope, RunError> {
+        if self.header(run)?.bot.is_some() {
+            return Err(super::bots::refused("bot_continue_requires_new_run"));
+        }
         let prior = match self.status(run)? {
             RunStatus::Interrupted { prior_attempt } => prior_attempt,
             other => {
@@ -109,6 +112,9 @@ impl Orchestrator {
         confirm: bool,
         mut resolved_scope: Option<ResolvedScope>,
     ) -> Result<Started, RunError> {
+        if self.header(run)?.bot.is_some() {
+            return Err(super::bots::refused("bot_continue_requires_new_run"));
+        }
         let prior = match self.status(run)? {
             RunStatus::Interrupted { prior_attempt } => prior_attempt,
             other => {

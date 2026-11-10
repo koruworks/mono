@@ -156,6 +156,45 @@ impl Orchestrator {
         workspace: WorkspaceId,
     ) -> Result<Created, CreateError> {
         let run = request.run;
+        let bot = if matches!(
+            request.scope,
+            koru_delegate_core::WorkspaceScope::BotFolder { .. }
+        ) {
+            let admission = self
+                .ports
+                .store
+                .bots()
+                .ok_or_else(|| {
+                    crate::PortError::new(
+                        crate::Port::Store,
+                        "bot_execution_unavailable",
+                        "Bot admission is unavailable.",
+                    )
+                })?
+                .bot_admission(run)
+                .map_err(|_| {
+                    crate::PortError::new(
+                        crate::Port::Store,
+                        "bot_admission_unreadable",
+                        "Bot admission could not be read.",
+                    )
+                })?
+                .filter(|record| {
+                    record.submission.valid()
+                        && record.submission.request == request
+                        && record.submission.workspace == workspace
+                })
+                .ok_or_else(|| {
+                    crate::PortError::new(
+                        crate::Port::Store,
+                        "bot_admission_required",
+                        "A matching durable Bot admission is required.",
+                    )
+                })?;
+            Some(admission.submission.provenance)
+        } else {
+            None
+        };
         // Step 2. The pins are the identity the run keeps forever (UC2).
         let captured = match self.ports.capture.capture(run, &request.context, workspace) {
             Ok(captured) => captured,
@@ -194,6 +233,7 @@ impl Orchestrator {
         };
         let now = self.ports.clock.now_ms();
         let mut header = RunHeader::from_request(request, now);
+        header.bot = bot;
         header.context = captured.pins;
         // Step 3. Idempotent by run id in the port; a retry after a lost
         // answer finds the document it made.

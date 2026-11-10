@@ -12,6 +12,10 @@ description = "Whether two working scopes are the same folder or nest, and which
 # it declares. It links the run vocabulary it speaks and `std`'s filesystem —
 # `canonicalize` is the whole of its I/O — and no database, no wire, no
 # process and no surface. `src/tests/dependency.rs` is the fence.
+[features]
+# Pure fixture identities are never enabled by shipping composition.
+fixtures = []
+
 [dependencies]
 # `WorkspaceScope`, `RunId`, `RunAttemptId`, `ProjectId`, `RelativeFolder`.
 koru-delegate-core = { path = "../koru-delegate-core" }

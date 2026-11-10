@@ -599,3 +599,28 @@ fn every_bot_write_keeps_the_existing_crash_commit_boundary() {
         }
     }
 }
+
+#[test]
+fn execution_projection_and_reserved_candidates_keep_recovery_identity_without_payload() {
+    let (mut db, _) = memory();
+    let s = submission(61);
+    let admission = db.admit_bot(&s).unwrap();
+    let projection = db.bot_execution(s.request.run).unwrap().unwrap();
+    assert_eq!(projection, admission.execution());
+    assert_eq!(
+        db.reconcile_bot_execution(&key(&s)).unwrap(),
+        Some(projection.clone())
+    );
+    assert_eq!(
+        db.reserve_bot(s.request.run).unwrap(),
+        BotReservation::Acquired
+    );
+    let active = db.active_bot_executions(s.provenance.owner.device).unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(
+        active[0].state,
+        koru_delegate_core::BotAdmissionState::Reserved
+    );
+    assert_eq!(db.queued_bots(0, 1).unwrap()[0].run, s.request.run);
+    assert!(!format!("{:?}", active[0]).contains("PRIVATE-TASK-SENTINEL"));
+}

@@ -86,7 +86,38 @@ impl Orchestrator {
         // §7.6: every attempt a process may still exist for.
         let mut liveness: HashMap<koru_delegate_core::RunAttemptId, Liveness> = HashMap::new();
         let mut recorded = Vec::new();
-        for row in self.ports.store.live_attempts()? {
+        let mut restart_rows = self.ports.store.live_attempts()?;
+        // Ordinary live_attempts excludes terminal Unknown/Interrupted phases.
+        // A Bot's unretired row still owns capacity and its folder. This is a
+        // one-time startup intent scan, never a timer or queue payload scan.
+        for intent in self.ports.store.intents()? {
+            if !self
+                .ports
+                .store
+                .bots()
+                .map(|ledger| ledger.bot_execution(intent.run))
+                .transpose()?
+                .flatten()
+                .is_some()
+            {
+                continue;
+            }
+            if let Some(row) = self.ports.store.current_attempt(intent.run)? {
+                if row.retired {
+                    self.bot_ledger()?
+                        .settle_bot(intent.run, koru_delegate_sqlite::BotSettlement::Settled)?;
+                    continue;
+                }
+                if !row.retired
+                    && !restart_rows
+                        .iter()
+                        .any(|known| known.attempt == row.attempt)
+                {
+                    restart_rows.push(row);
+                }
+            }
+        }
+        for row in restart_rows {
             let run = row.run;
             let header = match self.header(run) {
                 Ok(header) => header,
@@ -100,7 +131,38 @@ impl Orchestrator {
                 attempt: row.attempt,
                 scope: header.scope.clone(),
             });
-            let (verdict, lookup) = self.classify(&row)?;
+            if header.bot.is_some() && (row.phase.is_terminal() || header.status.is_terminal()) {
+                let mut attempt = Attempt::new(row.attempt, row.generation);
+                attempt.is_bot = true;
+                attempt.session = row.provider_session.and_then(|key| key.session);
+                self.open(run)?.attempt = Some(attempt);
+                if self.bot_prove_end(run, true).unwrap_or(false) {
+                    self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
+                    liveness.insert(row.attempt, Liveness::Ended);
+                    report.reconciled.push(run);
+                } else {
+                    liveness.insert(row.attempt, Liveness::Unknown);
+                    report.unresolved.push(run);
+                }
+                continue;
+            }
+            if header.bot.is_some() {
+                // Even an unresolved creation needs the same active-budget
+                // deadline and owner Stop path after restart.
+                let mut attempt = Attempt::new(row.attempt, row.generation);
+                attempt.is_bot = true;
+                attempt.session = row.provider_session.and_then(|key| key.session);
+                self.open(run)?.attempt = Some(attempt);
+            }
+            let (verdict, lookup) = match self.classify(&row) {
+                Ok(answer) => answer,
+                Err(_) if header.bot.is_some() => {
+                    liveness.insert(row.attempt, Liveness::Unknown);
+                    report.unresolved.push(run);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             self.trace(run, "restart", format_args!("{}", verdict.name()));
             let verdict = match (&verdict, &lookup) {
                 // The host still lists the session but its process is gone:
@@ -151,8 +213,23 @@ impl Orchestrator {
                     report.reconciled.push(run);
                 }
                 RestartVerdict::Interrupted { prior, .. } => {
-                    liveness.insert(row.attempt, Liveness::Ended);
                     self.interrupt(&row, prior, verdict.records_as())?;
+                    let ended = if header.bot.is_some() {
+                        self.ports
+                            .store
+                            .current_attempt(run)?
+                            .is_some_and(|current| current.retired)
+                    } else {
+                        true
+                    };
+                    liveness.insert(
+                        row.attempt,
+                        if ended {
+                            Liveness::Ended
+                        } else {
+                            Liveness::Unknown
+                        },
+                    );
                     report.interrupted.push(run);
                 }
             }
@@ -185,6 +262,9 @@ impl Orchestrator {
                         continue;
                     }
                 };
+                if header.bot.is_some() {
+                    continue;
+                }
                 match header.origin {
                     koru_delegate_core::RunOrigin::Manual => {
                         manual.push((record.run, header.scope))
@@ -353,12 +433,26 @@ impl Orchestrator {
     ) -> Result<Started, RunError> {
         let run = row.run;
         let mut attempt = Attempt::new(row.attempt, row.generation);
+        attempt.is_bot = self.header(run)?.bot.is_some();
+        let is_bot = attempt.is_bot;
+        let bot_send = if is_bot {
+            self.bot_ledger()?
+                .bot_execution(run)?
+                .and_then(|record| record.initial_send)
+        } else {
+            None
+        };
+        let bot_turn = bot_send.as_ref().and_then(|send| send.turn);
         attempt.session = Some(session);
         // A session summary proves activity, not who asked for it. Read only
         // a bounded window of existing content-free steps for positive ownership.
         let timeline = self.open(run)?.doc.document().timeline_window(0, 256);
         if let Some(turn) = active_turn {
-            let originator = recovered_originator(&timeline, row.attempt, turn);
+            let originator = if is_bot {
+                (bot_turn == Some(turn)).then_some(TurnOriginator::Orchestrator)
+            } else {
+                recovered_originator(&timeline, row.attempt, turn)
+            };
             if originator == Some(TurnOriginator::Orchestrator) {
                 attempt.orchestrator_turn = Some(turn);
             } else {
@@ -370,14 +464,16 @@ impl Orchestrator {
         }
         self.open(run)?.attempt = Some(attempt);
         let status = self.status(run)?;
-        if !matches!(status, RunStatus::Running { .. }) {
+        if !matches!(status, RunStatus::Running { .. }) && (!is_bot || bot_turn.is_some()) {
             // The document says the provider was not up yet: the attempt
             // is `Starting` and the session exists, so it is up now.
             self.apply(run, &RunEvent::ProviderStarted)?;
         }
-        self.ports
-            .store
-            .advance(run, row.generation, AttemptPhase::Running)?;
+        if !is_bot || bot_turn.is_some() {
+            self.ports
+                .store
+                .advance(run, row.generation, AttemptPhase::Running)?;
+        }
         let observation = self.ports.sessions.observe(session)?;
         // An inactive summary can be paired with the latest observed terminal,
         // but only complete coverage and the same positive ownership proof
@@ -401,8 +497,12 @@ impl Orchestrator {
                 | (AgentEvent::TurnFailed { turn_id, .. }, Some(ManagedState::Failed)) => *turn_id,
                 _ => return None,
             };
-            (recovered_originator(&timeline, row.attempt, turn)
-                == Some(TurnOriginator::Orchestrator))
+            (if is_bot {
+                bot_turn == Some(turn)
+            } else {
+                recovered_originator(&timeline, row.attempt, turn)
+                    == Some(TurnOriginator::Orchestrator)
+            })
             .then_some(turn)
         });
         let clear_recovered_approval;
@@ -432,6 +532,18 @@ impl Orchestrator {
                         ..
                     } if attempt.pending_approvals.get(approval_id) == Some(turn_id) => {
                         attempt.pending_approvals.remove(approval_id);
+                    }
+                    koru_session_protocol::AgentEvent::QuestionsRequired {
+                        turn_id,
+                        request_id,
+                        ..
+                    } if is_bot && Some(*turn_id) == recovery_turn => {
+                        attempt.pending_questions.insert(*request_id, *turn_id);
+                    }
+                    koru_session_protocol::AgentEvent::QuestionsResolved { request_id, .. }
+                        if is_bot =>
+                    {
+                        attempt.pending_questions.remove(request_id);
                     }
                     _ => {}
                 }
@@ -562,7 +674,8 @@ impl Orchestrator {
         // holds the session: an orchestrator turn cannot end a run that
         // is under human control (§7.5), and the completion this device
         // did not see is theirs to finish.
-        if active_turn.is_none()
+        if !is_bot
+            && active_turn.is_none()
             && !discovered
             && (recovery_turn.is_some()
                 || !matches!(
@@ -632,6 +745,12 @@ impl Orchestrator {
                 _ => {}
             }
         }
+        if is_bot {
+            if active_turn.is_none() {
+                self.attempt_mut(run)?.bot_terminal_turn = recovery_turn;
+            }
+            self.bot_refresh_active_clock(run)?;
+        }
         Ok(Started {
             run,
             attempt: row.attempt,
@@ -652,13 +771,18 @@ impl Orchestrator {
         )>,
     ) -> Result<(), RunError> {
         let run = row.run;
-        self.open(run)?.attempt = Some(Attempt::new(row.attempt, row.generation));
+        let mut attempt = Attempt::new(row.attempt, row.generation);
+        attempt.is_bot = self.header(run)?.bot.is_some();
+        attempt.session = row.provider_session.and_then(|key| key.session);
+        let is_bot = attempt.is_bot;
+        self.open(run)?.attempt = Some(attempt);
         let status = self.status(run)?;
         if status.is_terminal() {
             self.end_attempt(run, AttemptPhase::Ended, false)?;
             return Ok(());
         }
         if let Some((Some(ManagedState::Completed), None)) = summary
+            && !is_bot
             && matches!(status, RunStatus::Running { .. })
         {
             let registered = self.ports.registrations.registered(run, row.attempt, None);
@@ -692,6 +816,33 @@ impl Orchestrator {
     ) -> Result<(), RunError> {
         let run = row.run;
         let status = self.status(run)?;
+        if self.header(run)?.bot.is_some() {
+            let mut attempt = Attempt::new(row.attempt, row.generation);
+            attempt.is_bot = true;
+            attempt.session = row.provider_session.and_then(|key| key.session);
+            self.open(run)?.attempt = Some(attempt);
+            let ended = prior == PriorAttempt::Ended && self.bot_prove_end(run, false)?;
+            if !status.is_terminal() {
+                self.apply(
+                    run,
+                    &RunEvent::Interrupt {
+                        prior_attempt: if ended {
+                            PriorAttempt::Ended
+                        } else {
+                            PriorAttempt::Unknown
+                        },
+                    },
+                )?;
+            }
+            if ended {
+                self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
+            } else if !row.phase.is_terminal() {
+                self.ports
+                    .store
+                    .advance(run, row.generation, AttemptPhase::Unknown)?;
+            }
+            return Ok(());
+        }
         if status.is_terminal() {
             self.ports
                 .store

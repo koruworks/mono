@@ -32,8 +32,15 @@ use super::{Orchestrator, RunError};
 impl Orchestrator {
     /// End the run. Idempotent on a finished run.
     pub fn cancel(&mut self, run: RunId) -> Result<RunHeader, RunError> {
+        let bot = self.header(run)?.bot.is_some();
+        if bot && !self.bot_prove_end(run, true)? {
+            return Err(super::bots::refused("bot_stop_unconfirmed"));
+        }
         let status = self.status(run)?;
         if status.is_terminal() {
+            if bot {
+                self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
+            }
             return self.header(run);
         }
         let human_holds_control = matches!(status.control(), Some(ControlState::Human { .. }));
@@ -42,7 +49,8 @@ impl Orchestrator {
             .attempt
             .as_ref()
             .map(|attempt| (attempt.id, attempt.session, attempt.orchestrator_turn));
-        if !human_holds_control
+        if !bot
+            && !human_holds_control
             && let (RunStatus::Running { .. }, Some((_, Some(session), Some(turn)))) =
                 (&status, live)
         {
@@ -105,7 +113,9 @@ impl Orchestrator {
                 reason: CancelReason::Run,
             }),
         )?;
-        if attempt.is_some() {
+        if bot {
+            self.bot_end_attempt(run, AttemptPhase::Ended, false)?;
+        } else if attempt.is_some() {
             self.end_attempt(run, AttemptPhase::Ended, true)?;
         } else if let Some(row) = self.ports.store.current_attempt(run)?
             && row.is_live()

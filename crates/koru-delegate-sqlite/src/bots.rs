@@ -8,7 +8,8 @@ mod repository;
 mod tests;
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotDeliveryReceipt,
-    BotId, BotOwner, BotSubmission, BotSubmissionKey, IdempotencyKey, RunAttemptId, RunId,
+    BotId, BotOwner, BotRequestId, BotSubmission, BotSubmissionKey, IdempotencyKey, RunAttemptId,
+    RunId,
 };
 
 pub const BOT_ACTIVE_BUDGET_MS: u64 = 600_000;
@@ -46,6 +47,53 @@ pub struct BotAdmissionRecord {
     pub updated_at_ms: i64,
 }
 
+/// Bounded column-only projection for observation/control and active budgets.
+/// It contains no task, context, policy body, or transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotExecutionRecord {
+    pub run: RunId,
+    pub owner: BotOwner,
+    pub bot: BotId,
+    pub request: BotRequestId,
+    pub config_revision: u64,
+    pub policy_revision: u64,
+    pub sequence: u64,
+    pub state: BotAdmissionState,
+    pub active_elapsed_ms: u64,
+    pub active_since_ms: Option<i64>,
+    pub initial_send: Option<BotInitialSend>,
+}
+impl BotExecutionRecord {
+    pub fn active_elapsed_at(&self, now_ms: i64) -> u64 {
+        active_elapsed(self.active_elapsed_ms, self.active_since_ms, now_ms)
+    }
+}
+impl BotAdmissionRecord {
+    pub fn execution(&self) -> BotExecutionRecord {
+        let p = &self.submission.provenance;
+        BotExecutionRecord {
+            run: self.submission.request.run,
+            owner: p.owner,
+            bot: p.bot,
+            request: p.submission,
+            config_revision: p.config_revision,
+            policy_revision: p.policy_revision,
+            sequence: self.sequence,
+            state: self.state,
+            active_elapsed_ms: self.active_elapsed_ms,
+            active_since_ms: self.active_since_ms,
+            initial_send: self.initial_send.clone(),
+        }
+    }
+}
+fn active_elapsed(elapsed: u64, since: Option<i64>, now: i64) -> u64 {
+    elapsed.saturating_add(since.map_or(0, |since| {
+        now.checked_sub(since)
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(BOT_ACTIVE_BUDGET_MS)
+    }))
+}
+
 /// Queue scans never load the bounded-but-large current task payload. The
 /// actor loads one full admission only after choosing a dispatch candidate.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,13 +109,7 @@ impl BotAdmissionRecord {
     /// A clock moving backwards cannot manufacture more trial budget. An
     /// uncertain open interval is conservatively exhausted, not reset.
     pub fn active_elapsed_at(&self, now_ms: i64) -> u64 {
-        self.active_elapsed_ms
-            .saturating_add(self.active_since_ms.map_or(0, |since| {
-                now_ms
-                    .checked_sub(since)
-                    .and_then(|n| u64::try_from(n).ok())
-                    .unwrap_or(BOT_ACTIVE_BUDGET_MS)
-            }))
+        active_elapsed(self.active_elapsed_ms, self.active_since_ms, now_ms)
     }
 }
 
@@ -118,6 +160,13 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    /// Bounded payload-free projection of the two reserved/executing host
+    /// slots. Retained reservations remain eligible for reconciliation even
+    /// when no additional queued admission can acquire capacity.
+    fn active_bot_executions(
+        &self,
+        device: koru_delegate_core::DeviceId,
+    ) -> Result<Vec<BotExecutionRecord>, BotLedgerError>;
     /// Atomically insert the ordinary Run intent and Bot admission. Exact
     /// retries return the original row; changed full typed payload conflicts.
     /// Enforce 50 queued jobs/Bot before inserting either row; a rejected call
@@ -128,11 +177,20 @@ pub trait BotLedger {
         submission: &BotSubmission,
     ) -> Result<BotAdmissionRecord, BotLedgerError>;
     fn bot_admission(&self, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError>;
+    fn bot_execution(&self, run: RunId) -> Result<Option<BotExecutionRecord>, BotLedgerError>;
+    fn reconcile_bot_execution(
+        &self,
+        key: &BotSubmissionKey,
+    ) -> Result<Option<BotExecutionRecord>, BotLedgerError>;
+
     fn reconcile_bot(
         &self,
         key: &BotSubmissionKey,
     ) -> Result<Option<BotAdmissionRecord>, BotLedgerError>;
-    /// Ordered, bounded pages; limit is clamped to 1..=1000. No transcript.
+    /// Ordered, bounded dispatch candidates (queued or reserved before a
+    /// crash); limit is clamped to 1..=1000. No task payload. The actor must
+    /// reconcile the journal before dispatching a recovered reservation;
+    /// executing/unknown work is never offered for a new launch.
     fn queued_bots(
         &self,
         after: u64,

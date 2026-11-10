@@ -92,6 +92,21 @@ pub fn offer() -> ProtocolOffer {
     }
 }
 
+/// Extra interactive capabilities are offered only for Bot creation.
+/// Controller connections may answer them without enabling questions in
+/// ordinary sessions, whose creation offer remains unchanged.
+fn bot_offer() -> ProtocolOffer {
+    let mut offered = offer();
+    let mut capabilities: Vec<_> = offered.capabilities.iter().cloned().collect();
+    capabilities.extend(
+        [capability::MANAGED_QUESTIONS, "conditional-turn-steering"]
+            .into_iter()
+            .map(|name| CapabilityName::from_str(name).expect("built-in capability")),
+    );
+    offered.capabilities = CapabilitySet::new(capabilities);
+    offered
+}
+
 fn connect(endpoint: &koru_ipc::Endpoint) -> Result<SessionClient, ClientError> {
     SessionClient::connect(endpoint, PRODUCT, offer())
 }
@@ -285,8 +300,19 @@ impl Sessions for HostSessions {
         })?;
         let size = GridSize::new(COLUMNS, ROWS)
             .map_err(|code| PortError::new(Port::Sessions, code.as_str(), "grid"))?;
-        let summary = self
-            .unary()?
+        let bot_client = if launch.is_bot {
+            Some(
+                SessionClient::connect(&self.endpoint, PRODUCT, bot_offer())
+                    .map_err(|error| session_error("connect", error))?,
+            )
+        } else {
+            None
+        };
+        let client = match &bot_client {
+            Some(client) => client,
+            None => self.unary()?,
+        };
+        let summary = client
             .create_delegated(
                 launch.key,
                 launch.profile,
@@ -332,7 +358,8 @@ impl Sessions for HostSessions {
         if self.controllers.contains_key(&session) {
             return Ok(());
         }
-        let client = connect(&self.endpoint).map_err(|error| session_error("connect", error))?;
+        let client = SessionClient::connect(&self.endpoint, PRODUCT, bot_offer())
+            .map_err(|error| session_error("connect", error))?;
         let generation = ViewportGeneration::new(1).expect("one");
         let (lease, render) = client
             .attach_live(session, generation, COLUMNS, 1)
@@ -381,6 +408,87 @@ impl Sessions for HostSessions {
             )
             .map_err(|error| session_error("submit", error))?;
         Ok(result.turn_id)
+    }
+
+    fn bot_submit(&mut self, _session: SessionId, _input: PendingInput) -> PortResult<AgentTurnId> {
+        // Protocol26's initial-only owner primitive is the required consumer.
+        // Ordinary send_pending_input may steer and is not a safe fallback.
+        Err(PortError::new(
+            Port::Sessions,
+            "bot_initial_input_unavailable",
+            "Initial-only Bot input requires the session owner contract.",
+        ))
+    }
+
+    fn bot_answer_approval(
+        &mut self,
+        session: SessionId,
+        approval: koru_session_protocol::ApprovalId,
+        decision: koru_session_protocol::ApprovalDecision,
+        choice: Option<koru_session_protocol::ApprovalChoiceId>,
+    ) -> PortResult<()> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .answer_approval(
+                session,
+                controller.lease,
+                IdempotencyKey::mint(),
+                approval,
+                decision,
+                choice,
+            )
+            .map_err(|error| session_error("bot_approval", error))
+    }
+    fn bot_answer_questions(
+        &mut self,
+        session: SessionId,
+        request: koru_session_protocol::QuestionRequestId,
+        answers: Vec<koru_session_protocol::QuestionAnswer>,
+    ) -> PortResult<()> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .answer_questions(
+                session,
+                controller.lease,
+                IdempotencyKey::mint(),
+                request,
+                Some(answers),
+            )
+            .map_err(|error| session_error("bot_questions", error))
+    }
+    fn bot_ingest_attachment(
+        &mut self,
+        session: SessionId,
+        id: koru_session_protocol::AttachmentId,
+        source: koru_session_protocol::AttachmentSource,
+        data: String,
+    ) -> PortResult<koru_session_protocol::Attachment> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .ingest_attachment_base64(session, controller.lease, id, source, data)
+            .map_err(|error| session_error("bot_attachment", error))
+    }
+    fn bot_remove_attachment(
+        &mut self,
+        session: SessionId,
+        id: koru_session_protocol::AttachmentId,
+    ) -> PortResult<koru_session_protocol::Attachment> {
+        let controller = self.controller(session)?;
+        controller
+            .client
+            .remove_attachment(session, controller.lease, id)
+            .map_err(|error| session_error("bot_attachment", error))
+    }
+    fn bot_attachments(
+        &mut self,
+        session: SessionId,
+    ) -> PortResult<Vec<koru_session_protocol::Attachment>> {
+        self.unary()?
+            .attachments(session)
+            .map_err(|error| session_error("bot_attachments", error))
     }
 
     fn cancel_turn(
