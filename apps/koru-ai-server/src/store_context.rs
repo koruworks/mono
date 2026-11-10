@@ -46,11 +46,14 @@ impl StoreContextPort for StoreContextAdapter {
                     .ok_or_else(document_unavailable)?;
                 // **Only the reader's profile's documents**: another
                 // profile's is the same answer as a missing one.
-                if store
+                store.profile(reader).map_err(|_| document_unavailable())?;
+                store
                     .workspace(workspace)
+                    .map_err(|_| document_unavailable())?;
+                if store
+                    .current_placement_profile(workspace)
                     .map_err(|_| context_unavailable())?
-                    .owner
-                    != reader
+                    != Some(reader)
                 {
                     return Err(document_unavailable());
                 }
@@ -110,11 +113,12 @@ impl StoreContextPort for StoreContextAdapter {
     ) -> Result<WorkspaceFileData, AiError> {
         self.client
             .with_store(move |store| {
+                store.profile(reader).map_err(|_| file_unavailable())?;
+                store.workspace(workspace).map_err(|_| file_unavailable())?;
                 if store
-                    .workspace(workspace)
+                    .current_placement_profile(workspace)
                     .map_err(|_| file_unavailable())?
-                    .owner
-                    != reader
+                    != Some(reader)
                     || store.locate(document).map_err(|_| file_unavailable())? != Some(workspace)
                 {
                     return Err(file_unavailable());
@@ -168,21 +172,6 @@ impl StoreContextPort for StoreContextAdapter {
         destination: &DocumentDestination,
         markdown: &str,
     ) -> Result<DocumentId, AiError> {
-        let workspace = self
-            .client
-            .with_store({
-                let workspace = destination.workspace_id;
-                move |store| store.workspace(workspace)
-            })
-            .map_err(|_| export_unavailable())?
-            .map_err(|_| export_unavailable())?;
-        if workspace.owner != destination.profile_id {
-            return Err(AiError::new(
-                AiErrorClass::Storage,
-                "The selected document destination is no longer available.",
-                false,
-            ));
-        }
         let snapshot = koru_import_markdown::document_snapshot(
             koru_core::WorkspaceId::from_uuid(destination.workspace_id.as_uuid()),
             &destination.title,
@@ -214,7 +203,8 @@ impl StoreContextPort for StoreContextAdapter {
             request.update(&[0]);
         }
         self.client
-            .seed_document(
+            .seed_document_for_profile(
+                destination.profile_id,
                 destination.workspace_id,
                 destination.title.clone(),
                 koru_core::explore::KIND_DOCUMENT.to_owned(),
@@ -227,7 +217,21 @@ impl StoreContextPort for StoreContextAdapter {
                 koru_ai_core::Timestamp::now(),
             )
             .map_err(|_| export_unavailable())?
-            .map_err(|_| export_unavailable())
+            .map_err(|error| {
+                if matches!(
+                    error.code(),
+                    koru_store_core::errors::Code::WorkspaceNotFound
+                        | koru_store_core::errors::Code::ProfileNotFound
+                ) {
+                    AiError::new(
+                        AiErrorClass::Storage,
+                        "The selected document destination is no longer available.",
+                        false,
+                    )
+                } else {
+                    export_unavailable()
+                }
+            })
     }
 
     /// The live profiles in the Store's order — the order Koru lists them,
@@ -237,14 +241,24 @@ impl StoreContextPort for StoreContextAdapter {
     fn profile_catalog(&self) -> Result<ProfileCatalog, AiError> {
         self.client
             .with_store(|store| {
-                let profiles = store.profiles()?.into_iter().map(|profile| profile.id);
-                let owners = store
-                    .workspaces_including_deleted()?
+                let profiles: Vec<_> = store
+                    .profiles()?
                     .into_iter()
-                    .map(|workspace| (workspace.id, workspace.owner));
+                    .map(|profile| profile.id)
+                    .collect();
+                // The catalog row can lag a remote move or unassignment.
+                // Use the same root placement as the read/write checks.
+                let mut owners = Vec::new();
+                for workspace in store.workspaces_including_deleted()? {
+                    if let Some(profile) = store.current_placement_profile(workspace.id)?
+                        && profiles.contains(&profile)
+                    {
+                        owners.push((workspace.id, profile));
+                    }
+                }
                 Ok::<_, koru_store_core::Error>(ProfileCatalog {
-                    profiles: profiles.collect(),
-                    workspace_owners: owners.collect(),
+                    profiles,
+                    workspace_owners: owners.into_iter().collect(),
                 })
             })
             .map_err(|_| profiles_unavailable())?
@@ -321,6 +335,9 @@ fn context_unavailable() -> AiError {
         true,
     )
 }
+
+#[cfg(test)]
+mod placement_tests;
 
 #[cfg(test)]
 mod tests {

@@ -424,6 +424,8 @@ enum WorkerCommand {
     },
     SeedDocument {
         workspace: koru_store_core::ids::WorkspaceId,
+        /// Rechecked under the Store lock immediately before creation/replay.
+        required_profile: Option<koru_store_core::ids::ProfileId>,
         title: String,
         kind: String,
         parent: Option<koru_store_core::ids::DocumentId>,
@@ -667,10 +669,83 @@ impl StoreWorkerClient {
         std::result::Result<koru_store_core::service::SeededCreation, Error>,
         WorkerError,
     > {
+        self.seed_document_checked(
+            workspace,
+            title,
+            kind,
+            parent,
+            index,
+            scope,
+            idempotency_key,
+            request_hash,
+            initial_update,
+            attribution,
+            at,
+            None,
+        )
+    }
+
+    /// Publish for a Profile only while it currently holds the Workspace.
+    /// The check and creation share the worker's Store lock, including replay.
+    #[allow(clippy::too_many_arguments)]
+    pub fn seed_document_for_profile(
+        &self,
+        profile: koru_store_core::ids::ProfileId,
+        workspace: koru_store_core::ids::WorkspaceId,
+        title: String,
+        kind: String,
+        parent: Option<koru_store_core::ids::DocumentId>,
+        index: Option<usize>,
+        scope: String,
+        idempotency_key: String,
+        request_hash: String,
+        initial_update: Vec<u8>,
+        at: Timestamp,
+    ) -> std::result::Result<
+        std::result::Result<koru_store_core::ids::DocumentId, Error>,
+        WorkerError,
+    > {
+        self.seed_document_checked(
+            workspace,
+            title,
+            kind,
+            parent,
+            index,
+            scope,
+            idempotency_key,
+            request_hash,
+            initial_update,
+            None,
+            at,
+            Some(profile),
+        )
+        .map(|result| result.map(|creation| creation.document))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_document_checked(
+        &self,
+        workspace: koru_store_core::ids::WorkspaceId,
+        title: String,
+        kind: String,
+        parent: Option<koru_store_core::ids::DocumentId>,
+        index: Option<usize>,
+        scope: String,
+        idempotency_key: String,
+        request_hash: String,
+        initial_update: Vec<u8>,
+        attribution: Option<String>,
+        at: Timestamp,
+        required_profile: Option<koru_store_core::ids::ProfileId>,
+    ) -> std::result::Result<
+        std::result::Result<koru_store_core::service::SeededCreation, Error>,
+        WorkerError,
+    > {
         let (reply, response) = std::sync::mpsc::sync_channel(1);
         self.requests
             .try_send(WorkerCommand::SeedDocument {
                 workspace,
+                required_profile,
                 title,
                 kind,
                 parent,

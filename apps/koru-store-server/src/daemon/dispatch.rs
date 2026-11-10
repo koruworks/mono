@@ -148,6 +148,7 @@ pub(crate) async fn serve(
             }
             WorkerCommand::SeedDocument {
                 workspace,
+                required_profile,
                 title,
                 kind,
                 parent,
@@ -161,20 +162,29 @@ pub(crate) async fn serve(
                 reply,
             } => {
                 let result = match state.store.lock() {
-                    Ok(mut store) => store.create_seeded_document_attributed(
-                        workspace,
-                        &title,
-                        &kind,
-                        parent,
-                        index,
-                        &scope,
-                        &idempotency_key,
-                        &request_hash,
-                        None,
-                        initial_update,
-                        attribution.as_deref(),
-                        at,
-                    ),
+                    Ok(mut store) => (|| {
+                        if let Some(profile) = required_profile {
+                            store.workspace(workspace)?;
+                            store.profile(profile)?;
+                            if store.current_placement_profile(workspace)? != Some(profile) {
+                                return Err(Error::bare(Code::WorkspaceNotFound));
+                            }
+                        }
+                        store.create_seeded_document_attributed(
+                            workspace,
+                            &title,
+                            &kind,
+                            parent,
+                            index,
+                            &scope,
+                            &idempotency_key,
+                            &request_hash,
+                            None,
+                            initial_update,
+                            attribution.as_deref(),
+                            at,
+                        )
+                    })(),
                     Err(_) => Err(Error::new(Code::Internal, "Store worker state is poisoned")),
                 };
                 let result = result.map(|creation| {
