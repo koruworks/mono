@@ -49,6 +49,10 @@ pub(in crate::worker) struct ControlResult {
     result: Result<BotReply, koru_delegate_api::Failure>,
     reply: SyncSender<ApiResult<ToolDecisionResponse>>,
 }
+enum PreparedDecision {
+    Forward(ControlJob),
+    Local(ToolDecisionResponse),
+}
 impl ControlJob {
     #[cfg(test)]
     pub(super) fn fixture(port: Arc<dyn BotDelegatePort>) -> Self {
@@ -195,7 +199,7 @@ impl WorkerState {
         approve: bool,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     ) {
-        let prepared = (|| -> ApiResult<ControlJob> {
+        let prepared = (|| -> ApiResult<PreparedDecision> {
             authorize(&context, AiScope::Chat)?;
             let access = self.bot_read_access(&context)?;
             let row = self
@@ -238,6 +242,26 @@ impl WorkerState {
                 .map_err(ai_failure)?
                 .ok_or_else(not_found)?;
             if attempt.status.is_terminal() {
+                if row
+                    .agent_input
+                    .as_deref()
+                    .and_then(koru_ai_core::QuestionsRecord::decode)
+                    .is_some_and(|record| record.next_message)
+                    && self
+                        .repository
+                        .bot_source_for_tool(row.attempt_id, row.id)
+                        .map_err(ai_failure)?
+                        .is_some_and(|source| source.kind == BotToolSourceKind::Questions)
+                {
+                    if !approve && decision.choice.is_none() && decision.answers.is_none() {
+                        return self.skip_next_message(&row).map(PreparedDecision::Local);
+                    }
+                    return Err(failure(
+                        "answer_as_message",
+                        "These questions are answered by your next message; send the answers as one.",
+                        false,
+                    ));
+                }
                 return Err(tool_not_resumable());
             }
             let chat = self
@@ -319,7 +343,7 @@ impl WorkerState {
                 return Err(tool_decision_conflict());
             }
             super::preparation::encoded_size(&command).map_err(ai_failure)?;
-            Ok(ControlJob {
+            Ok(PreparedDecision::Forward(ControlJob {
                 context: context.clone(),
                 workspace: bot.home_workspace,
                 attempt: row.attempt_id,
@@ -327,10 +351,13 @@ impl WorkerState {
                 command,
                 port: self.bot_delegate.clone().ok_or_else(tool_not_resumable)?,
                 reply: reply.clone(),
-            })
+            }))
         })();
         match prepared {
-            Ok(job) => match self
+            Ok(PreparedDecision::Local(response)) => {
+                let _ = reply.send(Ok(response));
+            }
+            Ok(PreparedDecision::Forward(job)) => match self
                 .provider_admin
                 .as_ref()
                 .ok_or_else(unavailable_failure)
@@ -402,6 +429,7 @@ impl WorkerState {
                     pins: Vec::new(),
                     chat_snapshot: None,
                     settings: None,
+                    terminal_question: None,
                 })),
             };
             let access = self.bot_read_access(&context)?;

@@ -31,6 +31,7 @@ fn settings_proof(
                 fast,
                 reasoning_control: Some(effort()),
             }),
+            terminal_question: None,
         })),
     }
 }

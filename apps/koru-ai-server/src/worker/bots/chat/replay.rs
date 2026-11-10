@@ -95,7 +95,7 @@ impl WorkerState {
             mapper,
             live,
             transient,
-            published,
+            mut published,
             terminal,
             completed,
         } = staged;
@@ -105,16 +105,57 @@ impl WorkerState {
         for (id, details) in transient {
             self.agent_live.insert(id, details);
         }
+        if terminal {
+            let questions: Vec<_> = chat
+                .live
+                .iter()
+                .filter_map(|action| match action {
+                    AgentLiveAction::OfferQuestions {
+                        invocation,
+                        next_message: true,
+                        ..
+                    } => Some(*invocation),
+                    _ => None,
+                })
+                .collect();
+            for invocation in questions {
+                let mut row = self
+                    .repository
+                    .tool_activity(invocation)?
+                    .ok_or_else(bot_route_error)?;
+                self.remember_bot_question(&mut row, true)?;
+                if row.status.is_terminal() {
+                    chat.live.retain(|action| !matches!(action, AgentLiveAction::OfferQuestions { invocation: id, .. } if *id == invocation));
+                    if let Some(AiEvent::ToolActivity { activity, .. }) = published.iter_mut().find(|event| matches!(event, AiEvent::ToolActivity { activity, .. } if activity.id == invocation)) {
+                        *activity = row;
+                    } else {
+                        published.insert(0, AiEvent::ToolActivity { attempt_id: id, activity: row });
+                    }
+                }
+            }
+        }
         for mut event in published {
             if let AiEvent::ToolActivity { activity, .. } = &mut event {
+                self.remember_bot_question(activity, false)?;
                 if activity.status.is_terminal() {
                     self.agent_live.remove(&activity.id);
+                    chat.live.retain(|action| !matches!(action,
+                        AgentLiveAction::OfferQuestions { invocation, .. }
+                        | AgentLiveAction::OfferApproval { invocation, .. } if *invocation == activity.id));
                 }
                 activity.live = self.agent_live.get(&activity.id).cloned();
             }
             self.publish(event);
         }
         if terminal {
+            for action in &chat.live {
+                if let AgentLiveAction::OfferApproval { invocation, .. }
+                | AgentLiveAction::OfferQuestions { invocation, .. } = action
+                    && !self.bot_next_message_ids.contains(invocation)
+                {
+                    self.agent_live.remove(invocation);
+                }
+            }
             self.streams.remove(&id);
             self.cancellations.remove(&id);
             self.work_terminal(id);

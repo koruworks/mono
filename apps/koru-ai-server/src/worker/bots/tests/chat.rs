@@ -6,10 +6,12 @@ use koru_delegate_core as d;
 use koru_session_protocol as s;
 use std::sync::Mutex;
 mod controls;
+mod questions;
 
 #[derive(Default)]
 struct Native {
     fail_first: bool,
+    allow_answer_tasks: bool,
     state: Mutex<NativeState>,
     submit_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     stop_reports: Mutex<Option<SyncSender<()>>>,
@@ -22,6 +24,7 @@ struct NativeState {
     begin: usize,
     observed_before_begin: bool,
     delivered: bool,
+    delivery: Option<d::BotDeliveryReceipt>,
     input: Option<s::PendingInput>,
     stopped: bool,
     stop_calls: usize,
@@ -43,7 +46,12 @@ impl BotDelegatePort for Native {
         let mut state = self.state.lock().unwrap();
         match command {
             D::Submit { submission } => {
-                assert_eq!(submission.input.text, "CURRENT-TASK");
+                assert!(
+                    submission.input.text == "CURRENT-TASK"
+                        || (self.allow_answer_tasks
+                            && koru_ai_core::AnswersRecord::decode(&submission.input.text)
+                                .is_some())
+                );
                 assert!(submission.provenance.ai_attempt_id.is_some());
                 let fence = d::BotExecutionFence {
                     owner: submission.provenance.owner,
@@ -147,6 +155,7 @@ impl BotDelegatePort for Native {
                         .unwrap()
                 );
                 state.delivered = true;
+                state.delivery = Some(receipt);
                 Ok(BotReply::Applied)
             }
             D::Stop { key, fence } => {
@@ -205,6 +214,7 @@ fn proof(authority: Arc<Authority>, bot: &Bot, chat: Chat) -> CommandContext {
             }],
             chat_snapshot: Some(chat),
             settings: None,
+            terminal_question: None,
         })),
     }
 }

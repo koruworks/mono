@@ -29,6 +29,7 @@ pub(in crate::worker) struct PreparedBotCommand {
     pub(in crate::worker) pins: Vec<koru_delegate_core::RunContextItem>,
     pub(in crate::worker) chat_snapshot: Option<Chat>,
     pub(in crate::worker) settings: Option<chat::SettingsProof>,
+    pub(in crate::worker) terminal_question: Option<chat::TerminalQuestionProof>,
 }
 pub(in crate::worker) struct BotPreparationJob {
     command: WorkerCommand,
@@ -39,6 +40,8 @@ pub(in crate::worker) struct BotPreparationJob {
     model: Option<BotConfig>,
     capture: Option<(BotOwner, WorkspaceId, Vec<BotPage>)>,
     chat_snapshot: Option<Chat>,
+    terminal_question: Option<chat::TerminalQuestionProof>,
+    delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
 }
 impl BotPreparationJob {
     pub(in crate::worker) fn run(
@@ -85,6 +88,9 @@ impl BotPreparationJob {
             } else {
                 Vec::new()
             };
+            if let Some(question) = &self.terminal_question {
+                question.verify(self.delegate.as_ref())?;
+            }
             Ok(PreparedBotCommand {
                 authority,
                 chats: self.chats.clone(),
@@ -92,6 +98,7 @@ impl BotPreparationJob {
                 pins,
                 chat_snapshot: self.chat_snapshot.clone(),
                 settings,
+                terminal_question: self.terminal_question.clone(),
             })
         }))
         .unwrap_or_else(|_| Err(bot_failure(BotError::Unavailable)));
@@ -236,6 +243,7 @@ impl WorkerState {
                 model = Some(config);
                 chat_snapshot = Some(chat);
             }
+            let terminal_question = self.bot_terminal_question_capture(&command)?;
             // Every referenced workspace is inspected, including invalid foreign-page requests.
             workspaces.extend(pages.iter().map(|p| p.workspace));
             Ok((
@@ -245,15 +253,17 @@ impl WorkerState {
                 model,
                 capture,
                 chat_snapshot,
+                terminal_question,
             ))
         })();
-        let (workspaces, pages, chats, model, capture, chat_snapshot) = match snapshot {
-            Ok(value) => value,
-            Err(error) => {
-                command.refuse(error);
-                return None;
-            }
-        };
+        let (workspaces, pages, chats, model, capture, chat_snapshot, terminal_question) =
+            match snapshot {
+                Ok(value) => value,
+                Err(error) => {
+                    command.refuse(error);
+                    return None;
+                }
+            };
         let job = BotPreparationJob {
             command,
             authority: self.bot_authority.as_ref().unwrap().clone(),
@@ -263,6 +273,8 @@ impl WorkerState {
             model,
             capture,
             chat_snapshot,
+            terminal_question,
+            delegate: self.bot_delegate.clone(),
         };
         let Some(pool) = self.provider_admin.as_ref() else {
             job.command.refuse(bot_failure(BotError::Unavailable));

@@ -181,6 +181,33 @@ impl Repository {
         tool_source_on(&self.connection, attempt, source)
     }
 
+    /// Reverse the existing invocation primary-key binding, never a caller's
+    /// native identifier. This read does not make a historical card live.
+    pub fn bot_source_for_tool(
+        &self,
+        attempt: InferenceAttemptId,
+        invocation: ToolInvocationId,
+    ) -> Result<Option<BotToolSource>, AiError> {
+        let source = self.connection.query_row(
+            "SELECT bot_source_kind, bot_source_id FROM tool_invocations WHERE id = ?1 AND attempt_id = ?2 AND bot_source_kind IS NOT NULL",
+            params![invocation.to_storage(), attempt.to_storage()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).optional().map_err(storage_failed)?;
+        source
+            .map(|(kind, id)| {
+                let kind = match kind.as_str() {
+                    "tool" => BotToolSourceKind::Tool,
+                    "approval" => BotToolSourceKind::Approval,
+                    "questions" => BotToolSourceKind::Questions,
+                    _ => return Err(invariant_failed()),
+                };
+                let source = BotToolSource { kind, id };
+                validate_source(&source)?;
+                Ok(source)
+            })
+            .transpose()
+    }
+
     pub fn apply_bot_replay(
         &mut self,
         batch: &BotReplayBatch,

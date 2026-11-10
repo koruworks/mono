@@ -11,6 +11,7 @@ use koru_session_protocol::{AgentEvent, PendingInput};
 
 mod controls;
 mod preparation;
+mod questions;
 mod replay;
 mod runtime;
 mod settings;
@@ -24,6 +25,7 @@ pub(in crate::worker) use steering::{
 };
 
 pub(in crate::worker) use preparation::{chat_capture, retry_anchor, retry_input};
+pub(in crate::worker) use questions::TerminalQuestionProof;
 pub(in crate::worker) use settings::{SettingsProof, settings_capture};
 
 fn bot_route_error() -> AiError {

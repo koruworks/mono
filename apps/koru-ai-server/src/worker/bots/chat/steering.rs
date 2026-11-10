@@ -367,6 +367,7 @@ impl WorkerState {
                     pins: vec![],
                     chat_snapshot: None,
                     settings: None,
+                    terminal_question: None,
                 })),
             };
             let access = self.bot_read_access(&context)?;

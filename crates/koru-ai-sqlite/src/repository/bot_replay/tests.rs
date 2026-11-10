@@ -475,6 +475,21 @@ fn reconnect_resolves_random_tool_identity_and_multi_effect_event_is_atomic() {
         Some(activity.id)
     );
     assert_eq!(
+        repo.bot_source_for_tool(turn.attempt.id, activity.id)
+            .unwrap(),
+        Some(source())
+    );
+    assert!(
+        repo.bot_source_for_tool(InferenceAttemptId::new(), activity.id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        repo.bot_source_for_tool(turn.attempt.id, ToolInvocationId::new())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
         repo.apply_bot_replay(&create, at(4)).unwrap(),
         BotReplayDisposition::Duplicate
     );

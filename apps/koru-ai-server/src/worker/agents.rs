@@ -667,6 +667,7 @@ impl WorkerState {
                 invocation,
                 answers,
             } => {
+                self.bot_next_message_ids.remove(&invocation);
                 self.next_message_rows.remove(&invocation);
                 if let Some(live) = self.agent_live.get_mut(&invocation) {
                     live.questions.clear();
@@ -693,6 +694,7 @@ impl WorkerState {
                 })
             }
             AgentActivityEvent::ApprovalExpired { invocation } => {
+                self.bot_next_message_ids.remove(&invocation);
                 // A set passed over here first has nothing left to expire.
                 if self.next_message_rows.remove(&invocation).is_none()
                     && matches!(
@@ -812,7 +814,7 @@ impl WorkerState {
         self.agent_rows.entry(attempt).or_default().push(invocation);
     }
 
-    fn agent_row_mut(
+    pub(super) fn agent_row_mut(
         &mut self,
         invocation: ToolInvocationId,
         change: impl FnOnce(&mut ToolActivity),
@@ -1009,7 +1011,11 @@ impl WorkerState {
     /// **Skip a set answered by the next message** after its reply ended:
     /// the row is denied as any skipped set is, and nothing reaches the
     /// agent — a skip costs nothing.
-    fn skip_next_message(&mut self, activity: &ToolActivity) -> ApiResult<ToolDecisionResponse> {
+    pub(super) fn skip_next_message(
+        &mut self,
+        activity: &ToolActivity,
+    ) -> ApiResult<ToolDecisionResponse> {
+        self.bot_next_message_ids.remove(&activity.id);
         self.next_message_rows.remove(&activity.id);
         self.agent_live.remove(&activity.id);
         if let Some(agents) = &self.agents {
@@ -1038,6 +1044,7 @@ impl WorkerState {
         invocation: ToolInvocationId,
         publish_on: Option<InferenceAttemptId>,
     ) {
+        self.bot_next_message_ids.remove(&invocation);
         self.next_message_rows.remove(&invocation);
         self.agent_live.remove(&invocation);
         let at = Timestamp::now();
@@ -1095,6 +1102,7 @@ impl WorkerState {
             .map(|(invocation, _)| *invocation)
             .collect();
         for invocation in gone {
+            self.bot_next_message_ids.remove(&invocation);
             self.next_message_rows.remove(&invocation);
             self.agent_live.remove(&invocation);
         }
@@ -1130,6 +1138,7 @@ impl WorkerState {
     /// the agent takes the answers.
     pub(super) fn send_answers_turn(
         &mut self,
+        context: bots::CommandContext,
         request: SendTurnRequest,
         next: koru_ai_core::NextMessageAnswers,
     ) -> ApiResult<AiResponseStream> {
@@ -1143,9 +1152,10 @@ impl WorkerState {
                 false,
             ));
         }
+        let access = self.bot_read_access(&context)?;
         let chat = self
             .repository
-            .chat(request.chat_id)
+            .chat_with_access(request.chat_id, &access)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let activity = self
@@ -1153,6 +1163,18 @@ impl WorkerState {
             .tool_activity(next.invocation)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
+        let bot_answer = self.prepare_bot_answer(&context, &chat, &activity, &next)?;
+        if bot_answer.is_some()
+            && (request.web_search
+                || !request.skills.is_empty()
+                || request.system_prompt_override.is_some())
+        {
+            return Err(failure(
+                "unsupported_capability",
+                "Bot answers are submitted on their own, without additional tools or prompt overrides.",
+                false,
+            ));
+        }
         if activity.chat_id != chat.id
             || !is_agent_provider(&chat.current_model.provider)
             || !self.next_message_rows.contains_key(&activity.id)
@@ -1182,35 +1204,37 @@ impl WorkerState {
             .find(|message| message.role == ChatRole::User)
             .ok_or_else(|| failure("invalid_request", "The chat has no message.", false))?
             .id;
-        let Some(agents) = self.agents.clone() else {
-            return Err(tool_not_resumable());
-        };
-        match agents
-            .live()
-            .check_next_message_answers(chat.id, activity.id, &next.answers)
-        {
-            Ok(()) => {}
-            Err(AnswerError::NotLive) => {
-                self.close_next_message_row(activity.id, None);
-                return Err(failure(
-                    "questions_closed",
-                    koru_ai_core::AGENT_QUESTIONS_CLOSED,
-                    false,
-                ));
-            }
-            Err(AnswerError::ChoiceRequired) => {
-                return Err(failure(
-                    "answers_required",
-                    "These questions take answers; send one for each.",
-                    false,
-                ));
-            }
-            Err(_) => {
-                return Err(failure(
-                    "invalid_request",
-                    "Those answers do not fit the questions.",
-                    false,
-                ));
+        if bot_answer.is_none() {
+            let Some(agents) = self.agents.clone() else {
+                return Err(tool_not_resumable());
+            };
+            match agents
+                .live()
+                .check_next_message_answers(chat.id, activity.id, &next.answers)
+            {
+                Ok(()) => {}
+                Err(AnswerError::NotLive) => {
+                    self.close_next_message_row(activity.id, None);
+                    return Err(failure(
+                        "questions_closed",
+                        koru_ai_core::AGENT_QUESTIONS_CLOSED,
+                        false,
+                    ));
+                }
+                Err(AnswerError::ChoiceRequired) => {
+                    return Err(failure(
+                        "answers_required",
+                        "These questions take answers; send one for each.",
+                        false,
+                    ));
+                }
+                Err(_) => {
+                    return Err(failure(
+                        "invalid_request",
+                        "Those answers do not fit the questions.",
+                        false,
+                    ));
+                }
             }
         }
         let ordinal = messages.last().map_or(Ok(0), |message| {
@@ -1219,7 +1243,13 @@ impl WorkerState {
         let now = Timestamp::now();
         let assistant_id = MessageId::new();
         let attempt_id = InferenceAttemptId::new();
-        let reasoning = chat.current_model.default_reasoning;
+        let reasoning = if bot_answer.is_some() {
+            request
+                .reasoning_override
+                .unwrap_or(chat.current_model.default_reasoning)
+        } else {
+            chat.current_model.default_reasoning
+        };
         let assistant_message = Message {
             id: assistant_id,
             chat_id: chat.id,
@@ -1235,7 +1265,7 @@ impl WorkerState {
             created_at: now,
             completed_at: None,
         };
-        let provider_messages: Vec<AiRequestMessage> = messages
+        let mut provider_messages: Vec<AiRequestMessage> = messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
@@ -1248,6 +1278,14 @@ impl WorkerState {
                 attachments: Vec::new(),
             })
             .collect();
+        self.bot_answer_history(chat.id, &messages, &mut provider_messages)?;
+        if let Some(answer) = &bot_answer {
+            provider_messages.push(AiRequestMessage {
+                role: ChatRole::User,
+                markdown: koru_ai_core::render_prompt_text(&answer.prompt),
+                attachments: Vec::new(),
+            });
+        }
         let attempt = InferenceAttempt {
             id: attempt_id,
             operation_id: request.operation_id,
@@ -1284,12 +1322,27 @@ impl WorkerState {
         };
         // A reply of its own, after the one that asked; no message of the
         // person's is written — the answers are read on the set's card.
-        self.repository
-            .begin_retry(&PendingRetry {
-                assistant_message,
-                attempt: attempt.clone(),
-            })
-            .map_err(ai_failure)?;
+        let pending = PendingRetry {
+            assistant_message,
+            attempt: attempt.clone(),
+        };
+        if let Some(answer) = &bot_answer {
+            self.prepare_bot_chat_turn(
+                &context,
+                &chat,
+                koru_ai_core::bots::replay::BotChatPreparation::AnsweredContinuation {
+                    retry: pending,
+                    question: answer.question.clone(),
+                },
+                request.destination_workspace,
+                "send",
+                &request,
+                &[],
+                Some(answer.previous),
+            )?;
+        } else {
+            self.repository.begin_retry(&pending).map_err(ai_failure)?;
+        }
         let (stream_sender, events) = sync_channel(STREAM_CAPACITY);
         self.streams.insert(
             attempt_id,
@@ -1300,7 +1353,14 @@ impl WorkerState {
         );
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
-        self.answer_attempts.insert(attempt_id, activity.id);
+        if bot_answer.is_some() {
+            if let Err(error) = self.finish_bot_answer(activity.id, attempt_id) {
+                self.interrupt_bot_chat(attempt_id);
+                return Err(error);
+            }
+        } else {
+            self.answer_attempts.insert(attempt_id, activity.id);
+        }
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -1318,7 +1378,7 @@ impl WorkerState {
                 agent_mode: chat.agent_mode.clone(),
                 agent_fast: chat.agent_fast,
                 agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
-                agent_answers: Some(next),
+                agent_answers: bot_answer.is_none().then_some(next),
                 ..AiRequestOptions::default()
             },
         };
@@ -1326,20 +1386,37 @@ impl WorkerState {
         let started_at = Timestamp::now();
         // No context goes with answers: the chat's pinned documents are not
         // read again, and nothing is recorded against the asking message.
-        let job = ContextJob {
-            attempt_id,
-            user_message_id: user,
-            chat_id: chat.id,
-            profile: chat.profile_id,
-            request: base_request,
-            refs: Vec::new(),
-            known_documents: HashMap::new(),
-            replace_pinned_documents: false,
-            started_at,
-            cancellation,
+        let job = if bot_answer.is_some() {
+            self.prepare_context_job(
+                attempt_id,
+                user,
+                chat.id,
+                base_request,
+                Vec::new(),
+                &access,
+                request.replace_pinned_documents,
+                started_at,
+                cancellation,
+            )
+        } else {
+            Ok(ContextJob {
+                attempt_id,
+                user_message_id: user,
+                chat_id: chat.id,
+                profile: chat.profile_id,
+                request: base_request,
+                refs: Vec::new(),
+                known_documents: HashMap::new(),
+                replace_pinned_documents: false,
+                started_at,
+                cancellation,
+            })
         };
-        match self.context_pool.try_submit(job) {
-            Ok(()) => self.work_admitted(attempt_id),
+        match job {
+            Ok(job) => match self.context_pool.try_submit(job) {
+                Ok(()) => self.work_admitted(attempt_id),
+                Err(error) => self.fail_context(attempt_id, started_at, error),
+            },
             Err(error) => self.fail_context(attempt_id, started_at, error),
         }
         tracing::info!(attempt = %attempt_id, "AI attempt queued with an agent's answers");

@@ -1554,6 +1554,8 @@ struct WorkerState {
     /// chat (koru-ai D108): they outlive their reply, and another message
     /// in the chat passes them over.
     next_message_rows: HashMap<ToolInvocationId, ChatId>,
+    // A bounded subset of next_message_rows; definitions stay in agent_live.
+    bot_next_message_ids: HashSet<ToolInvocationId>,
     /// Replies that carry a set's answers, with the set's row.
     answer_attempts: HashMap<InferenceAttemptId, ToolInvocationId>,
     /// The dispatcher's own inbox, for reports that arrive from other threads.
@@ -1794,6 +1796,7 @@ fn run_worker(
         agent_live: HashMap::new(),
         agent_rows: HashMap::new(),
         next_message_rows: HashMap::new(),
+        bot_next_message_ids: HashSet::new(),
         answer_attempts: HashMap::new(),
         output: provider_output.clone(),
         agent_views,
@@ -3808,19 +3811,7 @@ impl WorkerState {
         // A set's answers sent as the next message (D108): a reply of its
         // own with no message of the person's.
         if let Some(next) = request.answers.clone() {
-            if self
-                .repository
-                .bot_for_chat(request.chat_id)
-                .map_err(bots::bot_failure)?
-                .is_some()
-            {
-                return Err(failure(
-                    "unsupported_capability",
-                    "Bot question continuation is not available yet.",
-                    false,
-                ));
-            }
-            return self.send_answers_turn(request, next);
+            return self.send_answers_turn(context, request, next);
         }
         // A message may be attachments only (chat-attachments D3).
         if request.markdown.trim().is_empty() && request.attachment_ids.is_empty() {
@@ -3954,6 +3945,7 @@ impl WorkerState {
                 attachments: history_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
+        self.bot_answer_history(chat.id, &existing_messages, &mut provider_messages)?;
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
             markdown: koru_ai_core::render_prompt_text(&request.markdown),
@@ -4024,9 +4016,7 @@ impl WorkerState {
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
         // Another message passes over the chat's open sets (D108).
-        if !is_bot {
-            self.pass_over_questions(chat.id, attempt_id);
-        }
+        self.pass_over_questions(chat.id, attempt_id);
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -4203,6 +4193,7 @@ impl WorkerState {
                 attachments: retried_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
+        self.bot_answer_history(chat_id, &messages, &mut provider_messages)?;
         let attempt = InferenceAttempt {
             id: attempt_id,
             operation_id: request.operation_id,
@@ -4255,6 +4246,18 @@ impl WorkerState {
                 .map_err(ai_failure)?
                 .ok_or_else(not_found)?;
             let original = &receipt.intent.submission;
+            if koru_ai_core::AnswersRecord::decode(&original.input.text).is_some_and(|record| {
+                record
+                    .answers
+                    .iter()
+                    .any(|answer| matches!(answer.value, koru_ai_core::AgentAnswerValue::Withheld))
+            }) {
+                return Err(failure(
+                    "questions_closed",
+                    "The secret answer is no longer available. Enter it again in a new Bot task.",
+                    false,
+                ));
+            }
             user_message_id = bots::chat::retry_input(
                 &messages,
                 failed,
@@ -7212,13 +7215,31 @@ fn replay_stream(
     let bot_receipt = repository
         .bot_submission_for_attempt(attempt.id)
         .map_err(ai_failure)?;
-    let user_message_id =
-        if let Some(receipt) = bot_receipt.filter(|_| assistant.origin_message_id.is_some()) {
+    let user_message_id = if let Some(receipt) = bot_receipt {
+        if let Some(origin) = assistant.origin_message_id {
             let previous = messages
                 .iter()
-                .find(|message| Some(message.id) == assistant.origin_message_id)
+                .find(|message| message.id == origin)
                 .ok_or_else(not_found)?;
             bots::chat::retry_anchor(&messages, previous, &receipt.intent.submission.input.text)?
+        } else if receipt
+            .intent
+            .submission
+            .provenance
+            .continued_from
+            .is_some()
+            && koru_ai_core::AnswersRecord::decode(&receipt.intent.submission.input.text).is_some()
+        {
+            // AnsweredContinuation adds no user bubble. Return the same
+            // preceding user anchor chosen by the shared answer launcher.
+            messages
+                .iter()
+                .rev()
+                .find(|message| {
+                    message.role == ChatRole::User && message.ordinal < assistant.ordinal
+                })
+                .map(|message| message.id)
+                .ok_or_else(not_found)?
         } else {
             messages
                 .iter()
@@ -7228,7 +7249,17 @@ fn replay_stream(
                 })
                 .map(|message| message.id)
                 .ok_or_else(not_found)?
-        };
+        }
+    } else {
+        messages
+            .iter()
+            .find(|message| {
+                message.role == ChatRole::User
+                    && message.ordinal.checked_add(1) == Some(assistant.ordinal)
+            })
+            .map(|message| message.id)
+            .ok_or_else(not_found)?
+    };
     Ok(AiResponseStream {
         accepted: SendTurnAccepted {
             attempt_id: attempt.id,
