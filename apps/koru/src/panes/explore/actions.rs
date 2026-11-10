@@ -85,6 +85,9 @@ pub(super) fn available(mode: NavigatorMode) -> &'static [Action] {
         // Nor does the Chats view: *New chat* heads its own list, and a menu
         // holding it a second time would be two doors to one room.
         NavigatorMode::Chats | NavigatorMode::Socials => &[],
+        // Nor the Bots roster: creating a Bot is not built yet, and a menu
+        // holding nothing is a dead end.
+        NavigatorMode::Bots => &[],
         // Nor Canvases: nothing imports as a canvas, and a flat list has no
         // folds to collapse or expand.
         NavigatorMode::Canvases => &[],

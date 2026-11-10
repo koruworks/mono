@@ -6735,6 +6735,7 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
             NavigatorMode::Artifacts,
             NavigatorMode::Canvases,
             NavigatorMode::Socials,
+            NavigatorMode::Bots,
         ]
     );
     let mut view = ExploreView::new();
@@ -7169,4 +7170,36 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
             assert_eq!(view.mode, NavigatorMode::Documents, "{hidden:?}");
         }
     });
+}
+
+/// **The Bots roster works only while its view is showing**: switching to
+/// Bots is what lets it ask the Bot service, once; switching away stops it,
+/// and coming back asks once more. The heading offers it no menu.
+#[test]
+fn the_bots_roster_asks_only_while_its_view_is_showing() {
+    use crate::bots::link::{BotsLink, Command};
+    let (link, commands, _answers) = BotsLink::test_pair();
+    let mut v = ExploreView::new();
+    v.bots = crate::bots::BotsRoster::with_link(link);
+    v.bots
+        .set_workspace(Some(koru_store_core::ids::WorkspaceId::new()));
+    assert!(!v.bots.maintain());
+    assert!(commands.try_recv().is_err(), "not shown: nothing asked");
+
+    v.show_bots();
+    assert!(v.showing_bots());
+    assert!(v.bots.maintain());
+    assert!(matches!(commands.try_recv(), Ok(Command::List { .. })));
+    assert!(!v.bots.maintain(), "once");
+
+    v.show_documents();
+    assert!(!v.bots.maintain());
+    assert!(commands.try_recv().is_err(), "hidden again: nothing asked");
+    v.show_bots();
+    assert!(v.bots.maintain());
+    assert!(commands.try_recv().is_ok(), "shown again: asked once more");
+    assert!(
+        actions::available(NavigatorMode::Bots).is_empty(),
+        "no heading menu"
+    );
 }

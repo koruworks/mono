@@ -97,6 +97,9 @@ koru-api-client = { path = "../../crates/koru-api-client" }
 # that crate's own `ContextStore` port. Naming the three is what keeps the
 # modal from inventing a fourth vocabulary for a run.
 koru-delegate-core = { path = "../../crates/koru-delegate-core" }
+# The Bot owner's command and record types (`/v1/ai/bots`), for the Bots
+# roster's link. Already in the test graph; no new crate in the lock.
+koru-ai-core = { path = "../../crates/koru-ai-core" }
 koru-delegate-api = { path = "../../crates/koru-delegate-api" }
 koru-delegate-context = { path = "../../crates/koru-delegate-context" }
 koru-delegate-document = { path = "../../crates/koru-delegate-document" }
@@ -222,7 +225,6 @@ tempfile.workspace = true
 # A drawn diagram for the leaf and container tests to open their viewer on.
 koru-diagram = { path = "../../crates/koru-diagram" }
 koru-workspace-host = { path = "../../crates/koru-workspace-host", features = ["no-model-reader"] }
-koru-ai-core = { path = "../../crates/koru-ai-core" }
 koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client", "test-support"] }
 koru-socials-ui = { path = "../../crates/koru-socials-ui", features = ["no-reader"] }
 # **The same crate, with `no-reader` on.** A `SearchSurface` built in a test must

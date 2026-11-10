@@ -30,6 +30,7 @@
 mod agent;
 mod ai_chat_view;
 mod app_menu;
+mod bots;
 mod build_stamp;
 mod canvas_view;
 mod console;

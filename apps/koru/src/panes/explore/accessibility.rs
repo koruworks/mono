@@ -152,6 +152,10 @@ impl ExploreView {
             // The Chats view replaces the tree, on the rail's model: a list
             // of rows that are chats, each with Open and Delete.
             children.push(chats::semantics(&self.chats, cx, self.rows_top(cx.area)));
+        } else if self.showing_bots() && self.current.is_some() {
+            // The roster replaces the tree the same way, while there is a
+            // workspace it is about.
+            children.extend(bots::semantics(&self.bots, cx, self.rows_top(cx.area)));
         } else if !self.showing_socials() {
             children.push(self.tree_semantics(cx));
         }
@@ -196,6 +200,9 @@ impl ExploreView {
         }
         if self.showing_chats() {
             chats::revise(&self.chats, rev);
+        }
+        if self.showing_bots() {
+            bots::revise(&self.bots, rev);
         }
         rev.opt_uuid(self.focused().map(|node| node.as_uuid()));
         rev.opt_uuid(self.selected().map(|node| node.as_uuid()));
@@ -305,6 +312,9 @@ impl ExploreView {
         if self.showing_chats() {
             return chats::focus_occurrence(&self.chats, cx);
         }
+        if self.showing_bots() {
+            return bots::focus_occurrence(&self.bots, cx);
+        }
         let node = self.focused()?;
         Some(cx.model(node.as_uuid(), ControlPart::ROOT))
     }
@@ -351,6 +361,9 @@ impl ExploreView {
         if self.showing_chats() {
             let top = self.rows_top(area);
             return chats::action(&mut self.chats, area, top, target, action);
+        }
+        if self.showing_bots() && self.current.is_some() {
+            return bots::action(&mut self.bots, area, target, action);
         }
         // A row. Everything below reaches `nav_key`, so there is exactly one
         // implementation of open, fold and step.
@@ -518,6 +531,7 @@ impl ExploreView {
             _ if self.current.is_none() => {
                 (t(lang, Key::A11yEmptyWorkspace), Some(Key::CreateWorkspace))
             }
+            NavigatorMode::Bots => (t(lang, Key::BotsEmpty), None),
             NavigatorMode::Files => (t(lang, Key::A11yEmptyFiles), Some(Key::A11yAddFiles)),
             NavigatorMode::Canvases => (t(lang, Key::CanvasesEmpty), Some(Key::CanvasNew)),
             NavigatorMode::Documents => (
@@ -1036,6 +1050,7 @@ fn object_of(id: uuid::Uuid) -> koru_workspace_host::accessibility::ObjectKey {
     koru_workspace_host::accessibility::ObjectKey::Model(id)
 }
 
+mod bots;
 mod chats;
 
 #[cfg(test)]

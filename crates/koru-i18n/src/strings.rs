@@ -1755,6 +1755,20 @@ pub enum Key {
     ChatsRefusedUnavailable,
     /// The last resort. A code with no sentence of its own still gets one.
     ChatsRefusedOther,
+    // The Bots roster (Bots P1.8): a person's own Bots in the window's
+    // workspace, in the navigator. Machine-translated in good faith and
+    // **not yet reviewed by a native speaker**, like the rest of this table.
+    /// The Bots view's own name: the navigator icon's tooltip, its heading and the roster list's accessible name.
+    BotsTitle,
+    BotsLoading,
+    /// The AI service is not answering. **Not an empty roster**: what is on screen stays, and this says why it may be old.
+    BotsUnavailable,
+    /// The empty roster, in the approved experience's words. It names no button: creating a Bot is not in this build yet.
+    BotsEmpty,
+    /// A paused Bot's mark on its row: new work waits until it is resumed.
+    BotsPaused,
+    /// A paused Bot's row, as a screen reader names it: its name, then that it is paused.
+    BotsRowPaused,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3176,7 +3190,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2219] = [
+    pub const ALL: [Key; 2225] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4430,6 +4444,12 @@ impl Key {
         Key::ChatsRefusedBusy,
         Key::ChatsRefusedUnavailable,
         Key::ChatsRefusedOther,
+        Key::BotsTitle,
+        Key::BotsLoading,
+        Key::BotsUnavailable,
+        Key::BotsEmpty,
+        Key::BotsPaused,
+        Key::BotsRowPaused,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -14531,6 +14551,72 @@ pub const ROWS: &[Row] = &[
         ar: "تعذّر حذف هذه المحادثة. حاول مرة أخرى.",
         zh_hans: "无法删除此对话，请重试。",
         ja: "このチャットを削除できませんでした。もう一度お試しください。",
+    },
+    Row {
+        key: Key::BotsTitle,
+        en: "Bots",
+        es: "Bots",
+        pt_br: "Bots",
+        de: "Bots",
+        fr: "Bots",
+        ar: "البوتات",
+        zh_hans: "Bot",
+        ja: "Bot",
+    },
+    Row {
+        key: Key::BotsLoading,
+        en: "Loading bots…",
+        es: "Cargando bots…",
+        pt_br: "Carregando bots…",
+        de: "Bots werden geladen…",
+        fr: "Chargement des bots…",
+        ar: "جارٍ تحميل البوتات…",
+        zh_hans: "正在加载 Bot…",
+        ja: "Bot を読み込み中…",
+    },
+    Row {
+        key: Key::BotsUnavailable,
+        en: "Koru AI isn't answering, so your bots can't be listed right now.",
+        es: "Koru AI no responde, así que ahora no se pueden mostrar tus bots.",
+        pt_br: "O Koru AI não está respondendo, então seus bots não podem ser listados agora.",
+        de: "Koru AI antwortet nicht, deshalb können deine Bots gerade nicht angezeigt werden.",
+        fr: "Koru AI ne répond pas ; vos bots ne peuvent pas être affichés pour le moment.",
+        ar: "لا يستجيب Koru AI، لذا لا يمكن عرض البوتات الآن.",
+        zh_hans: "Koru AI 没有响应，暂时无法列出你的 Bot。",
+        ja: "Koru AI が応答していないため、今は Bot を一覧表示できません。",
+    },
+    Row {
+        key: Key::BotsEmpty,
+        en: "Give a bot a standing job. Its conversations and work stay together here.",
+        es: "Dale a un bot un trabajo permanente. Sus conversaciones y su trabajo quedan reunidos aquí.",
+        pt_br: "Dê a um bot uma tarefa permanente. As conversas e o trabalho dele ficam reunidos aqui.",
+        de: "Gib einem Bot eine dauerhafte Aufgabe. Seine Unterhaltungen und seine Arbeit bleiben hier beisammen.",
+        fr: "Confiez une mission permanente à un bot. Ses conversations et son travail restent réunis ici.",
+        ar: "امنح بوتًا مهمة دائمة. تبقى محادثاته وعمله معًا هنا.",
+        zh_hans: "给 Bot 一项长期任务。它的对话和工作都会集中在这里。",
+        ja: "Bot に継続的な仕事を任せましょう。その会話と作業はここにまとまります。",
+    },
+    Row {
+        key: Key::BotsPaused,
+        en: "Paused",
+        es: "En pausa",
+        pt_br: "Pausado",
+        de: "Pausiert",
+        fr: "En pause",
+        ar: "متوقف مؤقتًا",
+        zh_hans: "已暂停",
+        ja: "一時停止中",
+    },
+    Row {
+        key: Key::BotsRowPaused,
+        en: "{}, paused",
+        es: "{}, en pausa",
+        pt_br: "{}, pausado",
+        de: "{}, pausiert",
+        fr: "{}, en pause",
+        ar: "{}، متوقف مؤقتًا",
+        zh_hans: "{}，已暂停",
+        ja: "{}、一時停止中",
     },
     Row {
         key: Key::SizeBytes,

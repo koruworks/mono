@@ -5971,6 +5971,25 @@ impl MainView {
         asked || answered || opened
     }
 
+    /// **The Bots roster's own pass** (Bots P1.8): which workspace it is
+    /// about and whatever its link answered.
+    ///
+    /// **Only while it is showing**, as the artifacts column's: a roster
+    /// nobody is looking at asks the Bot service for nothing and folds
+    /// nothing. Its link starts the first time it is shown.
+    fn maintain_bots(&mut self) -> bool {
+        if !self.explore.showing_bots() {
+            return false;
+        }
+        self.explore.start_bots(crate::search::gateway_root());
+        let workspace = self
+            .current_workspace()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
+        let roster = self.explore.bots_mut();
+        let moved = roster.set_workspace(workspace);
+        roster.maintain() || moved
+    }
+
     /// **The Chats view's own pass** (AGENTUX I5).
     ///
     /// Every chat surface in this window — the right-hand pane and each AI
@@ -14791,6 +14810,7 @@ impl View for MainView {
             Some(crate::panes::explore::NavigatorMode::Chats) => self.explore.show_chats(),
             Some(crate::panes::explore::NavigatorMode::Canvases) => self.explore.show_canvases(),
             Some(crate::panes::explore::NavigatorMode::Socials) => self.explore.show_socials(),
+            Some(crate::panes::explore::NavigatorMode::Bots) => self.explore.show_bots(),
             _ => self.explore.show_documents(),
         }
         self.restore_session(ws, settings);
@@ -14905,6 +14925,10 @@ impl View for MainView {
             // **Only while an answer is owed** to a Chats view that is
             // showing: an idle list is never a reason to wake.
             (self.explore.showing_chats() && self.explore.chats_awaiting())
+                .then(|| Instant::now() + std::time::Duration::from_millis(50)),
+            // The same for the Bots roster: only while an answer is owed to
+            // a roster that is showing.
+            (self.explore.showing_bots() && self.explore.bots_awaiting())
                 .then(|| Instant::now() + std::time::Duration::from_millis(50)),
             // **Not `tabs().active_tab()`, deliberately.** A feedback report is
             // sent by a worker that outlives the tab that wrote it, so the
@@ -15254,6 +15278,7 @@ impl View for MainView {
         // when the list changed, and folding in its reader's answer — never
         // on a timer.
         let chats_changed = self.maintain_chats();
+        let bots_changed = self.maintain_bots();
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document();
         let ai_attachment_opened = self.open_pending_ai_attachment();
@@ -15390,6 +15415,7 @@ impl View for MainView {
             || schedules_changed
             || artifacts_changed
             || chats_changed
+            || bots_changed
             || socials_changed
             || probe_changed
             || search_changed
@@ -17746,6 +17772,10 @@ impl MainView {
             crate::panes::explore::NavigatorMode::Canvases => self.explore.show_canvases(),
             crate::panes::explore::NavigatorMode::Socials => {
                 self.open_socials_tab();
+                self.explore.focus_tree(self.explore_area());
+            }
+            crate::panes::explore::NavigatorMode::Bots => {
+                self.explore.show_bots();
                 self.explore.focus_tree(self.explore_area());
             }
         }

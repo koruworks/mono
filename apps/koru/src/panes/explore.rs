@@ -209,6 +209,11 @@ pub enum NavigatorMode {
     /// The eighth icon, after Canvases. Its rows are the Socials store's, read
     /// by [`koru_socials_ui`]; opening one is reported for the container.
     Socials,
+    /// **The person's own Bots in this workspace** (Bots P1.8). Last in the
+    /// default order, so no other view's slot moves. Its rows are the Bot
+    /// service's, read by [`crate::bots::BotsRoster`] on its own thread;
+    /// shown wherever agents and Koru AI are ([`crate::bots::shown`]).
+    Bots,
 }
 
 impl NavigatorMode {
@@ -226,7 +231,8 @@ impl NavigatorMode {
             | Self::Chats
             | Self::Agents
             | Self::Artifacts
-            | Self::Socials => None,
+            | Self::Socials
+            | Self::Bots => None,
         }
     }
 
@@ -244,6 +250,7 @@ impl NavigatorMode {
             Self::Artifacts => "artifacts",
             Self::Canvases => "canvases",
             Self::Socials => "socials",
+            Self::Bots => "bots",
         }
     }
 
@@ -269,6 +276,7 @@ impl NavigatorMode {
             Self::Artifacts => t(lang, Key::ArtifactsTitle),
             Self::Canvases => t(lang, Key::CanvasesTitle),
             Self::Socials => koru_i18n::socials::t(lang, koru_i18n::socials::Key::Title),
+            Self::Bots => t(lang, Key::BotsTitle),
         }
     }
 
@@ -281,7 +289,7 @@ impl NavigatorMode {
     /// Every mode, in the rail's **default** order — the person can reorder
     /// it (`sidebar::rail_order`). Adding a mode is one entry here rather
     /// than four widths to keep in step.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Home,
         Self::Documents,
         Self::Files,
@@ -291,12 +299,14 @@ impl NavigatorMode {
         Self::Artifacts,
         Self::Canvases,
         Self::Socials,
+        Self::Bots,
     ];
 
     /// Whether this build shows the mode (`koru_features`,
     /// guide/contributing/FEATURE-FLAGS.md): Tasks with tasks, Chats with Koru AI,
     /// Agents and Artifacts with agent views, Canvases with canvas, Socials with
-    /// socials. Documents and Files always. Home while
+    /// socials, Bots where agents and Koru AI both are — never behind agent
+    /// views (`crate::bots::shown`). Documents and Files always. Home while
     /// `koru_features::HOME_SHOWN` says so — hidden for now (2026-11-03).
     pub fn shown_in_product(self) -> bool {
         match self {
@@ -307,6 +317,7 @@ impl NavigatorMode {
             Self::Agents | Self::Artifacts => koru_features::agent_views(),
             Self::Canvases => koru_features::canvas(),
             Self::Socials => koru_features::socials(),
+            Self::Bots => crate::bots::shown(),
         }
     }
 
@@ -340,6 +351,7 @@ impl NavigatorMode {
             "artifacts" => Some(Self::Artifacts),
             "canvases" => Some(Self::Canvases),
             "socials" => Some(Self::Socials),
+            "bots" => Some(Self::Bots),
             _ => None,
         }
     }
@@ -766,6 +778,9 @@ pub struct ExploreView {
     /// artifacts column it reports what it cannot do itself — open a tab,
     /// start a chat, ask before a delete — as [`Outcome`]s.
     chats: koru_chats_ui::ChatsSurface,
+    /// The Bots mode's content (Bots P1.8). It asks the Bot service only
+    /// while it is shown; a Bot pressed is recorded on it for the Bot view.
+    bots: crate::bots::BotsRoster,
     socials: Option<koru_socials_ui::SharedSurface>,
     /// The manifest is already the projection supplied by the Store. Keeping
     /// this small cache lets the mode buttons swap lists without another IPC
@@ -1181,6 +1196,31 @@ impl ExploreView {
         self.set_navigator_mode(NavigatorMode::Socials);
     }
 
+    pub fn show_bots(&mut self) {
+        self.set_navigator_mode(NavigatorMode::Bots);
+    }
+
+    /// Whether the Bots roster is what is showing.
+    pub fn showing_bots(&self) -> bool {
+        self.mode == NavigatorMode::Bots
+    }
+
+    /// Give the Bots roster its link to the Bot service, once — the first
+    /// time it is shown, by the container, which knows this window's `--root`.
+    pub fn start_bots(&mut self, root: Option<std::path::PathBuf>) {
+        self.bots.start(root);
+    }
+
+    pub fn bots_mut(&mut self) -> &mut crate::bots::BotsRoster {
+        &mut self.bots
+    }
+
+    /// Whether the roster owes an answer — the one reason the container
+    /// keeps a wake clock for it.
+    pub fn bots_awaiting(&self) -> bool {
+        self.bots.awaiting()
+    }
+
     pub fn showing_socials(&self) -> bool {
         self.mode == NavigatorMode::Socials
     }
@@ -1461,6 +1501,10 @@ impl ExploreView {
         self.scroll = 0.0;
         self.focus = None;
         self.selection.clear();
+        // **The roster works only while shown**: leaving it marks it stale
+        // and lets the keyboard go; coming back asks once, on the
+        // container's next pass.
+        self.bots.set_shown(mode == NavigatorMode::Bots);
         // The anchor is the fixed end of a selection that has just gone; a
         // Shift+click in the new mode extends from the row it lands on.
         self.selection_anchor = None;
@@ -1509,7 +1553,8 @@ impl ExploreView {
             | NavigatorMode::Artifacts
             | NavigatorMode::Canvases
             | NavigatorMode::Home
-            | NavigatorMode::Socials => &mut self.collapsed,
+            | NavigatorMode::Socials
+            | NavigatorMode::Bots => &mut self.collapsed,
         }
     }
 
@@ -1524,7 +1569,8 @@ impl ExploreView {
             | NavigatorMode::Artifacts
             | NavigatorMode::Canvases
             | NavigatorMode::Home
-            | NavigatorMode::Socials => &self.collapsed,
+            | NavigatorMode::Socials
+            | NavigatorMode::Bots => &self.collapsed,
         }
     }
 
@@ -1653,6 +1699,7 @@ impl ExploreView {
             self.focus.is_some()
                 || (self.mode == NavigatorMode::Artifacts && self.artifacts.has_keyboard())
                 || (self.mode == NavigatorMode::Chats && self.chats.has_keyboard())
+                || (self.mode == NavigatorMode::Bots && self.bots.has_keyboard())
                 || (self.showing_socials()
                     && self
                         .socials
@@ -1671,6 +1718,7 @@ impl ExploreView {
                 koru_artifacts_ui::Press::Escape,
             );
         let chats = self.chats.clear_focus();
+        let bots = self.bots.clear_focus();
         let socials = self.socials.as_ref().is_some_and(|s| {
             let mut s = s.borrow_mut();
             let focused = s.navigation_has_keyboard();
@@ -1679,7 +1727,7 @@ impl ExploreView {
         });
         let rail_had_focus = self.rail.clear_queue_focus();
         let tree_had_focus = self.focus.take().is_some();
-        tree_had_focus || artifacts || chats || socials || rail_had_focus
+        tree_had_focus || artifacts || chats || bots || socials || rail_had_focus
     }
 
     /// Take the keyboard, landing on the row that is already open if one is —
@@ -1702,6 +1750,10 @@ impl ExploreView {
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
             return self.chats.focus_first(area, top) || self.chats.has_keyboard();
+        }
+        // On the Bot last asked for when the roster holds it, else the first.
+        if self.mode == NavigatorMode::Bots {
+            return self.bots.focus_first() || self.bots.has_keyboard();
         }
         if self.showing_tasks() {
             let top = self.rows_top(area);
@@ -1787,6 +1839,12 @@ impl ExploreView {
                 return None;
             }
             return Some(self.chats_outcome());
+        }
+        // The roster claims the arrows, Home/End, Enter/Space and Escape, and
+        // no others: it offers nothing to delete or rename yet.
+        if self.mode == NavigatorMode::Bots {
+            let press = crate::bots::roster::Press::of(key)?;
+            return self.bots.key(press).then_some(Outcome::Consumed);
         }
         if self.showing_tasks() {
             let top = self.rows_top(area);
@@ -4274,7 +4332,8 @@ impl ExploreView {
                 | NavigatorMode::Artifacts
                 | NavigatorMode::Canvases
                 | NavigatorMode::Home
-                | NavigatorMode::Socials => Outcome::Consumed,
+                | NavigatorMode::Socials
+                | NavigatorMode::Bots => Outcome::Consumed,
             },
             actions::Action::CollapseAll => {
                 self.pending_fold = Some(fold::Fold::Collapse);
@@ -4595,6 +4654,9 @@ impl ExploreView {
             NavigatorMode::Chats => koru_chats_ui::MODE_ICON,
             NavigatorMode::Canvases => icons::CANVAS,
             NavigatorMode::Socials => icons::MEGAPHONE,
+            // The Agents view's robot for now: whether Bots gets a mark of
+            // its own is the maintainers' question (Bots P1.8).
+            NavigatorMode::Bots => icons::ROBOT,
             NavigatorMode::Home => icons::HOUSE,
         }
     }
@@ -5119,6 +5181,14 @@ impl ExploreView {
             });
         }
 
+        // The roster owns everything below the heading while there is a
+        // workspace for it to be about; a press on a Bot is recorded on it.
+        if self.mode == NavigatorMode::Bots && self.current.is_some() {
+            let top = self.rows_top(area);
+            self.bots.mouse_down(area, top, x, y);
+            return Outcome::Consumed;
+        }
+
         // The empty-state button, which stands where the rows would be.
         if self.empty_cta.is_some_and(|cta| cta.contains(x, y)) {
             return self.empty_state().2;
@@ -5530,7 +5600,10 @@ impl ExploreView {
         // on the row; a right-click that opened a menu of one disabled item
         // would be a promise the column cannot keep. The press is still
         // ours, so it does not fall through to the view beside the column.
-        if matches!(self.mode, NavigatorMode::Artifacts | NavigatorMode::Socials) {
+        if matches!(
+            self.mode,
+            NavigatorMode::Artifacts | NavigatorMode::Socials | NavigatorMode::Bots
+        ) {
             return Outcome::Consumed;
         }
         // A chat row's menu, whose one verb is *Delete chat*. Reported, not
@@ -5804,6 +5877,16 @@ impl ExploreView {
         } else {
             false
         };
+        let bots_moved = if self.mode == NavigatorMode::Bots {
+            let top = self.rows_top(area);
+            if popover.is_some() || actions {
+                self.bots.clear_hover()
+            } else {
+                self.bots.mouse_move(area, top, x, y)
+            }
+        } else {
+            false
+        };
         let home_moved = if self.mode == NavigatorMode::Home {
             let top = self.rows_top(area);
             if popover.is_some() || actions {
@@ -5839,6 +5922,7 @@ impl ExploreView {
             || rail_moved
             || artifacts_moved
             || chats_moved
+            || bots_moved
             || hover != self.hover
             || popover_part != self.popover_part
             || actions != self.actions_hover
@@ -6775,6 +6859,10 @@ impl ExploreView {
             self.chats.scroll_by(area, top, dy);
             return;
         }
+        if self.mode == NavigatorMode::Bots {
+            self.bots.scroll_by(dy);
+            return;
+        }
         self.scroll -= dy;
         self.clamp_scroll(area);
     }
@@ -6874,6 +6962,7 @@ impl ExploreView {
                     | NavigatorMode::Chats
                     | NavigatorMode::Agents
                     | NavigatorMode::Artifacts
+                    | NavigatorMode::Bots
             )
             && self.current.is_none()
             && self
@@ -6941,12 +7030,15 @@ impl ExploreView {
                 Outcome::ImportFiles,
             ),
             NavigatorMode::Canvases => canvases::empty_state(),
+            // Never reached with a workspace: the roster draws its own empty
+            // sentence, and with none the column says Create workspace above.
             NavigatorMode::Home
             | NavigatorMode::Tasks
             | NavigatorMode::Chats
             | NavigatorMode::Agents
             | NavigatorMode::Socials
-            | NavigatorMode::Artifacts => ("", "", Outcome::Consumed),
+            | NavigatorMode::Artifacts
+            | NavigatorMode::Bots => ("", "", Outcome::Consumed),
         }
     }
 
@@ -7111,6 +7203,17 @@ impl ExploreView {
             self.empty_subscribe = None;
             self.chats.set_lang(crate::format::lang());
             self.chats.draw(scene, root, engine, area, top);
+            return false;
+        }
+
+        // The roster's whole content, for the Chats view's reason — while
+        // there is a workspace it is about. With none, the empty-state branch
+        // below offers Create workspace, as every other view does.
+        if self.mode == NavigatorMode::Bots && self.current.is_some() {
+            self.empty_cta = None;
+            self.empty_subscribe = None;
+            self.bots.set_lang(crate::format::lang());
+            self.bots.draw(scene, root, engine, area, top);
             return false;
         }
 
