@@ -876,7 +876,7 @@ fn a_folder_chip_opens_its_local_folder_on_double_click() {
 #[test]
 fn a_referenced_png_file_opens_in_the_image_viewer() {
     let (mut surface, chat, _commands) = surface_with_agent_chat();
-    let path = PathBuf::from("C:/Users/someone/Desktop/Bots -- exported@2x.png");
+    let path = PathBuf::from("C:/Users/someone/Desktop/Bots -- exported-2x.png");
     let draft = Draft::reference(path.clone(), AttachmentKind::File);
     surface.strips.push(chat, draft.clone());
     surface.composer_rect();

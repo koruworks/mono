@@ -99,9 +99,15 @@ fn a_turns_model_needs_protocol_twenty_two() {
         !protocol(21, true, true).turn_model(),
         "a v21 peer has none"
     );
-    assert_eq!(
-        crate::protocol_offer().versions.max,
-        koru_session_protocol::PATH_REFERENCES_PROTOCOL_VERSION,
+    // The host offers path references, which is what this asserts. It used
+    // to say so as an equality, which only held while path references was
+    // the newest version and broke on the next bump that had nothing to do
+    // with it. The two version tests that *are* meant to break on a bump
+    // pin a literal and document each version; this one does not, so it
+    // asks the question it actually means.
+    assert!(
+        crate::protocol_offer().versions.max
+            >= koru_session_protocol::PATH_REFERENCES_PROTOCOL_VERSION,
         "the host offers it"
     );
 }
