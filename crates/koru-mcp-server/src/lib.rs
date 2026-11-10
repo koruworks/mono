@@ -13850,7 +13850,10 @@ mod tests {
             .unwrap();
         assert_eq!(read["document_id"], made["document_id"]);
         assert_eq!(read["root_node_id"], made["root_node_id"]);
-        assert_eq!(read["revision"], placed["revision"]);
+        assert_eq!(
+            decoded_revision(read["revision"].as_str().unwrap()).unwrap(),
+            decoded_revision(placed["revision"].as_str().unwrap()).unwrap()
+        );
         let nodes = read["nodes"].as_array().unwrap();
         assert!(
             nodes
@@ -13865,12 +13868,35 @@ mod tests {
         let before = WorkspaceDoc::from_snapshot(&created_snapshot).unwrap();
         let after =
             WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&document]).unwrap();
-        assert_eq!(revision(&before), made["revision"].as_str().unwrap());
+        assert_eq!(
+            before.version(),
+            decoded_revision(made["revision"].as_str().unwrap()).unwrap()
+        );
         assert!(
             after.doc().oplog_vv().includes_vv(&before.doc().oplog_vv()),
             "the creation's history is a prefix of the document's, not a new lineage"
         );
         assert!(placed.get("history").is_none());
+    }
+
+    // A revision is a causal vector, not a canonical byte encoding: Loro's
+    // map iteration can encode equal vectors in different entry orders.
+    fn decoded_revision(encoded: &str) -> Result<loro::VersionVector, ToolError> {
+        let bytes = unhex(encoded)?;
+        loro::VersionVector::decode(&bytes)
+            .map_err(|error| ToolError::invalid(format!("invalid revision: {error}")))
+    }
+
+    #[test]
+    fn revision_comparison_decodes_entry_order_and_refuses_invalid_evidence() {
+        let first = "029493bab193e8c5c20150c4f9a99c9db5ebf68d0116";
+        let reordered = "02c4f9a99c9db5ebf68d01169493bab193e8c5c20150";
+        assert_ne!(first, reordered);
+        let vector = decoded_revision(first).unwrap();
+        assert_eq!(vector, decoded_revision(reordered).unwrap());
+        assert_ne!(vector, loro::VersionVector::default());
+        assert!(decoded_revision("zz").is_err());
+        assert!(decoded_revision("ff").is_err());
     }
 
     // ------------------------------------------ writes reach only what reads reach

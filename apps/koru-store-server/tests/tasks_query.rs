@@ -366,6 +366,18 @@ fn repeated_warm_queries_open_no_document_and_accumulate_no_work() {
     let client = store.client();
     let fixture = Fixture::build(&store, &root, 8);
 
+    // A sweep can publish the task rows while the same commit still waits in
+    // the projector's debounce queue. Measure queries only after fixture work
+    // drains, as the performance fixtures do; row visibility is not idleness.
+    wait_for("the fixture's projection work to drain", || {
+        let projection = client.debug("projection").expect("projection state");
+        let pending = projection["pending"].as_u64().expect("pending count");
+        let sweeping = projection["sweeping"].as_bool().expect("sweep state");
+        let failed = projection["failed"].as_u64().expect("failure count");
+        assert_eq!(failed, 0, "fixture projection failed: {projection}");
+        pending == 0 && !sweeping
+    });
+
     let walked = counter(&client, "projection", "projected");
     let queries = counter(&client, "tasks", "queries");
     let answered = counter(&client, "tasks", "rows_answered");
