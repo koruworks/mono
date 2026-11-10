@@ -5133,6 +5133,7 @@ dependencies = [
 name = "koru-ai-core"
 version = "0.0.3"
 dependencies = [
+ "koru-delegate-core",
  "koru-link",
  "koru-store-core",
  "pulldown-cmark",
@@ -5264,6 +5265,7 @@ dependencies = [
  "koru-ai-core",
  "koru-sqlite",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "tracing",
  "url",

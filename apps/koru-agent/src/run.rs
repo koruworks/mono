@@ -307,7 +307,7 @@ pub fn run(
         // launch registers its expected bridge with it — and before the sync
         // control worker below, which ensures a gateway at the top of every
         // attempt.
-        crate::gateway_host::start(&paths_for_producers);
+        crate::gateway_host::start(&paths_for_producers, local_device);
         // The delegate worker (D12), after the sessions and gateway workers
         // it reaches. Like the gateway's, its supervision returns at once;
         // the child waits for the gateway to publish on its own thread.

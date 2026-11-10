@@ -17,6 +17,44 @@ use crate::{
 
 /// The only persistence surface visible to AI application behavior.
 pub trait AiPersistence: Send {
+    fn chat_with_access(
+        &self,
+        id: ChatId,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<Option<Chat>, AiError> {
+        require_ordinary_reader(access)?;
+        self.chat(id)
+    }
+    fn chats_with_access(
+        &self,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<Vec<Chat>, AiError> {
+        require_ordinary_reader(access)?;
+        self.chats()
+    }
+    fn chat_overviews_with_access(
+        &self,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<Vec<ChatOverview>, AiError> {
+        require_ordinary_reader(access)?;
+        self.chat_overviews()
+    }
+    fn search_with_access(
+        &self,
+        query: &AiSearchQuery,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<AiSearchPage, AiError> {
+        require_ordinary_reader(access)?;
+        self.search(query)
+    }
+    fn message_block_context_with_access(
+        &self,
+        block: crate::MessageBlockId,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<Option<MessageBlockContext>, AiError> {
+        require_ordinary_reader(access)?;
+        self.message_block_context(block)
+    }
     fn settings(&self) -> Result<Option<AiSettings>, AiError>;
     fn save_settings(&mut self, settings: &AiSettings) -> Result<(), AiError>;
     fn create_chat(&mut self, chat: &Chat) -> Result<(), AiError>;
@@ -97,6 +135,14 @@ pub trait AiPersistence: Send {
     fn append_feedback(&mut self, event: &FeedbackEvent) -> Result<FeedbackEvent, AiError>;
     fn attempt_for_message(&self, message: MessageId) -> Result<Option<InferenceAttempt>, AiError>;
     fn usage(&self, chat: Option<ChatId>) -> Result<UsageReport, AiError>;
+    fn usage_with_access(
+        &self,
+        chat: Option<ChatId>,
+        access: &crate::bots::ChatReadAccess,
+    ) -> Result<UsageReport, AiError> {
+        require_ordinary_reader(access)?;
+        self.usage(chat)
+    }
     fn delete_chat(&mut self, chat: ChatId) -> Result<bool, AiError>;
     fn clear_history(&mut self) -> Result<u64, AiError>;
     fn clear_usage(&mut self) -> Result<UsageClearResult, AiError>;
@@ -164,6 +210,18 @@ pub trait AiPersistence: Send {
         finalized_blocks: &[MessageBlock],
     ) -> Result<InferenceAttempt, AiError>;
     fn recover_interrupted(&mut self, now: Timestamp) -> Result<RecoveryCounts, AiError>;
+}
+
+fn require_ordinary_reader(access: &crate::bots::ChatReadAccess) -> Result<(), AiError> {
+    if access.is_ordinary() {
+        Ok(())
+    } else {
+        Err(AiError::new(
+            AiErrorClass::Storage,
+            "This reader does not support Bot authority.",
+            false,
+        ))
+    }
 }
 
 /// Provider execution boundary. SDK and credential types stay behind it.

@@ -970,3 +970,43 @@ fn a_v12_database_keeps_its_chats_with_no_profile_yet() {
     prepare(&mut connection).unwrap();
     assert_eq!(user_version(&connection).unwrap(), SCHEMA_VERSION);
 }
+
+#[test]
+fn populated_v15_survives_bot_migration_and_repeated_open_unchanged() {
+    const V15: Schema = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 15,
+        migrations: MIGRATIONS.split_at(15).0,
+    };
+    let mut c = koru_sqlite::open_in_memory(&V15).unwrap();
+    c.execute_batch("INSERT INTO chats(id,title,current_provider,current_model,created_at_ms,updated_at_ms) VALUES('chat','kept','mock','fixture',1,2);
+ INSERT INTO messages(id,chat_id,ordinal,role,state,markdown,created_at_ms,completed_at_ms) VALUES('message','chat',0,'user','complete','kept body',1,1);
+ INSERT INTO inference_attempts(id,operation_id,chat_id,surface,provider,requested_model,prompt_template_version,status,queued_at_ms,context_used_tokens) VALUES('attempt','operation','chat','standalone','mock','fixture','v1','pending',1,42);").unwrap();
+    for _ in 0..2 {
+        prepare(&mut c).unwrap();
+        assert_eq!(user_version(&c).unwrap(), 16);
+        assert_eq!(
+            c.query_row(
+                "SELECT markdown FROM messages WHERE id='message'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "kept body"
+        );
+        assert_eq!(
+            c.query_row(
+                "SELECT context_used_tokens FROM inference_attempts WHERE id='attempt'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            42
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM bots", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}

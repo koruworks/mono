@@ -11,7 +11,7 @@ use rusqlite::Connection;
 
 pub use koru_sqlite::OpenError;
 
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -104,6 +104,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/015_ai_reported_context_usage.sql"),
         columns: &[],
     },
+    Migration {
+        to: 16,
+        name: "016_ai_bots.sql",
+        sql: include_str!("../migrations/016_ai_bots.sql"),
+        columns: &[],
+    },
 ];
 
 const SCHEMA: Schema = Schema {
@@ -116,7 +122,7 @@ pub(crate) fn open(path: &Path) -> Result<Connection, OpenError> {
     koru_sqlite::open(&SCHEMA, path)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fixtures"))]
 pub(crate) fn open_in_memory() -> Result<Connection, OpenError> {
     koru_sqlite::open_in_memory(&SCHEMA)
 }

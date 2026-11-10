@@ -37,7 +37,7 @@ use koru_ai_core::{
 use super::{ApiResult, Failure, WorkerCommand, WorkerState, ai_failure, failure, not_found};
 
 /// How a command names the chat it reads or changes.
-enum Named {
+pub(super) enum Named {
     Chat(ChatId),
     /// A new chat: hidden when its profile is removed, or when the id is
     /// already a removed profile's chat.
@@ -96,13 +96,14 @@ impl WorkerCommand {
 
     /// The one chat this command is about, when it names one. A listing,
     /// a search and a clear name none: they leave the hidden ones out.
-    fn named(&self) -> Option<Named> {
+    pub(super) fn named(&self) -> Option<Named> {
         Some(match self {
             Self::CreateChat { request, .. } => Named::NewChat {
                 chat: request.chat_id,
                 profile: request.profile_id,
             },
-            Self::ReadChat { chat, .. }
+            Self::WorkspaceCopyAdmission { chat, .. }
+            | Self::ReadChat { chat, .. }
             | Self::RenameChat { chat, .. }
             | Self::PinChat { chat, .. }
             | Self::UpdateChatModel { chat, .. }
@@ -147,11 +148,14 @@ impl WorkerCommand {
     }
 
     /// Answer this command with `failure` instead of serving it.
-    fn refuse(self, failure: Failure) {
+    pub(super) fn refuse(self, failure: Failure) {
         fn answer<T>(reply: SyncSender<ApiResult<T>>, failure: Failure) {
             let _ = reply.send(Err(failure));
         }
         match self {
+            Self::Bots { reply, .. } => answer(reply, failure),
+            Self::WorkspaceCopyAdmission { reply, .. } => answer(reply, failure),
+            Self::ClearUsage { reply, .. } => answer(reply, failure),
             Self::CreateChat { reply, .. } => answer(reply, failure),
             Self::ListChats { reply, .. } => answer(reply, failure),
             Self::ReadChat { reply, .. } => answer(reply, failure),

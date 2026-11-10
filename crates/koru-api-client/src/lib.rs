@@ -660,6 +660,13 @@ pub struct ModelPullEventStream {
 }
 
 impl AiClient<'_> {
+    pub fn bots(&self, request: &koru_ai_wire::BotCommand) -> AiResult<koru_ai_wire::BotResponse> {
+        self.json(
+            reqwest::Method::POST,
+            "/v1/ai/bots".into(),
+            Some(json_body(request)?),
+        )
+    }
     pub fn available(&self) -> bool {
         self.client.capabilities.iter().any(|value| value == "ai")
     }

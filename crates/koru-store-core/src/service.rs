@@ -896,6 +896,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.open.values().map(|w| w.documents.len()).sum()
     }
 
+    /// Durable local catalog identity for trusted service composition, never caller supplied.
+    pub fn local_user_scope(&self) -> Result<crate::UserScopeId> {
+        self.catalog.local_user_scope()
+    }
+
     // ------------------------------------------------------------- profiles
 
     /// Create a persona.

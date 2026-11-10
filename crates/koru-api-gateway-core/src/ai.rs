@@ -80,6 +80,19 @@ const ATTACHMENT_BODY_LIMIT: usize =
 
 pub const ROUTES: &[AiRoute] = &[
     AiRoute {
+        operation_id: "ai_bot_command",
+        method: "POST",
+        path: "/v1/ai/bots",
+        scope: AiScope::ManageBots,
+        summary: "Read or configure an engine-owned Bot",
+        returns: "A durable Bot configuration or authorized listing; never starts work.",
+        handler: || post(bot_command),
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotCommand>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotResponse>()),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
         operation_id: "ai_provider_settings",
         method: "GET",
         path: "/v1/ai/providers/settings",
@@ -1039,6 +1052,22 @@ async fn cancel_ollama_pull(
         Err(response) => return response,
     };
     answer(call(move || client.cancel_ollama_pull(context)).await)
+}
+
+async fn bot_command(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    payload: Result<Json<koru_ai_wire::BotCommand>, JsonRejection>,
+) -> Response {
+    let request = match json_request(payload) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::ManageBots) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.bots(context, request)).await)
 }
 
 async fn create_chat(
@@ -2065,7 +2094,7 @@ fn status_for(failure: &Failure) -> StatusCode {
     use koru_ai_wire::attachment_codes as attachment;
     match failure.code.as_str() {
         "invalid_request" | "invalid_id" | attachment::LIMIT => StatusCode::BAD_REQUEST,
-        "forbidden" | attachment::WORKSPACE_NOT_GRANTED => StatusCode::FORBIDDEN,
+        "forbidden" | "wrong_owner" | attachment::WORKSPACE_NOT_GRANTED => StatusCode::FORBIDDEN,
         "not_found"
         | "chat_not_found"
         | attachment::NOT_FOUND
@@ -2078,11 +2107,18 @@ fn status_for(failure: &Failure) -> StatusCode {
         | attachment::UNSUPPORTED
         | attachment::WORKSPACE_FILE_UNAVAILABLE => StatusCode::CONFLICT,
         attachment::STORAGE => StatusCode::INSUFFICIENT_STORAGE,
-        "chat_busy" | "idempotency_conflict" | "model_pull_active" | "steer_unavailable" => {
-            StatusCode::CONFLICT
-        }
+        "chat_busy"
+        | "request_conflict"
+        | "revision_conflict"
+        | "folder_locked"
+        | "unsupported_capability"
+        | "idempotency_conflict"
+        | "model_pull_active"
+        | "steer_unavailable" => StatusCode::CONFLICT,
         "deadline_exceeded" | "ai_worker_timeout" => StatusCode::GATEWAY_TIMEOUT,
-        "ai_worker_saturated"
+        "workspace_unavailable"
+        | "runtime_unavailable"
+        | "ai_worker_saturated"
         | "ai_unavailable"
         | "ai_context_unavailable"
         | "ai_provider_management_unavailable"

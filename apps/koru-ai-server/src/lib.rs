@@ -8,6 +8,8 @@
 use std::path::PathBuf;
 
 mod attachments;
+mod bots;
+pub use bots::BotAuthorityAdapter;
 mod chat_tools;
 mod store_context;
 mod store_tools;

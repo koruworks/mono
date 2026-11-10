@@ -90,10 +90,7 @@ impl Policy {
         // ordinary and lost the scope it asked for, silently. A third scope made
         // that a bug waiting rather than a latent one, so the predicate now
         // names the set `effective_scopes` gates on.
-        let asks = hello
-            .requested_scopes
-            .iter()
-            .any(|scope| scope == WORKSPACE_DESTROY_SCOPE || scope == WORKSPACE_MIGRATE_SCOPE);
+        let asks = asks_vouched_scope(&hello.requested_scopes);
         let (Some(agent), Some(grant), true) = (self.agent.as_ref(), hello.grant.clone(), asks)
         else {
             return Admission::Ordinary;
@@ -113,3 +110,11 @@ impl Policy {
 pub(crate) fn instance_id() -> String {
     format!("{}-{}", std::process::id(), now_millis())
 }
+
+fn asks_vouched_scope(scopes: &[String]) -> bool {
+    scopes
+        .iter()
+        .any(|s| s == WORKSPACE_DESTROY_SCOPE || s == WORKSPACE_MIGRATE_SCOPE || s == "bots.manage")
+}
+#[cfg(test)]
+mod tests;

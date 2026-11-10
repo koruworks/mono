@@ -280,7 +280,7 @@ fn effective_scopes(requested: &[String], admission: Admission) -> Vec<String> {
                 || (vouched
                     && matches!(
                         scope.as_str(),
-                        WORKSPACE_DESTROY_SCOPE | WORKSPACE_MIGRATE_SCOPE
+                        WORKSPACE_DESTROY_SCOPE | WORKSPACE_MIGRATE_SCOPE | "bots.manage"
                     ))
         })
         .cloned()
@@ -361,6 +361,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         client: "client.ai().cancel_ollama_pull",
         http: "POST /v1/ai/providers/ollama/pulls/cancel",
         reason: "Desktop-local Ollama lifecycle is unavailable on mobile",
+    },
+    MobileUnavailableOperation {
+        id: "ai.bot_command",
+        client: "client.ai().bots",
+        http: "POST /v1/ai/bots",
+        reason: "Bot configuration currently requires the vouched desktop owner",
     },
     MobileUnavailableOperation {
         id: "ai.create_chat",
@@ -3165,6 +3171,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bot_route_requires_vouch_and_rejects_unknown_fields_before_owner_dispatch() {
+        let (_root, state, _) = state_with_ai();
+        let (ordinary, _) =
+            state
+                .sessions
+                .mint("claimed-owner", &["bots.manage".into()], now_millis());
+        let (owner, _) = state.sessions.mint_admitted(
+            "owner",
+            &["bots.manage".into()],
+            Admission::Vouched,
+            now_millis(),
+        );
+        for (token, extra, expected) in [
+            (ordinary, false, StatusCode::FORBIDDEN),
+            (owner, true, StatusCode::BAD_REQUEST),
+        ] {
+            let mut body =
+                serde_json::json!({"command":"list","workspace":koru_ai_core::WorkspaceId::new()});
+            if extra {
+                body["owner_device"] = serde_json::json!("caller-controlled");
+            }
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/bots")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+    }
+
+    #[tokio::test]
     async fn ai_requests_are_strict_and_scope_checked_before_dispatch() {
         let (_root, state, _) = state_with_ai();
         let (read_only, _) =
@@ -4843,3 +4887,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod bot_scope_tests;

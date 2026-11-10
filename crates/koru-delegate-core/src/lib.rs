@@ -64,8 +64,8 @@ pub use economics::{
 pub use failure::RunFailureReason;
 pub use header::{DelegatedRun, Rating, ResultReference, RunHeader, RunRating};
 pub use ids::{
-    ArtifactVersionId, AttemptGeneration, BlockNodeId, HandoffId, IdParseError, ModelRef,
-    RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
+    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, HandoffId,
+    IdParseError, ModelRef, RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
 };
 pub use name::RunName;
 pub use pin::ContextState;

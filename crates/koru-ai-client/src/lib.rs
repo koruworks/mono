@@ -33,6 +33,13 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn bots(
+        &self,
+        context: RequestContext,
+        request: koru_ai_wire::BotCommand,
+    ) -> Result<koru_ai_wire::BotResponse> {
+        self.server.bots(context, request)
+    }
     pub fn new(server: Arc<dyn AiServerPort>) -> Self {
         Self { server }
     }

@@ -26,6 +26,8 @@ use uuid::Uuid;
 use crate::db::{self, OpenError};
 
 mod attachments;
+mod bots;
+use koru_ai_core::bots::ChatReadAccess;
 
 pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 
@@ -40,8 +42,8 @@ impl Repository {
         })
     }
 
-    #[cfg(test)]
-    fn in_memory() -> Result<Self, OpenError> {
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn in_memory() -> Result<Self, OpenError> {
         Ok(Self {
             connection: db::open_in_memory()?,
         })
@@ -388,7 +390,19 @@ impl AiPersistence for Repository {
         query_chat(&self.connection, id)
     }
 
+    fn chat_with_access(
+        &self,
+        id: ChatId,
+        access: &ChatReadAccess,
+    ) -> Result<Option<Chat>, AiError> {
+        query_chat_with_access(&self.connection, id, access)
+    }
+
     fn chats(&self) -> Result<Vec<Chat>, AiError> {
+        self.chats_with_access(&ChatReadAccess::ordinary())
+    }
+
+    fn chats_with_access(&self, access: &ChatReadAccess) -> Result<Vec<Chat>, AiError> {
         let mut statement = self
             .connection
             .prepare(
@@ -397,11 +411,12 @@ impl AiPersistence for Repository {
                         created_at_ms, updated_at_ms, private, agent_working_folder, agent_mode,
                         agent_fast, pinned_at_ms, profile_id
                    FROM chats
+                  WHERE NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chats.id) OR chats.id IN (SELECT value FROM json_each(?1))
                   ORDER BY updated_at_ms DESC, id",
             )
             .map_err(storage_failed)?;
         let rows = statement
-            .query_map([], chat_from_row)
+            .query_map([access.json()], chat_from_row)
             .map_err(storage_failed)?;
         collect_rows(rows)
     }
@@ -413,7 +428,7 @@ impl AiPersistence for Repository {
     fn unplaced_chats(&self) -> Result<Vec<ChatPlacementEvidence>, AiError> {
         let mut chats = self
             .connection
-            .prepare("SELECT id FROM chats WHERE profile_id IS NULL ORDER BY created_at_ms, id")
+            .prepare("SELECT id FROM chats WHERE NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chats.id) AND profile_id IS NULL ORDER BY created_at_ms, id")
             .map_err(storage_failed)?;
         let ids = collect_rows(
             chats
@@ -507,6 +522,13 @@ impl AiPersistence for Repository {
     }
 
     fn chat_overviews(&self) -> Result<Vec<ChatOverview>, AiError> {
+        self.chat_overviews_with_access(&ChatReadAccess::ordinary())
+    }
+
+    fn chat_overviews_with_access(
+        &self,
+        access: &ChatReadAccess,
+    ) -> Result<Vec<ChatOverview>, AiError> {
         let mut statement = self
             .connection
             .prepare(
@@ -516,12 +538,13 @@ impl AiPersistence for Repository {
                    FROM chats AS chat
                    LEFT JOIN messages AS message
                      ON message.chat_id = chat.id AND message.state = 'complete'
+                  WHERE NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chat.id) OR chat.id IN (SELECT value FROM json_each(?1))
                   GROUP BY chat.id
                   ORDER BY chat.updated_at_ms DESC, chat.id",
             )
             .map_err(storage_failed)?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map([access.json()], |row| {
                 Ok(ChatOverview {
                     chat_id: required_id(row, 0, ChatId::parse, "ChatId")?,
                     title: row.get(1)?,
@@ -573,6 +596,14 @@ impl AiPersistence for Repository {
     }
 
     fn search(&self, query: &AiSearchQuery) -> Result<AiSearchPage, AiError> {
+        self.search_with_access(query, &ChatReadAccess::ordinary())
+    }
+
+    fn search_with_access(
+        &self,
+        query: &AiSearchQuery,
+        access: &ChatReadAccess,
+    ) -> Result<AiSearchPage, AiError> {
         let text = fts_query(&query.text);
         if text.is_empty() || query.limit == 0 {
             return Ok(AiSearchPage {
@@ -604,6 +635,7 @@ impl AiPersistence for Repository {
                       JOIN chats AS chat ON chat.id = message.chat_id
                      WHERE message_blocks_fts MATCH ?1
                        AND message.state = 'complete'
+                       AND (NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chat.id) OR chat.id IN (SELECT value FROM json_each(?8)))
                        AND (?4 = 0 OR chat.private = 0 OR chat.id = ?5)
                        AND (?6 IS NULL OR chat.profile_id = ?6)
                        AND (?7 IS NULL OR chat.profile_id IS NULL
@@ -654,6 +686,7 @@ impl AiPersistence for Repository {
                     calling_chat,
                     query.profile.map(|profile| profile.to_storage()),
                     removed,
+                    access.json(),
                 ],
                 |row| {
                     let rank: f64 = row.get(5)?;
@@ -798,13 +831,26 @@ impl AiPersistence for Repository {
     }
 
     fn usage(&self, chat: Option<ChatId>) -> Result<UsageReport, AiError> {
+        self.usage_with_access(chat, &ChatReadAccess::ordinary())
+    }
+
+    fn usage_with_access(
+        &self,
+        chat: Option<ChatId>,
+        access: &ChatReadAccess,
+    ) -> Result<UsageReport, AiError> {
+        if let Some(id) = chat
+            && self.chat_with_access(id, access)?.is_none()
+        {
+            return Err(storage_missing());
+        }
         let current_chat = chat
             .map(|chat_id| query_usage_totals(&self.connection, chat_id))
             .transpose()?;
         Ok(UsageReport {
             chat_id: chat,
             current_chat,
-            groups: query_usage_groups(&self.connection)?,
+            groups: query_usage_groups(&self.connection, access)?,
         })
     }
 
@@ -817,7 +863,10 @@ impl AiPersistence for Repository {
 
     fn clear_history(&mut self) -> Result<u64, AiError> {
         self.connection
-            .execute("DELETE FROM chats", [])
+            .execute(
+                "DELETE FROM chats WHERE id NOT IN (SELECT chat_id FROM bot_chats)",
+                [],
+            )
             .map(|deleted| u64::try_from(deleted).unwrap_or(u64::MAX))
             .map_err(storage_failed)
     }
@@ -825,10 +874,10 @@ impl AiPersistence for Repository {
     fn clear_usage(&mut self) -> Result<UsageClearResult, AiError> {
         let transaction = self.connection.transaction().map_err(storage_failed)?;
         let feedback_events = transaction
-            .execute("DELETE FROM feedback_events", [])
+            .execute("DELETE FROM feedback_events WHERE chat_id IS NULL OR chat_id NOT IN (SELECT chat_id FROM bot_chats)", [])
             .map_err(storage_failed)?;
         let attempts = transaction
-            .execute("DELETE FROM inference_attempts", [])
+            .execute("DELETE FROM inference_attempts WHERE chat_id IS NULL OR chat_id NOT IN (SELECT chat_id FROM bot_chats)", [])
             .map_err(storage_failed)?;
         transaction.commit().map_err(storage_failed)?;
         Ok(UsageClearResult {
@@ -855,6 +904,14 @@ impl AiPersistence for Repository {
         &self,
         block: MessageBlockId,
     ) -> Result<Option<MessageBlockContext>, AiError> {
+        self.message_block_context_with_access(block, &ChatReadAccess::ordinary())
+    }
+
+    fn message_block_context_with_access(
+        &self,
+        block: MessageBlockId,
+        access: &ChatReadAccess,
+    ) -> Result<Option<MessageBlockContext>, AiError> {
         self.connection
             .query_row(
                 "SELECT message.chat_id, chat.private, message.id, block.id, message.role,
@@ -862,8 +919,8 @@ impl AiPersistence for Repository {
                    FROM message_blocks AS block
                    JOIN messages AS message ON message.id = block.message_id
                    JOIN chats AS chat ON chat.id = message.chat_id
-                  WHERE block.id = ?1",
-                [block.to_storage()],
+                  WHERE block.id = ?1 AND (NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chat.id) OR chat.id IN (SELECT value FROM json_each(?2)))",
+                params![block.to_storage(),access.json()],
                 |row| {
                     Ok(MessageBlockContext {
                         chat_id: required_id(row, 0, ChatId::parse, "ChatId")?,
@@ -1419,12 +1476,19 @@ impl AiPersistence for Repository {
                 ],
             )
             .map_err(storage_failed)?;
-        query_export(
+        let existing = query_export(
             &self.connection,
             "idempotency_key",
             &export.idempotency_key.to_string(),
         )?
-        .ok_or_else(storage_missing)
+        .ok_or_else(storage_missing)?;
+        if existing.chat_id != export.chat_id
+            || existing.through_message_id != export.through_message_id
+            || existing.destination != export.destination
+        {
+            return Err(invariant_failed());
+        }
+        Ok(existing)
     }
 
     fn export(&self, id: DocumentExportId) -> Result<Option<DocumentExport>, AiError> {
@@ -2037,14 +2101,22 @@ const ATTEMPT_COLUMNS: &str = "id, operation_id, chat_id, assistant_message_id,
     context_used_tokens, context_limit_tokens";
 
 fn query_chat(connection: &Connection, id: ChatId) -> Result<Option<Chat>, AiError> {
+    query_chat_with_access(connection, id, &ChatReadAccess::ordinary())
+}
+
+fn query_chat_with_access(
+    connection: &Connection,
+    id: ChatId,
+    access: &ChatReadAccess,
+) -> Result<Option<Chat>, AiError> {
     connection
         .query_row(
             "SELECT id, title, current_provider, current_model, current_reasoning,
                     branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
                     private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms,
                     profile_id
-               FROM chats WHERE id = ?1",
-            [id.to_storage()],
+               FROM chats WHERE id = ?1 AND (NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chats.id) OR chats.id IN (SELECT value FROM json_each(?2)))",
+            params![id.to_storage(),access.json()],
             chat_from_row,
         )
         .optional()
@@ -2231,7 +2303,10 @@ fn query_usage_totals(connection: &Connection, chat: ChatId) -> Result<UsageTota
         .map_err(storage_failed)
 }
 
-fn query_usage_groups(connection: &Connection) -> Result<Vec<UsageGroup>, AiError> {
+fn query_usage_groups(
+    connection: &Connection,
+    access: &ChatReadAccess,
+) -> Result<Vec<UsageGroup>, AiError> {
     let sql = format!(
         "SELECT date(attempt.completed_at_ms / 1000, 'unixepoch'),
                 attempt.surface,
@@ -2246,12 +2321,14 @@ fn query_usage_groups(connection: &Connection) -> Result<Vec<UsageGroup>, AiErro
            LEFT JOIN current_message_feedback AS feedback
              ON feedback.attempt_id = attempt.id
           WHERE attempt.completed_at_ms IS NOT NULL
+            AND (NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=attempt.chat_id)
+                 OR attempt.chat_id IN (SELECT value FROM json_each(?1)))
           GROUP BY 1, 2, 3, 4, 5, 6, 7
           ORDER BY 1 DESC, 2, 3, 4, 5, 6, 7"
     );
     let mut statement = connection.prepare(&sql).map_err(storage_failed)?;
     let rows = statement
-        .query_map([], |row| {
+        .query_map([access.json()], |row| {
             let surface = row.get::<_, String>(1)?;
             let status = row.get::<_, String>(5)?;
             Ok(UsageGroup {
