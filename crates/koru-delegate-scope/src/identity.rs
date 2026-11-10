@@ -72,6 +72,8 @@ pub enum ScopeRefusal {
     UnknownProject,
     ProjectHasNoRoot,
     NoTemporaryDirectory,
+    /// Bot execution never takes the ordinary manual warn-and-proceed path.
+    Busy,
     /// The relative folder resolved somewhere the project's root does not
     /// contain — a `..` chain, an absolute spelling, a junction out.
     FolderOutsideProject,
@@ -89,6 +91,7 @@ impl fmt::Display for ScopeRefusal {
             Self::UnknownProject => f.write_str("the project is not on this device"),
             Self::ProjectHasNoRoot => f.write_str("the project has no folder"),
             Self::NoTemporaryDirectory => f.write_str("no temporary directory was created"),
+            Self::Busy => f.write_str("the working folder is busy"),
             Self::FolderOutsideProject => f.write_str("the folder is outside the project"),
             Self::NotFound => f.write_str("the folder does not exist"),
             Self::NotADirectory => f.write_str("the path is not a directory"),
@@ -229,6 +232,8 @@ impl ResolvedScope {
     ) -> Result<Self, ScopeRefusal> {
         match scope {
             WorkspaceScope::None => Err(ScopeRefusal::NotAdmissible),
+            // A lost mount must never become an empty replacement working folder.
+            WorkspaceScope::BotFolder { folder } => resolved(Path::new(folder.as_str())),
             WorkspaceScope::ProjectRoot { project } => resolved(&project_root(roots, *project)?),
             WorkspaceScope::ProjectFolder { project, folder } => {
                 let root = resolved(&project_root(roots, *project)?)?;

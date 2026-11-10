@@ -29,8 +29,8 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
     assert_eq!(
         run.compatibility(),
         Compatibility::TooNew {
-            found: 3,
-            understood: 2
+            found: 4,
+            understood: 3
         }
     );
     assert_eq!(run.header().unwrap().status, RunStatus::running());
@@ -38,8 +38,8 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
     assert_eq!(run.timeline_window(0, 10).len(), 2);
 
     let refused = RunDocumentError::ReadOnly {
-        found: 3,
-        understood: 2,
+        found: 4,
+        understood: 3,
     };
     assert_eq!(
         run.append_step(&step(StepKind::Completed, 5)).err(),

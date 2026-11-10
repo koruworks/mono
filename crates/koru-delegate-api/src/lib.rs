@@ -22,6 +22,7 @@
 //! set — a window creates a run and reads its activity, and a person can
 //! see both.
 
+pub mod bots;
 pub mod ipc;
 mod local;
 mod port;

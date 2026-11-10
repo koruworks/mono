@@ -308,7 +308,13 @@ pub const DELEGATE_AGENT_TOKENS: &[&str] = &["codex", "claude", "gemini", "openc
 
 /// `WorkspaceScope`'s variants. `none` is a run created before a scope was
 /// chosen; P1.5 refuses to *start* it, so it can be created and never run.
-const DELEGATE_SCOPE_KINDS: &[&str] = &["none", "project_root", "project_folder", "temporary"];
+const DELEGATE_SCOPE_KINDS: &[&str] = &[
+    "none",
+    "project_root",
+    "project_folder",
+    "temporary",
+    "bot_folder",
+];
 
 /// `PriorAttempt` (§7.6): what recovery could prove about the attempt a
 /// restart interrupted.

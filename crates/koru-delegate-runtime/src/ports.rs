@@ -159,6 +159,11 @@ pub type PortResult<T> = Result<T, PortError>;
 /// test. The method set is the ledger's own; the port exists so the
 /// orchestrator can be driven with no file.
 pub trait RunStore: ScheduleLedger {
+    /// The same ledger connection's Bot domain. Ordinary fakes may omit it;
+    /// Bot callers must return unavailable and never fall back to CreateRun.
+    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
+        None
+    }
     /// Validate an existing RunId without creating an intent. Used before
     /// scope preflight so an exact satisfied retry keeps its §7.1 answer.
     fn validate_intent(

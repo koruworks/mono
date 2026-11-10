@@ -91,6 +91,12 @@ pub struct ResultReference {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RunHeader {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot: Option<crate::BotProvenance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_results: Vec<crate::NativeResultReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_delivery: Option<crate::BotDeliveryReceipt>,
     pub run: RunId,
     pub created_at_ms: i64,
     pub requested_by: ActorRef,
@@ -130,10 +136,43 @@ pub struct RunHeader {
 }
 
 impl RunHeader {
+    /// Local shape validation, not authorization. A transported provenance is
+    /// historical evidence; the trusted execution owner still admits all work.
+    pub fn bot_fields_valid(&self) -> bool {
+        let Some(bot) = &self.bot else {
+            return self.native_results.is_empty()
+                && self.chat_delivery.is_none()
+                && !matches!(self.scope, WorkspaceScope::BotFolder { .. });
+        };
+        bot.valid()
+            && matches!(self.scope, WorkspaceScope::BotFolder { .. })
+            && self
+                .native_results
+                .iter()
+                .all(crate::NativeResultReference::valid)
+            && self
+                .native_results
+                .iter()
+                .map(|r| r.operation_id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == self.native_results.len()
+            && self.chat_delivery.as_ref().is_none_or(|receipt| {
+                receipt.valid()
+                    && receipt.run == self.run
+                    && receipt.chat_id == bot.chat_id
+                    && bot.ai_attempt_id == Some(receipt.ai_attempt_id)
+                    && bot.assistant_message_id == Some(receipt.assistant_message_id)
+            })
+    }
+
     /// The header the Run document is committed with (§7.1 step 3): the
     /// request as given, `Created`, nothing produced yet.
     pub fn from_request(request: DelegationRequest, created_at_ms: i64) -> Self {
         Self {
+            bot: None,
+            native_results: Vec::new(),
+            chat_delivery: None,
             run: request.run,
             created_at_ms,
             requested_by: request.requested_by,

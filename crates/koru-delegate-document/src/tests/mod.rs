@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::*;
 
+mod bots;
 mod dependency;
 mod economics;
 mod gate;

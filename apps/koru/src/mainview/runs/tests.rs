@@ -35,6 +35,9 @@ fn a_run_result(version: u128, title: &str) -> OpenedResult {
 
 fn a_header(run: RunId) -> RunHeader {
     RunHeader {
+        bot: None,
+        native_results: Vec::new(),
+        chat_delivery: None,
         run,
         created_at_ms: 10,
         requested_by: ActorRef::Person {

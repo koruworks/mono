@@ -252,6 +252,7 @@ pub(crate) fn run_view(
         WorkspaceScope::ProjectRoot { .. } => "project_root",
         WorkspaceScope::ProjectFolder { .. } => "project_folder",
         WorkspaceScope::Temporary => "temporary",
+        WorkspaceScope::BotFolder { .. } => "bot_folder",
     };
     RunView {
         document_id: document.to_storage(),

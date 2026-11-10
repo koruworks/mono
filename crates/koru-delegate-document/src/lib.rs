@@ -84,7 +84,7 @@ pub const SCHEDULE_KIND: &str = "koru-schedule";
 /// `koru_store_core::version::Compatibility::against(found, this)`: a run
 /// written by a newer build opens read-only here, never refused, and never
 /// through the node model's `meta.schema_version` (proposal F3).
-pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 2;
+pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 
 /// The schedule document's own local gate, stored at `schedule.schema`.
 pub const SCHEDULE_DOCUMENT_SCHEMA_VERSION: i64 = 1;

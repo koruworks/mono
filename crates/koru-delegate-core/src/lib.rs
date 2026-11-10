@@ -32,6 +32,9 @@
 
 mod actor;
 mod attempt;
+#[doc(hidden)]
+pub mod bot_wire;
+mod bots;
 mod context;
 mod deletion;
 mod economics;
@@ -53,6 +56,11 @@ pub use actor::ActorRef;
 pub use attempt::{
     AttemptState, HostInstanceId, PendingPublication, ProcessFacts, ProviderSessionKey,
     PublicationKind, StaleAttempt,
+};
+pub use bots::{
+    BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView, BotDeliveryReceipt,
+    BotExecutionFence, BotOwner, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
+    BotWorkingFolder, CapturedBotPolicy, NativeResultKind, NativeResultReference,
 };
 pub use context::{BlobKind, RunContextItem};
 pub use deletion::{ArtifactDisposition, FolderOutcome};
@@ -95,8 +103,10 @@ pub use turn::{TurnIdentity, TurnOriginator};
 pub use koru_device::DeviceId;
 pub use koru_events::EventId;
 pub use koru_session_protocol::{
-    AgentTurnId, ApprovalId, AttachmentId, IdempotencyKey, ProjectId, ProviderKind, SessionId,
-    SessionProfileKey,
+    AgentEventObservation, AgentTurnId, ApprovalChoiceId, ApprovalDecision, ApprovalId, Attachment,
+    AttachmentId, AttachmentSource, IdempotencyKey, PendingInput, ProjectId, ProviderKind,
+    QuestionAnswer, QuestionRequestId, SequencedAgentEvent, SessionId, SessionProfileKey,
+    StreamSequence,
 };
 pub use koru_store_core::ids::DocumentVersionId;
 pub use koru_store_core::{BlobHash, DocumentId, ProfileId, WorkspaceId};
