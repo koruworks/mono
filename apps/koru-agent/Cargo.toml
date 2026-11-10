@@ -253,6 +253,11 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# Layered native Bot acceptance composes the existing owners in-process.
+koru-ai-server = { path = "../koru-ai-server" }
+koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite" }
+koru-artifact-api = { path = "../../crates/koru-artifact-api" }
+loro.workspace = true
 koru-socials-publisher = { path = "../../crates/koru-socials-publisher", features = ["no-network"] }
 # Every surface on by default in tests; `koru_features::testing::with` opts
 # one test into the simplified product.

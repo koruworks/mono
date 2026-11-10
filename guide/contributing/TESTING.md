@@ -609,3 +609,52 @@ against the shared drawing clip and paragraph coordinates against hit testing.
 These checks exercise the composition absent from the original zero-origin
 fixtures. They remain in-memory checks; live capture and native input results must
 still be recorded separately.
+
+### Scripted native Bot process acceptance
+
+The `native_bots` child of the Agent's `delegate_worker_process` integration
+target returns before any I/O unless `KORU_LIVE_PROVIDER_SMOKE` is enabled.
+Its positive case uses a disposable root, the checked-in Codex app-server
+fixture, real session/delegate worker roles, and an in-process gateway with
+explicit vouched admission. A discovery-only fixture speaks the existing
+session wire protocol to the AI owner's model picker: Agent's test graph keeps
+`no-provider-probes` enabled. It advertises only `fixture-model`, counts actual
+discovery, and refuses every launch/control verb. The delegate and gateway
+bridge use the real sessions owner for the registered `agent-codex` runtime.
+The disposable delegate worker reuses the schedule-process suite's existing
+`test-support` clock/preflight fixture guards; it does not qualify production
+runtime readiness.
+The existing delegated-create helper currently records `Manual` session
+origin; this fixture checks managed execution, its exact Run/session fence and
+exclusion of Chat origin. It does not claim a `Delegated` origin marker.
+The stack composes one `NativeMutationGate` into both AI recovery and the
+gateway state, as gateway-process composition does, and waits for the AI
+worker's own startup recovery sweep to open it. Nothing marks it ready.
+Public Bot creation and shared chat submission
+exercise native page creation, exact-version editing, replay, retained history,
+AI delivery and cleanup. The scripted turn makes eight native calls, two of
+them deliberate refusals (a changed-payload create and a stale edit). The
+journey checks the trace names all eight in order and the transcript holds
+eight durable tool rows: six complete, two failed. Tool calls are tool rows,
+not message blocks; the reply's own markdown is its single paragraph block.
+A separate supervised ordinary-client case checks
+the specific missing-scope refusal. This composition does not prove trusted
+first-party executable admission, production model discovery, GUI behavior or
+a live provider's behavior.
+
+Build with `cargo test -p koru-agent --test delegate_worker_process --no-run`.
+Both worker roles use that integration build's `CARGO_BIN_EXE_koru-agent`,
+including its test features such as events `no-sink`. Do not overwrite that
+image with a standalone production build before running these cases.
+
+With the guard enabled only in the invoking process, run each exact test name:
+
+```text
+cargo test -p koru-agent --test delegate_worker_process native_bots::scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in -- --exact --nocapture
+cargo test -p koru-agent --test delegate_worker_process native_bots::ordinary_supervised_client_cannot_manage_bots_when_opted_in -- --exact --nocapture
+```
+
+The guard also enables genuine provider tests elsewhere. An exact name and
+`--exact` are required here; a broad filter is not the scripted-only command.
+The Windows and Unix fixture scripts share the synthetic native sequence;
+passing one platform does not establish execution on the other.

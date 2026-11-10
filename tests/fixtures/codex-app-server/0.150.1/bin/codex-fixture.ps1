@@ -68,6 +68,83 @@ function Send-Frame([object]$value) {
     [Console]::Out.Flush()
 }
 
+# Scripted native acceptance only. No provider credentials or global config.
+function Native-Rpc([string]$method, [object]$params) {
+    $override = @($FixtureArgs | Where-Object { $_ -like 'mcp_servers.koru_run.url=*' })
+    if ($override.Count -ne 1 -or -not $env:KORU_RUN_MCP_TOKEN) { throw 'native endpoint unavailable' }
+    $url = ($override[0] -replace '^mcp_servers\.koru_run\.url=', '').Trim("'")
+    $request = [System.Net.HttpWebRequest]::Create($url)
+    $request.Method = 'POST'
+    $request.ContentType = 'application/json'
+    $request.Headers['Authorization'] = 'Bearer ' + $env:KORU_RUN_MCP_TOKEN
+    $request.Timeout = 30000
+    $request.ReadWriteTimeout = 30000
+    $body = [System.Text.Encoding]::UTF8.GetBytes($json.Serialize(@{jsonrpc='2.0';id=1;method=$method;params=$params}))
+    $request.ContentLength = $body.Length
+    $stream = $request.GetRequestStream()
+    try { $stream.Write($body, 0, $body.Length) } finally { $stream.Dispose() }
+    $response = $request.GetResponse()
+    try {
+        $reader = [System.IO.StreamReader]::new($response.GetResponseStream())
+        try { $answer = $json.DeserializeObject($reader.ReadToEnd()) } finally { $reader.Dispose() }
+        if ($answer.error) { throw 'native RPC refused' }
+        return $answer.result
+    } finally { $response.Dispose() }
+}
+function Native-Call([string]$id, [string]$name, [object]$arguments, [bool]$refused = $false) {
+    Trace-Fixture ('native:call:' + $id)
+    $item = @{type='mcpToolCall';id=$id;server='koru_run';tool=$name;arguments=$arguments;status='inProgress'}
+    Send-Frame @{method='item/started';params=@{threadId='fixture-thread';turnId='fixture-turn';item=$item}}
+    $result = Native-Rpc 'tools/call' @{name=$name;arguments=$arguments}
+    if ([bool]$result.isError -ne $refused) { throw 'native tool outcome mismatch' }
+    $item.status = $(if ($refused) {'failed'} else {'completed'})
+    $item.result = $result
+    Send-Frame @{method='item/completed';params=@{threadId='fixture-thread';turnId='fixture-turn';item=$item}}
+    return $result.structuredContent
+}
+function Native-Discover {
+    $catalog = Native-Rpc 'tools/list' @{}
+    $names = @($catalog.tools | ForEach-Object { $_.name } | Sort-Object)
+    if (($names -join ',') -ne 'create_document,edit_document,read_document,search_documents') { throw 'native catalog mismatch' }
+    Trace-Fixture 'native:catalog:4'
+}
+function Invoke-NativePages {
+    Trace-Fixture 'native:turn'
+    $config = $json.DeserializeObject([System.IO.File]::ReadAllText($env:CODEX_FIXTURE_NATIVE_CONFIG))
+    try {
+        $create = @{operation_id='11111111-1111-4111-8111-111111111111';workspace_id=$config.workspace;title='Native fixture result';initial_operations=@(@{op='insert';node_id='body';parent_id='root';after_node_id=$null;kind='paragraph';text='NATIVE ORIGINAL'})}
+        $created = Native-Call 'native-create' 'create_document' $create
+        if ($created.status -ne 'saved') { throw 'native create unconfirmed' }
+        $repeat = Native-Call 'native-create-replay' 'create_document' $create
+        if ($repeat.document_id -ne $created.document_id -or $repeat.base_revision -ne $created.base_revision) { throw 'native create replay changed' }
+        $readArgs = @{workspace_id=$config.workspace;document_id=$created.document_id}
+        $before = Native-Call 'native-read-before' 'read_document' $readArgs
+        $node = @($before.nodes | Where-Object { $_.content.text -eq 'NATIVE ORIGINAL' })
+        if ($node.Count -ne 1) { throw 'native body missing' }
+        $edit = @{operation_id='22222222-2222-4222-8222-222222222222';workspace_id=$config.workspace;document_id=$created.document_id;base_revision=$before.revision;operations=@(@{op='replace_text';node_id=$node[0].node_id;expected='NATIVE ORIGINAL';text='NATIVE EDITED'})}
+        $edited = Native-Call 'native-edit' 'edit_document' $edit
+        if ($edited.status -ne 'saved') { throw 'native edit unconfirmed' }
+        $repeat = Native-Call 'native-edit-replay' 'edit_document' $edit
+        if ($repeat.document_id -ne $created.document_id -or $repeat.base_revision -ne $edited.base_revision) { throw 'native edit replay changed' }
+        $changed = $json.DeserializeObject($json.Serialize($create)); $changed.title = 'Changed payload'
+        [void](Native-Call 'native-create-conflict' 'create_document' $changed $true)
+        $stale = $json.DeserializeObject($json.Serialize($edit)); $stale.operation_id = '33333333-3333-4333-8333-333333333333'
+        [void](Native-Call 'native-stale-edit' 'edit_document' $stale $true)
+        $after = Native-Call 'native-read-after' 'read_document' $readArgs
+        if (@($after.nodes | Where-Object { $_.content.text -eq 'NATIVE EDITED' }).Count -ne 1) { throw 'native edited body missing' }
+        [System.IO.File]::WriteAllText($config.report, $json.Serialize(@{status='ready';document=$created.document_id}))
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not [System.IO.File]::Exists($config.finish)) {
+            if ([DateTime]::UtcNow -gt $deadline) { throw 'native inspection timeout' }
+            [System.Threading.Thread]::Sleep(25)
+        }
+    } catch {
+        Trace-Fixture 'native:failed'
+        [System.IO.File]::WriteAllText($config.report, '{"status":"failed"}')
+        throw 'native scripted sequence failed'
+    }
+}
+
 Trace-Clock 'reading'
 $first = $true
 while (($line = [Console]::In.ReadLine()) -ne $null) {
@@ -85,12 +162,18 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
             Send-Frame @{ id=$message.id; result=@{ data=@(@{ id='fixture-model'; model='fixture-model'; displayName='Fixture'; description='fixture'; isDefault=$true; hidden=$false; defaultReasoningEffort='medium'; supportedReasoningEfforts=@(); inputModalities=@('text','image') }); nextCursor=$null } }
         }
         'thread/start' {
+            if ($env:CODEX_FIXTURE_TURN -eq 'native') {
+                if ($message.params.model -ne 'fixture-model') { throw 'native requested model mismatch' }
+                Trace-Fixture 'native:model:fixture-model'
+                Native-Discover
+            }
             Send-Frame @{ id=$message.id; result=@{ thread=@{ id='fixture-thread' } } }
         }
         'turn/start' {
             $image = @($message.params.input | Where-Object { $_.type -eq 'localImage' })
             Send-Frame @{ id=$message.id; result=@{ turn=@{ id='fixture-turn'; status='inProgress'; items=@() } } }
-            Send-Frame @{ method='item/agentMessage/delta'; params=@{ threadId='fixture-thread'; turnId='fixture-turn'; itemId='message-1'; delta='FIXTURE_TEXT' } }
+            $text = $(if ($env:CODEX_FIXTURE_TURN -eq 'native') { 'FIXTURE_NATIVE_TEXT' } else { 'FIXTURE_TEXT' })
+            Send-Frame @{ method='item/agentMessage/delta'; params=@{ threadId='fixture-thread'; turnId='fixture-turn'; itemId='message-1'; delta=$text } }
             if ($image.Count -ge 1) {
                 Send-Frame @{ method='item/completed'; params=@{ threadId='fixture-thread'; turnId='fixture-turn'; item=@{ type='imageView'; id='image-1'; path=$image[0].path } } }
             }
@@ -98,7 +181,8 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
             # cleanly with no approval, which is what a delegated run needs to
             # reach its end without a person answering (P1.6's process test).
             if ($env:CODEX_FIXTURE_TURN -eq 'register') { Invoke-RunRegistration }
-            if ($env:CODEX_FIXTURE_TURN -eq 'complete' -or $env:CODEX_FIXTURE_TURN -eq 'register') {
+            if ($env:CODEX_FIXTURE_TURN -eq 'native') { Invoke-NativePages }
+            if ($env:CODEX_FIXTURE_TURN -eq 'complete' -or $env:CODEX_FIXTURE_TURN -eq 'register' -or $env:CODEX_FIXTURE_TURN -eq 'native') {
                 Send-Frame @{ method='thread/tokenUsage/updated'; params=@{ threadId='fixture-thread'; turnId='fixture-turn'; tokenUsage=@{ last=@{ inputTokens=120; outputTokens=40; cachedInputTokens=20 }; total=@{ inputTokens=120; outputTokens=40; cachedInputTokens=20 }; modelContextWindow=1000 } } }
                 Send-Frame @{ method='turn/completed'; params=@{ threadId='fixture-thread'; turn=@{ id='fixture-turn'; items=@(); status='completed'; error=$null } } }
                 continue

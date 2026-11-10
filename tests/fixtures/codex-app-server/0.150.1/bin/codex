@@ -89,6 +89,82 @@ def send(value):
     print(json.dumps(value, separators=(",", ":")), flush=True)
 
 
+def native_rpc(method, params):
+    import os
+    import urllib.request
+    override = next(arg for arg in sys.argv[1:] if arg.startswith("mcp_servers.koru_run.url="))
+    endpoint = override.split("=", 1)[1].strip("'")
+    request = urllib.request.Request(endpoint, data=json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": method, "params": params
+    }).encode(), headers={"content-type": "application/json", "authorization": "Bearer " + os.environ["KORU_RUN_MCP_TOKEN"]})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        answer = json.load(response)
+    assert "error" not in answer, "native RPC refused"
+    return answer["result"]
+
+
+def native_call(identity, name, arguments, refused=False):
+    trace("native:call:" + identity)
+    item = {"type": "mcpToolCall", "id": identity, "server": "koru_run", "tool": name, "arguments": arguments, "status": "inProgress"}
+    send({"method": "item/started", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "item": item}})
+    result = native_rpc("tools/call", {"name": name, "arguments": arguments})
+    assert bool(result.get("isError")) == refused, "native tool outcome mismatch"
+    item.update(status="failed" if refused else "completed", result=result)
+    send({"method": "item/completed", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "item": item}})
+    return result.get("structuredContent")
+
+
+def native_discover():
+    names = sorted(tool["name"] for tool in native_rpc("tools/list", {})["tools"])
+    assert names == ["create_document", "edit_document", "read_document", "search_documents"], "native catalog mismatch"
+    trace("native:catalog:4")
+
+
+def native_pages():
+    import os
+    import time
+    import copy
+    trace("native:turn")
+    with open(os.environ["CODEX_FIXTURE_NATIVE_CONFIG"], encoding="utf-8") as handle:
+        config = json.load(handle)
+    try:
+        create = {"operation_id": "11111111-1111-4111-8111-111111111111", "workspace_id": config["workspace"], "title": "Native fixture result",
+                  "initial_operations": [{"op": "insert", "node_id": "body", "parent_id": "root", "after_node_id": None, "kind": "paragraph", "text": "NATIVE ORIGINAL"}]}
+        created = native_call("native-create", "create_document", create)
+        assert created["status"] == "saved"
+        repeated = native_call("native-create-replay", "create_document", create)
+        assert (repeated["document_id"], repeated["base_revision"]) == (created["document_id"], created["base_revision"])
+        read = {"workspace_id": config["workspace"], "document_id": created["document_id"]}
+        before = native_call("native-read-before", "read_document", read)
+        nodes = [node for node in before["nodes"] if node.get("content", {}).get("text") == "NATIVE ORIGINAL"]
+        assert len(nodes) == 1
+        edit = {"operation_id": "22222222-2222-4222-8222-222222222222", "workspace_id": config["workspace"], "document_id": created["document_id"], "base_revision": before["revision"],
+                "operations": [{"op": "replace_text", "node_id": nodes[0]["node_id"], "expected": "NATIVE ORIGINAL", "text": "NATIVE EDITED"}]}
+        edited = native_call("native-edit", "edit_document", edit)
+        assert edited["status"] == "saved"
+        repeated = native_call("native-edit-replay", "edit_document", edit)
+        assert (repeated["document_id"], repeated["base_revision"]) == (created["document_id"], edited["base_revision"])
+        changed = copy.deepcopy(create)
+        changed["title"] = "Changed payload"
+        native_call("native-create-conflict", "create_document", changed, True)
+        stale = copy.deepcopy(edit)
+        stale["operation_id"] = "33333333-3333-4333-8333-333333333333"
+        native_call("native-stale-edit", "edit_document", stale, True)
+        after = native_call("native-read-after", "read_document", read)
+        assert len([node for node in after["nodes"] if node.get("content", {}).get("text") == "NATIVE EDITED"]) == 1
+        with open(config["report"], "w", encoding="utf-8") as handle:
+            json.dump({"status": "ready", "document": created["document_id"]}, handle)
+        deadline = time.monotonic() + 30
+        while not os.path.exists(config["finish"]):
+            assert time.monotonic() < deadline, "native inspection timeout"
+            time.sleep(0.025)
+    except Exception:
+        trace("native:failed")
+        with open(config["report"], "w", encoding="utf-8") as handle:
+            json.dump({"status": "failed"}, handle)
+        raise RuntimeError("native scripted sequence failed") from None
+
+
 for line in sys.stdin:
     message = json.loads(line)
     method = message.get("method")
@@ -98,18 +174,25 @@ for line in sys.stdin:
     elif method == "model/list":
         send({"id": message["id"], "result": {"data": [{"id": "fixture-model", "model": "fixture-model", "displayName": "Fixture", "description": "fixture", "isDefault": True, "hidden": False, "defaultReasoningEffort": "medium", "supportedReasoningEfforts": [], "inputModalities": ["text", "image"]}], "nextCursor": None}})
     elif method == "thread/start":
+        if __import__("os").environ.get("CODEX_FIXTURE_TURN") == "native":
+            assert message["params"]["model"] == "fixture-model", "native requested model mismatch"
+            trace("native:model:fixture-model")
+            native_discover()
         send({"id": message["id"], "result": {"thread": {"id": "fixture-thread"}}})
     elif method == "turn/start":
         image = next((part for part in message["params"]["input"] if part.get("type") == "localImage"), None)
         send({"id": message["id"], "result": {"turn": {"id": "fixture-turn", "status": "inProgress", "items": []}}})
-        send({"method": "item/agentMessage/delta", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "itemId": "message-1", "delta": "FIXTURE_TEXT"}})
+        text = "FIXTURE_NATIVE_TEXT" if __import__("os").environ.get("CODEX_FIXTURE_TURN") == "native" else "FIXTURE_TEXT"
+        send({"method": "item/agentMessage/delta", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "itemId": "message-1", "delta": text}})
         if image is not None:
             send({"method": "item/completed", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "item": {"type": "imageView", "id": "image-1", "path": image["path"]}}})
         # CODEX_FIXTURE_TURN=complete: the turn reports its usage and ends
         # cleanly with no approval (P1.6's process test drives a run to its end).
         if __import__("os").environ.get("CODEX_FIXTURE_TURN") == "register":
             register_result()
-        if __import__("os").environ.get("CODEX_FIXTURE_TURN") in ("complete", "register"):
+        if __import__("os").environ.get("CODEX_FIXTURE_TURN") == "native":
+            native_pages()
+        if __import__("os").environ.get("CODEX_FIXTURE_TURN") in ("complete", "register", "native"):
             usage = {"inputTokens": 120, "outputTokens": 40, "cachedInputTokens": 20}
             send({"method": "thread/tokenUsage/updated", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "tokenUsage": {"last": usage, "total": usage, "modelContextWindow": 1000}}})
             send({"method": "turn/completed", "params": {"threadId": "fixture-thread", "turn": {"id": "fixture-turn", "items": [], "status": "completed", "error": None}}})

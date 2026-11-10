@@ -1382,6 +1382,8 @@ mod claude_live;
 
 #[path = "delegate_worker_process/live_generic.rs"]
 mod live_generic;
+#[path = "delegate_worker_process/native_bots.rs"]
+mod native_bots;
 
 #[path = "delegate_worker_process/schedules.rs"]
 mod schedules;
