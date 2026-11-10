@@ -831,7 +831,7 @@ fn initial_input_contains_pinned_context_instructions_and_ai_history_exactly_onc
     let sent = h.submissions();
     assert_eq!(sent.len(), 1);
     for marker in [
-        "stable fixture preamble",
+        "You are working as a Bot in Koru.",
         "AI-history-sentinel",
         "current-task-sentinel",
         ".koru",
@@ -839,11 +839,18 @@ fn initial_input_contains_pinned_context_instructions_and_ai_history_exactly_onc
         assert_eq!(sent[0].matches(marker).count(), 1);
     }
     assert!(sent[0].contains(&s.request.run.to_string()));
+    assert!(!sent[0].contains("stable fixture preamble"));
+    assert!(!sent[0].contains(".artifacts"));
     h.orchestrator
         .bot_begin_turn(&fence, fence.owner.device, s.input.clone())
         .unwrap();
     assert_eq!(count_submits(&h), 1);
     h.orchestrator.ports_mut().preamble = Box::new(BotPreamble("changed preamble"));
+    // Ordinary artifact instructions are not part of a Bot's retry identity.
+    h.orchestrator
+        .bot_begin_turn(&fence, fence.owner.device, s.input.clone())
+        .unwrap();
+    s.input.text.push_str("changed task");
     assert!(
         h.orchestrator
             .bot_begin_turn(&fence, fence.owner.device, s.input)

@@ -1025,6 +1025,8 @@ pub struct GatewayState {
     /// `LocalDelegate` over the delegate worker's private IPC, or a cloud
     /// worker's transport later. Empty means `/v1/runs/*` answers 503.
     delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::DelegatePort>>,
+    /// Private bootstrap capability, never a provider or public request principal.
+    bot_delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     artifacts: std::sync::OnceLock<Arc<dyn koru_artifact_api::ArtifactDomain>>,
     /// `http://127.0.0.1:<port>`, handed down by the host once its listener
     /// is bound: the base of the endpoint URL a run's authority names. Empty
@@ -1121,6 +1123,7 @@ impl GatewayState {
             settings_write_fault: settings::SettingsWriteFault::default(),
             artifacts: std::sync::OnceLock::new(),
             delegate: std::sync::OnceLock::new(),
+            bot_delegate: std::sync::OnceLock::new(),
             public_endpoint: std::sync::OnceLock::new(),
             openapi: public_openapi(),
             asyncapi: public_asyncapi(),
@@ -1173,6 +1176,18 @@ impl GatewayState {
 
     fn delegate_port(&self) -> Option<Arc<dyn koru_delegate_api::DelegatePort>> {
         self.delegate.get().cloned()
+    }
+
+    /// Compose the same private owner port used by AI before serving Run tools.
+    pub fn set_bot_delegate_port(
+        &self,
+        port: Arc<dyn koru_delegate_api::bots::BotDelegatePort>,
+    ) -> bool {
+        self.bot_delegate.set(port).is_ok()
+    }
+
+    fn bot_delegate_port(&self) -> Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> {
+        self.bot_delegate.get().cloned()
     }
 
     /// Tell the state where it is listening, once, so an issued run

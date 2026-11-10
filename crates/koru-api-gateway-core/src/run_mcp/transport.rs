@@ -30,8 +30,9 @@ use rmcp::model::{
     ServerJsonRpcMessage, ServerResult,
 };
 
-use super::tools;
+use super::{native, tools};
 use crate::GatewayState;
+use koru_delegate_core::RunToolAuthority;
 
 /// The most bytes one JSON-RPC message may carry. Arguments are a path, a
 /// title, an id or a query; the bytes of a result never travel here.
@@ -111,7 +112,7 @@ fn answer(id: RequestId, result: ServerResult) -> Response {
 /// What `initialize` answers. The protocol version is the client's when
 /// this SDK knows it, else the latest this SDK speaks — the SDK server's
 /// own negotiation rule.
-fn initialize(offered: &ProtocolVersion) -> InitializeResult {
+fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
     let negotiated = if ProtocolVersion::KNOWN_VERSIONS.contains(offered) {
         offered.clone()
     } else {
@@ -123,9 +124,11 @@ fn initialize(offered: &ProtocolVersion) -> InitializeResult {
             "koru-run",
             env!("CARGO_PKG_VERSION"),
         ))
-        .with_instructions(
-            "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input.",
-        )
+        .with_instructions(if bot {
+            "This Bot endpoint exposes four scoped native document tools. Create ordinary pages in the explicit workspace; use a stable operation_id for each mutation. Access refusals require an owner grant and explicit continuation. A native result is Saved only after durable verification and Run registration."
+        } else {
+            "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input."
+        })
 }
 
 pub(super) async fn handle(
@@ -161,13 +164,23 @@ pub(super) async fn handle(
         Ok(authority) => authority,
         Err(response) => return response,
     };
-    if body.len() > MESSAGE_LIMIT {
+    let classification = match native::classify(state.bot_delegate_port(), &authority).await {
+        Ok(value) => value,
+        Err(error) => return refuse(StatusCode::SERVICE_UNAVAILABLE, error),
+    };
+    let is_bot = matches!(classification, RunToolAuthority::Bot { .. });
+    let limit = if is_bot {
+        4 * 1024 * 1024
+    } else {
+        MESSAGE_LIMIT
+    };
+    if body.len() > limit {
         return jsonrpc_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             None,
             ErrorData::new(
                 ErrorCode::INVALID_REQUEST,
-                "The message exceeds the run endpoint's limit; bytes are registered from files, never sent inline.",
+                "The message exceeds the Run endpoint's limit.",
                 None,
             ),
         );
@@ -200,16 +213,28 @@ pub(super) async fn handle(
     match request.request {
         ClientRequest::InitializeRequest(initialize_request) => answer(
             id,
-            ServerResult::InitializeResult(initialize(&initialize_request.params.protocol_version)),
+            ServerResult::InitializeResult(initialize(
+                &initialize_request.params.protocol_version,
+                is_bot,
+            )),
         ),
         ClientRequest::PingRequest(_) => answer(id, ServerResult::empty(())),
         ClientRequest::ListToolsRequest(_) => answer(
             id,
-            ServerResult::ListToolsResult(ListToolsResult::with_all_items(tools::definitions())),
+            ServerResult::ListToolsResult(ListToolsResult::with_all_items(if is_bot {
+                native::definitions()
+            } else {
+                tools::definitions()
+            })),
         ),
         ClientRequest::CallToolRequest(call) => answer(
             id,
-            ServerResult::CallToolResult(tools::call(&state, authority, call.params).await),
+            ServerResult::CallToolResult(match classification {
+                RunToolAuthority::Bot { provenance, policy } => {
+                    native::call(&state, authority, provenance, policy, call.params).await
+                }
+                RunToolAuthority::Ordinary {} => tools::call(&state, authority, call.params).await,
+            }),
         ),
         other => jsonrpc_error(
             StatusCode::OK,

@@ -209,6 +209,15 @@ impl Orchestrator {
         key: &NativeResultKey,
         device: DeviceId,
     ) -> Result<NativeIntentRecord, RunError> {
+        self.native_record_if_present(key, device)?
+            .ok_or_else(|| refused("bot_native_missing"))
+    }
+
+    fn native_record_if_present(
+        &mut self,
+        key: &NativeResultKey,
+        device: DeviceId,
+    ) -> Result<Option<NativeIntentRecord>, RunError> {
         let admission = self
             .bot_ledger()?
             .bot_admission(key.run)?
@@ -220,9 +229,42 @@ impl Orchestrator {
         if header.run != key.run || header.bot.as_ref() != Some(&admission.submission.provenance) {
             return Err(refused("bot_provenance_mismatch"));
         }
-        self.native_ledger()?
-            .native_result(key)?
-            .ok_or_else(|| refused("bot_native_missing"))
+        if let Some(record) = self.native_ledger()?.native_result(key)? {
+            return Ok(Some(record));
+        }
+        // Positive absence is useful before an effect exists, but is not an
+        // alternate way to query an invented/foreign attempt or turn.
+        let attempt = self
+            .ports
+            .store
+            .current_attempt(key.run)?
+            .ok_or_else(|| refused("bot_fenced"))?;
+        if attempt.attempt != key.attempt
+            || attempt.generation != key.generation
+            || admission.initial_send.as_ref().is_none_or(|send| {
+                send.attempt != key.attempt
+                    || send.generation != key.generation
+                    || send.turn != Some(key.turn)
+            })
+            || key.operation_id.get_version_num() != 4
+            || key.operation_id.as_bytes()[8] & 0xc0 != 0x80
+        {
+            return Err(refused("bot_fenced"));
+        }
+        Ok(None)
+    }
+
+    /// Private IPC distinguishes validated absence from unavailable evidence.
+    /// Neither absence nor a retained result is permission to execute a write.
+    pub fn reconcile_native_result_if_present(
+        &mut self,
+        key: &NativeResultKey,
+        device: DeviceId,
+    ) -> Result<Option<NativeResultIntentView>, RunError> {
+        let Some(record) = self.native_record_if_present(key, device)? else {
+            return Ok(None);
+        };
+        self.reconcile_native_record(record).map(Some)
     }
 
     /// Recovery publishes already verified evidence even after cancellation.
@@ -232,7 +274,15 @@ impl Orchestrator {
         key: &NativeResultKey,
         device: DeviceId,
     ) -> Result<NativeResultIntentView, RunError> {
-        let mut record = self.native_record_for_device(key, device)?;
+        let record = self.native_record_for_device(key, device)?;
+        self.reconcile_native_record(record)
+    }
+
+    fn reconcile_native_record(
+        &mut self,
+        mut record: NativeIntentRecord,
+    ) -> Result<NativeResultIntentView, RunError> {
+        let key = &record.key;
         if record.stage == NativeResultStage::Prepared
             && record.lease_state == koru_delegate_sqlite::NativeLeaseState::None
         {

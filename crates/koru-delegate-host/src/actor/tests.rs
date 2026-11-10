@@ -21,6 +21,7 @@ use koru_session_protocol::{
 };
 
 use super::*;
+mod native_lookup;
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {

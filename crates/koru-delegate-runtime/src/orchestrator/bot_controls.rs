@@ -10,6 +10,8 @@ use koru_delegate_sqlite::{
     AttemptPhase, BOT_ACTIVE_BUDGET_MS, BotExecutionRecord, BotInitialSend,
 };
 
+mod native_prompt;
+
 impl Orchestrator {
     pub(crate) fn bot_live_fence(
         &mut self,
@@ -176,16 +178,10 @@ impl Orchestrator {
             .run_workspace(fence.run)?
             .filter(|path| !path.as_os_str().is_empty())
             .ok_or_else(|| refused("bot_folder_unavailable"))?;
-        // AI supplies uncomposed history/current task. The owner adds its
-        // existing context-file/tool instructions once, and fingerprints the
-        // actual forwarded input. No history or preamble is persisted here.
-        let preamble = self.ports.preamble.resolve();
-        input.text = super::start::compose_first_submission(
-            &preamble.text,
-            fence.run,
-            &workspace,
-            &input.text,
-        );
+        // The editable artifact preamble belongs to ordinary Runs. Bot Role,
+        // history and task arrive from AI; these native instructions neither
+        // reinterpret that preamble nor claim conversation output is discarded.
+        input.text = native_prompt::compose(fence.run, &workspace, &input.text);
         // Struct field order and ordered input vectors are semantic. PendingInput
         // has no unordered maps; the digest binds forwarded bytes, not a transcript.
         let encoded = serde_json::to_vec(&(fence, &input)).map_err(|_| refused("bot_invalid"))?;

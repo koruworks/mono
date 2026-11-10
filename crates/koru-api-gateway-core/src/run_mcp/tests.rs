@@ -33,6 +33,22 @@ fn gateway(root: &Path) -> Arc<GatewayState> {
     .spawn()
     .unwrap();
     let state = GatewayState::new("internal-debug".into(), worker);
+    struct OrdinaryOwner;
+    impl koru_delegate_api::bots::BotDelegatePort for OrdinaryOwner {
+        fn execute(
+            &self,
+            command: koru_delegate_api::bots::BotCommand,
+        ) -> Result<koru_delegate_api::bots::BotReply, koru_delegate_api::Failure> {
+            assert!(matches!(
+                command,
+                koru_delegate_api::bots::BotCommand::ResolveRunAuthority { .. }
+            ));
+            Ok(koru_delegate_api::bots::BotReply::RunAuthority {
+                authority: koru_delegate_core::RunToolAuthority::Ordinary {},
+            })
+        }
+    }
+    assert!(state.set_bot_delegate_port(Arc::new(OrdinaryOwner)));
     let repository =
         koru_artifact_sqlite::Repository::open(&koru_channel::artifacts_root_beside(root)).unwrap();
     assert!(state.set_artifact_service(Arc::new(koru_artifact_api::Service::new(repository))));

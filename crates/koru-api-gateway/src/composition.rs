@@ -161,6 +161,24 @@ pub(crate) fn open(
             })
             .map_err(|error| error.public_message)
     };
+    // One private capability, composed independently of AI startup. Discovery
+    // must also work while an AI worker is unavailable; effects still require it.
+    let bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> =
+        config.bootstrap.as_ref().and_then(|bootstrap| {
+            let authority = koru_delegate_api::bots::BotDelegateAuthority::new(
+                bootstrap.bot_delegate.as_ref()?.expose().to_owned(),
+            )?;
+            let endpoint = koru_ipc::Endpoint::for_service_channel_root(
+                koru_ipc::DELEGATE,
+                segment,
+                &config.channel_root,
+            )
+            .ok()?;
+            Some(Arc::new(koru_delegate_api::bots::LocalBotDelegate::new(
+                endpoint, authority,
+            ))
+                as Arc<dyn koru_delegate_api::bots::BotDelegatePort>)
+        });
     let ai_config = ai_config.map(|ai_config| {
         match config.bootstrap.as_ref().and_then(|b| {
             koru_ai_server::BotAuthorityAdapter::from_device(
@@ -170,22 +188,8 @@ pub(crate) fn open(
         }) {
             Some(authority) => {
                 let ai_config = ai_config.with_bot_authority(Arc::new(authority));
-                let bot_delegate = config.bootstrap.as_ref().and_then(|bootstrap| {
-                    let authority = koru_delegate_api::bots::BotDelegateAuthority::new(
-                        bootstrap.bot_delegate.as_ref()?.expose().to_owned(),
-                    )?;
-                    let endpoint = koru_ipc::Endpoint::for_service_channel_root(
-                        koru_ipc::DELEGATE,
-                        segment,
-                        &config.channel_root,
-                    )
-                    .ok()?;
-                    Some(koru_delegate_api::bots::LocalBotDelegate::new(
-                        endpoint, authority,
-                    ))
-                });
-                match bot_delegate {
-                    Some(delegate) => ai_config.with_bot_delegate(Arc::new(delegate)),
+                match bot_delegate.clone() {
+                    Some(delegate) => ai_config.with_bot_delegate(delegate),
                     None => ai_config,
                 }
             }
@@ -209,6 +213,10 @@ pub(crate) fn open(
             GatewayState::new_with_services(segment.to_owned(), worker, events, sessions)
         }
     };
+
+    if let Some(delegate) = bot_delegate {
+        state.set_bot_delegate_port(delegate);
+    }
 
     // The Artifact Store, hosted here (D13) with its own database. Opening
     // it is a migration from empty on the first run and a stamp check on

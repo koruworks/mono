@@ -30864,7 +30864,7 @@
     },
     "/v1/runs/{run}/mcp": {
       "post": {
-        "description": "The endpoint a delegated provider is handed. Authenticated by the run's own bearer (issued through POST /v1/artifacts/authorities), resolved against the durable authority record on every call — never by a gateway session bearer. One JSON-RPC message per POST, answered as application/json; a notification is 202; GET and DELETE are 405. Exactly six tools: create, create_version, get, read, search, attach_to_run. Their definitions, as tools/list returns them, are in x-mcp-tools.",
+        "description": "The endpoint a delegated provider is handed. Authenticated by the Run bearer and positively classified by the private execution owner; unknown authority never falls back to ordinary tools. One JSON-RPC message per POST, answered as application/json; a notification is 202; GET and DELETE are 405. Ordinary Runs expose create, create_version, get, read, search, attach_to_run, with definitions in x-mcp-tools. Bots expose only search_documents, read_document, create_document, edit_document; tools/list returns their shared narrowed schemas. Native writes require operation_id and report Saved only after durable Store verification and Run registration. The request limit is 64 KiB for ordinary Runs and 4 MiB for Bots.",
         "operationId": "runs_mcp",
         "requestBody": {
           "content": {
@@ -30915,7 +30915,7 @@
             "description": "GET and DELETE: the endpoint is stateless and never speaks first"
           },
           "503": {
-            "description": "artifacts.db did not open"
+            "description": "The bearer authority or private Run classification is unavailable"
           }
         },
         "security": [

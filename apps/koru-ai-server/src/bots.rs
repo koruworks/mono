@@ -112,27 +112,16 @@ impl BotAuthority for BotAuthorityAdapter {
                         store.profile(profile).map_err(|_| BotError::Forbidden)?;
                         Ok(profile)
                     })();
-                    let documents = if profile.is_ok()
-                        && pages.iter().any(|page| page.workspace == workspace)
-                    {
-                        store.documents(workspace).ok()
-                    } else {
-                        None
-                    };
                     for page in pages.iter().filter(|p| p.workspace == workspace) {
-                        let allowed = documents.as_ref().is_some_and(|entries| {
-                            entries.iter().any(|entry| {
-                                entry.id == page.document && entry.trashed_at.is_none()
-                            })
-                        });
-                        checked_pages.insert(
-                            page.clone(),
-                            if allowed {
-                                Ok(())
-                            } else {
-                                Err(BotError::Forbidden)
-                            },
-                        );
+                        let allowed = if profile.is_ok() {
+                            store
+                                .document_entry_live(workspace, page.document)
+                                .map_err(|_| BotError::Unavailable)
+                                .and_then(|entry| entry.map(|_| ()).ok_or(BotError::Forbidden))
+                        } else {
+                            Err(BotError::Forbidden)
+                        };
+                        checked_pages.insert(page.clone(), allowed);
                     }
                     checked.insert(workspace, profile);
                 }
@@ -180,9 +169,8 @@ impl BotAuthority for BotAuthorityAdapter {
                 };
                 store.profile(profile)?;
                 Ok(store
-                    .documents(page.workspace)?
-                    .iter()
-                    .any(|entry| entry.id == page.document && entry.trashed_at.is_none()))
+                    .document_entry_live(page.workspace, page.document)?
+                    .is_some())
             })
             .map_err(|_| BotError::Unavailable)?
             .map_err(|_: koru_store_core::Error| BotError::Unavailable)?;

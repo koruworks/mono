@@ -41,6 +41,7 @@ koru-session-wire = { path = "../koru-session-wire" }
 # routes here are its only network surface, and the host hands it its paths.
 koru-settings = { path = "../koru-settings" }
 koru-ipc = { path = "../koru-ipc" }
+koru-mcp-server = { path = "../koru-mcp-server" }
 koru-store-api = { path = "../koru-store-api" }
 koru-store-core = { path = "../koru-store-core" }
 koru-store-server = { path = "../../apps/koru-store-server" }

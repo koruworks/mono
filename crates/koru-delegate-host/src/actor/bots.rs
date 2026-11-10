@@ -128,11 +128,13 @@ impl Actor {
                     .prepare_native_effect(&request, device)
                     .map_err(bot_failure)?,
             },
-            BotCommand::ReconcileNativeResult { key } => BotReply::NativeResult {
-                intent: self
-                    .orchestrator
-                    .reconcile_native_result(&key, device)
-                    .map_err(bot_failure)?,
+            BotCommand::ReconcileNativeResult { key } => match self
+                .orchestrator
+                .reconcile_native_result_if_present(&key, device)
+                .map_err(bot_failure)?
+            {
+                Some(intent) => BotReply::NativeResult { intent },
+                None => BotReply::Missing,
             },
             BotCommand::ConfirmNativeResult { request } => BotReply::NativeResult {
                 intent: self
