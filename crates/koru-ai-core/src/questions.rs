@@ -230,6 +230,31 @@ impl QuestionsRecord {
 }
 
 impl AnswersRecord {
+    /// Accepted user input must fit intact. Unlike the display encoder below,
+    /// this never shortens an answer. Callers still withhold secrets first.
+    pub fn encode_lossless(&self) -> Option<String> {
+        // Bound before serialization as well: a rejected record must not build
+        // a temporary string proportional to arbitrary caller input.
+        let mut chars = 0usize;
+        for answer in &self.answers {
+            chars = chars.checked_add(answer.question_id.chars().count())?;
+            chars = chars.checked_add(match &answer.value {
+                AgentAnswerValue::Option { label } => label.chars().count(),
+                AgentAnswerValue::Text { text } => text.chars().count(),
+                AgentAnswerValue::Withheld => 0,
+            })?;
+            // At least one byte of JSON overhead per answer, including empty IDs.
+            chars = chars.checked_add(1)?;
+            if chars > AGENT_CONTENT_CHARS {
+                return None;
+            }
+        }
+        let mut record = serde_json::Map::new();
+        record.insert(ANSWERS_MARK.into(), serde_json::to_value(self).ok()?);
+        let encoded = serde_json::to_string(&record).ok()?;
+        (encoded.chars().count() <= AGENT_CONTENT_CHARS).then_some(encoded)
+    }
+
     /// The record as the row's `agent_output`, fitted to the column.
     pub fn encode(&self) -> Option<String> {
         fitted(ANSWERS_MARK, |limit| Self {

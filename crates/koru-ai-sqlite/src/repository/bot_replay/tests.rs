@@ -7,6 +7,7 @@ use koru_ai_core::bots::{
 };
 use koru_delegate_core as delegate;
 use std::collections::BTreeSet;
+mod preparation;
 
 fn at(n: i64) -> Timestamp {
     Timestamp::from_millis(1_770_000_000_000 + n)

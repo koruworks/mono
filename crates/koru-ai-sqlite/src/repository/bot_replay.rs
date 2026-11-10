@@ -4,6 +4,7 @@
 use super::*;
 use koru_ai_core::bots::replay::*;
 use std::io::Write;
+mod preparation;
 
 impl Repository {
     /// Foundation seam: the ai16 intent must already be prepared. P1.3's typed
@@ -16,69 +17,12 @@ impl Repository {
         now: Timestamp,
     ) -> Result<InferenceAttempt, AiError> {
         let tx = self.connection.transaction().map_err(storage_failed)?;
-        validate_prepared_submission(&tx, turn, submission)?;
-        let p = &submission.provenance;
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT run_id FROM bot_chat_runs WHERE ai_attempt_id=?1",
-                [turn.attempt.id.to_storage()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(storage_failed)?;
-        if let Some(run) = existing {
-            if run != submission.request.run.to_storage() {
-                return Err(invariant_failed());
-            }
-            let current = query_attempt(&tx, "id", &turn.attempt.id.to_storage())?
-                .ok_or_else(invariant_failed)?;
-            if current.operation_id != turn.attempt.operation_id
-                || current.chat_id != turn.attempt.chat_id
-                || current.assistant_message_id != turn.attempt.assistant_message_id
-            {
-                return Err(invariant_failed());
-            }
-            validate_link(&tx, turn.attempt.id, submission)?;
-            return Ok(current);
-        }
-        // Existing associations are receipt replays, not fresh admissions.
-        // Only a new turn must still match the current revision/pause fence.
-        let admissible: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM bots b
-            JOIN bot_command_receipts r ON r.bot_id=b.bot_id
-            WHERE b.bot_id=?1 AND b.revision=?2 AND b.policy_revision=?3 AND b.paused=0
-            AND r.user_scope_id=?4 AND r.request_id=?5 AND r.stage='prepared')",
-                params![
-                    p.bot.to_storage(),
-                    required_u64(p.config_revision)?,
-                    required_u64(p.policy_revision)?,
-                    p.owner.user_scope.to_string(),
-                    p.submission.to_storage()
-                ],
-                |r| r.get(0),
-            )
-            .map_err(storage_failed)?;
-        if !admissible {
-            return Err(invariant_failed());
-        }
-        if query_attempt(&tx, "operation_id", &turn.attempt.operation_id.to_string())?.is_some() {
-            return Err(invariant_failed());
-        }
-        let current = mutations::begin_turn_on(&tx, turn)?;
-        tx.execute("INSERT INTO bot_chat_runs (ai_attempt_id,user_scope_id,owner_device_id,submission_id,
-            bot_id,chat_id,assistant_message_id,run_id,record_workspace_id,continued_from_run_id,created_at_ms)
-            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![
-            current.id.to_storage(), p.owner.user_scope.to_string(), p.owner.device.to_string(),
-            p.submission.to_storage(), p.bot.to_storage(), p.chat_id.to_string(),
-            turn.assistant_message.id.to_storage(), submission.request.run.to_storage(),
-            submission.workspace.to_string(), p.continued_from.map(|id|id.to_storage()), now.millis(),
-        ]).map_err(storage_failed)?;
-        tx.execute(
-            "INSERT INTO bot_run_replay(ai_attempt_id,updated_at_ms) VALUES (?1,?2)",
-            params![current.id.to_storage(), now.millis()],
-        )
-        .map_err(storage_failed)?;
+        let current = preparation::prepare_association_on(
+            &tx,
+            &BotChatPreparation::Turn(turn.clone()),
+            submission,
+            now,
+        )?;
         tx.commit().map_err(storage_failed)?;
         Ok(current)
     }
@@ -437,15 +381,18 @@ fn finish_agent_rows_on(
 
 fn validate_prepared_submission(
     connection: &Connection,
-    turn: &PendingTurn,
+    preparation: &BotChatPreparation,
     submission: &BotSubmission,
 ) -> Result<(), AiError> {
     let p = &submission.provenance;
     if !submission.valid()
-        || p.ai_attempt_id != Some(turn.attempt.id.as_uuid())
-        || p.assistant_message_id != Some(turn.assistant_message.id.as_uuid())
-        || p.chat_id != turn.user_message.chat_id.as_uuid()
-        || turn.user_message.markdown != submission.input.text
+        || p.ai_attempt_id != Some(preparation.attempt().id.as_uuid())
+        || p.assistant_message_id != Some(preparation.assistant().id.as_uuid())
+        || p.chat_id != preparation.assistant().chat_id.as_uuid()
+        || preparation.attempt().chat_id != Some(preparation.assistant().chat_id)
+        || preparation.attempt().assistant_message_id != Some(preparation.assistant().id)
+        || matches!(preparation, BotChatPreparation::Turn(turn)
+            if turn.user_message.markdown != submission.input.text)
     {
         return Err(invariant_failed());
     }

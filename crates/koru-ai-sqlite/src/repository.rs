@@ -1123,37 +1123,12 @@ impl AiPersistence for Repository {
     }
 
     fn begin_retry(&mut self, retry: &PendingRetry) -> Result<InferenceAttempt, AiError> {
-        if retry.assistant_message.role != ChatRole::Assistant
-            || retry.assistant_message.state != MessageState::Pending
-            || retry.attempt.assistant_message_id != Some(retry.assistant_message.id)
-            || retry.attempt.chat_id != Some(retry.assistant_message.chat_id)
-        {
-            return Err(invariant_failed());
-        }
         let started = Instant::now();
         let transaction = self.connection.transaction().map_err(storage_failed)?;
-        if let Some(existing) = query_attempt(
-            &transaction,
-            "operation_id",
-            &retry.attempt.operation_id.to_string(),
-        )? {
-            trace_attempt_transaction("begin_retry", existing.id, "replayed", started);
-            return Ok(existing);
-        }
-        insert_message(&transaction, &retry.assistant_message)?;
-        insert_attempt(&transaction, &retry.attempt)?;
-        transaction
-            .execute(
-                "UPDATE chats SET updated_at_ms = max(updated_at_ms, ?2) WHERE id = ?1",
-                params![
-                    retry.assistant_message.chat_id.to_storage(),
-                    retry.assistant_message.created_at.millis()
-                ],
-            )
-            .map_err(storage_failed)?;
+        let attempt = mutations::begin_retry_on(&transaction, retry)?;
         transaction.commit().map_err(storage_failed)?;
-        trace_attempt_transaction("begin_retry", retry.attempt.id, "committed", started);
-        Ok(retry.attempt.clone())
+        trace_attempt_transaction("begin_retry", attempt.id, "committed", started);
+        Ok(attempt)
     }
 
     fn create_branch(&mut self, branch: &BranchCopy) -> Result<(), AiError> {
