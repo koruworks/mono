@@ -12,6 +12,9 @@ mod repository;
 #[cfg(feature = "fixtures")]
 pub use db::write_at_schema;
 pub use db::{OpenError, SCHEMA_VERSION};
-pub use repository::{HistoricalBotRun, KnownAttachmentDirs, RemovedAttachment, Repository};
+pub use repository::{
+    HistoricalBotRun, KnownAttachmentDirs, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
+    LifecycleOperation, LifecycleSubject, RemovedAttachment, Repository,
+};
 
 pub const DATABASE_FILE: &str = "ai.db";

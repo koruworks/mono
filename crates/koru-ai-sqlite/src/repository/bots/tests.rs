@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::super::tests::{chat, complete_turn};
 use super::*;
-mod branch;
+pub(super) mod branch;
 mod conversations;
 use koru_ai_core::{
     AiSearchQuery, ChatAccessLens, ListChatsToolRequest, ReadChatToolRequest,

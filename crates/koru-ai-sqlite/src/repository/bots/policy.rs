@@ -174,13 +174,15 @@ impl Repository {
         })
     }
 
+    /// One page of prepared access changes, read through the ai18 partial
+    /// index (`bot_pending_access`), so settled history is never walked.
     pub fn pending_bot_access(
         &self,
         after: i64,
         limit: usize,
     ) -> Result<BotAccessRecoveryPage, BotError> {
         let mut query = self.connection.prepare(
-            "SELECT rowid,bot_id,user_scope_id,request_id,command_kind,stage FROM bot_command_receipts WHERE rowid>?1 ORDER BY rowid LIMIT ?2",
+            "SELECT rowid,bot_id,user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_pending_access WHERE rowid>?1 AND command_kind='update_access' AND stage='prepared' ORDER BY rowid LIMIT ?2",
         ).map_err(bad)?;
         let rows = query
             .query_map(params![after, limit.clamp(1, 64)], |r| {
@@ -189,8 +191,6 @@ impl Repository {
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
                 ))
             })
             .map_err(bad)?;
@@ -199,16 +199,14 @@ impl Repository {
             pending: Vec::new(),
         };
         for row in rows {
-            let (row, bot, scope, request, kind, stage) = row.map_err(bad)?;
+            let (row, bot, scope, request) = row.map_err(bad)?;
             page.scanned_through = Some(row);
-            if kind == "update_access" && stage == "prepared" {
-                page.pending.push((
-                    row,
-                    bot.parse().map_err(bad)?,
-                    UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
-                    request.parse().map_err(bad)?,
-                ));
-            }
+            page.pending.push((
+                row,
+                bot.parse().map_err(bad)?,
+                UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
+                request.parse().map_err(bad)?,
+            ));
         }
         Ok(page)
     }

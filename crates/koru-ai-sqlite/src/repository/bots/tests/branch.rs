@@ -27,7 +27,12 @@ fn setup() -> (Repository, Bot, ProfileId, PendingTurn) {
 }
 
 /// What the worker's shared Branch copy builds: fresh identities, origins kept.
-fn copy(repo: &Repository, bot: &Bot, source: ChatId, through: MessageId) -> BranchCopy {
+pub(in crate::repository::bots) fn copy(
+    repo: &Repository,
+    bot: &Bot,
+    source: ChatId,
+    through: MessageId,
+) -> BranchCopy {
     let id = ChatId::new();
     let mut ids = HashMap::new();
     let messages: Vec<Message> = repo

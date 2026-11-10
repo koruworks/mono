@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 pub mod admission;
 pub use admission::*;
 
+pub mod lifecycle;
 pub mod policy;
 pub mod replay;
+pub use lifecycle::*;
 pub use policy::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

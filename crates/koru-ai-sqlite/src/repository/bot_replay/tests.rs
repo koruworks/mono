@@ -249,7 +249,7 @@ fn populated_v16_migrates_twice_without_changing_chat_bot_or_receipt() {
     let before = repo.messages(ordinary).unwrap();
     db::prepare(&mut repo.connection).unwrap();
     db::prepare(&mut repo.connection).unwrap();
-    assert_eq!(repo.schema_version().unwrap(), 17);
+    assert_eq!(repo.schema_version().unwrap(), db::SCHEMA_VERSION);
     assert_eq!(repo.messages(ordinary).unwrap(), before);
     assert_eq!(
         repo.attempt(completed.attempt.id).unwrap().unwrap().status,
@@ -267,7 +267,7 @@ fn populated_v16_migrates_twice_without_changing_chat_bot_or_receipt() {
         submission.request.run.to_storage()
     );
     assert!(koru_sqlite::prepare(&older, &mut repo.connection).is_err());
-    assert_eq!(repo.schema_version().unwrap(), 17);
+    assert_eq!(repo.schema_version().unwrap(), db::SCHEMA_VERSION);
 }
 
 #[test]

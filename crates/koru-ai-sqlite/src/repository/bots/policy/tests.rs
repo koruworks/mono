@@ -53,11 +53,8 @@ fn pending_access_is_atomic_replayable_and_effective_only_after_exact_barrier() 
         repo.prepare_bot_access(&bot, profile, request, &"b".repeat(64), 1, &barrier)
             .is_err()
     );
-    let first_page = repo.pending_bot_access(0, 1).unwrap();
-    assert!(first_page.pending.is_empty());
-    let rows = repo
-        .pending_bot_access(first_page.scanned_through.unwrap(), 1)
-        .unwrap();
+    // Pages hold only prepared access changes; settled receipts are not read.
+    let rows = repo.pending_bot_access(0, 1).unwrap();
     assert_eq!(rows.pending.len(), 1);
     assert!(
         repo.pending_bot_access(rows.scanned_through.unwrap(), 1)
@@ -226,12 +223,12 @@ fn sparse_recovery_windows_and_per_bot_guards_bound_work_without_rewriting_histo
         let Some(scanned) = page.scanned_through else {
             break;
         };
-        assert!(scanned - after <= 16, "raw-row work bound");
         visited += 1;
         after = scanned;
         found.extend(page.pending);
     }
-    assert!(visited > 1);
+    // One page reaches the only pending row past 80 settled ones (ai18 index).
+    assert_eq!(visited, 1);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].3, request);
     for sql in [

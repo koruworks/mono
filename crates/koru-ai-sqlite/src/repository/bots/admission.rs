@@ -168,6 +168,59 @@ fn pause_on(
         acknowledged,
     }))
 }
+/// Prepare a pause or resume barrier inside the caller's transaction (P1.3);
+/// lifecycle capture composes it with its own journal rows.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_bot_pause_on(
+    tx: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    request: BotRequestId,
+    expected: u64,
+    paused: bool,
+    fingerprint_value: &str,
+    now: i64,
+) -> Result<BotPauseReceipt, BotError> {
+    fingerprint(fingerprint_value)?;
+    let g = guard(tx, owner, bot)?;
+    if let Some(r) = pause_on(tx, owner.user_scope, request)? {
+        return if r.intent.barrier.bot == bot
+            && r.intent.expected_revision == expected
+            && r.intent.barrier.paused == paused
+            && r.fingerprint == fingerprint_value
+        {
+            Ok(r)
+        } else {
+            Err(BotError::Conflict)
+        };
+    }
+    super::policy::require_policy_settled(tx, bot)?;
+    if expected != g.revision || expected == 0 || expected >= i64::MAX as u64 {
+        return Err(BotError::RevisionConflict);
+    }
+    require_pause_settled(tx, owner.user_scope, bot)?;
+    let intent = BotPauseIntent {
+        version: 1,
+        expected_revision: expected,
+        barrier: BotAdmissionBarrier {
+            owner: koru_delegate_core::BotOwner {
+                user_scope: owner.user_scope,
+                device: owner.device,
+            },
+            bot,
+            request,
+            epoch: expected + 1,
+            paused,
+        },
+    };
+    tx.execute(
+        "UPDATE bots SET paused=?2,revision=?3,updated_at_ms=?4 WHERE bot_id=?1",
+        params![bot.to_storage(), paused, intent.barrier.epoch, now],
+    )
+    .map_err(bad)?;
+    tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,desired_pause,expected_revision,pause_ack_stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'prepared',?6,?7,'pending',?8,?9,?9)",params![owner.user_scope.to_storage(),request.to_storage(),bot.to_storage(),fingerprint_value,if paused {"pause"}else{"resume"},paused,expected,serde_json::to_string(&intent).map_err(bad)?,now]).map_err(bad)?;
+    pause_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)
+}
 fn fingerprint(value: &str) -> Result<(), BotError> {
     if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(BotError::Invalid);
@@ -197,21 +250,37 @@ pub(super) struct Guard {
     pub(super) home: WorkspaceId,
 }
 pub(super) fn guard(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<Guard, BotError> {
+    match guard_any_lifecycle(conn, owner, bot)? {
+        (guard, BotLifecycle::Active) => Ok(guard),
+        _ => Err(BotError::Forbidden),
+    }
+}
+/// The same owner fence for lifecycle operations, which also act on archived
+/// and trashed Bots; the caller decides which lifecycle it accepts.
+pub(super) fn guard_any_lifecycle(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+) -> Result<(Guard, BotLifecycle), BotError> {
     let r:Option<(String,String,String,u64,u64,bool,String,Option<String>,Option<i64>,String)>=conn.query_row("SELECT user_scope_id,owner_device_id,lifecycle,revision,policy_revision,paused,working_folder,folder_lock_request_id,folder_frozen_at_ms,home_workspace_id FROM bots WHERE bot_id=?1",
         [bot.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?))).optional().map_err(bad)?;
     let r = r.ok_or(BotError::NotFound)?;
-    if r.0 != owner.user_scope.to_storage() || r.1 != owner.device.to_storage() || r.2 != "active" {
+    if r.0 != owner.user_scope.to_storage() || r.1 != owner.device.to_storage() {
         return Err(BotError::Forbidden);
     }
-    Ok(Guard {
-        revision: r.3,
-        policy: r.4,
-        paused: r.5,
-        folder: r.6,
-        lock: r.7,
-        frozen: r.8,
-        home: WorkspaceId::parse(&r.9).ok_or(BotError::Storage)?,
-    })
+    let lifecycle = BotLifecycle::parse(&r.2).ok_or(BotError::Storage)?;
+    Ok((
+        Guard {
+            revision: r.3,
+            policy: r.4,
+            paused: r.5,
+            folder: r.6,
+            lock: r.7,
+            frozen: r.8,
+            home: WorkspaceId::parse(&r.9).ok_or(BotError::Storage)?,
+        },
+        lifecycle,
+    ))
 }
 
 /// P1.5 composes this with its PendingTurn/association insert in one transaction.
@@ -432,49 +501,20 @@ impl Repository {
         fingerprint_value: &str,
         now: i64,
     ) -> Result<BotPauseReceipt, BotError> {
-        fingerprint(fingerprint_value)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(bad)?;
-        let g = guard(&tx, owner, bot)?;
-        if let Some(r) = pause_on(&tx, owner.user_scope, request)? {
-            return if r.intent.barrier.bot == bot
-                && r.intent.expected_revision == expected
-                && r.intent.barrier.paused == paused
-                && r.fingerprint == fingerprint_value
-            {
-                Ok(r)
-            } else {
-                Err(BotError::Conflict)
-            };
-        }
-        super::policy::require_policy_settled(&tx, bot)?;
-        if expected != g.revision || expected == 0 || expected >= i64::MAX as u64 {
-            return Err(BotError::RevisionConflict);
-        }
-        require_pause_settled(&tx, owner.user_scope, bot)?;
-        let intent = BotPauseIntent {
-            version: 1,
-            expected_revision: expected,
-            barrier: BotAdmissionBarrier {
-                owner: koru_delegate_core::BotOwner {
-                    user_scope: owner.user_scope,
-                    device: owner.device,
-                },
-                bot,
-                request,
-                epoch: expected + 1,
-                paused,
-            },
-        };
-        tx.execute(
-            "UPDATE bots SET paused=?2,revision=?3,updated_at_ms=?4 WHERE bot_id=?1",
-            params![bot.to_storage(), paused, intent.barrier.epoch, now],
-        )
-        .map_err(bad)?;
-        tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,desired_pause,expected_revision,pause_ack_stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'prepared',?6,?7,'pending',?8,?9,?9)",params![owner.user_scope.to_storage(),request.to_storage(),bot.to_storage(),fingerprint_value,if paused {"pause"}else{"resume"},paused,expected,serde_json::to_string(&intent).map_err(bad)?,now]).map_err(bad)?;
-        let result = pause_on(&tx, owner.user_scope, request)?.ok_or(BotError::Storage)?;
+        let result = prepare_bot_pause_on(
+            &tx,
+            owner,
+            bot,
+            request,
+            expected,
+            paused,
+            fingerprint_value,
+            now,
+        )?;
         tx.commit().map_err(bad)?;
         Ok(result)
     }
@@ -655,7 +695,7 @@ impl Repository {
         after: i64,
         limit: u16,
     ) -> Result<Vec<(i64, BotId, UserScopeId, BotRequestId)>, BotError> {
-        let mut q=self.connection.prepare("SELECT rowid,bot_id,user_scope_id,request_id FROM bot_command_receipts WHERE rowid>?1 AND stage IN ('prepared','accepted') AND command_kind IN ('start','continue','pause','resume') ORDER BY rowid LIMIT ?2").map_err(bad)?;
+        let mut q=self.connection.prepare("SELECT rowid,bot_id,user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_unresolved_coordination WHERE rowid>?1 AND stage IN ('prepared','accepted') AND command_kind IN ('start','continue','pause','resume') ORDER BY rowid LIMIT ?2").map_err(bad)?;
         q.query_map(params![after, limit.clamp(1, 64)], |r| {
             Ok((
                 r.get::<_, i64>(0)?,

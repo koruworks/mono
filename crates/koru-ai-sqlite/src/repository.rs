@@ -32,7 +32,10 @@ mod mutations;
 use koru_ai_core::bots::ChatReadAccess;
 
 pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
-pub use bots::HistoricalBotRun;
+pub use bots::{
+    HistoricalBotRun, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
+    LifecycleSubject,
+};
 
 pub struct Repository {
     connection: Connection,
@@ -53,6 +56,24 @@ impl Repository {
     pub fn in_memory() -> Result<Self, OpenError> {
         Ok(Self {
             connection: db::open_in_memory()?,
+            bot_replay_fail_after_commit: false,
+        })
+    }
+
+    /// An in-memory database migrated to `version` and no further, for a
+    /// migration test that writes rows through the code of that version.
+    #[cfg(test)]
+    pub(crate) fn at_schema(version: i64) -> Result<Self, OpenError> {
+        let steps = usize::try_from(version)
+            .unwrap_or(0)
+            .min(db::MIGRATIONS.len());
+        let schema = koru_sqlite::Schema {
+            database: crate::DATABASE_FILE,
+            understood: version,
+            migrations: &db::MIGRATIONS[..steps],
+        };
+        Ok(Self {
+            connection: koru_sqlite::open_in_memory(&schema)?,
             bot_replay_fail_after_commit: false,
         })
     }
