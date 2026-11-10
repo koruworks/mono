@@ -119,6 +119,7 @@ fn an_inputs_skills_are_absent_when_none_and_bounded_when_named() {
         idempotency_key: super::idempotency_key(),
         text: "Use $review-pr".into(),
         attachment_ids: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,

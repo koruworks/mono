@@ -594,6 +594,8 @@ impl ManagedModel {
             // An agent's questions (koru-ai D108): the AI chat draws them; a
             // terminal's session is not created to, and none arrive.
             AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. } => {}
+            AgentEvent::CommandsUpdated { .. } => {}
+            AgentEvent::ContextUsage { .. } => {}
             AgentEvent::MessageDelta { .. } => unreachable!("handled above"),
         }
     }

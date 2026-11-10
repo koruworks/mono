@@ -4,7 +4,7 @@
 
 use koru_ai_core::{
     AiError, AiErrorClass, DocumentContext, DocumentDestination, DocumentId, ProfileCatalog,
-    ProfileId, StoreContextPort, StoreRevision, WorkspaceId,
+    ProfileId, StoreContextPort, StoreRevision, WorkspaceFileData, WorkspaceId,
 };
 use koru_core::WorkspaceDoc;
 use koru_export::NoBlobs;
@@ -100,6 +100,66 @@ impl StoreContextPort for StoreContextAdapter {
             source_revision: revision,
             markdown,
         })
+    }
+
+    fn read_workspace_file(
+        &self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        reader: ProfileId,
+    ) -> Result<WorkspaceFileData, AiError> {
+        self.client
+            .with_store(move |store| {
+                if store
+                    .workspace(workspace)
+                    .map_err(|_| file_unavailable())?
+                    .owner
+                    != reader
+                    || store.locate(document).map_err(|_| file_unavailable())? != Some(workspace)
+                {
+                    return Err(file_unavailable());
+                }
+                let entry = store
+                    .documents(workspace)
+                    .map_err(|_| file_unavailable())?
+                    .into_iter()
+                    .find(|entry| entry.id == document && entry.trashed_at.is_none())
+                    .ok_or_else(file_unavailable)?;
+                let snapshot = store
+                    .snapshot(workspace, document)
+                    .map_err(|_| file_unavailable())?;
+                let doc = WorkspaceDoc::from_snapshot(&snapshot).map_err(|_| file_unavailable())?;
+                let root = doc
+                    .children(koru_core::schema::Parent::Root)
+                    .map_err(|_| file_unavailable())?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(file_unavailable)?;
+                let node = doc.read(root).map_err(|_| file_unavailable())?;
+                let koru_core::node::Content::Blob { hash, .. } = node.content else {
+                    return Err(file_unavailable());
+                };
+                let hash = koru_store_core::model::BlobHash::parse(&hash.0)
+                    .map_err(|_| file_unavailable())?;
+                let metadata = store
+                    .blob(workspace, &hash)
+                    .map_err(|_| file_unavailable())?;
+                if metadata.size > koru_ai_core::attachments::MAX_ATTACHMENT_BYTES {
+                    return Err(AiError::new(
+                        AiErrorClass::ContextTooLarge,
+                        "The selected file is larger than the attachment limit.",
+                        false,
+                    ));
+                }
+                let bytes = store
+                    .get_blob(workspace, &hash)
+                    .map_err(|_| file_unavailable())?;
+                Ok::<_, AiError>(WorkspaceFileData {
+                    file_name: entry.title,
+                    bytes,
+                })
+            })
+            .map_err(|_| file_unavailable())?
     }
 
     fn create_document(
@@ -242,6 +302,14 @@ fn document_unavailable() -> AiError {
     AiError::new(
         AiErrorClass::Storage,
         "The selected document is not available.",
+        false,
+    )
+}
+
+fn file_unavailable() -> AiError {
+    AiError::new(
+        AiErrorClass::Storage,
+        "The selected workspace file is not available.",
         false,
     )
 }

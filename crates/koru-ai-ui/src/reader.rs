@@ -45,6 +45,20 @@ pub(crate) enum Command {
     /// The approval mode the chat's local agent runs its next message in.
     UpdateAgentSettings(ChatId, koru_ai_wire::UpdateChatAgentSettingsRequest),
     UpdateToolPolicy(ChatId, UpdateChatToolPolicyRequest),
+    AddGrants(
+        ChatId,
+        Option<WorkspaceId>,
+        Vec<koru_ai_core::DocumentId>,
+        uuid::Uuid,
+    ),
+    /// Restage one sent attachment for recall; the result is correlated by
+    /// the newly minted id and runs off the reader's command thread.
+    Restage(
+        ChatId,
+        koru_ai_core::ChatAttachmentId,
+        koru_ai_core::ChatAttachmentId,
+    ),
+    CopyWorkspaceFile(ChatId, koru_ai_wire::FromWorkspaceAttachmentRequest),
     ApproveTool(ToolInvocationId),
     DenyTool(ToolInvocationId),
     /// Answer a local agent's permission request with one of the choices it
@@ -100,6 +114,9 @@ impl Command {
             Self::UpdateFolder(_, _) => "update_folder",
             Self::UpdateAgentSettings(_, _) => "update_agent_settings",
             Self::UpdateToolPolicy(_, _) => "update_tool_policy",
+            Self::AddGrants(..) => "add_grants",
+            Self::Restage(..) => "restage_attachment",
+            Self::CopyWorkspaceFile(..) => "copy_workspace_file",
             Self::ApproveTool(_) => "approve_tool",
             Self::DenyTool(_) => "deny_tool",
             Self::DecideTool(..) => "decide_tool",
@@ -164,6 +181,20 @@ pub(crate) enum Update {
     FolderUpdated(koru_ai_core::Chat),
     AgentSettingsUpdated(koru_ai_core::Chat),
     ToolPolicy(koru_ai_core::ChatToolPolicy),
+    GrantsAdded {
+        chat: ChatId,
+        op: uuid::Uuid,
+        result: Result<koru_ai_core::ChatToolPolicy, String>,
+    },
+    Restaged {
+        new_id: koru_ai_core::ChatAttachmentId,
+        result: Result<koru_ai_core::ChatAttachment, String>,
+    },
+    AttachmentCopied {
+        chat: ChatId,
+        id: koru_ai_core::ChatAttachmentId,
+        result: Result<koru_ai_core::ChatAttachment, koru_ai_wire::Failure>,
+    },
     ToolActivity(koru_ai_core::ToolActivity),
     Usage(UsageReport),
     HistoryChanged {
@@ -530,6 +561,40 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                     return;
                 }
             }
+            Command::AddGrants(chat, current, documents, op) => {
+                let mut workspace_ids: Vec<WorkspaceId> = current.into_iter().collect();
+                let mut failed = None;
+                for document in documents {
+                    match client.store().locate_document(document) {
+                        Ok(location) if location.document == document => {
+                            if !workspace_ids.contains(&location.workspace) {
+                                workspace_ids.push(location.workspace);
+                            }
+                        }
+                        _ => {
+                            failed = Some("A mentioned document is unavailable.".to_owned());
+                            break;
+                        }
+                    }
+                }
+                let result = match failed {
+                    Some(message) => Err(message),
+                    None => client
+                        .ai()
+                        .add_chat_workspace_grants(
+                            chat,
+                            &koru_ai_wire::AddChatWorkspaceGrantsRequest { workspace_ids },
+                        )
+                        .map(|response| response.policy)
+                        .map_err(|error| error.message),
+                };
+                if updates
+                    .send(Update::GrantsAdded { chat, op, result })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Command::ApproveTool(tool) => {
                 let update = match client.ai().approve_tool_call(tool, None) {
                     Ok(response) => {
@@ -610,6 +675,30 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                     .and_then(|_| client.ai().usage(chat))
                     .map(|response| Update::Usage(response.report));
                 send_result(&updates, result);
+            }
+            Command::Restage(chat, source, new_id) => {
+                let client = client.clone();
+                let updates = updates.clone();
+                off_thread("koru-ai-restage", move || {
+                    let result = client
+                        .ai()
+                        .restage_attachment(chat, source, new_id)
+                        .map(|response| response.attachment)
+                        .map_err(|failure| failure.message);
+                    let _ = updates.send(Update::Restaged { new_id, result });
+                });
+            }
+            Command::CopyWorkspaceFile(chat, request) => {
+                let client = client.clone();
+                let updates = updates.clone();
+                off_thread("koru-ai-workspace-copy", move || {
+                    let id = request.id;
+                    let result = client
+                        .ai()
+                        .from_workspace_attachment(chat, request)
+                        .map(|response| response.attachment);
+                    let _ = updates.send(Update::AttachmentCopied { chat, id, result });
+                });
             }
             Command::Send(request) => match client.ai().send_turn(&request) {
                 Ok(stream) => stream_attempt(client.clone(), request.chat_id, stream, &updates),
@@ -1195,6 +1284,13 @@ fn refused_answer(
         Command::Send(request) => {
             return (request.chat_id == *chat).then(|| Update::SendFailed(failure.clone()));
         }
+        Command::AddGrants(about, _, _, op) => {
+            return (*about == *chat).then(|| Update::GrantsAdded {
+                chat: *about,
+                op: *op,
+                result: Err(failure.message.clone()),
+            });
+        }
         Command::Read(about)
         | Command::Rename(about, _)
         | Command::Pin(about, _)
@@ -1286,6 +1382,12 @@ mod tests {
         assert!(matches!(
             refused_answer(Some(&refused), &folder),
             Some(Update::Failure(message)) if message == failure.message
+        ));
+        let op = uuid::Uuid::new_v4();
+        assert!(matches!(
+            refused_answer(Some(&refused), &Command::AddGrants(chat, None, Vec::new(), op)),
+            Some(Update::GrantsAdded { chat: answered, op: identity, result: Err(message) })
+                if answered == chat && identity == op && message == failure.message
         ));
         assert!(refused_answer(Some(&refused), &send(koru_ai_core::ChatId::new())).is_none());
         assert!(refused_answer(None, &send(chat)).is_none());

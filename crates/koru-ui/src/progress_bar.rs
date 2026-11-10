@@ -57,7 +57,7 @@ impl ProgressBar {
         scene::fill(
             canvas,
             root,
-            p.bubble_hover.multiply_alpha(alpha),
+            p.panel_border.multiply_alpha(alpha),
             &scene::rrect(rect.x, rect.y, rect.w, rect.h, rect.h * 0.5),
         );
         let fill = match self.mode {

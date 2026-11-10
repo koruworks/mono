@@ -66,6 +66,15 @@ fn a_document_with_no_nodes_contributes_nothing_and_is_titled_elsewhere() {
     assert!(title_fragment("w", "d", "  ").is_none());
 }
 
+#[test]
+fn a_trashed_task_node_has_no_search_fragment() {
+    let mut task = node("task", "paragraph", "Ship café");
+    task.in_trash = true;
+    let projected = projection(vec![task]);
+    assert!(fragments(&projected, "Roadmap", None).is_empty());
+    assert!(attr_values("workspace", "document", &projected).is_empty());
+}
+
 /// The listing and the root node normally hold the same string. Indexing both
 /// would double every title hit.
 #[test]

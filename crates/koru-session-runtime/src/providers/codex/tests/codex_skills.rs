@@ -109,6 +109,7 @@ fn input(text: &str, skills: &[&str]) -> AgentInput {
         turn_id: AgentTurnId::mint(),
         text: text.into(),
         attachments: Vec::new(),
+        references: Vec::new(),
         mode: None,
         fast: None,
         reasoning: None,

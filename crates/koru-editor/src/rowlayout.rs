@@ -103,7 +103,7 @@ pub fn build_row(engine: &mut TextEngine, row: &mut Paragraph, viewport_w: f32) 
         row.lang_chip_w = engine.simple_layout(label, theme::role::hint()).width() + 6.0;
     }
     let line_box = step.size * step.line_height;
-    let pill_style = PillTextStyle::new(step.size, line_box);
+    let pill_style = PillTextStyle::new(step.size, line_box).with_stack(row.font_choice().stack());
     let tab_width = row
         .text
         .contains('\t')
@@ -1401,7 +1401,8 @@ pub fn visit_pills(
     mut f: impl FnMut(AttrId, &PillInfo, &PillVisual, f32, f32, f32, f32),
 ) {
     let step = row.type_step();
-    let style = PillTextStyle::new(step.size, step.size * step.line_height);
+    let style = PillTextStyle::new(step.size, step.size * step.line_height)
+        .with_stack(row.font_choice().stack());
     for line in row.layout.lines() {
         let baseline = line.metrics().baseline;
         for item in line.items() {
@@ -2147,7 +2148,8 @@ mod tests {
             .expect("title row");
         let info = row.pills.values().next().expect("document pill");
         let step = row.type_step();
-        let style = PillTextStyle::new(step.size, step.size * step.line_height);
+        let style = PillTextStyle::new(step.size, step.size * step.line_height)
+            .with_stack(row.font_choice().stack());
         let visual = engine
             .pills
             .get_with_style(info.kind, &info.label, info.url.as_deref(), style)

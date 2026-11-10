@@ -43,6 +43,29 @@ fn open_panel(count: usize) -> ChatSurface {
     surface
 }
 
+#[test]
+fn permission_panels_follow_their_toolbar_controls() {
+    let mut surface = open_panel(3);
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 1000.0));
+    surface.composer_rect();
+    surface.tool_mode_open = true;
+    let access = surface.tool_access_panel().unwrap();
+    let mode = surface.tool_mode_panel().unwrap();
+    let access_button = surface.tool_access_button();
+    let mode_button = surface.tool_mode_button().unwrap();
+    assert!(access.y >= access_button.y + access_button.h);
+    assert!(mode.y >= mode_button.y + mode_button.h);
+
+    surface.pending_user = Some("Plan the launch".into());
+    surface.composer_rect();
+    let access = surface.tool_access_panel().unwrap();
+    let mode = surface.tool_mode_panel().unwrap();
+    let access_button = surface.tool_access_button();
+    let mode_button = surface.tool_mode_button().unwrap();
+    assert!(access.y + access.h <= access_button.y);
+    assert!(mode.y + mode.h <= mode_button.y);
+}
+
 /// A chat in two profiles' worth of workspaces — *Private*'s Travel and
 /// Home, *Work*'s Project, Plan and Ops — granted Travel and Project, the
 /// access panel open, in a window on Travel.
@@ -425,89 +448,20 @@ fn the_panels_words_come_from_the_catalog() {
     assert_eq!(spec.empty.as_deref(), Some("The service did not answer."));
 }
 
-/// The *Button label* record inside the `KoruButton` record drawn at
-/// `chip`, from a frame of the whole surface.
-fn chip_label(surface: &mut ChatSurface, chip: Rect) -> vello::kurbo::Rect {
-    let capture = inspect::Frame::begin(
-        1,
-        Affine::IDENTITY,
-        vello::kurbo::Rect::new(0.0, 0.0, 900.0, 700.0),
-    );
-    let mut scene = Scene::new();
-    surface.draw(&mut scene, Affine::IDENTITY);
-    let snapshot = capture.finish();
-    let records = &snapshot.records;
-    let button = records
-        .iter()
-        .position(|record| {
-            let r = record.rect();
-            record.name == "KoruButton"
-                && (r.x0 as f32 - chip.x).abs() < 0.01
-                && (r.y0 as f32 - chip.y).abs() < 0.01
-                && (r.width() as f32 - chip.w).abs() < 0.01
-        })
-        .expect("the chip's button");
-    records
-        .iter()
-        .find(|record| record.name == "Button label" && record.parent == Some(button))
-        .expect("the chip's label")
-        .rect()
-}
-
-/// **The *1 space* chip hugs its label** (D107, the user: *left indent the
-/// text, don't show that spacing on the left*). It starts where the toolbar
-/// does, its label at its left padding — the approval-mode chip's
-/// `ActionButton::PAD_X` — then the caret, and it is as wide as that and its
-/// padding: no wider button with the label centred in it.
 #[test]
-fn the_access_chip_hugs_its_label_from_its_left_padding() {
+fn workspace_access_is_not_a_composer_control() {
     let mut surface = open_panel(3);
     surface.tool_access_open = false;
-    let mut scene = Scene::new();
-    surface.draw(&mut scene, Affine::IDENTITY);
-    assert_eq!(surface.tool_access_label(), "1 space");
-    let chip = surface.tool_access_button();
-    let toolbar = surface.composer_toolbar_rect();
-    let start = surface
-        .web_search_button()
-        .or_else(|| surface.privacy_button())
-        .map_or(toolbar.x, |icon| icon.x + icon.w + 6.0);
-    near(chip.x, start, "it starts the row");
-    let hug = ActionButton::new("1 space", ActionStyle::Ghost, Some(icons::CARET_DOWN))
-        .width(&mut surface.engine);
-    near(chip.w, hug, "as wide as its label, caret and padding");
-    assert!(chip.w < 78.0, "narrower than the old least, {}", chip.w);
-    let label = chip_label(&mut surface, chip);
-    near(
-        label.x0 as f32,
-        chip.x + ActionButton::PAD_X,
-        "label at the padding",
+    surface.draw(&mut Scene::new(), Affine::IDENTITY);
+    let former = surface.tool_access_button();
+    assert_eq!(surface.tool_access_chip_w, 0.0);
+    assert_ne!(
+        surface.control_hover_at(former.x + 2.0, former.y + 2.0),
+        Some((5, 6)),
     );
-    // More workspaces, a longer label: the chip grows with it.
-    surface
-        .transcript
-        .as_mut()
-        .unwrap()
-        .tool_policy
-        .workspace_ids = surface
-        .destinations
-        .iter()
-        .map(|workspace| workspace.workspace_id)
-        .collect();
-    surface.draw(&mut scene, Affine::IDENTITY);
-    let wider = surface.tool_access_button();
-    assert!(wider.w > chip.w, "{} after {}", wider.w, chip.w);
-    let label = chip_label(&mut surface, wider);
-    near(
-        label.x0 as f32,
-        wider.x + ActionButton::PAD_X,
-        "still at the padding",
-    );
+    surface.mouse_down(former.x + 2.0, former.y + 2.0);
+    assert!(!surface.tool_access_open);
 }
-
-/// A label longer than the chip's widest is elided to the room its
-/// padding and caret leave, so it still starts at the padding; the chip
-/// stops at its widest.
 #[test]
 fn a_long_access_label_is_elided_inside_the_widest_chip() {
     let mut surface = open_panel(3);

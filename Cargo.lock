@@ -5133,6 +5133,7 @@ dependencies = [
 name = "koru-ai-core"
 version = "0.0.3"
 dependencies = [
+ "koru-link",
  "koru-store-core",
  "pulldown-cmark",
  "schemars 1.2.2",
@@ -6271,6 +6272,7 @@ dependencies = [
 name = "koru-link"
 version = "0.0.3"
 dependencies = [
+ "koru-session-protocol",
  "uuid",
 ]
 

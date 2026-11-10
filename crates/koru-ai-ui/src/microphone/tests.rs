@@ -81,16 +81,15 @@ fn checked(surface: &ChatSurface) -> Vec<bool> {
         .collect()
 }
 
-/// **The chevron shows on the microphone**, just left of it, and only
+/// **The chevron expands right of the fixed microphone** on hover, and only
 /// there: not before the pointer comes, not while the composer records, and
-/// not where the host offers no choice. Its slot is kept either way, so the
-/// toolbar ends before it and nothing moves under the pointer.
+/// not where the host offers no choice. Its slot is kept either way.
 #[test]
-fn the_chevron_shows_left_of_the_microphone_on_hover() {
+fn the_chevron_expands_right_of_the_microphone_on_hover() {
     let mut surface = surface();
     let mic = surface.mic_button().unwrap();
     let slot = surface.mic_chooser_slot().unwrap();
-    assert!(slot.x + slot.w < mic.x, "left of the microphone");
+    assert!(mic.x + mic.w < slot.x, "right of the microphone");
     assert_eq!((slot.y, slot.h), (mic.y, mic.h));
     near(
         slot.w,
@@ -98,12 +97,13 @@ fn the_chevron_shows_left_of_the_microphone_on_hover() {
         "the compact icon button's width",
     );
     let toolbar = surface.composer_toolbar_rect();
-    assert!(toolbar.x + toolbar.w <= slot.x, "the toolbar gives way");
+    assert!(toolbar.x + toolbar.w <= mic.x, "the toolbar gives way");
 
     assert!(surface.mic_chooser_button().is_none(), "not before a hover");
     let (x, y) = centre(mic);
     assert!(surface.mouse_move(x, y), "a redraw shows it");
     assert_eq!(surface.mic_chooser_button(), Some(slot));
+    assert_eq!(surface.mic_button(), Some(mic), "hover keeps the mic fixed");
     let (x, y) = centre(slot);
     surface.mouse_move(x, y);
     assert_eq!(surface.mic_chooser_button(), Some(slot), "still on it");
@@ -143,7 +143,7 @@ fn near(a: f32, b: f32, what: &str) {
 
 /// **The panel**: *Default – <the system's device>* first and checked, then
 /// a row a device, a divider, and *Hold to record* with its switch. It opens
-/// above the composer, its right edge on the microphone's, and opening it
+/// next to the chooser, its right edge on the chooser's, and opening it
 /// asks the host for the list again.
 #[test]
 fn the_chevron_opens_the_devices_with_default_first() {
@@ -161,15 +161,17 @@ fn the_chevron_opens_the_devices_with_default_first() {
     assert_eq!(checked(&surface), [true, false, false]);
 
     let panel = surface.microphone_panel().unwrap();
-    let mic = surface.mic_button().unwrap();
+    let chooser = surface.mic_chooser_slot().unwrap();
     near(
         panel.x + panel.w,
-        mic.x + mic.w,
-        "right edge on the microphone's",
+        chooser.x + chooser.w,
+        "right edge on the chooser's",
     );
+    let gap = koru_draw::theme::overlay::popover().anchor_gap;
     assert!(
-        panel.y + panel.h < surface.composer_hit_rect.y,
-        "above the composer"
+        (panel.y - chooser.y - chooser.h - gap).abs() < 0.5
+            || (chooser.y - panel.y - panel.h - gap).abs() < 0.5,
+        "panel stays beside the chooser on the side with room"
     );
 
     let (_, _, frame) = surface.microphone_frame().unwrap();

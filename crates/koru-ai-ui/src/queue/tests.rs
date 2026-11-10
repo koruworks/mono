@@ -176,6 +176,8 @@ fn stored_attachment(surface: &mut ChatSurface) {
             state: attachments::DraftState::Stored,
             bytes: None,
             path: None,
+            reference_path: None,
+            origin: None,
         },
     );
 }
@@ -420,6 +422,60 @@ fn steer_is_native_for_an_agent_that_steers() {
         replayed: false,
     }));
     assert_eq!(surface.steered_shown(), ["also this"]);
+}
+
+#[test]
+fn enter_in_an_empty_composer_steers_the_first_queued_message() {
+    let (mut surface, _transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    let attempt = send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "steer first");
+    assert!(press(&mut surface, NamedKey::Enter));
+    type_into(&mut surface, "send later");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(surface.shown_queue().unwrap().items.len(), 2);
+
+    assert!(press(&mut surface, NamedKey::Enter));
+    let steered = drain(&commands)
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Steer(to, request) => Some((to, request.markdown)),
+            _ => None,
+        });
+    assert_eq!(steered, Some((attempt, "steer first".into())));
+    assert_eq!(
+        surface
+            .shown_queue()
+            .unwrap()
+            .items
+            .front()
+            .unwrap()
+            .markdown,
+        "send later"
+    );
+}
+
+#[test]
+fn queued_card_header_folds_rows_without_losing_messages() {
+    let (mut surface, _transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "waiting");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(surface.item_rows().len(), 1);
+    let expanded_height = surface.queue_band_h();
+    let band = surface.queue_band_rect().unwrap();
+    assert_eq!(
+        surface.queue_hit_at(band.x + 12.0, band.y + 12.0),
+        Some(QueueHit::Toggle)
+    );
+
+    assert!(surface.queue_action(QueueHit::Toggle));
+    assert!(surface.item_rows().is_empty());
+    assert!(surface.queue_band_h() < expanded_height);
+    assert_eq!(surface.shown_queue().unwrap().items.len(), 1);
+    assert!(surface.queue_action(QueueHit::Toggle));
+    assert_eq!(surface.item_rows().len(), 1);
 }
 
 /// The conversation as laid out: each card's role and what it says.
@@ -689,7 +745,15 @@ fn a_taken_steer_is_walked_back_to_and_a_queued_one_is_not() {
     type_into(&mut surface, "queued");
     press(&mut surface, NamedKey::Enter);
     assert!(surface.composer.is_blank());
-    assert_eq!(surface.input_history(), ["first"], "queued is not sent");
+    assert_eq!(
+        surface
+            .input_history()
+            .iter()
+            .map(|entry| entry.markdown.as_str())
+            .collect::<Vec<_>>(),
+        ["first"],
+        "queued is not sent"
+    );
     assert!(surface.queue_action(QueueHit::Steer(0)));
     drain(&commands);
     surface.apply_update(Update::Steered(koru_ai_wire::SteerAttemptResponse {
@@ -697,6 +761,13 @@ fn a_taken_steer_is_walked_back_to_and_a_queued_one_is_not() {
         user_message_id: koru_ai_core::MessageId::new(),
         replayed: false,
     }));
-    assert_eq!(surface.input_history(), ["first", "steered"]);
+    assert_eq!(
+        surface
+            .input_history()
+            .iter()
+            .map(|entry| entry.markdown.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "steered"]
+    );
     assert_eq!(queued_texts(&surface), ["queued"]);
 }

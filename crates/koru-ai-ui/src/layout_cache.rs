@@ -29,8 +29,8 @@ pub(crate) struct MessageLayout {
     pub usage: Option<Layout<Brush>>,
     pub sources: Option<SourcesLayout>,
     pub blocks: Vec<BlockLayout>,
-    /// The pictures and files sent with a message the person wrote, drawn
-    /// as tiles under its text at sizes known before any thumbnail loads.
+    /// Pictures, files, and folders sent with a message, drawn as one-line
+    /// pills under its text with widths measured during layout.
     pub attachments: Vec<Tile>,
 }
 

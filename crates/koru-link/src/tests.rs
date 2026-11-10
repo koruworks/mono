@@ -4,6 +4,51 @@
 
 use super::*;
 
+#[test]
+fn selected_agent_links_encode_and_decode_valid_names() {
+    for name in ["review-pr", "issue#42", "docs:docs", "route/a?b", "café"] {
+        let skill = skill_link(name).unwrap();
+        let command = command_link(name).unwrap();
+        assert_eq!(parse(&skill), Ok(KoruLink::Skill { name: name.into() }));
+        assert_eq!(parse(&command), Ok(KoruLink::Command { name: name.into() }));
+        assert_eq!(wrapped(&format!("before [[{skill}]] after")).len(), 1);
+    }
+    assert_eq!(
+        skill_link("route/a?b").unwrap(),
+        "koru://skill/route%2Fa%3Fb"
+    );
+    assert_eq!(command_link("café").unwrap(), "koru://command/caf%C3%A9");
+}
+
+#[test]
+fn malformed_or_untransportable_agent_names_remain_text() {
+    for name in ["", "two words", "line\nbreak"] {
+        assert_eq!(skill_link(name), Err(LinkError::BadName));
+    }
+    for url in [
+        "koru://skill/two%20words",
+        "koru://skill/bad%ZZ",
+        "koru://skill/%FF",
+        "koru://command/a/b",
+        "koru://command/name#fragment",
+    ] {
+        assert!(parse(url).is_err(), "{url}");
+        assert!(wrapped(&format!("[[{url}]]")).is_empty(), "{url}");
+    }
+}
+
+#[test]
+fn literal_link_escape_prevents_pill_recognition() {
+    let text = "plain [[koru://skill/review-pr]] and [[koru://command/issue%2342]]";
+    let escaped = escape_literal_links(text);
+    assert_eq!(wrapped(&escaped), Vec::new());
+    assert_eq!(unescape_literal_links(&escaped), text);
+    let with_slash = "literal \\[[koru://skill/review-pr]]";
+    let escaped = escape_literal_links(with_slash);
+    assert_eq!(wrapped(&escaped), Vec::new());
+    assert_eq!(unescape_literal_links(&escaped), with_slash);
+}
+
 fn uuid() -> Uuid {
     Uuid::new_v4()
 }

@@ -39,6 +39,13 @@ impl AcpControl {
         if !input.text.is_empty() {
             prompt.push(json!({"type":"text","text":input.text}));
         }
+        // Claude's resource_link delivery is fixture-gated in Composer v2.
+        // Until the pinned fixture proves it, give each path as a text line.
+        for reference in &input.references {
+            prompt.push(
+                json!({"type":"text","text":super::super::contract::reference_line(reference)}),
+            );
+        }
         for attachment in &input.attachments {
             if attachment.kind != AttachmentKind::Image
                 || !attachment.media_type.starts_with("image/")
@@ -110,6 +117,15 @@ pub(super) fn fingerprint(input: &AgentInput) -> blake3::Hash {
         }]);
         hash.update(&(attachment.media_type.len() as u64).to_le_bytes());
         hash.update(attachment.media_type.as_bytes());
+    }
+    for reference in &input.references {
+        hash.update(b"reference\0");
+        hash.update(&[match reference.kind {
+            koru_session_protocol::PathReferenceKind::File => 1,
+            koru_session_protocol::PathReferenceKind::Folder => 2,
+        }]);
+        hash.update(&(reference.path.len() as u64).to_le_bytes());
+        hash.update(reference.path.as_bytes());
     }
     // A model chosen after the start is part of what the turn asks.
     if let Some(model) = &input.model {

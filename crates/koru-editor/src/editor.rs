@@ -1101,7 +1101,7 @@ pub trait Editing {
         self.view_mut().wants_move_selection.take()
     }
 
-    /// Whether the open picker is a move-mode one with nothing typed — the
+    /// Whether the open picker has nothing typed — the
     /// state whose result list is the window's **recents**, fed by the
     /// container. The store's search service only remembers search-driven
     /// navigations, so its empty-query answer is not the list a person means
@@ -1109,11 +1109,11 @@ pub trait Editing {
     fn entity_wants_recents(&self) -> bool {
         matches!(
             &self.view().overlay,
-            Overlay::Entity(picker) if picker.move_mode && picker.document_query.trim().is_empty()
+            Overlay::Entity(picker) if picker.document_query.trim().is_empty()
         )
     }
 
-    /// Feed the window's recents into a move-mode picker with an empty query.
+    /// Feed the window's recents into a picker with an empty query.
     /// `false` when nothing changed — the caller runs per gesture, and an
     /// unconditional "changed" would spin the redraw loop.
     fn set_entity_recents(
@@ -7578,6 +7578,19 @@ pub trait Editing {
         let cursor = Cursor::from_byte_index(&row.layout, trigger.start, Affinity::Downstream);
         let geo = cursor.geometry(&row.layout, 1.0);
         let (w, h) = self.view().overlay.panel_size();
+
+        // A composer's mention picker belongs above the whole input, including
+        // a draft that wraps to several lines. Caret-relative placement can
+        // choose the space below an early line and cover the rest of the draft.
+        if matches!(&self.view().overlay, Overlay::Entity(_))
+            && let Some(embedded) = self.view().embedded
+        {
+            let room = embedded.panels;
+            let x = (cx + row.text_x() + geo.x0 as f32)
+                .clamp(room.x + 8.0, (room.x + room.w - w - 8.0).max(room.x + 8.0));
+            let y = (embedded.clip.y - h - 4.0).max(room.y + 8.0);
+            return Some(Rect::new(x, y, w, h));
+        }
 
         // The anchor can be far outside the viewport: the move picker anchors
         // at the *first* selected row, and a long mouse selection ends screens

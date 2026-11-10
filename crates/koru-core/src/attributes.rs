@@ -130,6 +130,11 @@ pub const ROLE_QUOTE: &str = "koru.quote";
 /// spell it the same.
 pub const ROLE_SKILL: &str = "koru.skill";
 
+/// A selected agent command in the chat composer's private document. Like a
+/// skill chip, its stored message is a durable link; only provider prompt
+/// rendering turns it into `/name` at its selected position.
+pub const ROLE_COMMAND: &str = "koru.command";
+
 /// The roles whose `"ref"` record means **a reference to a document**, and
 /// which are therefore read back as [`AttrValue::Document`] rather than as a
 /// bare [`AttrValue::Ref`] homed at one.
