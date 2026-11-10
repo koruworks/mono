@@ -491,7 +491,11 @@ fn v10_managed_and_presented_capabilities_are_explicit() {
     // sends none.
     // **v23 is path references**: a terminal view sends none and does not
     // offer their capability.
-    assert_eq!(offer.versions.max, 23);
+    // **v24 is provider-reported context usage**: an agent's stream may
+    // carry how much of its context window is occupied. There is no
+    // capability for it, so there is nothing here to decline; a terminal
+    // view simply reads it as one more event.
+    assert_eq!(offer.versions.max, 24);
     assert!(
         !offer
             .capabilities
