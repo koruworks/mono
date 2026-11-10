@@ -99,7 +99,9 @@ pub const CATALOG_SCHEMA_VERSION: i64 = 13;
 /// `documents.note_doc`, the derived projection of a file's attached note.
 /// `12` admits Cloud provenance in the existing journal JSON. Its empty
 /// structural migration fences older writers that would silently lose it.
-pub const WORKSPACE_SCHEMA_VERSION: i64 = 12;
+/// `13` retains immutable local creation-origin evidence independently of
+/// expiring transport receipts and checkpoint-pruned seed updates.
+pub const WORKSPACE_SCHEMA_VERSION: i64 = 13;
 
 /// The manifest `LoroDoc`'s shape, stored as `meta.schema_version`.
 ///

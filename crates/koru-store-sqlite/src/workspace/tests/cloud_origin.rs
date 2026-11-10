@@ -72,7 +72,10 @@ fn null_legacy_rows_stay_null_but_unknown_nonnull_origins_are_corrupt() {
 #[test]
 fn schema_twelve_has_no_structural_change_and_old_writer_refuses_before_mutation() {
     let mut connection = db::open_in_memory().unwrap();
-    let old = &MIGRATIONS[..MIGRATIONS.len() - 1];
+    let old = &MIGRATIONS[..MIGRATIONS
+        .iter()
+        .position(|migration| migration.to == 12)
+        .unwrap()];
     db::migrate(&mut connection, "workspace.db", old, 11).unwrap();
     fn shape(connection: &Connection) -> Vec<(String, Option<String>)> {
         connection
@@ -84,7 +87,13 @@ fn schema_twelve_has_no_structural_change_and_old_writer_refuses_before_mutation
             .collect()
     }
     let before = shape(&connection);
-    let mut upgraded = SqliteWorkspace::from_connection(connection).unwrap();
+    let through_twelve = &MIGRATIONS[..MIGRATIONS
+        .iter()
+        .position(|migration| migration.to == 12)
+        .unwrap()
+        + 1];
+    db::migrate(&mut connection, "workspace.db", through_twelve, 12).unwrap();
+    let mut upgraded = SqliteWorkspace { connection };
     assert_eq!(upgraded.schema_version().unwrap(), 12);
     assert_eq!(shape(&upgraded.connection), before);
     let error = db::migrate(&mut upgraded.connection, "workspace.db", old, 11).unwrap_err();

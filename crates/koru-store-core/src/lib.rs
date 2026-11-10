@@ -85,11 +85,11 @@ pub use model::{
 };
 pub use personal_attributes::{EntityRef, PersonalAttributeValue};
 pub use ports::{
-    BackupId, BackupInfo, Backups, BlobStore, Catalog, Checkpoint, CheckpointHeader, DocumentIndex,
-    DocumentState, LocalProfileRemoval, LocalProfileRestoration, Opened, ProfileCatalogState,
-    Recovery, RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, SeedDocument,
-    SeededDocument, StoredUpdate, UpdateBatch, WorkspacePersonalUnitState, WorkspaceReminderDue,
-    WorkspaceRepo,
+    BackupId, BackupInfo, Backups, BlobStore, Catalog, Checkpoint, CheckpointHeader,
+    CreationOrigin, CreationOriginLookup, DocumentIndex, DocumentState, LocalProfileRemoval,
+    LocalProfileRestoration, Opened, ProfileCatalogState, ProvenSeededDocument, Recovery,
+    RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, SeedDocument, SeededDocument,
+    StoredUpdate, UpdateBatch, WorkspacePersonalUnitState, WorkspaceReminderDue, WorkspaceRepo,
 };
 pub use profile_account::{
     ProfileAccountBinding, ProfileAccountBindingOutcome, ProfileAccountClearOutcome,
@@ -107,8 +107,9 @@ pub use root_catalog::{
 pub use service::{TransportModeChoice, mint_peer_id};
 pub mod sync_digest;
 pub use service::{
-    Backend, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted, ProvisionedReplica,
-    ReminderCommitted, ReplicaPlacement, SeededCreation, Store, TRASH_RETENTION_MS,
+    Backend, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted,
+    ProvenSeededCreation, ProvisionedReplica, ReminderCommitted, ReplicaPlacement, SeededCreation,
+    Store, TRASH_RETENTION_MS,
 };
 pub use temporal::{CalendarDate, FloatingDateTime, TemporalValue, ZonedDateTime};
 pub use text::Locale;

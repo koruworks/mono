@@ -71,6 +71,10 @@ pub use availability::{
     EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityRead,
     WorkspaceAuthorityState, WorkspaceAvailabilityIssue, WorkspaceManifestInspection,
 };
+mod creation;
+mod native;
+pub use creation::ProvenSeededCreation;
+pub use native::NativeUpdateError;
 mod pins;
 mod preparation;
 mod removal;
@@ -2289,6 +2293,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.open[&workspace].repo.entries()
     }
 
+    /// One manifest entry through its indexed identity, without listing the
+    /// workspace. Visibility/authorization belongs to the invoking owner.
+    pub fn document_entry(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> Result<Option<DocumentEntry>> {
+        self.ensure_open(workspace)?;
+        self.open[&workspace].repo.entry(document)
+    }
+
     /// When each document in a workspace last changed, without opening bodies.
     ///
     /// **The manifest carries no timestamp**, and deliberately: it holds what
@@ -3039,6 +3054,41 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         attribution: Option<&str>,
         at: Timestamp,
     ) -> Result<SeededCreation> {
+        self.create_seeded_document_inner(
+            workspace,
+            title,
+            kind,
+            parent,
+            index,
+            scope,
+            idempotency_key,
+            request_hash,
+            candidate,
+            initial_update,
+            attribution,
+            at,
+            false,
+        )
+        .map(|(creation, _)| creation)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_seeded_document_inner(
+        &mut self,
+        workspace: WorkspaceId,
+        title: &str,
+        kind: &str,
+        parent: Option<DocumentId>,
+        index: Option<usize>,
+        scope: &str,
+        idempotency_key: &str,
+        request_hash: &str,
+        candidate: Option<DocumentId>,
+        initial_update: Vec<u8>,
+        attribution: Option<&str>,
+        at: Timestamp,
+        strict: bool,
+    ) -> Result<(SeededCreation, Option<crate::ports::CreationOrigin>)> {
         if idempotency_key.is_empty() || idempotency_key.len() > 128 {
             return Err(Error::new(
                 Code::InvalidRequest,
@@ -3078,11 +3128,14 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         let recover_candidate = candidate.is_some();
         let candidate = candidate.unwrap_or_default();
         let mut validation = LiveDocument::empty(candidate);
+        if strict {
+            crate::lifecycle::validate_cloud_import(validation.doc(), &initial_update)?;
+        }
         validation.import(&initial_update)?;
         let expires_before =
             Timestamp::from_millis(at.millis().saturating_sub(7_i64 * 24 * 60 * 60 * 1_000));
 
-        let (document, original_update, replayed, manifest_delta) = {
+        let (document, original_update, replayed, manifest_delta, origin) = {
             let open = self.open.get_mut(&workspace).expect("just opened");
             if recover_candidate
                 && let Some(existing) = open
@@ -3097,7 +3150,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                     "the candidate identity belongs to another manifest kind",
                 ));
             }
-            let durable = open.repo.seed_document(&SeedDocument {
+            let seed = SeedDocument {
                 candidate,
                 recover_candidate,
                 scope: scope.to_owned(),
@@ -3108,7 +3161,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 frontiers: validation.encoded_frontiers(),
                 created_at: at,
                 expires_before,
-            })?;
+            };
+            let (durable, origin) = if strict {
+                let proven = open.repo.seed_document_with_origin(&seed)?;
+                (proven.seeded, Some(proven.origin))
+            } else {
+                (open.repo.seed_document(&seed)?, None)
+            };
             let document = durable.document;
 
             // Open from the repository rather than from `initial_update`: on a
@@ -3174,16 +3233,20 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 durable.initial_update,
                 durable.replayed,
                 manifest_delta,
+                origin,
             )
         };
 
         self.catalog.record_location(document, workspace)?;
-        Ok(SeededCreation {
-            document,
-            initial_update: original_update,
-            replayed,
-            manifest_delta,
-        })
+        Ok((
+            SeededCreation {
+                document,
+                initial_update: original_update,
+                replayed,
+                manifest_delta,
+            },
+            origin,
+        ))
     }
 
     /// The manifest's document id, which is what a client joins to see the

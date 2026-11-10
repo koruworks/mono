@@ -7,6 +7,7 @@ mod availability;
 mod client_receive;
 mod cloud_origin;
 mod commit_retry;
+mod creation_origin;
 mod inspection;
 mod preparation;
 
@@ -76,6 +77,9 @@ fn schema_seven(origin_json: bool, mime: bool) -> Connection {
              -- no real database ever had.
              CREATE TABLE blobs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL,
                mime TEXT NOT NULL, filename TEXT, created_at INTEGER NOT NULL);
+             CREATE TABLE loro_documents (id TEXT PRIMARY KEY, kind TEXT NOT NULL);
+             CREATE TABLE document_creations (scope TEXT, request_key TEXT,
+               request_hash TEXT, document_id TEXT, initial_update BLOB, created_at INTEGER);
              PRAGMA user_version = 7;",
             if origin_json {
                 ", origin_json BLOB"
@@ -1015,6 +1019,9 @@ fn a_version_six_workspace_missing_update_origins_is_repaired() {
              -- Present since migration 1; migration 9 alters it.
              CREATE TABLE blobs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL,
                mime TEXT NOT NULL, filename TEXT, created_at INTEGER NOT NULL);
+             CREATE TABLE loro_documents (id TEXT PRIMARY KEY, kind TEXT NOT NULL);
+             CREATE TABLE document_creations (scope TEXT, request_key TEXT,
+               request_hash TEXT, document_id TEXT, initial_update BLOB, created_at INTEGER);
              PRAGMA user_version = 6;",
         )
         .unwrap();

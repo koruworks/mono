@@ -1050,6 +1050,36 @@ pub struct SeededDocument {
     pub replayed: bool,
 }
 
+/// Store-owned local creation evidence. This is not replicated attribution or
+/// current authorization. Content and request identifiers are redacted in Debug.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CreationOrigin {
+    pub document: DocumentId,
+    pub scope: String,
+    pub request_key: String,
+    pub request_hash: String,
+    pub initial_update: Vec<u8>,
+    pub created_at: Timestamp,
+}
+impl std::fmt::Debug for CreationOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreationOrigin")
+            .field("document", &self.document)
+            .finish_non_exhaustive()
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CreationOriginLookup {
+    Missing,
+    Unknown,
+    Known(CreationOrigin),
+}
+#[derive(Debug)]
+pub struct ProvenSeededDocument {
+    pub seeded: SeededDocument,
+    pub origin: CreationOrigin,
+}
+
 /// One workspace's Loro state.
 pub trait WorkspaceRepo {
     fn documents(&self) -> Result<Vec<DocumentState>>;
@@ -1072,6 +1102,20 @@ pub trait WorkspaceRepo {
         Err(crate::errors::Error::new(
             crate::errors::Code::StorageFailed,
             "seeded document creation is not implemented by this repository",
+        ))
+    }
+    /// Strict internal creation: candidate replay requires the original scoped
+    /// request binding. Unsupported repositories must not guess absence/proof.
+    fn seed_document_with_origin(&mut self, _seed: &SeedDocument) -> Result<ProvenSeededDocument> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "strict creation is not implemented by this repository",
+        ))
+    }
+    fn creation_origin(&self, _document: DocumentId) -> Result<CreationOriginLookup> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "creation origin is not implemented by this repository",
         ))
     }
     /// Drop a document's rows entirely. Separate from unregistering it in the
@@ -1120,6 +1164,18 @@ pub trait WorkspaceRepo {
         Err(crate::errors::Error::new(
             crate::errors::Code::StorageFailed,
             "history is not implemented by this repository",
+        ))
+    }
+    /// Trusted idempotent history capture. Exact identity reuses its first
+    /// marker/time; a conflicting binding or version refuses before mutation.
+    fn capture_history_once(
+        &mut self,
+        _capture: &HistoryCapture<'_>,
+        _identity: HistoryEntryId,
+    ) -> Result<HistoryEntry> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "idempotent history is not implemented by this repository",
         ))
     }
     /// Newest first, with an exclusive `(recorded_at, id)` cursor.

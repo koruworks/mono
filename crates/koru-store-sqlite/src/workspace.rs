@@ -59,9 +59,10 @@ use koru_store_core::errors::{Code, Error, Result};
 use koru_store_core::ids::{ClientId, DocumentId, DocumentVersionId, HistoryEntryId};
 use koru_store_core::model::{Blob, BlobHash, DocumentKind, Timestamp};
 use koru_store_core::ports::{
-    Checkpoint, CheckpointHeader, DocumentState, DocumentVersion, HistoryCapture, HistoryEntry,
-    HistoryReason, JournalSince, SeedDocument, SeededDocument, StoredUpdate, UpdateBatch,
-    UpdateOrigin, WorkspaceRepo,
+    Checkpoint, CheckpointHeader, CreationOrigin, CreationOriginLookup, DocumentState,
+    DocumentVersion, HistoryCapture, HistoryEntry, HistoryReason, JournalSince,
+    ProvenSeededDocument, SeedDocument, SeededDocument, StoredUpdate, UpdateBatch, UpdateOrigin,
+    WorkspaceRepo,
 };
 use koru_store_core::version::WORKSPACE_SCHEMA_VERSION;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -277,6 +278,12 @@ const MIGRATIONS: &[Migration] = &[
         sql: "",
         columns: &[],
     },
+    Migration {
+        to: 13,
+        name: "durable document creation origins",
+        columns: &[],
+        sql: include_str!("../migrations/013_workspace_creation_origins_migration.sql"),
+    },
 ];
 
 /// The checksum a checkpoint is verified against.
@@ -465,122 +472,36 @@ impl WorkspaceRepo for SqliteWorkspace {
     }
 
     fn seed_document(&mut self, seed: &SeedDocument) -> Result<SeededDocument> {
-        let tx = self.connection.transaction().map_err(sql_failed)?;
-        tx.execute(
-            "DELETE FROM document_creations WHERE created_at < ?1",
-            params![seed.expires_before.millis()],
-        )
-        .map_err(sql_failed)?;
-
-        // A v2 caller-minted candidate is the create identity. Content was
-        // committed before manifest publication, so finding this row can mean
-        // the earlier call died in that safe gap. Reuse its original first
-        // update and let Store finish publication; never replace those bytes
-        // with a later retry body. This deliberately precedes receipt/hash
-        // lookup because the transport receipt is allowed to expire while the
-        // document identity is not.
-        if seed.recover_candidate {
-            let existing: Option<(String, Vec<u8>)> = tx
-                .query_row(
-                    "SELECT d.kind, u.update_bytes
-                       FROM loro_documents d
-                       JOIN loro_updates u ON u.document_id = d.id AND u.seq = 1
-                      WHERE d.id = ?1",
-                    params![seed.candidate.to_storage()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()
-                .map_err(sql_failed)?;
-            if let Some((kind, initial_update)) = existing {
-                if kind != DocumentKind::Document.as_str() {
-                    return Err(Error::new(
-                        Code::IdempotencyConflict,
-                        "the candidate identity belongs to another document kind",
-                    ));
-                }
-                tx.commit().map_err(sql_failed)?;
-                return Ok(SeededDocument {
-                    document: seed.candidate,
-                    initial_update,
-                    replayed: true,
-                });
-            }
-        }
-
-        let existing: Option<(String, String, Vec<u8>)> = tx
-            .query_row(
-                "SELECT request_hash, document_id, initial_update
-                   FROM document_creations
-                  WHERE scope = ?1 AND request_key = ?2",
-                params![seed.scope, seed.key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()
-            .map_err(sql_failed)?;
-        if let Some((request_hash, document, initial_update)) = existing {
-            let document = DocumentId::parse(&document).ok_or_else(|| {
-                Error::new(
-                    Code::CorruptState,
-                    "an idempotency record contains an invalid document id",
-                )
-            })?;
-            if request_hash != seed.request_hash {
-                return Err(Error::new(
-                    Code::IdempotencyConflict,
-                    "that idempotency key was already used for a different request",
-                ));
-            }
-            tx.commit().map_err(sql_failed)?;
-            return Ok(SeededDocument {
-                document,
-                initial_update,
-                replayed: true,
-            });
-        }
-
-        let document = seed.candidate.to_storage();
-        tx.execute(
-            "INSERT INTO loro_documents
-               (id, kind, latest_checkpoint_seq, version_vector, frontiers, updated_at)
-             VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
-            params![
-                document,
-                DocumentKind::Document.as_str(),
-                seed.version_vector,
-                seed.frontiers,
-                seed.created_at.millis()
-            ],
-        )
-        .map_err(sql_failed)?;
-        tx.execute(
-            "INSERT INTO loro_updates
-               (document_id, seq, update_bytes, received_at, from_client)
-             VALUES (?1, 1, ?2, ?3, NULL)",
-            params![document, seed.initial_update, seed.created_at.millis()],
-        )
-        .map_err(sql_failed)?;
-        tx.execute(
-            "INSERT INTO document_creations
-               (scope, request_key, request_hash, document_id, initial_update, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                seed.scope,
-                seed.key,
-                seed.request_hash,
-                document,
-                seed.initial_update,
-                seed.created_at.millis()
-            ],
-        )
-        .map_err(sql_failed)?;
-        tx.commit().map_err(sql_failed)?;
-        Ok(SeededDocument {
-            document: seed.candidate,
-            initial_update: seed.initial_update.clone(),
-            replayed: false,
-        })
+        self.seed_document_inner(seed, false)
     }
-
+    fn seed_document_with_origin(&mut self, seed: &SeedDocument) -> Result<ProvenSeededDocument> {
+        if !seed.recover_candidate
+            || seed.scope.is_empty()
+            || seed.scope.len() > 256
+            || seed.key.is_empty()
+            || seed.key.len() > 128
+            || seed.request_hash.is_empty()
+            || seed.request_hash.len() > 128
+            || seed.initial_update.is_empty()
+            || seed.initial_update.len() > 16 * 1024 * 1024
+        {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "invalid strict creation input",
+            ));
+        }
+        let seeded = self.seed_document_inner(seed, true)?;
+        let CreationOriginLookup::Known(origin) = self.creation_origin(seeded.document)? else {
+            return Err(Error::new(
+                Code::CorruptState,
+                "strict creation lost origin evidence",
+            ));
+        };
+        Ok(ProvenSeededDocument { seeded, origin })
+    }
+    fn creation_origin(&self, document: DocumentId) -> Result<CreationOriginLookup> {
+        creation::origin_at(&self.connection, document)
+    }
     fn drop_document(&mut self, id: DocumentId) -> Result<()> {
         // Cascades to checkpoints and updates. Always the *later* of the two
         // steps: the manifest unregisters first, so a crash between them leaves
@@ -902,75 +823,14 @@ impl WorkspaceRepo for SqliteWorkspace {
     // --------------------------------------------------------------- history
 
     fn capture_history(&mut self, capture: &HistoryCapture<'_>) -> Result<HistoryEntry> {
-        self.require_document(capture.document)?;
-        if checksum(capture.snapshot) != capture.checksum {
-            return Err(Error::new(
-                Code::CorruptState,
-                "the history version checksum does not match its bytes",
-            ));
-        }
-        let document = capture.document.to_storage();
-        let tx = self.connection.transaction().map_err(sql_failed)?;
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT id FROM document_versions WHERE document_id = ?1 AND frontiers = ?2",
-                params![document, capture.frontiers],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(sql_failed)?;
-        let version = match existing.as_deref().and_then(DocumentVersionId::parse) {
-            Some(id) => id,
-            None => {
-                let id = DocumentVersionId::new();
-                tx.execute(
-                    "INSERT INTO document_versions
-                       (id, document_id, snapshot, version_vector, frontiers, checksum, captured_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    params![
-                        id.to_storage(),
-                        document,
-                        capture.snapshot,
-                        capture.version_vector,
-                        capture.frontiers,
-                        capture.checksum,
-                        capture.recorded_at.millis()
-                    ],
-                )
-                .map_err(sql_failed)?;
-                id
-            }
-        };
-        let entry = HistoryEntry {
-            id: HistoryEntryId::new(),
-            document: capture.document,
-            version,
-            reason: capture.reason,
-            recorded_at: capture.recorded_at,
-            label: capture.label.map(str::to_owned),
-            message: capture.message.map(str::to_owned),
-            boundary: capture.boundary.map(str::to_owned),
-            pinned: capture.reason.pinned(),
-        };
-        tx.execute(
-            "INSERT INTO document_history
-               (id, document_id, version_id, reason, recorded_at, label, message, boundary, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                entry.id.to_storage(),
-                document,
-                entry.version.to_storage(),
-                entry.reason.as_str(),
-                entry.recorded_at.millis(),
-                entry.label,
-                entry.message,
-                entry.boundary,
-                i64::from(entry.pinned)
-            ],
-        )
-        .map_err(sql_failed)?;
-        tx.commit().map_err(sql_failed)?;
-        Ok(entry)
+        self.capture_history_inner(capture, None)
+    }
+    fn capture_history_once(
+        &mut self,
+        capture: &HistoryCapture<'_>,
+        identity: HistoryEntryId,
+    ) -> Result<HistoryEntry> {
+        self.capture_history_inner(capture, Some(identity))
     }
 
     fn history_entries(
@@ -1284,3 +1144,7 @@ fn read_document_version(row: &rusqlite::Row<'_>) -> RowResult<DocumentVersion> 
 
 #[cfg(test)]
 mod tests;
+
+mod creation;
+
+mod history;
