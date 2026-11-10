@@ -221,6 +221,18 @@ fn credential() -> SyncCredential {
     SyncCredential::try_from(format!("{head}.{body}.{signature}")).unwrap()
 }
 
+/// A credential issued under `workspace`, as the service's device
+/// credential names it in its `workspace_id` claim.
+fn credential_under(workspace: WorkspaceId) -> SyncCredential {
+    let head = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#);
+    let body = URL_SAFE_NO_PAD.encode(format!(
+        r#"{{"sub":"test","workspace_id":"{}"}}"#,
+        workspace.as_uuid()
+    ));
+    let signature = URL_SAFE_NO_PAD.encode([9_u8; 64]);
+    SyncCredential::try_from(format!("{head}.{body}.{signature}")).unwrap()
+}
+
 fn route() -> CloudSyncRouteV1 {
     let key = ed25519_dalek::SigningKey::from_bytes(&[7_u8; 32])
         .verifying_key()
@@ -769,7 +781,7 @@ impl Api for FakeApi {
         if world.denied_scopes.contains(&label) {
             return Err(Failure::Denied);
         }
-        let (dataset, available) = match scope {
+        let (dataset, available, credential) = match scope {
             CloudSyncScopeV2::Workspace { workspace_id } => {
                 let index = index_of(workspace_id);
                 let logical = world
@@ -777,17 +789,26 @@ impl Api for FakeApi {
                     .get(&workspace_id)
                     .copied()
                     .unwrap_or_else(|| replica(index));
-                (Some(workspace_dataset(index, logical)), true)
+                (
+                    Some(workspace_dataset(index, logical)),
+                    true,
+                    credential_under(workspace_id),
+                )
             }
+            // The service issues a Profile's credential under one Workspace
+            // placed under it; the fake names the Profile's own index.
             CloudSyncScopeV2::ProfileUnits { profile_id } => (
                 Some(profile_dataset(index_of_profile(profile_id))),
                 world.profile_route_available,
+                credential_under(workspace(index_of_profile(profile_id))),
             ),
-            CloudSyncScopeV2::UserCatalog | CloudSyncScopeV2::UserPersonal { .. } => (None, true),
+            CloudSyncScopeV2::UserCatalog | CloudSyncScopeV2::UserPersonal { .. } => {
+                (None, true, credential())
+            }
         };
         Ok(SyncTokenResponseV2 {
             version: Version2,
-            credential: credential(),
+            credential,
             expires_at_seconds: world.token_expiry,
             catalog_scope_id: self::scope(),
             scope,
@@ -1275,6 +1296,7 @@ fn a_fresh_device_binds_joins_root_units_then_admits_content_and_profile_units()
     assert_eq!(units.dataset(), Some(profile_dataset(1)));
     let CloudPermitScopeV2::ProfileUnits {
         allowed_profile_units,
+        authority_workspace_id,
         ..
     } = &units.scope
     else {
@@ -1290,6 +1312,12 @@ fn a_fresh_device_binds_joins_root_units_then_admits_content_and_profile_units()
                 profile: profile(1)
             },
         ]
+    );
+    // The Workspace the Profile token's credential is issued under, which
+    // the worker scopes the session to.
+    assert_eq!(
+        authority_workspace_id,
+        &Some(cloud_id(workspace(1).as_uuid()))
     );
     assert_ne!(content.permit_id, units.permit_id);
     drop(world);

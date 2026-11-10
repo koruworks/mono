@@ -1228,6 +1228,13 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         if profile_id != cloud_id(profile.as_uuid()) {
             return Err(Failure::DatasetMismatch);
         }
+        // The service picks the Workspace this credential is issued under
+        // (one placed under the Profile) and says so only in the credential;
+        // the worker scopes the session to it.
+        let authority_workspace = token
+            .credential
+            .unverified_workspace_id()
+            .ok_or(Failure::DatasetMismatch)?;
         let permit = self.permit_v2(
             authority,
             &token,
@@ -1237,6 +1244,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                     ProfileUnitRef::Identity { profile },
                     ProfileUnitRef::Private { profile },
                 ],
+                authority_workspace_id: Some(cloud_id(authority_workspace)),
             },
         )?;
         Ok(Scoped {

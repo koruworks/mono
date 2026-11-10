@@ -239,9 +239,34 @@ fn v2_permits_are_one_scope_each_and_need_no_profile_pair() {
                 profile: profile_id(profile),
             },
         ],
+        authority_workspace_id: Some(v4(1)),
     });
     units.validate().unwrap();
     assert_eq!(units.dataset(), Some(dataset));
+    // The Workspace the credential is issued under is a v4 id when present.
+    let mut malformed = units.clone();
+    if let CloudPermitScopeV2::ProfileUnits {
+        authority_workspace_id,
+        ..
+    } = &mut malformed.scope
+    {
+        *authority_workspace_id = Some(koru_device::cloud::CloudId::from_bytes([0; 16]));
+    }
+    assert_eq!(malformed.validate(), Err(HostCloudError::PermitIdentity));
+    // A permit serialized before the field existed still reads, as `None`.
+    let mut encoded = serde_json::to_value(&units).unwrap();
+    encoded["scope"]
+        .as_object_mut()
+        .unwrap()
+        .remove("authority_workspace_id");
+    let older: CloudPermitV2 = serde_json::from_value(encoded).unwrap();
+    assert!(matches!(
+        older.scope,
+        CloudPermitScopeV2::ProfileUnits {
+            authority_workspace_id: None,
+            ..
+        }
+    ));
     // Personal is never a Profile unit here, another Profile's unit is
     // refused, the legacy private unit is refused, and an empty list is
     // not a permit.
@@ -272,6 +297,7 @@ fn v2_permits_are_one_scope_each_and_need_no_profile_pair() {
             permit_v2(CloudPermitScopeV2::ProfileUnits {
                 dataset,
                 allowed_profile_units: allowed,
+                authority_workspace_id: Some(v4(1)),
             })
             .validate(),
             Err(HostCloudError::PermitProfileUnits)
@@ -284,6 +310,7 @@ fn v2_permits_are_one_scope_each_and_need_no_profile_pair() {
             allowed_profile_units: vec![ProfileUnitRef::Identity {
                 profile: profile_id(profile),
             }],
+            authority_workspace_id: Some(v4(1)),
         })
         .validate(),
         Err(HostCloudError::PermitScope)

@@ -164,6 +164,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                     ProfileUnitRef::Identity { profile },
                     ProfileUnitRef::Private { profile },
                 ],
+                // The pair's credential, which this permit shares with the
+                // Workspace's, is issued under this Workspace.
+                authority_workspace_id: Some(cloud_id(workspace.as_uuid())),
             },
             account_generation: self.account_generation,
             authority_generation: 1,
