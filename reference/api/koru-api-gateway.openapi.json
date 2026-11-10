@@ -2897,10 +2897,66 @@
         ],
         "type": "object"
       },
+      "BotDeliveryReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_attempt_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "assistant_message_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "attempt": {
+            "$ref": "#/components/schemas/RunAttemptId"
+          },
+          "chat_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "confirmed_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/AttemptGeneration"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunId"
+          }
+        },
+        "required": [
+          "run",
+          "attempt",
+          "generation",
+          "chat_id",
+          "ai_attempt_id",
+          "assistant_message_id",
+          "confirmed_at_ms"
+        ],
+        "type": "object"
+      },
       "BotId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "BotOwner": {
+        "additionalProperties": false,
+        "properties": {
+          "device": {
+            "type": "string"
+          },
+          "user_scope": {
+            "$ref": "#/components/schemas/UserScopeId"
+          }
+        },
+        "required": [
+          "user_scope",
+          "device"
+        ],
+        "type": "object"
       },
       "BotPage": {
         "additionalProperties": false,
@@ -2915,6 +2971,67 @@
         "required": [
           "workspace",
           "document"
+        ],
+        "type": "object"
+      },
+      "BotProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_attempt_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "assistant_message_id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "bot": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "chat_id": {
+            "description": "These UUIDs refer to existing AI identities. They are never minted or\nconverted from a Bot/Run identity; keeping their owners in AI avoids a cycle.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "config_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "continued_from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "owner": {
+            "$ref": "#/components/schemas/BotOwner"
+          },
+          "policy_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "submission": {
+            "$ref": "#/components/schemas/BotRequestId"
+          }
+        },
+        "required": [
+          "owner",
+          "bot",
+          "submission",
+          "chat_id",
+          "config_revision",
+          "policy_revision"
         ],
         "type": "object"
       },
@@ -2965,6 +3082,10 @@
             "type": "object"
           }
         ]
+      },
+      "BotWorkingFolder": {
+        "description": "An owned binding, not a filesystem sandbox. Its Debug never exposes a path.",
+        "type": "string"
       },
       "BranchChatRequest": {
         "additionalProperties": false,
@@ -8556,6 +8677,57 @@
         ],
         "type": "object"
       },
+      "NativeResultKind": {
+        "enum": [
+          "created_page",
+          "edited_page"
+        ],
+        "type": "string"
+      },
+      "NativeResultReference": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NativeResultKind"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "items": {
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "operation_id",
+          "workspace",
+          "document",
+          "version",
+          "title",
+          "confirmed_at_ms",
+          "kind"
+        ],
+        "type": "object"
+      },
       "Navigation": {
         "description": "The body of `POST /v1/search/navigated`.\n\n**Machine-local, derived, and never written into a shared profile or a\ncollaborative document**: it describes this person's activity on this\ndesktop. A query earns a place in the history only by leading somewhere,\nwhich is why the text arrives here rather than on the search itself.",
         "properties": {
@@ -12082,6 +12254,32 @@
             },
             "type": "array"
           },
+          "bot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotProvenance"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "chat_delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotDeliveryReceipt"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "context": {
             "description": "Context as given — pinned, and unchanged by anything that happens to\nthe source afterwards (§7.2).",
             "items": {
@@ -12148,6 +12346,12 @@
             },
             "type": "array",
             "uniqueItems": true
+          },
+          "native_results": {
+            "items": {
+              "$ref": "#/components/schemas/NativeResultReference"
+            },
+            "type": "array"
           },
           "objective": {
             "$ref": "#/components/schemas/Objective"
@@ -18644,6 +18848,25 @@
       "WorkspaceScope": {
         "description": "The working folder a run is admitted to (P1.5) and started in.\n\nIdentity is a [`ProjectId`] rather than a path: the project already\ncarries a canonical root the host validates at launch, and an id is what a\nsecond device can *name* without being able to resolve it (D15, D16). The\nfolder inside it is text a person chose, and is redacted like every path.\n\n**`None` is unreachable at admission.** It exists so a request can be\nbuilt before a scope is chosen and so the modal has a state to refuse;\nP1.5 makes it impossible to start a run with it. M4 adds git shapes —\na worktree per run — as new variants, which is why this is an enum.",
         "oneOf": [
+          {
+            "description": "Fixed engine-owned Bot binding. Only authenticated Bot admission may\nresolve it; deleting a Run never deletes this persistent folder.",
+            "properties": {
+              "folder": {
+                "$ref": "#/components/schemas/BotWorkingFolder"
+              },
+              "kind": {
+                "enum": [
+                  "bot_folder"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "folder"
+            ],
+            "type": "object"
+          },
           {
             "description": "No scope chosen. Refused at admission (P1.5), never started.",
             "properties": {

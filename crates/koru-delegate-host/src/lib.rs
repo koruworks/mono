@@ -255,6 +255,7 @@ fn serve(
             launch_id: bootstrap.launch_id.clone(),
             authority: bootstrap.authority().to_owned(),
             device_id: device.clone(),
+            bot_authority: bootstrap.bot_authority().cloned(),
         },
         commands,
         stop_tx,

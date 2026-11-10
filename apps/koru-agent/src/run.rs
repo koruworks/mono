@@ -307,11 +307,25 @@ pub fn run(
         // launch registers its expected bridge with it — and before the sync
         // control worker below, which ensures a gateway at the top of every
         // attempt.
-        crate::gateway_host::start(&paths_for_producers, local_device);
+        // One independent capability per Agent lifetime, retained by both
+        // supervisors across child restarts. Never a CLI argument or env var.
+        let bot_authority = koru_delegate_api::bots::BotDelegateAuthority::new(format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        ))
+        .expect("generated Bot authority");
+        crate::gateway_host::start(
+            &paths_for_producers,
+            local_device,
+            koru_network_bridge::BotDelegateAuthority::new(bot_authority.clone().into()),
+        );
         // The delegate worker (D12), after the sessions and gateway workers
         // it reaches. Like the gateway's, its supervision returns at once;
         // the child waits for the gateway to publish on its own thread.
-        if let Err(error) = crate::delegate_host::start(&paths_for_producers) {
+        if let Err(error) =
+            crate::delegate_host::start(&paths_for_producers, local_device, bot_authority)
+        {
             tracing::error!(
                 target: "koru::delegate_host",
                 %error,

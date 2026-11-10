@@ -95,7 +95,7 @@ impl LocalDelegate {
         Ok(stream)
     }
 
-    fn call(&self, request: &Request) -> Result<Response> {
+    pub(crate) fn call(&self, request: &Request) -> Result<Response> {
         let stream = self.connect()?;
         let mut writer = &stream;
         frame::write_frame(&mut writer, WIRE_VERSION, request)
@@ -126,6 +126,7 @@ fn unexpected(response: &Response) -> Failure {
         format!(
             "The delegate worker answered with {}.",
             match response {
+                Response::Bot(_) => "bot",
                 Response::Hello(_) => "hello",
                 Response::Stopping => "stopping",
                 Response::SchedulesWoken => "schedules_woken",

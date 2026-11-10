@@ -1010,7 +1010,7 @@ fn the_worker_role_is_dispatched_by_this_executable() {
     assert_eq!(crate::gateway_worker::role().name, "gateway");
     let paths = Paths::for_root(std::path::PathBuf::from("X:/never-created"));
     assert_eq!(
-        gateway_spec(&paths, koru_device::DeviceId::new()).role,
+        gateway_spec(&paths, koru_device::DeviceId::new(), None).role,
         "gateway"
     );
 }
@@ -1021,7 +1021,7 @@ fn the_worker_role_is_dispatched_by_this_executable() {
 #[test]
 fn a_consumer_waits_for_less_time_than_the_supervisor_gives_a_child() {
     let paths = Paths::for_root(std::path::PathBuf::from("X:/never-created"));
-    let spec = gateway_spec(&paths, koru_device::DeviceId::new());
+    let spec = gateway_spec(&paths, koru_device::DeviceId::new(), None);
     assert!(
         ENSURE_DEADLINE < spec.ready_deadline,
         "a consumer would time out only after the supervisor had killed the child"
