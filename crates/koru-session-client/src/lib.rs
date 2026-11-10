@@ -681,6 +681,42 @@ impl SessionClient {
                 .supports(koru_session_protocol::capability::CONDITIONAL_TURN_STEERING)
     }
 
+    /// Begin a new managed turn, never steer an already active one.
+    pub fn begin_pending_input(
+        &self,
+        session_id: SessionId,
+        controller_lease: ControllerLeaseToken,
+        input: PendingInput,
+    ) -> Result<SendPendingInputResult, ClientError> {
+        if !self.supports_begin_pending_input()
+            || (input.needs_agent_commands() && !self.supports_agent_commands())
+            || (input.needs_path_references() && !self.supports_path_references())
+        {
+            return Err(ClientError::Session(failure(
+                ErrorCode::CapabilityNotNegotiated,
+            )));
+        }
+        match self.request(Request::BeginPendingInput(
+            koru_session_wire::BeginPendingInput {
+                session_id,
+                controller_lease,
+                input,
+            },
+        ))? {
+            Response::PendingInputSent { result } => Ok(result),
+            _ => Err(ClientError::UnexpectedResponse),
+        }
+    }
+
+    pub fn supports_begin_pending_input(&self) -> bool {
+        self.host.agreement.version >= koru_session_protocol::BEGIN_PENDING_INPUT_PROTOCOL_VERSION
+            && self
+                .host
+                .agreement
+                .capabilities
+                .supports(koru_session_protocol::capability::BEGIN_PENDING_INPUT)
+    }
+
     pub fn send_pending_input(
         &self,
         session_id: SessionId,

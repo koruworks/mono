@@ -860,3 +860,94 @@ fn recovering_creation_keeps_budget_deadline_and_claim_without_a_second_launch()
             .all(|call| !matches!(call, Call::Create { .. } | Call::Submit { .. }))
     );
 }
+
+#[test]
+fn lost_initial_reply_after_restart_reconciles_exact_turn_without_claiming_human_turn() {
+    for different_human_turn in [false, true] {
+        let mut h = bot_harness();
+        let s = submission(22);
+        let fence = prepared(&mut h, &s);
+        observe(&mut h, &fence);
+        h.sessions.lock().unwrap().bot_reply_lost = true;
+        assert!(
+            h.orchestrator
+                .bot_begin_turn(&fence, fence.owner.device, s.input.clone())
+                .is_err()
+        );
+        let native = h.sessions.lock().unwrap().bot_inputs[&s.input.idempotency_key].1;
+        let active = if different_human_turn {
+            AgentTurnId::mint()
+        } else {
+            native
+        };
+        let mut h = restarted(
+            h,
+            (
+                host(1),
+                CreationLookup::Known {
+                    session: summary(ManagedState::Running, Some(active)),
+                },
+            ),
+        );
+        assert_eq!(h.orchestrator.restart().unwrap().reattached.len(), 1);
+        assert_eq!(count_submits(&h), 0);
+        observe(&mut h, &fence);
+        assert_eq!(
+            h.orchestrator
+                .bot_begin_turn(&fence, fence.owner.device, s.input.clone())
+                .unwrap(),
+            native
+        );
+        assert_eq!(count_submits(&h), 0);
+        let attempt = h.orchestrator.runs[&s.request.run]
+            .attempt
+            .as_ref()
+            .unwrap();
+        if different_human_turn {
+            assert_eq!(attempt.recovered_unowned_turn, Some(active));
+            assert_eq!(attempt.orchestrator_turn, None);
+            assert!(
+                h.orchestrator
+                    .bot_live_fence(&fence, fence.owner.device, true, false)
+                    .is_err()
+            );
+        } else {
+            assert_eq!(attempt.recovered_unowned_turn, None);
+            assert_eq!(attempt.orchestrator_turn, Some(native));
+            assert!(
+                h.orchestrator
+                    .bot_live_fence(&fence, fence.owner.device, true, false)
+                    .is_ok()
+            );
+        }
+    }
+}
+
+#[test]
+fn prepared_restart_with_genuine_human_controller_uses_existing_handover_state() {
+    let mut h = bot_harness();
+    let s = submission(23);
+    let fence = prepared(&mut h, &s);
+    let mut h = restarted(
+        h,
+        (
+            host(1),
+            CreationLookup::Known {
+                session: summary(ManagedState::Idle, None),
+            },
+        ),
+    );
+    h.sessions.lock().unwrap().attach_fails = true;
+    assert_eq!(h.orchestrator.restart().unwrap().reattached.len(), 1);
+    assert!(matches!(
+        h.status(s.request.run).control(),
+        Some(ControlState::Human { .. })
+    ));
+    observe(&mut h, &fence);
+    assert!(
+        h.orchestrator
+            .bot_begin_turn(&fence, fence.owner.device, s.input)
+            .is_err()
+    );
+    assert_eq!(count_submits(&h), 0);
+}

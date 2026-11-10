@@ -204,6 +204,7 @@ pub mod capability {
     pub const PATH_REFERENCES: &str = "path-references";
 
     /// v25: the owner and native adapter fence steering to one active turn.
+    pub const BEGIN_PENDING_INPUT: &str = "begin-pending-input";
     pub const CONDITIONAL_TURN_STEERING: &str = "conditional-turn-steering";
 
     pub const ALL: &[&str] = &[
@@ -242,5 +243,6 @@ pub mod capability {
         AGENT_COMMANDS,
         PATH_REFERENCES,
         CONDITIONAL_TURN_STEERING,
+        BEGIN_PENDING_INPUT,
     ];
 }

@@ -18,6 +18,17 @@ impl Orchestrator {
         controls: bool,
         exact_turn: bool,
     ) -> Result<BotExecutionRecord, RunError> {
+        self.bot_live_fence_inner(fence, device, controls, exact_turn, false)
+    }
+
+    fn bot_live_fence_inner(
+        &mut self,
+        fence: &BotExecutionFence,
+        device: DeviceId,
+        controls: bool,
+        exact_turn: bool,
+        initial_replay: bool,
+    ) -> Result<BotExecutionRecord, RunError> {
         let record = self.bot_record(
             &BotRunKey {
                 owner: fence.owner,
@@ -60,7 +71,13 @@ impl Orchestrator {
         if controls {
             if !attempt.holds_lease
                 || attempt.release_owed
-                || attempt.recovered_unowned_turn.is_some()
+                || (attempt.recovered_unowned_turn.is_some()
+                    && !(initial_replay
+                        && record.initial_send.as_ref().is_some_and(|send| {
+                            send.turn.is_none()
+                                && send.attempt == fence.attempt
+                                && send.generation == fence.generation
+                        })))
                 || (!matches!(status, RunStatus::Starting)
                     && status.control() != Some(ControlState::Orchestrator))
             {
@@ -133,7 +150,7 @@ impl Orchestrator {
         device: DeviceId,
         mut input: PendingInput,
     ) -> Result<AgentTurnId, RunError> {
-        let record = self.bot_live_fence(fence, device, true, false)?;
+        let record = self.bot_live_fence_inner(fence, device, true, false, true)?;
         if fence.turn.is_some()
             || !self
                 .open(fence.run)?
@@ -192,19 +209,12 @@ impl Orchestrator {
                 turn
             }
         };
-        if self
-            .open(fence.run)?
-            .attempt
-            .as_ref()
-            .expect("validated")
-            .bot_terminal_turn
-            != Some(turn)
-        {
-            self.open(fence.run)?
-                .attempt
-                .as_mut()
-                .expect("validated")
-                .orchestrator_turn = Some(turn);
+        let attempt = self.open(fence.run)?.attempt.as_mut().expect("validated");
+        if attempt.recovered_unowned_turn == Some(turn) {
+            attempt.recovered_unowned_turn = None;
+        }
+        if attempt.recovered_unowned_turn.is_none() && attempt.bot_terminal_turn != Some(turn) {
+            attempt.orchestrator_turn = Some(turn);
         }
         self.bot_mark_started(fence.run)?;
         Ok(turn)

@@ -113,7 +113,9 @@ pub const MIN_PROTOCOL_VERSION: u32 = 1;
 /// older peer.
 /// v25 adds strict conditional text steering. It can only join the exact
 /// expected active turn; unlike ordinary input it never starts a new turn.
-pub const MAX_PROTOCOL_VERSION: u32 = 25;
+/// v26 adds initial-only managed input with retained, lease-independent replay.
+pub const MAX_PROTOCOL_VERSION: u32 = 26;
+pub const BEGIN_PENDING_INPUT_PROTOCOL_VERSION: u32 = 26;
 pub const CONDITIONAL_STEERING_PROTOCOL_VERSION: u32 = 25;
 /// The first version whose agent stream can carry current context occupancy.
 pub const CONTEXT_USAGE_PROTOCOL_VERSION: u32 = 24;

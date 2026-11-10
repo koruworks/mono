@@ -1348,3 +1348,6 @@ fn an_inputs_skills_reach_the_adapter_and_never_ride_a_steer() {
 
 #[path = "delivery/conditional.rs"]
 mod conditional;
+
+#[path = "delivery/initial.rs"]
+mod initial;

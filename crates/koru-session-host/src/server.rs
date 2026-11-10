@@ -182,6 +182,13 @@ impl ConnectionProtocol {
         self.version >= koru_session_protocol::TURN_MODEL_PROTOCOL_VERSION
     }
 
+    fn begin_pending_input(&self) -> bool {
+        self.version >= koru_session_protocol::BEGIN_PENDING_INPUT_PROTOCOL_VERSION
+            && self
+                .capabilities
+                .supports(koru_session_protocol::capability::BEGIN_PENDING_INPUT)
+    }
+
     fn conditional_steering(&self) -> bool {
         self.version >= koru_session_protocol::CONDITIONAL_STEERING_PROTOCOL_VERSION
             && self
@@ -957,6 +964,22 @@ fn handle_request(
                         .remove_attachment(controller_lease, attachment_id)
                         .map_err(failure)?;
                     Ok(Response::AttachmentRemoved { attachment })
+                })
+            }
+        }
+        Request::BeginPendingInput(request) => {
+            if !protocol.begin_pending_input()
+                || !protocol.attachments
+                || (request.input.needs_agent_commands() && !protocol.agent_commands())
+                || (request.input.needs_path_references() && !protocol.path_references())
+            {
+                Err(failure(ErrorCode::CapabilityNotNegotiated))
+            } else {
+                with_session(state, request.session_id, |session| {
+                    session
+                        .begin_pending_input(request.controller_lease, request.input)
+                        .map(|result| Response::PendingInputSent { result })
+                        .map_err(failure)
                 })
             }
         }

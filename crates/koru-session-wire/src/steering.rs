@@ -14,6 +14,16 @@ pub struct SteerPendingInput {
     pub input: PendingInput,
 }
 
+/// Initial-only managed input. An active turn is never implicitly steered.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginPendingInput {
+    pub session_id: SessionId,
+    pub controller_lease: ControllerLeaseToken,
+    #[serde(with = "StrictPendingInput")]
+    pub input: PendingInput,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "PendingInput", deny_unknown_fields)]
 struct StrictPendingInput {
