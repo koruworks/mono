@@ -2,12 +2,13 @@
 
 //! The private AI-owner to delegate boundary. Possessing a Run ID or an
 //! ordinary `runs.*` scope does not grant access to this port.
+use crate::wire::{RestoreRunResponse, RunView, TimelineQuery, TrashRunResponse};
 use koru_delegate_core::{
     AgentEventObservation, AgentTurnId, ApprovalChoiceId, ApprovalDecision, ApprovalId, Attachment,
     AttachmentId, AttachmentSource, AttemptGeneration, BotAdmissionBarrier, BotDeliveryReceipt,
     BotExecutionFence, BotSubmission, CapturedBotPolicy, DocumentId, NativeResultReference,
-    PendingInput, QuestionAnswer, QuestionRequestId, RunAttemptId, RunHeader, RunId,
-    StreamSequence, WorkspaceId,
+    PendingInput, QuestionAnswer, QuestionRequestId, RunAttemptId, RunId, StreamSequence,
+    WorkspaceId,
 };
 pub use koru_delegate_core::{BotAdmissionState, BotAdmissionView, BotRunKey, BotSubmissionKey};
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,17 @@ pub enum BotCommand {
     },
     Read {
         key: BotRunKey,
+        #[serde(with = "StrictTimelineQuery")]
+        window: TimelineQuery,
+    },
+    /// Reserved for P1.7. Results are always kept; no purge authority exists.
+    Trash {
+        key: BotRunKey,
+        lifecycle: BotLifecycleFence,
+    },
+    Restore {
+        key: BotRunKey,
+        lifecycle: BotLifecycleFence,
     },
     Observe {
         fence: BotExecutionFence,
@@ -151,6 +163,38 @@ pub enum BotCommand {
         receipt: BotDeliveryReceipt,
     },
 }
+impl BotCommand {
+    /// The explicit owner asserted by the trusted AI owner. Native-result
+    /// commands instead resolve their immutable Run binding inside the actor.
+    pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
+        match self {
+            Self::Submit { submission } => Some(&submission.provenance.owner),
+            Self::Reconcile { key } => Some(&key.owner),
+            Self::Barrier { barrier } => Some(&barrier.owner),
+            Self::Read { key, .. }
+            | Self::Trash { key, .. }
+            | Self::Restore { key, .. }
+            | Self::Stop { key, .. }
+            | Self::AcknowledgeDelivery { key, .. } => Some(&key.owner),
+            Self::Observe { fence, .. }
+            | Self::BeginTurn { fence, .. }
+            | Self::Steer { fence, .. }
+            | Self::IngestAttachment { fence, .. }
+            | Self::RemoveAttachment { fence, .. }
+            | Self::ListAttachments { fence }
+            | Self::AnswerApproval { fence, .. }
+            | Self::AnswerQuestions { fence, .. }
+            | Self::TakeOver { fence }
+            | Self::HandBack { fence }
+            | Self::EffectFence { fence } => Some(&fence.owner),
+            Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
+            Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
+            Self::PrepareNativeResult { .. }
+            | Self::ReconcileNativeResult { .. }
+            | Self::ConfirmNativeResult { .. } => None,
+        }
+    }
+}
 impl std::fmt::Debug for BotCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Inputs, titles, native revision bytes and capabilities must not leak
@@ -170,7 +214,13 @@ pub enum BotReply {
         barrier: BotAdmissionBarrier,
     },
     Run {
-        header: RunHeader,
+        view: RunView,
+    },
+    Trashed {
+        response: TrashRunResponse,
+    },
+    Restored {
+        response: RestoreRunResponse,
     },
     Observation {
         observation: BotObservation,
@@ -209,12 +259,75 @@ pub trait BotDelegatePort: Send + Sync {
     fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure>;
 }
 
+/// Only the trusted gateway composition receives this credentialed adapter.
+/// It never retries a mutation: unknown acknowledgement is reconciled by its
+/// stable command identity through the same durable owner.
+#[derive(Clone)]
+pub struct LocalBotDelegate {
+    transport: crate::LocalDelegate,
+    authority: BotDelegateAuthority,
+}
+impl LocalBotDelegate {
+    pub fn new(endpoint: koru_ipc::Endpoint, authority: BotDelegateAuthority) -> Self {
+        Self {
+            transport: crate::LocalDelegate::new(endpoint, "bot-owner"),
+            authority,
+        }
+    }
+}
+impl BotDelegatePort for LocalBotDelegate {
+    fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure> {
+        match self.transport.call(&crate::ipc::Request::Bot {
+            authority: self.authority.clone(),
+            command,
+        })? {
+            crate::ipc::Response::Bot(reply) => Ok(reply),
+            crate::ipc::Response::Failure(failure) => Err(failure),
+            _ => Err(crate::Failure::new(
+                "delegate_unexpected_response",
+                "The Bot owner received an unexpected response.",
+                false,
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BotPolicyBarrierKey {
     pub owner: koru_delegate_core::BotOwner,
     pub bot: koru_delegate_core::BotId,
     pub request: koru_delegate_core::BotRequestId,
+}
+
+/// P1.7 resolves this exact Effective barrier and requires its revision to
+/// remain the latest installed epoch before applying a lifecycle operation.
+/// A delayed Trash cannot overwrite a later Restore. P1.3 never fabricates an
+/// effective receipt; both lifecycle commands remain explicitly unavailable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotLifecycleFence {
+    pub barrier: BotPolicyBarrierKey,
+    pub config_revision: u64,
+    pub policy_revision: u64,
+}
+impl BotLifecycleFence {
+    pub fn valid_for(&self, key: &BotRunKey) -> bool {
+        self.barrier.owner == key.owner
+            && self.barrier.bot == key.bot
+            && self.config_revision > 0
+            && self.config_revision <= i64::MAX as u64
+            && self.policy_revision > 0
+            && self.policy_revision <= i64::MAX as u64
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "TimelineQuery", deny_unknown_fields)]
+struct StrictTimelineQuery {
+    from: u64,
+    len: u32,
+    workspace: Option<WorkspaceId>,
 }
 /// A current AI-owned policy snapshot for effect fencing, never a second
 /// canonical configuration. P1.4 acquires this before taking an effect lease.

@@ -28,12 +28,13 @@ use koru_delegate_core::ArtifactDisposition;
 
 /// The frame version. Both sides are this same executable's build, so a
 /// mismatch is a stale worker, and it is refused rather than reinterpreted.
+// Version 7 adds the separate authenticated Bot-owner command channel.
 // Version 6 adds the complete schedule-management vocabulary and named
 // schedule projections. Version 5 added live schedule diagnostics. Version 4 added typed schedule
 // create/list/watch frames. Version 3 added the
 // authenticated, content-free native schedule wake. Version 2 preserved
 // explicit model intent on creation and every later start.
-pub const WIRE_VERSION: u8 = 6;
+pub const WIRE_VERSION: u8 = 7;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +49,11 @@ pub struct Caller {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub enum Request {
+    /// Separate Agent-run capability; Caller labels never authorize Bots.
+    Bot {
+        authority: crate::bots::BotDelegateAuthority,
+        command: crate::bots::BotCommand,
+    },
     /// Who is serving: the readiness probe.
     Hello,
     /// Stop, with the per-child authority the supervisor minted.
@@ -215,6 +221,7 @@ pub struct WorkerCounters {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub enum Response {
+    Bot(crate::bots::BotReply),
     Hello(Hello),
     Stopping,
     SchedulesWoken,

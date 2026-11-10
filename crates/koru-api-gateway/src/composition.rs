@@ -168,7 +168,27 @@ pub(crate) fn open(
                 b.device_id.as_deref()?,
             )
         }) {
-            Some(authority) => ai_config.with_bot_authority(Arc::new(authority)),
+            Some(authority) => {
+                let ai_config = ai_config.with_bot_authority(Arc::new(authority));
+                let bot_delegate = config.bootstrap.as_ref().and_then(|bootstrap| {
+                    let authority = koru_delegate_api::bots::BotDelegateAuthority::new(
+                        bootstrap.bot_delegate.as_ref()?.expose().to_owned(),
+                    )?;
+                    let endpoint = koru_ipc::Endpoint::for_service_channel_root(
+                        koru_ipc::DELEGATE,
+                        segment,
+                        &config.channel_root,
+                    )
+                    .ok()?;
+                    Some(koru_delegate_api::bots::LocalBotDelegate::new(
+                        endpoint, authority,
+                    ))
+                });
+                match bot_delegate {
+                    Some(delegate) => ai_config.with_bot_delegate(Arc::new(delegate)),
+                    None => ai_config,
+                }
+            }
             None => ai_config,
         }
     });

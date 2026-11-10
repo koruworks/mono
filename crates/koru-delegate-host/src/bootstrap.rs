@@ -25,6 +25,8 @@ pub struct LaunchBootstrap {
     /// it.
     pub device_id: String,
     authority: String,
+    #[serde(default)]
+    bot_authority: Option<koru_delegate_api::bots::BotDelegateAuthority>,
 }
 
 impl LaunchBootstrap {
@@ -45,12 +47,25 @@ impl LaunchBootstrap {
             explicit_root,
             device_id,
             authority,
+            bot_authority: None,
         }
     }
 
     /// The per-child stop authority: a stop carrying it ends this worker.
     pub fn authority(&self) -> &str {
         &self.authority
+    }
+
+    pub fn with_bot_authority(
+        mut self,
+        authority: koru_delegate_api::bots::BotDelegateAuthority,
+    ) -> Self {
+        self.bot_authority = Some(authority);
+        self
+    }
+
+    pub fn bot_authority(&self) -> Option<&koru_delegate_api::bots::BotDelegateAuthority> {
+        self.bot_authority.as_ref()
     }
 }
 

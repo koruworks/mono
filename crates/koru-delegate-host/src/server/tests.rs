@@ -32,7 +32,7 @@ fn stale_wire_versions_cannot_reach_dispatch() {
             confirm: false,
         },
     ] {
-        for stale in [1, 3, 4] {
+        for stale in [1, 3, 4, 6] {
             let legacy = frame::encode(stale, &request).unwrap();
             assert!(
                 read_current_request(&mut legacy.as_slice())
@@ -53,4 +53,53 @@ fn stale_wire_versions_cannot_reach_dispatch() {
             Some(request)
         );
     }
+}
+
+#[test]
+fn bot_admission_requires_separate_capability_and_validated_device() {
+    use koru_delegate_api::bots::BotDelegateAuthority;
+    let capability =
+        BotDelegateAuthority::new("private-bot-capability-01234567890123456789".into()).unwrap();
+    let mut identity = Identity {
+        launch_id: "test".into(),
+        authority: "private-stop-authority-01234567890123456789".into(),
+        device_id: uuid::Uuid::new_v4().to_string(),
+        bot_authority: Some(capability.clone()),
+    };
+    assert!(admits_bot(&identity, &capability));
+    assert!(!admits_bot(
+        &identity,
+        &BotDelegateAuthority::new(identity.authority.clone()).unwrap()
+    ));
+    identity.device_id = uuid::Uuid::nil().to_string();
+    assert!(!admits_bot(&identity, &capability));
+    identity.device_id = "invalid".into();
+    assert!(!admits_bot(&identity, &capability));
+    identity.device_id = uuid::Uuid::new_v4().to_string();
+    identity.bot_authority = None;
+    assert!(!admits_bot(&identity, &capability));
+}
+
+#[test]
+fn caller_owner_must_match_the_agents_validated_device() {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    let capability =
+        BotDelegateAuthority::new("private-bot-capability-01234567890123456789".into()).unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let identity = Identity {
+        launch_id: "test".into(),
+        authority: "different".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+    };
+    let mut value = serde_json::json!({
+        "command":"reconcile",
+        "key":{"owner":{"user_scope":uuid::Uuid::new_v4(),"device":device.as_uuid()},
+            "bot":uuid::Uuid::new_v4(),"request":uuid::Uuid::new_v4()}
+    });
+    let command: BotCommand = serde_json::from_value(value.clone()).unwrap();
+    assert!(admits_bot_command(&identity, &capability, &command));
+    value["key"]["owner"]["device"] = serde_json::json!(uuid::Uuid::new_v4());
+    let command: BotCommand = serde_json::from_value(value).unwrap();
+    assert!(!admits_bot_command(&identity, &capability, &command));
 }

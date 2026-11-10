@@ -42,6 +42,30 @@ pub struct Identity {
     pub launch_id: String,
     pub authority: String,
     pub device_id: String,
+    pub bot_authority: Option<koru_delegate_api::bots::BotDelegateAuthority>,
+}
+
+fn admits_bot(
+    identity: &Identity,
+    authority: &koru_delegate_api::bots::BotDelegateAuthority,
+) -> bool {
+    identity
+        .bot_authority
+        .as_ref()
+        .is_some_and(|expected| expected.matches(authority))
+        && koru_delegate_core::DeviceId::parse(&identity.device_id)
+            .is_some_and(|device| !device.as_uuid().is_nil())
+}
+
+fn admits_bot_command(
+    identity: &Identity,
+    authority: &koru_delegate_api::bots::BotDelegateAuthority,
+    command: &koru_delegate_api::bots::BotCommand,
+) -> bool {
+    admits_bot(identity, authority)
+        && command.owner().is_none_or(|owner| {
+            Some(owner.device) == koru_delegate_core::DeviceId::parse(&identity.device_id)
+        })
 }
 
 pub fn spawn(
@@ -128,6 +152,23 @@ fn handle(
     };
     let (reply_tx, reply_rx) = mpsc::sync_channel::<Response>(1);
     let command = match request {
+        Request::Bot { authority, command } => {
+            if !admits_bot_command(&identity, &authority, &command) {
+                write(
+                    &stream,
+                    &Response::Failure(Failure::new(
+                        "bot_authority_unavailable",
+                        "The Bot command authority is unavailable or does not match.",
+                        false,
+                    )),
+                );
+                return;
+            }
+            Command::Bot {
+                command,
+                reply: reply_tx,
+            }
+        }
         Request::Hello => {
             write(
                 &stream,

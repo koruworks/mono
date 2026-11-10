@@ -72,12 +72,32 @@ impl fmt::Debug for SessionLifecycleAuthority {
     }
 }
 
+/// Separate per-Agent-run capability for the AI owner's private Bot commands.
+/// It is neither bridge ingress nor session lifecycle authority.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotDelegateAuthority(String);
+impl BotDelegateAuthority {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+impl fmt::Debug for BotDelegateAuthority {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("BotDelegateAuthority([REDACTED])")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchBootstrap {
     /// Agent-owned device identity. Older Agents omit it; Bots remain unavailable.
     /// This is launch metadata, not part of the bridge handshake identity.
     #[serde(default)]
     pub device_id: Option<String>,
+    #[serde(default)]
+    pub bot_delegate: Option<BotDelegateAuthority>,
     pub launch_id: String,
     pub bridge_version: u32,
     pub channel: String,
@@ -209,6 +229,7 @@ mod tests {
     fn bootstrap() -> LaunchBootstrap {
         LaunchBootstrap {
             device_id: None,
+            bot_delegate: None,
             launch_id: uuid::Uuid::new_v4().to_string(),
             bridge_version: BRIDGE_VERSION,
             channel: "internal-debug".into(),

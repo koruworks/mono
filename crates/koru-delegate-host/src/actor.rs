@@ -62,6 +62,10 @@ const PAGE: usize = 200;
 const WATCH_POLL: Duration = Duration::from_secs(1);
 
 pub enum Command {
+    Bot {
+        command: koru_delegate_api::bots::BotCommand,
+        reply: mpsc::SyncSender<Response>,
+    },
     Stop {
         why: &'static str,
     },
@@ -538,6 +542,13 @@ impl Actor {
 
     fn handle(&mut self, command: Command) {
         match command {
+            Command::Bot { command: _, reply } => {
+                let _ = reply.send(Response::Failure(Failure::new(
+                    "bot_execution_unavailable",
+                    "Bot execution is not available.",
+                    false,
+                )));
+            }
             Command::Stop { .. } | Command::ScheduleStopped => {}
             Command::ScheduleBegin {
                 run,

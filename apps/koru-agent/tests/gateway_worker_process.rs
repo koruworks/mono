@@ -263,6 +263,7 @@ fn supervised_refusal(directory: &str, mangle: impl FnOnce(&mut LaunchBootstrap)
     std::fs::create_dir_all(&store_root).expect("the rooted store directory");
     let mut bootstrap = LaunchBootstrap {
         device_id: None,
+        bot_delegate: None,
         launch_id: uuid::Uuid::new_v4().to_string(),
         bridge_version: BRIDGE_VERSION,
         channel: segment().into(),

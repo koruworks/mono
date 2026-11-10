@@ -109,11 +109,21 @@ static DELEGATE: OnceLock<Supervisor> = OnceLock::new();
 ///
 /// **Returns immediately.** The first spawn happens on the supervision
 /// thread; nothing here opens a database or waits for readiness.
-pub fn start(paths: &Paths) -> Result<&'static Supervisor, String> {
+pub fn start(
+    paths: &Paths,
+    device: koru_device::DeviceId,
+    bot_authority: koru_delegate_api::bots::BotDelegateAuthority,
+) -> Result<&'static Supervisor, String> {
     let endpoint = crate::delegate_endpoint(paths).map_err(|error| error.to_string())?;
     let authority = Arc::new(Mutex::new(String::new()));
     let wakes = wake_ingress(endpoint.clone(), Arc::clone(&authority))?;
-    let handle = worker::start(delegate_spec(paths, &endpoint, authority));
+    let handle = worker::start(delegate_spec(
+        paths,
+        &endpoint,
+        authority,
+        device,
+        bot_authority,
+    ));
     let supervisor = Supervisor {
         handle,
         endpoint,
@@ -165,12 +175,13 @@ fn delegate_spec(
     paths: &Paths,
     endpoint: &koru_ipc::Endpoint,
     wake_authority: Arc<Mutex<String>>,
+    device: koru_device::DeviceId,
+    bot_authority: koru_delegate_api::bots::BotDelegateAuthority,
 ) -> WorkerSpec<DelegateChild> {
     let segment: String = crate::segment().into();
     let root = paths.root().to_path_buf();
     let store_dir = paths.store_dir();
     let explicit_root = paths.explicit_root().map(Path::to_path_buf);
-    let device_file = paths.device_file();
     let launch_endpoint = endpoint.clone();
 
     let mut spec = WorkerSpec::new(
@@ -181,11 +192,8 @@ fn delegate_spec(
             *wake_authority
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = stop_authority.clone();
-            // The executing device (D3, D16): the Agent's own identity,
-            // read from the file it minted, never derived by the child.
-            let device_id = crate::Device::open(&device_file, now_millis())
-                .map(|device| device.id)
-                .map_err(|error| format!("device identity: {error}"))?;
+            // Already validated by the Agent; never reopen or mint identity here.
+            let device_id = device.to_storage();
             let bootstrap = koru_delegate_host::LaunchBootstrap::new(
                 launch_id.clone(),
                 segment.clone(),
@@ -194,7 +202,8 @@ fn delegate_spec(
                 explicit_root.is_some(),
                 device_id,
                 stop_authority.clone(),
-            );
+            )
+            .with_bot_authority(bot_authority.clone());
             let bootstrap = serde_json::to_vec(&bootstrap)
                 .map_err(|error| format!("could not encode the delegate bootstrap: {error}"))?;
             let mut args: Vec<std::ffi::OsString> = Vec::new();
@@ -352,14 +361,6 @@ fn run_wake_ingress(
             retry = retry.saturating_mul(2).min(WAKE_RETRY_MAX);
         }
     }
-}
-
-/// Wall-clock epoch milliseconds, for the device file's own bookkeeping.
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

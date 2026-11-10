@@ -534,9 +534,15 @@ static GATEWAY: OnceLock<Supervisor> = OnceLock::new();
 ///
 /// **Returns immediately.** The first spawn happens on the supervision thread;
 /// nothing here opens a Store, reads an image or waits for readiness.
-pub fn start(paths: &Paths, device: koru_device::DeviceId) -> &'static Supervisor {
+pub fn start(
+    paths: &Paths,
+    device: koru_device::DeviceId,
+    bot_authority: koru_network_bridge::BotDelegateAuthority,
+) -> &'static Supervisor {
     install(Supervisor::over(Box::new(worker::start(gateway_spec(
-        paths, device,
+        paths,
+        device,
+        Some(bot_authority),
     )))))
 }
 
@@ -823,7 +829,11 @@ impl Supervisor {
 // ------------------------------------------------------------------ the spec
 
 /// The role's whole knowledge, spelled as the worker crate's closures.
-fn gateway_spec(paths: &Paths, device: koru_device::DeviceId) -> WorkerSpec<GatewayChild> {
+fn gateway_spec(
+    paths: &Paths,
+    device: koru_device::DeviceId,
+    bot_authority: Option<koru_network_bridge::BotDelegateAuthority>,
+) -> WorkerSpec<GatewayChild> {
     let segment: String = crate::segment().into();
     let root = paths.root().to_path_buf();
     let store_dir = paths.store_dir();
@@ -849,6 +859,7 @@ fn gateway_spec(paths: &Paths, device: koru_device::DeviceId) -> WorkerSpec<Gate
             let launch_id = uuid::Uuid::new_v4().to_string();
             let bootstrap = koru_network_bridge::LaunchBootstrap {
                 device_id: Some(device.to_storage()),
+                bot_delegate: bot_authority.clone(),
                 launch_id: launch_id.clone(),
                 bridge_version: koru_network_bridge::BRIDGE_VERSION,
                 channel: launch_segment.clone(),

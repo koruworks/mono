@@ -92,3 +92,54 @@ fn reserved_commands_refuse_arbitrary_fields() {
     wire["extra"] = serde_json::json!(true);
     assert!(serde_json::from_value::<BotCommand>(wire).is_err());
 }
+
+#[test]
+fn historical_read_window_is_strict_and_lifecycle_is_owner_and_revision_fenced() {
+    let key: BotRunKey = serde_json::from_value(serde_json::json!({
+        "owner": {"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()},
+        "bot":Uuid::new_v4(),"run":Uuid::new_v4()
+    }))
+    .unwrap();
+    let command = BotCommand::Read {
+        key: key.clone(),
+        window: TimelineQuery {
+            from: 0,
+            len: 100,
+            workspace: None,
+        },
+    };
+    let mut value = serde_json::to_value(&command).unwrap();
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(value.clone()).unwrap(),
+        command
+    );
+    value["window"]["undeclared_authority"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<BotCommand>(value).is_err());
+    let mut lifecycle = BotLifecycleFence {
+        barrier: BotPolicyBarrierKey {
+            owner: key.owner.clone(),
+            bot: key.bot,
+            request: koru_delegate_core::BotRequestId::mint(),
+        },
+        config_revision: 2,
+        policy_revision: 1,
+    };
+    assert!(lifecycle.valid_for(&key));
+    let command = BotCommand::Trash {
+        key: key.clone(),
+        lifecycle: lifecycle.clone(),
+    };
+    let value = serde_json::to_value(&command).unwrap();
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(value).unwrap(),
+        command
+    );
+    lifecycle.barrier.bot = koru_delegate_core::BotId::mint();
+    assert!(!lifecycle.valid_for(&key));
+    lifecycle.barrier.bot = key.bot;
+    lifecycle.barrier.owner.device = koru_delegate_core::DeviceId::new();
+    assert!(!lifecycle.valid_for(&key));
+    lifecycle.barrier.owner = key.owner;
+    lifecycle.policy_revision = 0;
+    assert!(!lifecycle.valid_for(&key));
+}
