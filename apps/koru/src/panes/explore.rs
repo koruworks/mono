@@ -5121,6 +5121,15 @@ impl ExploreView {
             if self.mode == NavigatorMode::Chats {
                 return Outcome::NewAiChat;
             }
+            // The Bots heading's is *Create a bot* (S8), with a workspace
+            // to create it in.
+            if self.mode == NavigatorMode::Bots {
+                return if self.current.is_some() {
+                    Outcome::CreateBot
+                } else {
+                    Outcome::Consumed
+                };
+            }
             self.toggle_popover(PopoverKind::LibraryActions);
             return Outcome::Consumed;
         }

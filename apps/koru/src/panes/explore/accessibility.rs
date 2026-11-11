@@ -883,6 +883,15 @@ impl ExploreView {
                     self.toggle_profile_popover();
                     Some(Outcome::Consumed)
                 }
+                // The Bots heading's button is *Create a bot* (S8), as a
+                // press on it is.
+                p if p == parts::ACTIONS && self.mode == NavigatorMode::Bots => {
+                    Some(if self.current.is_some() {
+                        Outcome::CreateBot
+                    } else {
+                        Outcome::Consumed
+                    })
+                }
                 p if p == parts::ACTIONS => {
                     self.toggle_popover(PopoverKind::LibraryActions);
                     Some(Outcome::Consumed)

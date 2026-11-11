@@ -8,7 +8,8 @@
 //! it the way it feeds the Tasks page's: the scope, its recents and the
 //! search service's answers (`MainView::sync_bot_page_picker`). A page
 //! picked goes into the unsaved access choice; nothing is sent until
-//! *Save*.
+//! *Save*. The create form (S8) opens the same picker for its selected
+//! pages and, under *Choose a page…*, for an existing role page.
 
 use koru_ai_core::bots::BotPage;
 use koru_draw::geometry::Rect;
@@ -27,6 +28,23 @@ impl BotView {
     pub(super) fn open_page_picker(&mut self) {
         self.picker = Some(Box::new(crate::input_engine::with(EntityPicker::for_link)));
         self.picker_hover = None;
+        self.picker_for_role = false;
+    }
+
+    /// **Open the picker under *Choose a page…*** (S8): the create form's
+    /// existing role page, from the same home workspace.
+    pub(super) fn open_role_picker(&mut self) {
+        self.open_page_picker();
+        self.picker_for_role = true;
+    }
+
+    /// The control the picker opens under, and the keyboard goes back to.
+    fn picker_anchor(&self) -> koru_draw::el::Key {
+        if self.picker_for_role {
+            super::create::CHOOSE_ROLE_PAGE
+        } else {
+            ADD_PAGE
+        }
     }
 
     pub(crate) fn page_picker_open(&self) -> bool {
@@ -37,15 +55,15 @@ impl BotView {
     fn close_page_picker(&mut self) {
         self.picker = None;
         self.picker_hover = None;
-        if self.settings_open {
-            self.focus = Some(ADD_PAGE);
+        if self.form_open() {
+            self.focus = Some(self.picker_anchor());
         }
     }
 
     /// The picker's panel: under *Add a page…*, kept inside the tab.
     fn picker_rect(&self) -> Rect {
         let anchor = self
-            .with_frame(|_, frame| frame.node(ADD_PAGE).map(|node| node.rect))
+            .with_frame(|_, frame| frame.node(self.picker_anchor()).map(|node| node.rect))
             .unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, 0.0));
         let height = self.picker.as_deref().map_or(0.0, EntityPicker::height);
         let w = koru_draw::theme::PANEL_W;
@@ -60,7 +78,7 @@ impl BotView {
     /// **The scope the picker searches**: the Bot's home workspace alone.
     /// `true` when it changed what is owed.
     pub(crate) fn set_picker_context(&mut self, workspaces: Vec<WorkspaceChoice>) -> bool {
-        let Some(home) = self.facts.as_ref().map(|facts| facts.home) else {
+        let Some(home) = self.home() else {
             return false;
         };
         let home = koru_core::WorkspaceId::from_uuid(home.as_uuid());
@@ -76,7 +94,6 @@ impl BotView {
     /// Hits as the picker may offer them: not a page already selected.
     fn picker_hits(&self, hits: Vec<DocumentChoice>) -> Vec<DocumentChoice> {
         let listed: Vec<koru_core::DocumentId> = self
-            .settings
             .pages_shown()
             .iter()
             .map(|page| koru_core::DocumentId::from_uuid(page.document.as_uuid()))
@@ -124,12 +141,24 @@ impl BotView {
     fn finish_picker(&mut self, outcome: Outcome) {
         if let Outcome::Commit(spec) = outcome
             && let Some(target) = spec.document
-            && let Some(home) = self.facts.as_ref().map(|facts| facts.home)
+            && let Some(home) = self.home()
         {
-            self.settings.add_page(BotPage {
+            let page = BotPage {
                 workspace: home,
                 document: koru_ai_core::DocumentId::from_uuid(target.document.as_uuid()),
-            });
+            };
+            match self.create.as_deref_mut() {
+                // The create form's (S8): its role page, or a selected one.
+                Some(create) if self.picker_for_role => {
+                    create.form.choose_existing(page);
+                }
+                Some(create) => {
+                    create.form.add_page(page);
+                }
+                None => {
+                    self.settings.add_page(page);
+                }
+            }
             self.close_page_picker();
         }
     }

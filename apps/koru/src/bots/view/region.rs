@@ -33,10 +33,15 @@
 //! padding and gap is a token. One frame gives paint, the pointer, the
 //! keyboard's order, the accessibility tree and F12 their geometry.
 //!
-//! **What is absent, deliberately.** The agent, model, effort, mode and Fast
-//! (they need the agent-configuration control, a separate approval), the
-//! lifecycle actions, the conversation list and creating a Bot. An unbuilt
-//! control is absent, not disabled.
+//! **What is absent, deliberately.** The lifecycle actions and the
+//! conversation list, which are the tab's own (its header's ⋯, its column).
+//! An unbuilt control is absent, not disabled.
+//!
+//! **The create form is made of these cards** (S8, [`super::create`]): the
+//! access card, the *Agent and model* card, the keyboard's walk, the
+//! accessibility tree and the press routing here serve it too, reading the
+//! create form's draft where it is one ([`BotView::access_shown`],
+//! [`BotView::agent_draft`]).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -143,6 +148,20 @@ pub(crate) enum Act {
     /// An archived Bot's *Unarchive*, a trashed Bot's *Restore* (S14).
     Unarchive,
     Restore,
+    /// The create form's (S8): *Create bot*, a stopped creation's *Retry*
+    /// and *Abandon*, an example's wording, where the role comes from, the
+    /// existing role page's picker, *Change access*, the folder dialog, the
+    /// managed folder again, and a page a creation left behind.
+    Create,
+    Retry,
+    Abandon,
+    Example(crate::bots::creation::Example),
+    ChooseRole(crate::bots::creation::RoleKind),
+    ChooseRolePage,
+    ChangeAccess,
+    ChooseFolder,
+    UseManagedFolder,
+    OpenLeftPage,
 }
 
 /// One control as the accessibility tree publishes it, in the tab's
@@ -177,7 +196,7 @@ pub(crate) enum ControlRole {
 
 /// A card's quiet title above it, in the koru_ui `Card`'s words: a meta
 /// line in hint ink.
-fn card_title(words: &str) -> El {
+pub(super) fn card_title(words: &str) -> El {
     text(words.to_owned())
         .named("Bot settings title")
         .role(roles::META)
@@ -186,7 +205,7 @@ fn card_title(words: &str) -> El {
 }
 
 /// A card: the settings rows that belong together, on the raised plate.
-fn card(key: Key, name: Words) -> El {
+pub(super) fn card(key: Key, name: Words) -> El {
     col("Bot settings card")
         .id(key)
         .bg(Surface::Raised)
@@ -198,7 +217,7 @@ fn card(key: Key, name: Words) -> El {
 }
 
 /// A sentence in a card or below the cards: meta, wrapped.
-fn line(name: &'static str, key: Key, words: String, ink: Ink) -> El {
+pub(super) fn line(name: &'static str, key: Key, words: String, ink: Ink) -> El {
     text(words)
         .named(name)
         .id(key)
@@ -209,7 +228,7 @@ fn line(name: &'static str, key: Key, words: String, ink: Ink) -> El {
 
 impl BotView {
     /// The words the tab says in its language.
-    fn words(&self, key: Words) -> String {
+    pub(super) fn words(&self, key: Words) -> String {
         t(self.lang, key).to_owned()
     }
 
@@ -220,9 +239,8 @@ impl BotView {
     /// other. The tab holds no agent listing to read a display name from.
     pub(crate) fn agent_name(&self) -> String {
         let provider = self
-            .facts
-            .as_ref()
-            .map(|facts| facts.provider.as_str().to_owned())
+            .agent_provider()
+            .map(|provider| provider.as_str().to_owned())
             .unwrap_or_default();
         let word = provider.strip_prefix("agent-").unwrap_or(&provider);
         let mut chars = word.chars();
@@ -233,7 +251,7 @@ impl BotView {
     }
 
     /// The home workspace as the access sentences name it.
-    fn home_words(&self) -> String {
+    pub(super) fn home_words(&self) -> String {
         self.home_name
             .clone()
             .filter(|name| !name.trim().is_empty())
@@ -250,7 +268,7 @@ impl BotView {
             .unwrap_or_else(|| self.words(Words::DocUntitled))
     }
 
-    fn button(
+    pub(super) fn button(
         &self,
         engine: &mut TextEngine,
         name: &'static str,
@@ -314,7 +332,11 @@ impl BotView {
                 .child(card_title(t(self.lang, Words::BotsAgent)))
                 .child(self.agent_card(engine))
                 .child(card_title(t(self.lang, Words::BotsAccess)))
-                .child(self.access_card(engine))
+                .child(self.access_card(
+                    engine,
+                    settings.is_pending(Change::Access),
+                    Some(settings.can_save_access()),
+                ))
                 .child(card_title(t(self.lang, Words::BotsFolder)))
                 .child(self.folder_card(engine, &bot.config.working_folder))
                 .child(self.pause_card(engine, bot.paused))
@@ -398,11 +420,27 @@ impl BotView {
             .child(role)
     }
 
-    fn access_card(&self, engine: &mut TextEngine) -> El {
-        let settings = &self.settings;
-        let pending = settings.is_pending(Change::Access);
+    /// **What the access choice shows**: the settings' draft over what the
+    /// owner holds, or — in create mode (S8) — the new Bot's draft.
+    pub(super) fn access_shown(&self) -> BotAccess {
+        match self.create.as_deref() {
+            Some(create) => create.form.access_shown(),
+            None => self.settings.access_shown(),
+        }
+    }
+
+    /// The selected pages the access card lists, from the same draft.
+    pub(super) fn pages_shown(&self) -> &[BotPage] {
+        match self.create.as_deref() {
+            Some(create) => create.form.pages_shown(),
+            None => self.settings.pages_shown(),
+        }
+    }
+
+    /// What the shown access choice allows, naming the home workspace.
+    pub(super) fn access_summary(&self) -> String {
         let home = self.home_words();
-        let summary = match settings.access_shown() {
+        match self.access_shown() {
             BotAccess::Default => koru_i18n::fill(
                 t(self.lang, Words::BotsAccessDefaultSummary),
                 &[home.as_str()],
@@ -411,10 +449,24 @@ impl BotView {
                 t(self.lang, Words::BotsAccessWorkspaceSummary),
                 &[home.as_str()],
             ),
-        };
+        }
+    }
+
+    /// **The access card** — the summary, the two approved choices, the
+    /// selected pages with *Add a page…* — for the settings and, the same
+    /// card, for the create form (S8). `save` is the settings' *Save*
+    /// (whether it can send); the create form has none, its access going
+    /// with *Create bot*. `pending` holds every control still.
+    pub(super) fn access_card(
+        &self,
+        engine: &mut TextEngine,
+        pending: bool,
+        save: Option<bool>,
+    ) -> El {
+        let summary = self.access_summary();
         let selected = CHOICES
             .iter()
-            .position(|choice| *choice == settings.access_shown())
+            .position(|choice| *choice == self.access_shown())
             .unwrap_or(0);
         let hovered = (self.hot == Some(ACCESS_CHOICE))
             .then_some(self.hot_segment)
@@ -438,7 +490,7 @@ impl BotView {
             ))
             .child(row("Bot access row").child(choice).child(spacer()))
             .child(card_title(t(self.lang, Words::BotsSelectedPages)));
-        for page in settings.pages_shown() {
+        for page in self.pages_shown() {
             let title = self.page_title(page);
             card = card.child(
                 row("Bot selected page")
@@ -474,23 +526,23 @@ impl BotView {
                 pending,
             ))
             .child(spacer());
-        actions = actions.child(if pending {
-            line(
+        actions = match save {
+            None => actions,
+            Some(_) if pending => actions.child(line(
                 "Bot access pending",
                 ACCESS_PENDING,
                 self.words(Words::BotsSaving),
                 Ink::Hint,
-            )
-        } else {
-            self.button(
+            )),
+            Some(can_save) => actions.child(self.button(
                 engine,
                 "Bot save access",
                 SAVE_ACCESS,
                 self.words(Words::BotsSave),
                 ActionStyle::Primary,
-                !settings.can_save_access(),
-            )
-        });
+                !can_save,
+            )),
+        };
         card.child(actions)
     }
 
@@ -592,8 +644,16 @@ impl BotView {
     /// list; what the choice applies to (QUESTIONS O23); the agent's
     /// readiness when it is not ready; *Save*, or *Saving…* while the owner
     /// has not answered.
-    fn agent_card(&self, engine: &mut TextEngine) -> El {
-        let pending = self.settings.is_pending(Change::Model);
+    ///
+    /// **The create form has the same card** (S8) less its *Save* and its
+    /// note: the choice goes with *Create bot*, and the card says instead
+    /// that the agent is chosen once (QUESTIONS O42).
+    pub(super) fn agent_card(&self, engine: &mut TextEngine) -> El {
+        let creating = self.create.as_deref();
+        let pending = match creating {
+            Some(create) => !create.form.editable(),
+            None => self.settings.is_pending(Change::Model),
+        };
         let model = row("Bot model row").gap(Space::S2).items_center().child(
             self.button(
                 engine,
@@ -638,6 +698,14 @@ impl BotView {
                 Ink::Accent,
             ));
         }
+        if creating.is_some() {
+            return card.child(line(
+                "Bot agent fixed",
+                super::create::AGENT_FIXED_NOTE,
+                self.words(Words::BotsAgentFixed),
+                Ink::Secondary,
+            ));
+        }
         let save = row("Bot model save row")
             .gap(Space::S2)
             .items_center()
@@ -672,13 +740,12 @@ impl BotView {
 
     /// The agent's name as the catalog has it, else its id's word.
     pub(super) fn agent_label(&self) -> String {
-        self.facts
-            .as_ref()
-            .and_then(|facts| {
+        self.agent_provider()
+            .and_then(|provider| {
                 self.catalog
                     .agents()
                     .iter()
-                    .find(|agent| agent.id == facts.provider)
+                    .find(|agent| agent.id == provider)
             })
             .map_or_else(|| self.agent_name(), |agent| agent.label.clone())
     }
@@ -688,8 +755,9 @@ impl BotView {
     /// level when one is chosen.
     pub(super) fn model_chip_words(&self) -> String {
         use koru_ai_ui::agent_catalog::config::picker::{DEFAULT_MODEL, inputs};
-        let Some(draft) = self.settings.model_shown() else {
-            return String::new();
+        let Some(draft) = self.agent_draft() else {
+            // The create form before the catalog has offered an agent.
+            return self.words(Words::BotsAgent);
         };
         let id = draft.model.requested_model.as_str();
         let listing = self.agent_listing();
@@ -722,7 +790,7 @@ impl BotView {
     /// words.
     pub(super) fn mode_chip_words(&self) -> Option<String> {
         use koru_ai_ui::agent_catalog::config::modes;
-        let provider = self.facts.as_ref()?.provider.clone();
+        let provider = self.agent_provider()?;
         let listing = self.agent_listing()?;
         let rows = modes::rows(self.lang, provider.as_str(), &listing.offers());
         let shown = self.mode_shown();
@@ -736,8 +804,8 @@ impl BotView {
     /// never replaced by another agent.
     pub(super) fn agent_readiness_words(&self) -> Option<String> {
         use koru_ai_ui::agent_catalog::config::picker::Readiness;
-        let provider = &self.facts.as_ref()?.provider;
-        match self.catalog.readiness(provider)? {
+        let provider = self.agent_provider()?;
+        match self.catalog.readiness(&provider)? {
             Readiness::Ready | Readiness::Checking => None,
             _ => Some(koru_i18n::fill(
                 t(self.lang, Words::BotsAgentNotReady),
@@ -749,7 +817,7 @@ impl BotView {
     /// **The honest disclosures**, as plain sentences: where the Bot runs
     /// and whose account applies, what Koru's access does not reach, and the
     /// first version's agent.
-    fn disclosures(&self) -> El {
+    pub(super) fn disclosures(&self) -> El {
         let agent = self.agent_name();
         col("Bot disclosures")
             .gap(Space::S2)
@@ -801,7 +869,9 @@ impl BotView {
     /// Put the owner's name in the field when the person has no edit of
     /// their own in it: a read or a saved name moves it, an edit never.
     pub(super) fn sync_name_field(&mut self) {
-        if self.settings.name_edited() {
+        // The create form's field holds the draft's name, which only the
+        // person's typing moves (S8).
+        if self.settings.name_edited() || self.create.is_some() {
             return;
         }
         let shown = self.settings.name_shown().to_owned();
@@ -817,7 +887,9 @@ impl BotView {
 
     /// What pressing `key` asks for, if anything.
     pub(super) fn act_for(&self, key: Key) -> Option<Act> {
-        let settings = &self.settings;
+        if let Some(act) = self.create_act_for(key) {
+            return Some(act);
+        }
         let act = match key {
             k if k == SETTINGS_BUTTON => Act::ToggleSettings,
             k if k == SAVE_NAME => Act::SaveName,
@@ -837,8 +909,7 @@ impl BotView {
             k if k == super::actions::UNARCHIVE => Act::Unarchive,
             k if k == super::actions::RESTORE => Act::Restore,
             k if k.part == REMOVE_PART => Act::RemovePage(
-                settings
-                    .pages_shown()
+                self.pages_shown()
                     .iter()
                     .find(|page| remove_key(page) == k)?
                     .clone(),
@@ -853,6 +924,11 @@ impl BotView {
     /// page, the folder dialog, the page picker) is left for it to take.
     /// `true` when anything changed.
     pub(crate) fn perform(&mut self, act: Act) -> bool {
+        // The create form's acts, and the access card's while it is the
+        // create form's (S8).
+        if self.create.is_some() {
+            return self.perform_create(act);
+        }
         let command = match act {
             Act::ToggleSettings => {
                 self.set_settings_open(!self.settings_open);
@@ -919,6 +995,17 @@ impl BotView {
             Act::SaveAccess => self.settings.save_access(),
             Act::SaveModel => self.settings.save_model(),
             Act::TogglePause => self.settings.toggle_pause(),
+            // Only the create form offers these.
+            Act::Create
+            | Act::Retry
+            | Act::Abandon
+            | Act::Example(_)
+            | Act::ChooseRole(_)
+            | Act::ChooseRolePage
+            | Act::ChangeAccess
+            | Act::ChooseFolder
+            | Act::UseManagedFolder
+            | Act::OpenLeftPage => return false,
         };
         match command {
             Some(command) => {
@@ -997,11 +1084,7 @@ impl BotView {
         if self.focus == Some(super::list::CONVERSATION_LIST) {
             self.focus_list();
         }
-        if self.focus != Some(NAME_FIELD)
-            && let Some(input) = self.name_field.borrow().as_ref()
-        {
-            crate::input_engine::with(|engine| input.borrow_mut().blur(engine));
-        }
+        self.blur_fields_but(self.focus);
         self.reveal_focus();
         true
     }
@@ -1034,14 +1117,15 @@ impl BotView {
         typed: Option<&str>,
         mods: ModifiersState,
     ) -> Option<bool> {
-        if !self.settings_open && self.focus.is_none() {
+        if !self.form_open() && self.focus.is_none() {
             return None;
         }
         // Tab walks the region's controls while it is open, and the
         // header's and the conversation column's once one of them has the
-        // keyboard (`F6` landed on *Settings*).
+        // keyboard (`F6` landed on *Settings*). The create form is a region
+        // that is always open (S8).
         if let WinitKey::Named(NamedKey::Tab) = key
-            && (self.settings_open || self.focus.is_some())
+            && (self.form_open() || self.focus.is_some())
         {
             return Some(self.step_focus(mods.shift_key()));
         }
@@ -1049,11 +1133,14 @@ impl BotView {
             if self.settings_open {
                 self.set_settings_open(false);
             } else {
-                self.focus = None;
+                self.release_keyboard();
             }
             return Some(true);
         }
         let focus = self.focus?;
+        if let Some(handled) = self.create_field_key(focus, key, typed, mods) {
+            return Some(handled);
+        }
         if focus == NAME_FIELD {
             if let WinitKey::Named(NamedKey::Enter) = key {
                 return Some(self.perform(Act::SaveName));
@@ -1074,7 +1161,7 @@ impl BotView {
                 _ => activate,
             };
             if step {
-                let next = match self.settings.access_shown() {
+                let next = match self.access_shown() {
                     BotAccess::Default => BotAccess::Workspace,
                     BotAccess::Workspace => BotAccess::Default,
                 };
@@ -1082,10 +1169,17 @@ impl BotView {
             }
             return Some(false);
         }
+        if focus == super::create::ROLE_CHOICE {
+            let step = match key {
+                WinitKey::Named(NamedKey::ArrowLeft | NamedKey::ArrowRight) => true,
+                _ => activate,
+            };
+            return Some(step && self.perform(Act::ChooseRole(self.other_role())));
+        }
         if activate && let Some(act) = self.act_for(focus) {
             return Some(self.perform(act));
         }
-        if !self.settings_open {
+        if !self.form_open() {
             // *Settings* had the keyboard and the key is the conversation's.
             self.focus = None;
             return None;
@@ -1101,13 +1195,16 @@ impl BotView {
             Some((key, frame.node(key).map(|node| node.rect)))
         });
         let Some((key, rect)) = hit else {
-            if self.settings_open {
-                self.focus = None;
+            if self.form_open() {
+                self.release_keyboard();
                 return Some(false);
             }
             return None;
         };
         self.pressed = Some(key);
+        if let Some(handled) = self.create_field_press(key, rect, x, y) {
+            return Some(handled);
+        }
         if key == NAME_FIELD {
             self.focus = Some(NAME_FIELD);
             let input = self.name_input();
@@ -1116,11 +1213,21 @@ impl BotView {
             }
             return Some(true);
         }
-        if let Some(input) = self.name_field.borrow().as_ref() {
-            crate::input_engine::with(|engine| input.borrow_mut().blur(engine));
-        }
+        self.blur_fields();
         // A pointer press does not put the keyboard's ring on a button.
         self.focus = None;
+        if key == super::create::ROLE_CHOICE {
+            let labels = self.role_labels();
+            let segment = rect.and_then(|rect| {
+                crate::input_engine::with(|engine| {
+                    super::controls::segment_at(engine, &labels, rect, x, y)
+                })
+            });
+            return Some(match segment.and_then(|i| super::create::ROLES.get(i)) {
+                Some(role) => self.perform(Act::ChooseRole(*role)),
+                None => false,
+            });
+        }
         if key == ACCESS_CHOICE {
             let labels = self.choice_labels();
             let segment = rect.and_then(|rect| {
@@ -1165,8 +1272,15 @@ impl BotView {
                     super::controls::segment_at(engine, &labels, rect, x, y)
                 })
             }
+            (Some(key), Some(rect)) if key == super::create::ROLE_CHOICE => {
+                let labels = self.role_labels();
+                crate::input_engine::with(|engine| {
+                    super::controls::segment_at(engine, &labels, rect, x, y)
+                })
+            }
             _ => None,
         };
+        self.create_field_drag(x, y);
         if self.pressed == Some(NAME_FIELD)
             && let Some(field) = self.with_frame(|_, frame| frame.node(NAME_FIELD).map(|n| n.rect))
         {
@@ -1184,6 +1298,7 @@ impl BotView {
         if let Some(input) = self.name_field.borrow().as_ref() {
             input.borrow_mut().release();
         }
+        self.create_field_release();
     }
 
     /// Scroll the region by `dy` logical units; layout clamps it.
@@ -1240,7 +1355,16 @@ impl BotView {
 
     /// The pages the region lists: what the window looks titles up for.
     pub(crate) fn listed_pages(&self) -> Vec<BotPage> {
-        self.settings.pages_shown().to_vec()
+        let mut pages = self.pages_shown().to_vec();
+        // The create form's existing role page too (S8), so its title shows.
+        if let Some(page) = self
+            .create
+            .as_deref()
+            .and_then(|create| create.form.draft().existing.clone())
+        {
+            pages.push(page);
+        }
+        pages
     }
 
     // ---------------------------------------------------- accessibility
@@ -1255,7 +1379,7 @@ impl BotView {
         let labels = self.choice_labels();
         // Laid out on its own first: the list's rows come from the shared
         // list's geometry, which reads the tab's frame itself.
-        let list = if self.settings_open {
+        let list = if self.form_open() {
             Vec::new()
         } else {
             self.list_controls()
@@ -1274,7 +1398,7 @@ impl BotView {
                 let Some(key) = node.key else {
                     continue;
                 };
-                if !self.settings_open
+                if !self.form_open()
                     && key != SETTINGS_BUTTON
                     && key != super::list::NEW_CONVERSATION
                     && key != super::list::MORE_CONVERSATIONS
@@ -1283,9 +1407,9 @@ impl BotView {
                 {
                     continue;
                 }
-                let role = if key == NAME_FIELD {
+                let role = if key == NAME_FIELD || super::create::FIELDS.contains(&key) {
                     ControlRole::TextInput
-                } else if key == ACCESS_CHOICE {
+                } else if key == ACCESS_CHOICE || key == super::create::ROLE_CHOICE {
                     ControlRole::Group
                 } else {
                     match node.role {
@@ -1320,7 +1444,7 @@ impl BotView {
                         rect: node.rect,
                         role,
                         label: words,
-                        value: (key == NAME_FIELD).then(|| self.settings.name_shown().to_owned()),
+                        value: self.field_value(key),
                         selected: node.selected,
                         disabled: node.disabled,
                         focused,
@@ -1345,7 +1469,37 @@ impl BotView {
                                 role: ControlRole::Radio,
                                 label: words.clone(),
                                 value: None,
-                                selected: Some(self.settings.access_shown() == choice),
+                                selected: Some(self.access_shown() == choice),
+                                disabled: node.disabled,
+                                focused,
+                                children: Vec::new(),
+                            },
+                            Some(slot),
+                        ));
+                    }
+                }
+                // Where the new Bot's role comes from (S8): its two
+                // segments as radio buttons, the chosen one selected.
+                if key == super::create::ROLE_CHOICE {
+                    let labels = self.role_labels();
+                    let rects = crate::input_engine::with(|engine| {
+                        super::controls::segments(engine, &labels, node.rect)
+                    });
+                    let shown = self.role_shown();
+                    for (((rect, words), role), segment) in rects
+                        .into_iter()
+                        .zip(&labels)
+                        .zip(super::create::ROLES)
+                        .zip(super::create::ROLE_SEGMENTS)
+                    {
+                        arena.push((
+                            Control {
+                                key: segment,
+                                rect,
+                                role: ControlRole::Radio,
+                                label: words.clone(),
+                                value: None,
+                                selected: Some(shown == Some(role)),
                                 disabled: node.disabled,
                                 focused,
                                 children: Vec::new(),
@@ -1381,7 +1535,7 @@ impl BotView {
                         .map(|node| super::agent::control_of(node, focus, search.as_deref(), lang)),
                 );
             }
-            if !self.settings_open {
+            if !self.form_open() {
                 // The conversation list, after *New conversation* and before
                 // *Show more*, in the keyboard's order (S8).
                 let more = roots
@@ -1399,25 +1553,18 @@ impl BotView {
         if key == super::list::TRASH_NOTICE {
             return self.list_notice().map(|words| self.words(words));
         }
+        if self.create.is_some() {
+            return self.create_line_words(key);
+        }
         let settings = &self.settings;
         let bot = settings.bot()?;
         let agent = self.agent_name();
-        let home = self.home_words();
         Some(match key {
             k if k == SETTINGS_NOTICE => match settings.notice()? {
                 Notice::ChangedElsewhere => self.words(Words::BotsChangedElsewhere),
                 Notice::Refused(words) => self.words(words),
             },
-            k if k == ACCESS_SUMMARY => match settings.access_shown() {
-                BotAccess::Default => koru_i18n::fill(
-                    t(self.lang, Words::BotsAccessDefaultSummary),
-                    &[home.as_str()],
-                ),
-                BotAccess::Workspace => koru_i18n::fill(
-                    t(self.lang, Words::BotsAccessWorkspaceSummary),
-                    &[home.as_str()],
-                ),
-            },
+            k if k == ACCESS_SUMMARY => self.access_summary(),
             k if k == MODEL_NOTE => self.words(Words::BotsAppliesToNewConversations),
             k if k == AGENT_READINESS => return self.agent_readiness_words(),
             k if k == NAME_PENDING
@@ -1461,6 +1608,16 @@ impl BotView {
             self.focus = Some(ACCESS_CHOICE);
             return !click || self.perform(Act::Choose(CHOICES[index]));
         }
+        if let Some(index) = super::create::ROLE_SEGMENTS
+            .iter()
+            .position(|segment| *segment == key)
+        {
+            if !self.with_frame(|_, frame| frame.contains(super::create::ROLE_CHOICE)) {
+                return false;
+            }
+            self.focus = Some(super::create::ROLE_CHOICE);
+            return !click || self.perform(Act::ChooseRole(super::create::ROLES[index]));
+        }
         if !self.with_frame(|_, frame| frame.contains(key)) {
             return false;
         }
@@ -1468,8 +1625,11 @@ impl BotView {
             self.focus = Some(key);
             return true;
         }
+        if key == super::create::ROLE_CHOICE {
+            return self.perform(Act::ChooseRole(self.other_role()));
+        }
         if key == ACCESS_CHOICE {
-            let next = match self.settings.access_shown() {
+            let next = match self.access_shown() {
                 BotAccess::Default => BotAccess::Workspace,
                 BotAccess::Workspace => BotAccess::Default,
             };

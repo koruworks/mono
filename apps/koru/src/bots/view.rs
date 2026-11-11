@@ -34,10 +34,15 @@
 //! window first, the operation's progress, a parked one's Continue and
 //! Cancel, and what is true when it is done ([`actions`]).
 //!
-//! **What it does not show, deliberately.** No agent or model settings, no
-//! Rename or Pin on a conversation, and no permanent delete: each is a later
-//! slice with its own dependency, and a control that leads nowhere is a
-//! promise the tab cannot keep.
+//! **Creating one** (S8): a Bot tab in create mode is a form in the
+//! conversation's place ([`create`]), found by no conversation until the
+//! owner has made the Bot; then it becomes that Bot's tab, in place, on its
+//! main conversation.
+//!
+//! **What it does not show, deliberately.** No Rename or Pin on a
+//! conversation, and no permanent delete: each is a later slice with its own
+//! dependency, and a control that leads nowhere is a promise the tab cannot
+//! keep.
 //!
 //! ## One conversation, one container
 //!
@@ -94,6 +99,7 @@ mod actions;
 pub(crate) mod agent;
 mod controls;
 pub(crate) mod conversations;
+pub(crate) mod create;
 pub(crate) mod list;
 mod picker;
 pub(crate) mod region;
@@ -345,6 +351,16 @@ pub(crate) struct BotView {
     /// The starred models after a ☆ in the card's picker, for the window
     /// to store.
     favorites_request: Option<Vec<koru_ai_ui::FavoriteModel>>,
+    // ------------------------------------------------ creating one (S8)
+    /// **The create form**, while this tab creates a Bot: the draft, its
+    /// fields and what the window owes it. `None` on every other Bot tab.
+    /// Boxed for the reason the settings are.
+    create: Option<Box<create::CreateTab>>,
+    /// The page picker is choosing the create form's role page, not a
+    /// selected page.
+    picker_for_role: bool,
+    /// The tab just became a new Bot's tab: the window lists it.
+    created: bool,
 }
 
 impl BotView {
@@ -404,6 +420,9 @@ impl BotView {
             agent_settings: Box::default(),
             agent: None,
             favorites_request: None,
+            create: None,
+            picker_for_role: false,
+            created: false,
         }
     }
 
@@ -481,7 +500,7 @@ impl BotView {
 
     /// Whether this tab is still finding out whose its conversation is.
     pub(crate) fn opening(&self) -> Option<Opening> {
-        self.bot.is_none().then_some(self.opening)
+        (self.bot.is_none() && self.create.is_none()).then_some(self.opening)
     }
 
     /// The window's read of whose the conversation is did not answer.
@@ -541,6 +560,15 @@ impl BotView {
         self.chat
     }
 
+    /// **The conversation the window may find this tab by**: none while it
+    /// creates a Bot, whose conversation does not exist yet (S8).
+    pub(crate) fn conversation_id(&self) -> Option<ChatId> {
+        self.create.is_none().then_some(self.chat)
+    }
+
+    /// What the tab knows of its Bot. Test only: the window reads a tab's
+    /// home through [`Self::home`], which a create tab answers too (S8).
+    #[cfg(test)]
     pub(crate) fn facts(&self) -> Option<&BotFacts> {
         self.facts.as_ref()
     }
@@ -567,6 +595,10 @@ impl BotView {
     /// shown again; one never shown has nothing stale to refresh. Nothing is
     /// sent now: a hidden tab sends nothing.
     pub(crate) fn hidden(&mut self) {
+        if self.create.is_some() {
+            self.create_hidden();
+            return;
+        }
         if (self.started_link && self.asked) || self.opening() == Some(Opening::Failed) {
             self.stale = true;
         }
@@ -597,6 +629,9 @@ impl BotView {
     /// What the tab strip calls it: the Bot's name, or *Bot* until the Bot
     /// service has said.
     pub(crate) fn label(&self) -> String {
+        if let Some(label) = self.create_label() {
+            return label;
+        }
         match (&self.facts, &self.label_name) {
             (Some(facts), _) if !facts.name.trim().is_empty() => facts.name.trim().to_owned(),
             (None, Some(name)) => name.trim().to_owned(),
@@ -677,6 +712,10 @@ impl BotView {
     /// conversation the first time, asks the Bot service once, and folds
     /// whatever it answered. `true` when a repaint is owed.
     pub(crate) fn shown_pass(&mut self, root: Option<PathBuf>) -> bool {
+        // Creating a Bot (S8): the form's own pass.
+        if self.create.is_some() {
+            return self.create_pass(root);
+        }
         // Not known to be a Bot's yet: nothing of the tab's own to ask.
         if self.bot.is_none() {
             return false;
@@ -777,8 +816,16 @@ impl BotView {
         let mut wrote = Vec::new();
         let mut pages = Vec::new();
         let mut trash = None;
+        let mut creation = Vec::new();
+        let creating = self.create_bot();
         for answer in link.drain() {
             match answer {
+                // The create form's (S8): by its draft's reserved BotId.
+                Answer::Wrote {
+                    bot,
+                    request,
+                    result,
+                } if Some(bot) == creating => creation.push((request, result)),
                 Answer::Chats { seq, bot, result } => pages.push((seq, bot, result)),
                 Answer::Read { seq, bot, result } if seq == self.seq && Some(bot) == self.bot => {
                     taken = Some(result);
@@ -798,6 +845,9 @@ impl BotView {
             }
         }
         let mut changed = false;
+        for (request, result) in creation {
+            changed |= self.create_answer(request, result);
+        }
         for (seq, bot, result) in pages {
             changed |= self.conversations.answer(seq, bot, result);
         }
@@ -867,6 +917,8 @@ impl BotView {
     // ------------------------------------------------------------ frame
 
     /// The line under the header's facts, when there is one to say.
+    ///
+    /// A create tab says nothing here: its form says where it stands (S8).
     fn notice(&self) -> Option<Words> {
         match self.opening() {
             Some(Opening::Asking) => return Some(Words::BotsChatOpening),
@@ -884,7 +936,9 @@ impl BotView {
     /// *Saves results in {workspace}*, naming the home by its name when the
     /// window knows it.
     pub(crate) fn saves_in(&self) -> Option<String> {
-        self.facts.as_ref()?;
+        if self.facts.is_none() && self.create.is_none() {
+            return None;
+        }
         let name = self
             .home_name
             .clone()
@@ -977,6 +1031,41 @@ impl BotView {
             if let Some(block) = self.lifecycle_block(engine) {
                 header = header.child(block);
             }
+        } else if let Some(label) = self.create_label() {
+            // A Bot being created (S8): its name so far, where its results
+            // will go, and the home-only limit.
+            header = header
+                .child(
+                    row("Bot title")
+                        .gap(Space::S2)
+                        .items_center()
+                        .child(icon(icons::ROBOT, IconSize::M).decorative())
+                        .child(
+                            text(label)
+                                .named("Bot name")
+                                .id(NAME)
+                                .role(roles::POPOVER_HEADING)
+                                .emphasis(true)
+                                .fill()
+                                .truncate(),
+                        ),
+                )
+                .child(
+                    text(self.saves_in().unwrap_or_default())
+                        .named("Bot destination")
+                        .id(SAVES)
+                        .role(roles::META)
+                        .ink(Ink::Secondary)
+                        .wrap(),
+                )
+                .child(
+                    text(t(self.lang, Words::BotsHomeOnly))
+                        .named("Bot destination limit")
+                        .id(LIMIT)
+                        .role(roles::META)
+                        .ink(Ink::Hint)
+                        .wrap(),
+                );
         }
         if let Some(notice) = self.notice() {
             header = header.child(
@@ -999,6 +1088,10 @@ impl BotView {
     /// which takes what is left.
     pub(crate) fn tree(&self, engine: &mut koru_draw::text::TextEngine) -> El {
         let tab = col("Bot tab").id(ROOT).child(self.header(engine));
+        // Creating a Bot (S8): the form in the conversation's place.
+        if self.create.is_some() {
+            return tab.child(self.create_region(engine));
+        }
         // A trashed Bot is its header alone: what it says, and Restore.
         if self.facts.as_ref().is_some_and(|facts| facts.trashed) {
             return tab;
@@ -1089,7 +1182,13 @@ impl BotView {
                     out.push((key, node.rect, words));
                 }
             };
-            line(NAME, self.facts.as_ref().map(|facts| facts.name.clone()));
+            line(
+                NAME,
+                self.facts
+                    .as_ref()
+                    .map(|facts| facts.name.clone())
+                    .or_else(|| self.create_label()),
+            );
             line(
                 PAUSED,
                 self.facts
@@ -1114,9 +1213,8 @@ impl BotView {
             line(SAVES, self.saves_in());
             line(
                 LIMIT,
-                self.facts
-                    .as_ref()
-                    .map(|_| t(self.lang, Words::BotsHomeOnly).to_owned()),
+                (self.facts.is_some() || self.create.is_some())
+                    .then(|| t(self.lang, Words::BotsHomeOnly).to_owned()),
             );
             line(
                 NOTICE,
@@ -1161,6 +1259,9 @@ impl BotView {
         rev.str(self.home_name.as_deref().unwrap_or(""))
             .f32(self.size.0)
             .f32(self.size.1);
+        // A create tab's name so far (S8); its fields, lines and controls
+        // are folded with the controls below.
+        rev.str(self.create_label().as_deref().unwrap_or(""));
         if let Some(facts) = &self.facts {
             rev.bool(facts.trashed);
         }
@@ -1229,7 +1330,7 @@ impl BotView {
     /// Whether the header has a control the window's `F6` rotation can land
     /// on: *Settings*, which the header draws once it knows its Bot.
     pub(crate) fn header_stop(&self) -> bool {
-        self.facts.is_some()
+        self.facts.is_some() || self.create.is_some()
     }
 
     /// Whether one of the tab's own controls has the keyboard — *Settings*
@@ -1246,6 +1347,12 @@ impl BotView {
             return false;
         }
         self.blur_name_field();
+        // A create tab has no *Settings*: the form's first control, its
+        // name, is where the keyboard lands (S8).
+        if self.create.is_some() {
+            self.focus = self.focus_order().first().copied();
+            return self.focus.is_some();
+        }
         // A trashed Bot has no *Settings*: its first control is the
         // keyboard's landing, when it has one.
         let trashed = self.facts.as_ref().is_some_and(|facts| facts.trashed);
@@ -1269,9 +1376,7 @@ impl BotView {
     }
 
     fn blur_name_field(&self) {
-        if let Some(input) = self.name_field.borrow().as_ref() {
-            crate::input_engine::with(|engine| input.borrow_mut().blur(engine));
-        }
+        self.blur_fields();
     }
 }
 
@@ -1319,7 +1424,7 @@ impl View for BotView {
         if self.agent_popover_open() {
             return self.agent_press(x, y);
         }
-        if !self.settings_open
+        if !self.form_open()
             && let Some(handled) = self.list_press(x, y)
         {
             return handled;
@@ -1347,12 +1452,11 @@ impl View for BotView {
         // Over the conversation with nothing lit there is nothing of the
         // tab's to light: no layout.
         let over_column = x <= self.column_right.get();
-        let over_tab = self.settings_open
-            || y <= self.header_bottom.get()
-            || over_column
-            || self.hot.is_some();
-        let lit = self.facts.is_some() && over_tab && self.region_move(x, y);
-        if self.settings_open {
+        let over_tab =
+            self.form_open() || y <= self.header_bottom.get() || over_column || self.hot.is_some();
+        let lit =
+            (self.facts.is_some() || self.create.is_some()) && over_tab && self.region_move(x, y);
+        if self.form_open() {
             return lit;
         }
         let listed =
@@ -1376,7 +1480,7 @@ impl View for BotView {
             return self.agent_release();
         }
         self.region_release();
-        if self.settings_open {
+        if self.form_open() {
             return false;
         }
         self.conversation
@@ -1385,7 +1489,7 @@ impl View for BotView {
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
-        if self.settings_open || !self.shows_conversation() || !self.on_conversation(x, y) {
+        if self.form_open() || !self.shows_conversation() || !self.on_conversation(x, y) {
             return false;
         }
         self.conversation
@@ -1403,7 +1507,7 @@ impl View for BotView {
             self.agent_scroll(delta);
             return;
         }
-        if self.settings_open {
+        if self.form_open() {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, lines) => {
                     -lines * koru_draw::theme::metrics::ROW_MIN.value
@@ -1440,7 +1544,9 @@ impl View for BotView {
     }
 
     fn cursor_icon(&self) -> CursorIcon {
-        if self.hot == Some(region::NAME_FIELD) {
+        if self.hot == Some(region::NAME_FIELD)
+            || self.hot.is_some_and(|hot| create::FIELDS.contains(&hot))
+        {
             return CursorIcon::Text;
         }
         // The I-beam over the card's picker's search field (S7).
@@ -1450,7 +1556,7 @@ impl View for BotView {
         }) {
             return cursor;
         }
-        if self.settings_open {
+        if self.form_open() {
             return CursorIcon::Default;
         }
         self.conversation
@@ -1500,11 +1606,15 @@ impl View for BotView {
                 let header = self.header(engine);
                 let header_frame =
                     header.layout(engine, &mut self.cache.borrow_mut(), header_rect, cx);
-                let region = self.settings_open.then(|| {
+                let region = self.form_open().then(|| {
                     let area = frame
                         .node(region::SETTINGS)
                         .map_or(conversation_area, |node| node.rect);
-                    let tree = self.region(engine);
+                    let tree = if self.create.is_some() {
+                        self.create_region(engine)
+                    } else {
+                        self.region(engine)
+                    };
                     let laid = tree.layout(engine, &mut self.cache.borrow_mut(), area, cx);
                     (tree, laid)
                 });
@@ -1604,16 +1714,19 @@ impl View for BotView {
         let read = read.or_else(|| {
             (self.conversations.awaiting()
                 || self.trash_awaiting()
-                || (self.settings_open && self.catalog.waiting()))
+                || (self.form_open() && self.catalog.waiting()))
             .then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
                     .unwrap_or(now)
             })
         });
+        // A create tab's creation, moving and shown (S8).
+        let creating = (!self.stale).then(|| self.create_deadline(now)).flatten();
         let mine = [
             read,
             self.settings.deadline(now),
             self.lifecycle_deadline(now),
+            creating,
         ]
         .into_iter()
         .flatten()
@@ -1640,8 +1753,10 @@ impl View for BotView {
             && self.list_pass();
         // A catalog answer on its way while the settings are shown (S6).
         let catalog =
-            !self.stale && self.settings_open && self.catalog.pass(crate::search::gateway_root());
-        let folded = folded || polled || listed || lifecycle || catalog;
+            !self.stale && self.form_open() && self.catalog.pass(crate::search::gateway_root());
+        // A create tab's read on its clock, never while hidden (S8).
+        let read = !self.stale && self.send_create_read(now);
+        let folded = folded || polled || listed || lifecycle || catalog || read;
         let chat = self
             .conversation
             .as_mut()

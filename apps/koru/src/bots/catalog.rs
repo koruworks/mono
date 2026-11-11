@@ -499,10 +499,7 @@ impl Catalog {
     /// The agent a new Bot starts on: the person's default agent where it is
     /// registered and not turned off, else the first ready one in their
     /// order, else the first. Never a fallback the person did not see: the
-    /// form shows it and its readiness.
-    // The create form's (S8), which is not built yet: tested here so it is
-    // ready, and read by nothing else meanwhile.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// form shows it and its readiness (S8, `BotView::seed_agent`).
     pub(crate) fn preferred(&self, settings: &AgentSettings) -> Option<AiProviderId> {
         let agents = self.control_agents(settings);
         let shown: Vec<&Agent<'_, AiProviderId>> =

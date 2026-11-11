@@ -8,11 +8,11 @@
 //! *Settings* opens the Bot's settings ([`settings`], S5). Its ⋯ archives
 //! it or moves it to Trash, a conversation row moves one conversation to
 //! Trash, the roster's Archived filter unarchives, and the window's Trash
-//! restores ([`lifecycle`], [`trash`], S14). Its agent and model settings
-//! and creating one land in later increments
-//! (`docs/features/bots/P1.8.PLAN.final.md`); until they do, nothing offers
-//! a control that would lead nowhere — no *Create a bot*, and no permanent
-//! delete of a Bot, which is not built.
+//! restores ([`lifecycle`], [`trash`], S14). Its settings choose its agent's
+//! model, effort, mode and Fast ([`catalog`], S6–S7). *Create a bot* opens a
+//! Bot tab in create mode ([`creation`], S8). Nothing offers a
+//! control that would lead nowhere: there is no permanent delete of a Bot,
+//! which is not built.
 //!
 //! Two rules it is built under, the Chats view's:
 //!
@@ -23,6 +23,7 @@
 //!   while another view is showing; being shown again asks once.
 
 pub(crate) mod catalog;
+pub(crate) mod creation;
 pub(crate) mod labels;
 pub(crate) mod lifecycle;
 pub(crate) mod link;

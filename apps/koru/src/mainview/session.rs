@@ -670,6 +670,11 @@ impl MainView {
             // finding out whose its conversation is saves the chat alone,
             // as the chat tab it may yet become, and is placed again on
             // restore (`mainview/bots.rs`).
+            // **A create tab is not saved** (S8): a draft never sent has
+            // nothing the owner knows, and one that was sent comes back as
+            // an unfinished creation in the roster — never as a half-filled
+            // form with identities that may no longer be live.
+            TabView::Bot(b) if b.is_creating() => return None,
             TabView::Bot(b) => match b.bot() {
                 Some(bot) => TabRef::Bot {
                     bot: bot.as_uuid(),

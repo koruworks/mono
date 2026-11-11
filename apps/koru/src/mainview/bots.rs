@@ -333,7 +333,8 @@ impl MainView {
                 let TabView::Bot(view) = &mut tab.view else {
                     continue;
                 };
-                if view.bot().is_some() {
+                // Known, or creating one (S8): nothing to place.
+                if view.bot().is_some() || view.is_creating() {
                     continue;
                 }
                 let chat = view.chat_id();
@@ -526,7 +527,19 @@ impl MainView {
         let Some(start) = view.take_folder_request() else {
             return;
         };
+        // The create form's folder (S8): its answer goes to the draft, found
+        // by the BotId it reserves — it has no conversation yet.
+        if let Some(draft) = view.create_bot() {
+            self.bot_create_folder_ask = Some(draft);
+            self.ai_chat_folder_ask = None;
+            self.ask_pane(koru_workspace_host::PaneRequest::ChooseAiChatFolder {
+                title: koru_i18n::t(crate::format::lang(), koru_i18n::Key::BotsFolder).to_owned(),
+                start,
+            });
+            return;
+        }
         let chat = view.chat_id();
+        self.bot_create_folder_ask = None;
         self.ai_chat_folder_ask = Some((super::AiChatFolderSource::BotTab, chat));
         self.ask_pane(koru_workspace_host::PaneRequest::ChooseAiChatFolder {
             title: koru_i18n::t(crate::format::lang(), koru_i18n::Key::BotsFolder).to_owned(),
@@ -553,6 +566,133 @@ impl MainView {
         false
     }
 
+    /// **The folder dialog answered a create form** (S8): the folder joins
+    /// that draft, wherever its tab now is, found by the BotId the draft
+    /// reserves. Nothing is sent.
+    pub(super) fn bot_create_folder_chosen(
+        &mut self,
+        draft: koru_ai_core::bots::BotId,
+        chosen: &std::path::Path,
+    ) -> bool {
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Bot(view) = &mut tab.view
+                    && view.create_bot() == Some(draft)
+                {
+                    return view.create_folder_chosen(chosen);
+                }
+            }
+        }
+        false
+    }
+
+    /// **Create a bot** (S8) — the roster's heading or its empty state:
+    /// a Bot tab in create mode for the window's workspace, or the create
+    /// tab with nothing sent yet that is already open for it, brought
+    /// forward rather than a second one beside it. `false` with no
+    /// workspace to create in.
+    pub(super) fn open_bot_create_tab(&mut self) -> bool {
+        if !crate::bots::shown() {
+            return false;
+        }
+        let Some(home) = self
+            .current_workspace()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
+        else {
+            return false;
+        };
+        let open = self.panes.iter_groups().find_map(|(path, group)| {
+            group
+                .tabs()
+                .iter()
+                .position(|tab| {
+                    matches!(&tab.view, TabView::Bot(view)
+                        if view.create_untouched() && view.home() == Some(home))
+                })
+                .map(|index| (path, index))
+        });
+        self.record_jump();
+        if let Some((path, index)) = open {
+            self.panes.set_focus(path);
+            let _ = self.select(index);
+            return true;
+        }
+        let view = BotView::creating(home, self.workspace_name(home));
+        self.tabs_mut().push(Tab::bot(view));
+        self.mark_tab_widths_stale();
+        true
+    }
+
+    /// **The create tab in front asked to abandon its creation** (S8): the
+    /// window asks first, saying nothing is deleted. `true` when it asked.
+    pub(super) fn drain_bot_create_asks(&mut self) -> bool {
+        let TabView::Bot(view) = &mut self.tabs_mut().active_mut().view else {
+            return false;
+        };
+        let Some(draft) = view.create_bot() else {
+            return false;
+        };
+        let Some(name) = view.take_abandon_ask() else {
+            return false;
+        };
+        self.ask_abandon_creation(name, super::trash::AbandonFrom::Tab(draft))
+    }
+
+    /// **Ask before a creation is abandoned** — a create tab's Abandon:
+    /// nothing is deleted, and what it leaves stays where it is.
+    pub(super) fn ask_abandon_creation(
+        &mut self,
+        name: String,
+        from: super::trash::AbandonFrom,
+    ) -> bool {
+        let lang = crate::format::lang();
+        let shown = if name.trim().is_empty() {
+            koru_i18n::t(lang, koru_i18n::Key::BotsNewBot).to_owned()
+        } else {
+            name
+        };
+        self.confirm = Some((
+            koru_ui::Confirm::localized(
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::BotsAbandonTitle),
+                    &[shown.as_str()],
+                ),
+                koru_i18n::t(lang, koru_i18n::Key::BotsAbandonBody).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::BotsAbandon).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::BotsDialogCancel),
+            ),
+            super::trash::ConfirmSubject::AbandonBotCreation(from),
+        ));
+        true
+    }
+
+    /// The person answered the Abandon question: a yes is sent by whoever
+    /// asked; a no sends nothing; the keyboard goes back to the control
+    /// that asked.
+    pub(super) fn settle_abandon_creation(
+        &mut self,
+        from: super::trash::AbandonFrom,
+        confirmed: bool,
+    ) {
+        match from {
+            super::trash::AbandonFrom::Tab(draft) => {
+                for (_, group) in self.panes.iter_groups_mut() {
+                    for tab in group.iter_tabs_mut() {
+                        if let TabView::Bot(view) = &mut tab.view
+                            && view.create_bot() == Some(draft)
+                        {
+                            if confirmed {
+                                view.abandon_confirmed();
+                            }
+                            view.dialog_closed();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// **Feed a Bot tab's *Add a page…* picker** (S5): the scope — the
     /// Bot's home workspace alone — the window's recents while nothing is
     /// typed, and the search it owes, through the search service the `@`
@@ -565,7 +705,7 @@ impl MainView {
         // The window's recents are its own workspace's: offered only when
         // that is the Bot's home, so no other workspace's page is offered.
         let home = match &self.tabs().active_tab().view {
-            TabView::Bot(view) => view.facts().map(|facts| facts.home.as_uuid()),
+            TabView::Bot(view) => view.home().map(|home| home.as_uuid()),
             _ => None,
         };
         let recents = if home.is_some() && self.current_workspace().map(|id| id.as_uuid()) == home {
@@ -626,7 +766,7 @@ impl MainView {
             .iter_groups()
             .flat_map(|(_, group)| group.iter_tabs())
             .filter_map(|tab| match &tab.view {
-                TabView::Bot(view) => view.facts().map(|facts| facts.home),
+                TabView::Bot(view) => view.home(),
                 _ => None,
             })
             .map(|home| (home, self.workspace_name(home)))
@@ -643,6 +783,7 @@ impl MainView {
         let roster = self.explore.bots();
         let mut work_moved = false;
         let mut moved = false;
+        let mut created = false;
         for (_, group) in self.panes.iter_groups_mut() {
             let mut relabeled = false;
             let active = group.active();
@@ -664,11 +805,14 @@ impl MainView {
                         // roster last read it (S8, S10).
                         moved |= view.set_activity(&roster.activity_of(bot));
                     }
-                    if let Some(home) = view.facts().map(|facts| facts.home)
+                    if let Some(home) = view.home()
                         && let Some((_, name)) = names.iter().find(|(id, _)| *id == home)
                     {
                         view.set_home_name(name.clone());
                     }
+                    // A create tab that just became its new Bot's (S8):
+                    // the roster lists it.
+                    created |= view.take_created();
                     if index == active {
                         let mine = view
                             .listed_pages()
@@ -692,6 +836,10 @@ impl MainView {
         }
         if work_moved {
             self.explore.bots_mut().owe_activity();
+        }
+        if created {
+            self.explore.bots_mut().owe_lifecycle_refresh();
+            moved = true;
         }
         moved || placed || recorded
     }

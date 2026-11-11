@@ -700,3 +700,41 @@ fn with_koru_ai_off_an_unanswered_link_is_kept_and_asked_again_on_activation() {
         },
     );
 }
+
+/// **Create a bot opens one create tab**, found by no conversation, and
+/// brought forward rather than doubled while nothing was sent from it; it is
+/// **not saved with the session**, so it never comes back as a half-filled
+/// form with identities that may no longer be live — a creation that was
+/// sent comes back as the roster's unfinished row instead.
+#[test]
+fn create_a_bot_opens_one_form_found_by_no_conversation_and_not_saved() {
+    let (mut v, _w) = on_document();
+    let before = v.tabs().len();
+    assert!(v.open_bot_create_tab());
+    assert_eq!(v.tabs().len(), before + 1);
+    let TabView::Bot(view) = &v.tabs().active_tab().view else {
+        panic!("a Bot tab in front");
+    };
+    assert!(view.is_creating());
+    assert_eq!(
+        v.tabs().active_tab().view.chat_id(),
+        None,
+        "no conversation"
+    );
+    assert_eq!(
+        v.tabs().active_tab().label,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::BotsNewBot)
+    );
+    assert!(v.open_bot_create_tab(), "asked again");
+    assert_eq!(v.tabs().len(), before + 1, "the same form, brought forward");
+    let mut settings = Settings::default();
+    v.capture_session(&mut settings);
+    assert!(
+        !settings
+            .tabs
+            .iter()
+            .any(|(tab, _)| matches!(tab, TabRef::Bot { .. } | TabRef::Chat(_))),
+        "{:?}",
+        settings.tabs
+    );
+}

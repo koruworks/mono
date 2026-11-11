@@ -16,6 +16,11 @@
 //! the control is told only the Bot's agent may be offered, so it shows it
 //! and hides the rail.
 //!
+//! **The create form hosts the same control** (S8) over the new Bot's
+//! draft, with no agent fixed: every registered agent runtime is on the
+//! rail and a turned-off one is not, favorites are offered (QUESTIONS O42),
+//! and choosing another agent starts on its own model at its defaults.
+//!
 //! **Hosted as the page picker is** (`picker.rs`): while a popover is up it
 //! takes the keys, the presses, the pointer and the wheel first, it paints
 //! last, and the control keeps it inside the tab.
@@ -70,6 +75,7 @@ fn inputs<'a>(
     settings: &'a AgentSettings,
     provider: &'a AiProviderId,
     draft: &'a ModelDraft,
+    allowed: Option<&'a AiProviderId>,
     place: Place,
 ) -> Inputs<'a, AiProviderId> {
     let footer = catalog
@@ -87,7 +93,7 @@ fn inputs<'a>(
             effort: agent_catalog::effort(draft.model.default_reasoning),
         }),
         applies: Applies::NextTask,
-        allowed: AGENT_FIXED_AFTER_CREATION.then_some(provider),
+        allowed,
         preferred: None,
         favorites: &settings.favorites,
         // *Manage agent providers* is not routed from a Bot tab yet: the
@@ -100,9 +106,38 @@ fn inputs<'a>(
 }
 
 impl BotView {
-    /// The Bot's agent, while the tab knows it.
-    fn agent_provider(&self) -> Option<AiProviderId> {
-        self.facts.as_ref().map(|facts| facts.provider.clone())
+    /// The Bot's agent, while the tab knows it — or, in create mode (S8),
+    /// the agent the new Bot's draft is on.
+    pub(super) fn agent_provider(&self) -> Option<AiProviderId> {
+        match self.create.as_deref() {
+            Some(create) => create.form.model_shown().map(|draft| draft.model.provider),
+            None => self.facts.as_ref().map(|facts| facts.provider.clone()),
+        }
+    }
+
+    /// **The agent-and-model draft the control chooses for**: the settings'
+    /// over what the owner holds, or the create form's (S8).
+    pub(super) fn agent_draft(&self) -> Option<ModelDraft> {
+        match self.create.as_deref() {
+            Some(create) => create.form.model_shown(),
+            None => self.settings.model_shown(),
+        }
+    }
+
+    /// The draft after a choice, into whichever form it is.
+    fn edit_agent_draft(&mut self, draft: ModelDraft) {
+        match self.create.as_deref_mut() {
+            Some(create) => create.form.edit_model(draft),
+            None => self.settings.edit_model(draft),
+        }
+    }
+
+    /// **Whether only the Bot's own agent may be offered**: once it exists
+    /// ([`AGENT_FIXED_AFTER_CREATION`]). In the create form any registered
+    /// runtime is, because that is where the agent is chosen (S8,
+    /// QUESTIONS O33).
+    fn agent_allowed(&self) -> bool {
+        self.create.is_none() && AGENT_FIXED_AFTER_CREATION
     }
 
     /// The listing of the Bot's agent, while the catalog holds one.
@@ -141,7 +176,7 @@ impl BotView {
     ) -> Option<R> {
         let popover = self.agent.as_deref()?;
         let provider = self.agent_provider()?;
-        let draft = self.settings.model_shown()?;
+        let draft = self.agent_draft()?;
         let place = self.picker_place();
         let inputs = inputs(
             self.lang,
@@ -149,6 +184,7 @@ impl BotView {
             &self.agent_settings,
             &provider,
             &draft,
+            self.agent_allowed().then_some(&provider),
             place,
         );
         Some(f(Picker::new(&inputs, &popover.state, popover.picker_open)))
@@ -164,8 +200,9 @@ impl BotView {
     ) -> Option<R> {
         let provider = self.agent_provider()?;
         let place = self.picker_place();
+        let allowed = self.agent_allowed();
         let result = {
-            let draft = self.settings.model_shown()?;
+            let draft = self.agent_draft()?;
             let popover = self.agent.as_deref_mut()?;
             let inputs = inputs(
                 self.lang,
@@ -173,6 +210,7 @@ impl BotView {
                 &self.agent_settings,
                 &provider,
                 &draft,
+                allowed.then_some(&provider),
                 place,
             );
             crate::input_engine::with(|engine| {
@@ -194,7 +232,10 @@ impl BotView {
                 .map(|popover| popover.state.take_outcomes())
                 .unwrap_or_default();
             for outcome in outcomes {
-                self.apply_agent_outcome(&provider, outcome);
+                let Some(current) = self.agent_provider() else {
+                    break;
+                };
+                self.apply_agent_outcome(&current, outcome);
             }
             let pending = self
                 .agent
@@ -203,7 +244,9 @@ impl BotView {
             if !pending {
                 break;
             }
-            let draft = self.settings.model_shown()?;
+            // A choice may have moved the draft to another agent (S8).
+            let provider = self.agent_provider()?;
+            let draft = self.agent_draft()?;
             let popover = self.agent.as_deref_mut()?;
             let inputs = inputs(
                 self.lang,
@@ -211,6 +254,7 @@ impl BotView {
                 &self.agent_settings,
                 &provider,
                 &draft,
+                allowed.then_some(&provider),
                 place,
             );
             crate::input_engine::with(|engine| {
@@ -243,7 +287,7 @@ impl BotView {
     /// listing asked for; ↻; the starred models kept for the window to
     /// store. Nothing is sent.
     fn apply_agent_outcome(&mut self, provider: &AiProviderId, outcome: Outcome<AiProviderId>) {
-        let Some(mut draft) = self.settings.model_shown() else {
+        let Some(mut draft) = self.agent_draft() else {
             return;
         };
         match outcome {
@@ -251,8 +295,19 @@ impl BotView {
                 provider: chosen,
                 model,
             } => {
-                if AGENT_FIXED_AFTER_CREATION && chosen != *provider {
+                if self.agent_allowed() && chosen != *provider {
                     return;
+                }
+                // Another agent, in the create form (S8): its own model, at
+                // its own default level, mode and Fast; nothing of the
+                // previous agent's carries over.
+                if chosen != *provider {
+                    self.catalog.want(&chosen);
+                    draft.model.default_reasoning = agent_catalog::reasoning(
+                        koru_ai_ui::agent_catalog::config::effort::Effort::Default,
+                    );
+                    draft.mode = None;
+                    draft.fast = None;
                 }
                 // A model with no Fast takes no Fast setting.
                 let offers_fast = self
@@ -303,7 +358,7 @@ impl BotView {
             // no agent settings from here.
             Outcome::BuiltinModel(_) | Outcome::EffortLocked | Outcome::Setup => return,
         }
-        self.settings.edit_model(draft);
+        self.edit_agent_draft(draft);
     }
 
     /// **The starred models after a ☆ in the card's picker**, for the
@@ -336,7 +391,7 @@ impl BotView {
 
     /// **The model's chip**: the picker opens under it, on the Bot's agent.
     pub(super) fn open_agent_picker(&mut self) -> bool {
-        if self.settings.model_shown().is_none() {
+        if self.agent_draft().is_none() {
             return false;
         }
         if let Some(provider) = self.agent_provider() {
@@ -362,10 +417,15 @@ impl BotView {
 
     /// The mode the draft names, else the one the agent says it starts in.
     pub(super) fn mode_shown(&self) -> Option<String> {
-        self.settings
-            .model_shown()
-            .and_then(|draft| draft.mode)
-            .or_else(|| self.agent_listing()?.default_mode.clone())
+        if let Some(mode) = self.agent_draft().and_then(|draft| draft.mode) {
+            return Some(mode);
+        }
+        // A new Bot starts in its runtime's asking mode, never the person's
+        // own default permission (S8, QUESTIONS O42).
+        if self.create.is_some() {
+            return self.asking_mode();
+        }
+        self.agent_listing()?.default_mode.clone()
     }
 
     /// **The mode's chip**: the list opens under it, the keyboard on the
@@ -412,9 +472,9 @@ impl BotView {
         let Some(row) = self.mode_rows().into_iter().nth(index) else {
             return false;
         };
-        if let Some(mut draft) = self.settings.model_shown() {
+        if let Some(mut draft) = self.agent_draft() {
             draft.mode = Some(row.id);
-            self.settings.edit_model(draft);
+            self.edit_agent_draft(draft);
         }
         self.close_agent_popover(MODE_CHIP);
         true

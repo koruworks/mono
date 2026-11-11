@@ -119,6 +119,17 @@ pub(super) enum ConfirmSubject {
         bot: koru_ai_core::bots::BotId,
         chat: koru_ai_ui::ChatId,
     },
+    /// **Abandon an unfinished creation** (Bots P1.8 S8). A yes is sent by
+    /// whoever asked — the create tab, by its draft — and deletes nothing; a
+    /// no sends nothing. The keyboard goes back to the tab's *Abandon*.
+    AbandonBotCreation(AbandonFrom),
+}
+
+/// Who asked to abandon a creation, and so who sends it on a yes.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum AbandonFrom {
+    /// A create tab, by the BotId its draft reserves.
+    Tab(koru_ai_core::bots::BotId),
 }
 
 /// More nested documents than this and the deletion is confirmed first.
@@ -744,6 +755,10 @@ impl MainView {
         // **A Bot's question is answered by its tab**, either way: a yes
         // sends, a no sends nothing, and the keyboard goes back to the
         // control that asked (S14).
+        if let ConfirmSubject::AbandonBotCreation(from) = &subject {
+            self.settle_abandon_creation(*from, confirmed);
+            return true;
+        }
         if let ConfirmSubject::BotLifecycle { bot, .. }
         | ConfirmSubject::TrashBotConversation { bot, .. } = &subject
         {
@@ -851,7 +866,9 @@ impl MainView {
                 }
             }
             // Answered above, by the Bot's tab.
-            ConfirmSubject::BotLifecycle { .. } | ConfirmSubject::TrashBotConversation { .. } => {}
+            ConfirmSubject::BotLifecycle { .. }
+            | ConfirmSubject::TrashBotConversation { .. }
+            | ConfirmSubject::AbandonBotCreation(_) => {}
         }
         true
     }

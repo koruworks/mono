@@ -145,8 +145,9 @@ impl TabView {
         match self {
             // **A Bot tab is its conversation**, before the Bot service has
             // answered and while the conversation is unavailable: one chat,
-            // one container, whatever the chat itself can show.
-            Self::Bot(view) => Some(view.chat_id()),
+            // one container, whatever the chat itself can show. A tab that
+            // is creating a Bot has no conversation yet (S8).
+            Self::Bot(view) => view.conversation_id(),
             _ => self.chat_view().and_then(AiChatView::chat_id),
         }
     }

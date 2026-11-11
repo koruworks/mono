@@ -705,6 +705,10 @@ pub struct MainView {
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
     ai_chat_folder_ask: Option<(AiChatFolderSource, koru_ai_ui::ChatId)>,
+    /// The create form whose folder pick is out with the shell (Bots P1.8
+    /// S8), by the BotId its draft reserves: it has no conversation to be
+    /// found by. Never set beside [`Self::ai_chat_folder_ask`].
+    bot_create_folder_ask: Option<koru_ai_core::bots::BotId>,
     /// **Whose each conversation is, as far as the window knows** (Bots
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
@@ -1859,6 +1863,7 @@ impl MainView {
             context_view: ContextView::new(),
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
+            bot_create_folder_ask: None,
             bot_labels: crate::bots::labels::ChatLabels::default(),
             bot_book: crate::bots::lifecycle::Book::default(),
             bot_trash: crate::bots::trash::BotTrash::default(),
@@ -7961,6 +7966,7 @@ impl MainView {
                 self.show_navigator(crate::panes::explore::NavigatorMode::Socials)
             }
             Outcome::NewAiChat => self.open_ai_chat_tab(),
+            Outcome::CreateBot => self.open_bot_create_tab(),
             Outcome::DeleteAiChats(chats) => self.ask_delete_chats(chats),
             Outcome::AiChatMenu { chats, at } => self.open_chat_menu(chats, at),
             Outcome::PinAiChat(chat, pinned) => self.pin_ai_chat(chat, pinned),
@@ -12415,6 +12421,10 @@ impl View for MainView {
     }
 
     fn ai_chat_folder_chosen(&mut self, chosen: std::path::PathBuf) -> bool {
+        // A create form's folder (Bots P1.8 S8), by its draft.
+        if let Some(draft) = self.bot_create_folder_ask.take() {
+            return self.bot_create_folder_chosen(draft, &chosen);
+        }
         let Some((source, chat)) = self.ai_chat_folder_ask.take() else {
             return false;
         };
@@ -15399,6 +15409,7 @@ impl View for MainView {
         let ai_document_opened = self.open_pending_ai_document()
             | self.open_pending_bot_role()
             | self.drain_bot_lifecycle_asks()
+            | self.drain_bot_create_asks()
             | self.maintain_bot_trash();
         let ai_attachment_opened = self.open_pending_ai_attachment();
         let file_preview_changed = self
@@ -16955,6 +16966,7 @@ impl MainView {
             return;
         };
         self.ai_chat_folder_ask = Some((source, request.chat));
+        self.bot_create_folder_ask = None;
         self.ask_pane(koru_workspace_host::PaneRequest::ChooseAiChatFolder {
             title: koru_i18n::t(crate::format::lang(), koru_i18n::Key::AiAgentChooseFolder)
                 .to_owned(),

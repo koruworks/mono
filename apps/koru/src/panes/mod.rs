@@ -131,6 +131,9 @@ pub enum Outcome {
     OpenSocials,
     /// The Chats navigator's *New chat* row: a fresh AI chat tab.
     NewAiChat,
+    /// The Bots navigator's heading button, *Create a bot* (Bots P1.8 S8):
+    /// a Bot tab in create mode for the window's workspace.
+    CreateBot,
     /// The Delete key on a chat row. **Nothing is deleted yet**: the
     /// container asks through its confirmation and, on yes, the Chats
     /// surface sends the delete itself.

@@ -17,6 +17,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme::metrics;
 use koru_ui::button::{ActionButton, ActionStyle};
 use koru_ui::segmented::Segmented;
+use koru_ui::text_field::TextArea;
 use koru_ui::text_input::{InputStyle, TextInput};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -48,6 +49,42 @@ impl Leaf for FieldLeaf {
             engine,
             at,
             InputStyle::form(self.focused),
+            Some(&self.placeholder),
+            self.focused,
+        );
+    }
+}
+
+/// **The role's text** (S8): the shared multi-line `TextArea`, as tall as
+/// four form rows; its own scroll takes what is longer.
+pub(crate) struct AreaLeaf {
+    pub(crate) input: Rc<RefCell<TextArea>>,
+    pub(crate) placeholder: String,
+    pub(crate) focused: bool,
+}
+
+/// How many form rows the role's text is tall.
+pub(crate) const AREA_ROWS: f32 = 4.0;
+
+impl Leaf for AreaLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, metrics::BUTTON_MIN.value * AREA_ROWS)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        _state: ElState,
+    ) {
+        self.input.borrow_mut().draw(
+            scene,
+            root,
+            engine,
+            at,
             Some(&self.placeholder),
             self.focused,
         );

@@ -1239,4 +1239,5 @@ fn a_hidden_tabs_list_reads_once_when_shown_again() {
 
 /// The lifecycle half of the tab (S14).
 mod agent;
+mod create;
 mod lifecycle;
