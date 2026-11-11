@@ -2909,7 +2909,7 @@
             "type": "string"
           },
           {
-            "description": "The Bot first: the conversation went with the Bot's `trash`\n(`restore` naming `trashed_by` brings it back), or its Bot is\ntrashed or archived now, which `restore_chat` refuses until the Bot\nis restored or unarchived.",
+            "description": "The Bot first: its Bot is trashed or archived now, and `restore_chat`\nrefuses until it is not. In order:\n1. `restore` naming the operation that holds the Bot: `bot_held_by`\n   (the Bot's `held_by` in `list_lifecycle`). When `trashed_by` is\n   the Bot's own `trash` it is that same operation, and this alone\n   brings the conversation back.\n2. When `trashed_by` is a `trash_chat`, the conversation was trashed\n   on its own before; the Bot's Restore leaves it in Trash, and\n   `restore_chat` naming `trashed_by` then brings it back. Naming a\n   `trash_chat` in `restore` is `invalid_request`.",
             "enum": [
               "bot"
             ],
@@ -5181,6 +5181,20 @@
       "BotTrashedChat": {
         "description": "A Bot conversation in Trash, with what put it there and how it comes back.",
         "properties": {
+          "bot_held_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycleHolder"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "When `restore` is `bot`: the completed operation that holds the Bot\narchived or in Trash (as the Bot's own `held_by`), to name as\n`source_request_id` in its `restore` first. Omitted for an active\nBot's conversation, and for one whose Bot's holder cannot be found."
+          },
           "conversation": {
             "$ref": "#/components/schemas/BotConversation"
           },

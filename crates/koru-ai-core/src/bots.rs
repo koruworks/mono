@@ -480,6 +480,12 @@ pub struct BotTrashedChat {
     pub trashed_by: BotTrashedBy,
     pub trashed_at_ms: i64,
     pub restore: BotChatRestore,
+    /// When `restore` is `bot`: the completed operation that holds the Bot
+    /// archived or in Trash (as the Bot's own `held_by`), to name as
+    /// `source_request_id` in its `restore` first. Omitted for an active
+    /// Bot's conversation, and for one whose Bot's holder cannot be found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_held_by: Option<BotLifecycleHolder>,
 }
 
 /// The lifecycle operation that put a conversation into Trash.
@@ -498,10 +504,16 @@ pub enum BotChatRestore {
     /// `restore_chat` naming `trashed_by`: it was trashed on its own and its
     /// Bot is active.
     Conversation,
-    /// The Bot first: the conversation went with the Bot's `trash`
-    /// (`restore` naming `trashed_by` brings it back), or its Bot is
-    /// trashed or archived now, which `restore_chat` refuses until the Bot
-    /// is restored or unarchived.
+    /// The Bot first: its Bot is trashed or archived now, and `restore_chat`
+    /// refuses until it is not. In order:
+    /// 1. `restore` naming the operation that holds the Bot: `bot_held_by`
+    ///    (the Bot's `held_by` in `list_lifecycle`). When `trashed_by` is
+    ///    the Bot's own `trash` it is that same operation, and this alone
+    ///    brings the conversation back.
+    /// 2. When `trashed_by` is a `trash_chat`, the conversation was trashed
+    ///    on its own before; the Bot's Restore leaves it in Trash, and
+    ///    `restore_chat` naming `trashed_by` then brings it back. Naming a
+    ///    `trash_chat` in `restore` is `invalid_request`.
     Bot,
 }
 

@@ -245,6 +245,28 @@ impl WorkerState {
         else {
             return;
         };
+        // A task's first input starts it: never while lifecycle holds its
+        // conversation or its Bot (P1.7). The person's Stop ends it instead,
+        // as the operation itself would; a hold that cannot be read waits.
+        if let Some(chat) = self.bot_chats.get(&id)
+            && matches!(chat.phase, Phase::Begin)
+        {
+            let hold = ChatId::parse(&chat.submission.provenance.chat_id.to_string())
+                .map(|chat| self.repository.bot_chat_hold(chat));
+            match hold {
+                Some(Ok(None)) => {}
+                Some(Err(_)) => {
+                    if let Some(chat) = self.bot_chats.get_mut(&id) {
+                        chat.due = now + Duration::from_millis(250);
+                    }
+                    return;
+                }
+                Some(Ok(Some(_))) | None => {
+                    let _ = self.stop_attempt(id);
+                    return;
+                }
+            }
+        }
         let chat = self.bot_chats.get_mut(&id).expect("selected chat");
         let mut ingest = None;
         let command = match chat.phase {

@@ -76,7 +76,8 @@ pub(crate) const BOT_ACTIVITY_SQL: &str = "SELECT bc.bot_id, bc.chat_id,
 /// the cursor: that table holds only what is in Trash now (a Restore deletes
 /// its rows), never lifecycle history. Each row reaches its association,
 /// Bot, Chat and operation by primary key. `?4` is the cursor's Chat ID or
-/// NULL for the first page.
+/// NULL for the first page; `?6` the last Trash row this page may examine
+/// ([`TRASHED_BOT_CHAT_WINDOW_SQL`]), or NULL when fewer remain.
 pub(crate) const TRASHED_BOT_CHAT_PAGE_SQL: &str =
     "SELECT c.id, c.title, c.current_provider, c.current_model, c.current_reasoning,
         c.branched_from_chat_id, c.branched_from_message_id, c.created_at_ms, c.updated_at_ms,
@@ -87,10 +88,26 @@ pub(crate) const TRASHED_BOT_CHAT_PAGE_SQL: &str =
   CROSS JOIN bots AS b ON b.bot_id = bc.bot_id
   CROSS JOIN chats AS c ON c.id = t.chat_id
   CROSS JOIN bot_lifecycle_intents AS i ON i.user_scope_id = t.user_scope_id AND i.operation_id = t.operation_id
-  WHERE (?4 IS NULL OR t.chat_id > ?4)
+  WHERE (?4 IS NULL OR t.chat_id > ?4) AND (?6 IS NULL OR t.chat_id <= ?6)
     AND b.user_scope_id = ?1 AND b.owner_device_id = ?2 AND b.home_workspace_id = ?3
   ORDER BY t.chat_id
   LIMIT ?5";
+
+/// How many Trash rows one page may examine. `bot_chat_trash` holds every
+/// owner's and workspace's conversations in Trash on this device and has no
+/// index by owner (ai.db 18), so a page filtered by owner and workspace
+/// would otherwise walk all of Trash past the cursor to fill itself. Each
+/// row costs four primary-key reads.
+pub(crate) const TRASHED_BOT_CHAT_SCAN: i64 = 512;
+
+/// The last Trash row of a page's window: the `?2`-th row (counted from 0)
+/// past the cursor `?1`, read from the primary key alone, or none when fewer
+/// remain, which makes the window the rest of Trash.
+pub(crate) const TRASHED_BOT_CHAT_WINDOW_SQL: &str =
+    "SELECT chat_id FROM bot_chat_trash INDEXED BY sqlite_autoindex_bot_chat_trash_1
+  WHERE (?1 IS NULL OR chat_id > ?1)
+  ORDER BY chat_id
+  LIMIT 1 OFFSET ?2";
 
 /// The owner's completed whole-Bot Archive and Trash operations of the named
 /// Bots that no completed Restore names as its source: the candidates for
@@ -220,6 +237,18 @@ impl Repository {
         if limit == 0 || limit > BOT_CHAT_PAGE_LIMIT {
             return Err(BotError::Invalid);
         }
+        let after = cursor.map(|c| c.chat_id.to_storage());
+        // The page examines at most TRASHED_BOT_CHAT_SCAN rows past the
+        // cursor, whoever they belong to.
+        let window_end: Option<String> = self
+            .connection
+            .query_row(
+                TRASHED_BOT_CHAT_WINDOW_SQL,
+                params![after, TRASHED_BOT_CHAT_SCAN - 1],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(bad)?;
         let mut statement = self
             .connection
             .prepare(TRASHED_BOT_CHAT_PAGE_SQL)
@@ -230,8 +259,9 @@ impl Repository {
                     owner.user_scope.to_storage(),
                     owner.device.to_storage(),
                     workspace.to_storage(),
-                    cursor.map(|c| c.chat_id.to_storage()),
+                    after,
                     i64::from(limit) + 1,
+                    window_end,
                 ],
                 |row| {
                     Ok((
@@ -248,6 +278,7 @@ impl Repository {
             )
             .map_err(bad)?;
         let mut chats = Vec::new();
+        let mut held = Vec::new();
         for row in rows {
             let (mut chat, purpose, bot_name, bot, lifecycle, operation, kind, at) =
                 row.map_err(bad)?;
@@ -268,6 +299,9 @@ impl Repository {
                 } else {
                     BotChatRestore::Bot
                 };
+            if lifecycle != BotLifecycle::Active {
+                held.push((label.bot_id, lifecycle));
+            }
             chats.push(BotTrashedChat {
                 conversation: BotConversation { chat, label },
                 trashed_by: BotTrashedBy {
@@ -276,6 +310,7 @@ impl Repository {
                 },
                 trashed_at_ms: at,
                 restore,
+                bot_held_by: None,
             });
         }
         let next_cursor = if chats.len() > usize::from(limit) {
@@ -284,8 +319,25 @@ impl Repository {
                 chat_id: last.conversation.chat.id,
             })
         } else {
-            None
+            // The window ended before the page filled: the next page goes on
+            // from its last row, which may be in another workspace's Trash.
+            // It grants nothing; every entry is read again under authority.
+            window_end
+                .map(|end| ChatId::parse(&end).ok_or(BotError::Storage))
+                .transpose()?
+                .map(|chat_id| BotTrashedChatCursor { chat_id })
         };
+        // What holds each archived or trashed Bot of the page, so an entry
+        // whose `restore` is `bot` names the Restore to send.
+        let inactive: Vec<(BotId, BotLifecycle)> = held
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_iter()
+            .collect();
+        let holders = self.bot_lifecycle_holders(owner, &inactive)?;
+        for entry in &mut chats {
+            entry.bot_held_by = holders.get(&entry.conversation.label.bot_id).cloned();
+        }
         Ok(BotTrashedChatPage { chats, next_cursor })
     }
 
