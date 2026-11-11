@@ -86,6 +86,15 @@ fn area() -> Rect {
     Rect::new(0.0, theme::CAPTION_H, theme::SIDEBAR_W, 600.0)
 }
 
+/// [`area`] tall enough for every app square at once. Main's rail gained the
+/// workspace `…` and App settings and the Bots branch the Bots app, so a
+/// 600-high pane folds two apps into the overflow (`rail_overflow`'s case).
+const TALL_H: f32 = 720.0;
+
+fn tall_area() -> Rect {
+    Rect::new(0.0, theme::CAPTION_H, theme::SIDEBAR_W, TALL_H)
+}
+
 /// The app under a point in the rail beside `a`, through the same hit test a
 /// press uses; `None` for the gaps and for the foot's controls.
 fn mode_at(v: &ExploreView, a: Rect, x: f32, y: f32) -> Option<NavigatorMode> {
@@ -4212,7 +4221,7 @@ fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
         theme::SIDEBAR_W,
         400.0,
     ] {
-        let a = Rect::new(theme::RAIL_W, theme::CAPTION_H, width, 600.0);
+        let a = Rect::new(theme::RAIL_W, theme::CAPTION_H, width, TALL_H);
         let rail = view.rail_of(a);
         assert_eq!(rail.x, 0.0, "the rail is before the pane");
         assert_eq!(rail.w, theme::RAIL_W);
@@ -6779,7 +6788,7 @@ fn the_chats_mode_is_the_fourth_icon_and_owns_the_column() {
 #[test]
 fn socials_mode_requests_its_shared_tab_and_has_no_library_footer() {
     let mut view = ExploreView::new();
-    let a = area();
+    let a = tall_area();
     let (_, socials) = view
         .navigator_mode_rects(view.rail_of(a))
         .into_iter()
@@ -6868,7 +6877,7 @@ fn mode_icons_are_sized_from_the_modes_the_build_shows() {
         });
     }
     let view = ExploreView::new();
-    let rects = view.navigator_mode_rects(view.rail_of(a));
+    let rects = view.navigator_mode_rects(view.rail_of(tall_area()));
     assert_eq!(rects.len(), NavigatorMode::ALL.len() - 1, "all but Home");
     assert!(rects.iter().all(|(_, r)| r.w == apps_rail::SQUARE));
 }

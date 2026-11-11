@@ -4,12 +4,16 @@ use super::*;
 use crate::panes::explore::{ExploreView, NavigatorMode};
 use koru_draw::theme;
 
+/// A band with room for every control at once. Main's rail gained the
+/// workspace `…` and App settings and the Bots branch the Bots app, and a
+/// 600-high window now folds two apps into the overflow, which is
+/// `rail_overflow`'s to test, not this file's.
 fn band() -> Rect {
     Rect::new(
         0.0,
         theme::CAPTION_H,
         theme::RAIL_W,
-        600.0 - theme::CAPTION_H,
+        720.0 - theme::CAPTION_H,
     )
 }
 
