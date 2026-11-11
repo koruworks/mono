@@ -125,6 +125,34 @@ pub const VOICE: &str = if cfg!(windows) {
     "koru-voice-worker"
 };
 
+/// The read worker. It parses the files and pictures Koru reads words out of —
+/// untrusted bytes in, words out — in a process of its own, so a file that
+/// breaks the parser takes nothing else with it.
+///
+/// **Supervised by the Store, never started by a person or by the updater.**
+/// The Store daemon runs it through `koru-agent-worker` as a sibling program
+/// resolved beside its own executable (never through `PATH`), inside a
+/// kill-on-close Job Object with a memory ceiling. It has no `stop` verb, so it
+/// is deliberately absent from the updater's stop sequence: it ends when the
+/// Store that supervises it ends, and the quiesce probe is what proves its
+/// image free.
+///
+/// **Named here before it is built, and not yet in [`ALL`].** `apps/koru-read`
+/// does not exist yet; [`ALL`] is read in both directions — package
+/// validation requires every name in it, and `koru-release` builds, signs and
+/// stages every package its table pairs with one — so listing it now would
+/// refuse every package. The plan that creates the binary adds it to [`ALL`]
+/// and to `koru-release`'s `CHANNEL_BINARIES` (and the macOS notices list) in
+/// the same change. Keep this constant synchronized with the package and
+/// `[[bin]]` name `koru-read-worker`, the release/signing inventories, the
+/// Store's sibling resolution, launchers, stop scripts, logs and docs, as
+/// [`VOICE`]'s comment says for its worker.
+pub const READ: &str = if cfg!(windows) {
+    "koru-read-worker.exe"
+} else {
+    "koru-read-worker"
+};
+
 /// The retired standalone terminal window (TERMINATAB W5): sessions run as
 /// Koru Workspace tabs now, and no current package ships this binary. The
 /// name is kept because the frozen v2-v4 inventories require it and the
@@ -370,6 +398,7 @@ mod tests {
             assert_eq!(LEGACY_VOICE, "koru-voice.exe");
             assert_eq!(MCP, "koru-mcp.exe");
             assert_eq!(VOICE, "koru-voice-worker.exe");
+            assert_eq!(READ, "koru-read-worker.exe");
             assert_eq!(UPDATER, "koru-updater.exe");
             assert_eq!(TERMINAL, "koru-terminal.exe");
             assert_eq!(SESSION_HOST, "koru-session-host.exe");
@@ -380,6 +409,7 @@ mod tests {
             assert_eq!(COM_NOTIFICATION, "koru-com-notification");
             assert_eq!(LEGACY_VOICE, "koru-voice");
             assert_eq!(VOICE, "koru-voice-worker");
+            assert_eq!(READ, "koru-read-worker");
             assert_eq!(UPDATER, "koru-updater");
             for name in ALL {
                 assert!(!name.ends_with(".exe"), "{name} carries a Windows suffix");
@@ -454,6 +484,17 @@ mod tests {
         } else {
             assert!(!ALL.contains(&COM_NOTIFICATION));
         }
+    }
+
+    /// **The read worker is named and not yet required.** No package can carry
+    /// it until `apps/koru-read` builds it, and requiring it would refuse every
+    /// package — see [`READ`]. The plan that builds it deletes this test, adds
+    /// [`READ`] to [`ALL`] and to `every_executable_is_in_the_list_exactly_once`,
+    /// and pairs it in `koru-release`'s `CHANNEL_BINARIES`.
+    #[test]
+    fn the_read_worker_is_named_but_not_yet_required_of_a_package() {
+        assert!(!ALL.contains(&READ));
+        assert_ne!(READ, VOICE);
     }
 
     /// The auxiliary set is macOS's login-item bundle and nothing else, with

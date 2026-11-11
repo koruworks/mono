@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Running a role of our own executable as a supervised child.
+//! Running a role of our own executable — or a sibling program — as a
+//! supervised child.
 //!
 //! **This crate can name no role.** It owns the mechanism a self-hosted
 //! worker needs — the early-`main` dispatch that turns `koru-agent.exe
@@ -13,6 +14,16 @@
 //! and nothing about what any particular worker does. Role knowledge
 //! (endpoints, authorities, bootstrap contents) stays with the role, passed
 //! in as closures and an opaque payload.
+//!
+//! **The same mechanism runs a sibling program** (OCR roadmap Plan 1.4): a
+//! supervised child may be a separately shipped executable resolved beside
+//! `current_exe()` ([`supervisor::Program::Sibling`]) instead of a role of
+//! this one, and any child may carry a ceiling on its tree's committed memory
+//! ([`supervisor::WorkerSpec::memory_limit`], Windows only —
+//! [`supervisor::MEMORY_LIMIT_ENFORCED`]). Which sibling, and why it needs a
+//! ceiling, is the caller's knowledge; the crate names neither. A sibling
+//! that links this crate reads its bootstrap and watches its parent with the
+//! same [`read_bootstrap_line`] and [`ParentPipe`] a role does.
 //!
 //! Two sides, two entry points:
 //!
