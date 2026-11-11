@@ -37,7 +37,9 @@ const MIGRATED: &[&str] = &[
     "crates/koru-ai-ui/src/model_picker/elements.rs",
     "crates/koru-ai-ui/src/model_picker/paint.rs",
     // The composer's approval-mode list (koru-ai D7, D105): boxes, text and
-    // icons only; its tokens are beside it in `approval_modes/tokens.rs`.
+    // icons only, moved into the agent-configuration control (Bots P1.8);
+    // its tokens are beside it in `modes/tokens.rs`.
+    "crates/koru-agent-config-ui/src/modes/elements.rs",
     "crates/koru-ai-ui/src/approval_modes/elements.rs",
     // The composer's workspace-access panel (koru-ai D106): its filter field
     // is the picker's `SearchLeaf`; its tokens are in `privacy/tokens.rs`.

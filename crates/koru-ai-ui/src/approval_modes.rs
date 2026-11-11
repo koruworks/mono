@@ -33,12 +33,13 @@
 
 use std::time::{Duration, Instant};
 
+use koru_agent_config_ui::modes as cfg;
 use koru_ai_core::AiProviderId;
 use koru_ai_wire::{AgentModeView, UpdateChatAgentSettingsRequest};
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
 use koru_draw::inspect;
-use koru_draw::{icons, scene, theme, theme::role};
+use koru_draw::{scene, theme, theme::role};
 use koru_i18n::{Key as Words, fill, t};
 use koru_ui::popover::PopoverAlign;
 use koru_ui::split_button::SplitTone;
@@ -51,8 +52,11 @@ use crate::Focus;
 use crate::agents::is_agent_provider;
 use crate::reader::Command;
 
-/// One row of the list: an icon, a title and a line under it.
-pub(crate) const MODE_ROW_H: f32 = 46.0;
+// Read only by the suite, through `use super::*`, since the mode table
+// moved; it goes when the suite moves into the control's crate.
+#[cfg(test)]
+use koru_draw::icons;
+
 /// The air around the rows inside the panel.
 const PANEL_PAD: f32 = 4.0;
 /// The panel's corners, as the composer's other panels have them.
@@ -71,348 +75,69 @@ pub(crate) struct ListedModes {
     pub default: Option<String>,
 }
 
-/// One mode as the picker shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ModeRow {
-    pub id: String,
-    pub title: String,
-    pub help: Option<String>,
-    pub icon: char,
-    /// *Full access*: drawn in the warning color, never stepped to by
-    /// Shift+Tab, and a new chat's only by a *Yolo* default.
-    pub full_access: bool,
-}
+// **The modes' vocabulary is the agent-configuration control's**
+// (`koru_agent_config_ui::modes`, Bots P1.8): the rows, Koru's words for the
+// agents' own modes, what each is for, a new chat's mode and Shift+Tab's
+// order. The chat names them here over its own types — the provider id and
+// the listing it keeps — so this crate's code and its suite read as they did.
+pub use cfg::NewChatPermission;
+pub(crate) use cfg::{MODE_ROW_H, ModeRow, Role, next_mode};
 
-/// The modes Koru knows: the agent's kind, the mode's id, its title, its
-/// line, its icon, and its [`Role`]. A title or line that is `None` stays
-/// the agent's own — a mode can need Koru's role without Koru's words.
-const KNOWN: &[(&str, &str, Option<Words>, Option<Words>, char, Role)] = &[
-    (
-        "agent-claude",
-        "default",
-        Some(Words::AiAgentModeAskFirst),
-        Some(Words::AiAgentModeAskFirstHelp),
-        icons::QUESTION,
-        Role::Ask,
-    ),
-    (
-        "agent-claude",
-        "acceptEdits",
-        Some(Words::AiAgentModeAcceptEdits),
-        Some(Words::AiAgentModeAcceptEditsHelp),
-        icons::PENCIL,
-        Role::Other,
-    ),
-    (
-        "agent-claude",
-        "plan",
-        Some(Words::AiAgentModePlan),
-        Some(Words::AiAgentModePlanHelp),
-        icons::LIST_CHECKS,
-        Role::Other,
-    ),
-    (
-        "agent-claude",
-        "auto",
-        Some(Words::AiAgentModeAuto),
-        Some(Words::AiAgentModeAutoHelp),
-        icons::SPARKLE,
-        Role::Auto,
-    ),
-    (
-        "agent-claude",
-        "bypassPermissions",
-        Some(Words::AiAgentModeFullAccess),
-        Some(Words::AiAgentModeFullAccessHelp),
-        icons::WARNING,
-        Role::Full,
-    ),
-    (
-        "agent-codex",
-        "ask",
-        Some(Words::AiAgentModeAskApproval),
-        Some(Words::AiAgentModeAskApprovalHelp),
-        icons::QUESTION,
-        Role::Ask,
-    ),
-    (
-        "agent-codex",
-        "auto-review",
-        Some(Words::AiAgentModeApproveForMe),
-        Some(Words::AiAgentModeApproveForMeHelp),
-        icons::ROBOT,
-        Role::Auto,
-    ),
-    (
-        "agent-codex",
-        "full-access",
-        Some(Words::AiAgentModeFullAccess),
-        Some(Words::AiAgentModeCodexFullAccessHelp),
-        icons::WARNING,
-        Role::Full,
-    ),
-    (
-        "agent-opencode",
-        "build",
-        Some(Words::AiAgentModeBuild),
-        Some(Words::AiAgentModeBuildHelp),
-        icons::WRENCH,
-        Role::Ask,
-    ),
-    (
-        "agent-opencode",
-        "plan",
-        Some(Words::AiAgentModePlan),
-        Some(Words::AiAgentModeOpenCodePlanHelp),
-        icons::LIST_CHECKS,
-        Role::Other,
-    ),
-    // Devin over ACP (`devin acp`, D51). It has no mode that asks before
-    // an edit: *Code* (`accept-edits`) is what it starts in and what
-    // *Manual* means for it. Its `ask` only answers questions and never
-    // edits, so it is not *Ask first*: it keeps Devin's own name and line.
-    // Koru names the rest and Devin's own line explains them, but for
-    // `bypass`, whose *Runs everything without asking.* is exactly it.
-    (
-        "agent-devin",
-        "accept-edits",
-        Some(Words::AiAgentModeAcceptEdits),
-        None,
-        icons::PENCIL,
-        Role::Other,
-    ),
-    (
-        "agent-devin",
-        "smart",
-        Some(Words::AiAgentModeAuto),
-        None,
-        icons::SPARKLE,
-        Role::Auto,
-    ),
-    ("agent-devin", "ask", None, None, icons::FADERS, Role::Other),
-    (
-        "agent-devin",
-        "plan",
-        Some(Words::AiAgentModePlan),
-        None,
-        icons::LIST_CHECKS,
-        Role::Other,
-    ),
-    (
-        "agent-devin",
-        "bypass",
-        Some(Words::AiAgentModeFullAccess),
-        Some(Words::AiAgentModeFullAccessHelp),
-        icons::WARNING,
-        Role::Full,
-    ),
-];
-
-/// **What a mode is for**, as far as a new chat's default needs to know:
-/// the agent's asking mode, the one that approves safe actions on its own,
-/// the one that runs everything without asking, or none of those (Claude's
-/// *Accept edits* and *Plan*, OpenCode's *Plan*).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Role {
-    Ask,
-    Auto,
-    Full,
-    Other,
-}
-
-/// **The ids other agents spell the same three roles with** — the known
-/// aliases, compared without case and with `_` read as `-`. A mode in
-/// [`KNOWN`] has its role from there; these are for an agent Koru has no
-/// table for, so that a new agent offering `yolo` or `full-access` is not
-/// started in it by *Manual*, and is by *Yolo*.
-const ASK_ALIASES: &[&str] = &[
-    "default",
-    "ask",
-    "manual",
-    "read-only",
-    "readonly",
-    "suggest",
-];
-const AUTO_ALIASES: &[&str] = &["auto", "auto-review", "autoreview", "auto-approve"];
-const FULL_ALIASES: &[&str] = &[
-    "bypasspermissions",
-    "bypass-permissions",
-    "full-access",
-    "fullaccess",
-    "yolo",
-    "danger-full-access",
-    "dangerously-skip-permissions",
-];
-
-/// `id`'s role for `agent`: its row in [`KNOWN`], else a known alias, else
-/// [`Role::Other`].
-pub(crate) fn role_of(agent: &AiProviderId, id: &str) -> Role {
-    if let Some(known) = KNOWN
-        .iter()
-        .find(|known| known.0 == agent.as_str() && known.1 == id)
-    {
-        return known.5;
-    }
-    let spelled = id.to_ascii_lowercase().replace('_', "-");
-    let spelled = spelled.as_str();
-    if FULL_ALIASES.contains(&spelled) {
-        Role::Full
-    } else if AUTO_ALIASES.contains(&spelled) {
-        Role::Auto
-    } else if ASK_ALIASES.contains(&spelled) {
-        Role::Ask
-    } else {
-        Role::Other
-    }
-}
-
-/// Whether `id` is `agent`'s *Full access*: drawn in the warning color and
-/// never stepped to by Shift+Tab.
-pub(crate) fn is_full_access(agent: &AiProviderId, id: &str) -> bool {
-    role_of(agent, id) == Role::Full
-}
-
-/// **The permission a new chat starts in**, as the person set it on *Agent
-/// providers*. Each agent's own modes are what a chat runs in;
-/// [`default_mode`] maps this onto them.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum NewChatPermission {
-    /// The agent's asking mode: Claude's *Ask first*, Codex's *Ask for
-    /// approval*, OpenCode's *Build*.
-    #[default]
-    Manual,
-    /// The mode that approves safe actions on its own: Claude's *Auto*,
-    /// Codex's *Approve for me*. An agent with none starts in *Manual*.
-    Auto,
-    /// The mode that runs everything without asking: Claude's
-    /// `bypassPermissions` where it offers it, Codex's *Full access*. An
-    /// agent that offers none starts in *Manual*.
-    Yolo,
-}
-
-/// Whether `agent` is one of the **supported agents** — it offers a mode
-/// that approves safe actions on its own — and so starts from the first of
-/// the two defaults rather than the second.
-pub(crate) fn has_auto_mode(agent: &AiProviderId, listed: &ListedModes) -> bool {
+/// `listed`'s modes as the control takes them, borrowed.
+fn offers(listed: &ListedModes) -> Vec<cfg::ModeOffer<'_>> {
     listed
         .modes
         .iter()
-        .any(|mode| role_of(agent, &mode.id) == Role::Auto)
+        .map(|mode| cfg::ModeOffer {
+            id: &mode.id,
+            name: mode.name.as_deref(),
+            description: mode.description.as_deref(),
+        })
+        .collect()
 }
 
-/// **The mode a new chat with `agent` starts in** — the one tested place the
-/// two default permissions meet an agent's own modes (D39).
-///
-/// An agent with an auto mode takes `supported`, any other `other` (where
-/// *Auto* means *Manual*: it has nothing to approve with). Then:
-///
-/// - *Manual* is the agent's asking mode; failing one, the mode it reports
-///   it starts in, unless that runs everything; failing that, its first
-///   mode that does not.
-/// - *Auto* is its auto mode, and *Manual* without one.
-/// - *Yolo* is its full-access mode **only where it offers one**, and
-///   *Manual* otherwise — never a mode the agent did not list, which the
-///   adapter would refuse.
-///
-/// `None` only for an agent that lists no modes at all, whose chat has no
-/// mode to start in.
+/// `id`'s role for `agent` ([`cfg::role_of`]).
+pub(crate) fn role_of(agent: &AiProviderId, id: &str) -> Role {
+    cfg::role_of(agent.as_str(), id)
+}
+
+/// Whether `id` is `agent`'s *Full access* ([`cfg::is_full_access`]).
+#[cfg(test)]
+pub(crate) fn is_full_access(agent: &AiProviderId, id: &str) -> bool {
+    cfg::is_full_access(agent.as_str(), id)
+}
+
+/// Whether `agent` offers a mode that approves safe actions on its own
+/// ([`cfg::has_auto_mode`]).
+#[cfg(test)]
+pub(crate) fn has_auto_mode(agent: &AiProviderId, listed: &ListedModes) -> bool {
+    cfg::has_auto_mode(agent.as_str(), &offers(listed))
+}
+
+/// **The mode a new chat with `agent` starts in** ([`cfg::default_mode`]):
+/// the person's two default permissions mapped onto the agent's own modes.
 pub(crate) fn default_mode(
     agent: &AiProviderId,
     listed: &ListedModes,
     supported: NewChatPermission,
     other: NewChatPermission,
 ) -> Option<String> {
-    let first = |role: Role| {
-        listed
-            .modes
-            .iter()
-            .find(|mode| role_of(agent, &mode.id) == role)
-            .map(|mode| mode.id.clone())
-    };
-    let manual = || {
-        first(Role::Ask)
-            .or_else(|| {
-                listed
-                    .default
-                    .clone()
-                    .filter(|id| listed.modes.iter().any(|mode| &mode.id == id))
-                    .filter(|id| role_of(agent, id) != Role::Full)
-            })
-            .or_else(|| {
-                listed
-                    .modes
-                    .iter()
-                    .find(|mode| role_of(agent, &mode.id) != Role::Full)
-                    .map(|mode| mode.id.clone())
-            })
-    };
-    let permission = if has_auto_mode(agent, listed) {
-        supported
-    } else {
-        other
-    };
-    match permission {
-        NewChatPermission::Manual => manual(),
-        NewChatPermission::Auto => first(Role::Auto).or_else(manual),
-        NewChatPermission::Yolo => first(Role::Full).or_else(manual),
-    }
+    cfg::default_mode(
+        agent.as_str(),
+        &offers(listed),
+        listed.default.as_deref(),
+        supported,
+        other,
+    )
 }
 
-/// `agent`'s modes as rows, in the agent's order: Koru's words for the ones
-/// it knows, the agent's own name and description, and a neutral icon, for
-/// the rest.
+/// `agent`'s modes as rows, in the agent's order ([`cfg::rows`]).
 pub(crate) fn rows(
     lang: koru_i18n::Lang,
     agent: &AiProviderId,
     listed: &ListedModes,
 ) -> Vec<ModeRow> {
-    listed
-        .modes
-        .iter()
-        .map(|mode| {
-            match KNOWN
-                .iter()
-                .find(|known| known.0 == agent.as_str() && known.1 == mode.id)
-            {
-                // Koru's words where it has them, the agent's own where it
-                // does not (Devin's, D51); the role is Koru's either way.
-                Some((_, _, title, help, icon, role)) => ModeRow {
-                    id: mode.id.clone(),
-                    title: title.map_or_else(
-                        || mode.name.clone().unwrap_or_else(|| mode.id.clone()),
-                        |title| t(lang, title).to_owned(),
-                    ),
-                    help: help
-                        .map(|help| t(lang, help).to_owned())
-                        .or_else(|| mode.description.clone()),
-                    icon: *icon,
-                    full_access: *role == Role::Full,
-                },
-                // An agent Koru has no words for keeps its own; one of the
-                // known full-access spellings is still drawn and stepped as
-                // *Full access*.
-                None => ModeRow {
-                    id: mode.id.clone(),
-                    title: mode.name.clone().unwrap_or_else(|| mode.id.clone()),
-                    help: mode.description.clone(),
-                    icon: icons::FADERS,
-                    full_access: is_full_access(agent, &mode.id),
-                },
-            }
-        })
-        .collect()
-}
-
-/// The mode after `current` among the ones Shift+Tab steps through — every
-/// mode but *Full access* — wrapping at the end. From *Full access*, or a
-/// mode no longer listed, the first.
-pub(crate) fn next_mode<'a>(rows: &'a [ModeRow], current: Option<&str>) -> Option<&'a ModeRow> {
-    let steps: Vec<&ModeRow> = rows.iter().filter(|row| !row.full_access).collect();
-    let at = current.and_then(|current| steps.iter().position(|row| row.id == current));
-    match at {
-        Some(at) => steps.get((at + 1) % steps.len()).copied(),
-        None => steps.first().copied(),
-    }
+    cfg::rows(lang, agent.as_str(), &offers(listed))
 }
 
 /// How long after an agent's listing came without modes it is asked again.
@@ -927,4 +652,3 @@ mod elements;
 mod pins;
 #[cfg(test)]
 mod tests;
-mod tokens;

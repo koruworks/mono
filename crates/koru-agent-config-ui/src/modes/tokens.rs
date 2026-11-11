@@ -15,25 +15,25 @@ use koru_draw::theme::{Metric, Space, Tagged};
 use super::MODE_ROW_H;
 
 /// The air around the rows inside the panel: 4.
-pub(crate) const PANEL_INSET: Tagged<Space> = Tagged::new("APPROVAL_PANEL_PAD", Space::S1);
+pub const PANEL_INSET: Tagged<Space> = Tagged::new("APPROVAL_PANEL_PAD", Space::S1);
 
 /// One row of the list ([`MODE_ROW_H`]): an icon, a title and a line under
 /// it.
-pub(crate) const ROW_HEIGHT: Metric = Metric::new("APPROVAL_ROW_H", MODE_ROW_H);
+pub const ROW_HEIGHT: Metric = Metric::new("APPROVAL_ROW_H", MODE_ROW_H);
 
 /// A row's content inset at its start, and at its end after the ✓'s lane:
 /// 10.
-pub(crate) const ROW_INSET: Tagged<Space> = Tagged::new("APPROVAL_ROW_INSET", Space::S2_5);
+pub const ROW_INSET: Tagged<Space> = Tagged::new("APPROVAL_ROW_INSET", Space::S2_5);
 
 /// The mode's icon below the row's top: 8.
-pub(crate) const ICON_TOP: Tagged<Space> = Tagged::new("APPROVAL_ICON_TOP", Space::S2);
+pub const ICON_TOP: Tagged<Space> = Tagged::new("APPROVAL_ICON_TOP", Space::S2);
 
 /// Between the icon and the words: with the inset and the icon, the 34 the
 /// words always started at.
-pub(crate) const WORDS_INSET: Tagged<Space> = Tagged::new("APPROVAL_WORDS_INSET", Space::S3);
+pub const WORDS_INSET: Tagged<Space> = Tagged::new("APPROVAL_WORDS_INSET", Space::S3);
 
 /// The title below the row's top: 5, which no step names.
-pub(crate) const WORDS_TOP: Tagged<Space> = Tagged::new("APPROVAL_WORDS_TOP", Space::Px(5.0));
+pub const WORDS_TOP: Tagged<Space> = Tagged::new("APPROVAL_WORDS_TOP", Space::Px(5.0));
 
 /// Between the title and its line: 2.
-pub(crate) const WORDS_GAP: Tagged<Space> = Tagged::new("APPROVAL_WORDS_GAP", Space::S0_5);
+pub const WORDS_GAP: Tagged<Space> = Tagged::new("APPROVAL_WORDS_GAP", Space::S0_5);

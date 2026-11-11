@@ -211,6 +211,36 @@ fn pin_state(pins: &mut Pins, name: &str, mut surface: ChatSurface, golden: [&st
     pins.check(&format!("{name}.grid"), &grid, golden[2]);
 }
 
+/// **The tree is the control's** (S2c): every element record the open
+/// list draws is built in `koru-agent-config-ui`.
+#[test]
+fn the_lists_elements_are_built_by_the_control() {
+    use koru_draw::inspect;
+    let mut surface = open();
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        vello::kurbo::Rect::new(0.0, 0.0, 900.0, 700.0),
+    );
+    let mut scene = Scene::new();
+    surface.draw_approval_mode_picker(&mut scene, Affine::IDENTITY);
+    let snapshot = capture.finish();
+    let elements: Vec<_> = snapshot
+        .records
+        .iter()
+        .filter(|record| record.kind == "element")
+        .collect();
+    assert!(elements.len() > 10, "{}", elements.len());
+    for record in elements {
+        assert!(
+            record.source.contains("koru-agent-config-ui"),
+            "{} is built at {}",
+            record.name,
+            record.source
+        );
+    }
+}
+
 macro_rules! golden {
     ($name:literal) => {
         [

@@ -22,6 +22,7 @@
 //! The plan this is built to is `docs/features/bots/P1.8.PICKER.notes.md`.
 
 pub mod effort;
+pub mod modes;
 pub mod picker;
 
 #[cfg(test)]
