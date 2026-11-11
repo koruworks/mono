@@ -88,15 +88,21 @@ impl LocalDelegate {
         }
     }
 
-    fn connect(&self) -> Result<Stream> {
-        let stream = koru_ipc::connect_timed(&self.endpoint, CONNECT_TIMEOUT)
+    fn connect(&self, within: Duration) -> Result<Stream> {
+        let stream = koru_ipc::connect_timed(&self.endpoint, CONNECT_TIMEOUT.min(within))
             .map_err(|_| Failure::unavailable())?;
-        koru_ipc::set_timeouts(&stream, Some(CALL_TIMEOUT));
+        koru_ipc::set_timeouts(&stream, Some(within));
         Ok(stream)
     }
 
     pub(crate) fn call(&self, request: &Request) -> Result<Response> {
-        let stream = self.connect()?;
+        self.call_within(request, CALL_TIMEOUT)
+    }
+
+    /// One call that waits at most `within` (at least a millisecond) to
+    /// connect, write and read; past it the call is `delegate_unavailable`.
+    pub(crate) fn call_within(&self, request: &Request, within: Duration) -> Result<Response> {
+        let stream = self.connect(within.max(Duration::from_millis(1)))?;
         let mut writer = &stream;
         frame::write_frame(&mut writer, WIRE_VERSION, request)
             .map_err(|_| Failure::unavailable())?;
@@ -292,7 +298,7 @@ impl DelegatePort for LocalDelegate {
         workspace: Option<WorkspaceId>,
         after: Option<u64>,
     ) -> Result<Box<dyn RunStream>> {
-        let stream = self.connect()?;
+        let stream = self.connect(CALL_TIMEOUT)?;
         // A stream waits as long as the run does; the worker ends it.
         koru_ipc::set_timeouts(&stream, None);
         let mut writer = &stream;
@@ -424,7 +430,7 @@ impl DelegatePort for LocalDelegate {
         workspace: WorkspaceId,
         after: Option<ScheduleChange>,
     ) -> Result<Box<dyn ScheduleStream>> {
-        let stream = self.connect()?;
+        let stream = self.connect(CALL_TIMEOUT)?;
         let mut writer = &stream;
         frame::write_frame(
             &mut writer,

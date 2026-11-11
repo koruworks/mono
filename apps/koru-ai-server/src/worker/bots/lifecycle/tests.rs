@@ -165,6 +165,14 @@ fn reads_are_the_only_bot_commands_an_archived_bot_answers() {
             workspace: WorkspaceId::new(),
             lifecycle: BotLifecycle::Archived,
         },
+        BotCommand::ReadRun {
+            bot_id: bot,
+            chat_id: ChatId::new(),
+            message_id: koru_ai_core::MessageId::new(),
+            run_id: koru_delegate_core::RunId::mint(),
+            from: 0,
+            len: 1,
+        },
     ] {
         assert!(bot_read_command(&read), "{read:?}");
     }

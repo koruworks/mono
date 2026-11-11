@@ -83,13 +83,14 @@ impl Repository {
         &self,
         message: MessageId,
     ) -> Result<Option<HistoricalBotRun>, BotError> {
+        // Prepared once per connection: a transcript asks it per reply.
         let row: Option<(String, String, String, String)> = self
             .connection
-            .query_row(
-                HISTORICAL_BOT_RUN_SQL,
-                params![message.to_storage(), MAX_ORIGIN_HOPS],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
+            .prepare_cached(HISTORICAL_BOT_RUN_SQL)
+            .map_err(bad)?
+            .query_row(params![message.to_storage(), MAX_ORIGIN_HOPS], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
             .optional()
             .map_err(bad)?;
         row.map(|(bot, chat, assistant, run)| {

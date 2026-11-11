@@ -3849,7 +3849,8 @@
               },
               "len": {
                 "format": "uint32",
-                "minimum": 0,
+                "maximum": 500,
+                "minimum": 1,
                 "type": "integer"
               },
               "message_id": {

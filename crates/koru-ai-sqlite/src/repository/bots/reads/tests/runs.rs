@@ -252,3 +252,39 @@ fn reply_runs_seek_by_keys_only() {
         "{found}"
     );
 }
+
+/// A reference is consulted only when the chain names no Run of this Bot:
+/// with the source alive, a stray reference to another Run binds nothing.
+#[test]
+fn a_reference_never_overrides_the_run_the_chain_names() {
+    let (mut repo, bot, _, reply, run) = replied();
+    let first = copy(&repo, &bot, bot.main_chat, reply);
+    repo.create_bot_branch(&bot, &first).unwrap();
+    let copied = first.messages[1].id;
+    let stray = RunId::mint();
+    repo.connection
+        .execute(
+            "INSERT INTO bot_historical_run_refs(chat_id,message_id,source_chat_id,source_message_id,bot_id,run_id,record_workspace_id,recorded_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,1)",
+            params![
+                first.chat.id.to_storage(),
+                copied.to_storage(),
+                bot.main_chat.to_storage(),
+                reply.to_storage(),
+                bot.id.to_storage(),
+                stray.to_storage(),
+                bot.home_workspace.to_storage()
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.bound_bot_run(bot.id, first.chat.id, copied, stray)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        repo.bound_bot_run(bot.id, first.chat.id, copied, run)
+            .unwrap(),
+        Some(bot.home_workspace)
+    );
+    assert_eq!(reported(&repo, &bot, first.chat.id), vec![(copied, run)]);
+}

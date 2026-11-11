@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! `read_run` (P1.8 B1) through the real worker: the writer checks the owner,
-//! the conversation's Trash and the binding of the Run to the reply; a
-//! bounded pool job checks authority again and asks the execution owner;
-//! the answer is the Run view without its session.
+//! the conversation's Trash and the binding of the Run to the reply; a job
+//! on the Run reads' own bounded lane checks authority again and asks the
+//! execution owner within a deadline; the answer is the Run view with
+//! nothing that names its session.
 use super::*;
 use koru_delegate_api::bots::{BotCommand as D, BotDelegatePort, BotReply};
 use koru_delegate_api::wire::TimelineQuery;
@@ -11,13 +12,17 @@ use koru_delegate_core::{BotRunKey, RunExecution, RunView, TimelineItem, Timelin
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// The execution owner's `Read`, refusing exactly what the real one refuses.
-/// Each branch names the real code it mirrors (`koru-delegate-host`
-/// `actor/bots.rs` `BotCommand::Read`, which calls `koru-delegate-runtime`
-/// `Orchestrator::bot_read_allowed` and then `Actor::view`).
+/// The execution owner's `Read`, refusing exactly what the real one refuses
+/// and answering what it answers. Each branch names the real code it
+/// mirrors (`koru-delegate-host` `actor/bots.rs` `BotCommand::Read`, which
+/// calls `koru-delegate-runtime` `Orchestrator::bot_read_allowed` and then
+/// `Actor::view`); a Run read always states how long it may wait, as
+/// `LocalBotDelegate::execute_within` bounds its socket.
 struct RunOwner {
     /// The delegate worker's own device (`Actor::device`).
     device: DeviceId,
+    /// The provider session every Run here was driven in.
+    session: d::SessionId,
     /// The ledger's immutable binding of each Bot Run: the owner and Bot its
     /// `BotExecutionRecord` holds.
     ledger: Mutex<HashMap<d::RunId, (d::BotOwner, BotId)>>,
@@ -27,17 +32,21 @@ struct RunOwner {
     gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     /// The delegate worker does not answer.
     down: AtomicBool,
+    /// Its Runs say the agent asked for them (no Bot Run does).
+    agent_requested: AtomicBool,
 }
 
 impl RunOwner {
     fn on(device: DeviceId) -> Arc<Self> {
         Arc::new(Self {
             device,
+            session: d::SessionId::mint(),
             ledger: Mutex::default(),
             entries: 7,
             reads: Mutex::default(),
             gate: Mutex::default(),
             down: AtomicBool::new(false),
+            agent_requested: AtomicBool::new(false),
         })
     }
     fn holds(&self, run: d::RunId, bot: &Bot) {
@@ -49,6 +58,60 @@ impl RunOwner {
     fn reads(&self) -> Vec<(BotRunKey, TimelineQuery)> {
         self.reads.lock().unwrap().clone()
     }
+    /// The history a Bot Run's owner writes once it starts: `bot_mark_started`
+    /// records the attempt and its session on the Started step; turns follow,
+    /// one with the agent as its actor, and a usage fact.
+    fn timeline(&self, at: u64) -> TimelineItem {
+        let attempt = d::RunAttemptId::from_uuid(Uuid::from_u128(1));
+        let step = |kind, refs: Vec<d::TimelineRef>| {
+            TimelineItem::Step(d::TimelineEntry {
+                id: d::TimelineEntryId::mint(),
+                kind,
+                refs: d::TimelineRefs::new(refs).unwrap(),
+                at_ms: at as i64,
+            })
+        };
+        match at {
+            0 => step(d::StepKind::RunCreated, vec![]),
+            1 => step(
+                d::StepKind::Started,
+                vec![
+                    d::TimelineRef::Attempt { attempt },
+                    d::TimelineRef::Session {
+                        session: self.session,
+                    },
+                ],
+            ),
+            2 => step(
+                d::StepKind::TurnStarted {
+                    originator: d::TurnOriginator::Orchestrator,
+                },
+                vec![
+                    d::TimelineRef::Attempt { attempt },
+                    d::TimelineRef::Actor {
+                        actor: d::ActorRef::Agent {
+                            session: self.session,
+                        },
+                    },
+                ],
+            ),
+            3 => TimelineItem::Usage(d::UsageFact {
+                identity: d::UsageFactId::mint(),
+                attempt,
+                turn: d::AgentTurnId::mint(),
+                revision: d::AmendmentRevision(0),
+                input: Some(1),
+                output: Some(2),
+                cached_input: None,
+                model: d::ModelRef::mint(),
+                completeness: d::Completeness::Complete,
+            }),
+            _ => step(
+                d::StepKind::Completed,
+                vec![d::TimelineRef::Attempt { attempt }],
+            ),
+        }
+    }
 }
 
 /// `koru-delegate-host` `bot_failure` for a `bot_*` port code.
@@ -59,24 +122,37 @@ fn refused(code: &str) -> koru_delegate_api::Failure {
 impl BotDelegatePort for RunOwner {
     fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
         assert!(
-            std::thread::current()
-                .name()
-                .unwrap_or_default()
-                .starts_with("koru-ai-provider"),
-            "the execution owner is asked off the writer"
+            !matches!(command, D::Read { .. }),
+            "a Run read always states how long it may wait"
+        );
+        // Startup recovery (native effects, deliveries) is not under test.
+        Err(koru_delegate_api::Failure::new(
+            "fixture_pending",
+            "fixture recovery stays pending",
+            true,
+        ))
+    }
+
+    fn execute_within(
+        &self,
+        command: D,
+        within: Duration,
+    ) -> Result<BotReply, koru_delegate_api::Failure> {
+        assert_eq!(
+            std::thread::current().name(),
+            Some("koru-ai-provider-run-read"),
+            "the execution owner is asked on the Run reads' own lane"
         );
         let D::Read { key, window } = command else {
-            // Startup recovery (native effects, deliveries) is not under test.
-            return Err(koru_delegate_api::Failure::new(
-                "fixture_pending",
-                "fixture recovery stays pending",
-                true,
-            ));
+            panic!("only a Run read is bounded");
         };
         self.reads.lock().unwrap().push((key.clone(), window));
         if let Some((entered, release)) = self.gate.lock().unwrap().take() {
             entered.send(()).unwrap();
-            let _ = release.recv();
+            // `LocalDelegate::call_within`: the socket's read times out.
+            if release.recv_timeout(within).is_err() {
+                return Err(koru_delegate_api::Failure::unavailable());
+            }
         }
         if self.down.load(Ordering::SeqCst) {
             // `LocalDelegate` when no delegate worker answers.
@@ -99,19 +175,12 @@ impl BotDelegatePort for RunOwner {
         if owner != key.owner || bot != key.bot {
             return Err(refused("bot_owner_mismatch"));
         }
-        // `Actor::view` over `Orchestrator::view`: the live session, if
-        // any, and the window `from.min(total)`, `bounded_len()` entries.
+        // `Actor::view` over `Orchestrator::view`: the live session, and the
+        // window `from.min(total)`, `bounded_len()` entries, as recorded.
         let start = window.from.min(self.entries);
         let items = (start..self.entries)
             .take(window.bounded_len())
-            .map(|n| {
-                TimelineItem::Step(d::TimelineEntry {
-                    id: d::TimelineEntryId::mint(),
-                    kind: d::StepKind::Started,
-                    refs: Default::default(),
-                    at_ms: n as i64,
-                })
-            })
+            .map(|n| self.timeline(n))
             .collect();
         let mut header = d::RunHeader::from_request(
             d::DelegationRequest {
@@ -122,7 +191,9 @@ impl BotDelegatePort for RunOwner {
                 objective: d::Objective::new("RUN-OBJECTIVE").unwrap(),
                 agent: d::SessionProfileKey::BuiltIn("codex".parse().unwrap()),
                 requested_model: None,
-                scope: d::WorkspaceScope::Temporary,
+                scope: d::WorkspaceScope::BotFolder {
+                    folder: d::BotWorkingFolder::new("D:/isolated".into()).unwrap(),
+                },
                 context: Vec::new(),
                 grants: Default::default(),
                 executing_device: self.device,
@@ -130,14 +201,30 @@ impl BotDelegatePort for RunOwner {
             },
             1,
         );
+        header.bot = Some(d::BotProvenance {
+            owner,
+            bot,
+            submission: BotRequestId::mint(),
+            chat_id: Uuid::new_v4(),
+            ai_attempt_id: Some(Uuid::new_v4()),
+            assistant_message_id: Some(Uuid::new_v4()),
+            config_revision: 1,
+            policy_revision: 1,
+            continued_from: None,
+        });
         header.status = d::RunStatus::Completed;
+        if self.agent_requested.load(Ordering::SeqCst) {
+            header.requested_by = d::ActorRef::Agent {
+                session: self.session,
+            };
+        }
         Ok(BotReply::Run {
             view: RunView {
                 document: d::DocumentId::from_uuid(Uuid::new_v4()),
                 header,
                 execution: RunExecution {
                     device: self.device,
-                    session: Some(d::SessionId::mint()),
+                    session: Some(self.session),
                     run_workspace: Some("D:/isolated".into()),
                 },
                 context: Vec::new(),
@@ -334,7 +421,7 @@ fn the_owner_reads_the_run_that_wrote_a_reply_without_its_session() {
                 chat_id: bot.main_chat,
                 message_id: reply.assistant_message.id,
                 run_id: run,
-                from: 2,
+                from: 1,
                 len: 3,
             },
         )
@@ -346,6 +433,13 @@ fn the_owner_reads_the_run_that_wrote_a_reply_without_its_session() {
         "{}",
         wire["view"]["execution"]
     );
+    // The owner's Started step names the session, and a turn names the agent
+    // by it: neither leaves, anywhere in the answer.
+    let text = serde_json::to_string(&response).unwrap();
+    assert!(
+        !text.contains(&owner.session.to_string()),
+        "the session leaked: {text}"
+    );
     let BotResponse::Run { view } = response else {
         panic!("a Run view")
     };
@@ -355,8 +449,19 @@ fn the_owner_reads_the_run_that_wrote_a_reply_without_its_session() {
     assert_eq!(view.execution.device, bot.owner_device);
     // The owner's own folder stays, as the Bot read returns it.
     assert_eq!(view.execution.run_workspace.as_deref(), Some("D:/isolated"));
-    assert_eq!((view.timeline.total, view.timeline.from), (7, 2));
+    assert_eq!((view.timeline.total, view.timeline.from), (7, 1));
     assert_eq!(view.timeline.items.len(), 3);
+    // The steps are kept with their other references.
+    let refs = |n: usize| match &view.timeline.items[n] {
+        TimelineItem::Step(entry) => entry.refs.iter().cloned().collect::<Vec<_>>(),
+        other => panic!("a step, not {other:?}"),
+    };
+    let attempt = d::TimelineRef::Attempt {
+        attempt: d::RunAttemptId::from_uuid(Uuid::from_u128(1)),
+    };
+    assert_eq!(refs(0), vec![attempt.clone()]);
+    assert_eq!(refs(1), vec![attempt]);
+    assert!(view.header.bot.is_some());
     // The execution owner was asked for exactly this Bot Run, owner and
     // window, naming the record's workspace.
     assert_eq!(
@@ -368,7 +473,7 @@ fn the_owner_reads_the_run_that_wrote_a_reply_without_its_session() {
                 run,
             },
             TimelineQuery {
-                from: 2,
+                from: 1,
                 len: 3,
                 workspace: Some(bot.home_workspace),
             },
@@ -678,7 +783,9 @@ fn authority_is_checked_on_the_writer_and_again_off_it_and_the_owner_repeats_the
         owner.reads().is_empty(),
         "refused before the owner is asked"
     );
-    // The execution owner repeats its immutable binding.
+    // The execution owner repeats its immutable binding; the AI owner's
+    // own checks passed, so its disagreement is `not_found`, never "it
+    // exists elsewhere".
     assert_eq!(
         code(
             &client,
@@ -690,7 +797,7 @@ fn authority_is_checked_on_the_writer_and_again_off_it_and_the_owner_repeats_the
                 misbound_run
             )
         ),
-        "wrong_owner"
+        "not_found"
     );
     assert_eq!(owner.reads().len(), 1);
     // An owner that does not answer is retryable.
@@ -722,7 +829,7 @@ fn an_execution_owner_on_another_device_refuses_the_owner_it_is_told() {
             context(true),
             read(bot.id, bot.main_chat, reply.assistant_message.id, run)
         ),
-        "wrong_owner"
+        "not_found"
     );
     assert_eq!(owner.reads().len(), 1);
     worker.shutdown();
@@ -762,8 +869,13 @@ fn a_window_is_one_to_five_hundred_entries() {
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+/// While one Run read waits on its execution owner, the Bot's other work does
+/// not: its own conversation reads (their preparation hop), another Bot
+/// command's preparation, and another Run read's refusal are all answered;
+/// and the hung read itself is answered `bot_unavailable` (retryable) by its
+/// deadline, never left to the caller's worker timeout.
 #[test]
-fn the_writer_answers_while_the_execution_owner_is_blocked() {
+fn a_hung_execution_owner_holds_only_its_own_read_and_is_answered_by_the_deadline() {
     let (mut repo, authority, command) = fixture();
     let bot = created(&mut repo, authority.clone(), command);
     let (reply, run) = replied(&mut repo, &bot, bot.main_chat, 1, bot.home_workspace);
@@ -774,6 +886,7 @@ fn the_writer_answers_while_the_execution_owner_is_blocked() {
     *owner.gate.lock().unwrap() = Some((entered_tx, release));
     let (worker, client) = worker(repo, authority, owner.clone());
     let (reply_tx, answer) = sync_channel(1);
+    let sent = Instant::now();
     client
         .send(WorkerCommand::Bots {
             context: context(true).into(),
@@ -782,59 +895,85 @@ fn the_writer_answers_while_the_execution_owner_is_blocked() {
         })
         .unwrap();
     entered.recv_timeout(Duration::from_secs(5)).unwrap();
-    // The read is in the owner's hands; the writer still answers.
+    // The read is in the owner's hands; the writer and the Bot's other work
+    // still answer.
     worker.ping().unwrap();
-    let chat = ChatId::new();
-    client
-        .create_chat(
-            context(false),
-            CreateChatRequest {
-                chat_id: chat,
-                title: "ordinary".into(),
-                profile_id: None,
-                model: ModelSelection {
-                    provider: AiProviderId::parse("mock").unwrap(),
-                    requested_model: "deterministic-v1".into(),
-                    default_reasoning: ReasoningChoice::Default,
-                },
-            },
-        )
-        .unwrap();
     assert_eq!(
-        client.read_chat(context(false), chat).unwrap().chat.id,
-        chat
+        client
+            .read_chat(context(true), bot.main_chat)
+            .unwrap()
+            .chat
+            .id,
+        bot.main_chat
+    );
+    assert!(matches!(
+        client
+            .bots(
+                context(true),
+                BotCommand::ListBotChats {
+                    bot_id: bot.id,
+                    cursor: None,
+                    limit: 10,
+                },
+            )
+            .unwrap(),
+        BotResponse::Chats { .. }
+    ));
+    assert_eq!(
+        code(
+            &client,
+            context(true),
+            read(bot.id, bot.main_chat, MessageId::new(), run)
+        ),
+        "not_found"
     );
     assert!(
         answer.try_recv().is_err(),
         "the read waits for its owner, not the writer"
     );
-    release_tx.send(()).unwrap();
-    let BotResponse::Run { view } = answer
-        .recv_timeout(Duration::from_secs(5))
+    // Never released: its deadline answers it.
+    let late = answer
+        .recv_timeout(super::super::reads::RUN_READ_DEADLINE + Duration::from_secs(5))
         .unwrap()
-        .unwrap()
-    else {
-        panic!("a Run view")
-    };
-    assert_eq!(view.header.run, run);
+        .unwrap_err();
+    assert_eq!(late.code, "bot_unavailable");
+    assert!(late.retryable);
+    assert!(sent.elapsed() < super::super::reads::RUN_READ_DEADLINE + Duration::from_secs(2));
+    drop(release_tx);
+    // Once the owner answers again, the Run reads.
+    assert_eq!(
+        view(
+            &client,
+            read(bot.id, bot.main_chat, reply.assistant_message.id, run)
+        )
+        .header
+        .run,
+        run
+    );
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+/// The Run reads' lane holds one read running and
+/// `RUN_READ_QUEUE_CAPACITY` waiting; one more is answered
+/// `ai_worker_saturated` at once, and a read whose deadline passed while it
+/// waited asks nobody.
 #[test]
-fn a_full_pool_answers_the_read_at_once_and_retryably() {
+fn a_full_run_read_lane_answers_at_once_and_a_late_read_asks_nobody() {
     let (output, _events) = sync_channel(64);
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut admin = ProviderAdminPool::spawn(None, None, output, shutdown.clone()).unwrap();
-    let (entered_tx, entered) = sync_channel(1);
-    let (release_tx, release) = sync_channel(1);
+    // The shared administration lane is blocked too: the Run reads' lane
+    // does not wait on it.
+    let (admin_entered_tx, admin_entered) = sync_channel(1);
+    let (admin_release_tx, admin_release) = sync_channel(1);
     admin
         .try_submit(ProviderAdminJob::BlockForFixture {
-            entered: entered_tx,
-            release,
+            entered: admin_entered_tx,
+            release: admin_release,
         })
         .unwrap_or_else(|_| panic!("an empty queue"));
-    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    admin_entered.recv_timeout(Duration::from_secs(5)).unwrap();
     let (_, authority, command) = fixture();
     let BotCommand::Create { bot_id, .. } = command else {
         unreachable!()
@@ -854,38 +993,55 @@ fn a_full_pool_answers_the_read_at_once_and_retryably() {
         .lock()
         .unwrap()
         .insert(run, (key.owner, bot_id));
-    let job = |reply| {
+    let (entered_tx, entered) = sync_channel(1);
+    let (release_tx, release) = sync_channel(1);
+    *owner.gate.lock().unwrap() = Some((entered_tx, release));
+    let job = |deadline, reply| {
         BotRunReadJob::fixture(
             authority.clone(),
             authority.owner,
             authority.workspace,
             key.clone(),
             owner.clone(),
+            deadline,
             reply,
         )
     };
-    let mut queued = Vec::new();
-    for _ in 0..PROVIDER_ADMIN_QUEUE_CAPACITY {
-        let (reply, answer) = sync_channel(1);
-        job(reply).submit(Some(&admin));
-        queued.push(answer);
-    }
+    let far = Instant::now() + Duration::from_secs(60);
+    let (reply, running) = sync_channel(1);
+    job(far, reply).submit(Some(&admin));
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    // One waits until it may run; the other's deadline passes while it waits.
+    let (reply, waiting) = sync_channel(1);
+    job(far, reply).submit(Some(&admin));
+    let (reply, late) = sync_channel(1);
+    job(Instant::now() + Duration::from_millis(50), reply).submit(Some(&admin));
     let (reply, answer) = sync_channel(1);
-    job(reply).submit(Some(&admin));
+    job(far, reply).submit(Some(&admin));
     let full = answer.try_recv().unwrap().unwrap_err();
     assert_eq!(full.code, "ai_worker_saturated");
     assert!(full.retryable);
     // Without a pool at all it is answered at once too.
     let (reply, answer) = sync_channel(1);
-    job(reply).submit(None);
+    job(far, reply).submit(None);
     assert!(answer.try_recv().unwrap().is_err());
+    std::thread::sleep(Duration::from_millis(100));
     release_tx.send(()).unwrap();
-    for answer in queued {
+    for answer in [running, waiting] {
         assert!(matches!(
             answer.recv_timeout(Duration::from_secs(5)).unwrap(),
             Ok(BotResponse::Run { .. })
         ));
     }
+    let late = late
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(late.code, "bot_unavailable");
+    assert!(late.retryable);
+    // The late read never reached the owner.
+    assert_eq!(owner.reads().len(), 2);
+    drop(admin_release_tx);
     admin.stop();
 }
 
@@ -1003,6 +1159,58 @@ fn the_transcript_names_each_replys_run_and_read_run_accepts_every_pair() {
             .unwrap_err()
             .code,
         "not_found"
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// A header that names an agent session cannot be handed out without it,
+/// and cannot lose it without misreporting who asked: it is refused.
+#[test]
+fn a_run_whose_header_names_an_agent_session_is_refused() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let (reply, run) = replied(&mut repo, &bot, bot.main_chat, 1, bot.home_workspace);
+    let owner = RunOwner::on(bot.owner_device);
+    owner.holds(run, &bot);
+    owner.agent_requested.store(true, Ordering::SeqCst);
+    let (worker, client) = worker(repo, authority, owner.clone());
+    let refused = client
+        .bots(
+            context(true),
+            read(bot.id, bot.main_chat, reply.assistant_message.id, run),
+        )
+        .unwrap_err();
+    assert_eq!(refused.code, "bot_run_unreadable");
+    assert!(!refused.retryable);
+    assert!(!refused.message.contains(&owner.session.to_string()));
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// The transcript is the person's conversation: when its Runs cannot be
+/// named it is still answered, without them.
+#[test]
+fn a_transcript_whose_runs_cannot_be_named_is_still_answered() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let (kept, kept_run) = replied(&mut repo, &bot, bot.main_chat, 1, bot.home_workspace);
+    // A reply no Run wrote: its lookup reaches the references table, which
+    // this fixture breaks.
+    completed(&mut repo, bot.main_chat, 3);
+    repo.fixture_execute_batch("DROP TABLE bot_historical_run_refs;")
+        .unwrap();
+    let owner = RunOwner::on(bot.owner_device);
+    owner.holds(kept_run, &bot);
+    let (worker, client) = worker(repo, authority, owner);
+    let transcript = client.read_chat(context(true), bot.main_chat).unwrap();
+    assert_eq!(transcript.messages.len(), 4);
+    assert!(named(&transcript).is_empty());
+    assert!(
+        transcript
+            .messages
+            .iter()
+            .any(|m| m.id == kept.assistant_message.id)
     );
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);

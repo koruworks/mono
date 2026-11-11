@@ -363,6 +363,7 @@ pub enum BotCommand {
         message_id: crate::MessageId,
         run_id: koru_delegate_core::RunId,
         from: u64,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 500)))]
         len: u32,
     },
 }

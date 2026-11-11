@@ -472,8 +472,7 @@ impl WorkerState {
         // operation moving the revision (Archive's pause, its completion)
         // must not refuse a client polling its progress.
         let read = matches!(&command, WorkerCommand::Bots { request, .. }
-            if super::lifecycle::bot_read_command(request)
-                || matches!(request, BotCommand::ReadRun { .. }));
+            if super::lifecycle::bot_read_command(request));
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match super::lifecycle::provable_bot(&self.repository, *id, &command) {

@@ -170,10 +170,13 @@ impl Repository {
         if replies.is_empty() || bot_for_chat_on(&self.connection, chat)? != Some(bot) {
             return Ok(Vec::new());
         }
-        let mut admitted = self.connection.prepare(BOT_RUN_ADMITTED_SQL).map_err(bad)?;
+        let mut admitted = self
+            .connection
+            .prepare_cached(BOT_RUN_ADMITTED_SQL)
+            .map_err(bad)?;
         let mut referenced = self
             .connection
-            .prepare(BOT_REPLY_HISTORICAL_RUN_SQL)
+            .prepare_cached(BOT_REPLY_HISTORICAL_RUN_SQL)
             .map_err(bad)?;
         let mut runs = Vec::new();
         for reply in replies {
@@ -242,25 +245,28 @@ impl Repository {
         if in_chat.as_deref() != Some(chat.to_storage().as_str()) {
             return Ok(None);
         }
+        // The chain decides when it names a Run of this Bot: that Run, and
+        // only it. A purged source's reference is asked for only when the
+        // chain names none, exactly as `bot_reply_runs` reports.
         let workspace: Option<String> = match self.historical_bot_run(message)? {
-            Some(found) if found.bot == bot && found.run == run => self
-                .connection
-                .query_row(
-                    BOT_RUN_RECORD_SQL,
-                    params![
-                        run.to_storage(),
-                        bot.to_storage(),
-                        found.assistant_message.to_storage()
-                    ],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(bad)?,
-            _ => None,
-        };
-        let workspace = match workspace {
-            Some(workspace) => Some(workspace),
-            None => self
+            Some(found) if found.bot == bot => {
+                if found.run != run {
+                    return Ok(None);
+                }
+                self.connection
+                    .query_row(
+                        BOT_RUN_RECORD_SQL,
+                        params![
+                            run.to_storage(),
+                            bot.to_storage(),
+                            found.assistant_message.to_storage()
+                        ],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(bad)?
+            }
+            _ => self
                 .connection
                 .query_row(
                     BOT_HISTORICAL_RUN_SQL,

@@ -439,6 +439,9 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
             // whatever the Bot's lifecycle is now.
             | BotCommand::ReadBotCreation { .. }
             | BotCommand::ListBotCreations { .. }
+            // P1.8 B1: a Run of a conversation, read through its owner;
+            // an archived Bot's history reads.
+            | BotCommand::ReadRun { .. }
     )
 }
 

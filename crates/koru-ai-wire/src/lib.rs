@@ -77,9 +77,12 @@ pub mod bot_lifecycle_codes {
 /// beside the reasons a recorded creation carries (P1.8). Each is answered
 /// before anything is recorded, never retryable.
 pub mod bot_creation_codes {
-    /// The selected folder is Koru's own data: the AI data root, the
-    /// Store's data root or anything under the AI root's `bots/`. A folder
-    /// that does not exist or is not a folder stays `invalid_request`.
+    /// The selected folder is Koru's own data: the AI data root or the
+    /// Store's data root, or any folder inside either (every managed Bot
+    /// folder is inside the AI root), compared by their canonical paths. A
+    /// folder that merely contains one of them, such as the person's home
+    /// folder, is not refused. A folder that does not exist or is not a
+    /// folder stays `invalid_request`.
     pub const FOLDER_RESERVED: &str = "folder_reserved";
 }
 
@@ -1266,6 +1269,18 @@ mod tests {
             serde_json::from_str::<ChatTranscript>(ORDINARY_TRANSCRIPT).unwrap(),
             transcript
         );
+        // An entry written without the optional fields still reads: losing
+        // a `#[serde(default)]` would fail here, where the bytes above
+        // cannot tell.
+        let mut sparse: serde_json::Value = serde_json::from_str(ORDINARY_TRANSCRIPT).unwrap();
+        sparse["usage"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("context");
+        let read = serde_json::from_value::<ChatTranscript>(sparse).unwrap();
+        assert_eq!(read.usage[0].context, None);
+        assert_eq!(read.usage[0].stop_code, None);
+        assert_eq!(read.usage[0].run_id, None);
     }
 
     const ORDINARY_TRANSCRIPT: &str = r#"{"chat":{"id":"00000000-0000-4000-8000-000000000001","title":"Compatibility fixture","private":false,"current_model":{"provider":"mock","requested_model":"mock-v1","default_reasoning":"default"},"branched_from":null,"created_at":1,"updated_at":1},"tool_policy":{"chat_id":"00000000-0000-4000-8000-000000000001","mode":"manual","workspace_ids":[]},"tool_activities":[],"messages":[{"id":"00000000-0000-4000-8000-000000000002","chat_id":"00000000-0000-4000-8000-000000000001","ordinal":0,"role":"user","state":"complete","markdown":"Question","origin_message_id":null,"provider":null,"requested_model":null,"resolved_model":null,"error_class":null,"created_at":2,"completed_at":3},{"id":"00000000-0000-4000-8000-000000000003","chat_id":"00000000-0000-4000-8000-000000000001","ordinal":1,"role":"assistant","state":"complete","markdown":"Answer","origin_message_id":null,"provider":null,"requested_model":null,"resolved_model":null,"error_class":null,"created_at":2,"completed_at":3}],"blocks":[],"pinned_documents":[],"feedback":[],"usage":[{"message_id":"00000000-0000-4000-8000-000000000003","usage":{"prompt_tokens":12,"cached_prompt_tokens":null,"completion_tokens":34,"reasoning_tokens":null,"total_tokens":null,"source":"unavailable"},"context":{"used":5,"size":10}}],"sources":[],"attachments":[]}"#;

@@ -2928,11 +2928,23 @@ impl WorkerState {
                 .filter(|message| message.role == ChatRole::Assistant)
                 .map(|message| message.id)
                 .collect();
-            let runs = self
+            // The conversation is readable either way: the Runs are an index
+            // into another owner, so failing to name them answers the
+            // transcript without them (said once in the log), never refuses
+            // the person their conversation. A client reads absent as "no
+            // Run named"; asking again names them once the lookup works.
+            match self
                 .repository
                 .bot_reply_runs(label.bot_id, chat_id, &replies)
-                .map_err(bots::bot_failure)?;
-            usage = with_bot_runs(usage, &messages, runs);
+            {
+                Ok(runs) => usage = with_bot_runs(usage, &messages, runs),
+                Err(error) => tracing::warn!(
+                    target: "koru_ai::bots",
+                    chat = %chat_id,
+                    error = ?error,
+                    "a Bot conversation's Runs could not be named; its transcript is answered without them"
+                ),
+            }
         }
         let mut sources = Vec::<MessageSources>::new();
         for (message_id, source) in self.repository.citations(chat_id).map_err(ai_failure)? {
@@ -5660,7 +5672,8 @@ enum ProviderAdminJob {
     BotCreationPrepare(bots::CreationPreparationJob),
     BotCreationStep(bots::CreationJob),
     BotCreationRead(bots::CreationReadJob),
-    /// A public Run read (P1.8 B1); it answers its caller itself.
+    /// A public Run read (P1.8 B1), on its own lane; it answers its caller
+    /// itself.
     BotRunRead(bots::BotRunReadJob),
     Validate {
         provider: AiProviderId,
@@ -5692,6 +5705,12 @@ struct ProviderAdminPool {
     /// keeps at most one step in flight, so this queue of one never fills.
     creation_sender: Option<SyncSender<bots::CreationJob>>,
     creation_thread: Option<JoinHandle<()>>,
+    /// Public Run reads' own lane (P1.8 B1): each asks the execution owner,
+    /// within its deadline, so a slow or hung owner holds this lane and
+    /// nothing else of the Bot's (its preparation, chat reads, recovery).
+    /// A small queue; a full one is answered at once.
+    run_read_sender: Option<SyncSender<bots::BotRunReadJob>>,
+    run_read_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -5820,7 +5839,9 @@ impl ProviderAdminPool {
                                 &thread_shutdown,
                             );
                         }
-                        ProviderAdminJob::BotRunRead(job) => job.run(),
+                        ProviderAdminJob::BotRunRead(_) => {
+                            unreachable!("run read lane dispatch")
+                        }
                         ProviderAdminJob::Validate { provider, reply } => {
                             let started = Instant::now();
                             let diagnostic_provider = provider.clone();
@@ -5947,6 +5968,29 @@ impl ProviderAdminPool {
                 return Err(error.to_string());
             }
         };
+        let (run_read_sender, run_read_receiver) =
+            sync_channel::<bots::BotRunReadJob>(bots::RUN_READ_QUEUE_CAPACITY);
+        let run_read_shutdown = Arc::clone(&shutdown);
+        let run_read_thread = match std::thread::Builder::new()
+            .name("koru-ai-provider-run-read".into())
+            .spawn(move || {
+                while !run_read_shutdown.load(Ordering::Acquire) {
+                    match run_read_receiver.recv_timeout(LOOP_INTERVAL) {
+                        Ok(job) => job.run(),
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                drop(sender);
+                drop(creation_sender);
+                let _ = thread.join();
+                let _ = creation_thread.join();
+                return Err(error.to_string());
+            }
+        };
         let control_shutdown = Arc::clone(&shutdown);
         let control_thread = match std::thread::Builder::new()
             .name("koru-ai-provider-control".into())
@@ -5993,8 +6037,10 @@ impl ProviderAdminPool {
             Err(error) => {
                 drop(sender);
                 drop(creation_sender);
+                drop(run_read_sender);
                 let _ = thread.join();
                 let _ = creation_thread.join();
+                let _ = run_read_thread.join();
                 return Err(error.to_string());
             }
         };
@@ -6006,6 +6052,8 @@ impl ProviderAdminPool {
             control_thread: Some(control_thread),
             creation_sender: Some(creation_sender),
             creation_thread: Some(creation_thread),
+            run_read_sender: Some(run_read_sender),
+            run_read_thread: Some(run_read_thread),
             shutdown,
         })
     }
@@ -6054,6 +6102,28 @@ impl ProviderAdminPool {
                 },
                 TrySendError::Disconnected(step) => AdminSubmitError {
                     job: ProviderAdminJob::BotCreationStep(step),
+                    failure: unavailable_failure(),
+                },
+            });
+        }
+        if let ProviderAdminJob::BotRunRead(read) = job {
+            let Some(sender) = &self.run_read_sender else {
+                return Err(AdminSubmitError {
+                    job: ProviderAdminJob::BotRunRead(read),
+                    failure: unavailable_failure(),
+                });
+            };
+            return sender.try_send(read).map_err(|error| match error {
+                TrySendError::Full(read) => AdminSubmitError {
+                    job: ProviderAdminJob::BotRunRead(read),
+                    failure: failure(
+                        "ai_worker_saturated",
+                        "The Bot Run read lane is busy. Try again.",
+                        true,
+                    ),
+                },
+                TrySendError::Disconnected(read) => AdminSubmitError {
+                    job: ProviderAdminJob::BotRunRead(read),
                     failure: unavailable_failure(),
                 },
             });
@@ -6108,10 +6178,14 @@ impl ProviderAdminPool {
         self.control_sender.take();
         self.interactive_sender.take();
         self.creation_sender.take();
+        self.run_read_sender.take();
         if let Some(thread) = self.control_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.creation_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.run_read_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.thread.take() {

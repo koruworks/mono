@@ -73,8 +73,10 @@ impl BotFolderSystem for NativeFolders {
     }
 }
 
-/// Koru's own data, which no selected folder may be: the AI root, the
-/// Store's data root, and the AI root's `bots/` (every managed folder).
+/// Koru's own data, which no selected folder may be or be inside: the AI
+/// root (with every managed folder under its `bots/`) and the Store's data
+/// root. A folder that merely contains one of them, such as the person's
+/// home folder, is not refused (a product choice recorded for the owner).
 #[derive(Clone, Debug, Default)]
 pub(in crate::worker) struct ReservedFolders {
     pub(in crate::worker) ai_root: PathBuf,
@@ -82,17 +84,17 @@ pub(in crate::worker) struct ReservedFolders {
 }
 
 impl ReservedFolders {
-    /// Whether the canonical `folder` is one of them. Each root is compared
-    /// in its canonical form when it can be read, as written otherwise.
+    /// Whether the canonical `folder` is one of them or inside one, by whole
+    /// path components (a sibling whose name only begins the same is not).
+    /// Each root is compared in its canonical form when it can be read, as
+    /// written otherwise.
     fn holds(&self, fs: &dyn BotFolderSystem, folder: &Path) -> bool {
         let canonical = |path: &Path| fs.canonical(path).unwrap_or_else(|_| path.to_path_buf());
-        let ai_root = canonical(&self.ai_root);
-        folder == ai_root
-            || folder.starts_with(ai_root.join("bots"))
+        folder.starts_with(canonical(&self.ai_root))
             || self
                 .store_root
                 .as_deref()
-                .is_some_and(|store| folder == canonical(store))
+                .is_some_and(|store| folder.starts_with(canonical(store)))
     }
 }
 

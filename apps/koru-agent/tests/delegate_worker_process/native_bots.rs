@@ -185,7 +185,7 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     assert!(trace.lines().any(|line| line == "native:images-on-disk:1"));
     // The Run through the public Bots API (P1.8 B1), found from the public
     // transcript alone, while its session is live: no session handle.
-    let (reply, run, running) = read_reply_run(&stack.client, &bot);
+    let (reply, run, running) = read_reply_run(&stack.client, &bot, fence.session);
     assert_eq!((reply, run), (accepted.assistant_message_id, fence.run));
     assert_eq!(running.header.run, fence.run);
     assert_eq!(running.execution.device, stack.device);
@@ -263,7 +263,7 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     assert_eq!(receipt.attempt, fence.attempt);
     assert_eq!(receipt.generation, fence.generation);
     // Read again once finished: the same canonical Run, its whole history.
-    let (reply, run, finished) = read_reply_run(&stack.client, &bot);
+    let (reply, run, finished) = read_reply_run(&stack.client, &bot, fence.session);
     assert_eq!((reply, run), (accepted.assistant_message_id, fence.run));
     assert_eq!(finished.header.run, fence.run);
     assert!(matches!(
@@ -492,6 +492,7 @@ fn ordinary_supervised_client_cannot_manage_bots_when_opted_in() {
 fn read_reply_run(
     client: &koru_api_client::Client,
     bot: &koru_ai_core::bots::Bot,
+    session: koru_delegate_core::SessionId,
 ) -> (
     koru_ai_core::MessageId,
     koru_delegate_core::RunId,
@@ -520,6 +521,13 @@ fn read_reply_run(
     let wire = serde_json::to_value(&response).unwrap();
     assert_eq!(wire["result"], "run");
     assert!(wire["view"]["execution"].get("session").is_none());
+    // Nothing anywhere in the answer names the Run's session: not the
+    // execution state, not the owner's Started step, not an agent actor.
+    let text = wire.to_string();
+    assert!(
+        !text.contains(&session.to_string()),
+        "the Run's session leaked through read_run"
+    );
     let BotResponse::Run { view } = response else {
         panic!("a Run view")
     };

@@ -28,7 +28,7 @@ pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingB
 pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
-pub(super) use reads::BotRunReadJob;
+pub(super) use reads::{BotRunReadJob, RUN_READ_QUEUE_CAPACITY};
 mod creation;
 pub(super) use creation::{
     BotFolderSystem, CreationDriver, CreationJob, CreationPreparationJob, CreationPrepared,

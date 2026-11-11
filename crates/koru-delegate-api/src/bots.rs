@@ -314,6 +314,18 @@ impl std::fmt::Debug for BotReply {
 /// substitute an ordinary diagnostic principal label for it.
 pub trait BotDelegatePort: Send + Sync {
     fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure>;
+    /// The same, waiting at most `within` for the answer; past it the call
+    /// fails `delegate_unavailable` (retryable) and whatever the owner does
+    /// with it is not reported, so only reads use it. The default ignores
+    /// the bound: a port that can block must bound it itself.
+    fn execute_within(
+        &self,
+        command: BotCommand,
+        within: std::time::Duration,
+    ) -> Result<BotReply, crate::Failure> {
+        let _ = within;
+        self.execute(command)
+    }
 }
 
 /// Only the trusted gateway composition receives this credentialed adapter.
@@ -332,12 +344,9 @@ impl LocalBotDelegate {
         }
     }
 }
-impl BotDelegatePort for LocalBotDelegate {
-    fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure> {
-        match self.transport.call(&crate::ipc::Request::Bot {
-            authority: self.authority.clone(),
-            command,
-        })? {
+impl LocalBotDelegate {
+    fn answer(response: crate::ipc::Response) -> Result<BotReply, crate::Failure> {
+        match response {
             crate::ipc::Response::Bot(reply) => Ok(reply),
             crate::ipc::Response::Failure(failure) => Err(failure),
             _ => Err(crate::Failure::new(
@@ -346,6 +355,27 @@ impl BotDelegatePort for LocalBotDelegate {
                 false,
             )),
         }
+    }
+}
+impl BotDelegatePort for LocalBotDelegate {
+    fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure> {
+        Self::answer(self.transport.call(&crate::ipc::Request::Bot {
+            authority: self.authority.clone(),
+            command,
+        })?)
+    }
+    fn execute_within(
+        &self,
+        command: BotCommand,
+        within: std::time::Duration,
+    ) -> Result<BotReply, crate::Failure> {
+        Self::answer(self.transport.call_within(
+            &crate::ipc::Request::Bot {
+                authority: self.authority.clone(),
+                command,
+            },
+            within,
+        )?)
     }
 }
 

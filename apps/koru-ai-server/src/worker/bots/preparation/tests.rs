@@ -21,6 +21,14 @@ fn ai_root() -> PathBuf {
 fn store_root() -> PathBuf {
     at(r"D:\koru\store", "/koru/store")
 }
+/// Beside the AI root, its name only beginning the same.
+fn sibling() -> PathBuf {
+    at(r"D:\koru\ai-sibling", "/koru/ai-sibling")
+}
+/// The folder that holds both roots: it contains Koru's data, it is not it.
+fn koru_parent() -> PathBuf {
+    at(r"D:\koru", "/koru")
+}
 
 /// A few existing folders and one link to `existing`; nothing else exists.
 struct Folders(Vec<PathBuf>);
@@ -33,6 +41,10 @@ impl Folders {
             bots.clone(),
             bots.join("other").join("work"),
             store_root(),
+            ai_root().join("logs"),
+            store_root().join("profiles"),
+            sibling(),
+            koru_parent(),
         ])
     }
 }
@@ -182,6 +194,9 @@ fn koru_s_own_data_is_never_a_working_folder() {
         store_root(),
         ai_root().join("bots"),
         ai_root().join("bots").join("other").join("work"),
+        // Inside a reserved root, not only equal to it.
+        ai_root().join("logs"),
+        store_root().join("profiles"),
     ] {
         let (command, runtime) = prepare(Some(reserved.to_str().unwrap()));
         let refused = runtime.unwrap_err();
@@ -193,5 +208,12 @@ fn koru_s_own_data_is_never_a_working_folder() {
         assert!(!refused.retryable);
         // A refused folder is never bound.
         assert_eq!(folder_of(&command), reserved.to_str().unwrap());
+    }
+    // A sibling, and a parent that merely contains Koru's data, are allowed.
+    for allowed in [sibling(), koru_parent()] {
+        assert!(
+            prepare(Some(allowed.to_str().unwrap())).1.is_ok(),
+            "{allowed:?}"
+        );
     }
 }

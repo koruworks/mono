@@ -280,10 +280,34 @@ fn koru_s_own_data_is_never_a_selected_folder() {
         ai_root: root(),
         store_root: Some(store.clone()),
     };
-    for at in [root(), store.clone(), root().join("bots"), other.clone()] {
+    // Equal to a reserved root, or anywhere inside one.
+    let inside_ai = root().join("logs").join("deep");
+    let inside_store = store.join("profiles").join("one");
+    fs.mkdirs(&inside_ai);
+    fs.mkdirs(&inside_store);
+    for at in [
+        root(),
+        store.clone(),
+        root().join("bots"),
+        other.clone(),
+        inside_ai.clone(),
+        inside_store.clone(),
+    ] {
         assert_eq!(
             check_selected(fs.as_ref(), &reserved, at.to_str().unwrap()),
             Err(FolderFailure::Reserved),
+            "{at:?}"
+        );
+    }
+    // A sibling whose name only begins the same, and a parent that merely
+    // contains Koru's data, are the person's to choose.
+    let sibling = PathBuf::from(format!("{}-sibling", root().to_str().unwrap()));
+    let parent = root().parent().unwrap().to_path_buf();
+    fs.mkdirs(&sibling);
+    for at in [sibling, parent] {
+        assert_eq!(
+            check_selected(fs.as_ref(), &reserved, at.to_str().unwrap()),
+            Ok(at.to_str().unwrap().to_owned()),
             "{at:?}"
         );
     }
