@@ -240,3 +240,78 @@ fn a_run_is_neither_forked_nor_captured_while_a_page_beside_it_is() {
     );
     assert_eq!(captures(&mut store, page), 1, "the page was captured once");
 }
+
+/// **A reading document is neither walked nor versioned** (OCR TECHNICAL
+/// D14), through the daemon's own composition, held in memory: the Store
+/// opened with `koru_projection::model::UNVERSIONED` as `daemon::run` opens
+/// it, the real [`StoreSource`], a checkpoint policy small enough that fifty
+/// updates cross it. Fifty pages of words reach the projector's activity log —
+/// the door to automatic history — zero times, and the checkpoints they earn
+/// leave `document_versions` without a row of any reason for it.
+#[test]
+fn a_reading_document_reaches_no_activity_and_no_version() {
+    let catalog = SqliteCatalog::in_memory().unwrap();
+    let mut store: KoruStore = Store::open(catalog, SqliteBackend::in_memory())
+        .unwrap()
+        .with_unversioned_kinds(koru_projection::model::UNVERSIONED);
+    store.checkpoints = koru_store_core::CheckpointPolicy {
+        every_updates: 10,
+        every_bytes: u64::MAX,
+    };
+    let profile = store
+        .create_profile("Owner", None, None, Locale::parse("en").unwrap(), at(0))
+        .unwrap();
+    let ws = store
+        .create_workspace(profile.id, "Workspace", at(0))
+        .unwrap()
+        .id;
+    let page = a_page(&mut store, ws, 1);
+    let reading = store.ensure_reading(ws, page, at(1)).unwrap().id;
+
+    let state = Arc::new(AppState::new(store, "memory".into(), "test".into(), 0));
+    let source = StoreSource::new(state.clone(), true);
+    let mut projector = Projector::new(source, Projections::in_memory().unwrap());
+    let mut now = 0;
+    projector.tick(now);
+
+    let mut sent = loro::VersionVector::default();
+    let words = loro::LoroDoc::new();
+    for page_number in 1..=50 {
+        words
+            .get_map("readings")
+            .insert(&page_number.to_string(), "the words on a page")
+            .unwrap();
+        words.commit();
+        let delta = words.export(loro::ExportMode::updates(&sent)).unwrap();
+        sent = words.oplog_vv();
+        let mut store = state.store.lock().unwrap();
+        store
+            .apply_update(ws, reading, delta, at(2 + page_number), None)
+            .unwrap();
+        store.flush(ws, reading, at(2 + page_number)).unwrap();
+        drop(store);
+        now += 1_500;
+        projector.tick(now);
+    }
+    now += IDLE_HISTORY_MS + 1;
+    for _ in 0..10 {
+        projector.tick(now);
+    }
+
+    let stats = projector.stats();
+    assert_eq!(stats.skipped, 50, "every commit was skipped: {stats:?}");
+    assert!(
+        projector.projections().revision(reading).unwrap().is_none(),
+        "the reading document has no projection row"
+    );
+    let mut store = state.store.lock().unwrap();
+    assert!(
+        store.document_report(ws, reading).unwrap().checkpoints > 0,
+        "its journal was checkpointed"
+    );
+    assert_eq!(
+        store.history_entries(ws, reading, None, 100).unwrap().len(),
+        0,
+        "and document_versions holds nothing for it"
+    );
+}

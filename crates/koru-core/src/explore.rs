@@ -192,36 +192,59 @@ pub const KIND_SCHEDULE: &str = "koru-schedule";
 /// Socials documents have their own surface and no ordinary node tree.
 pub const KIND_SOCIAL_POST: &str = "koru-social-post";
 pub const KIND_SOCIAL_CHANNEL: &str = "koru-social-channel";
+/// The token for a **reading document** — the one hidden child of a file, or
+/// of a page that holds pictures, that holds the words read out of it (OCR
+/// TECHNICAL D9). Its id is derived from its parent's
+/// ([`crate::ids::reading_document_id`]), so there is no link field anywhere.
+///
+/// App-defined and app-hidden: nobody opens, names or drags one, so
+/// [`listed`] gives it no row. It is also never walked and never versioned
+/// (D14): `koru_projection::model::NOT_PROJECTED` and the Store's unversioned
+/// kinds both name it.
+///
+/// **A stored name.** It is the value in every workspace manifest's open
+/// `kind` string on every device and never changes. `koru-store-core` spells
+/// the same literal for `Store::ensure_reading`, pinned equal by a test in
+/// each crate, because the store cannot link this crate (ADR-80).
+pub const KIND_READING: &str = "koru-reading";
+
+/// The kinds a person browses: [`listed`]'s whole answer.
+pub const LISTED_KINDS: [&str; 4] = [KIND_DOCUMENT, KIND_FILE, KIND_NOTE, KIND_CANVAS];
 
 /// Whether an entry of this kind belongs in a listing a person sees.
 ///
 /// One predicate rather than a check per surface, for the same reason the
 /// trash is one exclusion in `children`: a check at each surface is a check
-/// somebody forgets to add to the eighth. An unknown token — some future
-/// build's — is listed, because hiding what we do not understand would make a
-/// newer build's documents silently invisible here.
+/// somebody forgets to add to the eighth.
+///
+/// **An allowlist** ([`LISTED_KINDS`]): a page, a file, a note, a canvas, and
+/// nothing else. It was a list of what to hide until the reading document
+/// (OCR TECHNICAL §12), and an unknown token was listed then, so that a newer
+/// build's documents were not silently invisible on an older one. The cost of
+/// that rule was every internal kind ever added appearing on older builds as
+/// a row nobody can open — the system document, the tasks document, runs and
+/// now a reading document per file. This build is the last one that can show
+/// a future internal kind that way: a kind it does not know is not listed. A
+/// new kind a person browses is added here, in the change that makes it.
+///
+/// A note is listed *here* and hidden by the presentation layers (the desktop
+/// Explore, the phone's inventory), which reach it through its file
+/// (ADR-277-filenote): this predicate is about what a listing may hold, not
+/// about which rows each surface draws.
 ///
 /// **Hiding is a listing rule and nothing more.** Every hidden kind is an
 /// ordinary document everywhere else: it is registered in the manifest,
 /// synced and trashed like any other. The system and tasks documents are
 /// also projected and *indexed*, so a task's text is found by search like
 /// any other line — the seam a person is spared is the row in Explore, not
-/// the content. A run and a schedule are the exception to the projection
-/// half, decided one layer up (`koru_projection::model::NOT_PROJECTED`):
-/// they have no node tree to walk. Anything that needs to find one asks the
-/// manifest for its kind (`Workspace::task_list_documents`,
-/// `ensure_system`), which is a different question from what a library
-/// column draws.
+/// the content. A run, a schedule, a socials document and a reading document
+/// are the exception to the projection half, decided one layer up
+/// (`koru_projection::model::NOT_PROJECTED`): they have no node tree to walk.
+/// Anything that needs to find one asks the manifest for its kind
+/// (`Workspace::task_list_documents`, `ensure_system`), which is a different
+/// question from what a library column draws.
 pub fn listed(kind: &str) -> bool {
-    ![
-        KIND_SYSTEM,
-        KIND_TASK_LIST,
-        KIND_RUN,
-        KIND_SCHEDULE,
-        KIND_SOCIAL_POST,
-        KIND_SOCIAL_CHANNEL,
-    ]
-    .contains(&kind)
+    LISTED_KINDS.contains(&kind)
 }
 
 impl WorkspaceDoc {

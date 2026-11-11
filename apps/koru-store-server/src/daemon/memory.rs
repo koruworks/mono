@@ -58,7 +58,8 @@ impl MemoryStore {
     pub fn open(channel: &str) -> Result<Self, Error> {
         let catalog =
             SqliteCatalog::in_named_memory(&koru_sqlite::MemoryName::fresh("catalog.db"))?;
-        let store = Store::open(catalog, SqliteBackend::in_memory())?;
+        let store = Store::open(catalog, SqliteBackend::in_memory())?
+            .with_unversioned_kinds(koru_projection::model::UNVERSIONED);
         let state = Arc::new(AppState::new(
             store,
             "memory".into(),

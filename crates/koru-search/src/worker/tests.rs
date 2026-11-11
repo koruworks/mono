@@ -184,6 +184,89 @@ fn a_task_in_a_hidden_task_list_document_is_still_searchable() {
     assert_eq!(matches(&indexer, "Tasks"), 1, "and the document it is in");
 }
 
+/// **A reading document yields no search result** (OCR TECHNICAL D14, §7:
+/// "its title is shown nowhere … the plan picks the value and proves it
+/// produces no row in any listing and no search result"). The projector never
+/// walks one, so it has no node fragments. But the listing is indexed on its
+/// own — every listed document gets a title fragment, which is how a document
+/// nobody has opened is still findable — so the title is what decides it.
+/// `Store::ensure_reading` registers it with an empty title, and an empty
+/// title makes no fragment. The second listing row shows the value is
+/// load-bearing: an unprojected document *with* a title is found by it.
+///
+/// The kind is a literal for the reason
+/// `a_task_in_a_hidden_task_list_document_is_still_searchable` gives.
+#[test]
+fn an_untitled_reading_document_is_never_a_result() {
+    let fixture = Fixture::new("the quarterly plan");
+    let reading = DocumentId::new();
+    let titled = DocumentId::new();
+    let mut projections = fixture.projections;
+    projections
+        .set_listing(
+            fixture.workspace,
+            "Acme",
+            &[
+                listed(fixture.document, "Roadmap"),
+                ListedDocument {
+                    parent: Some(fixture.document),
+                    kind: "koru-reading".to_owned(),
+                    ..listed(reading, "")
+                },
+                ListedDocument {
+                    kind: "koru-reading".to_owned(),
+                    ..listed(titled, "Scanned")
+                },
+            ],
+            2,
+        )
+        .unwrap();
+    let mut indexer = Indexer::new(
+        SearchIndex::in_memory().unwrap(),
+        projections,
+        Queue::default(),
+    );
+    indexer.queue().push_listing(fixture.workspace);
+    settle(&mut indexer, 0);
+    settle(&mut indexer, 60_000);
+
+    assert_eq!(matches(&indexer, "quarterly"), 1, "the page is indexed");
+    assert_eq!(
+        matches(&indexer, "Scanned"),
+        1,
+        "a title on an unprojected listing row is found by it"
+    );
+    let hits = indexer
+        .index()
+        .query(
+            &crate::model::SearchQuery {
+                text: "Acme".into(),
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap()
+        .hits;
+    assert!(
+        hits.iter()
+            .all(|hit| hit.document.as_deref() != Some(reading.to_storage().as_str())),
+        "the untitled reading document is in no result"
+    );
+    assert_eq!(
+        indexer
+            .index()
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM fragments WHERE document_id = ?1",
+                [reading.to_storage()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "and has no fragment for any query to find"
+    );
+}
+
 /// The public `behind` counter is set on the reconcile that discovers missed
 /// work, before the bounded repair consumes it. A fast restart may repair the
 /// queue before an HTTP observer can sample that transient value, so pin the

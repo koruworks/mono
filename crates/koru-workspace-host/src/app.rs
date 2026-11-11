@@ -19808,6 +19808,12 @@ mod tests {
         assert_eq!(document_count(&kinds, true), 6);
         assert_eq!(document_count(&kinds, false), 4);
         assert_eq!(document_count(&std::collections::BTreeMap::new(), true), 0);
+        // **A reading document counts as neither** (OCR TECHNICAL §12): one
+        // per file and per page with pictures, and the manager's document and
+        // file columns are exactly what they were without them.
+        kinds.insert(koru_core::explore::KIND_READING.to_owned(), 9);
+        assert_eq!(document_count(&kinds, true), 6);
+        assert_eq!(kinds.get(koru_core::explore::KIND_FILE).copied(), Some(7));
         // The call site reads the flag: all-off hides canvases.
         koru_features::testing::with(koru_features::Features::ALL_OFF, || {
             assert_eq!(document_count(&kinds, koru_features::canvas()), 4);

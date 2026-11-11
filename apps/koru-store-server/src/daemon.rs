@@ -1020,7 +1020,10 @@ async fn run(
 
     // 2. `catalog.db`, and nothing else.
     let catalog = SqliteCatalog::open(&root.join(CATALOG_FILE))?;
-    let mut store = Store::open(catalog, SqliteBackend::new(&root))?;
+    // The kinds whose checkpoints record no history row are named here, by
+    // the host: the store interprets no kind of its own accord (OCR D14).
+    let mut store = Store::open(catalog, SqliteBackend::new(&root))?
+        .with_unversioned_kinds(koru_projection::model::UNVERSIONED);
     tracing::info!("store startup: catalog and store opened");
     // Retention is per deletion fact (`DeletionRecord::retention_ms`), so
     // the cutoff is simply now; a held or pending Workspace is reported,

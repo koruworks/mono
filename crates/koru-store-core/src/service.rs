@@ -272,6 +272,10 @@ struct WorkspaceManifestProjection {
 /// someone's work or the open that just replayed the journal — but it is
 /// logged: a checkpoint that silently never lands is a journal that grows
 /// forever, which is the bug this whole path exists to prevent.
+///
+/// `versioned` is false for a document whose kind the host named unversioned
+/// ([`Store::with_unversioned_kinds`]): its checkpoint is taken exactly as any
+/// other — the journal still needs bounding — and only the history row is not.
 fn take_checkpoint<W: crate::ports::WorkspaceRepo>(
     workspace: WorkspaceId,
     open: &mut Open<W>,
@@ -279,6 +283,7 @@ fn take_checkpoint<W: crate::ports::WorkspaceRepo>(
     head: u64,
     at: Timestamp,
     why: &'static str,
+    versioned: bool,
 ) {
     let Some((version_vector, frontiers)) = open.position(document) else {
         return;
@@ -321,8 +326,9 @@ fn take_checkpoint<W: crate::ports::WorkspaceRepo>(
                 // Soft like the checkpoint itself, but never silent. The
                 // manifest is exempt: it is not a document anyone's history
                 // view lists, and its snapshots would only grow the version
-                // store.
-                if !manifest {
+                // store. So is a kind the host named unversioned, for the same
+                // reason: nobody's history view lists a reading document.
+                if !manifest && versioned {
                     let capture = crate::ports::HistoryCapture {
                         document,
                         snapshot: &checkpoint.snapshot,
@@ -368,6 +374,7 @@ fn checkpoint_if_overdue<W: crate::ports::WorkspaceRepo>(
     workspace: WorkspaceId,
     open: &mut Open<W>,
     document: DocumentId,
+    versioned: bool,
 ) {
     let since_seq = open
         .repo
@@ -383,7 +390,29 @@ fn checkpoint_if_overdue<W: crate::ports::WorkspaceRepo>(
     };
     let count = head.saturating_sub(since_seq.unwrap_or(0));
     if policy.due(count, since.bytes) {
-        take_checkpoint(workspace, open, document, head, Timestamp::now(), "load");
+        take_checkpoint(
+            workspace,
+            open,
+            document,
+            head,
+            Timestamp::now(),
+            "load",
+            versioned,
+        );
+    }
+}
+
+/// Whether a checkpoint of `document` earns a history row: false for the
+/// manifest's kinds the host named unversioned. A document the manifest does
+/// not (yet) list is versioned — the safe fallback, the same one the
+/// projector takes for a kind it does not know yet.
+fn versioned<W>(unversioned: &[String], open: &Open<W>, document: DocumentId) -> bool {
+    if unversioned.is_empty() || open.is_manifest(document) {
+        return true;
+    }
+    match open.manifest.kind_of(document) {
+        Some(kind) => !unversioned.iter().any(|named| *named == kind),
+        None => true,
     }
 }
 
@@ -427,6 +456,10 @@ pub struct Store<C: Catalog, B: Backend> {
     /// of the install so a restart is not a new peer in every version vector.
     peer_id: u64,
     pub checkpoints: CheckpointPolicy,
+    /// Manifest kinds whose checkpoints record no history row, as the host
+    /// named them ([`Store::with_unversioned_kinds`]). Empty unless told:
+    /// the store interprets no kind on its own.
+    unversioned: Vec<String>,
     /// Recoveries seen since start-up, for the debug routes. Metadata only.
     recoveries: Vec<String>,
     /// Documents committed since somebody last drained this.
@@ -606,6 +639,20 @@ pub struct EnsuredFileNote {
     pub delta: Vec<u8>,
 }
 
+/// The answer to [`Store::ensure_reading`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EnsuredReading {
+    /// The reading document's id: always
+    /// [`reading_document_id`](crate::ids::reading_document_id) of the parent.
+    pub id: DocumentId,
+    /// Whether this call registered it. A fact the store knows, handed up so
+    /// no caller infers it from the delta.
+    pub created: bool,
+    /// The manifest delta — empty on the idempotent path, which changed
+    /// nothing, so a broadcaster should skip it.
+    pub delta: Vec<u8>,
+}
+
 /// When a document last changed, and where that change came from.
 ///
 /// **Provenance, never an author.** An origin names a replica path — this
@@ -702,15 +749,29 @@ fn may_mint_identity<C: Catalog>(catalog: &C, id: ProfileId) -> Result<bool> {
     Ok(catalog.state(&profile_origin_key(id))?.is_some())
 }
 
-/// The application-owned kind tokens [`Store::ensure_file_note`] has to know.
+/// The application-owned kind tokens [`Store::ensure_file_note`] and
+/// [`Store::ensure_reading`] have to know.
 ///
 /// Kind tokens belong to the application (`koru_core::explore::KIND_FILE` /
-/// `KIND_NOTE`); these two are duplicated here because core cannot name that
-/// crate — the same reason a manifest test writes `"page"` by hand. A kind the
-/// store *interprets* is the exception this operation is: a note may attach
-/// only to a file.
+/// `KIND_NOTE` / `KIND_DOCUMENT` / `KIND_READING`); these are duplicated here
+/// because core cannot name that crate — the same reason a manifest test
+/// writes `"page"` by hand. A kind the store *interprets* is the exception
+/// these two operations are: a note may attach only to a file, and a reading
+/// document only to a file or a page (OCR TECHNICAL D9).
 const KIND_FILE: &str = "file";
 const KIND_NOTE: &str = "note";
+const KIND_PAGE: &str = "page";
+const KIND_READING: &str = "koru-reading";
+
+/// The title a reading document is registered under: none.
+///
+/// **Shown nowhere, and it does not follow its parent's** (OCR TECHNICAL §7).
+/// Nothing lists a reading document and nothing projects or indexes one, so a
+/// title would be a string no person ever reads; an empty one also cannot
+/// match a search, even if some future surface indexed listing titles alone.
+/// [`Store::rename_document_entry`] renames a file's note with it and leaves
+/// this alone.
+const READING_TITLE: &str = "";
 
 impl<C: Catalog, B: Backend> Store<C, B> {
     /// Open the store. Touches `catalog.db` and nothing else.
@@ -832,6 +893,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             private_profiles: HashMap::new(),
             peer_id,
             checkpoints: CheckpointPolicy::default(),
+            unversioned: Vec::new(),
             recoveries: Vec::new(),
             committed: crate::commit_signal::Commits::default(),
             reminder_committed: HashMap::new(),
@@ -846,6 +908,27 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             sync_verified: HashMap::new(),
             transport: crate::transport::Fence::new(),
         })
+    }
+
+    /// Name the manifest kinds whose checkpoints record **no history row**
+    /// (OCR TECHNICAL D14), as part of constructing the Store:
+    /// `Store::open(catalog, backend)?.with_unversioned_kinds(kinds)`.
+    ///
+    /// **The host's to say.** This crate treats documents as opaque and names
+    /// no kind of its own accord, so the set arrives from whoever opens it —
+    /// the daemon passes `koru_projection::model::UNVERSIONED`. A Store opened
+    /// without one versions every document, which is what it always did.
+    ///
+    /// The checkpoint itself is still taken: it bounds the journal a reopen
+    /// replays, and that is owed to every document. Only the client-facing
+    /// row in `document_versions` is skipped.
+    pub fn with_unversioned_kinds<I, K>(mut self, kinds: I) -> Self
+    where
+        I: IntoIterator<Item = K>,
+        K: Into<String>,
+    {
+        self.unversioned = kinds.into_iter().map(Into::into).collect();
+        self
     }
 
     pub fn record_sync_state_event(
@@ -2536,6 +2619,94 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         })
     }
 
+    /// The one **reading document** a file or a page carries, registering it
+    /// when it has none (OCR TECHNICAL D9, §7 "Identity and registration").
+    ///
+    /// The pattern is [`ensure_file_note`](Self::ensure_file_note)'s, with one
+    /// difference that is the reason for this operation: **the id is derived**,
+    /// [`reading_document_id`](crate::ids::reading_document_id) of the parent,
+    /// so there is no link to write and none to carry across a transfer. That
+    /// is also what makes it safe for every device to call this before it has
+    /// heard from the others: two devices that each register one while apart
+    /// register the *same* id, the manifest then holds two tree nodes claiming
+    /// it, and [`Manifest::reindex`] keeps the lowest `TreeID` on every
+    /// replica. Both have been writing into one document all along.
+    ///
+    /// **Idempotent.** A parent whose reading document the manifest already
+    /// lists hands that id back with an empty delta. Only a file or a page
+    /// takes one; anything else is refused, the parent's kind being the one
+    /// token the store interprets here.
+    ///
+    /// Registered **empty**, as the last of the parent's children, with no
+    /// title ([`READING_TITLE`]): the store does not know what is inside a
+    /// document (ADR-80), and the reader writes the content later. As the
+    /// parent's manifest child it is trashed, restored and purged with it, and
+    /// moved to another workspace with it, by the code that already does that
+    /// for a note.
+    ///
+    /// The document's storage is created when it is missing even on the
+    /// idempotent path — the manifest entry and the document sync separately,
+    /// so a device may hold the entry before the bytes — so whoever asked can
+    /// write into it the moment this returns.
+    pub fn ensure_reading(
+        &mut self,
+        workspace: WorkspaceId,
+        parent: DocumentId,
+        at: Timestamp,
+    ) -> Result<EnsuredReading> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        let id = crate::ids::reading_document_id(parent);
+        if open.manifest.contains(id) {
+            if open.repo.document(id)?.is_none() {
+                open.repo.create_document(id, DocumentKind::Document, at)?;
+                self.catalog.record_location(id, workspace)?;
+            }
+            return Ok(EnsuredReading {
+                id,
+                created: false,
+                delta: Vec::new(),
+            });
+        }
+        let kind = open
+            .manifest
+            .kind_of(parent)
+            .ok_or_else(|| Error::bare(Code::DocumentNotFound))?;
+        if kind != KIND_FILE && kind != KIND_PAGE {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "a reading document belongs to a file or a page",
+            ));
+        }
+
+        let before = open.manifest.version();
+        open.manifest
+            .add_document_at(id, READING_TITLE, KIND_READING, Some(parent), None)?;
+        let delta = open.manifest.export_updates_since(&before)?;
+
+        if open.repo.document(id)?.is_none() {
+            open.repo.create_document(id, DocumentKind::Document, at)?;
+        }
+        let manifest_id = open.manifest_id;
+        commit_one(
+            open,
+            workspace,
+            &mut self.committed,
+            &mut self.sync_dirty,
+            manifest_id,
+            delta.clone(),
+            at,
+            crate::ports::UpdateOrigin::Store,
+        )?;
+        open.repo.reindex(&open.manifest.entries())?;
+        self.catalog.record_location(id, workspace)?;
+        Ok(EnsuredReading {
+            id,
+            created: true,
+            delta,
+        })
+    }
+
     /// Move one document entry and its inherited subtree to workspace trash.
     /// Bytes remain locally available and a later manifest restore can expose
     /// the same document again.
@@ -2911,6 +3082,21 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                         Code::Internal,
                         "could not place transferred documents into the target manifest",
                     ));
+                }
+            }
+            // **A file keeps its note.** The entries above are re-created from
+            // id, title, kind and type, which left out the one link a manifest
+            // entry carries: a file's `note_doc`. The note itself always came
+            // along, as the file's child, so the moved file no longer pointed
+            // at it and was offered *Add note* again — shipped behaviour,
+            // reproduced by `a_file_moved_to_another_workspace_keeps_its_note`.
+            // Carried only when the note travels too, which as the file's child
+            // it does; a link to a document left behind would point at nothing.
+            // A reading document needs nothing here: its id is derived from its
+            // parent's, which the transfer keeps.
+            for e in &meta {
+                if let Some(note) = e.note.filter(|note| ids.contains(note)) {
+                    open.manifest.set_note(e.id, Some(note))?;
                 }
             }
             // Position the root among its new siblings.
@@ -4678,7 +4864,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .journal_since(document, since_seq)
             .map_or(0, |since| since.bytes);
         if self.checkpoints.due(count, bytes) {
-            take_checkpoint(workspace, open, document, head, at, "flush");
+            let versioned = versioned(&self.unversioned, open, document);
+            take_checkpoint(workspace, open, document, head, at, "flush", versioned);
         }
 
         // The projection is rebuilt whenever the manifest changes, so a listing
@@ -5090,7 +5277,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             // it was the last one of its size.
             let policy = self.checkpoints;
             let manifest_id = open.manifest_id;
-            checkpoint_if_overdue(&policy, workspace, open, manifest_id);
+            checkpoint_if_overdue(&policy, workspace, open, manifest_id, true);
         }
         span.stop();
         Ok(())
@@ -5359,7 +5546,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // just replayed to load this document, so an overdue checkpoint is
         // taken here rather than waiting for an edit that may never come.
         let policy = self.checkpoints;
-        checkpoint_if_overdue(&policy, workspace, open, document);
+        let versioned = versioned(&self.unversioned, open, document);
+        checkpoint_if_overdue(&policy, workspace, open, document, versioned);
         Ok(())
     }
 }

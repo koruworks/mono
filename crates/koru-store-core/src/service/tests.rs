@@ -8,6 +8,21 @@ use crate::{
     RuleStatus, Timestamp, ToneId, WeekStartPreference, WorkspaceId,
 };
 
+/// **The kind tokens this file duplicates must match the application's.**
+/// `koru_core::explore` declares `KIND_FILE`, `KIND_NOTE`, `KIND_DOCUMENT` and
+/// `KIND_READING`, and pins the same literals on its side, because neither
+/// crate can name the other's constant (ADR-80). Drift would make
+/// `ensure_reading` register documents nothing hides, or refuse the parents it
+/// exists for.
+#[test]
+fn the_kind_tokens_match_the_applications() {
+    assert_eq!(KIND_FILE, "file");
+    assert_eq!(KIND_NOTE, "note");
+    assert_eq!(KIND_PAGE, "page");
+    assert_eq!(KIND_READING, "koru-reading");
+    assert_eq!(READING_TITLE, "");
+}
+
 fn rule(id: ReminderId, revision: RuleRevisionId, hour: u8) -> ReminderRule {
     ReminderRule {
         id,
