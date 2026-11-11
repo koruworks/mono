@@ -31,7 +31,7 @@ pub(super) fn raw(
     conn.query_row("SELECT bot_id,fingerprint,command_kind,stage,planned_run_id,captured_config_revision,captured_policy_revision,submission_version,submission_json,desired_pause,expected_revision,pause_ack_stage,outcome_json FROM bot_command_receipts WHERE user_scope_id=?1 AND request_id=?2",
         params![scope.to_storage(),request.to_storage()],|r|Ok(Raw {bot:r.get(0)?,fingerprint:r.get(1)?,kind:r.get(2)?,stage:r.get(3)?,run:r.get(4)?,config:r.get(5)?,policy:r.get(6)?,version:r.get(7)?,submission:r.get(8)?,desired:r.get(9)?,expected:r.get(10)?,ack:r.get(11)?,outcome:r.get(12)?})).optional().map_err(bad)
 }
-fn decode_submission(
+pub(super) fn decode_submission(
     r: Raw,
     scope: UserScopeId,
     request: BotRequestId,

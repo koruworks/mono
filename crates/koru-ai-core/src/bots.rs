@@ -364,13 +364,17 @@ pub enum BotCommand {
     /// One Run of a Bot conversation, read through the execution owner: the
     /// Run that wrote reply `message_id` of `chat_id` (or the reply a branch
     /// copied there), with a window of its history from entry `from`, `len`
-    /// entries (1 to 500). Answered `run` with the Run view
+    /// entries (1 to 500). Without `message_id`, the Run of a task started
+    /// through the API (`start`/`continue`, which writes no reply) in
+    /// `chat_id`, bound through the Bot's own admitted receipt; a reply's Run
+    /// is read only through its reply. Answered `run` with the Run view
     /// `GET /v1/runs/{run}` answers, without `execution.session`: no
     /// stream, control or takeover handle.
     ReadRun {
         bot_id: BotId,
         chat_id: ChatId,
-        message_id: crate::MessageId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<crate::MessageId>,
         run_id: koru_delegate_core::RunId,
         from: u64,
         #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 500)))]

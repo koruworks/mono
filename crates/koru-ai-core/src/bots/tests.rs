@@ -382,7 +382,7 @@ fn a_run_read_names_the_reply_and_its_run_and_nothing_else() {
     let request = BotCommand::ReadRun {
         bot_id: BotId::mint(),
         chat_id: ChatId::new(),
-        message_id: crate::MessageId::new(),
+        message_id: Some(crate::MessageId::new()),
         run_id: koru_delegate_core::RunId::mint(),
         from: 0,
         len: BOT_RUN_WINDOW_LIMIT,
@@ -422,6 +422,31 @@ fn a_run_read_names_the_reply_and_its_run_and_nothing_else() {
             "{field}"
         );
     }
+    // An API task's Run is read without `message_id` (omitted when absent;
+    // an explicit null reads the same).
+    let mut task = json.clone();
+    task.as_object_mut().unwrap().remove("message_id");
+    let BotCommand::ReadRun { message_id, .. } =
+        serde_json::from_value::<BotCommand>(task.clone()).unwrap()
+    else {
+        panic!("read_run")
+    };
+    assert_eq!(message_id, None);
+    let BotCommand::ReadRun { run_id, .. } = request else {
+        unreachable!()
+    };
+    let without = serde_json::from_value::<BotCommand>(task.clone()).unwrap();
+    assert!(
+        serde_json::to_value(&without)
+            .unwrap()
+            .get("message_id")
+            .is_none()
+    );
+    task["message_id"] = serde_json::Value::Null;
+    assert!(matches!(
+        serde_json::from_value::<BotCommand>(task).unwrap(),
+        BotCommand::ReadRun { message_id: None, run_id: r, .. } if r == run_id
+    ));
     let mut missing = json;
     missing.as_object_mut().unwrap().remove("len");
     assert!(serde_json::from_value::<BotCommand>(missing).is_err());

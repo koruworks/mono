@@ -3253,7 +3253,7 @@ mod tests {
         let command = koru_ai_wire::BotCommand::ReadRun {
             bot_id: koru_ai_core::bots::BotId::mint(),
             chat_id: koru_ai_core::ChatId::new(),
-            message_id: koru_ai_core::MessageId::new(),
+            message_id: Some(koru_ai_core::MessageId::new()),
             run_id: koru_delegate_core::RunId::mint(),
             from: 0,
             len: 100,

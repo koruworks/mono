@@ -300,7 +300,8 @@ impl WorkerState {
     }
 
     /// The owner first, then the conversation's Trash, then the Bot's
-    /// workspace, then the binding, as a named conversation read is checked
+    /// workspace, then the binding (a reply's, or without `message_id` an
+    /// API task's receipt), as a named conversation read is checked
     /// (`guard_command`, `require_held_owner`): only the owner learns a
     /// conversation is held, and a Run that is not this reply's is
     /// `not_found`, never someone else's.
@@ -362,11 +363,19 @@ impl WorkerState {
             .authority
             .workspace(bot.home_workspace)
             .map_err(bot_failure)?;
-        let record_workspace = self
-            .repository
-            .bound_bot_run(bot_id, chat_id, message_id, run_id)
-            .map_err(bot_failure)?
-            .ok_or_else(not_found)?;
+        // A reply's Run through its reply; without one, an API task's Run
+        // through the Bot's own admitted receipt. Neither binding admits the
+        // other's Run.
+        let record_workspace = match message_id {
+            Some(message) => self
+                .repository
+                .bound_bot_run(bot_id, chat_id, message, run_id),
+            None => self
+                .repository
+                .bound_bot_task_run(owner, bot_id, chat_id, run_id),
+        }
+        .map_err(bot_failure)?
+        .ok_or_else(not_found)?;
         let unavailable = || {
             failure(
                 "bot_unavailable",

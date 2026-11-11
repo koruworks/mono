@@ -122,6 +122,17 @@ const BOT_RUN_RECORD_SQL: &str = "SELECT record_workspace_id FROM bot_chat_runs
 const BOT_HISTORICAL_RUN_SQL: &str = "SELECT record_workspace_id FROM bot_historical_run_refs
   WHERE chat_id = ?1 AND message_id = ?2 AND run_id = ?3 AND bot_id = ?4";
 
+/// The receipt of a task started through the API, by its unique planned
+/// Run (the `planned_run_id` unique index), narrowed to the Bot: what
+/// `read_run` without a message binds through.
+pub(crate) const BOT_TASK_RUN_SQL: &str =
+    "SELECT user_scope_id, request_id FROM bot_command_receipts
+  WHERE planned_run_id = ?1 AND bot_id = ?2";
+
+/// Whether a Run wrote a reply: its row by the unique `run_id`.
+pub(crate) const BOT_RUN_HAS_REPLY_SQL: &str =
+    "SELECT EXISTS(SELECT 1 FROM bot_chat_runs WHERE run_id = ?1)";
+
 /// Whether the execution owner admitted a Run's submission: its receipt,
 /// by primary key from the Run's unique `run_id`, is `completed` (a refused
 /// one is `rejected`, one still in flight `prepared`).
@@ -267,6 +278,66 @@ impl Repository {
         workspace
             .map(|w| WorkspaceId::parse(&w).ok_or(BotError::Storage))
             .transpose()
+    }
+
+    /// The record workspace of `run` when `read_run` may bind it without a
+    /// message: one of `bot`'s tasks started through the API. Its receipt,
+    /// found by its unique planned Run, is `owner`'s and this Bot's,
+    /// `completed` (admitted by its execution owner), started from no
+    /// conversation attempt (a reply's Run binds only through its reply, by
+    /// [`Self::bound_bot_run`]), and its submission names `chat`, a
+    /// conversation of this Bot. The workspace is the submission's, where
+    /// the Run's record is. Anything else is `None`, never "it exists
+    /// elsewhere"; the caller has checked the owner first. Three key seeks.
+    pub fn bound_bot_task_run(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        chat: ChatId,
+        run: koru_delegate_core::RunId,
+    ) -> Result<Option<WorkspaceId>, BotError> {
+        if bot_for_chat_on(&self.connection, chat)? != Some(bot) {
+            return Ok(None);
+        }
+        let replied: bool = self
+            .connection
+            .query_row(BOT_RUN_HAS_REPLY_SQL, [run.to_storage()], |row| row.get(0))
+            .map_err(bad)?;
+        if replied {
+            return Ok(None);
+        }
+        let found: Option<(String, String)> = self
+            .connection
+            .query_row(
+                BOT_TASK_RUN_SQL,
+                params![run.to_storage(), bot.to_storage()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(bad)?;
+        let Some((scope, request)) = found else {
+            return Ok(None);
+        };
+        if scope != owner.user_scope.to_storage() {
+            return Ok(None);
+        }
+        let request: BotRequestId = request.parse().map_err(bad)?;
+        let Some(row) = super::admission::raw(&self.connection, owner.user_scope, request)? else {
+            return Ok(None);
+        };
+        if !matches!(row.kind.as_str(), "start" | "continue") {
+            return Ok(None);
+        }
+        let receipt = super::admission::decode_submission(row, owner.user_scope, request)?;
+        let submission = &receipt.intent.submission;
+        let p = &submission.provenance;
+        Ok((receipt.stage == BotReceiptStage::Completed
+            && p.ai_attempt_id.is_none()
+            && p.owner.device == owner.device
+            && p.bot == bot
+            && p.chat_id == chat.as_uuid()
+            && submission.request.run == run)
+            .then_some(submission.workspace))
     }
 
     /// Record that `run` wrote reply `message`, as a Bot conversation's
