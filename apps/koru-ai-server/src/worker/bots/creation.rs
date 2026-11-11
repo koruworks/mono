@@ -357,7 +357,6 @@ impl CreationPreparationJob {
                 },
                 String::new(),
             );
-            require_qualified_runtime(&probe)?;
             if self.discover_models {
                 validate_model_evidence(agents, &probe, false)?;
             }

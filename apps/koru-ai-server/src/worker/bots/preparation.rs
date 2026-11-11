@@ -184,17 +184,11 @@ impl WorkerState {
                         workspaces.insert(*home_workspace);
                         pages.insert(config.role.clone());
                         pages.extend(selected_pages.clone());
-                        // An unqualified runtime is refused by the writer;
-                        // it is not discovered first.
-                        if qualified_bot_runtime(&config.model.provider) {
-                            model = Some(config.clone());
-                        }
+                        model = Some(config.clone());
                     }
                     BotCommand::Update { config, .. } => {
                         pages.insert(config.role.clone());
-                        if qualified_bot_runtime(&config.model.provider) {
-                            model = Some(config.clone());
-                        }
+                        model = Some(config.clone());
                     }
                     BotCommand::UpdateAccess { selected_pages, .. } => {
                         pages.extend(selected_pages.clone())

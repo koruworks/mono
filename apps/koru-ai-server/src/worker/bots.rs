@@ -348,7 +348,6 @@ fn execute_bot_command(
             selected_pages,
             ..
         } => {
-            require_qualified_runtime(&config)?;
             validate_runtime(&config)?;
             (
                 Bot {
@@ -383,7 +382,6 @@ fn execute_bot_command(
                 .bot(bot_id)
                 .map_err(bot_failure)?
                 .ok_or_else(not_found)?;
-            require_qualified_runtime(&config)?;
             validate_runtime(&config)?;
             bot.config = config;
             bot.revision = next_revision(expected_revision)?;
@@ -421,20 +419,6 @@ fn execute_bot_command(
         .save_bot(&bot, profile, request_id, &fingerprint, expected)
         .map_err(bot_failure)?;
     Ok(BotResponse::Bot { bot })
-}
-
-/// M1 runs on the qualified runtimes only. Checked after an exact retry has
-/// replayed its retained outcome and before any discovery result is used or
-/// anything is written; an existing Bot on another runtime stays readable.
-fn require_qualified_runtime(config: &BotConfig) -> ApiResult<()> {
-    if qualified_bot_runtime(&config.model.provider) {
-        return Ok(());
-    }
-    Err(failure(
-        "unsupported_capability",
-        "This agent is not available for Bots in this version.",
-        false,
-    ))
 }
 
 fn validate_owner(authority: &Arc<dyn BotAuthority>, bot: &Bot) -> ApiResult<()> {
