@@ -75,7 +75,9 @@ fn bot_route_error() -> AiError {
 /// provider's error with no added words; its reason stays on the attempt.
 fn refused_input_error(refusal: koru_delegate_core::BotInputRefusal) -> AiError {
     use koru_delegate_core::BotInputRefusal as R;
-    match refusal {
+    // The live Failed event carries the owner's stable code (O36), the same
+    // one the attempt keeps in its stop reason.
+    let error = match refusal {
         R::TooLarge => context_too_large(),
         R::Pictures => AiError::new(AiErrorClass::Provider, "", false),
         R::Capability => AiError::new(
@@ -89,5 +91,6 @@ fn refused_input_error(refusal: koru_delegate_core::BotInputRefusal) -> AiError 
             false,
         ),
         R::Invalid => bot_route_error(),
-    }
+    };
+    error.with_stop_code(refusal.code())
 }

@@ -163,3 +163,29 @@ fn the_chat_label_is_optional_both_ways() {
     assert_eq!(older.title, "Scout");
     let _ = older.id;
 }
+
+/// A stop code is one of the engine's closed codes or nothing, and an error
+/// without one serializes exactly as before (O36).
+#[test]
+fn a_stop_code_is_closed_and_absent_by_default() {
+    let plain = crate::AiError::new(crate::AiErrorClass::Provider, "", false);
+    assert_eq!(plain.stop_code, None);
+    assert!(
+        serde_json::to_value(&plain)
+            .unwrap()
+            .get("stop_code")
+            .is_none()
+    );
+    let coded = plain.clone().with_stop_code("bot_input_too_large");
+    assert_eq!(coded.stop_code.as_deref(), Some("bot_input_too_large"));
+    assert_eq!(plain.clone().with_stop_code("max_tokens").stop_code, None);
+    #[derive(Deserialize)]
+    struct OlderError {
+        retryable: bool,
+    }
+    let older: OlderError = serde_json::from_value(serde_json::to_value(&coded).unwrap()).unwrap();
+    assert!(!older.retryable);
+    for refusal in koru_delegate_core::BotInputRefusal::ALL {
+        assert!(crate::is_engine_stop_code(refusal.code()));
+    }
+}

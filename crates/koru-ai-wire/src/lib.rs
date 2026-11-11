@@ -737,13 +737,19 @@ impl TryFrom<AiEvent> for PublicAiEvent {
             },
             AiEvent::Failed {
                 attempt_id,
-                error,
+                mut error,
                 at,
-            } => Self::Failed {
-                attempt_id,
-                error,
-                at,
-            },
+            } => {
+                // Only the engine's own stable codes reach a client (O36).
+                error.stop_code = error
+                    .stop_code
+                    .filter(|code| koru_ai_core::is_engine_stop_code(code));
+                Self::Failed {
+                    attempt_id,
+                    error,
+                    at,
+                }
+            }
             AiEvent::Cancelled { attempt_id, at } => Self::Cancelled { attempt_id, at },
             AiEvent::Notice {
                 attempt_id,

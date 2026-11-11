@@ -37,7 +37,7 @@ pub use ids::{
 pub use inference::{
     AiError, AiErrorClass, AiEvent, AiRequest, AiRequestMessage, AiRequestOptions, AiToolCall,
     AiToolDefinition, AiToolLoop, AiToolLoopLimits, AiToolResult, AiToolSafety, AiToolTurn,
-    AiUsage, Cancellation, ProviderStream, RequestMeasurements, UsageSource,
+    AiUsage, Cancellation, ProviderStream, RequestMeasurements, UsageSource, is_engine_stop_code,
 };
 pub use model::*;
 pub use ports::{

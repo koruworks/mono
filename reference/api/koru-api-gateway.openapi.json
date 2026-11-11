@@ -820,6 +820,11 @@
           },
           "retryable": {
             "type": "boolean"
+          },
+          "stop_code": {
+            "description": "**The engine's own stable code for why a reply ended**, when it has\none (O36): today a Bot task whose first input the runtime refused\n(`bot_input_*`, see [`is_engine_stop_code`]). Never provider text;\nabsent everywhere else, so an older reader sees the error it always\nsaw. A surface maps it to its own words and never shows it.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [

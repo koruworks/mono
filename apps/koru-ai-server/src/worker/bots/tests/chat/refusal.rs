@@ -88,6 +88,8 @@ fn a_named_refusal_of_the_first_input_ends_the_task_at_once_on_the_interrupt_lan
             PublicAiEvent::Failed { error, .. } => {
                 assert_eq!(error.class, class, "{code}");
                 assert!(!error.retryable);
+                // The live event names the owner's stable code (O36).
+                assert_eq!(error.stop_code.as_deref(), Some(code));
             }
             event => panic!("{code}: {event:?}"),
         }
@@ -142,4 +144,29 @@ fn an_uncertain_begin_is_reissued_with_backoff_not_four_times_a_second() {
     for (gap, floor) in gaps.iter().zip([400, 900, 1_900]) {
         assert!(*gap >= Duration::from_millis(floor), "{gaps:?}");
     }
+}
+
+/// Only the engine's own stable codes leave the service, whatever a value
+/// inside the worker happened to hold (O36).
+#[test]
+fn a_failed_reply_carries_only_an_engine_stop_code_to_a_client() {
+    let failed = |code: Option<&str>| {
+        let mut error = AiError::new(AiErrorClass::Provider, "", false);
+        error.stop_code = code.map(str::to_owned);
+        let event = AiEvent::Failed {
+            attempt_id: InferenceAttemptId::new(),
+            error,
+            at: Timestamp::from_millis(1),
+        };
+        match PublicAiEvent::try_from(event).unwrap() {
+            PublicAiEvent::Failed { error, .. } => error.stop_code,
+            event => panic!("{event:?}"),
+        }
+    };
+    assert_eq!(
+        failed(Some("bot_input_pictures_refused")).as_deref(),
+        Some("bot_input_pictures_refused")
+    );
+    assert_eq!(failed(Some("the provider said: no pictures")), None);
+    assert_eq!(failed(None), None);
 }

@@ -513,6 +513,13 @@ pub struct AiError {
     pub class: AiErrorClass,
     pub public_message: String,
     pub retryable: bool,
+    /// **The engine's own stable code for why a reply ended**, when it has
+    /// one (O36): today a Bot task whose first input the runtime refused
+    /// (`bot_input_*`, see [`is_engine_stop_code`]). Never provider text;
+    /// absent everywhere else, so an older reader sees the error it always
+    /// saw. A surface maps it to its own words and never shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_code: Option<String>,
 }
 
 impl AiError {
@@ -521,8 +528,23 @@ impl AiError {
             class,
             public_message: public_message.into(),
             retryable,
+            stop_code: None,
         }
     }
+
+    /// The same error with one of the engine's stable stop codes. Anything
+    /// that is not one is dropped rather than carried.
+    pub fn with_stop_code(mut self, code: &str) -> Self {
+        self.stop_code = is_engine_stop_code(code).then(|| code.to_owned());
+        self
+    }
+}
+
+/// Whether `code` is one of the engine's own stable stop codes, the only
+/// values a reply's `stop_code` may carry: the closed `bot_input_*`
+/// refusals of a Bot task's first input.
+pub fn is_engine_stop_code(code: &str) -> bool {
+    koru_delegate_core::BotInputRefusal::from_code(code).is_some()
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
