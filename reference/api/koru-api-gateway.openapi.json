@@ -2708,7 +2708,7 @@
                 "nullable": true
               }
             ],
-            "description": "A pause, resume or access change of the Bot that its execution owner\nhas not acknowledged yet, with since when and the owner's last answer:\nwhile it is there, changes of the Bot answer `bot_operation_pending`.\nReads fill it in; omitted when nothing is pending, so a Bot with\nnothing pending serializes, and every stored receipt holding one is\nstored, exactly as before."
+            "description": "A pause, resume or access change of the Bot that its execution owner\nhas not acknowledged yet, with since when and the owner's last answer:\nwhile it is there, changes of the Bot answer `bot_operation_pending`,\nexcept while an Archive, Trash or Restore holds the whole Bot, when\nthey answer `bot_lifecycle_pending` (the hold is checked first).\nReads fill it in; omitted when nothing is pending, so a Bot with\nnothing pending serializes, and every stored receipt holding one is\nstored, exactly as before."
           },
           "policy_revision": {
             "format": "uint64",
@@ -4923,7 +4923,7 @@
                 "$ref": "#/components/schemas/BotRequestId"
               }
             ],
-            "description": "The change's own operation, readable with `read_operation`."
+            "description": "The change's own operation, readable with `read_operation`. It may be\none the AI owner made itself to deliver the same change: a pause or\nresume its execution owner refused for good as conflicting\n(`bot_conflict`, `bot_stale`) is settled `rejected` and offered again\nunder a new request, so the client's own request then reads\n`rejected` while this one names the renewal."
           },
           "since_ms": {
             "description": "When the change was made, in epoch milliseconds (UTC).",
