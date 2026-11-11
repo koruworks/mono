@@ -1,0 +1,27 @@
+[package]
+rust-version.workspace = true
+name = "koru-agent-config-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Draws and drives the choice of how a local agent runs - agent, model, effort, Fast, context window and approval mode - from plain data its host hands it, and hands back what the person chose."
+
+# **A component, host-fed** (Bots P1.8, QUESTIONS O39 and O42): it never
+# reads a catalog, calls a service, stores a preference, or knows what a chat
+# or a Bot is. So it links the design system and the two platform libraries
+# and nothing of the AI stack, and another Rust/vello project can depend on
+# it for the UI alone. `src/tests/dependency.rs` is the fence.
+[features]
+default = []
+# The control's internals a host's own tests reach into: `koru-ai-ui` turns
+# it on in its `[dev-dependencies]` only, so its suite keeps writing the
+# picker's state as it did before the control moved here.
+test-support = []
+
+[dependencies]
+koru-draw = { path = "../koru-draw" }
+koru-i18n = { path = "../koru-i18n" }
+koru-ui = { path = "../koru-ui" }
+vello.workspace = true
+winit.workspace = true

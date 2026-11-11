@@ -23,6 +23,10 @@ no-client = [
 test-support = []
 
 [dependencies]
+# The model picker and the approval-mode list: a host-fed control of their
+# own (Bots P1.8, O39), which this chat feeds from its catalog and transcript
+# and whose choices it carries out.
+koru-agent-config-ui = { path = "../koru-agent-config-ui" }
 koru-ai-core = { path = "../koru-ai-core" }
 koru-ai-wire = { path = "../koru-ai-wire" }
 # The Chats list's vocabulary — a step through it (D87) — shared with the
@@ -65,3 +69,6 @@ uuid.workspace = true
 # never compiled with it — so the suite turns them on by feature.
 koru-search-ui = { path = "../koru-search-ui", features = ["no-reader"] }
 koru-editor = { path = "../koru-editor", features = ["no-browser"] }
+# The suite reaches into the control's state as it did while the control
+# lived here; only a test build opens it.
+koru-agent-config-ui = { path = "../koru-agent-config-ui", features = ["test-support"] }

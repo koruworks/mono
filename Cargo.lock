@@ -5086,6 +5086,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-agent-config-ui"
+version = "0.0.3"
+dependencies = [
+ "koru-draw",
+ "koru-i18n",
+ "koru-ui",
+ "vello",
+ "winit",
+]
+
+[[package]]
 name = "koru-agent-wire"
 version = "0.0.3"
 dependencies = [
@@ -5296,6 +5307,7 @@ version = "0.0.3"
 dependencies = [
  "bytes",
  "image",
+ "koru-agent-config-ui",
  "koru-ai-core",
  "koru-ai-wire",
  "koru-api-client",
