@@ -493,3 +493,39 @@ fn the_model_is_an_update_at_the_read_revision_and_shown_only_when_answered() {
     settings.edit_model(held);
     assert!(!settings.model_edited());
 }
+
+/// **A poll turned away for now keeps a pending Pause followed** — the
+/// third review's probe, made permanent. The owner holds the Pause as
+/// pending; its `ReadOperation` is turned away by the AI worker
+/// (`queue_failure`'s `ai_worker_saturated`, through the real link's
+/// classification). Only the question went unanswered: the Pause is still
+/// pending, said as *Pausing…*, and polled again on the clock — never
+/// *Koru AI is busy, so nothing changed*.
+#[test]
+fn a_poll_turned_away_for_now_keeps_a_pending_pause_followed() {
+    let (mut settings, bot) = known();
+    let (request, _) = write(settings.toggle_pause().unwrap());
+    let now = Instant::now();
+    settings.answer(
+        request,
+        Ok(operation(request, &bot, BotOperationStatus::Pending)),
+        now,
+    );
+    let later = now + std::time::Duration::from_secs(5);
+    assert_eq!(
+        settings.polls(later).len(),
+        1,
+        "the pending Pause is polled"
+    );
+    settings.answer(request, Err(Failure::turned_away()), later);
+    assert!(settings.is_pending(Change::Pause), "still followed");
+    assert_eq!(settings.notice(), None, "nothing claimed");
+    let again = settings.deadline(later).expect("polled again");
+    assert!(again > later);
+    assert_eq!(settings.polls(again).len(), 1, "and polled");
+    // Refused for good: not the Pause's words, and the Bot is read.
+    settings.answer(request, Err(Failure::Refused("wrong_owner".into())), again);
+    assert!(!settings.is_pending(Change::Pause));
+    assert_eq!(settings.notice(), None, "never the change's refusal");
+    assert!(settings.take_read_owed(), "the Bot says whether it paused");
+}

@@ -1045,3 +1045,87 @@ fn a_read_with_nothing_open_clears_another_change_is_finishing() {
     model.know(&bot);
     assert_eq!(model.outcome(), Some(&Outcome::Refused(Words::BotsErrBusy)));
 }
+
+/// **A read turned away for now keeps a moving Archive followed** — the
+/// third review's probe, made permanent. The Archive is accepted and moving;
+/// its progress read is turned away by the AI worker (`ai_worker_saturated`
+/// from `queue_failure`: the read was never queued), or by a Store or Bot
+/// that does not answer (`workspace_unavailable`, `storage_error` from
+/// `bot_failure`), each through the real link's classification. Only the
+/// question went unanswered: the Archive is still followed on the clock and
+/// nothing is claimed — never *Koru AI is busy, so nothing changed*.
+#[test]
+fn a_read_turned_away_for_now_keeps_a_moving_archive_followed() {
+    use crate::bots::link::Said;
+    for refused in [
+        Failure::turned_away(),
+        Failure::of(Said::new("workspace_unavailable", true)),
+        Failure::of(Said::new("storage_error", true)),
+    ] {
+        let (mut model, bot) = fixture();
+        let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
+        let now = Instant::now();
+        model.answer(
+            request,
+            progress(
+                &bot,
+                request,
+                BotLifecycleKind::Archive,
+                BotLifecycleStage::Captured,
+            ),
+            now,
+        );
+        model.read_now(now);
+        let (asked, _) = sent(model.read(now).expect("a read"));
+        assert_eq!(asked, request);
+        model.answer(request, Err(refused.clone()), now);
+        assert!(model.busy(), "{refused:?}: still followed");
+        assert_eq!(model.outcome(), None, "{refused:?}: nothing claimed");
+        assert_eq!(model.op().map(|op| op.stage), Some(Stage::Moving));
+        assert!(!model.op().unwrap().unanswered, "{refused:?}");
+        let again = model.deadline(now).expect("read again on the clock");
+        assert!(again > now, "{refused:?}: not at once");
+        let (asked, _) = sent(model.read(again).expect("and read"));
+        assert_eq!(asked, request);
+    }
+    // The command's own refusal for now is still the command's: it was
+    // never queued, so nothing changed.
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
+    model.answer(request, Err(Failure::turned_away()), Instant::now());
+    assert_eq!(model.outcome(), Some(&Outcome::Refused(Words::BotsErrBusy)));
+}
+
+/// **A read refused for good after the owner accepted the command** is not
+/// the command's refusal: the Archive stays as last said, the Bot is read
+/// rather than *that wasn't done* said, and it is read again only when the
+/// tab is next shown. `wrong_owner` is what `read_bot_lifecycle` answers
+/// once the caller's owner is no longer the operation's.
+#[test]
+fn a_read_refused_for_good_reads_the_bot_rather_than_saying_the_commands_words() {
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
+    let now = Instant::now();
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Settling,
+        ),
+        now,
+    );
+    model.take_read_bot_owed();
+    model.read_now(now);
+    sent(model.read(now).expect("a read"));
+    model.answer(request, Err(Failure::Refused("wrong_owner".into())), now);
+    assert_eq!(model.outcome(), None, "never the command's words");
+    assert!(model.busy(), "as last said");
+    assert!(model.take_read_bot_owed(), "the Bot is read");
+    assert_eq!(model.deadline(now), None, "no clock: it would be refused");
+    assert!(model.read(now + Duration::from_secs(60)).is_none());
+    // Shown again: asked once more.
+    model.read_now(now);
+    assert!(model.read(now).is_some());
+}

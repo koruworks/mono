@@ -253,6 +253,14 @@ impl Failure {
     pub(crate) fn timed_out() -> Self {
         Self::of(Said::new("ai_worker_timeout", true))
     }
+
+    /// The failure as the real link gives it for a command **turned away
+    /// for now**: the AI worker's queue was full and it was never queued
+    /// (`queue_failure` in `apps/koru-ai-server/src/worker.rs`, retryable).
+    #[cfg(test)]
+    pub(crate) fn turned_away() -> Self {
+        Self::of(Said::new("ai_worker_saturated", true))
+    }
 }
 
 /// What the client said, as [`Said`].

@@ -114,6 +114,16 @@ struct Pending {
     backoff: Duration,
 }
 
+impl Pending {
+    /// The question about it went unanswered, or was turned away for now:
+    /// asked again at the next step of the clock (doubling to [`POLL_MAX`]).
+    fn poll_again(&mut self, now: Instant) {
+        self.in_flight = false;
+        self.backoff = (self.backoff * 2).min(POLL_MAX);
+        self.next_poll = Some(now.checked_add(self.backoff).unwrap_or(now));
+    }
+}
+
 /// What an answer settled, for the tab to act on.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Settled {
@@ -607,9 +617,7 @@ impl Settings {
                 if pending.operation {
                     // The owner holds the operation; only the question about
                     // it went unanswered. Still pending: ask again later.
-                    pending.in_flight = false;
-                    pending.backoff = (pending.backoff * 2).min(POLL_MAX);
-                    pending.next_poll = Some(now.checked_add(pending.backoff).unwrap_or(now));
+                    pending.poll_again(now);
                 } else {
                     // Not confirmed: the same change asked again is the same
                     // request (the owner replays it), and the Bot is read
@@ -619,6 +627,21 @@ impl Settings {
                     self.notice = Some(Notice::Refused(Words::BotsErrUnreachable));
                     self.read_owed = true;
                 }
+            }
+            // **A poll turned away for now** (`ai_worker_saturated`,
+            // `workspace_unavailable`, `storage_error`): the question about a
+            // change the owner holds as pending, never the change. Still
+            // pending, asked again on the clock.
+            Err(failure) if self.pending[index].operation && failure.again() => {
+                self.pending[index].poll_again(now);
+            }
+            // **A poll refused for good**: the owner accepted the change as
+            // pending, so this refusal's words are not the change's. It is
+            // no longer followed here, and the Bot's read says whether it
+            // took effect.
+            Err(Failure::Refused(_)) if self.pending[index].operation => {
+                self.pending.remove(index);
+                self.read_owed = true;
             }
             Err(Failure::Refused(code)) => {
                 self.pending.remove(index);

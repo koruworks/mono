@@ -118,6 +118,10 @@ pub(crate) struct Op {
     /// finished (`bot_lifecycle_pending`, a conflict), so the tab reads what
     /// it is now rather than saying the refusal.
     cancels: Option<Box<Op>>,
+    /// **The owner refused the last read of it for good**, after it had
+    /// accepted the command: it is not read again until the tab is next
+    /// shown, and the Bot's read says what holds it.
+    read_refused: bool,
     /// The owner has answered something about it: a read that answers
     /// `not_found` before that means the command never reached it.
     answered: bool,
@@ -430,6 +434,7 @@ impl Lifecycle {
             command: Some(command),
             flights: VecDeque::from([Flight::Command]),
             cancels: None,
+            read_refused: false,
             answered: false,
             unanswered: false,
             next_read: None,
@@ -467,6 +472,7 @@ impl Lifecycle {
             command: Some(command),
             flights: VecDeque::from([Flight::Command]),
             cancels: None,
+            read_refused: false,
             answered: false,
             unanswered: false,
             next_read: None,
@@ -553,6 +559,7 @@ impl Lifecycle {
             command: Some(command),
             flights: VecDeque::from([Flight::Command]),
             cancels,
+            read_refused: false,
             answered: false,
             unanswered: false,
             next_read: None,
@@ -584,6 +591,8 @@ impl Lifecycle {
         if let Some(op) = &mut self.op
             && !op.in_flight()
         {
+            // A read refused for good is tried once more per showing.
+            op.read_refused = false;
             op.next_read = Some(now);
         }
     }
@@ -593,7 +602,7 @@ impl Lifecycle {
     pub(crate) fn read(&mut self, now: Instant) -> Option<Command> {
         let bot = self.bot?;
         let op = self.op.as_mut()?;
-        if op.in_flight() || !op.next_read.is_some_and(|at| at <= now) {
+        if op.in_flight() || op.read_refused || !op.next_read.is_some_and(|at| at <= now) {
             return None;
         }
         op.flights.push_back(Flight::Read);
@@ -616,7 +625,7 @@ impl Lifecycle {
         if op.in_flight() {
             return now.checked_add(Duration::from_millis(50));
         }
-        op.next_read
+        op.next_read.filter(|_| !op.read_refused)
     }
 
     /// The link would not take `request`'s command or read: the last one
@@ -663,6 +672,7 @@ impl Lifecycle {
         match result {
             Ok(operation) => {
                 op.answered = true;
+                op.read_refused = false;
                 self.fold(&operation, flight, now);
             }
             Err(Failure::Unanswered) => {
@@ -672,6 +682,12 @@ impl Lifecycle {
                 // ask about it on the clock rather than claim either.
                 op.again(now);
             }
+            // **A read turned away for now** — the AI worker's queue was
+            // full (`ai_worker_saturated`), the Store or what the Bot needs
+            // did not answer (`workspace_unavailable`, `storage_error`):
+            // only the question went unanswered, never the command the owner
+            // holds. Asked again on the clock, exactly as an unanswered read.
+            Err(failure) if flight == Flight::Read && failure.again() => op.again(now),
             // A read of an operation the owner never received.
             Err(Failure::Refused(code)) if code == "not_found" && !op.answered => {
                 self.refuse(Words::BotsErrUnreachable);
@@ -684,7 +700,9 @@ impl Lifecycle {
             // said: the operation and the Bot are read, and what they show
             // is what the tab says.
             Err(Failure::Refused(code))
-                if moved_meanwhile(&code) && (flight == Flight::Resume || op.cancels.is_some()) =>
+                if moved_meanwhile(&code)
+                    && (flight == Flight::Resume
+                        || (flight == Flight::Command && op.cancels.is_some())) =>
             {
                 let mut followed = match op.cancels.take() {
                     Some(parked) => *parked,
@@ -693,6 +711,16 @@ impl Lifecycle {
                 followed.flights.clear();
                 followed.next_read = Some(now);
                 self.op = Some(followed);
+                self.read_bot_owed = true;
+            }
+            // **A read refused for good after the command was accepted**:
+            // its refusal is the read's, not the command's, whose words
+            // would be false (*nothing changed*). The operation stays as last
+            // said and is not read again until the tab is next shown; the
+            // Bot's read says what holds the Bot.
+            Err(Failure::Refused(_)) if flight == Flight::Read => {
+                op.read_refused = true;
+                op.next_read = None;
                 self.read_bot_owed = true;
             }
             Err(Failure::Refused(code)) => self.refuse(words_for(kind, &code)),
@@ -826,6 +854,7 @@ fn adopted(open: &BotOpenLifecycle, bot: &Bot, now: Instant) -> Op {
         command: None,
         flights: VecDeque::new(),
         cancels: None,
+        read_refused: false,
         answered: true,
         unanswered: false,
         next_read: Some(now),
