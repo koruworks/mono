@@ -99,6 +99,7 @@ impl LifecycleOperation {
                     retained: member.retained,
                 })
                 .collect(),
+            left_in_place: BotLeftInPlace::of(self.kind),
         }
     }
 }
@@ -623,6 +624,257 @@ impl Repository {
         tx.commit().map_err(bad)?;
         Ok(done)
     }
+}
+
+/// Trash and Restore (P1.7 S6, S7). In this version they have an AI effect
+/// only (O41): a trashed Bot and a conversation in Trash are hidden, and no
+/// page, Run record, folder or credential is moved, so no Store or delegate
+/// owner is called here or by the driver for them.
+impl Repository {
+    /// A whole-Bot Trash's last step, once its work is settled and, for an
+    /// active Bot, its effects-off barrier is effective. One transaction: the
+    /// Bot becomes trashed and its revision goes up; each captured
+    /// conversation that was not already in Trash goes into Trash under this
+    /// operation (one already there keeps its own operation's row, so its own
+    /// Restore stays the only way back); every pending member is
+    /// acknowledged and the operation completes.
+    pub fn complete_bot_trash(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        now: i64,
+    ) -> Result<LifecycleOperation, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let op = read_operation(&tx, scope, operation)?.ok_or(BotError::NotFound)?;
+        if op.kind != BotLifecycleKind::Trash
+            || op.stage != BotLifecycleStage::Settling
+            || (op.policy_request.is_some()
+                && op.policy_barrier != Some(BotLifecycleBarrierState::Effective))
+        {
+            return Err(BotError::Conflict);
+        }
+        let (current, prior) = admission::guard_any_lifecycle(&tx, op.owner, op.bot)?;
+        if prior != op.prior_lifecycle || prior == BotLifecycle::Trashed {
+            return Err(BotError::Conflict);
+        }
+        // An active Bot's capture paused it (one revision); an archived one
+        // was captured as it stood.
+        if current.revision != op.barrier_revision.unwrap_or(op.expected_revision) {
+            return Err(BotError::RevisionConflict);
+        }
+        let revision = current.revision.checked_add(1).ok_or(BotError::Invalid)?;
+        tx.execute(
+            "UPDATE bots SET lifecycle='trashed',revision=?2,updated_at_ms=?3 WHERE bot_id=?1 AND revision=?4",
+            params![op.bot.to_storage(), revision, now, current.revision],
+        )
+        .map_err(bad)?;
+        insert_captured_chat_trash(&tx, scope, operation, now)?;
+        complete_operation(&tx, scope, operation, BotLifecycleStage::Settling, now)?;
+        let done = read_operation(&tx, scope, operation)?.ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+
+    /// Restore of a whole-Bot Trash, completed or parked, captured and
+    /// applied in one transaction. The Bot returns to the lifecycle it had
+    /// when it was trashed (active, or archived), paused, with its revision
+    /// raised; exactly the conversations this Trash put into Trash come back.
+    /// No owner is called and nothing is resumed. An exact repeat returns the
+    /// stored Restore.
+    pub fn restore_trashed_bot(
+        &mut self,
+        capture: &LifecycleCapture,
+    ) -> Result<LifecycleOperation, BotError> {
+        if capture.kind != BotLifecycleKind::Restore || !capture.members.is_empty() {
+            return Err(BotError::Invalid);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let source = capture.source.ok_or(BotError::Invalid)?;
+        let original =
+            read_operation(&tx, capture.owner.user_scope, source)?.ok_or(BotError::NotFound)?;
+        if original.kind != BotLifecycleKind::Trash {
+            return Err(BotError::Invalid);
+        }
+        let (restore, fresh) = capture_on(&tx, capture)?;
+        if !fresh {
+            return Ok(restore);
+        }
+        let (current, prior) = admission::guard_any_lifecycle(&tx, capture.owner, capture.bot)?;
+        // A completed Trash left the Bot trashed; a parked one left it as it
+        // was. Either way it returns to that lifecycle, paused.
+        let back = original.prior_lifecycle;
+        if back == BotLifecycle::Trashed || !(prior == BotLifecycle::Trashed || prior == back) {
+            return Err(BotError::Conflict);
+        }
+        let revision = current.revision.checked_add(1).ok_or(BotError::Invalid)?;
+        tx.execute(
+            "UPDATE bots SET lifecycle=?5,paused=1,revision=?2,updated_at_ms=?3 WHERE bot_id=?1 AND revision=?4",
+            params![
+                capture.bot.to_storage(),
+                revision,
+                capture.now,
+                current.revision,
+                back.token()
+            ],
+        )
+        .map_err(bad)?;
+        tx.execute(
+            "DELETE FROM bot_chat_trash WHERE user_scope_id=?1 AND operation_id=?2",
+            params![capture.owner.user_scope.to_storage(), source.to_storage()],
+        )
+        .map_err(bad)?;
+        complete_operation(
+            &tx,
+            capture.owner.user_scope,
+            capture.operation,
+            BotLifecycleStage::Captured,
+            capture.now,
+        )?;
+        let done = read_operation(&tx, capture.owner.user_scope, capture.operation)?
+            .ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+
+    /// A conversation Trash's last step, once that conversation's work is
+    /// settled: one transaction puts it into Trash under this operation and
+    /// completes. The Bot is not paused and its revision does not move, so
+    /// its other conversations are not disturbed.
+    pub fn complete_bot_chat_trash(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        now: i64,
+    ) -> Result<LifecycleOperation, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let op = read_operation(&tx, scope, operation)?.ok_or(BotError::NotFound)?;
+        if op.kind != BotLifecycleKind::TrashChat || op.stage != BotLifecycleStage::Settling {
+            return Err(BotError::Conflict);
+        }
+        let (_, prior) = admission::guard_any_lifecycle(&tx, op.owner, op.bot)?;
+        if prior != BotLifecycle::Active {
+            return Err(BotError::Conflict);
+        }
+        insert_captured_chat_trash(&tx, scope, operation, now)?;
+        complete_operation(&tx, scope, operation, BotLifecycleStage::Settling, now)?;
+        let done = read_operation(&tx, scope, operation)?.ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+
+    /// Restore of one conversation's Trash, completed or parked, captured and
+    /// applied in one transaction: exactly that operation's Trash row is
+    /// removed, so the same conversation and history return. Nothing runs.
+    pub fn restore_bot_chat(
+        &mut self,
+        capture: &LifecycleCapture,
+    ) -> Result<LifecycleOperation, BotError> {
+        if capture.kind != BotLifecycleKind::RestoreChat || !capture.members.is_empty() {
+            return Err(BotError::Invalid);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let chat = capture.chat.ok_or(BotError::Invalid)?;
+        let source = capture.source.ok_or(BotError::Invalid)?;
+        let (restore, fresh) = capture_on(&tx, capture)?;
+        if !fresh {
+            return Ok(restore);
+        }
+        tx.execute(
+            "DELETE FROM bot_chat_trash WHERE chat_id=?1 AND user_scope_id=?2 AND operation_id=?3",
+            params![
+                chat.to_storage(),
+                capture.owner.user_scope.to_storage(),
+                source.to_storage()
+            ],
+        )
+        .map_err(bad)?;
+        complete_operation(
+            &tx,
+            capture.owner.user_scope,
+            capture.operation,
+            BotLifecycleStage::Captured,
+            capture.now,
+        )?;
+        let done = read_operation(&tx, capture.owner.user_scope, capture.operation)?
+            .ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+
+    /// Whether a Bot conversation is in Trash now, by any operation.
+    pub fn bot_chat_in_trash(&self, chat: ChatId) -> Result<bool, BotError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1)",
+                [chat.to_storage()],
+                |r| r.get(0),
+            )
+            .map_err(bad)
+    }
+}
+
+/// Put each captured conversation still `pending` into Trash under this
+/// operation. A conversation captured as already in Trash is `retained`
+/// and keeps its own operation's row.
+fn insert_captured_chat_trash(
+    tx: &Connection,
+    scope: UserScopeId,
+    operation: BotRequestId,
+    now: i64,
+) -> Result<(), BotError> {
+    tx.execute(
+        "INSERT INTO bot_chat_trash(chat_id,user_scope_id,operation_id,trashed_at_ms)
+         SELECT chat_id,user_scope_id,operation_id,?3 FROM bot_lifecycle_members
+         WHERE user_scope_id=?1 AND operation_id=?2 AND kind='chat' AND stage='pending'",
+        params![scope.to_storage(), operation.to_storage(), now],
+    )
+    .map_err(bad)?;
+    Ok(())
+}
+
+/// Acknowledge every pending member and complete the operation, which must
+/// still be at `from`; anything else rolls the caller's transaction back.
+fn complete_operation(
+    tx: &Connection,
+    scope: UserScopeId,
+    operation: BotRequestId,
+    from: BotLifecycleStage,
+    now: i64,
+) -> Result<(), BotError> {
+    tx.execute(
+        "UPDATE bot_lifecycle_members SET stage='acknowledged',updated_at_ms=?3
+         WHERE user_scope_id=?1 AND operation_id=?2 AND stage='pending'",
+        params![scope.to_storage(), operation.to_storage(), now],
+    )
+    .map_err(bad)?;
+    let changed = tx
+        .execute(
+            "UPDATE bot_lifecycle_intents SET stage='completed',completed_at_ms=?3,updated_at_ms=?3
+             WHERE user_scope_id=?1 AND operation_id=?2 AND stage=?4",
+            params![
+                scope.to_storage(),
+                operation.to_storage(),
+                now,
+                from.token()
+            ],
+        )
+        .map_err(bad)?;
+    if changed != 1 {
+        return Err(BotError::Conflict);
+    }
+    Ok(())
 }
 
 /// Why lifecycle holds a Bot or one of its conversations still.

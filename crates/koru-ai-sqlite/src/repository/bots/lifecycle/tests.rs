@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 mod archive;
 mod migration;
 mod plans;
+mod trash;
 mod visibility;
 
 const HASH: &str = "abababababababababababababababababababababababababababababababab";

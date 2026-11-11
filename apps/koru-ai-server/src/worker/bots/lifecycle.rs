@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Bot lifecycle commands, the holds they place, and the Archive driver (P1.7).
+//! Bot lifecycle commands, the holds they place, and the driver for Archive
+//! and Trash (P1.7).
 //!
-//! The journal is the durable state; the writer only schedules. Archive is
-//! captured in one AI transaction (intent, members, the existing pause
-//! receipt). The driver then moves it on in finite steps, each owner call a
-//! job on the bounded provider-administration pool, each answer applied on
-//! the writer before the next step:
+//! The journal is the durable state; the writer only schedules. Archive and
+//! Trash of a Bot are captured in one AI transaction (intent, members, the
+//! existing pause receipt). The driver then moves it on in finite steps, each
+//! owner call a job on the bounded provider-administration pool, each answer
+//! applied on the writer before the next step:
 //!
 //! 1. `captured`: the pause receipt is acknowledged through the existing
-//!    coordination, then the effects-off policy barrier is installed.
+//!    coordination, then the effects-off policy barrier is installed. Trash
+//!    of an archived Bot has neither (it is already paused and settled) and
+//!    goes straight to `settling`, which still asks the delegate.
 //! 2. `settling`: submissions the owner has not acknowledged are resolved
 //!    first (the pause makes it refuse new admissions, so the set closes).
 //!    Then the delegate is asked, every round, which of the Bot's admissions
@@ -21,15 +24,24 @@
 //!    acknowledgement is not proof: the operation waits until the delegate
 //!    reports nothing unsettled and the barrier is effective (native
 //!    effects drained).
-//! 3. One transaction archives the Bot. Nothing is hidden or removed.
+//! 3. One transaction archives the Bot (nothing is hidden or removed), or
+//!    trashes it and puts each captured conversation not already in Trash
+//!    into Trash under the operation.
+//!
+//! Trash has no Store and no delegate-side effect in this version (O41): it
+//! hides the Bot and its conversations and leaves every page, Run record,
+//! folder and credential where it is, which its result says
+//! (`left_in_place`). No Store function and no delegate `Trash`/`Restore`
+//! is called.
 //!
 //! A restart resumes from the journal's stage, never recaptures, and re-asks
 //! every owner idempotently; nothing the driver remembers decides what has
 //! settled. An operation that cannot progress is parked `incomplete` with
 //! its reason; it is never retried on its own. The Bot's read names it, and
-//! the same request, or one naming only its id, resumes it. Unarchive is a
-//! Restore naming the Archive, applied in one transaction with no owner
-//! call. Trash, Restore of a Trash and Purge refuse until their slices.
+//! the same request, or one naming only its id, resumes it. Unarchive and the
+//! Restore of a Trash are each applied in one transaction with no owner
+//! call; the Bot comes back paused and nothing starts. Trash of one
+//! conversation and Purge refuse until their slices.
 use super::*;
 use koru_ai_sqlite::{BotHold, LifecycleCapture, LifecycleMemberDraft, LifecycleOperation};
 use koru_ai_wire::bot_lifecycle_codes;
@@ -150,14 +162,11 @@ fn unavailable() -> koru_delegate_api::Failure {
 impl LifecycleJob {
     pub(in crate::worker) fn run(self) -> LifecycleResult {
         let key = self.key;
-        let settle = matches!(self.step, Step::Settle { .. });
-        let outcome = catch_unwind(AssertUnwindSafe(|| self.execute())).unwrap_or_else(|_| {
-            if settle {
-                Outcome::Settle(Err(unavailable()))
-            } else {
-                Outcome::Policy(Err(unavailable()))
-            }
-        });
+        let failed = match &self.step {
+            Step::Policy(_) => Outcome::Policy(Err(unavailable())),
+            Step::Settle { .. } => Outcome::Settle(Err(unavailable())),
+        };
+        let outcome = catch_unwind(AssertUnwindSafe(|| self.execute())).unwrap_or(failed);
         LifecycleResult { key, outcome }
     }
     fn execute(self) -> Outcome {
@@ -323,6 +332,12 @@ pub(super) fn archived_change(
             | BotCommand::Start { bot_id, .. }
             | BotCommand::Continue { bot_id, .. }
             | BotCommand::ReconcileOperation { bot_id, .. } => Some(*bot_id),
+            // Changes to a creation, not to a Bot: one that made a Bot is
+            // completed, and then Retry only reports it and Abandon is
+            // `request_conflict`, so neither can change an archived or
+            // trashed Bot. A creation's BotId has no Bot row until it
+            // completes, and lifecycle acts only on Bots that exist.
+            BotCommand::RetryBotCreation { .. } | BotCommand::AbandonBotCreation { .. } => None,
             _ => None,
         },
         _ if command.bot_read_only() => None,
@@ -370,7 +385,9 @@ impl WorkerState {
             BotCommand::ReadOperation { request_id, bot_id } => self
                 .read_archived_operation(context, *request_id, *bot_id)
                 .transpose(),
-            BotCommand::Archive { .. } => Some(self.archive_bot(context, command)),
+            BotCommand::Archive { .. } | BotCommand::Trash { .. } => {
+                Some(self.archive_bot(context, command))
+            }
             BotCommand::Restore { .. } => Some(self.restore_bot(context, command)),
             _ if command.lifecycle_kind().is_some() => Some(Err(lifecycle_unavailable())),
             _ => self
@@ -443,19 +460,23 @@ impl WorkerState {
         Ok((bot, lifecycle))
     }
 
-    /// An archived Bot's admission receipt reads as it was left. An active
-    /// Bot's goes through the ordinary admission path (`None`).
+    /// An archived Bot's admission receipt reads as it was left. A trashed
+    /// Bot's reads as missing once its owner is known, as every read of a
+    /// trashed Bot does. An active Bot's goes through the ordinary admission
+    /// path (`None`).
     fn read_archived_operation(
         &self,
         context: &CommandContext,
         request: BotRequestId,
         id: BotId,
     ) -> ApiResult<Option<BotResponse>> {
-        if !matches!(
-            self.repository.bot_any_lifecycle(id).map_err(bot_failure)?,
-            Some((_, BotLifecycle::Archived))
-        ) {
-            return Ok(None);
+        match self.repository.bot_any_lifecycle(id).map_err(bot_failure)? {
+            Some((_, BotLifecycle::Archived)) => {}
+            Some((_, BotLifecycle::Trashed)) => {
+                self.bot_of_owner(context, id)?;
+                return Err(not_found());
+            }
+            _ => return Ok(None),
         }
         let (bot, _) = self.owned_bot(context, id)?;
         let owner = BotOwner {
@@ -584,32 +605,87 @@ impl WorkerState {
         Ok((owner, bot, fingerprint))
     }
 
-    /// Archive: capture, or answer a repeat with its progress. A parked
-    /// Archive is resumed by its id: the exact request does it, and so does
-    /// one carrying only the same id (and Bot), so a client that found the id
-    /// through the Bot's read need not reproduce the original revision.
-    /// Nothing is captured twice.
+    /// A repeat of a lifecycle command under an operation that already
+    /// exists: its progress. A parked operation is resumed by its id: the
+    /// exact request does it, and so does one carrying only the same id (and
+    /// Bot and conversation) under the same kind, so a client that found the
+    /// id through the Bot's read need not reproduce the original revision.
+    /// Anything else under that id is `request_conflict`.
+    fn repeat_bot_lifecycle(
+        &mut self,
+        op: LifecycleOperation,
+        (owner, bot): (BotOwner, BotId),
+        kind: BotLifecycleKind,
+        chat: Option<ChatId>,
+        fingerprint: &str,
+    ) -> ApiResult<LifecycleOperation> {
+        let parked = op.kind == kind && op.stage == BotLifecycleStage::Incomplete;
+        if op.bot != bot
+            || op.owner != owner
+            || op.chat != chat
+            || (op.fingerprint != fingerprint && !parked)
+        {
+            return Err(bot_failure(BotError::Conflict));
+        }
+        if parked {
+            self.repository
+                .resume_bot_lifecycle(op.owner.user_scope, op.operation, Timestamp::now().millis())
+                .map_err(bot_failure)?;
+        }
+        self.repository
+            .bot_lifecycle_operation(op.owner.user_scope, op.operation)
+            .map_err(bot_failure)?
+            .ok_or_else(not_found)
+    }
+
+    /// Archive or Trash of a whole Bot: capture, or answer a repeat with its
+    /// progress (see [`Self::repeat_bot_lifecycle`]). Nothing is captured
+    /// twice. Both pause an active Bot and stop its work as the person's
+    /// Stop; Trash then hides the Bot and its conversations and moves no
+    /// page or Run record (O41). An archived Bot can be trashed: it is
+    /// already paused and settled, and the delegate is still asked.
     fn archive_bot(
         &mut self,
         context: &CommandContext,
         command: &BotCommand,
     ) -> ApiResult<BotResponse> {
-        let BotCommand::Archive {
-            request_id,
-            bot_id,
-            expected_revision,
-        } = command
-        else {
-            return Err(not_found());
+        let (kind, request_id, bot_id, expected_revision) = match command {
+            BotCommand::Archive {
+                request_id,
+                bot_id,
+                expected_revision,
+            } => (
+                BotLifecycleKind::Archive,
+                request_id,
+                bot_id,
+                expected_revision,
+            ),
+            BotCommand::Trash {
+                request_id,
+                bot_id,
+                expected_revision,
+            } => (
+                BotLifecycleKind::Trash,
+                request_id,
+                bot_id,
+                expected_revision,
+            ),
+            _ => return Err(not_found()),
         };
         let (owner, bot, fingerprint) = self.lifecycle_subject(context, command, *bot_id)?;
         let existing = self
             .repository
             .bot_lifecycle_operation(owner.user_scope, *request_id)
             .map_err(bot_failure)?;
-        // A new Archive of a Bot that is already archived.
-        if existing.is_none() && bot.lifecycle == BotLifecycle::Archived {
-            return Err(archived_failure());
+        if existing.is_none() {
+            match (kind, bot.lifecycle) {
+                // Nothing changes a trashed Bot but the Restore of its Trash.
+                (_, BotLifecycle::Trashed) => return Err(hold_failure(BotHold::Trashed)),
+                (BotLifecycleKind::Archive, BotLifecycle::Archived) => {
+                    return Err(archived_failure());
+                }
+                _ => {}
+            }
         }
         if self.bot_delegate.is_none() || self.provider_admin.is_none() {
             return Err(bot_failure(BotError::Unavailable));
@@ -618,29 +694,17 @@ impl WorkerState {
         let now = Timestamp::now().millis();
         let operation = match existing {
             Some(op) => {
-                let parked = op.kind == BotLifecycleKind::Archive
-                    && op.stage == BotLifecycleStage::Incomplete;
-                if op.bot != *bot_id
-                    || op.owner != owner
-                    || (op.fingerprint != fingerprint && !parked)
-                {
-                    return Err(bot_failure(BotError::Conflict));
-                }
-                if parked {
-                    self.repository
-                        .resume_bot_lifecycle(owner.user_scope, *request_id, now)
-                        .map_err(bot_failure)?;
-                }
-                self.repository
-                    .bot_lifecycle_operation(owner.user_scope, *request_id)
-                    .map_err(bot_failure)?
-                    .ok_or_else(not_found)?
+                self.repeat_bot_lifecycle(op, (owner, *bot_id), kind, None, &fingerprint)?
             }
             None => {
                 let members = std::iter::once(LifecycleMemberDraft {
                     subject: BotLifecycleSubject::Bot,
                     reason: BotLifecycleReason::Bot,
-                    prior_state: BotLifecyclePriorState::Live,
+                    prior_state: if bot.lifecycle == BotLifecycle::Archived {
+                        BotLifecyclePriorState::Archived
+                    } else {
+                        BotLifecyclePriorState::Live
+                    },
                     intended: BotLifecycleIntended::Hide,
                     retained: None,
                 })
@@ -671,7 +735,7 @@ impl WorkerState {
                         operation: *request_id,
                         owner,
                         bot: *bot_id,
-                        kind: BotLifecycleKind::Archive,
+                        kind,
                         chat: None,
                         fingerprint,
                         expected_revision: *expected_revision,
@@ -693,9 +757,11 @@ impl WorkerState {
         })
     }
 
-    /// Unarchive (Restore naming an Archive): one AI transaction, no owner
-    /// call. The Bot returns active and still paused. Reversing a Trash is a
-    /// later slice and refuses explicitly.
+    /// Restore naming an Archive (Unarchive) or a whole-Bot Trash: one AI
+    /// transaction, no owner call. Unarchive returns the Bot active; the
+    /// Restore of a Trash returns it to the lifecycle it was trashed from
+    /// (active, or archived) with exactly the conversations that Trash put
+    /// into Trash. Either way it stays paused and nothing starts.
     fn restore_bot(
         &mut self,
         context: &CommandContext,
@@ -710,33 +776,46 @@ impl WorkerState {
         else {
             return Err(not_found());
         };
-        let (owner, _, fingerprint) = self.lifecycle_subject(context, command, *bot_id)?;
+        let (owner, bot, fingerprint) = self.lifecycle_subject(context, command, *bot_id)?;
         let source = self
             .repository
             .bot_lifecycle_operation(owner.user_scope, *source_request_id)
             .map_err(bot_failure)?
             .filter(|source| source.bot == *bot_id && source.owner == owner)
             .ok_or_else(not_found)?;
-        if source.kind != BotLifecycleKind::Archive {
-            return Err(lifecycle_unavailable());
-        }
-        // A moving Archive is reversed once it completes or parks itself.
+        let restore: fn(
+            &mut Repository,
+            &LifecycleCapture,
+        ) -> Result<LifecycleOperation, BotError> = match source.kind {
+            BotLifecycleKind::Archive => Repository::unarchive_bot,
+            BotLifecycleKind::Trash => Repository::restore_trashed_bot,
+            BotLifecycleKind::PurgeBot | BotLifecycleKind::PurgeChat => {
+                return Err(lifecycle_unavailable());
+            }
+            // A conversation's Trash is reversed by `restore_chat`.
+            _ => return Err(bot_failure(BotError::Invalid)),
+        };
+        // A moving Archive or Trash is reversed once it completes or parks itself.
         let replay = self
             .repository
             .bot_lifecycle_operation(owner.user_scope, *request_id)
             .map_err(bot_failure)?
             .is_some();
-        if !replay
-            && !matches!(
+        if !replay {
+            // A trashed Bot comes back only through its Trash's Restore.
+            if bot.lifecycle == BotLifecycle::Trashed && source.kind != BotLifecycleKind::Trash {
+                return Err(hold_failure(BotHold::Trashed));
+            }
+            if !matches!(
                 source.stage,
                 BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-            )
-        {
-            return Err(hold_failure(BotHold::Pending));
+            ) {
+                return Err(hold_failure(BotHold::Pending));
+            }
         }
-        let operation = self
-            .repository
-            .unarchive_bot(&LifecycleCapture {
+        let operation = restore(
+            &mut self.repository,
+            &LifecycleCapture {
                 operation: *request_id,
                 owner,
                 bot: *bot_id,
@@ -747,8 +826,9 @@ impl WorkerState {
                 source: Some(*source_request_id),
                 members: vec![],
                 now: Timestamp::now().millis(),
-            })
-            .map_err(bot_failure)?;
+            },
+        )
+        .map_err(bot_failure)?;
         self.bot_lifecycle
             .driving
             .remove(&(owner.user_scope, *source_request_id));
@@ -757,8 +837,8 @@ impl WorkerState {
         })
     }
 
-    /// The native-policy evidence for an active Bot while an Archive (or
-    /// later Trash) is unfinished: its own effects-off barrier, so no native
+    /// The native-policy evidence for an active Bot while an Archive or a
+    /// Trash is unfinished: its own effects-off barrier, so no native
     /// effect starts under the Bot being settled. `None` only when no such
     /// operation exists. A journal that cannot be read refuses (fails
     /// closed): the ordinary effects-allowed evidence is never the fallback.
@@ -900,8 +980,9 @@ impl WorkerState {
             }
             Err(_) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable),
         };
-        // S4 drives Archive only; the other kinds are refused at capture.
-        if op.kind != BotLifecycleKind::Archive
+        // Archive and Trash are driven; Restore is applied at once, and the
+        // other kinds are refused at capture.
+        if !matches!(op.kind, BotLifecycleKind::Archive | BotLifecycleKind::Trash)
             || matches!(
                 op.stage,
                 BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
@@ -910,16 +991,45 @@ impl WorkerState {
             self.bot_lifecycle.driving.remove(&key);
             return;
         }
-        let Ok(Some(bot)) = self.repository.bot(op.bot) else {
-            // The Bot left the active lifecycle under the operation.
+        let Some(bot) = self.lifecycle_bot(&op) else {
+            // The Bot left the lifecycle the operation was captured in.
             return self.wait_bot_lifecycle(key, BotLifecycleRefusal::RevisionChanged);
         };
-        match op.stage {
-            BotLifecycleStage::Captured => self.step_archive_barrier(key, &op, &bot),
-            BotLifecycleStage::Settling => self.step_archive_settle(key, &op, &bot),
+        match (op.stage, op.kind) {
+            (BotLifecycleStage::Captured, _) if op.pause_request.is_some() => {
+                self.step_archive_barrier(key, &op, &bot)
+            }
+            // Nothing to pause: Trash of an archived Bot (already paused and
+            // settled). Settling still asks the owner.
+            (BotLifecycleStage::Captured, _) => match self.repository.advance_bot_lifecycle(
+                key.0,
+                key.1,
+                BotLifecycleStage::Captured,
+                BotLifecycleStage::Settling,
+                false,
+                Timestamp::now().millis(),
+            ) {
+                Ok(true) => self.progressed_bot_lifecycle(key),
+                _ => self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable),
+            },
+            (BotLifecycleStage::Settling, _) => self.step_archive_settle(key, &op, &bot),
             _ => {
                 self.bot_lifecycle.driving.remove(&key);
             }
+        }
+    }
+
+    /// The Bot an operation acts on, while it still has the lifecycle the
+    /// operation needs: a Trash keeps the one it was captured in (active, or
+    /// archived); Archive and a conversation's Trash need an active Bot.
+    fn lifecycle_bot(&self, op: &LifecycleOperation) -> Option<Bot> {
+        let needed = match op.kind {
+            BotLifecycleKind::Trash => op.prior_lifecycle,
+            _ => BotLifecycle::Active,
+        };
+        match self.repository.bot_any_lifecycle(op.bot) {
+            Ok(Some((bot, lifecycle))) if lifecycle == needed => Some(bot),
+            _ => None,
         }
     }
 
@@ -1048,10 +1158,15 @@ impl WorkerState {
                 self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning)
             };
         }
-        let Ok(Some(bot)) = self.repository.bot(op.bot) else {
+        let Some(bot) = self.lifecycle_bot(op) else {
             return self.wait_bot_lifecycle(key, BotLifecycleRefusal::RevisionChanged);
         };
-        if op.policy_barrier != Some(koru_ai_core::bots::BotLifecycleBarrierState::Effective) {
+        // An operation that paused the Bot finishes only once its
+        // effects-off barrier is effective (native effects drained). Trash of
+        // an archived Bot installed none: Archive already settled it.
+        if op.policy_request.is_some()
+            && op.policy_barrier != Some(koru_ai_core::bots::BotLifecycleBarrierState::Effective)
+        {
             return match lifecycle_barrier(op, &bot) {
                 Some(barrier) => self.submit_bot_lifecycle(key, op, &bot, Step::Policy(barrier)),
                 None => self.wait_bot_lifecycle(key, BotLifecycleRefusal::MemberConflict),
@@ -1063,12 +1178,14 @@ impl WorkerState {
         {
             return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
         }
-        match self
-            .repository
-            .complete_bot_archive(key.0, key.1, Timestamp::now().millis())
-        {
-            Ok(_) => {
-                tracing::info!(target: "koru_ai::bots", operation = %key.1, "Bot archived");
+        let now = Timestamp::now().millis();
+        let completed = match op.kind {
+            BotLifecycleKind::Trash => self.repository.complete_bot_trash(key.0, key.1, now),
+            _ => self.repository.complete_bot_archive(key.0, key.1, now),
+        };
+        match completed {
+            Ok(done) => {
+                tracing::info!(target: "koru_ai::bots", operation = %key.1, kind = done.kind.token(), "Bot lifecycle operation completed");
                 self.bot_lifecycle.driving.remove(&key);
             }
             Err(BotError::RevisionConflict) => {
@@ -1159,18 +1276,21 @@ impl WorkerState {
     /// A Bot-level command on a held Bot, or a task naming a held
     /// conversation, refuses before it reaches its owner path.
     fn bot_command_hold(&self, context: &CommandContext, command: &BotCommand) -> ApiResult<()> {
-        let (bot, chat) = match command {
+        // Reconciling an admission is held only by Trash: it settles work,
+        // so an unfinished operation leaves it available.
+        let (bot, chat, trash_only) = match command {
             BotCommand::Start {
                 bot_id, chat_id, ..
             }
             | BotCommand::Continue {
                 bot_id, chat_id, ..
-            } => (*bot_id, Some(*chat_id)),
+            } => (*bot_id, Some(*chat_id), false),
             BotCommand::CreateChat { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Pause { bot_id, .. }
-            | BotCommand::Resume { bot_id, .. } => (*bot_id, None),
+            | BotCommand::Resume { bot_id, .. } => (*bot_id, None, false),
+            BotCommand::ReconcileOperation { bot_id, .. } => (*bot_id, None, true),
             _ => return Ok(()),
         };
         let hold = match chat {
@@ -1180,7 +1300,7 @@ impl WorkerState {
             _ => self.repository.bot_hold(bot),
         }
         .map_err(bot_failure)?;
-        let Some(hold) = hold else {
+        let Some(hold) = hold.filter(|hold| !trash_only || *hold == BotHold::Trashed) else {
             return Ok(());
         };
         // Ownership first: someone else's Bot never learns its lifecycle.
@@ -1195,12 +1315,23 @@ impl WorkerState {
 /// so that the owner's authority over its workspace is inspected before an
 /// archived Bot either answers (a read, its history being kept in the
 /// Archived filter, EXPERIENCE §3) or refuses with `bot_archived` (any
-/// change, see [`archived_change`]). A trashed or missing Bot proves nothing.
+/// change, see [`archived_change`]). A trashed Bot is proven only for its own
+/// lifecycle commands (the Restore of its Trash, a repeat of that Trash, a
+/// progress read), so its owner's workspace authority is inspected before
+/// any of them answers; for everything else it proves nothing, as a missing
+/// Bot does, and its holds answer.
 pub(super) fn provable_bot(
     repository: &Repository,
     id: BotId,
-    _command: &WorkerCommand,
+    command: &WorkerCommand,
 ) -> Result<Option<Bot>, BotError> {
+    if let WorkerCommand::Bots { request, .. } = command
+        && (request.lifecycle_kind().is_some()
+            || matches!(request, BotCommand::ReadLifecycleOperation { .. }))
+        && let Some((bot, BotLifecycle::Trashed)) = repository.bot_any_lifecycle(id)?
+    {
+        return Ok(Some(bot));
+    }
     readable_bot(repository, id)
 }
 
@@ -1254,7 +1385,7 @@ pub(super) fn hold_failure(hold: BotHold) -> Failure {
     match hold {
         BotHold::Trashed => failure(
             bot_lifecycle_codes::TRASHED,
-            "This Bot conversation is in Trash. Restore it to use it again.",
+            "This Bot, or this conversation of it, is in Trash. Restore it to use it again.",
             false,
         ),
         BotHold::Pending => failure(

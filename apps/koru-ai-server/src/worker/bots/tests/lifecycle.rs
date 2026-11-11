@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The lifecycle contract on the worker: progress is readable by its owner;
-//! changes whose cross-owner drivers do not exist yet refuse explicitly. (The
+//! changes whose drivers do not exist yet (Purge) refuse explicitly. (The
 //! Archived/Trash listing is served; see `holds.rs`.)
 use super::*;
 use koru_ai_sqlite::{LifecycleCapture, LifecycleMemberDraft};
@@ -96,33 +96,45 @@ fn lifecycle_progress_reads_back_and_changes_refuse_until_built() {
             )
             .is_err()
     );
-    // Archive is built (S4); without its delegate owner it refuses as
-    // unavailable before anything is captured.
-    assert_eq!(
-        client
-            .bots(
-                context(true),
-                BotCommand::Archive {
-                    request_id: BotRequestId::mint(),
-                    bot_id: bot.id,
-                    expected_revision: bot.revision,
-                },
-            )
-            .unwrap_err()
-            .code,
-        BotError::Unavailable.code()
-    );
+    // Archive (S4) and Trash (S7) are built; without their delegate owner
+    // they refuse as unavailable before anything is captured.
     for command in [
+        BotCommand::Archive {
+            request_id: BotRequestId::mint(),
+            bot_id: bot.id,
+            expected_revision: bot.revision,
+        },
         BotCommand::Trash {
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
             expected_revision: bot.revision,
         },
+    ] {
+        assert_eq!(
+            client.bots(context(true), command).unwrap_err().code,
+            BotError::Unavailable.code()
+        );
+    }
+    // A conversation's Trash and permanent deletion are not built yet.
+    for command in [
         BotCommand::TrashChat {
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
             chat_id: bot.main_chat,
             expected_revision: bot.revision,
+        },
+        BotCommand::PurgeBot {
+            request_id: BotRequestId::mint(),
+            bot_id: bot.id,
+            expected_revision: bot.revision,
+            source_request_id: request,
+        },
+        BotCommand::PurgeChat {
+            request_id: BotRequestId::mint(),
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
+            expected_revision: bot.revision,
+            source_request_id: request,
         },
     ] {
         assert_eq!(

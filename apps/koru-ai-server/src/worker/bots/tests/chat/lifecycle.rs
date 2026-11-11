@@ -10,6 +10,7 @@ use super::*;
 use koru_ai_core::bots::replay::BotReplayStop;
 use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, PENDING, TRASHED};
 use std::sync::atomic::AtomicUsize;
+mod trash;
 
 /// A task the fake owner runs that no conversation of this writer drives.
 struct ApiTask {
@@ -43,6 +44,14 @@ struct Archiving {
     stops: Mutex<Vec<d::RunId>>,
     /// Every Interrupt, by Run, whoever sent it.
     interrupts: Mutex<Vec<d::RunId>>,
+    /// Native effects the owner still holds for the Bot (one page).
+    effects: Mutex<Vec<d::NativePendingEffect>>,
+    /// Delegate-side Run `Trash`/`Restore` commands. Lifecycle sends none in
+    /// this version (O41); each test asserts this stays zero.
+    run_lifecycle: AtomicUsize,
+    /// Calls that reached the Store through the authority's capture (see
+    /// [`StoreSpy`]); lifecycle makes none.
+    store_calls: AtomicUsize,
 }
 impl Archiving {
     fn unsettled(&self, bot: d::BotId) -> Vec<d::BotUnsettledAdmission> {
@@ -147,6 +156,65 @@ impl BotDelegatePort for Archiving {
                     },
                 })
             }
+            D::Trash { .. } | D::Restore { .. } => {
+                self.run_lifecycle.fetch_add(1, Ordering::SeqCst);
+                Err(koru_delegate_api::Failure::new(
+                    "fixture_forbidden",
+                    "lifecycle must not trash or restore a Run",
+                    false,
+                ))
+            }
+            D::PendingNativeEffects { bot, limit, .. } => {
+                assert!(*limit >= 1 && *limit <= 64);
+                Ok(BotReply::NativePendingEffects {
+                    page: d::NativePendingEffects {
+                        targets: self
+                            .effects
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .filter(|e| Some(e.bot) == *bot)
+                            .cloned()
+                            .collect(),
+                        next: None,
+                    },
+                })
+            }
+            // A task started through the API, admitted by this owner.
+            D::Submit { submission }
+                if self
+                    .api
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|t| t.view.run == submission.request.run) =>
+            {
+                let api = self.api.lock().unwrap();
+                let task = api
+                    .iter()
+                    .find(|t| t.view.run == submission.request.run)
+                    .unwrap();
+                Ok(BotReply::Admission {
+                    admission: task.view.clone(),
+                })
+            }
+            D::Reconcile { key }
+                if self
+                    .api
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|t| t.view.key.request == key.request) =>
+            {
+                let api = self.api.lock().unwrap();
+                let task = api
+                    .iter()
+                    .find(|t| t.view.key.request == key.request)
+                    .unwrap();
+                Ok(BotReply::Admission {
+                    admission: task.view.clone(),
+                })
+            }
             D::UnsettledWork { bot, limit, .. } => {
                 assert!(*limit >= 1 && *limit <= 64);
                 self.reads.fetch_add(1, Ordering::SeqCst);
@@ -213,6 +281,44 @@ struct Running {
     attempt: InferenceAttemptId,
 }
 
+/// The worker's only way to the Store in these tests: the authority port.
+/// Its reads (owner, workspace, page, inspect) are authority checks; its
+/// `capture` reads Store history and is counted, since lifecycle never
+/// needs it. No native-recovery Store client is configured, so nothing
+/// else can reach a Store at all.
+struct StoreSpy {
+    inner: Arc<Authority>,
+    port: Arc<Archiving>,
+}
+impl BotAuthority for StoreSpy {
+    fn owner(&self) -> Result<BotOwner, BotError> {
+        self.inner.owner()
+    }
+    fn workspace(&self, id: WorkspaceId) -> Result<koru_ai_core::ProfileId, BotError> {
+        self.inner.workspace(id)
+    }
+    fn page(&self, page: &BotPage) -> Result<(), BotError> {
+        self.inner.page(page)
+    }
+    fn capture(
+        &self,
+        _owner: BotOwner,
+        _workspace: WorkspaceId,
+        _profile: koru_ai_core::ProfileId,
+        _pages: &[BotPage],
+    ) -> Result<Vec<d::RunContextItem>, BotError> {
+        self.port.store_calls.fetch_add(1, Ordering::SeqCst);
+        Err(BotError::Unavailable)
+    }
+    fn inspect(
+        &self,
+        workspaces: &[WorkspaceId],
+        pages: &[BotPage],
+    ) -> Result<koru_ai_core::bots::BotAuthoritySnapshot, BotError> {
+        self.inner.inspect(workspaces, pages)
+    }
+}
+
 fn spawn(
     repository: Repository,
     authority: Arc<Authority>,
@@ -224,7 +330,10 @@ fn spawn(
         "internal-debug",
         ProviderRegistry::default(),
     )
-    .with_bot_authority(authority)
+    .with_bot_authority(Arc::new(StoreSpy {
+        inner: authority,
+        port: port.clone(),
+    }))
     .with_bot_delegate(port);
     config.test_repository = Some(repository);
     config.test_repository_return = Some(return_tx);

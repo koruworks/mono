@@ -227,8 +227,13 @@ fn lifecycle_progress_is_strict_and_carries_no_owner_correlation() {
             stage: BotLifecycleMemberStage::Retained,
             retained: Some(BotLifecycleRetained::OwnershipUnproven),
         }],
+        left_in_place: BotLeftInPlace::of(BotLifecycleKind::TrashChat),
     };
     let mut json = serde_json::to_value(&progress).unwrap();
+    assert_eq!(
+        json["left_in_place"],
+        serde_json::json!(["pages", "run_records"])
+    );
     assert_eq!(json["members"][0]["subject"]["subject"], "owned_role");
     assert!(!json.to_string().contains("child_request"));
     assert_eq!(
@@ -256,4 +261,39 @@ fn lifecycle_progress_is_strict_and_carries_no_owner_correlation() {
     ] {
         assert_eq!((subject.kind(), subject.owner()), (kind, owner));
     }
+}
+
+#[test]
+fn only_trash_says_what_it_left_in_place_and_archive_serializes_as_before() {
+    use BotLifecycleKind::*;
+    for kind in BotLifecycleKind::ALL {
+        let left = BotLeftInPlace::of(*kind);
+        assert_eq!(
+            left,
+            if matches!(kind, Trash | TrashChat) {
+                vec![BotLeftInPlace::Pages, BotLeftInPlace::RunRecords]
+            } else {
+                vec![]
+            },
+            "{kind:?}"
+        );
+    }
+    // An Archive result has no such field on the wire, as before (additive).
+    let archive = BotLifecycleProgress {
+        request_id: BotRequestId::mint(),
+        bot_id: BotId::mint(),
+        kind: Archive,
+        chat_id: None,
+        source_request_id: None,
+        stage: BotLifecycleStage::Completed,
+        refusal: None,
+        members: vec![],
+        left_in_place: BotLeftInPlace::of(Archive),
+    };
+    let json = serde_json::to_value(&archive).unwrap();
+    assert!(json.get("left_in_place").is_none());
+    assert_eq!(
+        serde_json::from_value::<BotLifecycleProgress>(json).unwrap(),
+        archive
+    );
 }

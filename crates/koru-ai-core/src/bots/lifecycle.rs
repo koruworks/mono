@@ -271,6 +271,37 @@ pub struct BotLifecycleProgress {
     pub stage: BotLifecycleStage,
     pub refusal: Option<BotLifecycleRefusal>,
     pub members: Vec<BotLifecycleMemberOutcome>,
+    /// What the operation deliberately leaves exactly where it is, so a
+    /// client can tell the person (for example, that the Bot's Role page was
+    /// not moved). Trashing a Bot or a conversation moves no page and no Run
+    /// record in this version. Omitted when empty: Archive, Restore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_in_place: Vec<BotLeftInPlace>,
+}
+
+/// Something a lifecycle operation leaves in place rather than moving to
+/// Trash with the Bot or conversation. Wire-only; never stored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BotLeftInPlace {
+    /// Workspace pages: the Bot's Role page, the pages it created or edited,
+    /// and any page it was given. They stay ordinary, live pages.
+    Pages,
+    /// The Bot's Run records and their output documents.
+    RunRecords,
+}
+
+impl BotLeftInPlace {
+    /// What an operation of `kind` leaves in place.
+    pub fn of(kind: BotLifecycleKind) -> Vec<Self> {
+        match kind {
+            BotLifecycleKind::Trash | BotLifecycleKind::TrashChat => {
+                vec![Self::Pages, Self::RunRecords]
+            }
+            _ => Vec::new(),
+        }
+    }
 }
 
 impl BotLifecycleKind {

@@ -4258,6 +4258,25 @@
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
       },
+      "BotLeftInPlace": {
+        "description": "Something a lifecycle operation leaves in place rather than moving to\nTrash with the Bot or conversation. Wire-only; never stored.",
+        "oneOf": [
+          {
+            "description": "Workspace pages: the Bot's Role page, the pages it created or edited,\nand any page it was given. They stay ordinary, live pages.",
+            "enum": [
+              "pages"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Bot's Run records and their output documents.",
+            "enum": [
+              "run_records"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "BotLifecycle": {
         "description": "A Bot's stored lifecycle (`bots.lifecycle`, ai16). Pause is separate.",
         "enum": [
@@ -4358,6 +4377,13 @@
           },
           "kind": {
             "$ref": "#/components/schemas/BotLifecycleKind"
+          },
+          "left_in_place": {
+            "description": "What the operation deliberately leaves exactly where it is, so a\nclient can tell the person (for example, that the Bot's Role page was\nnot moved). Trashing a Bot or a conversation moves no page and no Run\nrecord in this version. Omitted when empty: Archive, Restore.",
+            "items": {
+              "$ref": "#/components/schemas/BotLeftInPlace"
+            },
+            "type": "array"
           },
           "members": {
             "items": {
