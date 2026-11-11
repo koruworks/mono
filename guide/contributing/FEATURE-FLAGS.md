@@ -31,9 +31,11 @@ decision record is ADR-450.
 All of it is in one leaf crate, [`crates/koru-features`](../../crates/koru-features/src/lib.rs):
 `koru_features::features()` (a `&'static Features` latched in a `OnceLock`) and
 one accessor per flag — `cloud_sync()`, `agents()`, `agent_views()`,
-`tasks()`, `ai()`, `reminders()`, `canvas()`, `socials()`. Two answer for
-more than one flag: `agent_views()` is `agents && agent_views`, and
-`delegate()` — whether Delegate can be *started* — is `ai() && agent_views()`.
+`tasks()`, `ai()`, `reminders()`, `canvas()`, `socials()`. Four answer for
+a rule over the flags: `agent_views()` is `agents && agent_views`;
+`delegate()` — whether Delegate can be *started* — is `ai() && agent_views()`;
+`bots()` — whether Bots are shown — is `agents()` alone; and `chat_links()` —
+whether a link to a chat is delivered — is `ai() || bots()`.
 
 1. **Baked in.** Each `ENABLE_*` constant is `option_env!("KORU_ENABLE_*")`
    read through koru-env's truthiness rule when `koru-features` is compiled.
@@ -125,6 +127,10 @@ inspector does not see it (it is not drawn), and session restore drops it.
 - **Session restore** drops a tab over a built-in **agent** profile (the
   session itself is untouched); shell and custom-profile tabs come back.
 - **Koru Agent's tray**: no *Agents* submenu.
+- **Bots** (`bots()`, which follows agents and nothing else): no *Bots* view,
+  no Bot tab, and a saved Bot tab is dropped at restore. A Bot's
+  conversation opened from a link, with Koru AI on, opens as an ordinary chat
+  tab.
 - Welcome's *Terminal agent* and *MCP* rows stay as they were — drawn and
   inert.
 
@@ -192,10 +198,14 @@ unaffected.
   a restored session never reopens the pane.
 - No AI chat tab: no *New AI chat* or *Chats ▸* in `+`, no Explore *Chats*
   mode (`Alt+4`); the pane surface is not booted when `+` opens.
-- A chat link opens nothing — from inside a document, from the search
-  overlay, and from another app (LaunchServices on a Mac, `koru-agent
-  koru://chat/…` on Windows), because the Agent itself answers `OpenChatLink`
-  with a silent `Ok` and pushes no window a chat when Koru AI is hidden.
+- An ordinary chat's link opens nothing — from inside a document, from the
+  search overlay, and from another app (LaunchServices on a Mac, `koru-agent
+  koru://chat/…` on Windows). With agents off too, the Agent itself answers
+  `OpenChatLink` with a silent `Ok` and pushes no window a chat
+  (`chat_links()`). **With agents on, a link is still delivered**, because it
+  may be a Bot's conversation, and Bots follow agents: the window asks whose
+  the chat is, shows nothing meanwhile, opens a Bot's conversation as its
+  Bot's tab and drops any other chat.
 - Settings › System has no Koru AI providers card; Welcome has no Koru AI row.
 - **Delegate**: no `/delegate`, no `+` *Delegate*, no document-menu *Delegate*,
   no tasks-view *Delegate…*; `begin_delegation` — the one door into the modal —

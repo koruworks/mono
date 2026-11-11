@@ -3481,6 +3481,82 @@ fn a_build_that_hides_koru_ai_opens_no_chat() {
     });
 }
 
+/// **A chat link is delivered while Koru AI or agents is on** (QUESTIONS
+/// O32): a Bot's conversation follows agents, an ordinary chat Koru AI, and
+/// the Agent cannot tell one from the other — the window decides by the
+/// chat's Bot label. So for every combination of the two switches, a link
+/// from another app and an overlay hit both reach the window exactly when
+/// either is on, and the asker is answered `Ok` either way.
+#[test]
+fn a_chat_link_is_delivered_while_koru_ai_or_agents_is_on() {
+    for ai in [false, true] {
+        for agents in [false, true] {
+            let features = koru_features::Features {
+                ai,
+                agents,
+                ..koru_features::Features::ALL_OFF
+            };
+            koru_features::testing::with(features, || {
+                let mut agent = agent();
+                let connection = ConnectionId(47);
+                let (conn, queue) = Connection::for_test(connection);
+                agent.connections.push(conn);
+                workspace_hello(&mut agent, connection, &queue);
+
+                let chat = "00000000-0000-4000-8000-000000000001";
+                agent.said(
+                    connection,
+                    9,
+                    Request::OpenChatLink {
+                        chat: chat.into(),
+                        block: None,
+                        profile: None,
+                    },
+                    Duration::ZERO,
+                );
+                let pushed = FromAgent::Push {
+                    body: Push::OpenChat {
+                        chat: chat.into(),
+                        block: None,
+                    },
+                };
+                let answered = FromAgent::Response {
+                    id: 9,
+                    body: Response::Ok,
+                };
+                let frames = drained(&queue);
+                assert!(frames.contains(&answered), "{features}: answered");
+                assert_eq!(
+                    frames.contains(&pushed),
+                    ai || agents,
+                    "{features}: the link reaches the window"
+                );
+
+                let hit = koru_ai_core::ChatId::new();
+                let block = koru_ai_core::MessageBlockId::new();
+                agent.open_target(koru_search_ui::Target::Chat {
+                    chat: hit,
+                    message: koru_ai_core::MessageId::new(),
+                    block,
+                    profile: None,
+                    disposition: koru_search_ui::Disposition::CurrentWindow,
+                });
+                assert_eq!(
+                    drained(&queue).contains(&FromAgent::Push {
+                        body: Push::OpenChat {
+                            chat: hit.as_uuid().to_string(),
+                            block: Some(block.as_uuid().to_string()),
+                        },
+                    }),
+                    ai || agents,
+                    "{features}: the overlay hit reaches the window"
+                );
+                assert!(agent.pending_workspace_chat.is_none(), "{features}");
+            });
+        }
+    }
+}
+
 /// Every frame queued for one window, without waiting for more.
 fn drained(queue: &std::sync::mpsc::Receiver<FromAgent>) -> Vec<FromAgent> {
     std::iter::from_fn(|| queue.try_recv().ok()).collect()

@@ -1393,8 +1393,10 @@ impl AgentLink {
         }
         let request = request_for_external_url(raw)?;
         // The same answer as an in-document chat link: nothing, in a build
-        // that hides Koru AI. The Agent refuses it too.
-        if matches!(request, Request::OpenChatLink { .. }) && !koru_features::ai() {
+        // that can open no chat — Koru AI and Bots both off. With either on
+        // the Agent delivers it and the window decides by the chat's Bot
+        // label (`koru_features::chat_links`). The Agent refuses it too.
+        if matches!(request, Request::OpenChatLink { .. }) && !koru_features::chat_links() {
             return Ok(());
         }
         // A chat link comes back as `Push::OpenChat`, to the Workspace window
@@ -1408,7 +1410,7 @@ impl AgentLink {
     /// profile's most recent window, or opens one; the profile goes with it
     /// so the Agent never routes it back here.
     pub fn open_chat_elsewhere(&self, chat: String, block: Option<String>, profile: String) {
-        if !koru_features::ai() {
+        if !koru_features::chat_links() {
             return;
         }
         self.request(Request::OpenChatLink {

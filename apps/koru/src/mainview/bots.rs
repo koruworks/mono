@@ -26,6 +26,14 @@ use crate::bots::BotView;
 use crate::bots::labels::{Known, Resolved};
 use crate::bots::roster::RosterBot;
 
+/// **A chat a door was asked to open while Koru AI is off**, held until the
+/// window learns whether it is a Bot's conversation
+/// ([`MainView::chat_door_open`]): the chat and its block, and the door.
+pub(super) struct HeldChatOpen {
+    target: koru_editor::ChatTarget,
+    where_: koru_editor::OpenWhere,
+}
+
 impl MainView {
     /// The Bot whose main conversation is `chat`, as far as the window knows.
     pub(super) fn bot_for_chat(&self, chat: koru_ai_ui::ChatId) -> Option<RosterBot> {
@@ -67,13 +75,91 @@ impl MainView {
         }
     }
 
+    /// **Whether a door may open `target` now** — the one test both of the
+    /// window's chat doors make (`open_ai_chat_tab_at`, `open_chat_where`).
+    /// With Koru AI on, any chat. With it off, only a Bot's conversation:
+    /// Bots follow agents alone (QUESTIONS O32). A conversation the window
+    /// knows is a Bot's opens at once; one it knows is ordinary is dropped,
+    /// exactly as every chat was with Koru AI off. **One it cannot place is
+    /// held, not guessed**: the label read is asked once and nothing is
+    /// shown — no tab that could turn out to be an ordinary chat — until it
+    /// answers ([`Self::open_held_chats`]): a Bot's conversation then opens
+    /// through the door it was asked by, anything else is dropped. Without a
+    /// label read to ask (under test, or no thread), nothing opens, as
+    /// before.
+    pub(super) fn chat_door_open(
+        &mut self,
+        target: koru_editor::ChatTarget,
+        where_: koru_editor::OpenWhere,
+    ) -> bool {
+        if koru_features::ai() {
+            return true;
+        }
+        let chat = koru_ai_ui::ChatId::from_uuid(target.chat);
+        if self.known_bot_conversation(chat) {
+            return true;
+        }
+        if !crate::bots::shown() || self.known_chat(chat).is_some() {
+            return false;
+        }
+        if self
+            .held_chat_opens
+            .iter()
+            .any(|held| held.target.chat == target.chat)
+        {
+            return false;
+        }
+        if self.bot_labels.ask(chat, crate::search::gateway_root()) {
+            self.held_chat_opens.push(HeldChatOpen { target, where_ });
+        }
+        false
+    }
+
+    /// **Open what was held while the window asked whose it is** (Koru AI
+    /// off): each held chat the label read has now placed opens through the
+    /// door it was asked by when it is a Bot's conversation, and is dropped
+    /// when it is ordinary or the read did not answer — with Koru AI off a
+    /// chat that might be ordinary is never shown. `true` when a tab opened.
+    fn open_held_chats(&mut self, answered: &[(koru_ai_ui::ChatId, Resolved)]) -> bool {
+        if self.held_chat_opens.is_empty() {
+            return false;
+        }
+        let mut opened = false;
+        for (chat, resolved) in answered {
+            let Some(index) = self
+                .held_chat_opens
+                .iter()
+                .position(|held| held.target.chat == chat.as_uuid())
+            else {
+                continue;
+            };
+            let held = self.held_chat_opens.remove(index);
+            match resolved {
+                Resolved::Known(Known::Bot { .. }) => {
+                    opened |= self.open_chat_where(held.target, held.where_);
+                }
+                Resolved::Known(Known::Ordinary) | Resolved::Unavailable => {
+                    let why = match resolved {
+                        Resolved::Unavailable => "unavailable",
+                        _ => "ordinary",
+                    };
+                    tracing::info!(
+                        target: "koru::chat_link",
+                        resolved = why,
+                        "chat link dropped: Koru AI is off and it is not known to be a Bot's"
+                    );
+                }
+            }
+        }
+        opened
+    }
+
     /// **Whether the window knows `chat` is a Bot's conversation** — the
     /// roster's main conversations, a learned label, or a Bot tab already on
     /// it. What lets a Bot's conversation through the window's Koru AI gates
     /// when that switch is off: Bots follow agents alone (QUESTIONS O32).
-    /// A chat the window cannot place is not let through then: with Koru AI
-    /// off there is no ordinary chat to fall back to, and asking whose it is
-    /// first is not built.
+    /// A chat the window cannot place is asked about first
+    /// ([`Self::chat_door_open`]).
     pub(super) fn known_bot_conversation(&self, chat: koru_ai_ui::ChatId) -> bool {
         if !crate::bots::shown() {
             return false;
@@ -149,9 +235,9 @@ impl MainView {
     /// remeasure or a repaint.
     pub(super) fn place_opening_tabs(&mut self) -> bool {
         let root = crate::search::gateway_root();
-        let failed: Vec<koru_ai_ui::ChatId> = self
-            .bot_labels
-            .poll()
+        let answered = self.bot_labels.poll();
+        let held = self.open_held_chats(&answered);
+        let failed: Vec<koru_ai_ui::ChatId> = answered
             .into_iter()
             .filter(|(_, resolved)| *resolved == Resolved::Unavailable)
             .map(|(chat, _)| chat)
@@ -215,7 +301,7 @@ impl MainView {
         for chat in asks {
             self.bot_labels.ask(chat, root.clone());
         }
-        moved
+        moved || held
     }
 
     /// The window's label read, for a test to hold the other end of.

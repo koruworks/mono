@@ -534,9 +534,128 @@ fn a_bots_conversation_opens_with_koru_ai_off() {
             let unknown = ChatId::new();
             assert!(
                 !v.open_ai_chat_tab_for(unknown),
-                "an unplaced chat: nothing"
+                "an unplaced chat, with no label read to ask: nothing"
             );
             assert!(on_chat(&v, unknown).is_empty());
+        },
+    );
+}
+
+/// **A link to a chat, for every combination of Koru AI and agents, with a
+/// Bot's conversation and with an ordinary chat** (QUESTIONS O32). The
+/// window decides by the chat's Bot label:
+///
+/// - both on: a neutral tab while it asks, then the Bot's tab or the
+///   ordinary chat tab in its place;
+/// - Koru AI alone: Bots are hidden, nothing is asked, and every chat opens
+///   as an ordinary chat tab, as before Bots;
+/// - agents alone: **nothing is shown while it asks** — no tab that could
+///   turn out to be an ordinary chat — then a Bot's conversation opens as
+///   its Bot's tab through the door it was asked by, and an ordinary chat
+///   is dropped exactly as every chat was with Koru AI off;
+/// - both off: nothing is asked and nothing opens.
+#[test]
+fn a_chat_link_opens_by_its_label_for_every_combination_of_ai_and_agents() {
+    for ai in [false, true] {
+        for agents in [false, true] {
+            for labelled in [true, false] {
+                for door in ["link", "background", "split"] {
+                    let features = koru_features::Features {
+                        ai,
+                        agents,
+                        ..koru_features::Features::ALL_ON
+                    };
+                    koru_features::testing::with(features, || {
+                        let case = format!("ai {ai}, agents {agents}, bot {labelled}, {door}");
+                        let (mut v, mut w) = container();
+                        let (commands, answers) = labels_link(&mut v);
+                        let bot = scout();
+                        let chat = ChatId::new();
+                        let target = ChatTarget {
+                            chat: chat.as_uuid(),
+                            block: None,
+                        };
+                        let opened = match door {
+                            "link" => v.open_ai_chat_tab_for(chat),
+                            "background" => v.open_chat_where(target, OpenWhere::BackgroundTab),
+                            _ => v.open_chat_where(target, OpenWhere::Split(SplitSide::Right)),
+                        };
+                        let asks = agents.then_some(chat).into_iter().collect::<Vec<_>>();
+                        assert_eq!(asked(&commands), asks, "{case}: asked");
+                        match (ai, agents) {
+                            (true, true) => {
+                                assert!(opened, "{case}");
+                                assert_eq!(on_chat(&v, chat), ["bot"], "{case}: neutral");
+                            }
+                            (true, false) => {
+                                assert!(opened, "{case}");
+                                assert_eq!(on_chat(&v, chat), ["chat"], "{case}");
+                            }
+                            (false, _) => {
+                                assert!(!opened, "{case}: nothing yet");
+                                assert!(on_chat(&v, chat).is_empty(), "{case}: no tab");
+                            }
+                        }
+                        if agents {
+                            answers
+                                .send(crate::bots::link::Answer::Labelled {
+                                    chat,
+                                    result: Ok(labelled.then(|| label_for(&bot))),
+                                })
+                                .unwrap();
+                        }
+                        let _ = View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
+                        let expected: &[&str] = match (ai, agents, labelled) {
+                            (true, true, true) => &["bot"],
+                            (true, _, _) => &["chat"],
+                            (false, true, true) => &["bot"],
+                            (false, _, _) => &[],
+                        };
+                        assert_eq!(on_chat(&v, chat), expected, "{case}: placed");
+                        if labelled && agents && !expected.is_empty() {
+                            let TabView::Bot(view) = &tab_on(&v, chat).view else {
+                                panic!("{case}: the Bot's tab");
+                            };
+                            assert_eq!(view.bot(), Some(bot.id), "{case}");
+                        }
+                        let _ = View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
+                        assert!(asked(&commands).is_empty(), "{case}: asked once");
+                        assert_eq!(on_chat(&v, chat), expected, "{case}: opened once");
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// **With Koru AI off, a chat link the label read cannot answer is dropped**
+/// rather than shown — it might be an ordinary chat — and a second link to
+/// the same chat while the first is asked asks nothing more.
+#[test]
+fn with_koru_ai_off_an_unanswered_link_is_dropped_and_asked_once() {
+    koru_features::testing::with(
+        koru_features::Features {
+            ai: false,
+            ..koru_features::Features::ALL_ON
+        },
+        || {
+            let (mut v, mut w) = container();
+            let (commands, answers) = labels_link(&mut v);
+            let chat = ChatId::new();
+            assert!(!v.open_ai_chat_tab_for(chat));
+            assert!(!v.open_ai_chat_tab_for(chat), "asked again meanwhile");
+            assert_eq!(asked(&commands), [chat], "asked once");
+            answers
+                .send(crate::bots::link::Answer::Labelled {
+                    chat,
+                    result: Err(crate::bots::link::Failure::Unreachable),
+                })
+                .unwrap();
+            let _ = View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
+            assert!(on_chat(&v, chat).is_empty(), "dropped, not shown");
+            // Asked for again later, it is asked about again.
+            assert!(!v.open_ai_chat_tab_for(chat));
+            assert_eq!(asked(&commands), [chat]);
         },
     );
 }

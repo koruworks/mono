@@ -28,15 +28,17 @@ pub(crate) mod view;
 pub(crate) use roster::BotsRoster;
 pub(crate) use view::BotView;
 
-/// **Whether this build shows Bots** — the one place the rule is written,
-/// so a change of mind is one line. Bots follow **agents being enabled, and
-/// nothing else** (QUESTIONS O32, the owner's answer, 2026-11-10): not the
-/// Koru AI switch, which shows the person's own AI chat, and not the
-/// Agent-views preference (Bots ROADMAP P1.8: no flag of its own). A Bot's
-/// tab and its conversation open wherever this answers `true`; the window's
-/// Koru AI gates let a Bot's conversation through (`mainview/bots.rs`).
+/// **Whether this build shows Bots**: `koru_features::bots`, where the rule
+/// is written once so a change of mind is one line, and where the Agent's
+/// chat-link gate reads it too (`koru_features::chat_links`). Bots follow
+/// **agents being enabled, and nothing else** (QUESTIONS O32, the owner's
+/// answer, 2026-11-10): not the Koru AI switch, which shows the person's own
+/// AI chat, and not the Agent-views preference (Bots ROADMAP P1.8: no flag
+/// of its own). A Bot's tab and its conversation open wherever this answers
+/// `true`; the window's Koru AI gates let a Bot's conversation through
+/// (`mainview/bots.rs`, `MainView::chat_door_open`).
 pub(crate) fn shown() -> bool {
-    koru_features::agents()
+    koru_features::bots()
 }
 
 #[cfg(test)]

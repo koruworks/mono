@@ -702,6 +702,10 @@ pub struct MainView {
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
     bot_labels: crate::bots::labels::ChatLabels,
+    /// **Chat opens held while Koru AI is off** until the label read says
+    /// whose each chat is: a Bot's opens as its tab, any other is dropped
+    /// (`bots.rs`, `MainView::chat_door_open`).
+    held_chat_opens: Vec<bots::HeldChatOpen>,
     ai_computer_ask: Option<(AiChatFolderSource, koru_ai_ui::ComputerPickerKind)>,
     ai_import_asks: std::collections::HashMap<uuid::Uuid, (AiChatFolderSource, koru_ai_ui::ChatId)>,
     ai_focused: bool,
@@ -1842,6 +1846,7 @@ impl MainView {
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
             bot_labels: crate::bots::labels::ChatLabels::default(),
+            held_chat_opens: Vec::new(),
             ai_computer_ask: None,
             ai_import_asks: std::collections::HashMap::new(),
             ai_chat: {

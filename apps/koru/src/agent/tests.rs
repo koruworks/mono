@@ -1337,6 +1337,43 @@ fn a_chat_link_from_another_app_sends_nothing_when_koru_ai_is_hidden() {
     });
 }
 
+/// **A chat link from another app, and a chat handed to a window of its own
+/// profile, reach the Agent while Koru AI or agents is on** (QUESTIONS O32):
+/// only a window can tell a Bot's conversation from an ordinary chat, by its
+/// Bot label, so every combination of the two switches sends exactly when
+/// either is on.
+#[test]
+fn a_chat_link_reaches_the_agent_while_koru_ai_or_agents_is_on() {
+    for ai in [false, true] {
+        for agents in [false, true] {
+            let features = koru_features::Features {
+                ai,
+                agents,
+                ..koru_features::Features::ALL_OFF
+            };
+            koru_features::testing::with(features, || {
+                let (link, receiver) = AgentLink::for_test();
+                link.live.store(true, Ordering::Release);
+                assert_eq!(
+                    link.open_external_url(&format!("koru://chat/{D}#{B}")),
+                    Ok(())
+                );
+                link.open_chat_elsewhere(D.into(), None, D.into());
+                let sent: Vec<Request> = std::iter::from_fn(|| receiver.try_recv().ok())
+                    .map(|FromShell::Request { body, .. }| body)
+                    .collect();
+                assert_eq!(
+                    sent.iter()
+                        .filter(|body| matches!(body, Request::OpenChatLink { .. }))
+                        .count(),
+                    if ai || agents { 2 } else { 0 },
+                    "{features}: {sent:?}"
+                );
+            });
+        }
+    }
+}
+
 /// **A quit is not a crash.** After `Push::Quitting` the end of the link must
 /// not start a reconnect — the reconnect is what dials, finds nothing and
 /// starts a new Agent, and it made the tray's *Quit* bring the Agent back.

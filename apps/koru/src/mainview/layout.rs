@@ -1016,7 +1016,11 @@ impl MainView {
     ) -> bool {
         // A build that hides Koru AI opens no chat — but a Bot's
         // conversation follows agents, not that switch (QUESTIONS O32).
-        if !koru_features::ai() && !self.known_bot_conversation(id) {
+        let target = koru_editor::ChatTarget {
+            chat: id.as_uuid(),
+            block: block.map(|block| block.as_uuid()),
+        };
+        if !self.chat_door_open(target, koru_editor::OpenWhere::Reuse) {
             return false;
         }
         // Standing still is not a jump.

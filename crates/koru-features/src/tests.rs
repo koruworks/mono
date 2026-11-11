@@ -141,6 +141,29 @@ fn delegate_needs_ai_and_the_agent_views() {
     );
 }
 
+/// **Bots follow agents alone, and a chat link is delivered when Koru AI or
+/// Bots can open it** (QUESTIONS O32): every combination of the two
+/// switches, with every other switch on and then off, so nothing else
+/// leaks into either rule.
+#[test]
+fn bots_follow_agents_and_a_chat_link_needs_ai_or_bots() {
+    for rest in [Features::ALL_ON, Features::ALL_OFF] {
+        for ai_on in [false, true] {
+            for agents_on in [false, true] {
+                let features = Features {
+                    ai: ai_on,
+                    agents: agents_on,
+                    ..rest
+                };
+                testing::with(features, || {
+                    assert_eq!(bots(), agents_on, "{features}");
+                    assert_eq!(chat_links(), ai_on || agents_on, "{features}");
+                });
+            }
+        }
+    }
+}
+
 #[test]
 fn cloud_sync_ships_by_default_and_a_runtime_override_can_hide_it() {
     if option_env!("KORU_ENABLE_CLOUD_SYNC").is_none() {

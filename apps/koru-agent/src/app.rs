@@ -4337,12 +4337,15 @@ impl Agent {
                     }
                 }
             }
-            // **A build that hides Koru AI opens nothing**, whoever asks: the
-            // in-document link is gated in the shells, but a `koru://chat/…`
-            // from Mail or Safari (LaunchServices on a Mac, `koru-agent
-            // koru://…` on Windows) reaches this arm. `Ok` is silent in the
-            // shell, so the link simply does nothing (koru-features, M39).
-            Request::OpenChatLink { .. } if !koru_features::ai() => {
+            // **A build that can open no chat opens nothing**, whoever asks:
+            // the in-document link is gated in the shells, but a
+            // `koru://chat/…` from Mail or Safari (LaunchServices on a Mac,
+            // `koru-agent koru://…` on Windows) reaches this arm. A link is
+            // delivered while Koru AI *or* Bots can open it
+            // (`koru_features::chat_links`); the window then decides by the
+            // chat's Bot label. `Ok` is silent in the shell, so a link no
+            // surface can open simply does nothing (koru-features, M39).
+            Request::OpenChatLink { .. } if !koru_features::chat_links() => {
                 self.reply(connection, id, Response::Ok);
             }
             // **A chat opens as a tab in a Koru window.** Answered at once:
@@ -5712,9 +5715,10 @@ impl Agent {
         profile: Option<ProfileId>,
     ) {
         // The in-document link and the overlay's chat hits are both absent in
-        // a build that hides Koru AI; this is the same answer at the door
-        // (koru-features).
-        if !koru_features::ai() {
+        // a build that can open no chat; this is the same answer at the door.
+        // With Koru AI off and Bots on the chat is still delivered: only the
+        // window knows whether it is a Bot's conversation (koru-features).
+        if !koru_features::chat_links() {
             return;
         }
         if self.restart_gate_pending() {
@@ -5745,7 +5749,7 @@ impl Agent {
         block: Option<uuid::Uuid>,
         profile: Option<ProfileId>,
     ) {
-        if !koru_features::ai() {
+        if !koru_features::chat_links() {
             return;
         }
         match self.chat_window(profile) {

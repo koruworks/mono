@@ -270,6 +270,22 @@ pub fn ai() -> bool {
 pub fn delegate() -> bool {
     ai() && agent_views()
 }
+/// **Bots are shown** — the Bots view, a Bot's tab and its conversations.
+/// Bots are about agent runtimes, so they follow [`agents`] alone: not the
+/// Koru AI switch, and not the Agent-views preference (QUESTIONS O32, the
+/// owner's answer).
+pub fn bots() -> bool {
+    agents()
+}
+/// **A link to a chat is delivered** — a `koru://chat/…` from another app,
+/// an overlay hit, a chat handed to a window of its own profile — when it
+/// can open anything: a Koru AI chat ([`ai`]) or a Bot's conversation
+/// ([`bots`]). Which one it is only the window can tell, by the chat's Bot
+/// label: it opens a Bot's conversation as its Bot's tab and drops an
+/// ordinary chat while Koru AI is off.
+pub fn chat_links() -> bool {
+    ai() || bots()
+}
 /// The reminders UI is shown.
 pub fn reminders() -> bool {
     features().reminders

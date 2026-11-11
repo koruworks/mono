@@ -811,7 +811,7 @@ impl MainView {
         let id = koru_ai_ui::ChatId::from_uuid(target.chat);
         // A Bot's conversation follows agents, not the Koru AI switch
         // (QUESTIONS O32).
-        if !koru_features::ai() && !self.known_bot_conversation(id) {
+        if !self.chat_door_open(target, where_) {
             return false;
         }
         let block = target.block.map(koru_ai_ui::MessageBlockId::from_uuid);
