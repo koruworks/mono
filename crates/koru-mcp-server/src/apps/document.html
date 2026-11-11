@@ -22,6 +22,11 @@
   An image is asked for with read_image and drawn from the bytes the answer
   carries, as a data: address, which the default policy allows.
 
+  A row's text is a list of spans, each with the marks a read reports for it
+  (bold, italic, underline, strike, code, a highlight). The page is drawn
+  from the spans and read back into them after every keystroke, so a mark is
+  part of what a row holds and is saved with set_mark.
+
   Note text is only ever written with textContent, never as markup.
 -->
 <html lang="en">
@@ -94,6 +99,12 @@
   .row { display: flex; align-items: flex-start; gap: 6px; padding: 2px 0 2px calc(var(--indent, 0) * 22px); }
   .row[hidden] { display: none; }
   .row.in-list { padding-left: calc(var(--indent, 0) * 22px + 16px); }
+  .row.al-center .text { text-align: center; }
+  .row.al-end .text { text-align: end; }
+  .marks { display: inline-flex; gap: 2px; }
+  .marks button { min-width: 26px; padding: 4px 6px; }
+  .marks .mb { font-weight: 700; } .marks .mi { font-style: italic; }
+  .marks .mu { text-decoration: underline; } .marks .ms { text-decoration: line-through; }
   .gutter { flex: 0 0 auto; min-width: 18px; text-align: center; color: var(--color-text-secondary, var(--k-muted)); user-select: none; }
   .gutter:empty { display: none; }
   .gutter input { margin: 4px 0 0; width: 15px; height: 15px; accent-color: var(--k-accent); }
@@ -118,6 +129,7 @@
   .row.v-media.a-end img { margin-left: auto; }
   .text .b { font-weight: 700; } .text .i { font-style: italic; } .text .u { text-decoration: underline; }
   .text .s { text-decoration: line-through; }
+  .text .u.s { text-decoration: underline line-through; }
   .text .c { font-family: var(--font-mono, ui-monospace, Consolas, monospace); font-size: .92em; background: var(--color-background-secondary, var(--k-soft)); padding: 0 3px; border-radius: 3px; }
   .text .hl-yellow { background: var(--k-hl-yellow); } .text .hl-green { background: var(--k-hl-green); }
   .text .hl-blue { background: var(--k-hl-blue); } .text .hl-pink { background: var(--k-hl-pink); }
@@ -138,6 +150,12 @@
     <span class="brand">Koru</span>
     <span id="status" class="status" role="status" aria-live="polite"></span>
     <span class="spacer"></span>
+    <span id="marks" class="marks" role="group" aria-label="Formatting">
+      <button type="button" class="mb" data-mark="b" title="Bold (Ctrl+B)" aria-label="Bold">B</button>
+      <button type="button" class="mi" data-mark="i" title="Italic (Ctrl+I)" aria-label="Italic">I</button>
+      <button type="button" class="mu" data-mark="u" title="Underline (Ctrl+U)" aria-label="Underline">U</button>
+      <button type="button" class="ms" data-mark="s" title="Strikethrough (Ctrl+Shift+S)" aria-label="Strikethrough">S</button>
+    </span>
     <button id="reload" type="button" disabled>Reload</button>
     <button id="save" type="button" class="primary" disabled>Save</button>
     <button id="expand" type="button" hidden>Expand</button>
@@ -259,7 +277,7 @@
   const byId = () => new Map(state.rows.map((row) => [row.id, row]));
   const editable = (row) => !state.readOnly && !row.pills && (row.view === 'title' || row.view === 'text');
   const dirtyRow = (row) => row.isNew || row.removed || row.text !== row.base.text || row.done !== row.base.done
-    || row.parentId !== row.base.parentId;
+    || row.parentId !== row.base.parentId || row.marksKey !== row.base.marksKey;
   const isDirty = () => state.rows.some(dirtyRow);
   const conflicts = () => state.rows.filter((row) => row.conflict !== null && !row.removed).length;
   const title = () => {
@@ -281,6 +299,89 @@
     }
   }
 
+  // ------------------------------------------------------------------- spans
+  // The marks edit_document sets, and the letter each is kept under.
+  const MARKS = [['bold', 'b'], ['italic', 'i'], ['underline', 'u'], ['strike', 's'], ['code', 'c']];
+  const LETTERS = MARKS.map((pair) => pair[1]).join('');
+  const encoder = new TextEncoder();
+  const bytes = (text) => encoder.encode(text).length;
+  const textOf = (spans) => spans.map((span) => span.text).join('');
+  const plain = (text) => (text ? [{ text, m: '', hl: null, pill: null }] : []);
+
+  /** Spans with nothing empty and no two alike side by side. */
+  function tidy(spans) {
+    const out = [];
+    for (const span of spans) {
+      if (!span.text) continue;
+      const last = out[out.length - 1];
+      if (last && !last.pill && !span.pill && last.m === span.m && last.hl === span.hl) last.text += span.text;
+      else out.push({ text: span.text, m: span.m, hl: span.hl, pill: span.pill });
+    }
+    return out;
+  }
+
+  /** A read's runs as spans; the text alone when the runs do not cover it. */
+  function spansOf(text, runs) {
+    if (!runs.length || runs.map((run) => run.text).join('') !== text) return plain(text);
+    return tidy(runs.map((run) => ({
+      text: run.text,
+      m: MARKS.filter((pair) => run[pair[0]]).map((pair) => pair[1]).join(''),
+      hl: typeof run.highlight === 'string' && /^[a-z]+$/.test(run.highlight) ? run.highlight : null,
+      pill: run.pill_attribute_id || null,
+    })));
+  }
+
+  /** Each mark's ranges over the spans' text, in UTF-8 bytes as set_mark takes them. */
+  function rangesOf(spans) {
+    const ranges = {};
+    for (const letter of LETTERS) ranges[letter] = [];
+    let at = 0;
+    for (const span of spans) {
+      const end = at + bytes(span.text);
+      for (const letter of span.m) {
+        const list = ranges[letter];
+        const last = list[list.length - 1];
+        if (last && last[1] === at) last[1] = end; else list.push([at, end]);
+      }
+      at = end;
+    }
+    return ranges;
+  }
+
+  /** The stretches where `inside` holds and `outside` does not, up to `total`. */
+  function stretches(inside, outside, total) {
+    const has = (list, at) => list.some((range) => range[0] <= at && at < range[1]);
+    const points = [...new Set([0, total, ...inside.flat(), ...outside.flat()])].filter((at) => at <= total).sort((a, b) => a - b);
+    const out = [];
+    for (let i = 0; i + 1 < points.length; i += 1) {
+      if (!has(inside, points[i]) || has(outside, points[i])) continue;
+      const last = out[out.length - 1];
+      if (last && last[1] === points[i]) last[1] = points[i + 1]; else out.push([points[i], points[i + 1]]);
+    }
+    return out;
+  }
+
+  /** Give a row its spans, and with them its text and what its marks are. */
+  function setSpans(row, spans) {
+    row.spans = tidy(spans);
+    row.text = textOf(row.spans);
+    row.marksKey = row.spans.map((span) => span.text.length + span.m).join(',');
+  }
+
+  /** The spans before and after a place in the text. */
+  function cutAt(spans, at) {
+    const before = [];
+    const after = [];
+    let left = at;
+    for (const span of spans) {
+      if (left >= span.text.length) { before.push(span); left -= span.text.length; continue; }
+      if (left > 0) before.push(Object.assign({}, span, { text: span.text.slice(0, left) }));
+      after.push(Object.assign({}, span, { text: span.text.slice(left) }));
+      left = 0;
+    }
+    return [before, after];
+  }
+
   /** The rows of a `read_document` projection, in its preorder. */
   function rowsOf(projection) {
     const nodes = projection.nodes || [];
@@ -298,16 +399,19 @@
       for (let up = parent; up && up.node_id !== projection.root_node_id; up = up.parent_id ? index.get(up.parent_id) : null) {
         if (up.kind !== 'listblock') indent += 1;
       }
-      return {
+      const row = {
         id: node.node_id, parentId: node.parent_id || null, afterId: null,
         isNew: false, removed: false, kind: node.kind, view, indent,
         heading: meta.heading || null, list,
         checkbox: view === 'text' && (node.kind === 'task' || list === 'checkbox'),
-        base: { text, done: !!meta.done, parentId: node.parent_id || null }, text, done: !!meta.done,
-        runs, attrs: new Map((content.attributes || []).map((attr) => [attr.attribute_id, attr])),
+        done: !!meta.done,
+        attrs: new Map((content.attributes || []).map((attr) => [attr.attribute_id, attr])),
         pills: runs.some((run) => run.pill_attribute_id) || text.includes('\u2060'),
         meta, content, conflict: null, el: null, textEl: null,
       };
+      setSpans(row, spansOf(text, runs));
+      row.base = { text, done: row.done, parentId: row.parentId, marksKey: row.marksKey, ranges: rangesOf(row.spans) };
+      return row;
     });
   }
 
@@ -319,42 +423,58 @@
     state.rows = rowsOf(projection);
     state.loaded = true;
     state.readAt = Date.now();
+    setTimeout(watch, 0);
   }
 
   /** A row that is not in the document yet. */
-  function blank(props) {
-    return Object.assign({
+  function blank(props, spans) {
+    const row = Object.assign({
       id: 'new' + (++state.seq), parentId: null, afterId: null, isNew: true, removed: false,
       kind: 'paragraph', view: 'text', indent: 0, heading: null, list: null, checkbox: false,
-      base: { text: '', done: false, parentId: null }, text: '', done: false,
-      runs: null, attrs: new Map(), pills: false, meta: {}, content: {}, conflict: null, el: null, textEl: null,
+      base: { text: '', done: false, parentId: null, marksKey: '', ranges: rangesOf([]) }, done: false,
+      attrs: new Map(), pills: false, meta: {}, content: {}, conflict: null, el: null, textEl: null,
     }, props);
+    setSpans(row, spans || []);
+    return row;
   }
 
   // ------------------------------------------------------------------ render
+  /** Draw a row's spans. */
   function fillText(row) {
     const target = row.textEl;
     target.textContent = '';
-    const runs = row.runs || [];
-    const whole = runs.length && row.text === row.base.text && runs.map((run) => run.text).join('') === row.text;
-    if (!whole) {
-      // Edited, or runs that do not cover the text: the text alone. A row
-      // with a pill is never editable, so dropping its anchors here is only
-      // ever a matter of display.
-      target.textContent = row.text.replace(/\u2060/g, '');
-      return;
+    for (const span of row.spans) {
+      if (span.pill) { target.appendChild(pill(row.attrs.get(span.pill))); continue; }
+      // A link's anchor with no pill to draw is not a character to show.
+      const text = span.text.replace(/\u2060/g, '');
+      const classes = span.m.split('').concat(span.hl ? ['hl-' + span.hl] : []);
+      if (!classes.length) target.appendChild(document.createTextNode(text));
+      else target.appendChild(el('span', classes.join(' '), text));
     }
-    for (const run of runs) {
-      if (run.pill_attribute_id) {
-        target.appendChild(pill(row.attrs.get(run.pill_attribute_id)));
-        continue;
+  }
+
+  /**
+   * Read a row's spans back from the page after the person typed in it: the
+   * text they see, with the marks of the span each character sits in.
+   */
+  function readSpans(row) {
+    const spans = [];
+    const TAGS = { B: 'b', STRONG: 'b', I: 'i', EM: 'i', U: 'u', S: 's', STRIKE: 's', DEL: 's' };
+    const walk = (node, m, hl) => {
+      if (node.nodeType === 3) { spans.push({ text: node.data.replace(/[\r\n]+/g, ' '), m, hl, pill: null }); return; }
+      if (node.nodeType !== 1) return;
+      const set = new Set(m);
+      let light = hl;
+      if (TAGS[node.tagName]) set.add(TAGS[node.tagName]);
+      for (const name of node.classList) {
+        if (name.length === 1 && LETTERS.includes(name)) set.add(name);
+        else if (/^hl-[a-z]+$/.test(name)) light = name.slice(3);
       }
-      const marks = ['bold:b', 'italic:i', 'underline:u', 'strike:s', 'code:c']
-        .filter((pair) => run[pair.split(':')[0]]).map((pair) => pair.split(':')[1]);
-      if (typeof run.highlight === 'string' && /^[a-z]+$/.test(run.highlight)) marks.push('hl-' + run.highlight);
-      if (!marks.length) { target.appendChild(document.createTextNode(run.text)); continue; }
-      target.appendChild(el('span', marks.join(' '), run.text));
-    }
+      const marks = [...LETTERS].filter((letter) => set.has(letter)).join('');
+      for (const child of node.childNodes) walk(child, marks, light);
+    };
+    for (const child of row.textEl.childNodes) walk(child, '', null);
+    setSpans(row, spans);
   }
 
   function pill(attr) {
@@ -426,7 +546,8 @@
 
   function renderRow(row) {
     const node = el('div', 'row v-' + row.view + ' k-' + row.kind + (row.heading ? ' h' + row.heading : '')
-      + (row.list ? ' in-list' : '') + (row.view === 'media' && row.meta.align ? ' a-' + row.meta.align : ''));
+      + (row.list ? ' in-list' : '') + (row.view === 'media' && row.meta.align ? ' a-' + row.meta.align : '')
+      + ((row.view === 'text' || row.view === 'title') && (row.meta.align === 'center' || row.meta.align === 'end') ? ' al-' + row.meta.align : ''));
     node.dataset.id = row.id;
     node.style.setProperty('--indent', row.indent);
     const gutter = el('span', 'gutter');
@@ -624,12 +745,10 @@
   }
 
   function split(row) {
-    const whole = row.textEl.textContent;
-    const at = row.view === 'title' ? whole.length : caret(row.textEl);
-    const right = whole.slice(at);
-    if (right) {
-      row.text = whole.slice(0, at);
-      row.runs = null;
+    const at = row.view === 'title' ? row.text.length : caret(row.textEl);
+    const [left, right] = cutAt(row.spans, at);
+    if (right.length) {
+      setSpans(row, left);
       fillText(row);
     }
     const first = row.view === 'title';
@@ -637,8 +756,8 @@
       parentId: first ? row.id : row.parentId, afterId: first ? null : row.id,
       kind: !first && row.kind === 'task' ? 'task' : 'paragraph',
       indent: first ? 0 : row.indent, list: first ? null : row.list,
-      checkbox: !first && row.checkbox, text: right,
-    });
+      checkbox: !first && row.checkbox,
+    }, right);
     const at_row = slot(created.parentId, created.afterId);
     // An unsaved sibling that followed the same anchor now follows the new row.
     for (const other of state.rows) {
@@ -703,8 +822,7 @@
   }
 
   function toBullet(row) {
-    row.text = row.textEl.textContent.slice(2);
-    row.runs = null;
+    setSpans(row, cutAt(row.spans, 2)[1]);
     const outer = row.parentId;
     const above = previousSibling(row);
     let list = above && isBulletList(above) ? above : null;
@@ -767,7 +885,7 @@
   doc.addEventListener('input', (event) => {
     const row = rowOf(event.target);
     if (!row || !row.textEl || event.target !== row.textEl) return;
-    row.text = row.textEl.textContent.replace(/[\r\n]+/g, ' ');
+    readSpans(row);
     if (event.inputType === 'insertText' && event.data === ' ' && row.view === 'text' && row.kind === 'paragraph'
       && !row.list && !row.heading && /^[-*] /.test(row.text) && caret(row.textEl) === 2) {
       toBullet(row);
@@ -819,7 +937,7 @@
     if (target.dataset.resolve) {
       const row = rowOf(target);
       if (!row) return;
-      if (target.dataset.resolve === 'theirs') { row.text = row.base.text; row.runs = row.keptRuns || null; }
+      if (target.dataset.resolve === 'theirs') setSpans(row, row.kept || plain(row.base.text));
       row.conflict = null;
       redraw(row);
       mark();
@@ -828,23 +946,125 @@
   });
 
   document.addEventListener('keydown', (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 's') {
       event.preventDefault();
       save();
     }
+  });
+
+  // ------------------------------------------------------------- formatting
+  // Koru's own chords: Ctrl+B, Ctrl+I, Ctrl+U, and Ctrl+Shift+S to strike.
+  // A mark is put on the selection in one row; the browser's own formatting
+  // is refused, because it draws a mark the row would not be holding.
+  function offsetIn(target, container, offset) {
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    range.setEnd(container, offset);
+    return range.toString().length;
+  }
+
+  /** The row the selection is in, and where in its text; null without one. */
+  function selected() {
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    const row = rowOf(range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentNode);
+    if (!row || row.view !== 'text' || !row.textEl || !row.textEl.isContentEditable) return null;
+    if (!row.textEl.contains(range.startContainer) || !row.textEl.contains(range.endContainer)) return null;
+    const start = offsetIn(row.textEl, range.startContainer, range.startOffset);
+    const end = offsetIn(row.textEl, range.endContainer, range.endOffset);
+    return start < end ? { row, start, end } : null;
+  }
+
+  function select(target, start, end) {
+    const place = (offset) => {
+      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+      let left = offset;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (left <= node.length) return [node, left];
+        left -= node.length;
+      }
+      return [target, target.childNodes.length];
+    };
+    const range = document.createRange();
+    range.setStart(...place(start));
+    range.setEnd(...place(end));
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  /** Put a mark on the selection, or take it off when all of it has it. */
+  function toggleMark(letter) {
+    const at = selected();
+    if (!at || state.readOnly) return;
+    const [before, rest] = cutAt(at.row.spans, at.start);
+    const [inside, after] = cutAt(rest, at.end - at.start);
+    const off = inside.every((span) => span.m.includes(letter));
+    for (const span of inside) {
+      const set = new Set(span.m);
+      if (off) set.delete(letter); else set.add(letter);
+      span.m = [...LETTERS].filter((each) => set.has(each)).join('');
+    }
+    setSpans(at.row, before.concat(inside, after));
+    fillText(at.row);
+    select(at.row.textEl, at.start, at.end);
+    touched();
+  }
+
+  doc.addEventListener('keydown', (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+    const key = event.key.toLowerCase();
+    const letter = event.shiftKey ? (key === 's' ? 's' : null) : ({ b: 'b', i: 'i', u: 'u' })[key] || null;
+    if (!letter) return;
+    event.preventDefault();
+    toggleMark(letter);
+  });
+  doc.addEventListener('beforeinput', (event) => {
+    if (typeof event.inputType === 'string' && event.inputType.startsWith('format')) event.preventDefault();
+  });
+  // A press on a button would take the selection away before the click.
+  $('marks').addEventListener('mousedown', (event) => event.preventDefault());
+  $('marks').addEventListener('click', (event) => {
+    const letter = event.target && event.target.dataset ? event.target.dataset.mark : null;
+    if (letter) toggleMark(letter);
   });
 
   // ------------------------------------------------------------------ saving
   /** The edit batch that turns the document as read into the rows as they are. */
   function operations() {
     const ops = [];
-    const tally = { edited: 0, added: 0, removed: 0, ticked: 0, moved: 0 };
+    const tally = { edited: 0, added: 0, removed: 0, ticked: 0, moved: 0, formatted: 0 };
+    // The set_mark operations that make a row's marks in Koru the ones on the
+    // page. A row whose text did not change sends only what differs. One
+    // whose text did is sent every mark it has or had, on and off over the
+    // whole line: where a typed character lands relative to a mark is the
+    // page's to say, not something to leave to how the text was merged.
+    const marksOf = (row) => {
+      const now = rangesOf(row.spans);
+      const total = bytes(row.text);
+      const rewritten = !row.isNew && row.text !== row.base.text;
+      const out = [];
+      for (const [name, letter] of MARKS) {
+        const was = row.isNew ? [] : row.base.ranges[letter];
+        if (!now[letter].length && !was.length) continue;
+        const on = rewritten ? now[letter] : stretches(now[letter], was, total);
+        const off = row.isNew ? [] : rewritten ? stretches([[0, total]], now[letter], total) : stretches(was, now[letter], total);
+        for (const [flag, list] of [[true, on], [false, off]]) {
+          for (const [start, end] of list) {
+            out.push({ op: 'set_mark', node_id: row.id, expected: row.text, start_utf8: start, end_utf8: end, mark: name, on: flag });
+          }
+        }
+      }
+      return out;
+    };
     // In the rows' order, which is the document's: a row's parent and the
     // sibling it is placed after always come before it.
     for (const row of state.rows) {
       if (row.removed) continue;
       if (row.isNew) {
         ops.push({ op: 'insert', node_id: row.id, parent_id: row.parentId, after_node_id: row.afterId, kind: row.kind, text: row.text });
+        ops.push(...marksOf(row));
         if (row.done) ops.push({ op: 'set_done', node_id: row.id, expected: row.text, done: true });
         if (row.view !== 'list') tally.added += 1;
         continue;
@@ -852,6 +1072,11 @@
       if (row.text !== row.base.text) {
         ops.push({ op: 'replace_text', node_id: row.id, expected: row.base.text, text: row.text });
         tally.edited += 1;
+      }
+      const marks = marksOf(row);
+      if (marks.length) {
+        ops.push(...marks);
+        if (row.marksKey !== row.base.marksKey && row.text === row.base.text) tally.formatted += 1;
       }
       if (row.parentId !== row.base.parentId) {
         ops.push({ op: 'move', node_id: row.id, expected: row.text, parent_id: row.parentId, after_node_id: row.afterId });
@@ -879,6 +1104,7 @@
     if (!ops.length) { chrome(); return; }
     const sent = state.rows.map((row) => ({
       row, text: row.text, done: row.done, parentId: row.parentId, removed: row.removed, isNew: row.isNew,
+      marksKey: row.marksKey, ranges: rangesOf(row.spans),
     }));
     state.saving = true;
     chrome();
@@ -916,7 +1142,10 @@
         row.isNew = false;
         if (row.el) row.el.dataset.id = minted;
       }
-      row.base = { text: item.text, done: item.done, parentId: renamed.get(item.parentId) || item.parentId };
+      row.base = {
+        text: item.text, done: item.done, parentId: renamed.get(item.parentId) || item.parentId,
+        marksKey: item.marksKey, ranges: item.ranges,
+      };
     }
     state.rows = state.rows.filter((row) => !row.gone);
     for (const row of state.rows) {
@@ -933,6 +1162,7 @@
     if (tally.added) parts.push(tally.added + ' added');
     if (tally.removed) parts.push(tally.removed + ' removed');
     if (tally.moved) parts.push(tally.moved + ' moved into or out of a list');
+    if (tally.formatted) parts.push(tally.formatted + ' formatted');
     if (!parts.length) parts.push('rearranged');
     if (tally.ticked) parts.push(tally.ticked + ' checked or unchecked');
     const text = 'The user edited the Koru document "' + title() + '" in the view (document_id ' + state.docId
@@ -1002,13 +1232,15 @@
       if (was.isNew) continue;
       const now = index.get(was.id);
       const textDirty = was.text !== was.base.text;
+      const unsaved = textDirty || was.marksKey !== was.base.marksKey;
       if (!now) { if (textDirty && !was.removed) lost.push(was.text); continue; }
       if (was.removed) { now.removed = now.base.text === was.base.text; continue; }
-      if (textDirty && now.base.text !== was.text) {
-        now.keptRuns = now.runs;
-        now.text = was.text;
-        now.runs = null;
-        // A conflict stays one until the person resolves it.
+      if (unsaved && (now.text !== was.text || now.marksKey !== was.marksKey)) {
+        now.kept = now.spans;
+        setSpans(now, was.spans);
+        // The text it was written over is no longer the text there, so
+        // sending it would replace somebody else's words: the person
+        // chooses. A conflict stays one until they do.
         if (now.base.text !== was.base.text || was.conflict !== null) now.conflict = now.base.text;
       }
       if (was.done !== was.base.done) now.done = was.done;
@@ -1071,6 +1303,48 @@
     }
   }
   window.addEventListener('focus', () => refresh());
+  // Coming to the view with the pointer is coming back to it too, and the
+  // document is then current before the click that would have moved it.
+  $('app').addEventListener('pointerenter', () => refresh());
+
+  // The view cannot be told that the document changed, so it keeps one call
+  // open that answers when it has: an edit an assistant makes in the same
+  // conversation, or a person makes in Koru, is drawn a moment later. A host
+  // that does not serve the call leaves the reads above as the only ones.
+  //
+  // One wait at a time, for the document on the page. A call already held
+  // open cannot be taken back, so opening another document starts a new run
+  // and the old one ends when its call answers.
+  let watchRun = 0;
+  let watched = null;
+  let noWatch = false;
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  async function watch() {
+    if (noWatch || !state.loaded || document.hidden || watched === state.docId) return;
+    const docId = state.docId;
+    const run = ++watchRun;
+    watched = docId;
+    try {
+      while (run === watchRun && state.docId === docId && !noWatch && !document.hidden) {
+        const held = state.revision;
+        let answer;
+        try {
+          answer = await koru.call('watch_document', { workspace_id: state.ws, document_id: docId, revision: held });
+        } catch (error) {
+          if (error.rpc || error.code === 'tool_not_available' || error.code === 'toolset_disabled') { noWatch = true; break; }
+          await pause(5000);
+          continue;
+        }
+        if (run !== watchRun || state.docId !== docId || !answer || !answer.changed) continue;
+        if (answer.revision !== state.revision) await refresh(true);
+        // Unsaved edits hold the page where it is; ask again once they are in.
+        if (state.revision === held) await pause(1500);
+      }
+    } finally {
+      if (run === watchRun) watched = null;
+    }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) watch(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 
   function lastChild(parentId) {

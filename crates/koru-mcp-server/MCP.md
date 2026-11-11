@@ -200,8 +200,9 @@ The current tool surface is:
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
   Koru AI chats; and
 - `show_document`, which shows a person a document in an interactive view,
-  for hosts that render MCP Apps, and `read_image`, which that view draws a
-  document's images from ([Views](#views)).
+  for hosts that render MCP Apps, with `read_image` and `watch_document`,
+  which that view draws a document's images from and hears of a change
+  through ([Views](#views)).
 
 A bridge serves every one of them unless it was started with `--toolsets`,
 which narrows it to named groups — see [Toolsets](#toolsets).
@@ -284,7 +285,8 @@ group (maintainers, 2026-11-02).
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
 | `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
-| every toolset on | the whole reply, envelope included | 23,162 | 5,791 | 25,550 |
+| the view tools — listed with `docs`, in no toolset | `show_document`, `read_image`, `watch_document` | 1,511 | 378 | 1,650 |
+| every toolset on | the whole reply, envelope included | 25,961 | 6,491 | 27,200 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
@@ -292,6 +294,15 @@ adds about 45 bytes of envelope. Tokens are bytes over four. Measured
 `each_toolset_is_within_its_budget`, and the total by
 `the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
 decision recorded here.
+
+**The view tools have a budget line of their own** (2026-11-11), and the
+total grew by it, from 25,550 to 27,200. They are in no router, so in no
+toolset's budget; the first two were paid for out of the toolsets' headroom
+and had used all but 42 bytes of it, which made the next tool in *any*
+toolset a refusal about tools it did not add. The line is measured the way
+a toolset's is, and held by `the_view_tool_names_its_view_and_the_tool_it_runs_as`.
+The whole reply and the view tools' row were measured on that day; the six
+toolset rows are 2026-11-02's.
 
 - **Every tool is in exactly one toolset**, and `core` is in every bridge:
   nothing else can be called without the documentation and a workspace id.
@@ -381,6 +392,7 @@ and as a test held them against real values. A failure is
 | `read_chat` | `{ chat_id, title, total_messages, messages: [{ message_id, ordinal, role, state, markdown, truncated, created_at }], next_cursor? }` |
 | `show_document` | `read_document`'s result plus `workspace_id`; the text block is one sentence naming the document, not its content ([Views](#views)) |
 | `read_image` | `{ node_id, mime, width, height }`, and the image itself as an MCP image content block; for the view only ([Views](#views)) |
+| `watch_document` | `{ changed, revision }`, when the document has left the revision asked about or after 25 seconds; for the view only ([Views](#views)) |
 
 ## The boundary
 
@@ -1785,6 +1797,18 @@ an empty one with Backspace. A block that holds a link or a reference to
 another document is read-only, because its text carries the link's anchor; a
 document reference opens that document in the view.
 
+**Formatting.** The view draws the marks a read reports in `runs` and a
+block's `metadata.align` (`center` and `end`; `start` is the default). A
+person puts bold, italic, underline or strikethrough on a selection in one
+block with Koru's own chords (Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+Shift+S) or the
+four buttons, and takes it off the same way when all of the selection has
+it. It is saved with `set_mark`. A block whose text did not change sends
+only the ranges that differ. One whose text did change is sent every mark it
+has or had, on and off over the whole line, after its `replace_text`: where
+a typed character falls relative to a mark is what the person saw on the
+page, not something left to how the text was merged. `code`, highlights,
+links and alignment are drawn and kept, and are not set from the view.
+
 **Lists.** A list is a `listblock` whose children are its items, and the
 view draws every list style a read reports. `- ` or `* ` typed at the start
 of a paragraph makes the paragraph a bullet: an item of the bullet list just
@@ -1812,19 +1836,34 @@ connection's own access: there an image stored larger than 8 MiB is refused
 `image_too_large` before it is fetched, and two images are read at a time.
 Where an image cannot be read the view shows its name in its place.
 
-**It asks again when it opens and when the person comes back.** The
-contract is ask and answer, so the view learns of a change made in Koru only
-by reading. What a host hands a view is the answer to the call that opened
-it, which a conversation opened again serves from what it kept, so the view
-reads the document once as it opens. After that, when it regains focus with
-nothing unsaved and has not read in the last four seconds, it reads again
-and, if the revision moved, draws the document again.
+**It hears of a change by keeping one call open.** The extension gives a
+view no notification that its data moved, and this contract is ask and
+answer. So the view calls `watch_document` with `workspace_id`,
+`document_id` and the `revision` it holds, and the bridge answers
+`{ changed: true, revision }` as soon as the document is at another
+revision, or `{ changed: false, revision }` after 25 seconds, and the view
+asks again. An edit an assistant makes in the same conversation, or a person
+makes in Koru, is on the page a moment later (measured: 69 ms after the edit
+was saved). The call waits in the Store's room for the document, on a thread
+of its own, so the calls made meanwhile are answered beside it. A revision
+the document has already left is answered at once. With unsaved edits on the
+page the view does not redraw; it asks again when they are saved. The view
+does not watch while its page is hidden. **Local bridges only**: a hosted
+server does not list the tool and refuses it `tool_not_available`, as does
+any host with no room to wait in.
+
+**It also reads when it opens and when the person comes back.** What a host
+hands a view is the answer to the call that opened it, which a conversation
+opened again serves from what it kept, so the view reads the document once
+as it opens. Where there is no watch, it reads again when it regains focus
+or the pointer comes to it, with nothing unsaved and no read in the last
+four seconds, and draws the document again if the revision moved.
 
 **It saves with `edit_document`, and reads with `read_document`.** The view
 calls those two tools through the host, under the connection's own access, so
-a save is the batch an agent would send: `replace_text`, `set_done`, `insert`
-with local names, `move` into or out of a list, and `remove`, each with the
-block's text as `expected`.
+a save is the batch an agent would send: `replace_text`, `set_mark`,
+`set_done`, `insert` with local names, `move` into or out of a list, and
+`remove`, each with the block's text as `expected`.
 Nothing about saving is particular to the view:
 
 - A block that changed somewhere else since the view read it is refused
@@ -1846,11 +1885,10 @@ is in no router and no catalog either; a host serves it wherever it serves
 `read_document`, and both are listed with the `docs` toolset. A host without the extension ignores `_meta.ui` and can still call
 `show_document`; the text says to use `read_document`.
 
-The two add 1,056 bytes to `tools/list` (`show_document` 621, `read_image`
-435), which is 25,508 bytes with every toolset on (measured 2026-11-11).
-They are in no toolset's own budget, because those are measured over the
-router, but they are in the total: **42 bytes are left under its 25,550**, so
-the next tool or description is a decision about that budget.
+The three add 1,511 bytes to `tools/list` (`show_document` 621,
+`read_image` 435, `watch_document` 452, a separator each), under a budget
+line of their own ([Toolsets](#toolsets)). Every agent reads them, including
+one that renders no view.
 
 `scripts/dev/mcp-app-host.html` is a stand-in host for working on the view in
 a browser, with a document held in the page.

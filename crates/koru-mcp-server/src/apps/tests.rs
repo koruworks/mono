@@ -52,7 +52,7 @@ fn arguments() -> rmcp::model::JsonObject {
 #[test]
 fn the_view_tool_names_its_view_and_the_tool_it_runs_as() {
     let tools = app_tools();
-    assert_eq!(tools.len(), 2);
+    assert_eq!(tools.len(), 3);
     let tool = serde_json::to_value(&tools[0]).expect("tool JSON");
     assert_eq!(tool["name"], SHOW_DOCUMENT);
     assert_eq!(tool["_meta"]["ui"]["resourceUri"], document_view_uri());
@@ -85,6 +85,28 @@ fn the_view_tool_names_its_view_and_the_tool_it_runs_as() {
     assert!(
         image_bytes < 450,
         "read_image publishes {image_bytes} bytes"
+    );
+
+    // The view's wait for a change: the same, and held open by the bridge.
+    let watch = serde_json::to_value(&tools[2]).expect("tool JSON");
+    assert_eq!(watch["name"], WATCH_DOCUMENT);
+    assert_eq!(watch["_meta"]["ui"]["visibility"], json!(["app"]));
+    assert_eq!(
+        watch["inputSchema"]["required"],
+        json!(["workspace_id", "document_id", "revision"])
+    );
+    assert_eq!(executes_as(WATCH_DOCUMENT), Some(WATCH_DOCUMENT));
+    assert_eq!(listed_with(WATCH_DOCUMENT), Some("read_document"));
+
+    // The three together are a line of the `tools/list` budget of their own.
+    let all: usize = tools
+        .iter()
+        .map(|tool| serde_json::to_vec(tool).expect("tool JSON").len() + 1)
+        .sum();
+    println!("the view tools: {all} bytes in tools/list");
+    assert!(
+        all <= crate::toolsets::VIEW_TOOLS_BUDGET,
+        "the view tools publish {all} bytes, over their budget"
     );
     // The tool is a line in every agent's context: it stays a small one.
     let bytes = serde_json::to_vec(&tools[0]).expect("tool JSON").len();
@@ -231,6 +253,76 @@ async fn a_client_lists_the_view_tool_reads_its_view_and_is_shown_a_document() {
     server_task.abort();
 }
 
+/// Holds every `watch_document` until it is told to answer, and answers
+/// everything else at once.
+struct Held {
+    release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl Backend for Held {
+    fn invoke(&self, _: &RequestContext, tool: &str, _: Value) -> Result<Value, ToolError> {
+        if tool == WATCH_DOCUMENT {
+            let release = self.release.lock().unwrap().take().expect("one watch");
+            release
+                .recv_timeout(std::time::Duration::from_secs(20))
+                .expect("the test lets the watch go");
+            return Ok(json!({ "changed": true, "revision": "01" }));
+        }
+        Ok(projection("Groceries"))
+    }
+
+    fn doctor(&self) -> Result<Value, ToolError> {
+        Ok(json!({ "ok": true }))
+    }
+}
+
+/// **A view's wait does not hold up the calls it is waiting to hear of.** The
+/// wait is open for seconds; the save an assistant makes meanwhile, and the
+/// view's own reads, are answered beside it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_held_watch_does_not_hold_up_other_calls() {
+    let (let_go, release) = std::sync::mpsc::channel();
+    let backend = Arc::new(Held {
+        release: Mutex::new(Some(release)),
+    });
+    let (server_transport, client_transport) = tokio::io::duplex(256 * 1024);
+    let server = KoruMcp::new(backend, RequestContext::local());
+    let server_task = tokio::spawn(async move { server.serve(server_transport).await });
+    let client = ().serve(client_transport).await.expect("MCP initialize handshake");
+
+    let peer = client.peer().clone();
+    let watching = tokio::spawn(async move {
+        let mut asked = arguments();
+        asked.insert("revision".into(), "00".into());
+        peer.call_tool(CallToolRequestParams::new(WATCH_DOCUMENT).with_arguments(asked))
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert!(!watching.is_finished(), "the watch is held open");
+
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client
+            .peer()
+            .call_tool(CallToolRequestParams::new("read_document").with_arguments(arguments())),
+    )
+    .await
+    .expect("a read is answered while the watch waits")
+    .expect("tools/call read_document");
+    assert_eq!(read.is_error, Some(false));
+    assert!(!watching.is_finished(), "and the watch is still waiting");
+
+    let_go.send(()).expect("the watch is listening");
+    let answered = watching.await.expect("the watch task").expect("tools/call");
+    assert_eq!(
+        answered.structured_content.expect("the answer")["changed"],
+        true
+    );
+
+    client.cancel().await.expect("close MCP client");
+    server_task.abort();
+}
+
 #[tokio::test]
 async fn the_view_tool_follows_the_toolset_of_the_tool_it_runs_as() {
     let (server_transport, client_transport) = tokio::io::duplex(256 * 1024);
@@ -241,9 +333,7 @@ async fn the_view_tool_follows_the_toolset_of_the_tool_it_runs_as() {
 
     let tools = client.peer().list_all_tools().await.expect("tools/list");
     assert!(
-        !tools
-            .iter()
-            .any(|tool| tool.name == SHOW_DOCUMENT || tool.name == READ_IMAGE),
+        !tools.iter().any(|tool| listed_with(&tool.name).is_some()),
         "docs is off, so its view tools are not listed"
     );
     let image = client

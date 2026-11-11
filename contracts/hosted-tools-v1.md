@@ -125,7 +125,9 @@ no tool that looks one up; the assistant checks content, as the message says.
   the image under the connection's own token and reads it from the object
   plane, checks it against its hash, and keeps none of it after the call. An
   image stored larger than 8 MiB answers `image_too_large`, and a server
-  with no blob plane configured answers `tool_not_available`.
+  with no blob plane configured answers `tool_not_available`. The view's
+  `watch_document`, which holds a call open until a document changes, is a
+  local bridge's: it is not listed here and answers `tool_not_available`.
 
 ### Image uploads
 

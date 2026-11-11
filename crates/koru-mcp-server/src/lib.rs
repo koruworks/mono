@@ -952,6 +952,7 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         | "read_file"
         | "read_document"
         | apps::READ_IMAGE
+        | apps::WATCH_DOCUMENT
         | "list_document_versions"
         | "compare_document_versions" => ToolPolicy {
             scope: read,
@@ -3531,6 +3532,42 @@ impl Backend for LocalBackend {
                 let (_, doc) = self.join(ws, doc_id)?;
                 Ok(document_json(doc_id, &doc)?)
             }
+            // The document view's wait (`apps`): answer when the document
+            // is no longer at the revision the view holds, or after
+            // `WATCH_SECONDS`. The contract has no push, so this is how a
+            // view hears of a change without asking on a clock: one call
+            // held open, on the room every other reader of the document is
+            // in. A host with no room to wait in says so.
+            apps::WATCH_DOCUMENT => {
+                let a: WatchRequest = from(arguments)?;
+                let ws = workspace(&a.workspace_id)?;
+                let doc_id = document(&a.document_id)?;
+                self.ensure_readable(ws, doc_id, "document_id")?;
+                let (mut session, mut doc) = self.join(ws, doc_id)?;
+                let deadline = Instant::now() + Duration::from_secs(apps::WATCH_SECONDS);
+                let answer = loop {
+                    let now = revision(&doc);
+                    if now != a.revision {
+                        break Ok(json!({ "changed": true, "revision": now }));
+                    }
+                    let DocumentSession::Remote(remote) = &mut session else {
+                        break Err(ToolError {
+                            code: "tool_not_available".into(),
+                            message: "this Koru host cannot wait for a change".into(),
+                            details: None,
+                        });
+                    };
+                    if Instant::now() >= deadline {
+                        break Ok(json!({ "changed": false, "revision": now }));
+                    }
+                    if let Err(error) = remote.drain(&mut doc) {
+                        break Err(error.into());
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                };
+                session.leave();
+                answer
+            }
             // The document view's images (`apps`): one image block, scaled
             // for display. In no router and no catalog; only a view asks.
             apps::READ_IMAGE => {
@@ -3716,6 +3753,14 @@ struct DocumentRequest {
     workspace_id: String,
     /// UUID of the document returned by `list_documents`.
     document_id: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WatchRequest {
+    workspace_id: String,
+    document_id: String,
+    /// The revision the view holds, from `read_document` or its last save.
+    revision: String,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -7151,6 +7196,36 @@ impl ServerHandler for KoruMcp {
                 return Ok(rmcp::model::CallToolResponse::Complete(refusal));
             }
             let arguments = Value::Object(request.arguments.unwrap_or_default());
+            // A view's wait is held open for seconds: on a blocking thread,
+            // so the calls made meanwhile — the saves it is waiting to hear
+            // of — are answered beside it. Quiet in the log, because an open
+            // view makes one every `WATCH_SECONDS`.
+            if runs_as == apps::WATCH_DOCUMENT {
+                let (executor, context) = (self.executor.clone(), self.context.clone());
+                let waited = tokio::task::spawn_blocking(move || {
+                    executor.invoke(&context, apps::WATCH_DOCUMENT, arguments)
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    Err(ToolError {
+                        code: "internal_error".into(),
+                        message: "the Koru backend worker stopped unexpectedly".into(),
+                        details: None,
+                    })
+                });
+                let result = match waited {
+                    Ok(value) => CallToolResult::structured(value),
+                    Err(error) => {
+                        tracing::debug!(code = %error.code, "document watch refused");
+                        let mut body = json!({"code": error.code, "message": error.message});
+                        if let (Value::Object(object), Some(details)) = (&mut body, error.details) {
+                            object.insert("details".into(), details);
+                        }
+                        CallToolResult::structured_error(body)
+                    }
+                };
+                return Ok(rmcp::model::CallToolResponse::Complete(result));
+            }
             let result = self.call(runs_as, &arguments);
             return Ok(rmcp::model::CallToolResponse::Complete(apps::present(
                 &request.name,
@@ -7763,8 +7838,8 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        // The router's 25 and the two view tools (`apps`).
-        assert_eq!(listed.tools.len(), 27);
+        // The router's 25 and the three view tools (`apps`).
+        assert_eq!(listed.tools.len(), 28);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -7885,7 +7960,7 @@ mod tests {
             .map(|tool| tool.name.to_string())
             .collect();
         expected.sort();
-        assert_eq!(expected.len(), 27);
+        assert_eq!(expected.len(), 28);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -7977,6 +8052,7 @@ mod tests {
             .chain([
                 apps::SHOW_DOCUMENT.to_string(),
                 apps::READ_IMAGE.to_string(),
+                apps::WATCH_DOCUMENT.to_string(),
             ])
             .collect();
         assert_eq!(listed, expected);
@@ -12624,7 +12700,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 27);
+        assert_eq!(tools.len(), 28);
         assert!(
             tools
                 .iter()
@@ -13203,6 +13279,35 @@ mod tests {
         fn status(&self) -> Result<Status, ToolError> {
             unreachable!("the note tests never ask for status")
         }
+    }
+
+    /// The document view's wait (`apps`): a revision the document has left
+    /// is answered at once with the one it is at; and a host with no room to
+    /// wait in says so, rather than answering "unchanged" forever.
+    #[test]
+    fn watch_document_answers_a_revision_the_document_has_left() {
+        let store = MemoryStore::new();
+        let document = store.add_document("page", "Notes", "Before");
+        let executor = WorkspaceToolExecutor::new(Arc::new(store.backend()));
+        let context = RequestContext::local();
+        let (current, _) = store.stored(document);
+        let watch = |revision: &str| {
+            executor.invoke(
+                &context,
+                apps::WATCH_DOCUMENT,
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": document.to_storage(),
+                    "revision": revision,
+                }),
+            )
+        };
+
+        let moved = watch("00").unwrap();
+        assert_eq!(moved["changed"], true);
+        assert_eq!(moved["revision"], current.as_str());
+
+        assert_eq!(watch(&current).unwrap_err().code, "tool_not_available");
     }
 
     /// The document view's image tool (`apps`): one image block's bytes, as

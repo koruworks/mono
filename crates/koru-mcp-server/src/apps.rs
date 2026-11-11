@@ -36,6 +36,14 @@
 //! it is in no router and no catalog, and is published for the view alone
 //! (`_meta.ui.visibility: ["app"]`). A hosted server serves it too, fetching
 //! the bytes from Cloud.
+//!
+//! **`watch_document` is how a view hears of a change.** The extension gives
+//! a view no notification that its data moved, and the tool contract is ask
+//! and answer. So the view holds one call open: it names the revision it has,
+//! and the bridge answers when the document is at another one, or after
+//! [`WATCH_SECONDS`], and the view asks again. An edit an agent makes in the
+//! same conversation, or a person makes in Koru, is on the page a moment
+//! later. Local bridges only: it waits in the Store's room for the document.
 
 use std::sync::LazyLock;
 
@@ -55,6 +63,13 @@ pub const SHOW_DOCUMENT: &str = "show_document";
 
 /// One image block of a document, scaled for display, for the view.
 pub const READ_IMAGE: &str = "read_image";
+
+/// Answers when a document is no longer at the revision the view holds.
+pub const WATCH_DOCUMENT: &str = "watch_document";
+
+/// How long one [`WATCH_DOCUMENT`] call waits before it answers "unchanged"
+/// and the view asks again. Under the 45 seconds a host gives a view's call.
+pub const WATCH_SECONDS: u64 = 25;
 
 /// What every revision of the document view's URI starts with.
 const DOCUMENT_VIEW_URI_PREFIX: &str = "ui://koru/document";
@@ -88,6 +103,7 @@ pub fn executes_as(tool: &str) -> Option<&'static str> {
     match tool {
         SHOW_DOCUMENT => Some("read_document"),
         READ_IMAGE => Some(READ_IMAGE),
+        WATCH_DOCUMENT => Some(WATCH_DOCUMENT),
         _ => None,
     }
 }
@@ -96,7 +112,7 @@ pub fn executes_as(tool: &str) -> Option<&'static str> {
 /// while that tool's toolset is on, and refuses it with that toolset's
 /// refusal when it is off. `None` for any other name.
 pub fn listed_with(tool: &str) -> Option<&'static str> {
-    matches!(tool, SHOW_DOCUMENT | READ_IMAGE).then_some("read_document")
+    matches!(tool, SHOW_DOCUMENT | READ_IMAGE | WATCH_DOCUMENT).then_some("read_document")
 }
 
 /// The view tools, as `tools/list` publishes them beside the catalog.
@@ -137,6 +153,23 @@ pub fn app_tools() -> Vec<Tool> {
             }))),
         )
         .with_title("Read a Koru image")
+        .with_annotations(ToolAnnotations::new().read_only(true).open_world(false))
+        .with_meta(MetaObject(object(json!({ "ui": { "visibility": ["app"] } })))),
+        Tool::new(
+            WATCH_DOCUMENT,
+            "Waits for a document to change, for the Koru document view.",
+            std::sync::Arc::new(object(json!({
+                "type": "object",
+                "properties": {
+                    "workspace_id": { "type": "string" },
+                    "document_id": { "type": "string" },
+                    "revision": { "type": "string" },
+                },
+                "required": ["workspace_id", "document_id", "revision"],
+                "additionalProperties": false,
+            }))),
+        )
+        .with_title("Watch a Koru document")
         .with_annotations(ToolAnnotations::new().read_only(true).open_world(false))
         .with_meta(MetaObject(object(json!({ "ui": { "visibility": ["app"] } })))),
     ]

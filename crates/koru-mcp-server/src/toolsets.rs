@@ -266,11 +266,19 @@ pub(crate) const BUDGETS: [(Toolset, usize); 6] = [
 #[cfg(test)]
 pub(crate) const REPLY_ENVELOPE_BYTES: usize = 100;
 
-/// The whole reply with every toolset on: every toolset's budget and the
-/// envelope.
+/// The view tools' share of the reply ([`crate::apps`]): `show_document`,
+/// `read_image` and `watch_document`, listed with `docs` and in no router,
+/// so in no toolset's budget above. Measured 2026-11-11 at 1,511 bytes, plus
+/// about 10%, as each toolset's is. Until this line they were paid for out of
+/// the toolsets' own headroom, which two of them had used all but 42 bytes of.
+#[cfg(test)]
+pub(crate) const VIEW_TOOLS_BUDGET: usize = 1_650;
+
+/// The whole reply with every toolset on: every toolset's budget, the view
+/// tools' and the envelope.
 #[cfg(test)]
 pub(crate) const fn total_budget() -> usize {
-    let mut total = REPLY_ENVELOPE_BYTES;
+    let mut total = REPLY_ENVELOPE_BYTES + VIEW_TOOLS_BUDGET;
     let mut index = 0;
     while index < BUDGETS.len() {
         total += BUDGETS[index].1;

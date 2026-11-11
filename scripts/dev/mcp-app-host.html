@@ -93,7 +93,7 @@
     add(root, 'image', '', { meta: { name: 'Bed layout', image_size: { width: 180, height: 120 } },
       content: { type: 'blob', hash: 'b3:layout', mime: 'image/png', width: 360, height: 240, attributes: [] } });
     add(root, 'task', 'Book the rotavator for Saturday');
-    add(root, 'quote', 'Plant thick, thin quick.');
+    add(root, 'quote', 'Plant thick, thin quick.', { meta: { align: 'center' } });
     add(root, 'code', 'rows = 4\nspacing_cm = 45', { meta: { language: 'python' } });
   }));
   store.set(OTHER, make(OTHER, 'Seed list', (add, root) => {
@@ -101,6 +101,32 @@
     add(list, 'paragraph', 'Tomato, Gardener\'s Delight');
     add(list, 'paragraph', 'Basil, Genovese');
   }));
+
+  /**
+   * set_mark: one mark on or off over a UTF-8 byte range of a node's text,
+   * answered as the runs a read then reports.
+   */
+  function marked(text, runs, op) {
+    const encoder = new TextEncoder();
+    const chars = Array.from(text);
+    const flags = [];
+    for (const each of (runs && runs.length ? runs : [run(text)])) {
+      for (let i = 0; i < Array.from(each.text).length; i += 1) flags.push(Object.assign({}, each, { text: undefined }));
+    }
+    let at = 0;
+    chars.forEach((char, index) => {
+      if (at >= op.start_utf8 && at < op.end_utf8) flags[index][op.mark] = op.on;
+      at += encoder.encode(char).length;
+    });
+    const out = [];
+    chars.forEach((char, index) => {
+      const key = JSON.stringify(flags[index]);
+      const last = out[out.length - 1];
+      if (last && last.key === key) last.text += char;
+      else out.push({ key, text: char, flags: flags[index] });
+    });
+    return out.map((piece) => Object.assign({}, piece.flags, { text: piece.text }));
+  }
 
   const refuse = (code, message, details) => { const error = new Error(message); error.tool = { code, message, details }; return error; };
   const projection = (doc) => ({
@@ -131,6 +157,11 @@
         expect(node, op);
         node.content.text = op.text;
         node.content.runs = op.text ? [run(op.text)] : [];
+      } else if (op.op === 'set_mark') {
+        const node = find(op.node_id);
+        expect(node, op);
+        if (!(op.start_utf8 < op.end_utf8)) throw refuse('invalid_request', 'set_mark needs a range that is not empty');
+        node.content.runs = marked(node.content.text, node.content.runs, op);
       } else if (op.op === 'set_done') {
         const node = find(op.node_id);
         expect(node, op);
@@ -175,6 +206,23 @@
     const answer = { revision: String(doc.version).padStart(4, '0') };
     if (Object.keys(created).length) answer.created = created;
     return answer;
+  }
+
+  /**
+   * watch_document: answer when the document is no longer at the revision
+   * the view holds, or after 25 seconds, as the bridge does.
+   */
+  function waitForChange(asked, answer) {
+    const started = Date.now();
+    const tick = () => {
+      const doc = store.get(asked.document_id);
+      const now = doc ? String(doc.version).padStart(4, '0') : null;
+      const changed = now !== asked.revision;
+      if (!changed && Date.now() - started < 25000) { setTimeout(tick, 300); return; }
+      const value = { changed, revision: now };
+      answer({ content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false });
+    };
+    setTimeout(tick, 300);
   }
 
   /** A picture drawn here, standing in for a stored one. */
@@ -268,6 +316,7 @@
         send({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: opening() });
         break;
       case 'tools/call':
+        if (params.name === 'watch_document') { waitForChange(params.arguments || {}, answer); break; }
         // A real host answers after a round trip to the server.
         setTimeout(() => answer(callTool(params.name, params.arguments || {})), 150);
         break;
