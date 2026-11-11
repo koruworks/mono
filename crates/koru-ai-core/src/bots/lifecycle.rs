@@ -106,8 +106,11 @@ closed_vocabulary! {
 }
 
 closed_vocabulary! {
-    /// Where an operation has got to. `Incomplete` is parked and retryable;
-    /// only `Completed` is final.
+    /// Where an operation has got to. `Incomplete` is parked and retryable.
+    /// `Completed` and `Reversed` are final: `Reversed` is an Archive, Trash
+    /// or conversation Trash, completed or parked, that a completed Restore
+    /// named (its `refusal` is kept when it had parked, absent when it had
+    /// completed). It holds nothing and is never resumed.
     BotLifecycleStage {
         Captured => "captured",
         Settling => "settling",
@@ -117,6 +120,15 @@ closed_vocabulary! {
         Purging => "purging",
         Completed => "completed",
         Incomplete => "incomplete",
+        Reversed => "reversed",
+    }
+}
+
+impl BotLifecycleStage {
+    /// Still on its way: neither parked (`Incomplete`) nor final
+    /// (`Completed`, `Reversed`). Only a moving operation is driven.
+    pub const fn moving(self) -> bool {
+        !matches!(self, Self::Completed | Self::Incomplete | Self::Reversed)
     }
 }
 
@@ -273,7 +285,9 @@ pub struct BotLifecycleMemberOutcome {
 }
 
 /// Where a lifecycle operation stands. A pending or incomplete operation is
-/// never reported as done; owner timeouts stay visible as `incomplete`.
+/// never reported as done; owner timeouts stay visible as `incomplete`. An
+/// operation a Restore reversed reads `reversed`, with the `refusal` it had
+/// parked for, if it had.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

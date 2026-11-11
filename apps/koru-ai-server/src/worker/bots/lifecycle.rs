@@ -822,7 +822,9 @@ impl WorkerState {
     /// exact request does it, and so does one carrying only the same id (and
     /// Bot and conversation) under the same kind, so a client that found the
     /// id through the Bot's read need not reproduce the original revision.
-    /// Anything else under that id is `request_conflict`.
+    /// One that parked and was then reversed answers the same repeat with its
+    /// progress (`reversed`) and is not taken up. Anything else under that id
+    /// is `request_conflict`.
     fn repeat_bot_lifecycle(
         &mut self,
         op: LifecycleOperation,
@@ -831,15 +833,17 @@ impl WorkerState {
         chat: Option<ChatId>,
         fingerprint: &str,
     ) -> ApiResult<LifecycleOperation> {
-        let parked = op.kind == kind && op.stage == BotLifecycleStage::Incomplete;
+        // A refusal is kept only by a parked operation, and by one reversed
+        // while parked.
+        let by_id = op.kind == kind && op.refusal.is_some();
         if op.bot != bot
             || op.owner != owner
             || op.chat != chat
-            || (op.fingerprint != fingerprint && !parked)
+            || (op.fingerprint != fingerprint && !by_id)
         {
             return Err(bot_failure(BotError::Conflict));
         }
-        if parked {
+        if op.stage == BotLifecycleStage::Incomplete {
             self.resume_parked_bot_lifecycle((op.owner.user_scope, op.operation))
                 .map_err(bot_failure)?;
         }
@@ -852,7 +856,7 @@ impl WorkerState {
     /// Take a parked operation up again from `captured`, which re-asks every
     /// owner idempotently, and drive it: a person's Continue, and an owner
     /// answering again after the operation parked for its silence, are this
-    /// one path. A reversed operation stays parked (`false`).
+    /// one path. A reversed operation is not taken up (`false`).
     fn resume_parked_bot_lifecycle(&mut self, key: OperationKey) -> Result<bool, BotError> {
         let resumed =
             self.repository
@@ -1149,10 +1153,7 @@ impl WorkerState {
         if fresh {
             let _ = self.refuse_unadmitted(&operation, &bot, None);
         }
-        if !matches!(
-            operation.stage,
-            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-        ) {
+        if operation.stage.moving() {
             self.bot_lifecycle.driving.entry(key).or_default();
         }
         Ok(BotResponse::Lifecycle {
@@ -1209,10 +1210,9 @@ impl WorkerState {
             if bot.lifecycle == BotLifecycle::Trashed && source.kind != BotLifecycleKind::Trash {
                 return Err(hold_failure(BotHold::BotTrashed));
             }
-            if !matches!(
-                source.stage,
-                BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-            ) {
+            // A source already reversed is refused by the capture, as any
+            // second reversal is (`request_conflict`).
+            if source.stage.moving() {
                 return Err(source_moving());
             }
             self.refuse_competing(*bot_id, Some(*source_request_id))?;
@@ -1340,10 +1340,7 @@ impl WorkerState {
         if fresh {
             let _ = self.refuse_unadmitted(&operation, &bot, Some(*chat_id));
         }
-        if !matches!(
-            operation.stage,
-            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-        ) {
+        if operation.stage.moving() {
             self.bot_lifecycle
                 .driving
                 .entry((owner.user_scope, *request_id))
@@ -1396,10 +1393,7 @@ impl WorkerState {
                 BotLifecycle::Active => {}
             }
             // A moving conversation Trash is reversed once it completes or parks.
-            if !matches!(
-                source.stage,
-                BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-            ) {
+            if source.stage.moving() {
                 return Err(source_moving());
             }
             self.refuse_competing(*bot_id, Some(*source_request_id))?;
@@ -1596,10 +1590,8 @@ impl WorkerState {
         if !matches!(
             op.kind,
             BotLifecycleKind::Archive | BotLifecycleKind::Trash | BotLifecycleKind::TrashChat
-        ) || matches!(
-            op.stage,
-            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-        ) {
+        ) || !op.stage.moving()
+        {
             self.bot_lifecycle.driving.remove(&key);
             return;
         }
@@ -1880,16 +1872,9 @@ impl WorkerState {
             return;
         };
         drive.busy = false;
-        // A parked or completed operation ignores a late answer.
+        // A parked, completed or reversed operation ignores a late answer.
         let op = match self.repository.bot_lifecycle_operation(key.0, key.1) {
-            Ok(Some(op))
-                if !matches!(
-                    op.stage,
-                    BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-                ) =>
-            {
-                op
-            }
+            Ok(Some(op)) if op.stage.moving() => op,
             Ok(_) => {
                 self.bot_lifecycle.driving.remove(&key);
                 return;

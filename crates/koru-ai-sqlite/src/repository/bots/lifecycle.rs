@@ -287,11 +287,9 @@ impl Repository {
     ) -> Result<Option<(UserScopeId, BotRequestId)>, BotError> {
         let row: Option<(String, String)> = self
             .connection
-            .query_row(
-                &format!("SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i WHERE chat_id=?1 AND {OPEN}"),
-                [chat.to_storage()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            .query_row(&open_chat_sql(), [chat.to_storage()], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
             .optional()
             .map_err(bad)?;
         row.map(|(scope, operation)| {
@@ -313,15 +311,7 @@ impl Repository {
         let (at, operation) = after
             .map(|(at, operation)| (at, operation.to_storage()))
             .unwrap_or((i64::MIN, String::new()));
-        let mut query = self
-            .connection
-            .prepare(
-                "SELECT updated_at_ms,user_scope_id,operation_id FROM bot_lifecycle_intents
-                 WHERE stage NOT IN ('completed','incomplete')
-                   AND (updated_at_ms>?1 OR (updated_at_ms=?1 AND operation_id>?2))
-                 ORDER BY updated_at_ms,operation_id LIMIT ?3",
-            )
-            .map_err(bad)?;
+        let mut query = self.connection.prepare(RESUMABLE_SQL).map_err(bad)?;
         let rows = query
             .query_map(params![at, operation, limit.clamp(1, 64)], |row| {
                 Ok((
@@ -343,7 +333,7 @@ impl Repository {
     }
 
     /// Up to `limit` driven operations (Archive, Trash, a conversation's
-    /// Trash) parked because their owner did not answer, unreversed, in
+    /// Trash) parked because their owner did not answer, in
     /// `bot_lifecycle_open`'s order (Bot, then row), starting just past
     /// `after`: the ones that take up their work again once it answers.
     /// Each comes with its own position, to pass back as `after` so a caller
@@ -416,10 +406,80 @@ pub(crate) fn parked_for_owner_sql() -> String {
     )
 }
 
-/// An unfinished operation, unless a completed Restore reversed it. An
-/// Archive parked incomplete and then reversed holds nothing any more; its
-/// own record still reads as it stopped. `i` is the intent row.
-const OPEN: &str = "i.stage<>'completed' AND NOT EXISTS(SELECT 1 FROM bot_lifecycle_intents r WHERE r.user_scope_id=i.user_scope_id AND r.source_operation_id=i.operation_id AND r.stage='completed')";
+/// An unfinished operation, moving or parked. One a completed Restore
+/// reversed reads `reversed` (the Restore's transaction wrote it), so it is
+/// not open and holds nothing. This is exactly the predicate of
+/// `bot_lifecycle_open` and `bot_lifecycle_chat_open`, which SQLite needs
+/// word for word to read either index. `i` is the intent row.
+pub(crate) const OPEN: &str = "i.stage NOT IN ('completed','reversed')";
+
+/// [`Repository::resumable_bot_lifecycle`]'s statement: the moving
+/// operations, through `bot_lifecycle_resume`, whose predicate it repeats.
+pub(crate) const RESUMABLE_SQL: &str =
+    "SELECT updated_at_ms,user_scope_id,operation_id FROM bot_lifecycle_intents
+     WHERE stage NOT IN ('completed','incomplete','reversed')
+       AND (updated_at_ms>?1 OR (updated_at_ms=?1 AND operation_id>?2))
+     ORDER BY updated_at_ms,operation_id LIMIT ?3";
+
+// The reads of unfinished operations, each one statement whose query plan
+// `tests/plans.rs` pins by index name. None asks whether a Restore names
+// the operation: its stage says so.
+
+/// [`Repository::open_chat_lifecycle`]: through `bot_lifecycle_chat_open`.
+pub(crate) fn open_chat_sql() -> String {
+    format!(
+        "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i WHERE chat_id=?1 AND {OPEN}"
+    )
+}
+
+/// [`whole_bot_operation_open`]: through `bot_lifecycle_open`.
+pub(crate) fn whole_bot_open_sql() -> String {
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND {OPEN})"
+    )
+}
+
+/// [`Repository::open_bot_lifecycle`]: through `bot_lifecycle_open`.
+pub(crate) fn open_bot_barrier_sql() -> String {
+    format!(
+        "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i
+         WHERE bot_id=?1 AND chat_id IS NULL AND policy_request_id IS NOT NULL AND {OPEN}
+         ORDER BY requested_at_ms DESC LIMIT 1"
+    )
+}
+
+/// [`Repository::bot_hold`]'s whole-Bot part: through `bot_lifecycle_open`.
+pub(crate) fn bot_hold_sql() -> String {
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='trashed'),
+            EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND i.stage<>'incomplete' AND {OPEN}),
+            EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND i.stage='incomplete' AND {OPEN})"
+    )
+}
+
+/// [`Repository::bot_open_lifecycle`]: through `bot_lifecycle_open`, named.
+pub(crate) fn bot_open_sql() -> String {
+    format!(
+        "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open
+         WHERE bot_id=?1 AND {OPEN} ORDER BY requested_at_ms DESC,operation_id DESC LIMIT 1"
+    )
+}
+
+/// [`Repository::bot_chat_hold`]'s own part: through `bot_lifecycle_chat_open`.
+pub(crate) fn chat_hold_sql() -> String {
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1),
+            EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND i.stage<>'incomplete' AND {OPEN}),
+            EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND i.stage='incomplete' AND {OPEN})"
+    )
+}
+
+/// The open-operation rule at capture: through `bot_lifecycle_open`.
+pub(crate) fn open_operations_sql() -> String {
+    format!(
+        "SELECT user_scope_id,operation_id,stage FROM bot_lifecycle_intents i WHERE bot_id=?1 AND {OPEN}"
+    )
+}
 
 /// Whether a whole-Bot operation (Archive, Trash) of this Bot is unfinished
 /// and unreversed, moving or parked. While one is, the only writes that may
@@ -441,14 +501,8 @@ pub(super) fn whole_bot_operation_open(conn: &Connection, bot: BotId) -> Result<
     if !journal {
         return Ok(false);
     }
-    conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND {OPEN})"
-        ),
-        [bot.to_storage()],
-        |r| r.get(0),
-    )
-    .map_err(bad)
+    conn.query_row(&whole_bot_open_sql(), [bot.to_storage()], |r| r.get(0))
+        .map_err(bad)
 }
 
 /// The revision rule of a whole-Bot operation's completion: the Bot's
@@ -562,15 +616,9 @@ impl Repository {
     ) -> Result<Option<(UserScopeId, BotRequestId)>, BotError> {
         let row: Option<(String, String)> = self
             .connection
-            .query_row(
-                &format!(
-                    "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i
-                     WHERE bot_id=?1 AND chat_id IS NULL AND policy_request_id IS NOT NULL AND {OPEN}
-                     ORDER BY requested_at_ms DESC LIMIT 1"
-                ),
-                [bot.to_storage()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+            .query_row(&open_bot_barrier_sql(), [bot.to_storage()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
             .optional()
             .map_err(bad)?;
         row.map(|(scope, operation)| {
@@ -580,21 +628,6 @@ impl Repository {
             ))
         })
         .transpose()
-    }
-
-    /// Whether a completed Restore names this operation as its source.
-    pub fn bot_lifecycle_reversed(
-        &self,
-        scope: UserScopeId,
-        operation: BotRequestId,
-    ) -> Result<bool, BotError> {
-        self.connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE user_scope_id=?1 AND source_operation_id=?2 AND stage='completed')",
-                params![scope.to_storage(), operation.to_storage()],
-                |r| r.get(0),
-            )
-            .map_err(bad)
     }
 
     /// Move a moving operation from `from` to `to`, and record its
@@ -609,13 +642,7 @@ impl Repository {
         policy_effective: bool,
         now: i64,
     ) -> Result<bool, BotError> {
-        if matches!(
-            to,
-            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-        ) || matches!(
-            from,
-            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-        ) {
+        if !to.moving() || !from.moving() {
             return Err(BotError::Invalid);
         }
         let changed = self
@@ -651,7 +678,7 @@ impl Repository {
             .connection
             .execute(
                 "UPDATE bot_lifecycle_intents SET stage='incomplete',refusal=?3,updated_at_ms=?4
-                 WHERE user_scope_id=?1 AND operation_id=?2 AND stage NOT IN ('completed','incomplete')",
+                 WHERE user_scope_id=?1 AND operation_id=?2 AND stage NOT IN ('completed','incomplete','reversed')",
                 params![
                     scope.to_storage(),
                     operation.to_storage(),
@@ -664,16 +691,14 @@ impl Repository {
     }
 
     /// A repeated request resumes its parked operation from `captured`, which
-    /// re-asks every owner idempotently. A reversed operation stays parked.
+    /// re-asks every owner idempotently. A reversed operation is no longer
+    /// `incomplete`, so it is never resumed (`false`).
     pub fn resume_bot_lifecycle(
         &mut self,
         scope: UserScopeId,
         operation: BotRequestId,
         now: i64,
     ) -> Result<bool, BotError> {
-        if self.bot_lifecycle_reversed(scope, operation)? {
-            return Ok(false);
-        }
         let changed = self
             .connection
             .execute(
@@ -781,16 +806,14 @@ impl Repository {
             params![capture.bot.to_storage(), revision, capture.now, current.revision],
         )
         .map_err(bad)?;
-        tx.execute(
-            "UPDATE bot_lifecycle_intents SET stage='completed',completed_at_ms=?3,updated_at_ms=?3
-             WHERE user_scope_id=?1 AND operation_id=?2 AND stage='captured'",
-            params![
-                capture.owner.user_scope.to_storage(),
-                capture.operation.to_storage(),
-                capture.now
-            ],
-        )
-        .map_err(bad)?;
+        reverse_source(&tx, capture.owner.user_scope, source, capture.now)?;
+        complete_operation(
+            &tx,
+            capture.owner.user_scope,
+            capture.operation,
+            BotLifecycleStage::Captured,
+            capture.now,
+        )?;
         let done = read_operation(&tx, capture.owner.user_scope, capture.operation)?
             .ok_or(BotError::Storage)?;
         tx.commit().map_err(bad)?;
@@ -905,6 +928,7 @@ impl Repository {
             params![capture.owner.user_scope.to_storage(), source.to_storage()],
         )
         .map_err(bad)?;
+        reverse_source(&tx, capture.owner.user_scope, source, capture.now)?;
         complete_operation(
             &tx,
             capture.owner.user_scope,
@@ -976,6 +1000,7 @@ impl Repository {
             ],
         )
         .map_err(bad)?;
+        reverse_source(&tx, capture.owner.user_scope, source, capture.now)?;
         complete_operation(
             &tx,
             capture.owner.user_scope,
@@ -1017,6 +1042,32 @@ fn insert_captured_chat_trash(
         params![scope.to_storage(), operation.to_storage(), now],
     )
     .map_err(bad)?;
+    Ok(())
+}
+
+/// Mark the operation a Restore reverses `reversed`, in the Restore's own
+/// transaction: completed or parked, it then holds nothing, leaves every
+/// index of unfinished operations, and is never resumed, with no read asking
+/// whether a Restore names it. It keeps its refusal (why it had parked) or
+/// its completion time (when it had completed). Capture already required
+/// the source to be completed or parked and not yet reversed or purged
+/// (`require_source`), so anything else rolls the transaction back.
+fn reverse_source(
+    tx: &Connection,
+    scope: UserScopeId,
+    source: BotRequestId,
+    now: i64,
+) -> Result<(), BotError> {
+    let changed = tx
+        .execute(
+            "UPDATE bot_lifecycle_intents SET stage='reversed',updated_at_ms=?3
+             WHERE user_scope_id=?1 AND operation_id=?2 AND stage IN ('completed','incomplete')",
+            params![scope.to_storage(), source.to_storage(), now],
+        )
+        .map_err(bad)?;
+    if changed != 1 {
+        return Err(BotError::Conflict);
+    }
     Ok(())
 }
 
@@ -1107,15 +1158,9 @@ impl Repository {
     pub fn bot_hold(&self, bot: BotId) -> Result<Option<BotHold>, BotError> {
         let (trashed, moving, parked): (bool, bool, bool) = self
             .connection
-            .query_row(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='trashed'),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND i.stage<>'incomplete' AND {OPEN}),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND i.stage='incomplete' AND {OPEN})"
-                ),
-                [bot.to_storage()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
+            .query_row(&bot_hold_sql(), [bot.to_storage()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
             .map_err(bad)?;
         Ok(hold(trashed, moving, parked).map(|hold| match hold {
             // The Bot itself is in Trash.
@@ -1131,14 +1176,9 @@ impl Repository {
     pub fn bot_open_lifecycle(&self, bot: BotId) -> Result<Option<BotOpenLifecycle>, BotError> {
         let row: Option<(String, String)> = self
             .connection
-            .query_row(
-                &format!(
-                    "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open
-                     WHERE bot_id=?1 AND {OPEN} ORDER BY requested_at_ms DESC,operation_id DESC LIMIT 1"
-                ),
-                [bot.to_storage()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+            .query_row(&bot_open_sql(), [bot.to_storage()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
             .optional()
             .map_err(bad)?;
         let Some((scope, operation)) = row else {
@@ -1163,15 +1203,9 @@ impl Repository {
         };
         let (trashed, moving, parked): (bool, bool, bool) = self
             .connection
-            .query_row(
-                &format!(
-                    "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND i.stage<>'incomplete' AND {OPEN}),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND i.stage='incomplete' AND {OPEN})"
-                ),
-                [chat.to_storage()],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
+            .query_row(&chat_hold_sql(), [chat.to_storage()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
             .map_err(bad)?;
         let whole = self.bot_hold(bot)?;
         // The strongest hold wins: the Bot's Trash (restoring the Bot is
@@ -1355,11 +1389,7 @@ fn require_no_open_operation(
     conn: &Connection,
     capture: &LifecycleCapture,
 ) -> Result<(), BotError> {
-    let mut query = conn
-        .prepare(&format!(
-            "SELECT user_scope_id,operation_id,stage FROM bot_lifecycle_intents i WHERE bot_id=?1 AND {OPEN}"
-        ))
-        .map_err(bad)?;
+    let mut query = conn.prepare(&open_operations_sql()).map_err(bad)?;
     let rows = query
         .query_map([capture.bot.to_storage()], |row| {
             Ok((

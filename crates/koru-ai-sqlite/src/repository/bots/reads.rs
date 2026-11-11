@@ -71,62 +71,45 @@ pub(crate) const BOT_ACTIVITY_SQL: &str = "SELECT bc.bot_id, bc.chat_id,
    ORDER BY bc.bot_id, bc.chat_id";
 
 /// One page of an owner's Bot conversations in Trash, for one workspace,
-/// whatever the Bot's lifecycle. It is driven by `bot_chat_trash` in its
-/// primary-key order (`sqlite_autoindex_bot_chat_trash_1`), a range seek past
-/// the cursor: that table holds only what is in Trash now (a Restore deletes
-/// its rows), never lifecycle history. Each row reaches its association,
-/// Bot, Chat and operation by primary key. `?4` is the cursor's Chat ID or
-/// NULL for the first page; `?6` the last Trash row this page may examine
-/// ([`TRASHED_BOT_CHAT_WINDOW_SQL`]), or NULL when fewer remain.
+/// whatever the Bot's lifecycle. It is a range of the caller's own rows of
+/// `bot_chat_trash` past the cursor, in Chat ID order, through
+/// `bot_chat_trash_owner (user_scope_id, chat_id)`: that table holds only
+/// what is in Trash now (a Restore deletes its rows), never lifecycle
+/// history, and another owner's rows are never read. Each row reaches its
+/// association, Bot, Chat and operation by primary key. The device and
+/// workspace filters apply to the owner's own rows, so a page stops as soon
+/// as it holds `?5` rows: at worst it reads the owner's Trash of other
+/// workspaces past the cursor. `?4` is the cursor's Chat ID, or the empty
+/// string for the first page (every Chat ID sorts after it), so the range
+/// always starts at a seek.
 pub(crate) const TRASHED_BOT_CHAT_PAGE_SQL: &str =
     "SELECT c.id, c.title, c.current_provider, c.current_model, c.current_reasoning,
         c.branched_from_chat_id, c.branched_from_message_id, c.created_at_ms, c.updated_at_ms,
         c.private, c.agent_working_folder, c.agent_mode, c.agent_fast, c.pinned_at_ms, c.profile_id,
         bc.purpose, b.name, b.bot_id, b.lifecycle, t.operation_id, i.kind, t.trashed_at_ms
-   FROM bot_chat_trash AS t INDEXED BY sqlite_autoindex_bot_chat_trash_1
+   FROM bot_chat_trash AS t INDEXED BY bot_chat_trash_owner
   CROSS JOIN bot_chats AS bc ON bc.chat_id = t.chat_id
   CROSS JOIN bots AS b ON b.bot_id = bc.bot_id
   CROSS JOIN chats AS c ON c.id = t.chat_id
   CROSS JOIN bot_lifecycle_intents AS i ON i.user_scope_id = t.user_scope_id AND i.operation_id = t.operation_id
-  WHERE (?4 IS NULL OR t.chat_id > ?4) AND (?6 IS NULL OR t.chat_id <= ?6)
+  WHERE t.user_scope_id = ?1 AND t.chat_id > ?4
     AND b.user_scope_id = ?1 AND b.owner_device_id = ?2 AND b.home_workspace_id = ?3
   ORDER BY t.chat_id
   LIMIT ?5";
 
-/// How many Trash rows one page may examine. `bot_chat_trash` holds every
-/// owner's and workspace's conversations in Trash on this device and has no
-/// index by owner (ai.db 18), so a page filtered by owner and workspace
-/// would otherwise walk all of Trash past the cursor to fill itself. Each
-/// row costs four primary-key reads.
-pub(crate) const TRASHED_BOT_CHAT_SCAN: i64 = 512;
-
-/// The last Trash row of a page's window: the `?2`-th row (counted from 0)
-/// past the cursor `?1`, read from the primary key alone, or none when fewer
-/// remain, which makes the window the rest of Trash.
-pub(crate) const TRASHED_BOT_CHAT_WINDOW_SQL: &str =
-    "SELECT chat_id FROM bot_chat_trash INDEXED BY sqlite_autoindex_bot_chat_trash_1
-  WHERE (?1 IS NULL OR chat_id > ?1)
-  ORDER BY chat_id
-  LIMIT 1 OFFSET ?2";
-
 /// The owner's completed whole-Bot Archive and Trash operations of the named
-/// Bots that no completed Restore names as its source: the candidates for
-/// what holds each archived or trashed Bot. There is no index from a Bot to
-/// its finished operations in ai.db 18 (QUESTIONS O44), so this walks the
-/// owner's own lifecycle journal through its primary key, which leads with
-/// the owner's scope (`sqlite_autoindex_bot_lifecycle_intents_1`): it reads
-/// every lifecycle operation that owner has ever made, across all their Bots,
-/// never another owner's, and checks each candidate's reversal through
-/// `bot_lifecycle_source`. `?3` is a JSON array of the Bot IDs wanted.
+/// Bots: what holds each archived or trashed Bot. One seek of
+/// `bot_lifecycle_held` per Bot (`?3` is a JSON array of the Bot IDs
+/// wanted), whose predicate this repeats word for word. A Restore marks the
+/// operation it reverses `reversed`, so a completed one is unreversed by its
+/// stage alone and no Restore is looked up. Another owner's or device's
+/// operation naming the same Bot ID is filtered out on its row.
 pub(crate) const BOT_LIFECYCLE_HOLDERS_SQL: &str =
     "SELECT i.bot_id, i.operation_id, i.kind, i.completed_at_ms
-   FROM bot_lifecycle_intents AS i INDEXED BY sqlite_autoindex_bot_lifecycle_intents_1
-  WHERE i.user_scope_id = ?1 AND i.owner_device_id = ?2
-    AND i.chat_id IS NULL AND i.kind IN ('archive', 'trash') AND i.stage = 'completed'
-    AND i.bot_id IN (SELECT value FROM json_each(?3))
-    AND NOT EXISTS(SELECT 1 FROM bot_lifecycle_intents AS r INDEXED BY bot_lifecycle_source
-                    WHERE r.user_scope_id = i.user_scope_id AND r.source_operation_id = i.operation_id
-                      AND r.stage = 'completed')";
+   FROM bot_lifecycle_intents AS i INDEXED BY bot_lifecycle_held
+  WHERE i.bot_id IN (SELECT value FROM json_each(?3))
+    AND i.stage = 'completed' AND i.chat_id IS NULL AND i.kind IN ('archive','trash')
+    AND i.user_scope_id = ?1 AND i.owner_device_id = ?2";
 
 /// The workspace a Bot Run's record lives in, when that Run wrote this reply
 /// (or the reply a branch copied here, through `historical_bot_run`). Keyed
@@ -399,10 +382,11 @@ impl Repository {
     }
 
     /// What holds each archived or trashed Bot of `bots` where it is: the
-    /// completed, unreversed Trash of a trashed Bot, the completed,
-    /// unreversed Archive of an archived one. An active Bot, or one with no
-    /// such operation, is absent from the answer. One read serves a whole
-    /// listing. The caller has checked the owner's authority over the Bots.
+    /// completed (so unreversed) Trash of a trashed Bot, the completed
+    /// Archive of an archived one. An active Bot, or one with no such
+    /// operation, is absent from the answer. One statement, one index seek
+    /// per Bot, serves a whole listing. The caller has checked the owner's
+    /// authority over the Bots.
     ///
     /// Which operation holds is decided by the Bot's lifecycle, not by
     /// comparing completion times: Archive needs an active Bot and Trash a
@@ -428,7 +412,7 @@ impl Repository {
             return Ok(holders);
         }
         let ids: Vec<BotId> = wanted.iter().map(|(bot, _)| *bot).collect();
-        for (bot, holder) in self.unreversed_whole_bot_operations(owner, &ids)? {
+        for (bot, holder) in self.completed_whole_bot_operations(owner, &ids)? {
             let Some((_, kind)) = wanted.iter().find(|(id, _)| *id == bot) else {
                 continue;
             };
@@ -448,9 +432,10 @@ impl Repository {
         Ok(holders)
     }
 
-    /// The candidate scan behind [`Self::bot_lifecycle_holders`]. An indexed
-    /// lookup from a Bot to its finished operations replaces only this.
-    fn unreversed_whole_bot_operations(
+    /// The candidates behind [`Self::bot_lifecycle_holders`]: the owner's
+    /// completed whole-Bot Archive and Trash of each named Bot, through
+    /// `bot_lifecycle_held`.
+    fn completed_whole_bot_operations(
         &self,
         owner: BotOwner,
         bots: &[BotId],
@@ -506,18 +491,8 @@ impl Repository {
         if limit == 0 || limit > BOT_CHAT_PAGE_LIMIT {
             return Err(BotError::Invalid);
         }
-        let after = cursor.map(|c| c.chat_id.to_storage());
-        // The page examines at most TRASHED_BOT_CHAT_SCAN rows past the
-        // cursor, whoever they belong to.
-        let window_end: Option<String> = self
-            .connection
-            .query_row(
-                TRASHED_BOT_CHAT_WINDOW_SQL,
-                params![after, TRASHED_BOT_CHAT_SCAN - 1],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(bad)?;
+        // Every Chat ID sorts after the empty string.
+        let after = cursor.map_or_else(String::new, |c| c.chat_id.to_storage());
         let mut statement = self
             .connection
             .prepare(TRASHED_BOT_CHAT_PAGE_SQL)
@@ -530,7 +505,6 @@ impl Repository {
                     workspace.to_storage(),
                     after,
                     i64::from(limit) + 1,
-                    window_end,
                 ],
                 |row| {
                     Ok((
@@ -582,19 +556,15 @@ impl Repository {
                 bot_held_by: None,
             });
         }
+        // A page that is not the last is full, and its cursor is its own
+        // last entry: one of the caller's conversations.
         let next_cursor = if chats.len() > usize::from(limit) {
             chats.truncate(usize::from(limit));
             chats.last().map(|last| BotTrashedChatCursor {
                 chat_id: last.conversation.chat.id,
             })
         } else {
-            // The window ended before the page filled: the next page goes on
-            // from its last row, which may be in another workspace's Trash.
-            // It grants nothing; every entry is read again under authority.
-            window_end
-                .map(|end| ChatId::parse(&end).ok_or(BotError::Storage))
-                .transpose()?
-                .map(|chat_id| BotTrashedChatCursor { chat_id })
+            None
         };
         // What holds each archived or trashed Bot of the page, so an entry
         // whose `restore` is `bot` names the Restore to send.

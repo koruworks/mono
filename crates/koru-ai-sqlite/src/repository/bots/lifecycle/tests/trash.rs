@@ -401,6 +401,12 @@ fn a_parked_trash_is_reversed_in_place_and_holds_nothing_after() {
     assert_eq!(repo.bot_hold(bot.id).unwrap(), None);
     assert_eq!(repo.open_bot_lifecycle(bot.id).unwrap(), None);
     assert!(!repo.resume_bot_lifecycle(scope, op.operation, 60).unwrap());
+    let original = repo
+        .bot_lifecycle_operation(scope, op.operation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.stage.token(), "reversed");
+    assert_eq!(original.refusal, Some(BotLifecycleRefusal::WorkRunning));
 }
 
 #[test]
@@ -485,6 +491,16 @@ fn a_conversation_trash_leaves_the_bot_as_it_is_and_restores_only_its_row() {
     assert_eq!(repo.bot_chat_hold(bot.main_chat).unwrap(), None);
     assert_eq!(revision(&repo, bot.id), start);
     assert_eq!(repo.restore_bot_chat(&request).unwrap(), restored);
+    // The completed Trash it reversed says so, and keeps when it completed.
+    let original = repo
+        .bot_lifecycle_operation(scope, op.operation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.stage.token(), "reversed");
+    assert_eq!(
+        (original.refusal, original.completed_at_ms),
+        (None, Some(23))
+    );
 }
 
 #[test]
@@ -525,4 +541,13 @@ fn a_parked_conversation_trash_is_reversed_by_its_own_restore() {
     assert_eq!(repo.bot_chat_hold(bot.main_chat).unwrap(), None);
     assert_eq!(trashed_under(&repo, bot.main_chat), None);
     assert!(!repo.resume_bot_lifecycle(scope, op.operation, 22).unwrap());
+    // Its own row says it was reversed, and why it had parked, and the
+    // per-conversation barrier lookup no longer finds it.
+    let original = repo
+        .bot_lifecycle_operation(scope, op.operation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.stage.token(), "reversed");
+    assert_eq!(original.refusal, Some(BotLifecycleRefusal::WorkRunning));
+    assert_eq!(repo.open_chat_lifecycle(bot.main_chat).unwrap(), None);
 }

@@ -45,12 +45,47 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
     let scope = owner.user_scope.to_storage();
     let id = bot.id.to_storage();
     let chat = bot.main_chat.to_storage();
-    // The Bot read's open operation (bot_open_lifecycle), with the reversal rule.
-    let open_read = format!(
-        "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open WHERE bot_id=?1 AND {OPEN} ORDER BY requested_at_ms DESC,operation_id DESC LIMIT 1"
+    // Every read of unfinished operations, exactly as the repository runs it.
+    // A reversed operation leaves these indexes by their own predicate, so
+    // none asks `bot_lifecycle_source` whether a Restore names a row.
+    use super::super::{
+        RESUMABLE_SQL, bot_hold_sql, bot_open_sql, chat_hold_sql, open_bot_barrier_sql,
+        open_chat_sql, open_operations_sql, whole_bot_open_sql,
+    };
+    let (bot_open, whole_open, barrier, bot_hold, operations) = (
+        bot_open_sql(),
+        whole_bot_open_sql(),
+        open_bot_barrier_sql(),
+        bot_hold_sql(),
+        open_operations_sql(),
     );
+    let (chat_open, chat_hold) = (open_chat_sql(), chat_hold_sql());
+    let open_reads: Vec<(&str, &str, Vec<&dyn rusqlite::ToSql>)> = vec![
+        ("bot_lifecycle_open", &bot_open, vec![&id]),
+        ("bot_lifecycle_open", &whole_open, vec![&id]),
+        ("bot_lifecycle_open", &barrier, vec![&id]),
+        ("bot_lifecycle_open", &bot_hold, vec![&id]),
+        ("bot_lifecycle_open", &operations, vec![&id]),
+        ("bot_lifecycle_chat_open", &chat_open, vec![&chat]),
+        ("bot_lifecycle_chat_open", &chat_hold, vec![&chat]),
+        (
+            "bot_lifecycle_resume",
+            RESUMABLE_SQL,
+            vec![&0i64, &"", &16i64],
+        ),
+    ];
+    for (index, sql, args) in open_reads {
+        let found = plan(c, sql, &args);
+        assert!(found.contains(index), "{index} not used by {sql}: {found}");
+        for walk in [
+            "bot_lifecycle_source",
+            "SCAN i",
+            "SCAN bot_lifecycle_intents",
+        ] {
+            assert!(!found.contains(walk), "{walk} in {sql}: {found}");
+        }
+    }
     let cases: Vec<(&str, &str, Vec<&dyn rusqlite::ToSql>)> = vec![
-        ("bot_lifecycle_open", &open_read, vec![&id]),
         // admission.rs pending_bot_operations
         (
             "bot_unresolved_coordination",
@@ -74,22 +109,7 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
             "SELECT EXISTS(SELECT 1 FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND command_kind IN ('pause','resume') AND stage='prepared')",
             vec![&scope, &id],
         ),
-        // lifecycle.rs
-        (
-            "bot_lifecycle_resume",
-            "SELECT updated_at_ms,user_scope_id,operation_id FROM bot_lifecycle_intents WHERE stage NOT IN ('completed','incomplete') AND (updated_at_ms>?1 OR (updated_at_ms=?1 AND operation_id>?2)) ORDER BY updated_at_ms,operation_id LIMIT ?3",
-            vec![&0i64, &"", &16i64],
-        ),
-        (
-            "bot_lifecycle_chat_open",
-            "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents WHERE chat_id=?1 AND stage<>'completed'",
-            vec![&chat],
-        ),
-        (
-            "bot_lifecycle_open",
-            "SELECT user_scope_id,operation_id,stage FROM bot_lifecycle_intents WHERE bot_id=?1 AND stage<>'completed'",
-            vec![&id],
-        ),
+        // lifecycle.rs: the reverse-once check at capture.
         (
             "bot_lifecycle_source",
             "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE user_scope_id=?1 AND source_operation_id=?2)",

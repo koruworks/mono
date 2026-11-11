@@ -12,7 +12,8 @@ fn owner_of(bot: &Bot) -> BotOwner {
 
 /// One journal row as the driver leaves it, written straight into the table
 /// so each case states exactly the history it means. `source` names the
-/// operation a Restore reverses.
+/// operation a Restore reverses; a completed Restore marks it `reversed`, as
+/// the Restore's own transaction does.
 fn op(
     repo: &Repository,
     owner: BotOwner,
@@ -45,6 +46,17 @@ fn op(
             ],
         )
         .unwrap();
+    if let (Some(source), BotLifecycleStage::Completed) = (source, stage) {
+        let reversed = repo
+            .connection
+            .execute(
+                "UPDATE bot_lifecycle_intents SET stage='reversed',updated_at_ms=?3
+                 WHERE user_scope_id=?1 AND operation_id=?2 AND stage IN ('completed','incomplete')",
+                params![owner.user_scope.to_storage(), source.to_storage(), at],
+            )
+            .unwrap();
+        assert_eq!(reversed, 1);
+    }
     operation
 }
 
@@ -155,21 +167,40 @@ fn another_owners_or_devices_operations_never_appear() {
     assert_eq!(both.len(), 2);
 }
 
+/// The holder read is one seek of `bot_lifecycle_held` per Bot asked about:
+/// it never walks the owner's lifecycle journal, however long, and never
+/// asks whether a Restore names a candidate (a reversed operation is no
+/// longer `completed`, so the index does not hold it).
 #[test]
-fn the_holder_read_walks_only_the_owners_journal_through_its_primary_key() {
+fn the_holder_read_seeks_each_bot_through_the_held_index() {
     use BotLifecycleKind::*;
     use BotLifecycleStage::*;
     let (repo, bot, _) = setup();
     let owner = owner_of(&bot);
-    // Thousands of other owners' completed operations, and a little of this
-    // owner's own history.
-    for n in 0..3000 {
+    // Thousands of this owner's own completed and reversed operations of
+    // other Bots, and other owners' operations naming this Bot.
+    for n in 0..1500 {
+        let other = BotId::mint();
+        let archive = op(&repo, owner, other, Archive, Completed, None, n);
+        op(&repo, owner, other, Restore, Completed, Some(archive), n);
+    }
+    for n in 0..500 {
         let stranger = BotOwner {
             user_scope: UserScopeId::new(),
             device: owner.device,
         };
-        op(&repo, stranger, BotId::mint(), Archive, Completed, None, n);
+        op(&repo, stranger, bot.id, Archive, Completed, None, n);
     }
+    let reversed = op(&repo, owner, bot.id, Archive, Completed, None, 4000);
+    op(
+        &repo,
+        owner,
+        bot.id,
+        Restore,
+        Completed,
+        Some(reversed),
+        4001,
+    );
     let archive = op(&repo, owner, bot.id, Archive, Completed, None, 5000);
     let found = plan(
         &repo.connection,
@@ -181,15 +212,22 @@ fn the_holder_read_walks_only_the_owners_journal_through_its_primary_key() {
         ],
     );
     assert!(
-        found.contains(
-            "SEARCH i USING INDEX sqlite_autoindex_bot_lifecycle_intents_1 (user_scope_id=?"
-        ),
+        found.contains("SEARCH i USING INDEX bot_lifecycle_held (bot_id=?"),
         "{found}"
     );
-    assert!(found.contains("bot_lifecycle_source"), "{found}");
-    assert!(!found.contains("SCAN i"), "{found}");
+    for walk in [
+        "sqlite_autoindex_bot_lifecycle_intents_1",
+        "bot_lifecycle_source",
+        "SCAN i",
+    ] {
+        assert!(!found.contains(walk), "{walk}: {found}");
+    }
     assert_eq!(
-        holder(&repo, &bot, BotLifecycle::Archived).map(|h| h.request_id),
-        Some(archive)
+        holder(&repo, &bot, BotLifecycle::Archived),
+        Some(BotLifecycleHolder {
+            request_id: archive,
+            kind: Archive,
+            completed_at_ms: 5000
+        })
     );
 }

@@ -492,10 +492,9 @@ pub struct BotChatCursor {
 }
 
 /// One page of a workspace's Bot conversations in Trash, in conversation ID
-/// order; `next_cursor` is absent on the last page. A page examines a
-/// bounded window of the device's Trash, so it may hold fewer than asked,
-/// or none at all, and still not be the last: follow `next_cursor` until it
-/// is absent.
+/// order; `next_cursor` is absent on the last page. Every page but the last
+/// holds exactly `limit` conversations, and `next_cursor` names the last of
+/// them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BotTrashedChatPage {

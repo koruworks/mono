@@ -131,18 +131,86 @@ const SCHEMA: Schema = Schema {
 };
 
 pub(crate) fn open(path: &Path) -> Result<Connection, OpenError> {
-    koru_sqlite::open(&SCHEMA, path)
+    let connection = koru_sqlite::open(&SCHEMA, path)?;
+    refuse_superseded_18(&connection)?;
+    Ok(connection)
 }
 
 #[cfg(any(test, feature = "fixtures"))]
 pub(crate) fn open_in_memory() -> Result<Connection, OpenError> {
-    koru_sqlite::open_in_memory(&SCHEMA)
+    let connection = koru_sqlite::open_in_memory(&SCHEMA)?;
+    refuse_superseded_18(&connection)?;
+    Ok(connection)
 }
 
 /// The whole open sequence on a connection already opened.
 #[cfg(test)]
 pub(crate) fn prepare(connection: &mut Connection) -> Result<(), OpenError> {
-    koru_sqlite::prepare(&SCHEMA, connection)
+    koru_sqlite::prepare(&SCHEMA, connection)?;
+    refuse_superseded_18(connection)
+}
+
+/// The `operation` of the [`OpenError::Storage`] that refuses an `ai.db` an
+/// unreleased development build left at schema 18 before that migration was
+/// amended. Its stamp is the current one, so the migrator (which tracks the
+/// version alone) would apply nothing and the older shape would fail only
+/// later, at a CHECK, the first time a Restore marked its source `reversed`.
+/// No released build ever wrote schema 18, so this is never a user's
+/// database: it is refused by this name, untouched, and recreated (delete
+/// the file with its `-wal` and `-shm` while Koru is stopped). Nothing
+/// repairs it in place: that would be a migration under a version that
+/// already claims to be applied.
+pub const SUPERSEDED_DEVELOPMENT_SCHEMA: &str = "open the superseded development schema of";
+
+/// What the amended `018_ai_bot_lifecycle.sql` has and the version that
+/// unreleased builds ran before it lacks: `(object type, name, a text its
+/// stored definition contains)`.
+const AMENDED_18: [(&str, &str, &str); 3] = [
+    ("index", "bot_lifecycle_held", ""),
+    ("index", "bot_chat_trash_owner", ""),
+    ("table", "bot_lifecycle_intents", "'reversed'"),
+];
+
+/// Refuse, by [`SUPERSEDED_DEVELOPMENT_SCHEMA`], a database stamped 18 or
+/// later that lacks the amended ai18's objects. Three `sqlite_master`
+/// lookups at open; nothing is written. A later migration that drops or
+/// rebuilds one of these objects must update [`AMENDED_18`].
+fn refuse_superseded_18(connection: &Connection) -> Result<(), OpenError> {
+    if user_version(connection)? < 18 {
+        return Ok(());
+    }
+    let mut missing = Vec::new();
+    for (kind, name, contains) in AMENDED_18 {
+        let present: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type=?1 AND name=?2 AND instr(sql, ?3) > 0)",
+                rusqlite::params![kind, name, contains],
+                |row| row.get(0),
+            )
+            .map_err(|error| OpenError::Storage {
+                database: crate::DATABASE_FILE,
+                operation: "check the schema of",
+                detail: error.to_string(),
+            })?;
+        if !present {
+            missing.push(if contains.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{name} {contains}")
+            });
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(OpenError::Storage {
+        database: crate::DATABASE_FILE,
+        operation: SUPERSEDED_DEVELOPMENT_SCHEMA,
+        detail: format!(
+            "schema 18 was written by an unreleased development build before that migration was amended (missing: {}); no released build wrote it. Nothing was changed. Stop Koru and recreate this development database by deleting ai.db, ai.db-wal and ai.db-shm from the ai folder of the root that opened it",
+            missing.join(", ")
+        ),
+    })
 }
 
 /// **An `ai.db` as an older build left it**, for a test above this crate

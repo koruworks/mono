@@ -832,10 +832,7 @@ fn settled(client: &AiWorkerClient, bot: BotId, request: BotRequestId) -> BotLif
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let operation = read_operation(client, bot, request);
-        if matches!(
-            operation.stage,
-            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-        ) {
+        if !operation.stage.moving() {
             return operation;
         }
         assert!(Instant::now() < deadline, "still {:?}", operation.stage);
@@ -1333,14 +1330,12 @@ fn a_parked_archive_found_through_the_bot_read_is_reversed_by_its_id() {
     assert_eq!(after.open_operation, None);
     assert!(after.paused);
     assert_eq!(after.lifecycle, BotLifecycle::Active);
-    // The reversed operation reads as it stopped, and a repeat of it no
-    // longer moves it.
-    assert_eq!(
-        archive_at(&client, &bot, request, after.revision)
-            .unwrap()
-            .stage,
-        BotLifecycleStage::Incomplete
-    );
+    // A repeat of it by its id no longer moves it: it answers its progress,
+    // which says it was reversed and keeps why it had parked (before ai18
+    // was amended it read `incomplete`, as it stopped).
+    let repeated = archive_at(&client, &bot, request, after.revision).unwrap();
+    assert_eq!(repeated.stage, BotLifecycleStage::Reversed);
+    assert!(repeated.refusal.is_some());
     assert_eq!(port.reads.load(Ordering::SeqCst), 0);
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);

@@ -108,8 +108,9 @@ fn another_owner_or_workspace_never_appears_and_the_limit_is_bounded() {
 }
 
 /// Thousands of conversations and lifecycle operations that are not in
-/// Trash: the page walks only what is in Trash now, in its primary-key
-/// order, and reaches everything else by primary key.
+/// Trash, and another owner's Trash: the page walks a range of the caller's
+/// own Trash rows in `bot_chat_trash_owner`, already in Chat ID order, and
+/// reaches everything else by primary key.
 #[test]
 fn a_trash_page_reads_only_what_is_in_trash_now_never_history() {
     let (mut repo, bot, profile) = setup();
@@ -131,79 +132,109 @@ fn a_trash_page_reads_only_what_is_in_trash_now_never_history() {
         bot.owner_device.to_storage(),
         bot.home_workspace.to_storage(),
     );
-    let cursor: Option<String> = None;
-    let found = plan(
-        &repo.connection,
-        TRASHED_BOT_CHAT_PAGE_SQL,
-        &[&scope, &device, &workspace, &cursor, &101i64, &cursor],
-    );
-    assert!(
-        found.contains("sqlite_autoindex_bot_chat_trash_1"),
-        "{found}"
-    );
-    for primary in [
-        "SEARCH bc USING",
-        "SEARCH b USING",
-        "SEARCH c USING",
-        "SEARCH i USING",
-    ] {
-        assert!(found.contains(primary), "{primary} missing: {found}");
+    let other = fixture_bot();
+    repo.save_bot(&other, profile, BotRequestId::mint(), "create", None)
+        .unwrap();
+    for n in 0..300 {
+        let chat = additional(&mut repo, &other, profile, 1000 + n);
+        trash(&repo, &other, chat);
     }
-    for walk in ["SCAN bc", "SCAN b ", "SCAN c", "SCAN i", "TEMP B-TREE"] {
-        assert!(!found.contains(walk), "{walk}: {found}");
+    // From the start (every Chat ID sorts after the empty string) and from
+    // a cursor: a range of the caller's own rows, never sorted.
+    for cursor in ["", "ffffffff"] {
+        let found = plan(
+            &repo.connection,
+            TRASHED_BOT_CHAT_PAGE_SQL,
+            &[&scope, &device, &workspace, &cursor, &101i64],
+        );
+        assert!(
+            found.contains(
+                "SEARCH t USING INDEX bot_chat_trash_owner (user_scope_id=? AND chat_id>?)"
+            ),
+            "{found}"
+        );
+        for primary in [
+            "SEARCH bc USING",
+            "SEARCH b USING",
+            "SEARCH c USING",
+            "SEARCH i USING",
+        ] {
+            assert!(found.contains(primary), "{primary} missing: {found}");
+        }
+        for walk in [
+            "sqlite_autoindex_bot_chat_trash_1",
+            "SCAN t",
+            "SCAN bc",
+            "SCAN b ",
+            "SCAN c",
+            "SCAN i",
+            "TEMP B-TREE",
+        ] {
+            assert!(!found.contains(walk), "{walk}: {found}");
+        }
     }
-    // The window's end is read from the primary key alone.
-    let window = plan(
-        &repo.connection,
-        TRASHED_BOT_CHAT_WINDOW_SQL,
-        &[&cursor, &(TRASHED_BOT_CHAT_SCAN - 1)],
-    );
-    assert!(
-        window.contains("sqlite_autoindex_bot_chat_trash_1"),
-        "{window}"
-    );
     assert_eq!(page(&repo, &bot).chats.len(), 1);
 }
 
-/// Another owner's Trash, more than one window of it, never makes one page
-/// walk all of Trash: a page examines a bounded window and, when that ends
-/// before the page fills, hands back a cursor at its end, so the walk goes
-/// on page by page and still finds every conversation of the owner's.
+/// Many conversations of another owner in Trash between each two of the
+/// caller's: every page but the last is full, never empty, and every cursor
+/// is one of the caller's own conversations, so a client walks the caller's
+/// Trash in as few pages as it fills and is never handed another owner's id.
 #[test]
-fn a_page_examines_a_bounded_window_of_everyone_elses_trash() {
+fn another_owners_trash_between_the_callers_never_empties_a_page_or_names_their_chat() {
     let (mut repo, bot, profile) = setup();
     let other = fixture_bot();
     repo.save_bot(&other, profile, BotRequestId::mint(), "create", None)
         .unwrap();
-    let theirs = TRASHED_BOT_CHAT_SCAN as usize + 88;
-    for n in 0..theirs {
-        let chat = additional(&mut repo, &other, profile, 1000 + n as i64);
-        trash(&repo, &other, chat);
-    }
-    let mine: Vec<ChatId> = (0..3)
+    // 2,000 of theirs in Trash; of 60 conversations of mine, only those with
+    // more than the old 512-row window of theirs since the previous one (or
+    // the start) go into Trash, so the gaps are wide whatever the random IDs.
+    let theirs: Vec<String> = (0..2000)
         .map(|n| {
-            let chat = additional(&mut repo, &bot, profile, 10 + n);
-            trash(&repo, &bot, chat);
-            chat
+            let chat = additional(&mut repo, &other, profile, 1000 + n);
+            trash(&repo, &other, chat);
+            chat.to_storage()
         })
         .collect();
+    let mut candidates: Vec<ChatId> = (0..60)
+        .map(|n| additional(&mut repo, &bot, profile, 10 + n))
+        .collect();
+    candidates.sort_by_key(|chat| chat.to_storage());
+    let mut mine = Vec::new();
+    let mut previous = String::new();
+    for chat in candidates {
+        let id = chat.to_storage();
+        let between = theirs.iter().filter(|t| **t > previous && **t < id).count();
+        if between > 520 {
+            trash(&repo, &bot, chat);
+            mine.push(chat);
+            previous = id;
+        }
+    }
+    assert!(mine.len() >= 2, "{} of mine", mine.len());
     let (mut seen, mut pages, mut cursor) = (Vec::new(), 0, None);
     loop {
         let found = repo
-            .trashed_bot_chat_page(owner_of(&bot), bot.home_workspace, cursor.as_ref(), 100)
+            .trashed_bot_chat_page(owner_of(&bot), bot.home_workspace, cursor.as_ref(), 1)
             .unwrap();
         pages += 1;
         seen.extend(found.chats.iter().map(|c| c.conversation.chat.id));
         match found.next_cursor {
-            Some(next) => cursor = Some(next),
+            Some(next) => {
+                assert_eq!(found.chats.len(), 1, "a page that is not the last is full");
+                assert!(
+                    mine.contains(&next.chat_id),
+                    "the cursor is the caller's own"
+                );
+                assert_eq!(Some(next.chat_id), seen.last().copied());
+                cursor = Some(next);
+            }
             None => break,
         }
     }
-    let mut expected = mine.clone();
-    expected.sort_by_key(|chat| chat.to_storage());
-    assert_eq!(seen, expected);
-    // 3 + 600 rows in Trash, at most 512 examined a page.
-    assert!(pages >= 2, "{pages} pages");
+    assert_eq!(seen, mine);
+    // One a page, the last one holding the last of mine: never an empty page.
+    assert_eq!(pages, mine.len());
 }
 
 /// An entry whose Bot must be restored first names what holds the Bot;

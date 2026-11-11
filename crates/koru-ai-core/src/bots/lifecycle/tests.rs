@@ -263,6 +263,37 @@ fn lifecycle_progress_is_strict_and_carries_no_owner_correlation() {
     }
 }
 
+/// `reversed` is the one new value on the wire (additive), and it is final:
+/// only the stages before `completed` are moving.
+#[test]
+fn a_reversed_operation_is_final_and_says_so_on_the_wire() {
+    use BotLifecycleStage::*;
+    assert_eq!(
+        serde_json::to_value(Reversed).unwrap(),
+        serde_json::json!("reversed")
+    );
+    assert_eq!(
+        serde_json::from_value::<BotLifecycleStage>(serde_json::json!("reversed")).unwrap(),
+        Reversed
+    );
+    let moving: Vec<_> = BotLifecycleStage::ALL
+        .iter()
+        .filter(|stage| stage.moving())
+        .copied()
+        .collect();
+    assert_eq!(
+        moving,
+        vec![
+            Captured,
+            Settling,
+            Applying,
+            Restoring,
+            PreservingReferences,
+            Purging
+        ]
+    );
+}
+
 #[test]
 fn only_trash_says_what_it_left_in_place_and_archive_serializes_as_before() {
     use BotLifecycleKind::*;

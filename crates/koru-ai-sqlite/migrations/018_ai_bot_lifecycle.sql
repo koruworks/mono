@@ -18,7 +18,7 @@ CREATE TABLE bot_lifecycle_intents (
  pause_request_id TEXT,
  policy_request_id TEXT,
  policy_barrier_state TEXT CHECK(policy_barrier_state IN ('pending','effective')),
- stage TEXT NOT NULL CHECK(stage IN ('captured','settling','applying','restoring','preserving_references','purging','completed','incomplete')),
+ stage TEXT NOT NULL CHECK(stage IN ('captured','settling','applying','restoring','preserving_references','purging','completed','incomplete','reversed')),
  refusal TEXT CHECK(refusal IN ('owner_unavailable','work_running','person_holding','member_conflict','store_unavailable','revision_changed')),
  requested_at_ms INTEGER NOT NULL,
  updated_at_ms INTEGER NOT NULL,
@@ -32,24 +32,32 @@ CREATE TABLE bot_lifecycle_intents (
  CHECK((kind IN ('archive','trash') AND prior_lifecycle = 'active') = (pause_request_id IS NOT NULL)),
  CHECK((pause_request_id IS NULL) = (policy_request_id IS NULL)),
  CHECK((policy_request_id IS NULL) = (policy_barrier_state IS NULL)),
- CHECK((stage = 'incomplete') = (refusal IS NOT NULL)),
- CHECK((stage = 'completed') = (completed_at_ms IS NOT NULL))
+ -- 'reversed' is terminal: the completed Restore naming this operation wrote
+ -- it in its own transaction. A reversed row keeps what it had been: the
+ -- refusal of a parked operation, or the completion time of a completed one.
+ CHECK(stage = 'reversed' OR (stage = 'incomplete') = (refusal IS NOT NULL)),
+ CHECK(stage = 'reversed' OR (stage = 'completed') = (completed_at_ms IS NOT NULL)),
+ CHECK(stage <> 'reversed' OR ((refusal IS NULL) <> (completed_at_ms IS NULL) AND kind IN ('archive','trash','trash_chat')))
 );
 -- At most one moving operation per Bot; an incomplete one is parked, still barred.
 CREATE UNIQUE INDEX bot_lifecycle_running ON bot_lifecycle_intents(bot_id)
- WHERE stage NOT IN ('completed','incomplete');
+ WHERE stage NOT IN ('completed','incomplete','reversed');
 -- Any unfinished operation of a Bot, including a parked incomplete one.
 CREATE INDEX bot_lifecycle_open ON bot_lifecycle_intents(bot_id)
- WHERE stage <> 'completed';
+ WHERE stage NOT IN ('completed','reversed');
 -- An operation is reversed or purged at most once.
 CREATE UNIQUE INDEX bot_lifecycle_source ON bot_lifecycle_intents(user_scope_id, source_operation_id)
  WHERE source_operation_id IS NOT NULL;
 -- The bounded restart scan.
 CREATE INDEX bot_lifecycle_resume ON bot_lifecycle_intents(updated_at_ms)
- WHERE stage NOT IN ('completed','incomplete');
+ WHERE stage NOT IN ('completed','incomplete','reversed');
 -- The per-conversation barrier lookup.
 CREATE INDEX bot_lifecycle_chat_open ON bot_lifecycle_intents(chat_id)
- WHERE chat_id IS NOT NULL AND stage <> 'completed';
+ WHERE chat_id IS NOT NULL AND stage NOT IN ('completed','reversed');
+-- What holds an archived or trashed Bot: its completed whole-Bot Archive or
+-- Trash that no Restore reversed (a reversed one is no longer 'completed').
+CREATE INDEX bot_lifecycle_held ON bot_lifecycle_intents(bot_id, completed_at_ms)
+ WHERE stage = 'completed' AND chat_id IS NULL AND kind IN ('archive','trash');
 
 -- Captured membership. One null group per kind; uniqueness per kind below.
 -- A Run reference's document is the delegate's to name and may be recorded
@@ -96,6 +104,9 @@ CREATE TABLE bot_chat_trash (
  trashed_at_ms INTEGER NOT NULL,
  FOREIGN KEY(user_scope_id, operation_id) REFERENCES bot_lifecycle_intents(user_scope_id, operation_id) ON DELETE RESTRICT
 );
+-- An owner's conversations in Trash, in Chat ID order: a Trash page is a
+-- range of the caller's own rows.
+CREATE INDEX bot_chat_trash_owner ON bot_chat_trash(user_scope_id, chat_id);
 
 -- Content-free receipts that outlive an explicit purge.
 CREATE TABLE bot_purge_tombstones (

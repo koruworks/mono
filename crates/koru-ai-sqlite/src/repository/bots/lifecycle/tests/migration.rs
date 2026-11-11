@@ -328,7 +328,12 @@ fn populated_ai17_survives_18_value_for_value_and_repeated_preparation() {
             assert!(rows.is_empty(), "{table} needs no backfill");
         }
         let added: Vec<_> = after.keys().filter(|k| !before.contains_key(*k)).collect();
-        assert_eq!(added.len(), AI18_TABLES.len() + 15, "{added:?}");
+        // Fifteen indexes, then the holder and Trash-owner indexes of the
+        // amendment made before any release.
+        assert_eq!(added.len(), AI18_TABLES.len() + 17, "{added:?}");
+        for index in ["index:bot_lifecycle_held", "index:bot_chat_trash_owner"] {
+            assert!(after.contains_key(index), "{index}");
+        }
     }
     // The upgraded database still reads through the current code.
     let bots = repo
@@ -349,6 +354,48 @@ fn a_failed_18_leaves_the_ai17_database_exactly_as_it_was() {
     assert!(crate::db::prepare(&mut repo.connection).is_err());
     assert_eq!(repo.schema_version().unwrap(), 17);
     assert_eq!(snapshot(&repo.connection), before);
+}
+
+/// ai18 was amended before any release (the holder and Trash-owner indexes,
+/// the `reversed` stage). A development database an unreleased build left
+/// at the unamended 18 has the same stamp and the older shape, and would
+/// fail a CHECK the first time a Restore marks its source: it is refused at
+/// open, by name, before anything in it is read or written.
+#[test]
+fn a_database_left_at_the_unamended_18_is_refused_by_name_and_left_untouched() {
+    let mut repo = populated_ai17();
+    repo.connection
+        .execute_batch(include_str!(
+            "../../../../fixtures/ai18-before-amendment.sql"
+        ))
+        .unwrap();
+    repo.connection
+        .execute_batch("PRAGMA user_version = 18;")
+        .unwrap();
+    let before = snapshot(&repo.connection);
+    let refused = crate::db::prepare(&mut repo.connection)
+        .expect_err("the unamended ai18 shape must not open");
+    let text = refused.to_string();
+    assert!(text.contains("superseded development schema"), "{text}");
+    assert!(text.contains("recreate"), "{text}");
+    assert_eq!(snapshot(&repo.connection), before);
+    let OpenError::Storage {
+        operation, detail, ..
+    } = refused
+    else {
+        panic!("{refused:?}")
+    };
+    assert_eq!(operation, crate::SUPERSEDED_DEVELOPMENT_SCHEMA);
+    for missing in [
+        "bot_lifecycle_held",
+        "bot_chat_trash_owner",
+        "bot_lifecycle_intents 'reversed'",
+    ] {
+        assert!(detail.contains(missing), "{detail}");
+    }
+    // Every later open refuses it the same way, and the amended 18 opens.
+    assert!(crate::db::prepare(&mut repo.connection).is_err());
+    assert!(Repository::in_memory().is_ok());
 }
 
 #[test]

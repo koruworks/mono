@@ -211,19 +211,138 @@ fn a_parked_archive_resumes_once_and_a_reversed_one_holds_nothing() {
         .unwrap();
     repo.unarchive_bot(&restore(&bot, owner, op.operation, current))
         .unwrap();
-    // The reversed Archive keeps its own record as it stopped, holds nothing,
-    // and never resumes; another operation may start.
+    // The reversed Archive reads `reversed`, keeping why it had parked,
+    // holds nothing, and never resumes; another operation may start.
     let original = repo
         .bot_lifecycle_operation(scope, op.operation)
         .unwrap()
         .unwrap();
-    assert_eq!(original.stage, BotLifecycleStage::Incomplete);
-    assert!(repo.bot_lifecycle_reversed(scope, op.operation).unwrap());
+    assert_eq!(original.stage, BotLifecycleStage::Reversed);
+    assert_eq!(original.refusal, Some(BotLifecycleRefusal::WorkRunning));
     assert_eq!(repo.bot_hold(bot.id).unwrap(), None);
     assert_eq!(repo.bot_chat_hold(bot.main_chat).unwrap(), None);
     assert_eq!(repo.open_bot_lifecycle(bot.id).unwrap(), None);
     assert_eq!(repo.bot_open_lifecycle(bot.id).unwrap(), None);
     assert!(!repo.resume_bot_lifecycle(scope, op.operation, 41).unwrap());
+}
+
+/// How many rows of the journal a partial index holds, read through that
+/// index with exactly its own predicate.
+fn in_index(repo: &Repository, index: &str, predicate: &str) -> i64 {
+    repo.connection
+        .query_row(
+            &format!(
+                "SELECT count(*) FROM bot_lifecycle_intents INDEXED BY {index} WHERE {predicate}"
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+/// The predicate of every index of unfinished operations, as ai18 states it.
+const OPEN_INDEXES: [(&str, &str); 4] = [
+    (
+        "bot_lifecycle_running",
+        "bot_id IS NOT NULL AND stage NOT IN ('completed','incomplete','reversed')",
+    ),
+    (
+        "bot_lifecycle_open",
+        "bot_id IS NOT NULL AND stage NOT IN ('completed','reversed')",
+    ),
+    (
+        "bot_lifecycle_resume",
+        "updated_at_ms IS NOT NULL AND stage NOT IN ('completed','incomplete','reversed')",
+    ),
+    (
+        "bot_lifecycle_chat_open",
+        "chat_id IS NOT NULL AND stage NOT IN ('completed','reversed')",
+    ),
+];
+
+/// A parked Archive that a Restore reverses is marked `reversed` on its own
+/// row in the Restore's transaction: its progress read says so, keeping why
+/// it had parked, and it leaves every index of unfinished operations by
+/// that index's own predicate, so no hold, open-operation or resume read
+/// needs to ask whether a Restore names it.
+#[test]
+fn a_reversed_parked_archive_reads_reversed_and_leaves_every_open_index() {
+    let (mut repo, bot, owner, op) = archived_setup();
+    let scope = owner.user_scope;
+    repo.park_bot_lifecycle(
+        scope,
+        op.operation,
+        BotLifecycleRefusal::OwnerUnavailable,
+        15,
+    )
+    .unwrap();
+    assert_eq!(
+        in_index(&repo, "bot_lifecycle_open", OPEN_INDEXES[1].1),
+        1,
+        "parked is still open"
+    );
+    let current = revision(&repo, bot.id).0;
+    let restored = repo
+        .unarchive_bot(&restore(&bot, owner, op.operation, current))
+        .unwrap();
+    let original = repo
+        .bot_lifecycle_operation(scope, op.operation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.stage.token(), "reversed");
+    assert_eq!(original.progress().stage.token(), "reversed");
+    assert_eq!(
+        original.refusal,
+        Some(BotLifecycleRefusal::OwnerUnavailable)
+    );
+    assert_eq!(original.completed_at_ms, None);
+    assert_eq!(original.updated_at_ms, restored.completed_at_ms.unwrap());
+    for (index, predicate) in OPEN_INDEXES {
+        assert_eq!(in_index(&repo, index, predicate), 0, "{index}");
+    }
+    assert_eq!(repo.bot_hold(bot.id).unwrap(), None);
+    assert_eq!(repo.bot_open_lifecycle(bot.id).unwrap(), None);
+    assert!(
+        repo.parked_for_owner_bot_lifecycle(None, 16)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!repo.resume_bot_lifecycle(scope, op.operation, 41).unwrap());
+}
+
+/// The normal Unarchive: a completed Archive that a Restore reverses is
+/// marked `reversed` too, keeping its completion time and no refusal, so a
+/// completed whole-Bot Archive or Trash that still reads `completed` is
+/// exactly one that holds its Bot.
+#[test]
+fn a_reversed_completed_archive_reads_reversed_and_keeps_when_it_completed() {
+    let (mut repo, bot, owner, op) = archived_setup();
+    let scope = owner.user_scope;
+    repo.advance_bot_lifecycle(
+        scope,
+        op.operation,
+        BotLifecycleStage::Captured,
+        BotLifecycleStage::Settling,
+        true,
+        11,
+    )
+    .unwrap();
+    repo.complete_bot_archive(scope, op.operation, 20).unwrap();
+    let archived = revision(&repo, bot.id).0;
+    repo.unarchive_bot(&restore(&bot, owner, op.operation, archived))
+        .unwrap();
+    let original = repo
+        .bot_lifecycle_operation(scope, op.operation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.stage.token(), "reversed");
+    assert_eq!(original.refusal, None);
+    assert_eq!(original.completed_at_ms, Some(20));
+    assert!(
+        repo.bot_lifecycle_holders(owner, &[(bot.id, BotLifecycle::Archived)])
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

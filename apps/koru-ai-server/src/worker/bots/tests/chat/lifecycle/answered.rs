@@ -249,10 +249,7 @@ fn a_restore_of_an_archive_the_engine_took_up_again_is_retryable_and_accepted_on
     let (worker, returned) = spawn(repository, authority, port.clone());
     let client = worker.client();
     until("the engine took the parked Archive up again", || {
-        !matches!(
-            read_operation(&client, bot.id, operation).stage,
-            BotLifecycleStage::Incomplete | BotLifecycleStage::Completed
-        )
+        read_operation(&client, bot.id, operation).stage.moving()
     });
     let refused =
         super::trash::restore_at(&client, &bot, operation, read_bot(&client, bot.id).revision)
@@ -325,8 +322,14 @@ fn a_reversed_parked_archive_stays_reversed_and_the_persons_archive_stops_what_s
             .is_some_and(|b| b.paused)
     });
     std::thread::sleep(Duration::from_millis(1500));
+    // Its own progress read says it was reversed, and why it had parked
+    // (before ai18 was amended it read `incomplete` for good).
     let reversed = read_operation(&client, bot.id, operation);
-    assert_eq!(reversed.stage, BotLifecycleStage::Incomplete);
+    assert_eq!(reversed.stage, BotLifecycleStage::Reversed);
+    assert_eq!(
+        reversed.refusal,
+        Some(BotLifecycleRefusal::OwnerUnavailable)
+    );
     let read = read_bot(&client, bot.id);
     assert!(read.paused);
     assert_eq!(read.lifecycle, BotLifecycle::Active);
