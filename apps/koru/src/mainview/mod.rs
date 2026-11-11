@@ -12480,6 +12480,9 @@ impl View for MainView {
                 _ => {}
             }
             self.drain_manage_profiles_request();
+            // A chat link held while Koru AI is off whose read went
+            // unanswered is asked about again (Bots P1.8, `bots.rs`).
+            self.ask_held_chats_again();
         }
     }
     fn take_wants_stay_focused(&mut self) -> bool {

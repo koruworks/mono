@@ -28,10 +28,13 @@ use crate::bots::roster::RosterBot;
 
 /// **A chat a door was asked to open while Koru AI is off**, held until the
 /// window learns whether it is a Bot's conversation
-/// ([`MainView::chat_door_open`]): the chat and its block, and the door.
+/// ([`MainView::chat_door_open`]): the chat and its block, the door, and
+/// whether a read about it is on its way — `false` once a read went
+/// unanswered, until the window is next activated and asks again.
 pub(super) struct HeldChatOpen {
     target: koru_editor::ChatTarget,
     where_: koru_editor::OpenWhere,
+    asking: bool,
 }
 
 impl MainView {
@@ -84,8 +87,11 @@ impl MainView {
     /// held, not guessed**: the label read is asked once and nothing is
     /// shown — no tab that could turn out to be an ordinary chat — until it
     /// answers ([`Self::open_held_chats`]): a Bot's conversation then opens
-    /// through the door it was asked by, anything else is dropped. Without a
-    /// label read to ask (under test, or no thread), nothing opens, as
+    /// through the door it was asked by; an ordinary or missing chat is
+    /// dropped. **A read that does not answer drops nothing**: the open stays
+    /// held and is asked about again when the window is next activated
+    /// ([`Self::ask_held_chats_again`]) or the link is followed again. Without
+    /// a label read to ask (under test, or no thread), nothing opens, as
     /// before.
     pub(super) fn chat_door_open(
         &mut self,
@@ -102,24 +108,54 @@ impl MainView {
         if !crate::bots::shown() || self.known_chat(chat).is_some() {
             return false;
         }
-        if self
+        let root = crate::search::gateway_root();
+        if let Some(held) = self
             .held_chat_opens
-            .iter()
-            .any(|held| held.target.chat == target.chat)
+            .iter_mut()
+            .find(|held| held.target.chat == target.chat)
         {
+            // Followed again: the latest door and block are the ones meant,
+            // and a read that went unanswered is asked once more now.
+            held.target = target;
+            held.where_ = where_;
+            if !held.asking {
+                held.asking = self.bot_labels.ask(chat, root);
+            }
             return false;
         }
-        if self.bot_labels.ask(chat, crate::search::gateway_root()) {
-            self.held_chat_opens.push(HeldChatOpen { target, where_ });
+        if !self.bot_labels.can_ask(root.clone()) {
+            return false;
         }
+        // A full queue still holds it: it is asked on the next activation.
+        let asking = self.bot_labels.ask(chat, root);
+        self.held_chat_opens.push(HeldChatOpen {
+            target,
+            where_,
+            asking,
+        });
         false
+    }
+
+    /// **The window was activated: ask again about every held chat whose
+    /// read went unanswered** — once each, the rule the neutral tab follows
+    /// when it is shown again. Nothing is asked for a chat already being
+    /// asked about, and nothing at all while none is held.
+    pub(super) fn ask_held_chats_again(&mut self) {
+        let root = crate::search::gateway_root();
+        for held in self.held_chat_opens.iter_mut().filter(|held| !held.asking) {
+            held.asking = self.bot_labels.ask(
+                koru_ai_ui::ChatId::from_uuid(held.target.chat),
+                root.clone(),
+            );
+        }
     }
 
     /// **Open what was held while the window asked whose it is** (Koru AI
     /// off): each held chat the label read has now placed opens through the
     /// door it was asked by when it is a Bot's conversation, and is dropped
-    /// when it is ordinary or the read did not answer — with Koru AI off a
-    /// chat that might be ordinary is never shown. `true` when a tab opened.
+    /// when it is ordinary or does not exist — with Koru AI off a chat that
+    /// might be ordinary is never shown. A read that did not answer keeps it
+    /// held, to be asked again. `true` when a tab opened.
     fn open_held_chats(&mut self, answered: &[(koru_ai_ui::ChatId, Resolved)]) -> bool {
         if self.held_chat_opens.is_empty() {
             return false;
@@ -133,20 +169,25 @@ impl MainView {
             else {
                 continue;
             };
-            let held = self.held_chat_opens.remove(index);
             match resolved {
                 Resolved::Known(Known::Bot { .. }) => {
+                    let held = self.held_chat_opens.remove(index);
                     opened |= self.open_chat_where(held.target, held.where_);
                 }
-                Resolved::Known(Known::Ordinary) | Resolved::Unavailable => {
-                    let why = match resolved {
-                        Resolved::Unavailable => "unavailable",
-                        _ => "ordinary",
-                    };
+                // Ordinary, or not found (the label read learns that as
+                // ordinary): what every chat link does with Koru AI off.
+                Resolved::Known(Known::Ordinary) => {
+                    self.held_chat_opens.remove(index);
                     tracing::info!(
                         target: "koru::chat_link",
-                        resolved = why,
-                        "chat link dropped: Koru AI is off and it is not known to be a Bot's"
+                        "chat link dropped: Koru AI is off and it is not a Bot's conversation"
+                    );
+                }
+                Resolved::Unavailable => {
+                    self.held_chat_opens[index].asking = false;
+                    tracing::info!(
+                        target: "koru::chat_link",
+                        "chat link held: whose it is went unanswered; asked again on activation"
                     );
                 }
             }

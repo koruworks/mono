@@ -628,11 +628,14 @@ fn a_chat_link_opens_by_its_label_for_every_combination_of_ai_and_agents() {
     }
 }
 
-/// **With Koru AI off, a chat link the label read cannot answer is dropped**
-/// rather than shown — it might be an ordinary chat — and a second link to
-/// the same chat while the first is asked asks nothing more.
+/// **With Koru AI off, a chat link whose read goes unanswered is kept, not
+/// dropped** — and not shown either, since it might be an ordinary chat.
+/// It is asked about once more when the window is next activated, or when
+/// the link is followed again, never on a timer; it opens when the answer is
+/// a Bot's, and is dropped only when the chat is ordinary or does not exist.
+/// A second link to a chat already being asked about asks nothing more.
 #[test]
-fn with_koru_ai_off_an_unanswered_link_is_dropped_and_asked_once() {
+fn with_koru_ai_off_an_unanswered_link_is_kept_and_asked_again_on_activation() {
     koru_features::testing::with(
         koru_features::Features {
             ai: false,
@@ -641,21 +644,59 @@ fn with_koru_ai_off_an_unanswered_link_is_dropped_and_asked_once() {
         || {
             let (mut v, mut w) = container();
             let (commands, answers) = labels_link(&mut v);
-            let chat = ChatId::new();
-            assert!(!v.open_ai_chat_tab_for(chat));
-            assert!(!v.open_ai_chat_tab_for(chat), "asked again meanwhile");
-            assert_eq!(asked(&commands), [chat], "asked once");
+            let now = std::time::Instant::now();
+            let bot = scout();
+            let unanswered = |chat| crate::bots::link::Answer::Labelled {
+                chat,
+                result: Err(crate::bots::link::Failure::Unreachable),
+            };
+
+            // A Bot's conversation: unanswered, kept, asked again on activation.
+            let theirs = ChatId::new();
+            assert!(!v.open_ai_chat_tab_for(theirs));
+            assert!(!v.open_ai_chat_tab_for(theirs), "followed again meanwhile");
+            assert_eq!(asked(&commands), [theirs], "asked once");
+            answers.send(unanswered(theirs)).unwrap();
+            for _ in 0..3 {
+                let _ = View::maintain(&mut v, &mut w.ws, now);
+            }
+            assert!(on_chat(&v, theirs).is_empty(), "not shown");
+            assert!(asked(&commands).is_empty(), "nothing polls");
+            View::set_window_focused(&mut v, true);
+            View::set_window_focused(&mut v, true);
+            assert_eq!(asked(&commands), [theirs], "asked once more on activation");
             answers
                 .send(crate::bots::link::Answer::Labelled {
-                    chat,
-                    result: Err(crate::bots::link::Failure::Unreachable),
+                    chat: theirs,
+                    result: Ok(Some(label_for(&bot))),
                 })
                 .unwrap();
-            let _ = View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
-            assert!(on_chat(&v, chat).is_empty(), "dropped, not shown");
-            // Asked for again later, it is asked about again.
-            assert!(!v.open_ai_chat_tab_for(chat));
-            assert_eq!(asked(&commands), [chat]);
+            let _ = View::maintain(&mut v, &mut w.ws, now);
+            assert_eq!(on_chat(&v, theirs), ["bot"], "a Bot's: it opens");
+
+            // An ordinary one: unanswered, followed again, then not found.
+            let missing = ChatId::new();
+            assert!(!v.open_ai_chat_tab_for(missing));
+            assert_eq!(asked(&commands), [missing]);
+            answers.send(unanswered(missing)).unwrap();
+            let _ = View::maintain(&mut v, &mut w.ws, now);
+            assert!(!v.open_ai_chat_tab_for(missing), "followed again");
+            assert_eq!(asked(&commands), [missing], "asked at once");
+            answers
+                .send(crate::bots::link::Answer::Labelled {
+                    chat: missing,
+                    result: Err(crate::bots::link::Failure::Refused("not_found".into())),
+                })
+                .unwrap();
+            let _ = View::maintain(&mut v, &mut w.ws, now);
+            assert!(on_chat(&v, missing).is_empty(), "not found: dropped");
+            View::set_window_focused(&mut v, true);
+            assert!(asked(&commands).is_empty(), "nothing is held any more");
+            assert!(
+                !v.open_ai_chat_tab_for(missing),
+                "known ordinary: nothing, and nothing asked"
+            );
+            assert!(asked(&commands).is_empty());
         },
     );
 }
