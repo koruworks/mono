@@ -19,7 +19,8 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
-use koru_ai_core::bots::{Bot, BotCommand, BotId, BotRequestId, BotResponse};
+use koru_ai_core::ChatId;
+use koru_ai_core::bots::{Bot, BotChatLabel, BotCommand, BotId, BotRequestId, BotResponse};
 use koru_store_core::ids::WorkspaceId;
 
 /// Commands waiting for the thread. A roster asks one list at a time, so
@@ -47,6 +48,10 @@ pub(crate) enum Command {
         request: BotRequestId,
         command: Box<BotCommand>,
     },
+    /// **Whose conversation `chat` is** (Bots P1.8, B1): the owner's own
+    /// read of the chat, whose `Chat.bot` labels a Bot's conversation for a
+    /// caller that may open it. Only the label is kept.
+    Label { chat: ChatId },
 }
 
 #[derive(Debug)]
@@ -66,6 +71,12 @@ pub(crate) enum Answer {
         bot: BotId,
         request: BotRequestId,
         result: Result<BotResponse, Failure>,
+    },
+    /// What a [`Command::Label`] found: the Bot's label, or `None` for an
+    /// ordinary chat.
+    Labelled {
+        chat: ChatId,
+        result: Result<Option<BotChatLabel>, Failure>,
     },
 }
 
@@ -229,7 +240,50 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::Label { chat } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    // The transcript is read and dropped here, on this
+                    // thread: only its label reaches the window.
+                    Some(connected) => labelled(
+                        connected
+                            .ai()
+                            .read_chat(chat)
+                            .map(|transcript| transcript.chat.bot)
+                            .map_err(|failure| failure.code),
+                    ),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A conversation's Bot label could not be read"
+                    );
+                    // A conversation that is not found is an answer, not a
+                    // broken connection.
+                    if !matches!(failure, Failure::Refused(code) if code == "not_found") {
+                        client = None;
+                    }
+                }
+                if answers.send(Answer::Labelled { chat, result }).is_err() {
+                    return;
+                }
+            }
         }
+    }
+}
+
+/// A `Label` reply: the label, `None` for an ordinary chat, or why not.
+pub(crate) fn labelled(
+    reply: Result<Option<BotChatLabel>, String>,
+) -> Result<Option<BotChatLabel>, Failure> {
+    match reply {
+        Ok(label) => Ok(label),
+        Err(code) if code.is_empty() => Err(Failure::Unreachable),
+        Err(code) => Err(Failure::Refused(code)),
     }
 }
 

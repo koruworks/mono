@@ -329,7 +329,7 @@ impl MainView {
                     }
                     self.restored_session_tab(*session, profile.clone(), recovery.clone())
                 }
-                TabRef::Chat(chat) => match restored_chat_tab(*chat) {
+                TabRef::Chat(chat) => match self.restored_chat_tab(*chat) {
                     Some(tab) => tab,
                     None => continue,
                 },
@@ -586,7 +586,7 @@ impl MainView {
                 }
                 self.restored_session_tab(*session, profile.clone(), recovery.clone())
             }
-            TabRef::Chat(chat) => restored_chat_tab(*chat)?,
+            TabRef::Chat(chat) => self.restored_chat_tab(*chat)?,
             TabRef::Bot { bot, chat } => restored_bot_tab(*bot, *chat)?,
             TabRef::Document {
                 id,
@@ -666,10 +666,16 @@ impl MainView {
             // `?` — and skips itself: there is nothing to reopen.
             TabView::AiChat(a) => chat_tab_ref(a)?,
             // **A Bot tab by its Bot and its conversation** (Bots P1.8 S4),
-            // known from the moment it was opened or restored.
-            TabView::Bot(b) => TabRef::Bot {
-                bot: b.bot().as_uuid(),
-                chat: b.chat_id().as_uuid(),
+            // known from the moment it was opened or restored. A tab still
+            // finding out whose its conversation is saves the chat alone,
+            // as the chat tab it may yet become, and is placed again on
+            // restore (`mainview/bots.rs`).
+            TabView::Bot(b) => match b.bot() {
+                Some(bot) => TabRef::Bot {
+                    bot: bot.as_uuid(),
+                    chat: b.chat_id().as_uuid(),
+                },
+                None => TabRef::Chat(b.chat_id().as_uuid()),
             },
             // **The saved record is `{session_id, profile_key}`**
             // (TERMINATAB), in tab order with the rest of the strip.
@@ -863,15 +869,23 @@ fn chat_tab_ref(view: &crate::ai_chat_view::AiChatView) -> Option<TabRef> {
     view.chat_id().map(|chat| TabRef::Chat(chat.as_uuid()))
 }
 
-/// A saved chat tab, opened back onto its chat (ADR-483-chattabrestore).
-///
-/// **Nothing here waits on the AI service**: the tab starts its surface's
-/// reader thread and asks for the chat, and the answer lands on a later pass.
-/// A chat deleted since is answered as missing, and the tab becomes a new
-/// chat (`koru_ai_ui`'s boot). `None` in a build that hides Koru AI, which
-/// drops the tab as a hidden surface's tab is dropped.
-fn restored_chat_tab(chat: uuid::Uuid) -> Option<Tab> {
-    koru_features::ai().then(|| Tab::ai_chat_existing(koru_ai_ui::ChatId::from_uuid(chat)))
+impl MainView {
+    /// A saved chat tab, opened back onto its chat (ADR-483-chattabrestore),
+    /// **through the one door every existing chat opens by**
+    /// ([`Self::chat_tab`]): a saved chat that turns out to be a Bot's
+    /// conversation comes back as its Bot's tab, never as an ordinary chat
+    /// that cannot read it (Bots P1.8, B1).
+    ///
+    /// **Nothing here waits on the AI service**: the tab starts its surface's
+    /// reader thread and asks for the chat — or, while the window cannot
+    /// tell whose the chat is, the window asks that off its thread — and the
+    /// answer lands on a later pass. A chat deleted since is answered as
+    /// missing, and the tab becomes a new chat (`koru_ai_ui`'s boot). `None`
+    /// in a build that hides Koru AI, which drops the tab as a hidden
+    /// surface's tab is dropped.
+    fn restored_chat_tab(&mut self, chat: uuid::Uuid) -> Option<Tab> {
+        koru_features::ai().then(|| self.chat_tab(koru_ai_ui::ChatId::from_uuid(chat), None))
+    }
 }
 
 /// **A saved Bot tab, put back as a Bot tab** (Bots P1.8 S4): its Bot and

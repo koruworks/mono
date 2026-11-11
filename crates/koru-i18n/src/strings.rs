@@ -1859,6 +1859,8 @@ pub enum Key {
     BotsErrUnreachable,
     /// An operation the owner rejected, or a refusal code this build does not know. The Bot is read again.
     BotsErrNotApplied,
+    /// A tab opened on a conversation before the window knows whether it is a Bot's: neutral, never a Bot or a new chat claimed early (Bots P1.8, B1). Non-English columns machine-written, awaiting a native read.
+    BotsChatOpening,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3280,7 +3282,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2269] = [
+    pub const ALL: [Key; 2270] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4584,6 +4586,7 @@ impl Key {
         Key::BotsErrStorage,
         Key::BotsErrUnreachable,
         Key::BotsErrNotApplied,
+        Key::BotsChatOpening,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -15225,6 +15228,17 @@ pub const ROWS: &[Row] = &[
         ar: "لم يُطبَّق هذا التغيير. تُعرض إعدادات البوت الحالية.",
         zh_hans: "该更改未被应用。显示的是 Bot 当前的设置。",
         ja: "その変更は適用されませんでした。Bot の現在の設定を表示しています。",
+    },
+    Row {
+        key: Key::BotsChatOpening,
+        en: "Opening this conversation…",
+        es: "Abriendo esta conversación…",
+        pt_br: "Abrindo esta conversa…",
+        de: "Diese Unterhaltung wird geöffnet…",
+        fr: "Ouverture de cette conversation…",
+        ar: "جارٍ فتح هذه المحادثة…",
+        zh_hans: "正在打开此对话…",
+        ja: "この会話を開いています…",
     },
     Row {
         key: Key::SizeBytes,

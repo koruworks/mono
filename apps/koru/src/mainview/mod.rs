@@ -698,6 +698,10 @@ pub struct MainView {
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
     ai_chat_folder_ask: Option<(AiChatFolderSource, koru_ai_ui::ChatId)>,
+    /// **Whose each conversation is, as far as the window knows** (Bots
+    /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
+    /// tab, and its one read off the window thread (`bots::labels`).
+    bot_labels: crate::bots::labels::ChatLabels,
     ai_computer_ask: Option<(AiChatFolderSource, koru_ai_ui::ComputerPickerKind)>,
     ai_import_asks: std::collections::HashMap<uuid::Uuid, (AiChatFolderSource, koru_ai_ui::ChatId)>,
     ai_focused: bool,
@@ -1837,6 +1841,7 @@ impl MainView {
             context_view: ContextView::new(),
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
+            bot_labels: crate::bots::labels::ChatLabels::default(),
             ai_computer_ask: None,
             ai_import_asks: std::collections::HashMap::new(),
             ai_chat: {
@@ -14965,6 +14970,11 @@ impl View for MainView {
             // The same for the Bots roster: only while an answer is owed to
             // a roster that is showing.
             (self.explore.showing_bots() && self.explore.bots_awaiting())
+                .then(|| Instant::now() + std::time::Duration::from_millis(50)),
+            // And while the window waits to learn whose a conversation it
+            // was asked to open is (Bots P1.8, B1).
+            self.bot_labels
+                .awaiting()
                 .then(|| Instant::now() + std::time::Duration::from_millis(50)),
             // **Not `tabs().active_tab()`, deliberately.** A feedback report is
             // sent by a worker that outlives the tab that wrote it, so the

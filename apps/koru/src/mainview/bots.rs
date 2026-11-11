@@ -9,16 +9,21 @@
 //! pane for a tab already on that `ChatId` (`TabView::chat_id`, which a Bot
 //! tab answers with its conversation before anything is read). Only when
 //! none is found is a tab made, and [`MainView::chat_tab`] makes it a **Bot
-//! tab** when the window knows the conversation is a Bot's: the roster's
-//! Bots and their main conversations. Where the window cannot know — a chat
-//! that is not a Bot's main conversation, or any Bot conversation before the
-//! engine labels a `Chat` with its Bot (QUESTIONS O33) — it does not guess:
-//! the ordinary tab opens, and the ordinary reader, which holds no
-//! `bots.manage`, cannot read a Bot's conversation into it.
+//! tab** when the conversation is a Bot's. The window knows that from the
+//! roster's main conversations and from every `Chat` label it has learned
+//! (`bots::labels`: a Bot tab's listed conversations, the roster's activity,
+//! a listed chat's label). **Where it does not know yet, it does not
+//! guess**: it asks the Bot owner once, off its thread, and shows a neutral
+//! *Opening this conversation…* tab ([`BotView::resolving`]) that becomes
+//! the Bot's tab on that conversation, or an ordinary chat tab in the same
+//! place ([`MainView::place_opening_tabs`]). A chat the window knows is
+//! ordinary — the Chats list's, the Koru AI pane's recents — opens exactly
+//! as it always did, with nothing asked.
 
 use super::MainView;
 use super::tab::{Tab, TabView};
 use crate::bots::BotView;
+use crate::bots::labels::{Known, Resolved};
 use crate::bots::roster::RosterBot;
 
 impl MainView {
@@ -28,25 +33,174 @@ impl MainView {
     }
 
     /// **A tab for an existing conversation that no tab shows yet**: the
-    /// Bot's tab when the conversation is a Bot's the window knows, an
-    /// ordinary chat tab otherwise. The one constructor every door to an
-    /// existing chat uses, so no door can open a Bot's conversation as an
-    /// ordinary chat.
+    /// Bot's tab on that conversation when it is a Bot's, an ordinary chat
+    /// tab when it is known not to be, and — when the window cannot tell yet
+    /// — a tab that says it is opening while the window asks. The one
+    /// constructor every door to an existing chat uses (a link, a search
+    /// hit, the Chats list, the place chooser, a split, a restored session),
+    /// so no door can open a Bot's conversation as an ordinary chat.
     pub(super) fn chat_tab(
-        &self,
+        &mut self,
         id: koru_ai_ui::ChatId,
         block: Option<koru_ai_ui::MessageBlockId>,
     ) -> Tab {
-        match self.bot_for_chat(id) {
-            Some(bot) if crate::bots::shown() => self.bot_tab(&bot),
-            _ => Tab::ai_chat_existing_at(id, block),
+        if !crate::bots::shown() {
+            return Tab::ai_chat_existing_at(id, block);
+        }
+        if let Some(bot) = self.bot_for_chat(id) {
+            return self.bot_tab_on(&bot, id, block);
+        }
+        match self.known_chat(id) {
+            Some(Known::Bot { bot, name }) => match self.roster_bot(bot) {
+                Some(listed) => self.bot_tab_on(&listed, id, block),
+                None => Tab::bot(BotView::labelled(bot, id, &name, block)),
+            },
+            Some(Known::Ordinary) => Tab::ai_chat_existing_at(id, block),
+            // Not known: ask, and say it is opening. With nothing to ask
+            // through — under test, or no thread — it opens as it always
+            // did.
+            None if self.bot_labels.can_ask(crate::search::gateway_root()) => {
+                self.bot_labels.ask(id, crate::search::gateway_root());
+                Tab::bot(BotView::resolving(id, block))
+            }
+            None => Tab::ai_chat_existing_at(id, block),
         }
     }
 
+    /// What the window knows about whose `chat` is: a label it learned, or
+    /// a chat one of its ordinary lists holds — those lists' reader cannot
+    /// see a Bot's conversation, so a chat they hold without a label is an
+    /// ordinary one.
+    fn known_chat(&mut self, chat: koru_ai_ui::ChatId) -> Option<Known> {
+        if let Some(known) = self.bot_labels.known(chat) {
+            return Some(known.clone());
+        }
+        if let Some(listed) = self.explore.chats().chats().iter().find(|c| c.id == chat) {
+            let label = listed.bot.clone();
+            self.bot_labels.learn_label(chat, label.as_ref());
+            return self.bot_labels.known(chat).cloned();
+        }
+        if self
+            .ai_chat
+            .recent_chats(usize::MAX)
+            .iter()
+            .any(|(listed, _)| *listed == chat)
+        {
+            self.bot_labels.learn_ordinary(chat);
+            return Some(Known::Ordinary);
+        }
+        None
+    }
+
+    /// The roster's row for `bot`, if it lists it.
+    fn roster_bot(&self, bot: koru_ai_core::bots::BotId) -> Option<RosterBot> {
+        self.explore
+            .bots()
+            .bots()
+            .iter()
+            .find(|row| row.id == bot)
+            .cloned()
+    }
+
     fn bot_tab(&self, bot: &RosterBot) -> Tab {
-        let mut view = BotView::opened(bot);
+        self.bot_tab_on(bot, bot.main_chat, None)
+    }
+
+    fn bot_tab_on(
+        &self,
+        bot: &RosterBot,
+        chat: koru_ai_ui::ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> Tab {
+        let mut view = BotView::opened_on(bot, chat, block);
         view.set_home_name(self.workspace_name(bot.home));
         Tab::bot(view)
+    }
+
+    /// **Place every tab that was opened before the window knew whose its
+    /// conversation is** (B1), from what the label read answered: it
+    /// becomes its Bot's tab, or an ordinary chat tab in the same place —
+    /// the same tab id, pin and position. A read that did not answer leaves
+    /// the tab saying the conversation cannot be opened; shown again, it is
+    /// asked once more. Every tab, not only the one in front: the read is
+    /// the one an ordinary chat tab made of its own before (its reader asks
+    /// for its chat when the tab is made). `true` when a strip owes a
+    /// remeasure or a repaint.
+    pub(super) fn place_opening_tabs(&mut self) -> bool {
+        let root = crate::search::gateway_root();
+        let failed: Vec<koru_ai_ui::ChatId> = self
+            .bot_labels
+            .poll()
+            .into_iter()
+            .filter(|(_, resolved)| *resolved == Resolved::Unavailable)
+            .map(|(chat, _)| chat)
+            .collect();
+        let can_ask = self.bot_labels.can_ask(root.clone());
+        let roster: Vec<RosterBot> = self.explore.bots().bots().to_vec();
+        let mut asks = Vec::new();
+        let mut moved = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let active = group.active();
+            let mut relabeled = false;
+            for (index, tab) in group.iter_tabs_mut().enumerate() {
+                let TabView::Bot(view) = &mut tab.view else {
+                    continue;
+                };
+                if view.bot().is_some() {
+                    continue;
+                }
+                let chat = view.chat_id();
+                let known = if can_ask {
+                    self.bot_labels.known(chat).cloned()
+                } else {
+                    Some(Known::Ordinary)
+                };
+                match known {
+                    Some(Known::Bot { bot, name }) => {
+                        view.resolved(bot, &name);
+                        if let Some(listed) = roster.iter().find(|row| row.id == bot) {
+                            view.refresh_from(listed);
+                        }
+                        relabeled |= tab.refresh_bot_label();
+                        moved = true;
+                    }
+                    Some(Known::Ordinary) => {
+                        let block = view.pending_block();
+                        become_ordinary_chat(tab, chat, block);
+                        relabeled = true;
+                    }
+                    None if failed.contains(&chat) => {
+                        view.opening_failed();
+                        moved = true;
+                    }
+                    None if index == active && view.take_opening_retry() => {
+                        asks.push(chat);
+                        moved = true;
+                    }
+                    None if !self.bot_labels.asking(chat)
+                        && view.opening() == Some(crate::bots::view::Opening::Asking) =>
+                    {
+                        // Not asked yet: the queue was full when it opened.
+                        asks.push(chat);
+                    }
+                    None => {}
+                }
+            }
+            if relabeled {
+                group.mark_widths_stale();
+                moved = true;
+            }
+        }
+        for chat in asks {
+            self.bot_labels.ask(chat, root.clone());
+        }
+        moved
+    }
+
+    /// The window's label read, for a test to hold the other end of.
+    #[cfg(test)]
+    pub(super) fn bot_labels_mut(&mut self) -> &mut crate::bots::labels::ChatLabels {
+        &mut self.bot_labels
     }
 
     /// The titles the window knows for the pages the Bot tabs in front
@@ -86,15 +240,23 @@ impl MainView {
             return false;
         }
         let chat = bot.main_chat;
-        let showing = self.panes.iter_groups().find_map(|(path, group)| {
-            group
-                .tabs()
-                .iter()
-                .position(|tab| tab.view.chat_id() == Some(chat))
-                .map(|index| (path, index))
+        // The tab on its main conversation, else the Bot's tab on another of
+        // its conversations: one Bot, one tab the roster brings forward.
+        let find = |of: &dyn Fn(&Tab) -> bool| {
+            self.panes.iter_groups().find_map(|(path, group)| {
+                group
+                    .tabs()
+                    .iter()
+                    .position(|tab| of(tab))
+                    .map(|index| (path, index))
+            })
+        };
+        let showing = find(&|tab: &Tab| tab.view.chat_id() == Some(chat)).or_else(|| {
+            find(&|tab: &Tab| matches!(&tab.view, TabView::Bot(view) if view.bot() == Some(bot.id)))
         });
         if let Some((path, index)) = showing {
-            if self.tabs().active_tab().view.chat_id() != Some(chat) {
+            let here = self.panes.focused_path() == &path && self.tabs().active() == index;
+            if !here {
                 self.record_jump();
             }
             self.panes.set_focus(path);
@@ -218,6 +380,7 @@ impl MainView {
     /// again. A comparison per Bot tab when nothing moved. `true` when the
     /// strip owes a remeasure.
     pub(super) fn refresh_bot_tabs(&mut self) -> bool {
+        let placed = self.place_opening_tabs();
         let names: Vec<(koru_store_core::ids::WorkspaceId, Option<String>)> = self
             .panes
             .iter_groups()
@@ -264,8 +427,25 @@ impl MainView {
                 moved = true;
             }
         }
-        moved
+        moved || placed
     }
+}
+
+/// **A tab that turned out to hold an ordinary chat** takes the ordinary
+/// chat tab's view and name, keeping its place: the same id (so Back and the
+/// strip's order hold), its pin and its home.
+fn become_ordinary_chat(
+    tab: &mut Tab,
+    chat: koru_ai_ui::ChatId,
+    block: Option<koru_ai_ui::MessageBlockId>,
+) {
+    let mut ordinary = Tab::ai_chat_existing_at(chat, block);
+    ordinary.id = tab.id;
+    ordinary.home = tab.home;
+    ordinary.pinned = tab.pinned;
+    ordinary.show_title = tab.show_title;
+    *tab = ordinary;
+    tab.invalidate_size();
 }
 
 #[cfg(test)]

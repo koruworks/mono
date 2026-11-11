@@ -74,8 +74,10 @@ fn the_same_chat_id_from_the_roster_and_elsewhere_focuses_one_container() {
 
 /// **A Bot's conversation never opens as an ordinary chat** where the window
 /// knows it is a Bot's: with no tab on it yet, a link opens the Bot's tab.
-/// A conversation the window cannot place stays an ordinary tab — the window
-/// does not guess (the engine's `Chat.bot` label is not built).
+/// A conversation the window cannot place, with no label read to ask it
+/// through (there is no link under test), opens as an ordinary chat did
+/// before the read existed; with one it asks first
+/// (`every_door_places_a_conversation_by_its_label`).
 #[test]
 fn a_known_bot_conversation_opens_as_its_bot_tab_from_a_link() {
     let (mut v, _w) = container();
@@ -156,7 +158,7 @@ fn a_bot_tab_is_restored_as_a_bot_tab() {
             _ => None,
         })
         .expect("the Bot tab came back");
-    assert_eq!(restored.bot(), id);
+    assert_eq!(restored.bot(), Some(id));
     assert!(
         restored.conversation().is_none(),
         "nothing is bound until the Bot service answers"
@@ -278,4 +280,233 @@ fn a_bot_tabs_settings_are_published_and_answer_a_clients_press() {
         koru_ai_core::bots::BotAccess::Workspace
     );
     assert!(view.settings().access_edited(), "drafted, not applied");
+}
+
+// ------------------------------------------- routing by the Bot label (B1)
+
+/// The window's label read, over a link this test holds the other end of.
+fn labels_link(
+    v: &mut MainView,
+) -> (
+    std::sync::mpsc::Receiver<crate::bots::link::Command>,
+    std::sync::mpsc::SyncSender<crate::bots::link::Answer>,
+) {
+    let (link, commands, answers) = crate::bots::link::BotsLink::test_pair();
+    *v.bot_labels_mut() = crate::bots::labels::ChatLabels::with_link(link);
+    (commands, answers)
+}
+
+/// The chats the window asked the label read about, in order.
+fn asked(commands: &std::sync::mpsc::Receiver<crate::bots::link::Command>) -> Vec<ChatId> {
+    commands
+        .try_iter()
+        .filter_map(|command| match command {
+            crate::bots::link::Command::Label { chat } => Some(chat),
+            _ => None,
+        })
+        .collect()
+}
+
+fn label_for(bot: &RosterBot) -> koru_ai_core::bots::BotChatLabel {
+    koru_ai_core::bots::BotChatLabel {
+        bot_id: bot.id,
+        bot_name: bot.name.clone(),
+        purpose: koru_ai_core::bots::BotChatPurpose::Additional,
+    }
+}
+
+/// The tab on `chat`, wherever it is.
+fn tab_on(v: &MainView, chat: ChatId) -> &Tab {
+    v.panes
+        .iter_groups()
+        .flat_map(|(_, group)| group.iter_tabs())
+        .find(|tab| tab.view.chat_id() == Some(chat))
+        .expect("a tab is on the chat")
+}
+
+/// Open `chat` through one of the doors a chat opens by.
+fn open_by(v: &mut MainView, door: &str, chat: ChatId) {
+    let target = ChatTarget {
+        chat: chat.as_uuid(),
+        block: None,
+    };
+    let opened = match door {
+        "link" => v.open_ai_chat_tab_for(chat),
+        "here" => v.open_chat_where(target, OpenWhere::SameTab),
+        "background" => v.open_chat_where(target, OpenWhere::BackgroundTab),
+        "split" => v.open_chat_where(target, OpenWhere::Split(SplitSide::Right)),
+        "search" => v.open_ai_chat_tab_at(chat, None),
+        _ => unreachable!(),
+    };
+    assert!(opened, "{door}");
+}
+
+/// **Every door opens a conversation the window cannot place as a neutral
+/// tab, asks once, and then places it**: a Bot's conversation becomes its
+/// Bot's tab on that conversation; an ordinary one becomes the ordinary chat
+/// tab in the same place, with the same tab id. Never a guess either way.
+#[test]
+fn every_door_places_a_conversation_by_its_label() {
+    for door in ["link", "here", "background", "split", "search"] {
+        for labelled in [true, false] {
+            let (mut v, mut w) = container();
+            let (commands, answers) = labels_link(&mut v);
+            let bot = scout();
+            let chat = ChatId::new();
+            open_by(&mut v, door, chat);
+            assert_eq!(asked(&commands), [chat], "{door}: asked once");
+            let tab = tab_on(&v, chat);
+            let id = tab.id;
+            let TabView::Bot(view) = &tab.view else {
+                panic!("{door}: a neutral tab while it is asked");
+            };
+            assert_eq!(view.bot(), None, "{door}: no Bot claimed early");
+            assert!(view.conversation().is_none(), "{door}: no chat started");
+            assert_eq!(
+                tab.label,
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::ChatsTabNew),
+                "{door}: never named a Bot early"
+            );
+            answers
+                .send(crate::bots::link::Answer::Labelled {
+                    chat,
+                    result: Ok(labelled.then(|| label_for(&bot))),
+                })
+                .unwrap();
+            let _ = View::maintain(&mut v, &mut w.ws, std::time::Instant::now());
+            let tab = tab_on(&v, chat);
+            assert_eq!(tab.id, id, "{door}: placed where it was");
+            match (&tab.view, labelled) {
+                (TabView::Bot(view), true) => {
+                    assert_eq!(view.bot(), Some(bot.id), "{door}");
+                    assert_eq!(view.chat_id(), chat, "{door}: on that conversation");
+                    assert_eq!(tab.label, "Scout", "{door}: named by the label");
+                }
+                (TabView::AiChat(_), false) => {}
+                _ => panic!("{door}: labelled {labelled}: the wrong kind of tab"),
+            }
+            assert_eq!(on_chat(&v, chat).len(), 1, "{door}: one tab");
+            assert!(asked(&commands).is_empty(), "{door}: asked nothing more");
+        }
+    }
+}
+
+/// **A conversation the window already knows opens at once**, with nothing
+/// asked: a label learned before is a Bot's tab straight away, and a chat
+/// learned to be ordinary is an ordinary chat exactly as before.
+#[test]
+fn a_known_conversation_opens_at_once_and_asks_nothing() {
+    let (mut v, _w) = container();
+    let (commands, _answers) = labels_link(&mut v);
+    let bot = scout();
+    let (theirs, mine) = (ChatId::new(), ChatId::new());
+    v.bot_labels_mut().learn_bot(theirs, bot.id, "Scout");
+    v.bot_labels_mut().learn_ordinary(mine);
+    assert!(v.open_ai_chat_tab_for(theirs));
+    assert!(v.open_ai_chat_tab_for(mine));
+    assert!(asked(&commands).is_empty(), "nothing asked");
+    assert_eq!(on_chat(&v, theirs), ["bot"]);
+    assert_eq!(on_chat(&v, mine), ["chat"]);
+    let TabView::Bot(view) = &tab_on(&v, theirs).view else {
+        unreachable!()
+    };
+    assert_eq!(view.bot(), Some(bot.id));
+}
+
+/// **A read that does not answer leaves the tab saying so** — never an
+/// ordinary chat in its place — and the tab asks once more the next time
+/// it is shown, not on a timer.
+#[test]
+fn an_unanswered_read_says_so_and_asks_again_when_shown() {
+    let (mut v, mut w) = container();
+    let (commands, answers) = labels_link(&mut v);
+    let chat = ChatId::new();
+    assert!(v.open_ai_chat_tab_for(chat));
+    assert_eq!(asked(&commands), [chat]);
+    answers
+        .send(crate::bots::link::Answer::Labelled {
+            chat,
+            result: Err(crate::bots::link::Failure::Unreachable),
+        })
+        .unwrap();
+    let now = std::time::Instant::now();
+    for _ in 0..3 {
+        let _ = View::maintain(&mut v, &mut w.ws, now);
+    }
+    let TabView::Bot(view) = &tab_on(&v, chat).view else {
+        panic!("still the neutral tab, not an ordinary chat");
+    };
+    assert_eq!(view.opening(), Some(crate::bots::view::Opening::Failed));
+    assert!(asked(&commands).is_empty(), "nothing polls");
+
+    // Away and back: one more ask.
+    let page = a_document(&mut w.ws, "Elsewhere");
+    v.open_node(&w.ws, page);
+    let _ = View::maintain(&mut v, &mut w.ws, now);
+    assert!(v.open_ai_chat_tab_for(chat), "back to it");
+    let _ = View::maintain(&mut v, &mut w.ws, now);
+    let _ = View::maintain(&mut v, &mut w.ws, now);
+    assert_eq!(asked(&commands), [chat], "asked once more");
+}
+
+/// **A saved ordinary-chat tab that turns out to be a Bot's** comes back as
+/// that Bot's tab on that conversation — the session wrote it before the
+/// window could tell — and a restored ordinary chat is placed as one.
+#[test]
+fn a_restored_chat_tab_that_is_a_bots_comes_back_as_its_bot_tab() {
+    let (_, mut w) = on_document();
+    let bot = scout();
+    let (theirs, mine) = (ChatId::new(), ChatId::new());
+    let settings = Settings {
+        tabs: vec![
+            (TabRef::Chat(theirs.as_uuid()), 0.0),
+            (TabRef::Chat(mine.as_uuid()), 0.0),
+        ],
+        ..Settings::default()
+    };
+    let mut back = MainView::new();
+    let (commands, answers) = labels_link(&mut back);
+    back.restore(&w, &settings);
+    let mut sent = asked(&commands);
+    sent.sort();
+    let mut both = vec![theirs, mine];
+    both.sort();
+    assert_eq!(sent, both, "each restored chat asked about once");
+    for (chat, label) in [(theirs, Some(label_for(&bot))), (mine, None)] {
+        answers
+            .send(crate::bots::link::Answer::Labelled {
+                chat,
+                result: Ok(label),
+            })
+            .unwrap();
+    }
+    let _ = View::maintain(&mut back, &mut w.ws, std::time::Instant::now());
+    assert_eq!(on_chat(&back, theirs), ["bot"]);
+    assert_eq!(on_chat(&back, mine), ["chat"]);
+    // Saved again, the Bot's is saved as its Bot's tab now.
+    let mut again = Settings::default();
+    back.capture_session(&mut again);
+    assert!(again.tabs.iter().any(|(tab, _)| *tab
+        == TabRef::Bot {
+            bot: bot.id.as_uuid(),
+            chat: theirs.as_uuid(),
+        }));
+}
+
+/// **Opened again from the roster, a Bot's tab on another of its
+/// conversations is brought forward** rather than a second tab opened on its
+/// main conversation.
+#[test]
+fn the_roster_brings_forward_the_bots_tab_on_another_conversation() {
+    let (mut v, mut w) = container();
+    let bot = scout();
+    let other = ChatId::new();
+    v.explore.bots_mut().listed_for_test(vec![bot.clone()]);
+    v.bot_labels_mut().learn_bot(other, bot.id, "Scout");
+    assert!(v.open_ai_chat_tab_for(other));
+    let page = a_document(&mut w.ws, "Elsewhere");
+    v.open_node(&w.ws, page);
+    assert!(v.open_bot_tab(bot.clone()));
+    assert_eq!(v.tabs().active_tab().view.chat_id(), Some(other));
+    assert!(on_chat(&v, bot.main_chat).is_empty(), "no second tab");
 }

@@ -174,8 +174,31 @@ pub(crate) struct Work {
     pub layouts: usize,
 }
 
+/// **Where a tab that does not yet know its Bot stands** (Bots P1.8, B1):
+/// the window asked whose the conversation is and shows this tab, neutral,
+/// until it answers.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub(crate) enum Opening {
+    #[default]
+    Asking,
+    /// The read did not answer: the tab says the conversation cannot be
+    /// opened right now, and is asked about again when it is next shown.
+    Failed,
+}
+
 pub(crate) struct BotView {
-    bot: BotId,
+    /// The Bot, once known. `None` only on a tab the window opened on a
+    /// conversation before it knew whose it was ([`Self::resolving`]).
+    bot: Option<BotId>,
+    /// Where finding out whose the conversation is stands, while `bot` is
+    /// `None`.
+    opening: Opening,
+    /// The name the conversation's Bot label carried, for the tab's name
+    /// until the Bot is read.
+    label_name: Option<String>,
+    /// The message block a link or a search hit named, shown once the
+    /// conversation is bound.
+    pending_block: Option<koru_ai_ui::MessageBlockId>,
     /// The conversation this tab shows: what it is found by.
     chat: ChatId,
     facts: Option<BotFacts>,
@@ -235,9 +258,12 @@ pub(crate) struct BotView {
 }
 
 impl BotView {
-    fn blank(bot: BotId, chat: ChatId) -> Self {
+    fn blank(bot: Option<BotId>, chat: ChatId) -> Self {
         Self {
             bot,
+            opening: Opening::Asking,
+            label_name: None,
+            pending_block: None,
             chat,
             facts: None,
             home_name: None,
@@ -276,10 +302,77 @@ impl BotView {
     /// the tab knows its Bot and binds its conversation at once; it asks
     /// the Bot service nothing more until it is opened again.
     pub(crate) fn opened(bot: &RosterBot) -> Self {
-        let mut view = Self::blank(bot.id, bot.main_chat);
+        Self::opened_on(bot, bot.main_chat, None)
+    }
+
+    /// **A Bot the roster knows, on one of its conversations** — its main
+    /// one or another the window learned is the Bot's — at `block` when a
+    /// link named one.
+    pub(crate) fn opened_on(
+        bot: &RosterBot,
+        chat: ChatId,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> Self {
+        let mut view = Self::blank(Some(bot.id), chat);
+        view.pending_block = block;
         view.asked = true;
         view.know(BotFacts::from(bot));
         view
+    }
+
+    /// **A conversation the window learned is `bot`'s**, from its label,
+    /// before the roster has listed that Bot: the tab knows which Bot and
+    /// reads it when shown. `name` is the label's, for the tab's name.
+    pub(crate) fn labelled(
+        bot: BotId,
+        chat: ChatId,
+        name: &str,
+        block: Option<koru_ai_ui::MessageBlockId>,
+    ) -> Self {
+        let mut view = Self::blank(Some(bot), chat);
+        view.label_name = Some(name.to_owned()).filter(|name| !name.trim().is_empty());
+        view.pending_block = block;
+        view
+    }
+
+    /// **A conversation whose Bot, if any, is not known yet** (B1): a link,
+    /// a search hit or a restored chat tab the window could not place. The
+    /// tab shows *Opening this conversation…* and nothing else — no
+    /// conversation, no link, no read of its own — until the window learns
+    /// whose it is and either names its Bot ([`Self::resolved`]) or puts an
+    /// ordinary chat tab in its place.
+    pub(crate) fn resolving(chat: ChatId, block: Option<koru_ai_ui::MessageBlockId>) -> Self {
+        let mut view = Self::blank(None, chat);
+        view.pending_block = block;
+        view
+    }
+
+    /// **The window learned the conversation is `bot`'s**: the tab becomes
+    /// that Bot's, on this conversation, and reads the Bot when shown.
+    pub(crate) fn resolved(&mut self, bot: BotId, name: &str) {
+        if self.bot.is_some() {
+            return;
+        }
+        self.bot = Some(bot);
+        self.label_name = Some(name.to_owned()).filter(|name| !name.trim().is_empty());
+    }
+
+    /// Whether this tab is still finding out whose its conversation is.
+    pub(crate) fn opening(&self) -> Option<Opening> {
+        self.bot.is_none().then_some(self.opening)
+    }
+
+    /// The window's read of whose the conversation is did not answer.
+    pub(crate) fn opening_failed(&mut self) {
+        if self.bot.is_none() {
+            self.opening = Opening::Failed;
+        }
+    }
+
+    /// The block a link named, for the ordinary tab that takes this one's
+    /// place.
+    pub(crate) fn pending_block(&self) -> Option<koru_ai_ui::MessageBlockId> {
+        self.pending_block
     }
 
     /// **A Bot tab put back from the session**: it knows which Bot and which
@@ -287,13 +380,13 @@ impl BotView {
     /// answers. Its conversation is not started before then — never as an
     /// ordinary chat in its place.
     pub(crate) fn restored(bot: BotId, chat: ChatId) -> Self {
-        Self::blank(bot, chat)
+        Self::blank(Some(bot), chat)
     }
 
     /// A tab over a link a test holds the other end of.
     #[cfg(test)]
     pub(crate) fn with_link(bot: BotId, chat: ChatId, link: BotsLink) -> Self {
-        let mut view = Self::blank(bot, chat);
+        let mut view = Self::blank(Some(bot), chat);
         view.started_link = true;
         view.link = Some(link);
         view
@@ -308,7 +401,9 @@ impl BotView {
         self.sync_name_field();
     }
 
-    pub(crate) fn bot(&self) -> BotId {
+    /// The Bot, once known: `None` while the tab is still finding out whose
+    /// its conversation is.
+    pub(crate) fn bot(&self) -> Option<BotId> {
         self.bot
     }
 
@@ -340,9 +435,21 @@ impl BotView {
     /// shown again; one never shown has nothing stale to refresh. Nothing is
     /// sent now: a hidden tab sends nothing.
     pub(crate) fn hidden(&mut self) {
-        if self.started_link && self.asked {
+        if (self.started_link && self.asked) || self.opening() == Some(Opening::Failed) {
             self.stale = true;
         }
+    }
+
+    /// **Shown again after a read of whose the conversation is failed**:
+    /// `true` once, and the tab says it is opening again — the window asks
+    /// once more.
+    pub(crate) fn take_opening_retry(&mut self) -> bool {
+        if self.opening() != Some(Opening::Failed) || !self.stale {
+            return false;
+        }
+        self.stale = false;
+        self.opening = Opening::Asking;
+        true
     }
 
     /// The embedded chat, once bound: the window's chat passes reach it
@@ -358,8 +465,12 @@ impl BotView {
     /// What the tab strip calls it: the Bot's name, or *Bot* until the Bot
     /// service has said.
     pub(crate) fn label(&self) -> String {
-        match &self.facts {
-            Some(facts) if !facts.name.trim().is_empty() => facts.name.trim().to_owned(),
+        match (&self.facts, &self.label_name) {
+            (Some(facts), _) if !facts.name.trim().is_empty() => facts.name.trim().to_owned(),
+            (None, Some(name)) => name.trim().to_owned(),
+            // Not known to be a Bot's: the name an ordinary chat tab wears
+            // before its chat is read, never *Bot*.
+            _ if self.bot.is_none() => t(self.lang, Words::ChatsTabNew).to_owned(),
             _ => t(self.lang, Words::BotsTabUnnamed).to_owned(),
         }
     }
@@ -377,7 +488,7 @@ impl BotView {
     /// The Bot service's newer word about this Bot — the roster's, opened
     /// again. `true` when the label may have moved.
     pub(crate) fn refresh_from(&mut self, bot: &RosterBot) -> bool {
-        if bot.id != self.bot {
+        if Some(bot.id) != self.bot {
             return false;
         }
         let facts = BotFacts::from(bot);
@@ -401,7 +512,13 @@ impl BotView {
             Some(view) => {
                 view.bind_owned(conversation);
             }
-            None => self.conversation = Some(AiChatView::owned(conversation)),
+            None => {
+                let mut view = AiChatView::owned(conversation);
+                if let Some(block) = self.pending_block.take() {
+                    view.open_link(self.chat, Some(block));
+                }
+                self.conversation = Some(view);
+            }
         }
         self.facts = Some(facts);
         self.load = Load::Ready;
@@ -412,6 +529,10 @@ impl BotView {
     /// conversation the first time, asks the Bot service once, and folds
     /// whatever it answered. `true` when a repaint is owed.
     pub(crate) fn shown_pass(&mut self, root: Option<PathBuf>) -> bool {
+        // Not known to be a Bot's yet: nothing of the tab's own to ask.
+        if self.bot.is_none() {
+            return false;
+        }
         if !self.started_link {
             self.started_link = true;
             self.link = BotsLink::start(root);
@@ -463,11 +584,11 @@ impl BotView {
 
     /// Ask for the Bot. A full queue leaves it unasked, for a later pass.
     fn ask(&mut self) -> bool {
-        let Some(link) = &self.link else {
+        let (Some(link), Some(bot)) = (&self.link, self.bot) else {
             return false;
         };
         let seq = self.seq.wrapping_add(1);
-        if !link.send(Command::Read { seq, bot: self.bot }) {
+        if !link.send(Command::Read { seq, bot }) {
             return false;
         }
         self.seq = seq;
@@ -492,14 +613,14 @@ impl BotView {
         let mut wrote = Vec::new();
         for answer in link.drain() {
             match answer {
-                Answer::Read { seq, bot, result } if seq == self.seq && bot == self.bot => {
+                Answer::Read { seq, bot, result } if seq == self.seq && Some(bot) == self.bot => {
                     taken = Some(result);
                 }
                 Answer::Wrote {
                     bot,
                     request,
                     result,
-                } if bot == self.bot => wrote.push((request, result)),
+                } if Some(bot) == self.bot => wrote.push((request, result)),
                 _ => {}
             }
         }
@@ -526,7 +647,7 @@ impl BotView {
     fn take(&mut self, result: Result<Bot, Failure>) {
         match result {
             // A Bot that says it is another is not this tab's.
-            Ok(bot) if bot.id == self.bot => {
+            Ok(bot) if Some(bot.id) == self.bot => {
                 self.settings.know(bot.clone());
                 self.know(BotFacts::from(bot));
             }
@@ -538,6 +659,11 @@ impl BotView {
 
     /// The line under the header's facts, when there is one to say.
     fn notice(&self) -> Option<Words> {
+        match self.opening() {
+            Some(Opening::Asking) => return Some(Words::BotsChatOpening),
+            Some(Opening::Failed) => return Some(Words::BotsConversationUnavailable),
+            None => {}
+        }
         match (self.load, self.facts.is_some()) {
             (Load::Cold | Load::Loading, false) => Some(Words::BotsBotLoading),
             (Load::Unavailable, _) => Some(Words::BotsBotUnavailable),
@@ -741,7 +867,9 @@ impl BotView {
 
     /// Fold what changes the published tree into the chrome's fingerprint.
     pub(crate) fn revise(&self, rev: &mut koru_workspace_host::accessibility::Revision) {
-        rev.byte(self.load as u8).uuid(self.bot.as_uuid());
+        rev.byte(self.load as u8)
+            .uuid(self.bot.map(|bot| bot.as_uuid()).unwrap_or_default())
+            .byte(self.opening as u8);
         match &self.facts {
             Some(facts) => {
                 rev.byte(1).str(&facts.name).bool(facts.paused);

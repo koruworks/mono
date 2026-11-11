@@ -34,7 +34,7 @@ impl Fixture {
                 assert_eq!(bot, self.bot.id, "about this tab's Bot");
                 seq
             }
-            Command::List { .. } | Command::Write { .. } => {
+            Command::List { .. } | Command::Write { .. } | Command::Label { .. } => {
                 panic!("a Bot tab only reads its Bot here")
             }
         }
@@ -272,7 +272,7 @@ impl Fixture {
     fn opened(bot: Bot) -> Self {
         let mut f = fixture();
         f.bot = bot;
-        f.view.bot = f.bot.id;
+        f.view.bot = Some(f.bot.id);
         f.view.chat = f.bot.main_chat;
         f.view.shown_pass(None);
         let seq = f.asked();
@@ -296,7 +296,7 @@ impl Fixture {
                 assert_eq!(bot, self.bot.id);
                 (request, *command)
             }
-            Command::Read { .. } | Command::List { .. } => panic!("not a write"),
+            _ => panic!("not a write"),
         }
     }
 
@@ -683,7 +683,7 @@ fn a_hidden_tab_sends_nothing_and_reads_once_when_shown_again() {
                 assert!(matches!(*command, BotCommand::ReadOperation { .. }));
                 polls += 1;
             }
-            Command::List { .. } => panic!("a tab lists nothing"),
+            Command::List { .. } | Command::Label { .. } => panic!("a tab lists nothing"),
         }
     }
     assert_eq!(reads, 1, "one read on showing");
