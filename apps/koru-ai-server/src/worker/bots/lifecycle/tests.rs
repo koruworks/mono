@@ -65,7 +65,7 @@ fn archive(bot: &Bot) -> LifecycleOperation {
         policy_request: Some(BotRequestId::mint().into()),
         policy_barrier: Some(koru_ai_core::bots::BotLifecycleBarrierState::Pending),
         stage: BotLifecycleStage::Incomplete,
-        refusal: Some(BotLifecycleRefusal::PersonHolding),
+        refusal: Some(BotLifecycleRefusal::WorkRunning),
         requested_at_ms: 1,
         updated_at_ms: 2,
         completed_at_ms: None,

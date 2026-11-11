@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Archive and Unarchive through the full worker (P1.7 S4, S4b), with the
-//! fake delegate owner the conversation tests use, extended with what
-//! Archive needs: the admission barrier, the policy barrier, and the per-Bot
-//! unsettled-work read (private IPC 12) over the conversation task and any
-//! tasks started through the public API, which have no conversation.
+//! Archive and Unarchive through the full worker (P1.7 S4, S4b, and the
+//! reversal of O27/O37), with the fake delegate owner the conversation tests
+//! use, extended with what Archive needs: the admission barrier, the policy
+//! barrier, and the per-Bot unsettled-work read (private IPC 12) over the
+//! conversation task and any tasks started through the public API, which
+//! have no conversation. Archive stops work as the person's Stop, so a
+//! session a person holds is ended, never waited for.
 use super::*;
+use koru_ai_core::bots::replay::BotReplayStop;
 use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, PENDING, TRASHED};
 use std::sync::atomic::AtomicUsize;
 
 /// A task the fake owner runs that no conversation of this writer drives.
 struct ApiTask {
     view: d::BotAdmissionView,
-    /// Interrupts the owner still answers as pending before it settles.
+    /// Stops the owner still answers as unconfirmed before it settles.
     pending: usize,
-    /// A person takes this task's session the moment an Interrupt reaches it.
-    take_on_interrupt: bool,
+    /// A person takes this task's session the moment the first Stop reaches
+    /// it. The owner's Stop is lease-free, so it ends the session anyway.
+    take_on_stop: bool,
+    /// The session owner reports a person holding this session.
     held: bool,
 }
 
@@ -24,6 +29,9 @@ struct Archiving {
     /// The session owner reports a person holding the conversation task's
     /// session (or asking for it).
     holding: AtomicBool,
+    /// The conversation task's Stops answer unconfirmed and never reach the
+    /// owner, so the Archive stays unfinished.
+    stop_pending: AtomicBool,
     /// The next policy installs answer Pending (effects still in flight).
     policy_pending: Mutex<usize>,
     barriers: Mutex<Vec<d::BotAdmissionBarrier>>,
@@ -31,7 +39,8 @@ struct Archiving {
     api: Mutex<Vec<ApiTask>>,
     /// Unsettled-work reads.
     reads: AtomicUsize,
-    stops: AtomicUsize,
+    /// Every Stop, by Run, whoever sent it.
+    stops: Mutex<Vec<d::RunId>>,
     /// Every Interrupt, by Run, whoever sent it.
     interrupts: Mutex<Vec<d::RunId>>,
 }
@@ -79,9 +88,29 @@ impl Archiving {
             .filter(|r| **r == run)
             .count()
     }
+    fn stops_of(&self, run: d::RunId) -> usize {
+        self.stops
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| **r == run)
+            .count()
+    }
+    /// The conversation task's Run, once it was submitted.
+    fn conversation_run(&self) -> d::RunId {
+        self.native
+            .state
+            .lock()
+            .unwrap()
+            .submission
+            .as_ref()
+            .unwrap()
+            .request
+            .run
+    }
 }
-fn pending() -> koru_delegate_api::Failure {
-    koru_delegate_api::Failure::new("bot_interrupt_pending", "fixture cleanup pending", true)
+fn unconfirmed() -> koru_delegate_api::Failure {
+    koru_delegate_api::Failure::new("bot_stop_unconfirmed", "fixture stop unconfirmed", true)
 }
 impl BotDelegatePort for Archiving {
     fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
@@ -128,30 +157,45 @@ impl BotDelegatePort for Archiving {
                     },
                 })
             }
-            D::Interrupt { key, fence } => {
+            D::Interrupt { key, .. } => {
                 self.interrupts.lock().unwrap().push(key.run);
+                // Lifecycle never interrupts; only a conversation's own
+                // automatic lane does, and that is the conversation fake's.
+                assert!(
+                    !self
+                        .api
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|t| t.view.run == key.run),
+                    "lifecycle interrupted an API task"
+                );
+                self.native.execute(command)
+            }
+            D::Stop { key, fence } => {
+                self.stops.lock().unwrap().push(key.run);
                 let mut api = self.api.lock().unwrap();
                 if let Some(task) = api.iter_mut().find(|t| t.view.run == key.run) {
                     // Only the owner's current fence is accepted.
                     assert_eq!(fence, &task.view.fence);
-                    if task.take_on_interrupt {
-                        // The person took the session after the driver's
-                        // read: the owned cleanup refuses, nothing ends it.
-                        task.take_on_interrupt = false;
+                    if task.take_on_stop {
+                        // A person takes the session mid-Archive; the
+                        // owner's Stop needs no lease, so it ends it anyway.
+                        task.take_on_stop = false;
                         task.held = true;
                     }
-                    if task.held || task.pending > 0 {
-                        task.pending = task.pending.saturating_sub(1);
-                        return Err(pending());
+                    if task.pending > 0 {
+                        task.pending -= 1;
+                        return Err(unconfirmed());
                     }
                     task.view.state = d::BotAdmissionState::Settled;
+                    task.held = false;
                     return Ok(BotReply::Applied);
                 }
                 drop(api);
-                self.native.execute(command)
-            }
-            D::Stop { .. } => {
-                self.stops.fetch_add(1, Ordering::SeqCst);
+                if self.stop_pending.load(Ordering::SeqCst) {
+                    return Err(unconfirmed());
+                }
                 drop(self.native.execute(command));
                 Ok(BotReply::Applied)
             }
@@ -271,28 +315,22 @@ fn read_operation(
     bot: BotId,
     request: BotRequestId,
 ) -> BotLifecycleProgress {
-    // A read prepared just before the operation moves the Bot's revision
-    // answers `revision_conflict` (its proof is bound to the revision it was
-    // prepared at); read again.
-    for _ in 0..50 {
-        match client.bots(
-            context(true),
-            BotCommand::ReadLifecycleOperation {
-                request_id: request,
-                bot_id: bot,
-            },
-        ) {
-            Ok(BotResponse::Lifecycle { operation }) => return operation,
-            Err(error) if error.code == BotError::RevisionConflict.code() => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            other => panic!(
-                "lifecycle read: {:?}",
-                other.map(|_| ()).map_err(|error| error.code)
-            ),
-        }
+    // One read, never retried: a progress read is not fenced to the Bot
+    // revision it was prepared at, so an operation moving the revision while
+    // the read is prepared cannot refuse it.
+    match client.bots(
+        context(true),
+        BotCommand::ReadLifecycleOperation {
+            request_id: request,
+            bot_id: bot,
+        },
+    ) {
+        Ok(BotResponse::Lifecycle { operation }) => operation,
+        other => panic!(
+            "lifecycle read: {:?}",
+            other.map(|_| ()).map_err(|error| error.code)
+        ),
     }
-    panic!("lifecycle read kept conflicting")
 }
 
 /// Read the operation until it stops moving.
@@ -359,9 +397,17 @@ fn api_task(bot: &Bot, state: d::BotAdmissionState, pending: usize) -> ApiTask {
             }),
         },
         pending,
-        take_on_interrupt: false,
+        take_on_stop: false,
         held: false,
     }
+}
+
+/// The task's AI attempt ended as the person's Stop: Cancelled, with the
+/// owner-stop reason only `cancel_bot_chat` records.
+fn stopped_by_the_person(repository: &Repository, attempt: InferenceAttemptId) -> bool {
+    repository.attempt(attempt).unwrap().unwrap().status == AttemptStatus::Cancelled
+        && repository.bot_replay_state(attempt).unwrap().stop_reason
+            == Some(BotReplayStop::OwnerUnavailable)
 }
 
 /// An Archive captured by an earlier worker straight into the journal.
@@ -388,7 +434,7 @@ fn captured_archive(repository: &mut Repository, bot: &Bot) -> BotRequestId {
 }
 
 #[test]
-fn archive_interrupts_the_running_task_without_stop_and_unarchive_starts_nothing() {
+fn archive_stops_the_running_task_as_the_persons_stop_and_unarchive_starts_nothing() {
     let Running {
         worker,
         client,
@@ -427,12 +473,14 @@ fn archive_interrupts_the_running_task_without_stop_and_unarchive_starts_nothing
             .iter()
             .all(|p| !p.effects_allowed && p.config_revision == bot.revision + 1)
     );
-    // The work came from the delegate and ended as an automatic
-    // interruption: the person's Stop never reached the owner.
+    // The work came from the delegate and was stopped as the person's Stop,
+    // through the conversation's own Stop lane; nothing was interrupted.
+    let run = port.conversation_run();
     assert!(port.reads.load(Ordering::SeqCst) >= 1);
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
-    assert_eq!(port.native.state.lock().unwrap().stop_calls, 0);
-    assert!(port.native.state.lock().unwrap().interrupt_calls >= 1);
+    assert!(port.stops_of(run) >= 1);
+    assert!(port.native.state.lock().unwrap().stop_calls >= 1);
+    assert_eq!(port.native.state.lock().unwrap().interrupt_calls, 0);
+    assert!(port.interrupts.lock().unwrap().is_empty());
     // Out of the roster, in the Archived filter, its history still readable.
     let Ok(BotResponse::List { bots }) = client.bots(
         context(true),
@@ -461,7 +509,7 @@ fn archive_interrupts_the_running_task_without_stop_and_unarchive_starts_nothing
     );
     // Unarchive: active again, still paused, nothing started or resumed.
     let begins = port.native.state.lock().unwrap().begin;
-    let interrupts = port.interrupts.lock().unwrap().len();
+    let stops = port.stops.lock().unwrap().len();
     let policies = port.policies.lock().unwrap().len();
     let BotResponse::Lifecycle { operation } = client
         .bots(
@@ -485,7 +533,8 @@ fn archive_interrupts_the_running_task_without_stop_and_unarchive_starts_nothing
     assert_eq!(restored.revision, bot.revision + 3);
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(port.native.state.lock().unwrap().begin, begins);
-    assert_eq!(port.interrupts.lock().unwrap().len(), interrupts);
+    assert_eq!(port.stops.lock().unwrap().len(), stops);
+    assert!(port.interrupts.lock().unwrap().is_empty());
     assert_eq!(port.policies.lock().unwrap().len(), policies);
     assert!(
         port.policies
@@ -495,23 +544,46 @@ fn archive_interrupts_the_running_task_without_stop_and_unarchive_starts_nothing
             .all(|p| !p.effects_allowed),
         "no Run's native writes were re-allowed"
     );
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
     let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
-    // A task Archive ended reads as interrupted, not as stopped by the person.
-    assert_eq!(
-        repository.attempt(attempt).unwrap().unwrap().status,
-        AttemptStatus::Interrupted
-    );
+    // A task Archive stopped reads as stopped by the person, not interrupted.
+    assert!(stopped_by_the_person(&repository, attempt));
 }
 
 #[test]
-fn a_person_holding_an_ended_task_parks_archive_and_nothing_ends_their_session() {
+fn archive_ends_a_running_session_a_person_holds_and_completes() {
+    let Running {
+        worker,
+        client,
+        returned,
+        port,
+        bot,
+        attempt,
+    } = running(true);
+    let request = BotRequestId::mint();
+    archive(&client, &bot, request);
+    let done = settled(&client, bot.id, request);
+    // O27 reversed: not parked, not waited for. The person's Stop ended it.
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    assert_eq!(done.refusal, None);
+    assert!(port.stops_of(port.conversation_run()) >= 1);
+    assert!(port.native.state.lock().unwrap().stopped);
+    assert!(port.interrupts.lock().unwrap().is_empty());
+    assert_eq!(read_bot(&client, bot.id).lifecycle, BotLifecycle::Archived);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+    let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(stopped_by_the_person(&repository, attempt));
+}
+
+#[test]
+fn archive_ends_a_held_session_whose_task_already_ended_and_completes() {
     // The task already ended in AI as Interrupted (a replay gap), Failed (the
-    // native turn failed) or natively Cancelled (a takeover "now"), so its
-    // Run no longer reads as running under a person. The session owner says
-    // otherwise, and that is what Archive asks.
+    // native turn failed) or natively Cancelled (a takeover "now"), while a
+    // person still holds its session, so the automatic lane's Interrupt
+    // stays pending. Archive is the person's Stop: it reaches the owner for
+    // each of those states and ends the session (O27, O37 reversed).
     for (variant, status) in [
         ("interrupted", AttemptStatus::Interrupted),
         ("failed", AttemptStatus::Failed),
@@ -546,62 +618,33 @@ fn a_person_holding_an_ended_task_parks_archive_and_nothing_ends_their_session()
                 .read_attempt(context(true), attempt)
                 .is_ok_and(|a| a.attempt.status == status)
         });
+        assert_eq!(port.native.state.lock().unwrap().stop_calls, 0, "{variant}");
         let request = BotRequestId::mint();
         archive(&client, &bot, request);
-        let parked = settled(&client, bot.id, request);
-        assert_eq!(parked.stage, BotLifecycleStage::Incomplete, "{variant}");
-        assert_eq!(
-            parked.refusal,
-            Some(BotLifecycleRefusal::PersonHolding),
-            "{variant}"
-        );
-        // O27: no Stop and no termination reached the session.
-        assert_eq!(port.stops.load(Ordering::SeqCst), 0, "{variant}");
-        assert_eq!(port.native.state.lock().unwrap().stop_calls, 0, "{variant}");
-        assert!(!port.native.state.lock().unwrap().interrupt_settled);
-        // The Bot's read names the parked operation; the hold says it waits.
-        let current = read_bot(&client, bot.id);
-        let open = current.open_operation.clone().expect("open operation");
-        assert_eq!(open.request_id, request);
-        assert_eq!(open.stage, BotLifecycleStage::Incomplete);
-        assert_eq!(open.refusal, Some(BotLifecycleRefusal::PersonHolding));
-        let refused = client
-            .bots(
-                context(true),
-                BotCommand::CreateChat {
-                    request_id: BotRequestId::mint(),
-                    bot_id: bot.id,
-                },
-            )
-            .unwrap_err();
-        assert_eq!(refused.code, PENDING);
-        assert!(
-            refused.message.contains("waiting for you"),
-            "{}",
-            refused.message
-        );
-        // Not retried on its own while it waits.
-        let reads = port.reads.load(Ordering::SeqCst);
-        std::thread::sleep(Duration::from_millis(600));
-        assert_eq!(port.reads.load(Ordering::SeqCst), reads);
-        // The person hands back; the owner's cleanup settles the task.
-        port.holding.store(false, Ordering::SeqCst);
-        port.native.hold_interrupt.store(false, Ordering::SeqCst);
-        until("the interruption settled", || {
-            port.native.state.lock().unwrap().interrupt_settled
-        });
-        // Resumed by its id alone, at the revision the read reported.
-        archive_at(&client, &bot, request, current.revision).unwrap();
         let done = settled(&client, bot.id, request);
+        // Not parked as `person_holding`: the person's Stop ended the session.
         assert_eq!(
             done.stage,
             BotLifecycleStage::Completed,
             "{variant} {done:?}"
         );
-        assert_eq!(port.stops.load(Ordering::SeqCst), 0, "{variant}");
+        assert_eq!(done.refusal, None, "{variant}");
+        assert!(port.stops_of(port.conversation_run()) >= 1, "{variant}");
+        assert!(
+            port.native.state.lock().unwrap().stop_calls >= 1,
+            "{variant}"
+        );
+        // The held automatic interruption never settled it; the Stop did.
+        assert!(
+            !port.native.state.lock().unwrap().interrupt_settled,
+            "{variant}"
+        );
+        assert_eq!(read_bot(&client, bot.id).lifecycle, BotLifecycle::Archived);
         worker.shutdown();
         assert_eq!(worker.join(), WorkerExit::Clean);
         let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+        // A terminal attempt status is absorbing (O25): it keeps how it ended,
+        // and the owner records the person's Stop as the Run's Cancelled.
         assert_eq!(
             repository.attempt(attempt).unwrap().unwrap().status,
             status,
@@ -615,7 +658,9 @@ fn an_api_task_holds_archive_until_the_delegate_settles_it_and_queued_work_never
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let port = Arc::new(Archiving::default());
-    let executing = api_task(&bot, d::BotAdmissionState::Executing, usize::MAX);
+    let mut executing = api_task(&bot, d::BotAdmissionState::Executing, usize::MAX);
+    // A person holds this API-started session. That is not a reason to wait.
+    executing.held = true;
     let reserved = api_task(&bot, d::BotAdmissionState::Reserved, 0);
     let queued = api_task(&bot, d::BotAdmissionState::Queued, 0);
     let runs = [executing.view.run, reserved.view.run, queued.view.run];
@@ -627,59 +672,55 @@ fn an_api_task_holds_archive_until_the_delegate_settles_it_and_queued_work_never
     let client = worker.client();
     let request = BotRequestId::mint();
     archive(&client, &bot, request);
-    until("every API task interrupted", || {
-        runs.iter().all(|run| port.interrupts_of(*run) >= 1)
+    until("every API task stopped", || {
+        runs.iter().all(|run| port.stops_of(*run) >= 1)
     });
-    // The reserved and queued tasks settled at their first interruption; the
-    // executing one is still cleaning up, and Archive waits for it.
+    // The reserved and queued tasks settled at their first Stop; the
+    // executing one's Stop is still unconfirmed, and Archive waits for it:
+    // an acknowledgement is not proof.
     std::thread::sleep(Duration::from_millis(800));
     let waiting = read_operation(&client, bot.id, request);
     assert_eq!(waiting.stage, BotLifecycleStage::Settling, "{waiting:?}");
-    assert_eq!(port.interrupts_of(runs[2]), 1, "queued work is not re-sent");
+    assert_eq!(port.stops_of(runs[2]), 1, "queued work is not re-sent");
     assert!(
-        port.interrupts_of(runs[0]) >= 2,
-        "the pending one is re-read"
+        port.stops_of(runs[0]) >= 2,
+        "the unconfirmed one is re-read"
     );
     port.api.lock().unwrap()[0].pending = 0;
     let done = settled(&client, bot.id, request);
     assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
     assert!(port.unsettled(bot.id).is_empty());
-    // Nothing started: no conversation turn, no Stop.
+    // Nothing started (no conversation turn) and nothing was interrupted.
     assert_eq!(port.native.state.lock().unwrap().begin, 0);
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
+    assert!(port.interrupts.lock().unwrap().is_empty());
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
 #[test]
-fn a_takeover_after_the_read_keeps_its_session_and_parks_archive() {
+fn a_takeover_that_begins_mid_archive_is_ended_too() {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let port = Arc::new(Archiving::default());
-    let mut task = api_task(&bot, d::BotAdmissionState::Executing, 0);
-    // The read finds the session free; the person takes it before the
-    // Interrupt arrives.
-    task.take_on_interrupt = true;
+    // The first read finds the session free. The person takes it as the
+    // first Stop arrives, which answers unconfirmed; the next round's Stop
+    // ends it, held or not, because the owner's Stop needs no lease.
+    let mut task = api_task(&bot, d::BotAdmissionState::Executing, 1);
+    task.take_on_stop = true;
     let run = task.view.run;
     port.api.lock().unwrap().push(task);
     let (worker, _returned) = spawn(repository, authority, port.clone());
     let client = worker.client();
     let request = BotRequestId::mint();
     archive(&client, &bot, request);
-    let parked = settled(&client, bot.id, request);
-    assert_eq!(parked.stage, BotLifecycleStage::Incomplete);
-    assert_eq!(parked.refusal, Some(BotLifecycleRefusal::PersonHolding));
-    // One Interrupt, refused by the owner's own lease check; no Stop.
-    assert_eq!(port.interrupts_of(run), 1);
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
-    assert!(port.api.lock().unwrap()[0].held);
-    // Handed back: resuming finishes it.
-    port.api.lock().unwrap()[0].held = false;
-    let current = read_bot(&client, bot.id);
-    archive_at(&client, &bot, request, current.revision).unwrap();
     let done = settled(&client, bot.id, request);
     assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
+    assert_eq!(done.refusal, None);
+    assert_eq!(port.stops_of(run), 2);
+    assert_eq!(port.interrupts_of(run), 0);
+    let task = &port.api.lock().unwrap()[0];
+    assert_eq!(task.view.state, d::BotAdmissionState::Settled);
+    assert!(!task.held, "the held session was ended");
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
@@ -714,7 +755,7 @@ fn a_parked_archive_rereads_the_delegate_after_a_repeat_and_after_an_ai_restart(
     // delegate, which still runs it, so the Archive waits.
     archive_at(&client, &bot, request, current.revision).unwrap();
     until("a delegate read after the repeat", || {
-        port.reads.load(Ordering::SeqCst) >= 1 && port.interrupts_of(run) >= 1
+        port.reads.load(Ordering::SeqCst) >= 1 && port.stops_of(run) >= 1
     });
     let moving = read_operation(&client, bot.id, request);
     assert_eq!(moving.stage, BotLifecycleStage::Settling, "{moving:?}");
@@ -736,7 +777,7 @@ fn a_parked_archive_rereads_the_delegate_after_a_repeat_and_after_an_ai_restart(
     port.api.lock().unwrap()[0].pending = 0;
     let done = settled(&client, bot.id, request);
     assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
+    assert_eq!(port.interrupts_of(run), 0);
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
@@ -813,13 +854,33 @@ fn while_archive_is_unfinished_native_evidence_is_its_effects_off_barrier() {
         port,
         bot,
         attempt: _,
-    } = running(true);
+    } = running(false);
+    // The conversation task's Stop stays unconfirmed, so the Archive keeps
+    // settling: unfinished and not reversed.
+    port.stop_pending.store(true, Ordering::SeqCst);
     let request = BotRequestId::mint();
     archive(&client, &bot, request);
-    // A person holds the live task: parked, unfinished, not reversed.
+    let run = port.conversation_run();
+    until("the task's Stop reached the owner", || {
+        port.stops_of(run) >= 1
+    });
     assert_eq!(
-        settled(&client, bot.id, request).refusal,
-        Some(BotLifecycleRefusal::PersonHolding)
+        read_operation(&client, bot.id, request).stage,
+        BotLifecycleStage::Settling
+    );
+    // The Bot is held while it settles.
+    assert_eq!(
+        client
+            .bots(
+                context(true),
+                BotCommand::CreateChat {
+                    request_id: BotRequestId::mint(),
+                    bot_id: bot.id,
+                },
+            )
+            .unwrap_err()
+            .code,
+        PENDING
     );
     let installed = port.policies.lock().unwrap()[0].clone();
     let submission = port
@@ -867,7 +928,7 @@ fn a_restart_resumes_a_captured_archive_from_the_journal_and_waits_for_the_barri
     assert!(!port.barriers.lock().unwrap().is_empty());
     assert!(port.policies.lock().unwrap().len() >= 3);
     assert!(port.reads.load(Ordering::SeqCst) >= 1);
-    assert_eq!(port.stops.load(Ordering::SeqCst), 0);
+    assert!(port.stops.lock().unwrap().is_empty());
     assert!(port.interrupts.lock().unwrap().is_empty());
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
@@ -876,6 +937,105 @@ fn a_restart_resumes_a_captured_archive_from_the_journal_and_waits_for_the_barri
         repository.bot_any_lifecycle(bot.id).unwrap().unwrap().1,
         BotLifecycle::Archived
     );
+}
+
+#[test]
+fn a_progress_read_prepared_before_the_revision_moves_still_answers() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let request = captured_archive(&mut repository, &bot);
+    repository
+        .park_bot_lifecycle(
+            bot.user_scope,
+            request,
+            BotLifecycleRefusal::OwnerUnavailable,
+            2,
+        )
+        .unwrap();
+    let current = repository.bot_any_lifecycle(bot.id).unwrap().unwrap().0;
+    let pause = repository
+        .bot_lifecycle_operation(bot.user_scope, request)
+        .unwrap()
+        .unwrap()
+        .pause_request
+        .unwrap();
+    let chat = repository
+        .chat_with_access(
+            bot.main_chat,
+            &ChatReadAccess::authorized(vec![bot.main_chat]),
+        )
+        .unwrap()
+        .unwrap();
+    let prepared = proof(authority.clone(), &current, chat);
+    let (worker, _returned) = spawn(
+        repository,
+        authority.clone(),
+        Arc::new(Archiving::default()),
+    );
+    let client = worker.client();
+    // Startup recovery sends the captured pause receipt first; once it is
+    // accepted nothing else inspects authority, so the gate below holds the
+    // read's own preparation.
+    until("the pause receipt was accepted", || {
+        matches!(
+            client.bots(
+                context(true),
+                BotCommand::ReadOperation {
+                    request_id: pause,
+                    bot_id: bot.id,
+                },
+            ),
+            Ok(BotResponse::Operation { operation })
+                if operation.status == BotOperationStatus::Accepted
+        )
+    });
+    // The read's preparation takes its snapshot (this revision), then waits
+    // in the authority inspection.
+    let (entered_tx, entered) = sync_channel(1);
+    let (release_tx, release) = sync_channel(1);
+    *authority.inspect_gate.lock().unwrap() = Some((entered_tx, release));
+    let reader = {
+        let client = client.clone();
+        std::thread::spawn(move || {
+            client.bots(
+                context(true),
+                BotCommand::ReadLifecycleOperation {
+                    request_id: request,
+                    bot_id: bot.id,
+                },
+            )
+        })
+    };
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    // Meanwhile the revision moves: reversing the parked Archive raises it.
+    // Its context is already prepared, so it does not queue behind the read.
+    let (reply, response) = sync_channel(1);
+    client
+        .send(WorkerCommand::Bots {
+            context: prepared,
+            request: BotCommand::Restore {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+                expected_revision: current.revision,
+                source_request_id: request,
+            },
+            reply,
+        })
+        .unwrap();
+    assert!(matches!(
+        response.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Ok(BotResponse::Lifecycle { .. })
+    ));
+    release_tx.send(()).unwrap();
+    // A progress read is not fenced to the revision it was prepared at.
+    let read = reader.join().unwrap();
+    assert!(
+        matches!(&read, Ok(BotResponse::Lifecycle { operation }) if operation.request_id == request),
+        "{:?}",
+        read.map(|_| ()).map_err(|error| error.code)
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
 #[test]

@@ -110,6 +110,9 @@ closed_vocabulary! {
     BotLifecycleRefusal {
         OwnerUnavailable => "owner_unavailable",
         WorkRunning => "work_running",
+        // Reserved and unused: Archive and Trash end a held session as the
+        // person's Stop (O27 reversed), so nothing parks for it. It stays
+        // because ai18's CHECK list, which is committed, names it.
         PersonHolding => "person_holding",
         MemberConflict => "member_conflict",
         StoreUnavailable => "store_unavailable",

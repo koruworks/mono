@@ -385,13 +385,20 @@ impl WorkerState {
             }
         }
         let destination = branch_destination(&command);
+        // A Bot read answers from the row as it is at dispatch, and proves the
+        // owner and the current workspace authority against that row there,
+        // so its proof is not fenced to the revision it was prepared at: an
+        // operation moving the revision (Archive's pause, its completion)
+        // must not refuse a client polling its progress.
+        let read = matches!(&command, WorkerCommand::Bots { request, .. }
+            if super::lifecycle::bot_read_command(request));
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match super::lifecycle::provable_bot(&self.repository, *id, &command) {
                 Ok(Some(bot))
                     if (owner == Some(*id) || (owner.is_none() && destination == Some(*chat)))
-                        && bot.revision == *revision
-                        && bot.policy_revision == *policy => {}
+                        && (read
+                            || (bot.revision == *revision && bot.policy_revision == *policy)) => {}
                 _ => {
                     command.refuse(bot_failure(BotError::RevisionConflict));
                     return;

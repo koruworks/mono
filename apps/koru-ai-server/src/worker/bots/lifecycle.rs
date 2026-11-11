@@ -12,15 +12,15 @@
 //! 2. `settling`: submissions the owner has not acknowledged are resolved
 //!    first (the pause makes it refuse new admissions, so the set closes).
 //!    Then the delegate is asked, every round, which of the Bot's admissions
-//!    it has not settled. A person holding one of their sessions parks the
-//!    operation as `incomplete/person_holding` before anything is sent (O27).
-//!    Otherwise each is ended as an automatic interruption: a live
-//!    conversation task through its own finishing lane, anything else (an
-//!    API-started task, queued work) by the owner's `Interrupt`. Neither is
-//!    the person's Stop: the owner's cleanup checks the session lease itself,
-//!    so a person who takes the session after the read keeps it. The
-//!    operation waits until the delegate reports nothing unsettled and the
-//!    barrier is effective (native effects drained).
+//!    it has not settled, and each is stopped as the person's own Stop
+//!    (O27, O37): Archive is the person's explicit action, so it ends a
+//!    session even while a person holds it, and the task reads as stopped.
+//!    A live conversation task goes through its own Stop lane, so its AI
+//!    attempt records the Stop; anything else (an API-started task, queued
+//!    work, which never starts) is stopped by the driver by key. An
+//!    acknowledgement is not proof: the operation waits until the delegate
+//!    reports nothing unsettled and the barrier is effective (native
+//!    effects drained).
 //! 3. One transaction archives the Bot. Nothing is hidden or removed.
 //!
 //! A restart resumes from the journal's stage, never recaptures, and re-asks
@@ -122,9 +122,9 @@ pub(in crate::worker) struct LifecycleJob {
 enum Step {
     /// Install (idempotently) the effects-off policy barrier.
     Policy(BotPolicyBarrier),
-    /// Ask the delegate what of the Bot it has not settled, then interrupt
-    /// each of those that no live conversation task of this writer is
-    /// already finishing (`live`). Nothing is sent when a person holds one.
+    /// Ask the delegate what of the Bot it has not settled, then stop, as
+    /// the person's Stop, each of those that is not a live conversation task
+    /// of this writer (`live`), which stops through its own lane.
     Settle { bot: BotId, live: HashSet<RunId> },
 }
 pub(in crate::worker) struct LifecycleResult {
@@ -137,12 +137,10 @@ enum Outcome {
 }
 /// The delegate's answer for one settling round.
 struct Unsettled {
-    /// Every Run it reported not settled, before this round's interruptions.
+    /// Every Run it reported not settled, before this round's Stops.
     runs: Vec<RunId>,
     /// More queued work exists past the page.
     more: bool,
-    /// A person holds (or asked for) one of these sessions; nothing was sent.
-    held: bool,
 }
 
 fn unavailable() -> koru_delegate_api::Failure {
@@ -204,26 +202,20 @@ impl LifecycleJob {
                         return Err(unavailable());
                     }
                     let runs = work.admissions.iter().map(|a| a.admission.run).collect();
-                    // O27: a person holds a session. Nothing is sent at all.
-                    if work.admissions.iter().any(|a| a.held) {
-                        return Ok(Unsettled {
-                            runs,
-                            more: work.more,
-                            held: true,
-                        });
-                    }
+                    // Whether a person holds a session (`held`) is not a
+                    // gate: Archive is the person's own action and ends it.
                     for unsettled in &work.admissions {
                         let admission = &unsettled.admission;
                         if live.contains(&admission.run) {
                             continue;
                         }
-                        // An automatic interruption with the owner's current
-                        // fence, never the person's Stop. A queued Run is
-                        // interrupted without starting; an active one keeps its
-                        // slot until the owner proves its process ended, under
-                        // the session's own lease check. A pending or refused
-                        // answer is read again next round, not remembered.
-                        let _ = self.delegate.execute(DelegateCommand::Interrupt {
+                        // The person's Stop with the owner's current fence. A
+                        // queued Run is cancelled without starting; an active
+                        // one ends even under a takeover, and keeps its slot
+                        // until the owner proves its process ended. An
+                        // unconfirmed or refused answer is read again next
+                        // round, not remembered.
+                        let _ = self.delegate.execute(DelegateCommand::Stop {
                             key: BotRunKey {
                                 owner,
                                 bot,
@@ -235,7 +227,6 @@ impl LifecycleJob {
                     Ok(Unsettled {
                         runs,
                         more: work.more,
-                        held: false,
                     })
                 }))
             }
@@ -1024,17 +1015,14 @@ impl WorkerState {
         op: &LifecycleOperation,
         unsettled: Unsettled,
     ) {
-        if unsettled.held {
-            // O27: never end what a person holds. Parked; resuming it once
-            // they hand the session back finishes it.
-            return self.park_bot_lifecycle(key, BotLifecycleRefusal::PersonHolding);
-        }
-        // A live conversation task the delegate still runs ends as an
-        // automatic interruption through its own finishing lane.
+        // A live conversation task the delegate still runs is stopped as the
+        // person's Stop through its own lane, whatever it already ended as
+        // (running, interrupted, failed, natively cancelled), so a session a
+        // person holds is ended too (O27, O37).
         let live = self.live_bot_tasks(op.bot);
         for run in &unsettled.runs {
             if let Some(attempt) = live.get(run) {
-                self.interrupt_bot_chat_for_lifecycle(*attempt);
+                self.stop_bot_chat_for_lifecycle(*attempt);
             }
         }
         // Live tasks the delegate already settled are still delivering
