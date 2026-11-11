@@ -10518,12 +10518,22 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
 /// it. A code the surface does not know reads as the service's words alone,
 /// so nothing a service can say goes unshown.
 pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lang) -> String {
-    // **A change to an archived Bot's conversation** (P1.7): the owner's
-    // stable code reads as its own sentence and nothing more — the owner's
-    // message is English developer text, and it names a way to unarchive that
-    // this build does not offer.
-    if failure.code == koru_ai_wire::bot_lifecycle_codes::ARCHIVED {
-        return koru_i18n::t(lang, koru_i18n::Key::BotsErrArchived).to_owned();
+    // **A change the owner refuses because of a Bot's lifecycle** (P1.7):
+    // archived, in Trash, or held by an operation that is moving or parked.
+    // Each stable code reads as its own sentence and nothing more — the
+    // owner's message is English developer text. A pure code-to-sentence
+    // mapping: the host owns every service call.
+    let lifecycle = match failure.code.as_str() {
+        koru_ai_wire::bot_lifecycle_codes::ARCHIVED => Some(koru_i18n::Key::BotsErrArchived),
+        koru_ai_wire::bot_lifecycle_codes::TRASHED => Some(koru_i18n::Key::BotsErrTrashed),
+        koru_ai_wire::bot_lifecycle_codes::PENDING => Some(koru_i18n::Key::BotsErrPending),
+        // The Bot-level refusal on a trashed Bot, additive with the engine's
+        // Trash review fix; `koru-ai-wire` names no constant for it yet.
+        "bot_trashed" => Some(koru_i18n::Key::BotsErrBotTrashed),
+        _ => None,
+    };
+    if let Some(key) = lifecycle {
+        return koru_i18n::t(lang, key).to_owned();
     }
     let key = match failure.code.as_str() {
         "ai_configuration" => Some(koru_i18n::Key::AiFailureConfiguration),

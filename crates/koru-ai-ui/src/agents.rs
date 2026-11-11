@@ -753,6 +753,31 @@ mod failure_words {
             );
         }
     }
+
+    /// **A conversation in Trash, and one an operation holds, each read as
+    /// its own sentence alone** (P1.7 holds): never the owner's English
+    /// message, in any language.
+    #[test]
+    fn the_lifecycle_holds_read_as_their_own_sentences_alone() {
+        for (code, key) in [
+            (
+                koru_ai_wire::bot_lifecycle_codes::TRASHED,
+                koru_i18n::Key::BotsErrTrashed,
+            ),
+            (
+                koru_ai_wire::bot_lifecycle_codes::PENDING,
+                koru_i18n::Key::BotsErrPending,
+            ),
+            ("bot_trashed", koru_i18n::Key::BotsErrBotTrashed),
+        ] {
+            let refused = failure(code, "This Bot conversation is held. Restore it first.");
+            for lang in Lang::ALL {
+                let said = crate::failure_text(&refused, lang);
+                assert_eq!(said, koru_i18n::t(lang, key), "{code} {lang:?}");
+                assert!(!said.contains("held"), "{code} {lang:?}: {said}");
+            }
+        }
+    }
 }
 
 pub(crate) fn is_agent_provider_str(provider: &str) -> bool {
