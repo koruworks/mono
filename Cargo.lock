@@ -6753,6 +6753,7 @@ dependencies = [
  "koru-draw",
  "koru-env",
  "koru-features",
+ "koru-i18n",
  "koru-keys",
  "koru-store-core",
  "koru-store-wire",

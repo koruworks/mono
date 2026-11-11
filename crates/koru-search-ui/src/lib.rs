@@ -34,6 +34,7 @@ mod filters;
 mod modal;
 mod reader;
 mod result_layout;
+mod row_text;
 mod scope;
 mod state;
 mod store;
@@ -54,7 +55,7 @@ use state::{
 use koru_ai_core::{ChatId, MessageBlockId, MessageId};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{icons, scene, split_leading_emoji, theme};
+use koru_draw::{icons, inspect, scene, split_leading_emoji, theme};
 use koru_store_core::ids::{DocumentId, ProfileId, WorkspaceId};
 // **The store's vocabulary, not the app's.** These used to come from
 // the app's own search crate, since deleted: an index it owned became an
@@ -1807,12 +1808,28 @@ impl SearchSurface {
         self.refresh();
     }
 
+    /// The row's context line. See [`row_text::context_line`].
     fn result_context(hit: &SearchHit) -> String {
-        if hit.lifecycle == Lifecycle::Trashed {
-            format!("{} · In Trash", hit.breadcrumb)
-        } else {
-            hit.breadcrumb.clone()
-        }
+        row_text::context(koru_i18n::current(), hit)
+    }
+
+    /// **What a screen reader should hear for result `index`**: its title,
+    /// where it is, and for a match inside, the words — with the page they
+    /// were read from said in words. `None` past the end.
+    ///
+    /// Public for the host that publishes this surface to accessibility. None
+    /// does yet: the in-app modal is published as one named dialog with no
+    /// contents (`apps/koru/src/mainview/accessibility/menus.rs`), and the
+    /// dedicated window publishes no tree. The sentence is settled here, beside
+    /// the row it describes, so the day a host lists the rows it reads it
+    /// rather than assembling one of its own.
+    pub fn result_accessible_name(&self, index: usize) -> Option<String> {
+        let hit = self.page.hits.get(index)?;
+        Some(row_text::spoken(
+            koru_i18n::current(),
+            hit,
+            Self::is_title_match(hit),
+        ))
     }
 
     fn result_card_rect(&self, y: f32) -> Rect {
@@ -3892,6 +3909,22 @@ impl SearchSurface {
             if y + self.list.row_height <= viewport.y || y >= viewport.y + viewport.h {
                 continue;
             }
+            // **One record per row in the inspector**, so the card, the icon
+            // and the three lines read as one result's parts in F12 rather
+            // than as loose runs under the modal.
+            let row = self.result_card_rect(y);
+            let _row = inspect::scope(
+                "Search result",
+                "part",
+                root,
+                scene::rect(row.x, row.y, row.w, row.h),
+                |record| {
+                    record.property("field", hit.field.clone(), "store hit");
+                    if let Some(page) = hit.page {
+                        record.property("page", page, "store hit");
+                    }
+                },
+            );
             if index == self.list.selected
                 && self.selected_pin.is_none()
                 && self.selected_recent_query.is_none()
@@ -4002,22 +4035,13 @@ impl SearchSurface {
                 p.highlights[0].1,
             );
             if !title_match {
-                draw_highlighted_line(
+                self.paint_snippet_line(
                     canvas,
                     root,
-                    &mut self.engine,
-                    &hit.snippet,
-                    hit.spans.iter().map(|span| Span {
-                        start: span.start,
-                        end: span.end,
-                    }),
+                    &hit,
                     content_x,
                     y + content.snippet,
                     content_width,
-                    theme::role::meta(),
-                    p.text_dim,
-                    p.text,
-                    p.highlights[0].1,
                 );
             }
         }
@@ -4060,6 +4084,76 @@ impl SearchSurface {
         if !self.query.is_empty() {
             self.paint_scrollbar(canvas, root);
         }
+    }
+
+    /// A content match's third line: the page its words were read from, when
+    /// the hit names one, then the snippet.
+    ///
+    /// **The snippet is drawn exactly as it came**, its highlight ranges
+    /// untouched, in the width the page leaves. The page is its own run ahead
+    /// of it, never text glued onto the snippet — `row_text`'s note says why.
+    /// Returns where the snippet began, which is what a test asks.
+    fn paint_snippet_line(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        hit: &SearchHit,
+        x: f32,
+        y: f32,
+        width: f32,
+    ) -> f32 {
+        let p = theme::p();
+        let style = theme::role::meta();
+        let mut snippet_x = x;
+        let mut snippet_width = width;
+        if let Some(label) = row_text::page_label(koru_i18n::current(), hit) {
+            let label = self.engine.elided(&label, style, width);
+            let label = self.engine.simple_layout(&label, style);
+            let separator = self.engine.simple_layout(row_text::SEPARATOR, style);
+            // `full_width`, not `width`: the separator's trailing space is
+            // part of the gap before the snippet, and `width` drops it.
+            let label_width = label.full_width();
+            let lead = label_width + separator.full_width();
+            let _prefix = inspect::scope(
+                "Page prefix",
+                "part",
+                root,
+                scene::rect(x, y, lead.min(width), style.metrics.line_height),
+                |record| {
+                    record.property("page", hit.page.unwrap_or_default(), "store hit");
+                    record.property("text role", "meta", "theme::role::meta()");
+                },
+            );
+            scene::draw_layout_first_line(canvas, root, &label, x, y, Some(p.text_dim));
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &separator,
+                x + label_width,
+                y,
+                Some(p.text_dim),
+            );
+            snippet_x = x + lead;
+            snippet_width = (width - lead).max(0.0);
+        }
+        draw_highlighted_line(
+            canvas,
+            root,
+            &mut self.engine,
+            &hit.snippet,
+            hit.spans.iter().map(|span| Span {
+                start: span.start,
+                end: span.end,
+            }),
+            snippet_x,
+            y,
+            snippet_width,
+            style,
+            p.text_dim,
+            p.text,
+            p.highlights[0].1,
+        );
+        snippet_x
     }
 
     fn paint_scrollbar(&self, canvas: &mut Scene, root: Affine) {
