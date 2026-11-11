@@ -52,7 +52,7 @@ use koru_ai_core::{AGENT_DEFAULT_MODEL, AiProviderId, ReasoningChoice, Reasoning
 use koru_draw::el::FrameCx;
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{brand, icons, scene};
+use koru_draw::{brand, icons};
 use koru_i18n::{Key, Lang, t};
 use koru_ui::Typed;
 use koru_ui::popover::PopoverAlign;
@@ -71,28 +71,26 @@ mod context;
 mod elements;
 mod fast;
 mod paint;
-mod tokens;
 
 /// **The element layout the composer's panels share** (D64, D105): one
 /// engine and text cache per UI thread, and one way to key a row by its
 /// model's id — the approval-mode list and the workspace-access panel are
 /// laid out on them as the picker is.
 pub(crate) use elements::{layout as layout_elements, stable_id};
-/// The search field's adapter, which the workspace-access panel's filter
-/// field is too (D106).
-pub(crate) use paint::{SearchLeaf, SearchPaint};
 
 // **The picker's vocabulary is the agent-configuration control's**
 // (`koru_agent_config_ui::picker`, Bots P1.8): its sizes, the rail's
 // entries, the list's rows, the keyboard's places, its state, its parts and
-// the pure rules over them. The chat names them here, its own agent id in
-// the generic ones, so this crate's code and its suite read as they did.
+// the pure rules over them — and the search field's adapter, which the
+// workspace-access panel's filter field is too (D106). The chat names them
+// here, its own agent id in the generic ones, so this crate's code and its
+// suite read as they did.
 pub use cfg::FavoriteModel;
 pub(crate) use cfg::{
-    Geometry, LIST_ROWS, PILL_H, PickerFocus, RAIL_BUTTON, RAIL_PAGE, RAIL_W, ROW_H, ROW_MARK,
-    SEARCH_H, SEGMENT_H, STAR, STRIP_H, SharedInput, TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED,
-    TOOLTIP_RAIL, TOOLTIP_REFRESH, matches, rail_dividers, rail_height, row_id, scroll_into_view,
-    size, step_highlight, toggled,
+    Geometry, LIST_ROWS, PickerFocus, RAIL_PAGE, ROW_H, SearchLeaf, SearchPaint, SharedInput,
+    TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED, TOOLTIP_RAIL, TOOLTIP_REFRESH, geometry_with, matches,
+    rail_dividers, rail_height, rail_rects, row_id, scroll_into_view, size, step_highlight,
+    toggled,
 };
 
 /// One mark on the rail, the chat's provider id its agent's.
@@ -107,7 +105,8 @@ pub(crate) type PickerState = cfg::PickerState<AiProviderId>;
 // suite moves into the control's crate and drives its public API.
 #[cfg(test)]
 pub(crate) use cfg::{
-    FOOTER_H, FOOTER_TOGGLES_H, MAX_W, PAD, RAIL_CONTENT_GAP, RAIL_DIVIDER, RAIL_GAP, star_rect,
+    FOOTER_H, FOOTER_TOGGLES_H, MAX_W, PAD, PILL_H, RAIL_BUTTON, RAIL_CONTENT_GAP, RAIL_DIVIDER,
+    RAIL_GAP, RAIL_W, SEARCH_H, SEGMENT_H, STRIP_H, geometry, star_rect,
 };
 #[cfg(test)]
 use koru_draw::theme;
@@ -115,45 +114,6 @@ use koru_draw::theme;
 /// The note over the strip when a level is chosen during a reply (D70).
 const LEVEL_NOTE_KEY: u64 = 0x5049_1004;
 const LEVEL_NOTE_HOLD: std::time::Duration = std::time::Duration::from_millis(2200);
-
-/// The picker's parts inside `panel`: the footer at the foot when the
-/// model offers `levels`, `context` or `fast` — the strip for levels, the
-/// pills' row for any — and the list in what is left. Laid out by the
-/// picker's element tree ([`elements::tree`]), whose marks take no room of
-/// their own: the rail is as tall as the panel.
-#[cfg(test)]
-pub(crate) fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
-    geometry_with(panel, elements::Footer::shape(levels, context, fast), false)
-}
-
-/// The picker's parts inside `panel` with `footer` at its foot — and no
-/// rail at its start when `hide_rail`, the content in its room.
-pub(crate) fn geometry_with(
-    panel: Rect,
-    footer: Option<elements::Footer>,
-    hide_rail: bool,
-) -> Geometry {
-    let spec = elements::Spec {
-        footer,
-        hide_rail,
-        ..elements::Spec::default()
-    };
-    let tree = elements::tree(&spec, elements::Painted::default());
-    elements::geometry_of(&elements::layout(&tree, panel, FrameCx::root()), panel)
-}
-
-/// The rail's marks, top to bottom; a divider follows each mark whose index
-/// is in `dividers` — *Favorites*, and the chat's own built-in provider
-/// (S1), each set off from the agents after it.
-pub(crate) fn rail_rects(rail: Rect, count: usize, dividers: &[usize]) -> Vec<Rect> {
-    let column = elements::rail_column(
-        (0..count).map(|index| (elements::placeholder_mark(), dividers.contains(&index))),
-    );
-    elements::layout(&column, rail, FrameCx::root())
-        .named(elements::MARK)
-        .map(|node| node.rect)
-        .collect()
-}
 
 /// **The footer's readout** (§9.3, D76) for the chat's reasoning control
 /// and choice, in the control's words ([`cfg::readout`]).
@@ -921,9 +881,9 @@ impl crate::ChatSurface {
 
     /// The effort strip's segment for `choice`, where it is drawn.
     #[cfg(test)]
-    pub(crate) fn picker_segment_rect(&self, choice: ReasoningChoice) -> Option<Rect> {
+    pub(crate) fn picker_segment_rect(&self, choice: impl effort::AsEffort) -> Option<Rect> {
         let (_, _, frame) = self.picker_frame()?;
-        Some(frame.node(elements::segment_key(choice))?.rect)
+        Some(frame.node(elements::segment_key(choice.as_effort()))?.rect)
     }
 
     /// How many rows the open list shows.
@@ -1247,7 +1207,7 @@ impl crate::ChatSurface {
                 })
             });
             return Some(match pressed {
-                Some(segment) => self.choose_level(segment.choice),
+                Some(segment) => self.choose_level(effort::reasoning(segment.choice)),
                 None => true,
             });
         }
@@ -1690,10 +1650,23 @@ fn provider_name(provider: &AiProviderId) -> String {
     }
 }
 
-/// A provider's mark in `inner`: the agent's brand by its kind
-/// (`agent-claude` wears Claude's), OpenAI's for OpenAI, a glyph where there
-/// is no brand — [`provider_mark`], which a chat tab wears too. The rail
-/// draws it, and so does a favorite's row, at its start.
+/// **A provider's mark**: the agent's brand by its kind (`agent-claude`
+/// wears Claude's), OpenAI's for OpenAI, a glyph where there is no brand —
+/// [`provider_mark`], which a chat tab wears too. What the picker's rail
+/// and a favorite's row wear, handed to the control as data.
+pub(crate) fn provider_profile_mark(provider: &AiProviderId, agent: bool) -> brand::ProfileMark {
+    let glyph = if agent {
+        icons::ROBOT
+    } else if provider.as_str() == AiProviderId::OLLAMA {
+        icons::DESKTOP
+    } else {
+        icons::SPARKLE
+    };
+    provider_mark(provider.as_str()).unwrap_or(brand::ProfileMark::Glyph(glyph))
+}
+
+/// A provider's mark in `inner` ([`provider_profile_mark`]), drawn as the
+/// picker draws it: the context ring wears it too.
 pub(crate) fn draw_provider_mark(
     canvas: &mut Scene,
     root: Affine,
@@ -1703,29 +1676,14 @@ pub(crate) fn draw_provider_mark(
     inner: Rect,
     colour: vello::peniko::Color,
 ) {
-    let glyph = if agent {
-        icons::ROBOT
-    } else if provider.as_str() == AiProviderId::OLLAMA {
-        icons::DESKTOP
-    } else {
-        icons::SPARKLE
-    };
-    match provider_mark(provider.as_str()).unwrap_or(brand::ProfileMark::Glyph(glyph)) {
-        brand::ProfileMark::Brand(icon) => {
-            scene::draw_brand_icon(canvas, root, inner, colour, icon)
-        }
-        brand::ProfileMark::Glyph(glyph) => {
-            let layout = engine.icon_layout(glyph, inner.h);
-            scene::draw_layout(
-                canvas,
-                root,
-                &layout,
-                inner.x + (inner.w - layout.width()) * 0.5,
-                inner.y + (inner.h - layout.height()) * 0.5,
-                Some(colour),
-            );
-        }
-    }
+    cfg::mark::draw_mark(
+        canvas,
+        root,
+        engine,
+        provider_profile_mark(provider, agent),
+        inner,
+        colour,
+    );
 }
 
 #[cfg(test)]

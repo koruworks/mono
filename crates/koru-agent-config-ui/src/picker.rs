@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::fmt::Display;
 use std::rc::Rc;
 
+use koru_draw::el::FrameCx;
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme;
@@ -27,6 +28,12 @@ use winit::keyboard::{Key as WinitKey, ModifiersState};
 use crate::effort::{self, Effort, Levels};
 
 pub mod context;
+pub mod elements;
+pub mod mark;
+pub mod paint;
+pub mod tokens;
+
+pub use paint::{SearchLeaf, SearchPaint};
 
 /// The rail's width, and the square of each of its marks.
 pub const RAIL_W: f32 = 44.0;
@@ -343,6 +350,41 @@ pub fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
     let width = composer_w.min(MAX_W).max(RAIL_W + 160.0);
     let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H;
     (width, height.max(rail_h))
+}
+
+/// The picker's parts inside `panel`: the footer at the foot when the
+/// model offers `levels`, `context` or `fast` — the strip for levels, the
+/// pills' row for any — and the list in what is left. Laid out by the
+/// picker's element tree ([`elements::tree`]), whose marks take no room of
+/// their own: the rail is as tall as the panel.
+#[cfg(any(test, feature = "test-support"))]
+pub fn geometry(panel: Rect, levels: bool, context: bool, fast: bool) -> Geometry {
+    geometry_with(panel, elements::Footer::shape(levels, context, fast), false)
+}
+
+/// The picker's parts inside `panel` with `footer` at its foot — and no
+/// rail at its start when `hide_rail`, the content in its room.
+pub fn geometry_with(panel: Rect, footer: Option<elements::Footer>, hide_rail: bool) -> Geometry {
+    let spec = elements::Spec {
+        footer,
+        hide_rail,
+        ..elements::Spec::default()
+    };
+    let tree = elements::tree(&spec, elements::Painted::default());
+    elements::geometry_of(&elements::layout(&tree, panel, FrameCx::root()), panel)
+}
+
+/// The rail's marks, top to bottom; a divider follows each mark whose index
+/// is in `dividers` — *Favorites*, and the chat's own built-in provider
+/// (S1), each set off from the agents after it.
+pub fn rail_rects(rail: Rect, count: usize, dividers: &[usize]) -> Vec<Rect> {
+    let column = elements::rail_column(
+        (0..count).map(|index| (elements::placeholder_mark(), dividers.contains(&index))),
+    );
+    elements::layout(&column, rail, FrameCx::root())
+        .named(elements::MARK)
+        .map(|node| node.rect)
+        .collect()
 }
 
 /// The height the rail's marks need, with `dividers` dividers among them.

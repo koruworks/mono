@@ -28,8 +28,12 @@ const MIGRATED: &[&str] = &[
     "apps/koru/src/panes/explore/heading_elements.rs",
     "apps/koru/src/panes/explore/workspace_menu_elements.rs",
     // The chat's model picker (koru-ai D64, QUESTIONS M7): its tree and its
-    // paint, every leaf a named adapter; its tokens are defined beside them
-    // in `model_picker/tokens.rs`.
+    // leaves, every leaf a named adapter, moved into the agent-configuration
+    // control (Bots P1.8); its tokens are defined beside them in
+    // `picker/tokens.rs`. The chat's side keeps what declares and draws the
+    // tree from its state, and the layout its other panels share.
+    "crates/koru-agent-config-ui/src/picker/elements.rs",
+    "crates/koru-agent-config-ui/src/picker/paint.rs",
     "crates/koru-ai-ui/src/model_picker/elements.rs",
     "crates/koru-ai-ui/src/model_picker/paint.rs",
     // The composer's approval-mode list (koru-ai D7, D105): boxes, text and

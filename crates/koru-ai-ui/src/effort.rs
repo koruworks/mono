@@ -81,6 +81,28 @@ pub(crate) fn levels(control: &ReasoningControl) -> Option<cfg::Levels> {
     }
 }
 
+/// **A choice in either vocabulary**: the suite names a level both as the
+/// service's `ReasoningChoice` and, read off the control's footer, as the
+/// control's `Effort`. Goes when the suite moves into the control's crate.
+#[cfg(test)]
+pub(crate) trait AsEffort {
+    fn as_effort(self) -> cfg::Effort;
+}
+
+#[cfg(test)]
+impl AsEffort for ReasoningChoice {
+    fn as_effort(self) -> cfg::Effort {
+        effort(self)
+    }
+}
+
+#[cfg(test)]
+impl AsEffort for cfg::Effort {
+    fn as_effort(self) -> cfg::Effort {
+        self
+    }
+}
+
 /// The levels a control offers, in the strip's order. `Default` is never
 /// one: the chip shows what the default resolves to instead.
 pub(crate) fn stops(control: &ReasoningControl) -> Vec<ReasoningChoice> {
