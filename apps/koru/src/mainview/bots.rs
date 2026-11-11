@@ -827,6 +827,7 @@ impl MainView {
         let mut work_moved = false;
         let mut moved = false;
         let mut created = false;
+        let mut news = Vec::new();
         for (_, group) in self.panes.iter_groups_mut() {
             let mut relabeled = false;
             let active = group.active();
@@ -856,6 +857,11 @@ impl MainView {
                     // A create tab that just became its new Bot's (S8):
                     // the roster lists it.
                     created |= view.take_created();
+                    // A rename, a pause or a resume the tab's own answers
+                    // carried: the roster's row says it now.
+                    if let Some(bot) = view.take_roster_news() {
+                        news.push(bot);
+                    }
                     if index == active {
                         let mine = view
                             .listed_pages()
@@ -882,6 +888,16 @@ impl MainView {
         }
         if created {
             self.explore.bots_mut().owe_lifecycle_refresh();
+            moved = true;
+        }
+        // The tabs' own news, into the roster's rows at once; its list is
+        // read again too, on its next shown pass, for whatever else moved.
+        if !news.is_empty() {
+            let roster = self.explore.bots_mut();
+            for bot in news {
+                roster.know_bot(crate::bots::roster::RosterBot::from(bot));
+            }
+            roster.owe_lifecycle_refresh();
             moved = true;
         }
         moved || placed || recorded

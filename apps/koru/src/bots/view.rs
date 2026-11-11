@@ -393,6 +393,11 @@ pub(crate) struct BotView {
     picker_for_role: bool,
     /// The tab just became a new Bot's tab: the window lists it.
     created: bool,
+    /// **What the roster shows of this Bot moved**, as one of the tab's own
+    /// answers says — a rename saved, a pause or a resume the owner took, a
+    /// read that shows either — for the window to hand the roster. Taken
+    /// once (`take_roster_news`).
+    roster_news: Option<Bot>,
 }
 
 impl BotView {
@@ -458,6 +463,29 @@ impl BotView {
             create: None,
             picker_for_role: false,
             created: false,
+            roster_news: None,
+        }
+    }
+
+    /// **The Bot as one of this tab's answers left it, when what the roster
+    /// shows of it moved** — its name or its pause. Taken once: the window
+    /// puts it in the roster's row at once and has the roster read its list
+    /// again, so neither waits for the roster to be shown again (the first
+    /// window run's finding 4).
+    pub(crate) fn take_roster_news(&mut self) -> Option<Bot> {
+        self.roster_news.take()
+    }
+
+    /// Note `bot` as roster news when its name or its pause is not what the
+    /// tab showed before.
+    fn note_roster_news(&mut self, bot: &Bot) {
+        // A tab's first read changes nothing the roster listed.
+        let moved = self
+            .facts
+            .as_ref()
+            .is_some_and(|facts| facts.name != bot.config.name || facts.paused != bot.paused);
+        if moved {
+            self.roster_news = Some(bot.clone());
         }
     }
 
@@ -969,6 +997,7 @@ impl BotView {
         }
         let settled = self.settings.answer(request, result, now);
         if let Some(bot) = settled.bot {
+            self.note_roster_news(&bot);
             // A write's answer: it never drops or replaces the operation the
             // tab follows — only a read does.
             self.lifecycle.know_written(&bot);
@@ -991,6 +1020,7 @@ impl BotView {
                 } else {
                     self.bot_read_answered();
                 }
+                self.note_roster_news(&bot);
                 self.settings.know(bot.clone());
                 if bot.lifecycle != BotLifecycle::Trashed {
                     self.trashed_bot = None;

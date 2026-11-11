@@ -188,6 +188,62 @@ fn a_hidden_roster_asks_nothing_and_lays_nothing_out() {
     assert_eq!(f.roster.work().layouts, 0);
 }
 
+/// **A listing Koru AI did not answer is asked again while the roster is
+/// shown**, on the bounded clock — not only when it is hidden and shown
+/// again (the first window run: after a restart the roster said *Koru AI
+/// isn't answering…* for good). A lost connection is answered as the real
+/// link answers it (`Failure::lost`, `link.rs`'s `Failure::of`); a refusal
+/// that would only repeat starts no clock, and a hidden roster keeps none.
+#[test]
+fn an_unanswered_listing_is_asked_again_while_shown() {
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    f.roster.maintain();
+    let seq = f.asked();
+    assert!(f.answer(seq, Err(Failure::lost())));
+    assert_eq!(f.roster.load(), Load::Unavailable);
+    assert!(f.roster.awaiting(), "a clock runs while shown");
+    assert!(f.roster.list_retry_due_for_test());
+    assert!(f.roster.maintain());
+    let again = f.asked();
+    assert!(again > seq, "asked again without being shown again");
+    assert!(f.answer(again, Ok(vec![f.bot("Scout")])));
+    assert_eq!(f.roster.load(), Load::Ready);
+    assert!(!f.roster.list_retry_due_for_test(), "answered: no clock");
+
+    // A refusal the owner says is final: no clock.
+    f.roster.owe_lifecycle_refresh();
+    f.roster.maintain();
+    let refused = f.asked();
+    f.answer(refused, Err(Failure::Refused("wrong_owner".into())));
+    assert!(!f.roster.list_retry_due_for_test(), "nothing to ask again");
+
+    // Hidden, the clock stops; shown again, it asks once as it always did.
+    f.roster.owe_lifecycle_refresh();
+    f.roster.maintain();
+    let lost = f.asked();
+    f.answer(lost, Err(Failure::lost()));
+    f.roster.set_shown(false);
+    assert!(!f.roster.list_retry_due_for_test(), "no clock while hidden");
+}
+
+/// **A Bot tab's own news reaches its row at once** — renamed, paused —
+/// and a Bot the roster does not list is left to the list.
+#[test]
+fn a_tabs_news_changes_its_row_at_once() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    let mut renamed = scout.clone();
+    renamed.config.name = "Scout Renamed".into();
+    renamed.paused = true;
+    assert!(f.roster.know_bot(RosterBot::from(renamed)));
+    assert_eq!(f.roster.bots()[0].name, "Scout Renamed");
+    assert!(f.roster.bots()[0].paused);
+    assert!(!f.roster.know_bot(RosterBot::from(f.bot("Other"))));
+    assert_eq!(f.roster.bots().len(), 1);
+}
+
 /// **Only the latest request's answer is taken**: an older reply, or one
 /// about another workspace, never replaces what the newer one says.
 #[test]

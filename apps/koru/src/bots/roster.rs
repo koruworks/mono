@@ -95,6 +95,10 @@ pub(crate) const ACTIVITY_PART: &str = "bot-activity";
 /// reply — moves nothing here, so an older read is not trusted to say
 /// nothing runs, and the question then defaults to Cancel.
 pub(crate) const ACTIVITY_FRESH: std::time::Duration = std::time::Duration::from_secs(30);
+/// The bounded clock an unanswered listing is asked again on: 250 ms,
+/// doubling to two seconds, the lifecycle UI's own.
+const LIST_FIRST: std::time::Duration = std::time::Duration::from_millis(250);
+const LIST_MAX: std::time::Duration = std::time::Duration::from_secs(2);
 /// The Archived filter's *Show archived bots* / *Hide archived bots* (S14).
 pub(crate) const ARCHIVED_TOGGLE: Key = Key::surface(SURFACE, "archived-toggle");
 /// The Archived filter's heading.
@@ -353,6 +357,13 @@ pub(crate) struct BotsRoster {
     /// the group when it finishes and its Bot is listed.
     creations_next: Option<std::time::Instant>,
     creations_backoff: std::time::Duration,
+    /// **When a listing Koru AI did not answer is asked again**: the same
+    /// bounded clock, only while shown. A roster shown right after a restart
+    /// asks before the service is up; without this it said *Koru AI isn't
+    /// answering…* until it was hidden and shown again (the first window
+    /// run's finding 4).
+    list_next: Option<std::time::Instant>,
+    list_backoff: std::time::Duration,
     /// Why the last Retry or Abandon from here did not happen.
     creation_refused: Option<Words>,
     /// The creation abandoned from here last: what it left, said once.
@@ -469,7 +480,22 @@ impl BotsRoster {
         self.unarchiving.clear();
         self.creations_acting.clear();
         self.creations_next = None;
+        self.list_next = None;
+        self.list_backoff = LIST_FIRST;
         true
+    }
+
+    /// The unanswered listing's clock, come due now: a test standing in
+    /// for the time passing. `false` when no clock runs.
+    #[cfg(test)]
+    pub(crate) fn list_retry_due_for_test(&mut self) -> bool {
+        match &mut self.list_next {
+            Some(at) => {
+                *at = std::time::Instant::now();
+                true
+            }
+            None => false,
+        }
     }
 
     /// **Whether the roster is what the navigator shows.** Leaving marks it
@@ -489,6 +515,7 @@ impl BotsRoster {
             self.hover = None;
             // Nothing is listed while hidden: shown again, it lists once.
             self.creations_next = None;
+            self.list_next = None;
         }
         true
     }
@@ -505,6 +532,14 @@ impl BotsRoster {
             .is_some_and(|at| at <= std::time::Instant::now())
         {
             self.creations_next = None;
+            self.fresh = false;
+        }
+        // An unanswered listing's clock came due: ask again.
+        if self
+            .list_next
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            self.list_next = None;
             self.fresh = false;
         }
         let asked = !self.fresh && self.refresh();
@@ -565,6 +600,20 @@ impl BotsRoster {
                 .iter()
                 .find(|row| row.id == bot)
                 .is_some_and(|row| row.open_operation.is_none())
+    }
+
+    /// **A Bot tab's own answer says what one of the listed Bots is now** —
+    /// renamed, paused or resumed there: its row says so at once, shown or
+    /// not, rather than when the roster next lists. A Bot the roster does
+    /// not list is left to the list. `true` when a row changed.
+    pub(crate) fn know_bot(&mut self, bot: RosterBot) -> bool {
+        match self.bots.iter_mut().find(|row| row.id == bot.id) {
+            Some(row) if *row != bot => {
+                *row = bot;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// **Another surface of the window changed a Bot's lifecycle**: both
@@ -956,9 +1005,21 @@ impl BotsRoster {
                 let hover = self.hover.filter(|id| self.has(*id));
                 self.selected = selected;
                 self.hover = hover;
+                self.list_next = None;
+                self.list_backoff = LIST_FIRST;
             }
             // What was shown stays; the line over it says why it may be old.
-            Err(_) => self.load = Load::Unavailable,
+            // Asked again on the bounded clock while shown when asking
+            // again may help — never for a refusal that would only repeat.
+            Err(failure) => {
+                self.load = Load::Unavailable;
+                if failure.again() {
+                    let wait = self.list_backoff.max(LIST_FIRST);
+                    let now = std::time::Instant::now();
+                    self.list_next = Some(now.checked_add(wait).unwrap_or(now));
+                    self.list_backoff = (wait * 2).min(LIST_MAX);
+                }
+            }
         }
     }
 
@@ -1017,6 +1078,7 @@ impl BotsRoster {
                 || self.archived_in_flight
                 || self.creations_in_flight
                 || self.creations_next.is_some()
+                || self.list_next.is_some()
                 || !self.unarchiving.is_empty()
                 || !self.creations_acting.is_empty())
     }

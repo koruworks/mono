@@ -392,6 +392,50 @@ fn a_restore_from_the_trash_tells_every_tab_of_the_bot() {
     }
 }
 
+/// **A rename or a pause made in the Bot's tab reaches the roster at
+/// once** — its row says the new name and *paused* — and the roster reads
+/// its list again; it no longer waits to be hidden and shown (the first
+/// window run's finding 4). The tab learns it as its read answers
+/// (`read`, `apps/koru-ai-server/src/worker/bots/reads.rs`), as it does
+/// after a rename is saved or a pause is taken.
+#[test]
+fn a_rename_or_a_pause_in_the_tab_reaches_the_roster_at_once() {
+    use crate::bots::link::{Answer, Command};
+    let (mut v, _w) = container();
+    let bot = crate::bots::tests::bot(BotId::mint(), WorkspaceId::new(), "Scout", false);
+    let (commands, answers, tab) = push_bot_tab(&mut v, &bot);
+    v.explore
+        .bots_mut()
+        .listed_for_test(vec![crate::bots::roster::RosterBot::from(bot.clone())]);
+    let view = bot_view_by_id(&mut v, tab);
+    view.shown_pass(None);
+    let seq = commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::Read { seq, .. } => Some(seq),
+            _ => None,
+        })
+        .expect("the tab reads its Bot");
+    let mut renamed = bot.clone();
+    renamed.config.name = "Scout Renamed".into();
+    renamed.paused = true;
+    renamed.revision += 1;
+    answers
+        .send(Answer::Read {
+            seq,
+            bot: bot.id,
+            result: Ok(renamed),
+        })
+        .unwrap();
+    bot_view_by_id(&mut v, tab).shown_pass(None);
+    assert!(v.refresh_bot_tabs());
+    let row = v.explore.bots().bots()[0].clone();
+    assert_eq!(row.name, "Scout Renamed");
+    assert!(row.paused, "paused, in the row");
+    // Said once: a later pass with nothing new changes nothing.
+    assert!(bot_view_by_id(&mut v, tab).take_roster_news().is_none());
+}
+
 /// The Bot tab with identity `id`.
 fn bot_view_by_id(v: &mut MainView, id: u64) -> &mut BotView {
     let at = v
