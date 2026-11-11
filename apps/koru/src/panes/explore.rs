@@ -4992,13 +4992,19 @@ impl ExploreView {
     /// row at `x = 0` would answer for a click meant for the view beside it.
     /// Which rows are pinned to the floor, top to bottom.
     ///
-    /// **None, since the Trash row left** (the review's note, E63): the Trash is
-    /// the floor menu's row now, with its count, and a second door at the
-    /// nav's foot was one more thing on every glance. The stack stays —
-    /// the band the library gets, the hit test, the hover, the drawing all
-    /// follow from this one list — for the next standing place.
+    /// **The Trash, again** — the column's floor row, where the workspace
+    /// menu now says it is (DESIGN.md, *The workspace menu*, 2026-11-10).
+    /// It left for the floor menu once (E63), the floor went (ADR-491), and
+    /// the workspace menu then dropped its row as being at the column's
+    /// foot — which left the Trash with no door at all: a document, a run
+    /// or a Bot in it could not be restored (the first window run of Bots,
+    /// finding 5). Not in Socials, which has no bin, as before E63.
     fn footer_rows(&self) -> &'static [FooterRow] {
-        &[]
+        if self.showing_socials() {
+            &[]
+        } else {
+            &[FooterRow::Trash]
+        }
     }
 
     /// Where each pinned row sits.
@@ -5071,7 +5077,10 @@ impl ExploreView {
     /// "The Trash is empty."
     fn footer_parts(&self, row: FooterRow) -> (char, &'static str) {
         match row {
-            FooterRow::Trash => (icons::TRASH, "Trash"),
+            FooterRow::Trash => (
+                icons::TRASH,
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::WorkspacesTrash),
+            ),
         }
     }
 

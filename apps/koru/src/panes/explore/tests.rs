@@ -3730,18 +3730,41 @@ fn the_library_stops_above_the_floor_and_does_not_scroll_into_it() {
 
 /// **A list, not a special case.** The footer is whatever `footer_rows` says,
 /// bottom-anchored, so adding one grows the stack upward and the library's band
-/// shrinks by exactly that much. Nothing is pinned since the Trash row left for
-/// the floor menu (E63); the library's band runs to the floor.
+/// shrinks by exactly that much. The Trash is pinned there again — the only
+/// door to the bin once the workspace menu dropped its row (the first window
+/// run of Bots, finding 5) — and it opens the Trash, in the person's language.
 #[test]
 fn the_footer_is_a_bottom_anchored_stack() {
     let v = with_rows(3);
     let a = area();
     let rows = v.footer_rects(a);
-    assert!(
-        rows.is_empty(),
-        "nothing pinned: the Trash is the floor menu's"
+    assert_eq!(rows.len(), 1, "the Trash is pinned at the column's foot");
+    let (row, rect) = rows[0];
+    assert_eq!(row, FooterRow::Trash);
+    assert_eq!(
+        v.rows_bottom(a),
+        rect.y,
+        "the band stops above the pinned row"
     );
-    assert_eq!(v.rows_bottom(a), a.y + a.h, "the band runs to the floor");
+    assert!(rect.y + rect.h <= a.y + a.h, "inside the column");
+    assert_eq!(
+        v.footer_parts(FooterRow::Trash).1,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::WorkspacesTrash)
+    );
+}
+
+/// **The pinned Trash row opens the Trash**, empty or not — whatever is in
+/// it, documents, runs or Bot rows, which the column cannot count — and it
+/// is published as a button a client can press.
+#[test]
+fn the_pinned_trash_row_opens_the_trash() {
+    let mut v = with_rows(3);
+    let a = area();
+    let (_, rect) = v.footer_rects(a)[0];
+    assert_eq!(
+        v.mouse_down(a, VIEW, rect.x + rect.w * 0.5, rect.y + rect.h * 0.5, false),
+        Outcome::OpenTrash
+    );
 }
 
 /// A pinned row lines up with the rows above it. Drifting a few pixels left
