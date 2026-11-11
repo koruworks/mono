@@ -9,6 +9,10 @@ impl ExploreView {
         if self.live().is_some_and(|p| p.kind == PopoverKind::Summary) {
             self.close_popover()
         } else {
+            // The `…`'s page is the whole menu, never the quick switcher.
+            self.workspace_filter = None;
+            self.workspace_filter_field = None;
+            self.switcher_at = None;
             self.open_popover(PopoverKind::Summary)
         }
     }
@@ -32,6 +36,9 @@ impl ExploreView {
             .map(|w| w.name.as_str())
             .or_else(|| profile.map(|p| p.name.as_str()))
             .unwrap_or(t(lang, Key::Workspaces));
+        // The open workspace's square: its own tile, or the Profile's while
+        // the catalog has not listed it yet, and the waiting square when no
+        // workspace is open. It sits **where the run puts it**, not first.
         let current = Item {
             hit: self
                 .current
@@ -70,13 +77,23 @@ impl ExploreView {
                 dimmed: false,
             })
             .collect();
-        let mut workspaces = vec![current];
-        workspaces.extend(
-            self.rail_workspace_ids()
-                .into_iter()
-                .filter(|id| Some(*id) != self.current)
-                .filter_map(|id| self.workspaces.iter().find(|w| w.id == id))
-                .map(|w| Item {
+        // **The run keeps its order.** The open workspace used to be lifted
+        // to the top, so every switch reshuffled the squares under the
+        // pointer; now each square stays where it was put, and the open one
+        // is the one drawn selected. With no workspace open, the waiting
+        // square leads, as it always has.
+        let mut workspaces = Vec::new();
+        let mut current = Some(current);
+        if self.current.is_none() {
+            workspaces.extend(current.take());
+        }
+        for id in self.rail_workspace_ids() {
+            if Some(id) == self.current {
+                workspaces.extend(current.take());
+                continue;
+            }
+            if let Some(w) = self.workspaces.iter().find(|w| w.id == id) {
+                workspaces.push(Item {
                     hit: apps_rail::Hit::Workspace(w.id),
                     name: fill(t(lang, Key::RailSwitchWorkspace), &[&w.name]),
                     contents: Contents::Tile {
@@ -86,8 +103,19 @@ impl ExploreView {
                     },
                     selected: false,
                     dimmed: false,
-                }),
-        );
+                });
+            }
+        }
+        workspaces.extend(current);
+        // The workspace menu's own door, under the squares and above the
+        // rule: the squares themselves now only switch.
+        workspaces.push(Item {
+            hit: apps_rail::Hit::WorkspaceMenu,
+            name: t(lang, Key::RailWorkspaceMenu).to_owned(),
+            contents: Contents::Glyph(icons::DOTS_THREE),
+            selected: self.popover_is(PopoverKind::Summary),
+            dimmed: false,
+        });
         Rail {
             workspaces,
             views,
@@ -106,6 +134,15 @@ impl ExploreView {
                     },
                     ..glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION)
                 },
+                // App settings are the app's, not a Profile's: they sat at
+                // the foot of the Profile menu, behind a press on a square
+                // that says nothing about settings. Here they are one press
+                // away, between Help and the profile square.
+                glyph(
+                    apps_rail::Hit::Settings,
+                    t(lang, Key::ProfileAppSettings),
+                    icons::FADERS,
+                ),
                 Item {
                     hit: apps_rail::Hit::Profile,
                     name: profile
@@ -156,6 +193,7 @@ impl ExploreView {
         {
             apps_rail::Hit::Workspace(id) => ExploreChromeFocus::Workspace(Some(id)),
             apps_rail::Hit::WaitingWorkspace => ExploreChromeFocus::Workspace(None),
+            apps_rail::Hit::WorkspaceMenu => ExploreChromeFocus::WorkspaceMenu,
             apps_rail::Hit::App(mode) => ExploreChromeFocus::App(
                 self.rail_modes()
                     .iter()
@@ -164,6 +202,7 @@ impl ExploreView {
             ),
             apps_rail::Hit::Overflow => ExploreChromeFocus::RailOverflow,
             apps_rail::Hit::Help => ExploreChromeFocus::RailHelp,
+            apps_rail::Hit::Settings => ExploreChromeFocus::RailSettings,
             apps_rail::Hit::Profile => ExploreChromeFocus::RailProfile,
         }
     }
@@ -184,7 +223,9 @@ impl ExploreView {
                 self.rail_modes().get(i).copied().map(apps_rail::Hit::App)
             }
             Some(ExploreChromeFocus::RailOverflow) => Some(apps_rail::Hit::Overflow),
+            Some(ExploreChromeFocus::WorkspaceMenu) => Some(apps_rail::Hit::WorkspaceMenu),
             Some(ExploreChromeFocus::RailHelp) => Some(apps_rail::Hit::Help),
+            Some(ExploreChromeFocus::RailSettings) => Some(apps_rail::Hit::Settings),
             Some(ExploreChromeFocus::RailProfile) => Some(apps_rail::Hit::Profile),
             _ => None,
         };

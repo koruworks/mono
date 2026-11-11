@@ -64,8 +64,34 @@ fn safe_api_code(code: &ErrorCode) -> &'static str {
         ErrorCode::CONFLICT => ErrorCode::CONFLICT,
         ErrorCode::NOT_FOUND => ErrorCode::NOT_FOUND,
         ErrorCode::SERVER_UNAVAILABLE => ErrorCode::SERVER_UNAVAILABLE,
-        _ => "unknown_api_error",
+        other => sync_issuance_code(other).unwrap_or("unknown_api_error"),
     }
+}
+
+/// Why a Cloud sync credential was refused. These are a closed vocabulary
+/// too, and without them every refused token read `unknown_api_error`: a
+/// device that was not authorized for a Workspace and one whose Workspace had
+/// Cloud switched off left the same line (2026-11-11).
+fn sync_issuance_code(code: &str) -> Option<&'static str> {
+    use koru_account_core::sync_issuance::SyncIssuanceError::*;
+    [
+        PermissionDenied,
+        WrongRegion,
+        DeviceRevoked,
+        EndpointMismatch,
+        WorkspaceNotAuthorized,
+        CloudDisabled,
+        CloudDeleting,
+        CloudAbsent,
+        AuthorizationStale,
+        CloudIncarnationStale,
+        ReplicaMismatch,
+        SyncUnavailable,
+        AuthorizationUnavailable,
+    ]
+    .into_iter()
+    .map(|error| error.code())
+    .find(|known| *known == code)
 }
 
 #[derive(Default)]

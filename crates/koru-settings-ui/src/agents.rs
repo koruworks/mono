@@ -11,7 +11,8 @@
 //! agent the host lists — its brand mark and name, its status in plain words,
 //! a *Setup guide ↗* link, an *Install* button when the agent (or the program
 //! its chats run through) is missing and the host knows the vendor's install
-//! command, and its switch — under a card that says what a
+//! command, an *Update* button when its CLI is behind its channel, and its
+//! switch — under a card that says what a
 //! switch does and offers *Refresh status*, and a title that offers *Restore
 //! defaults*. The host owns everything here (the agent list, the existing
 //! readiness checks, the stored settings), so every press is a
@@ -56,7 +57,7 @@ pub(crate) fn lay_out(
                 Action::AgentGuide(guide),
             );
         }
-        let status = row.status.words(lang);
+        let status = status_words(lang, row);
         let switch = Action::AgentEnabled(row.key.clone(), !row.on);
         // *Install* only where the host knows the vendor's command and the
         // status says something is missing; it sits before the switch, so
@@ -72,11 +73,47 @@ pub(crate) fn lay_out(
                 row.on,
                 switch,
             );
+        } else if row.update.as_ref().is_some_and(|update| !update.running) {
+            // *Update* sits where *Install* does, for the same reason. An
+            // agent that is missing is offered *Install* instead: there is
+            // nothing of it here to update.
+            b.row_button_toggle(
+                &row.name,
+                Some(&status),
+                (
+                    t(lang, Key::AgentCliUpdate),
+                    Action::UpdateAgent(row.key.clone()),
+                ),
+                row.on,
+                switch,
+            );
         } else {
             b.row_toggle(&row.name, Some(&status), row.on, switch);
         }
     }
     b.note(&order_hint(lang));
+}
+
+/// The row's sentence: its readiness, and — when its CLI is behind its
+/// channel — that an update is there, or that one is running.
+fn status_words(lang: Lang, row: &AgentProviderRow) -> String {
+    let status = row.status.words(lang);
+    match &row.update {
+        Some(update) if update.running => {
+            koru_i18n::fill(t(lang, Key::AgentCliUpdating), &[&row.name])
+        }
+        Some(update) => koru_i18n::fill(
+            t(lang, Key::SettingsAgentStatusDetail),
+            &[
+                &status,
+                &koru_i18n::fill(
+                    t(lang, Key::SettingsAgentUpdateAvailable),
+                    &[&update.installed, &update.latest],
+                ),
+            ],
+        ),
+        None => status,
+    }
 }
 
 /// How to move an agent: by its handle, or with the move chords the editor's

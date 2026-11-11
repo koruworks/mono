@@ -4026,11 +4026,12 @@ fn with_summary_open() -> (MainView, Workspace, Vec<koru_core::ProfileSummary>) 
         list.clone(),
         Some(list[0].id),
     );
-    // The floor chip opens the switcher; its Profiles page is one page away.
-    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
-    let (x, y) = chip.centre();
+    // The `…` under the workspace squares opens the switcher; its Profiles
+    // page is one page away. The square itself switches, it opens nothing.
+    let more = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
+    let (x, y) = more.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.popover_open(), "the chip opens the switcher");
+    assert!(v.explore.popover_open(), "the `…` opens the switcher");
     (v, w, profiles)
 }
 
@@ -4133,10 +4134,8 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     let first = |v: &MainView| v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row);
     assert_eq!(
         first(&v),
-        Some(PopoverRow::WorkspaceAction(
-            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
-        )),
-        "the chip's page lists the workspaces only"
+        Some(PopoverRow::WorkspacesHeading),
+        "the `…`'s page lists the workspaces only"
     );
     // The rail's profile square: the Profiles page.
     let rail = v.rail_area();
@@ -4153,16 +4152,11 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     assert!(!v.explore.popover_open(), "the square shuts it");
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
-    let (cx, cy) = chip.centre();
+    let menu = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
+    let (cx, cy) = menu.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
-    assert!(v.explore.popover_open(), "and the chip opens its page");
-    assert_eq!(
-        first(&v),
-        Some(PopoverRow::WorkspaceAction(
-            crate::panes::explore::workspace_menu_elements::MenuAction::Sync
-        ))
-    );
+    assert!(v.explore.popover_open(), "and the `…` opens its page");
+    assert_eq!(first(&v), Some(PopoverRow::WorkspacesHeading));
 }
 
 /// **The floor answers in every app.** Tasks, Home, Artifacts, Chats and
@@ -4182,7 +4176,7 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         v.show_navigator(mode);
         // Read after the switch: a mode that opens a tab can relay out the
         // pane, and the floor moves with it.
-        let square = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
+        let square = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
         let (cx, cy) = square.centre();
         v.mouse_down(&mut w.ws, cx, cy, false);
         assert!(
@@ -6271,8 +6265,8 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     v.menu = None;
     v.explore
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-    let chip = v.explore.apps_rail_rects(v.rail_area()).workspaces[0].1;
-    let (cx, cy) = chip.centre();
+    let menu = v.explore.apps_rail_rects(v.rail_area()).workspace_menu;
+    let (cx, cy) = menu.centre();
     v.mouse_down(&mut w.ws, cx, cy, false);
     assert!(v.explore.popover_open());
     let (_, h) = v
@@ -6286,28 +6280,14 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
     assert!(v.explore.popover_open(), "and the page stays");
 }
 
-/// **The Profile menu's App settings tooltip carries its chord**, the
-/// way the lane's controls carry theirs; the `?` has no chord to carry.
+/// **The rail's App settings tooltip carries its chord**, the way the
+/// lane's controls carry theirs; the `?` has no chord to carry.
 #[test]
-fn the_profile_menus_settings_tooltip_carries_its_chord() {
+fn the_rails_settings_tooltip_carries_its_chord() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
     let rects = v.explore.apps_rail_rects(v.rail_area());
-    v.explore.toggle_profile_popover();
-    let (_, settings) = v
-        .explore
-        .popover_rects(v.explore_popover_area(), v.viewport)
-        .into_iter()
-        .find(|(row, _)| {
-            matches!(
-                row,
-                crate::panes::explore::PopoverRow::ProfileAction(
-                    crate::panes::explore::popover_elements::profiles::MenuAction::Settings
-                )
-            )
-        })
-        .unwrap();
-    let (x, y) = settings.centre();
+    let (x, y) = rects.settings.centre();
     v.mouse_move(x, y);
     assert_eq!(
         v.tooltip.label(),
@@ -6320,7 +6300,6 @@ fn the_profile_menus_settings_tooltip_carries_its_chord() {
         v.tooltip.shortcut(),
         Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
     );
-    v.explore.close_popover();
     let (hx, hy) = rects.help.centre();
     v.mouse_move(hx, hy);
     assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
@@ -6451,9 +6430,9 @@ fn the_workspace_menu_actions_reach_import_trash_and_creation() {
 }
 
 /// Global sync opens Linked devices in the singleton Manage tab; the
-/// Profile menu's settings action opens Settings.
+/// rail's settings square opens Settings.
 #[test]
-fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
+fn the_sync_settings_tab_opens_once_and_the_rail_opens_settings() {
     let (mut v, mut w, _) = with_summary_open();
     v.explore.close_popover();
     let tabs = v.tabs().len();
@@ -6466,21 +6445,10 @@ fn the_sync_settings_tab_opens_once_and_the_profile_menu_opens_settings() {
     assert!(v.open_sync_settings_tab(), "the same tab comes forward");
     assert_eq!(v.tabs().len(), tabs + 1, "and no second one opens");
 
-    v.explore.toggle_profile_popover();
-    let (_, settings) = v
-        .explore
-        .popover_rects(v.explore_popover_area(), v.viewport)
-        .into_iter()
-        .find(|(row, _)| {
-            matches!(
-                row,
-                crate::panes::explore::PopoverRow::ProfileAction(
-                    crate::panes::explore::popover_elements::profiles::MenuAction::Settings
-                )
-            )
-        })
-        .unwrap();
-    let (x, y) = settings.centre();
+    if v.explore.apps_rail_rects(v.rail_area()).settings.w <= 0.0 {
+        v.toggle_sidebar();
+    }
+    let (x, y) = v.explore.apps_rail_rects(v.rail_area()).settings.centre();
     v.mouse_down(&mut w.ws, x, y, false);
     assert!(
         matches!(v.tabs().active_tab().view, TabView::Settings(_)),
@@ -7246,7 +7214,15 @@ fn back_across_a_workspace_swap_routes_to_the_prior_document() {
     v.open_node(&other, other_root);
     v.tabs_mut().active_mut().document = Some(other_document);
 
-    assert_eq!(v.history.len(), 1, "the source survived the reseat");
+    // The Source tab stays open across the switch now (2026-11-10), so
+    // opening Bugs from it records a stop of its own; what matters is that
+    // the Source stop survived the reseat, which Back below relies on.
+    assert!(
+        v.history
+            .first()
+            .is_some_and(|spot| spot.document == Some(source_document)),
+        "the source survived the reseat"
+    );
     assert!(v.navigate_history(&other, -1));
     assert_eq!(
         v.take_pane_request(),
@@ -12621,6 +12597,141 @@ fn an_open_settings_tab_adopts_a_preference_changed_elsewhere() {
     assert!(opened.pinned_show_title());
 }
 
+/// Settings may be the only utility tab open. Its choice must reach the next
+/// pin and survive closing Settings before the session is captured.
+#[test]
+fn pinned_title_choice_reaches_new_pins_without_welcome_or_settings_open() {
+    let (mut view, _) = on_document();
+    assert!(view.close(0), "close Welcome");
+    assert!(view.open_settings_tab());
+    let TabView::Settings(settings) = &mut view.tabs_mut().active_mut().view else {
+        panic!("Settings is active");
+    };
+    settings.surface_mut().adopt_preferences(
+        koru_draw::theme::ViewMode::Full,
+        None,
+        true,
+        koru_settings::CloseBehaviorChoice::Background,
+    );
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    assert!(view.close(1), "close Settings");
+
+    assert!(pin_active_document(&mut view));
+    assert!(view.tabs().get(0).unwrap().show_title);
+    let mut saved = Settings::default();
+    View::capture(&view, &mut saved);
+    assert!(saved.pinned_show_title);
+}
+
+#[test]
+fn an_external_pinned_title_preference_reaches_new_pins_without_welcome() {
+    let (mut view, mut workspace) = on_document();
+    assert!(view.close(0), "close Welcome");
+    assert!(pin_active_document(&mut view));
+    assert!(!view.tabs().get(0).unwrap().show_title);
+    View::adopt_preferences(
+        &mut view,
+        &Settings {
+            pinned_show_title: true,
+            ..Settings::default()
+        },
+    );
+    assert!(view.tabs().get(0).unwrap().show_title);
+    let other = a_document(&mut workspace.ws, "Other");
+    view.open_node(&workspace.ws, other);
+    assert!(pin_active_document(&mut view));
+    assert!(view.tabs().get(1).unwrap().show_title);
+}
+
+/// The setting is a strip-wide choice, including pins outside the focused
+/// split. Individual menu overrides hold until a Settings option is selected.
+#[test]
+fn pinned_title_setting_updates_existing_pins_in_every_pane() {
+    use crate::mainview::panes::SplitDir;
+
+    let (mut view, mut workspace) = on_document();
+    let notes = view.tabs().active_tab().id;
+    let notes = view
+        .panes
+        .take_tab_by_id(&PanePath::root(), notes)
+        .expect("take Notes into the right pane");
+    view.panes.split(&PanePath::root(), SplitDir::Right, notes);
+    let right = PanePath::root().child(1);
+    view.panes.set_focus(right.clone());
+    assert!(pin_active_document(&mut view));
+    assert!(
+        view.open_settings_tab(),
+        "the other pane keeps a Settings tab"
+    );
+
+    let left = PanePath::root().child(0);
+    view.panes.set_focus(left.clone());
+    let other = a_document(&mut workspace.ws, "Other");
+    view.open_node(&workspace.ws, other);
+    assert!(pin_active_document(&mut view));
+    assert!(view.open_settings_tab());
+    let TabView::Settings(settings) = &mut view.tabs_mut().active_mut().view else {
+        panic!("Settings is active");
+    };
+    settings.surface_mut().adopt_preferences(
+        koru_draw::theme::ViewMode::Full,
+        None,
+        true,
+        koru_settings::CloseBehaviorChoice::Background,
+    );
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    let mut saved = Settings::default();
+    View::capture(&view, &mut saved);
+    assert!(
+        saved.pinned_show_title,
+        "a stale Settings tab cannot undo it"
+    );
+
+    for path in [&left, &right] {
+        let group = view.panes.group_mut(path).unwrap();
+        group.ensure_widths(&mut view.engine);
+        assert!(group.tabs().get(0).unwrap().show_title);
+        assert!(group.widths[0] > koru_draw::theme::TAB_PINNED_W);
+    }
+    assert!(view.set_pinned_title(0, false), "override the left pin");
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    let left_pin = view.panes.group(&left).unwrap().tabs().get(0).unwrap();
+    assert!(left_pin.show_title, "reselecting the option reapplies it");
+
+    // Choosing icon-only also reaches the other pane.
+    let TabView::Settings(settings) = &mut view.tabs_mut().active_mut().view else {
+        panic!("Settings is active");
+    };
+    settings.surface_mut().adopt_preferences(
+        koru_draw::theme::ViewMode::Full,
+        None,
+        false,
+        koru_settings::CloseBehaviorChoice::Background,
+    );
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(false));
+    let right_pin = view.panes.group(&right).unwrap().tabs().get(0).unwrap();
+    assert!(!right_pin.show_title);
+    view.perform_settings_request(koru_settings_ui::Request::SetPinnedShowTitle(true));
+    let left_pin = view.panes.group(&left).unwrap().tabs().get(0).unwrap();
+    assert!(left_pin.show_title);
+}
+
+#[test]
+fn startup_pinned_preference_keeps_a_saved_title_override() {
+    let (mut view, _) = on_document();
+    assert!(pin_active_document(&mut view));
+    assert!(!view.tabs().get(0).unwrap().show_title);
+    View::adopt_startup_preferences(
+        &mut view,
+        &Settings {
+            pinned_show_title: true,
+            ..Settings::default()
+        },
+    );
+    assert!(!view.tabs().get(0).unwrap().show_title);
+    assert!(view.preferences.pinned_show_title);
+}
+
 #[test]
 fn feedback_opens_as_a_singleton_tab() {
     crate::feedback::draft::reset();
@@ -14928,4 +15039,194 @@ fn foreign_file_attachment_allows_reads_and_detach_but_rejects_mutation() {
     assert!(local.contains(&MenuAction::Rename));
     assert!(local.contains(&MenuAction::MoveToTrash));
     assert!(local.contains(&MenuAction::AddNote));
+}
+
+/// **A workspace switch leaves the strip open** (the user, 2026-11-10:
+/// "don't close chats when I switch workspaces, leave them open"). The
+/// switch reseats the window and then tells it the workspace changed; a
+/// chat tab and the document tab beside it are both still there after.
+#[test]
+fn a_workspace_switch_leaves_chats_and_documents_open() {
+    let (mut v, mut w) = container();
+    let root = a_document(&mut w.ws, "Notes");
+    v.open_node(&w.ws, root);
+    assert!(v.open_ai_chat_tab(), "a chat tab opened");
+    let before = v.tabs().len();
+    let mut other = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "other").unwrap();
+    a_document(&mut other, "Elsewhere");
+    v.reseat(&other);
+    assert_eq!(v.tabs().len(), before, "nothing closed");
+    assert!(
+        v.tabs()
+            .iter()
+            .any(|tab| matches!(tab.view, TabView::AiChat(_))),
+        "the chat is still open"
+    );
+    assert!(
+        v.tabs().iter().any(|tab| tab.view.root() == Some(root)),
+        "and so is the document"
+    );
+}
+
+/// **Ctrl+Alt+W is a quick switcher** (2026-11-10): the workspaces as a
+/// list under a search field, like the `/` menu. Typing narrows it, Enter
+/// switches to the match, and the rail's `…` still opens the whole menu.
+#[test]
+fn ctrl_alt_w_filters_the_workspaces_and_enter_switches_to_the_match() {
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w) = container();
+    v.toggle_sidebar();
+    let profile = koru_core::ProfileSummary {
+        id: koru_core::ProfileId::new(),
+        name: "mine".into(),
+        email: String::new(),
+        avatar: None,
+        icon: None,
+        color: None,
+        account: None,
+        folder: "C:/dev/mine".into(),
+    };
+    let list: Vec<_> = ["PM", "Specs", "Concepts", "Signals"]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| koru_core::WorkspaceEntry::new(WorkspaceId::new(), name, i as i64))
+        .collect();
+    v.set_pane_context(
+        vec![profile.clone()],
+        profile.id,
+        list.clone(),
+        Some(list[0].id),
+    );
+
+    assert!(v.open_workspace_switcher());
+    assert!(v.explore.workspace_filter_active());
+    let area = v.explore_popover_area();
+    let rows = |v: &MainView| v.explore.popover_rects(area, v.viewport);
+    assert!(
+        rows(&v)
+            .iter()
+            .all(|(row, _)| matches!(row, PopoverRow::Workspace(_))),
+        "only the workspaces: no heading, no New or Import"
+    );
+    assert_eq!(rows(&v).len(), 4);
+    // The field is an element of the page, inside the floating panel.
+    let field = v
+        .explore
+        .popover_filter_rect(area, v.viewport)
+        .expect("the field");
+    let panel = v
+        .explore
+        .popover_panel(area, v.viewport)
+        .expect("the panel");
+    assert!(
+        field.x >= panel.x && field.x + field.w <= panel.x + panel.w + 0.5 && field.y >= panel.y,
+        "{field:?} inside {panel:?}"
+    );
+
+    for typed in ["s", "i"] {
+        assert!(v.key(
+            &mut w.ws,
+            &Key::Character(typed.into()),
+            Some(typed),
+            ModifiersState::empty()
+        ));
+    }
+    let shown = rows(&v);
+    assert_eq!(shown.len(), 1, "\"si\" matches Signals alone");
+    assert!(v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(
+        v.take_pane_request(),
+        Some(koru_workspace_host::PaneRequest::Switch(list[3].id))
+    );
+
+    // The `…` is the whole menu again, heading and all.
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    assert!(v.explore.toggle_workspace_menu());
+    assert!(!v.explore.workspace_filter_active());
+    assert!(
+        rows(&v)
+            .iter()
+            .any(|(row, _)| *row == PopoverRow::WorkspacesHeading)
+    );
+}
+
+/// Escape leaves the quick switcher, and the field goes with it.
+#[test]
+fn escape_closes_the_quick_switcher() {
+    let (mut v, mut w, _) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    assert!(v.open_workspace_switcher());
+    assert!(v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(!v.explore.workspace_filter_active());
+}
+
+/// **Ctrl+Alt+W opens at the mouse** (2026-11-10): the panel's corner on the
+/// pointer, kept inside the window; with the pointer off the window it
+/// hangs off the rail as before.
+#[test]
+fn the_quick_switcher_opens_at_the_mouse() {
+    let (mut v, _w, _) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.pointer = (420.0, 260.0);
+    assert!(v.open_workspace_switcher());
+    let area = v.explore_popover_area();
+    let panel = v.explore.popover_panel(area, v.viewport).expect("open");
+    assert_eq!(
+        (panel.x, panel.y),
+        (420.0, 260.0),
+        "its corner on the pointer"
+    );
+
+    // Near the window's corner it is pulled back inside.
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.pointer = (v.viewport.0 - 5.0, v.viewport.1 - 5.0);
+    assert!(v.open_workspace_switcher());
+    let panel = v.explore.popover_panel(area, v.viewport).expect("open");
+    assert!(panel.x + panel.w <= v.viewport.0 && panel.y + panel.h <= v.viewport.1);
+}
+
+/// **Workspace tabs: per workspace** (2026-11-10): on a switch the focused
+/// column's main tabs become the incoming workspace's own — here none, so
+/// the Welcome floor — and with *Shared* tabs they stay as they were.
+#[test]
+fn per_workspace_tabs_replace_the_strip_on_a_switch_and_shared_keeps_it() {
+    let (mut v, mut w) = container();
+    let first = a_document(&mut w.ws, "First");
+    v.open_node(&w.ws, first);
+    assert!(v.open_ai_chat_tab());
+    let open = v.tabs().len();
+    assert!(open >= 2);
+
+    let shared = koru_workspace_host::Settings::default();
+    View::on_workspace_switched(&mut v, &w, &shared);
+    assert_eq!(v.tabs().len(), open, "shared: the tabs stay");
+
+    let per_workspace = koru_workspace_host::Settings {
+        tabs_per_workspace: true,
+        ..koru_workspace_host::Settings::default()
+    };
+    View::on_workspace_switched(&mut v, &w, &per_workspace);
+    assert_eq!(
+        v.tabs().len(),
+        1,
+        "the incoming workspace had none of its own"
+    );
+    assert!(matches!(v.tabs().active_tab().view, TabView::Welcome(_)));
 }

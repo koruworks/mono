@@ -71,7 +71,6 @@ impl MenuAction {
 
 pub(crate) const MANAGE: Key = Key::surface(popover_elements::SURFACE, "manage-workspaces");
 pub(crate) const NOTICE: Key = Key::surface(popover_elements::SURFACE, "workspace-notice");
-pub(crate) const HEADER: Key = Key::surface(popover_elements::SURFACE, "workspace-header");
 /// The empty Profile's one line (root-catalog §3.10).
 pub(crate) const EMPTY: Key = Key::surface(popover_elements::SURFACE, "workspaces-empty");
 /// The Unassigned group's heading (§3.6), and the parts of its rows: a row
@@ -357,46 +356,6 @@ impl ExploreView {
             .wrap()
     }
 
-    pub(crate) fn workspace_menu_header(&self) -> El {
-        let lang = crate::format::lang();
-        let profile = self.profile();
-        let name = profile.map_or(t(lang, Words::WorkspacesProfiles), |profile| {
-            profile.name.as_str()
-        });
-        row("Workspace menu profile")
-            .id(HEADER)
-            .min_h(metrics::PROFILE_ROW_MIN)
-            .pad_x(alias::NAV_PAD)
-            .gap(Space::S2)
-            .child(
-                leaf(
-                    "Workspace menu profile tile",
-                    TileLeaf {
-                        name: name.to_owned(),
-                        icon: profile.and_then(|p| p.icon.clone()),
-                        color: profile.and_then(|p| p.color.clone()),
-                    },
-                )
-                .decorative(),
-            )
-            .child(
-                col("Workspace menu profile words")
-                    .fill()
-                    .gap(Space::S0_5)
-                    .child(text(name).role(roles::ROW).truncate())
-                    .child(
-                        text(profile.map_or_else(
-                            || t(lang, Words::OnThisComputer).to_owned(),
-                            |p| self.profile_detail(p, lang),
-                        ))
-                        .role(roles::HINT)
-                        .ink(Ink::Secondary)
-                        .truncate(),
-                    ),
-            )
-            .child(self.sync_channel_controls())
-    }
-
     pub(crate) fn workspace_menu_heading(&self) -> El {
         let lang = crate::format::lang();
         row("Workspaces heading")
@@ -475,9 +434,7 @@ impl ExploreView {
         let mut foot = col("Workspace menu footer")
             .child(rule())
             .child(self.workspace_menu_action(MenuAction::New))
-            .child(self.workspace_menu_action(MenuAction::Import))
-            .child(rule())
-            .child(self.workspace_menu_action(MenuAction::Trash));
+            .child(self.workspace_menu_action(MenuAction::Import));
         if let Some(notice) = self
             .workspace_waiting
             .as_ref()

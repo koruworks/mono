@@ -1448,6 +1448,15 @@ pub struct AccountState {
     pub enrollment_retry_at_millis: Option<i64>,
     pub retry_at_millis: Option<i64>,
     pub failure_code: Option<String>,
+    /// **When Koru Cloud last accepted this sign-in**, Unix milliseconds: a
+    /// fresh sign-in, or the session being refreshed — which every Agent
+    /// start does, since the short-lived access token is never stored.
+    /// `None` until that has happened in this Agent. A time and nothing
+    /// else, so the page can say *checked …* beside *Signed in*: the refresh
+    /// was otherwise visible only in the Agent's log (2026-11-11). Absent
+    /// from an older Agent's state, which reads as not known.
+    #[serde(default)]
+    pub session_checked_at_millis: Option<i64>,
 }
 
 /// Nonsecret process-local routing and durable account discovery. Display names
@@ -1855,6 +1864,7 @@ impl Default for AccountState {
             enrollment_retry_at_millis: None,
             retry_at_millis: None,
             failure_code: None,
+            session_checked_at_millis: None,
         }
     }
 }

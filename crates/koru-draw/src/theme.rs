@@ -65,6 +65,7 @@ impl From<Color> for Brush {
 // ---------------------------------------------------------------- palettes
 
 /// Fill, border, and label colour for one pill kind.
+#[derive(Clone)]
 pub struct PillPalette {
     pub bg: Color,
     pub border: Color,
@@ -78,6 +79,7 @@ pub struct PillPalette {
 /// Nine per theme, tuned by hand — never a mechanical inversion of the other
 /// theme's set, which is how a legible light accent becomes an unreadable
 /// dark one.
+#[derive(Clone)]
 pub struct AccentTone {
     pub fill: Color,
     pub ink: Color,
@@ -99,6 +101,7 @@ pub fn accent_tone(token: &str) -> Option<&'static AccentTone> {
     Some(&p().accents[i])
 }
 
+#[derive(Clone)]
 pub struct Palette {
     /// The reading surface: the page in Page mode, and the whole viewport in
     /// the pageless modes. User-settable per document — see `ViewState::canvas_bg`.
@@ -788,6 +791,62 @@ pub fn base_color(dark: bool) -> Option<u32> {
         0 => None,
         value => Some(value & 0xFF_FFFF),
     }
+}
+
+// ------------------------------------------------------ the accent color
+//
+// The colour a primary action wears, replaced per theme (the user,
+// 2026-11-10): `accent_color_light=` / `accent_color_dark=` in
+// `preferences.conf`, as `#rrggbb`, kept like the base colour. It replaces
+// the palette's `accent` wherever a palette is read — `Theme::palette`, which
+// both `p()` and an element's frame go through — and keeps the theme's
+// `on_accent`: the offered swatches are deep on light (white text reads on
+// them) and light on dark (dark text does).
+
+/// `0` follows the theme; otherwise `0xFF00_0000 | rgb`. Light, then dark.
+static ACCENT_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// The accents Settings offers per theme, after the theme's own blue: teal,
+/// green, violet, rose, amber and graphite.
+pub const ACCENT_CHOICES_LIGHT: [u32; 6] =
+    [0x1F7A7A, 0x2D7A48, 0x6B4FB3, 0xB3416E, 0xA65A12, 0x4A4F57];
+pub const ACCENT_CHOICES_DARK: [u32; 6] =
+    [0x5CB8B2, 0x78CC91, 0xA88BD6, 0xD683B2, 0xE0A060, 0xA7ADB7];
+
+/// Set the accent for the light or the dark theme, or `None` for the
+/// theme's own. Text drawn in it is laid out again by the host.
+pub fn set_accent_color(dark: bool, rgb: Option<u32>) {
+    ACCENT_COLOR[usize::from(dark)].store(
+        rgb.map_or(0, |rgb| 0xFF00_0000 | (rgb & 0xFF_FFFF)),
+        Ordering::Relaxed,
+    );
+}
+
+/// The accent chosen for the light or the dark theme, if any.
+pub fn accent_color(dark: bool) -> Option<u32> {
+    match ACCENT_COLOR[usize::from(dark)].load(Ordering::Relaxed) {
+        0 => None,
+        value => Some(value & 0xFF_FFFF),
+    }
+}
+
+/// `base` with its accent replaced by `rgb`. Each palette and colour pair
+/// is made once and kept for the life of the process — a handful at most,
+/// one per swatch tried per theme — so `palette()` can stay `&'static`
+/// and every caller of it keeps working unchanged.
+pub(crate) fn accented(base: &'static Palette, rgb: u32) -> &'static Palette {
+    use std::sync::Mutex;
+    static MADE: Mutex<Vec<(usize, u32, &'static Palette)>> = Mutex::new(Vec::new());
+    let key = std::ptr::from_ref(base) as usize;
+    let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, _, palette)) = made.iter().find(|(p, c, _)| *p == key && *c == rgb) {
+        return palette;
+    }
+    let mut palette = base.clone();
+    palette.accent = rgb_hex(rgb);
+    let palette: &'static Palette = Box::leak(Box::new(palette));
+    made.push((key, rgb, palette));
+    palette
 }
 
 /// An `0xRRGGBB` value as a colour.
@@ -1646,6 +1705,45 @@ pub fn density() -> Density {
 /// layout time, so a change reflows every window.
 pub fn set_density(d: Density) {
     DENSITY.store(d as u8, Ordering::Relaxed);
+}
+
+// ------------------------------------------------------------ wheel speed
+//
+// How many steps one mouse-wheel notch moves a pane: 1 is the step every
+// view had before the setting existed, 2 the default (the user, 2026-11-10:
+// "too slow, speed it 2x"). A process global for the reason density is one:
+// the Settings row sets it live, and the window's wheel handler reads it.
+
+static WHEEL_SPEED: AtomicU8 = AtomicU8::new(2);
+
+/// The wheel speed, 1 to 4.
+pub fn wheel_speed() -> u8 {
+    WHEEL_SPEED.load(Ordering::Relaxed).clamp(1, 4)
+}
+
+/// Out-of-range values are held to 1..=4.
+pub fn set_wheel_speed(speed: u8) {
+    WHEEL_SPEED.store(speed.clamp(1, 4), Ordering::Relaxed);
+}
+
+// ------------------------------------------------------ workspace tabs
+//
+// **Settings → Appearance → Workspace tabs** (the user, 2026-11-10): `false`,
+// *Shared*, keeps the open tabs as you switch workspace, which is what Koru
+// does by default; `true`, *Per workspace*, gives each workspace its own tabs,
+// put aside on the way out and back on the way in. Pinned tabs stay in every
+// workspace either way. A process global for density's reason: the Settings
+// row sets it live, and the shell reads it back into `Settings`.
+
+static TABS_PER_WORKSPACE: AtomicBool = AtomicBool::new(false);
+
+/// Whether each workspace keeps its own tabs.
+pub fn tabs_per_workspace() -> bool {
+    TABS_PER_WORKSPACE.load(Ordering::Relaxed)
+}
+
+pub fn set_tabs_per_workspace(on: bool) {
+    TABS_PER_WORKSPACE.store(on, Ordering::Relaxed);
 }
 
 // ----------------------------------------------------- default document view mode
@@ -3475,5 +3573,38 @@ mod tests {
         set_code_font(FontChoice::SourceCodePro);
         assert_eq!(terminal_code_font(), FontChoice::SourceCodePro);
         set_code_font(original);
+    }
+}
+
+/// **The accent swap** (2026-11-10), on the pure function: nothing global
+/// moves, so no other test can see it.
+#[cfg(test)]
+mod accent_tests {
+    use super::*;
+
+    #[test]
+    fn an_accented_palette_changes_the_accent_alone_and_is_made_once() {
+        let made = accented(&LIGHT, 0x1F7A7A);
+        assert_eq!(made.accent.to_rgba8(), rgb_hex(0x1F7A7A).to_rgba8());
+        assert_eq!(made.on_accent.to_rgba8(), LIGHT.on_accent.to_rgba8());
+        assert_eq!(made.bg.to_rgba8(), LIGHT.bg.to_rgba8());
+        assert!(
+            std::ptr::eq(made, accented(&LIGHT, 0x1F7A7A)),
+            "kept, not remade"
+        );
+        assert!(
+            !std::ptr::eq(made, accented(&DARK, 0x1F7A7A)),
+            "per palette"
+        );
+    }
+
+    #[test]
+    fn every_offered_accent_is_a_distinct_choice_from_the_themes_own() {
+        for (own, choices) in [(&LIGHT, ACCENT_CHOICES_LIGHT), (&DARK, ACCENT_CHOICES_DARK)] {
+            let own = own.accent.to_rgba8();
+            for rgb in choices {
+                assert_ne!(rgb_hex(rgb).to_rgba8(), own, "{rgb:06X}");
+            }
+        }
     }
 }

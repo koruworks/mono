@@ -17,6 +17,27 @@ impl MainView {
             self.help_headlines = answer;
             self.help_headlines_rx = None;
         }
+        // The published releases: asked for once per window, the first time
+        // its Help popover opens — not at startup, so a window nobody asks
+        // for help in makes no request. A failure keeps this build's row.
+        if !self.help_releases_asked
+            && self
+                .explore
+                .popover_is(crate::panes::explore::PopoverKind::Help)
+        {
+            self.help_releases_asked = true;
+            self.help_releases_rx = Some(crate::whatsnew::fetch_releases_async());
+        }
+        if let Some(rx) = self.help_releases_rx.as_ref() {
+            match rx.try_recv() {
+                Ok(answer) => {
+                    self.help_releases = answer;
+                    self.help_releases_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.help_releases_rx = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         let report = self.updates.report();
         self.update_was_offered |= self.updates.was_offered()
             || report.as_ref().is_some_and(|r| {
@@ -40,6 +61,7 @@ impl MainView {
                 .help_headlines
                 .as_ref()
                 .and_then(|h| h.first().cloned()),
+            releases: self.help_releases.clone(),
         });
     }
 
@@ -54,6 +76,22 @@ impl MainView {
                 );
                 self.help_notes_read = true;
                 self.refresh_help();
+                self.ask_pane(PaneRequest::OpenWebsite(url))
+            }
+            Action::Release(index) => {
+                let Some(release) = self
+                    .help_releases
+                    .as_ref()
+                    .and_then(|list| list.get(usize::from(index)))
+                else {
+                    return false;
+                };
+                let url = release.url.clone();
+                // The running build's notes are the ones the dot is about.
+                if help::Model::is_running(release) {
+                    self.help_notes_read = true;
+                    self.refresh_help();
+                }
                 self.ask_pane(PaneRequest::OpenWebsite(url))
             }
             Action::Releases => {

@@ -19,8 +19,19 @@ fn every_control_uses_one_frame_for_hit_focus_and_geometry() {
     view.with_rail_frame(band(), |rail, frame| {
         let controls = rail.controls(frame);
         assert_eq!(controls.first(), Some(&Hit::WaitingWorkspace));
+        assert_eq!(
+            controls[1],
+            Hit::WorkspaceMenu,
+            "the `…` follows the squares"
+        );
         assert_eq!(controls.last(), Some(&Hit::Profile));
-        assert_eq!(controls.len(), view.rail_modes().len() + 3);
+        // The waiting square, the `…`, every view, then the foot's three:
+        // Help, App settings and the profile square.
+        assert_eq!(controls.len(), view.rail_modes().len() + 5);
+        assert_eq!(
+            controls[controls.len() - 3..],
+            [Hit::Help, Hit::Settings, Hit::Profile]
+        );
         for control in controls {
             let node = frame.node(key(control)).unwrap();
             let (x, y) = node.rect.centre();
@@ -31,9 +42,11 @@ fn every_control_uses_one_frame_for_hit_focus_and_geometry() {
             assert!(node.rect.x + node.rect.w <= band().x + band().w);
         }
         let rects = rail.rectangles(frame, band());
-        assert!(rects.workspaces[0].1.y + rects.workspaces[0].1.h < rects.apps[0].1.y);
+        assert!(rects.workspaces[0].1.y + rects.workspaces[0].1.h <= rects.workspace_menu.y);
+        assert!(rects.workspace_menu.y + rects.workspace_menu.h < rects.apps[0].1.y);
         assert!(rects.apps.last().unwrap().1.y + metrics::RAIL_SQUARE.value <= rects.help.y);
-        assert!(rects.help.y + rects.help.h <= rects.profile.y);
+        assert!(rects.help.y + rects.help.h <= rects.settings.y);
+        assert!(rects.settings.y + rects.settings.h <= rects.profile.y);
         assert!(rects.profile.y + rects.profile.h <= band().y + band().h);
     });
 }
@@ -61,7 +74,8 @@ fn keyboard_order_follows_reordered_views_after_the_workspace() {
         );
         let controls = rail.controls(&layout.frame);
         let expected: Vec<_> = rail.views.iter().map(|item| item.hit).collect();
-        assert_eq!(&controls[1..1 + expected.len()], expected);
+        // After the waiting square and the `…`.
+        assert_eq!(&controls[2..2 + expected.len()], expected);
         assert!(controls.contains(&Hit::App(NavigatorMode::Documents)));
     });
 }

@@ -298,7 +298,7 @@ impl SharedInput {
     }
 
     /// The field in `r`, with its placeholder while it is empty.
-    fn draw(
+    pub(crate) fn draw(
         &self,
         canvas: &mut Scene,
         root: Affine,

@@ -18,7 +18,7 @@ use koru_i18n::{Key, Lang};
 use koru_settings::{
     CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice, DensityChoice,
     DictationGesture, DictationInput, DictationLanguage, DictationTier, GlobalSettings,
-    LanguageChoice, ThemeChoice, ViewModeChoice,
+    LanguageChoice, ScrollSpeedChoice, ThemeChoice, ViewModeChoice,
 };
 use koru_ui::DropdownOption;
 
@@ -116,6 +116,23 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
             })
             .collect(),
     );
+    // Read from the live global, like density: two Settings tabs are two
+    // views of one preference.
+    let speed_now = theme::wheel_speed();
+    b.row_choice(
+        koru_i18n::t(lang, Key::SettingsScrollSpeed),
+        Some(koru_i18n::t(lang, Key::SettingsScrollSpeedHint)),
+        ScrollSpeedChoice::ALL
+            .iter()
+            .map(|choice| {
+                (
+                    Action::ScrollSpeed(*choice),
+                    format!("{}\u{d7}", choice.factor()),
+                    choice.factor() == speed_now,
+                )
+            })
+            .collect(),
+    );
     b.row_choice(
         koru_i18n::t(lang, Key::SettingsPinnedTabs),
         None,
@@ -129,6 +146,25 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
                 Action::PinnedShowTitle(true),
                 koru_i18n::t(lang, Key::SettingsIconAndTitle).to_owned(),
                 rows.pinned_show_title,
+            ),
+        ],
+    );
+    // **Workspace tabs**, under the pinned tabs (2026-11-10): whether the
+    // open tabs stay as you switch workspace, or each workspace keeps its own.
+    let per_workspace = theme::tabs_per_workspace();
+    b.row_choice(
+        koru_i18n::t(lang, Key::SettingsWorkspaceTabs),
+        Some(koru_i18n::t(lang, Key::SettingsWorkspaceTabsHint)),
+        vec![
+            (
+                Action::WorkspaceTabs(false),
+                koru_i18n::t(lang, Key::SettingsWorkspaceTabsShared).to_owned(),
+                !per_workspace,
+            ),
+            (
+                Action::WorkspaceTabs(true),
+                koru_i18n::t(lang, Key::SettingsWorkspaceTabsPerWorkspace).to_owned(),
+                per_workspace,
             ),
         ],
     );
@@ -148,6 +184,8 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     );
     base_row(b, lang, false);
     base_row(b, lang, true);
+    accent_row(b, lang, false);
+    accent_row(b, lang, true);
 
     // The document fonts are seen on a page rather than named: the link opens
     // a short sample document beside this tab, and it follows every choice
@@ -241,6 +279,35 @@ fn base_row(b: &mut Builder<'_>, lang: Lang, dark: bool) {
     swatches.extend(tints.iter().map(|&rgb| {
         (
             Action::BaseColor(dark, Some(rgb)),
+            Some(theme::rgb_hex(rgb)),
+            now == Some(rgb),
+        )
+    }));
+    b.row_swatches(koru_i18n::t(lang, label), None, swatches);
+}
+
+/// The accent for one theme (2026-11-10): the theme's own first, then the
+/// accents offered for that theme — deep ones on light, light ones on dark,
+/// so the words on a primary button stay readable.
+fn accent_row(b: &mut Builder<'_>, lang: Lang, dark: bool) {
+    let (label, own, choices) = if dark {
+        (
+            Key::SettingsAccentColorDark,
+            theme::DARK.accent,
+            theme::ACCENT_CHOICES_DARK,
+        )
+    } else {
+        (
+            Key::SettingsAccentColorLight,
+            theme::LIGHT.accent,
+            theme::ACCENT_CHOICES_LIGHT,
+        )
+    };
+    let now = theme::accent_color(dark);
+    let mut swatches = vec![(Action::AccentColor(dark, None), Some(own), now.is_none())];
+    swatches.extend(choices.iter().map(|&rgb| {
+        (
+            Action::AccentColor(dark, Some(rgb)),
             Some(theme::rgb_hex(rgb)),
             now == Some(rgb),
         )

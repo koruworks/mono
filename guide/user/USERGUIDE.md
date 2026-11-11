@@ -152,7 +152,11 @@ subscription for your signed-in Koru account, from top to bottom:
 - **When Koru can't connect**, a card at the top says so, with **Try again**
   and **Continue offline**; your local Profiles stay available. A Profile's own
   page points here with *Can't reach Koru — see Koru Cloud*.
-- **Account** names the account this computer is signed in to, with
+- **Account** names the account this computer is signed in to and, after
+  *Signed in on this computer*, when Koru Cloud last **checked** that sign-in.
+  Koru renews it every time it starts and again as it runs, so the time is
+  normally recent; an old one means Koru has not reached Koru Cloud since.
+  Beside it is
   **Accounts…** — the account chooser, which also opens from *{n} Profiles
   hidden* under the nav's Profiles. Up and Down move in it, Enter chooses,
   Escape closes it, and the wheel scrolls a long list. **Add Account** starts
@@ -195,37 +199,39 @@ says what is happening underneath — turning on, connecting, or syncing via Kor
 Cloud — in the same words as the Profile's own page, which has the same switch
 under *Sign-in and sync*. The switch is only live for a Profile of the account
 you are signed in to and only while the subscription is current; otherwise it
-is shown dimmed with the reason. A Profile that is not signed in says *Not
+is shown dimmed with the reason. A Profile that belongs to your account but
+is not linked to the Google Account you are signed in with reads *Not linked
+to this sign-in*: after you unlink a Google Account from a Profile, that is
+how the Profile looks on a computer signed in with it. The Profile and its
+workspaces stay on this computer and do not sync from it. **Connect…** on
+its row opens the Profile's page, where **Connect to your account** links it
+to the Google Account you are signed in with again; Koru may ask you to sign
+in with Google once more first. A Profile that
+is not signed in says *Not
 signed in* and offers **Sign in…**, which opens that Profile's page at its
 *Sign-in and sync*.
 
-**Koru asks about your Workspaces the first time.** Switching Cloud sync on
-for a Profile asks whether its Workspaces should move to Cloud as well. This
-question, and the switch that raises it, are on the **desktop**: a phone has no
-Cloud sync switch of its own, and because each device decides for itself,
-answering here does not answer it for your phone.
+**A Profile you create or choose while signed in starts with Cloud sync on.**
+Sign in on a new computer and create your first Profile, choose one your
+account already has, or create another Profile for the account you are signed
+in to, and it syncs through Koru Cloud without the switch being touched and
+without the question below. A Workspace you had switched off on another
+device stays off. It starts once the
+account's subscription is current; if you subscribe afterwards, it starts the
+next time the Koru Cloud page checks the subscription. Switch it off and it
+stays off. A Profile that was already on this computer before you connected it
+to an account is not switched on for you, because it may hold work you have
+not decided to send anywhere. This is on the desktop; a Profile created on a
+phone still waits for its switch.
 
-- **Move everything** — the Profile and every Workspace under it move together,
-  and the files those Workspaces contain start being sent straight away.
-- **Just this Profile** — only the Profile moves. Its Workspaces keep their
-  files on this device, which is a perfectly good place for them to be; you can
-  move them later by answering the question again.
-- **Not now** — nothing moves and nothing is saved. Escape, and closing the
-  dialog, do the same thing. Turn Cloud sync off and on again and the question
-  comes back.
-
-A Workspace you have already set yourself is left exactly as you set it,
-whichever answer you give, and Koru says how many it left alone. Workspaces
-you make afterwards — and ones that arrive from your other devices — follow
-the Profile, so you are not asked again for each one. Nothing about
-this reaches your other devices: each one decides for itself, so switching this
-laptop to Cloud changes nothing on your phone.
-
-**The keyboard does not answer the question.** Pressing Enter does nothing
-until you deliberately choose a button, because the first answer can start
-sending gigabytes. Escape dismisses the question without answering it — your
-Profile keeps the Cloud sync you just switched on, and its Workspaces stay
-exactly as they were.
+**The switch is all there is to it.** Switching Cloud sync on for a Profile
+syncs the Profile and every Workspace under it, and Workspaces you make
+afterwards follow. Nothing is asked. (Koru used to ask whether the Profile's
+Workspaces should move as well, and a switch left on with that question
+unanswered synced nothing.) A Workspace you have switched off yourself on
+another device stays off until you switch it on. This switch is on the
+**desktop**; each device decides for itself, so switching this laptop on
+changes nothing on your phone.
 
 **Switching Cloud sync off** stops transfers on this device immediately —
 nothing waits for another device to notice. Nothing already on this device is
@@ -616,9 +622,12 @@ account choice** reopens the retained chooser. Tab moves between modes, rows and
 actions; Space or Enter activates the focused choice. Escape requests unfinished
 cancellation when available, or returns to the local form.
 
-In the desktop **Manage** tab, **Connect** beside a Profile under *Other
-Profiles* in the nav adds the Profile while keeping the tab open. Its row shows the current connection
-status. Choose the Profile from the Profile switcher when you want to work in
+In the desktop **Manage** tab, the **Koru Cloud** page lists your account's
+Profiles that are not on this computer under **Which profiles sync**, after the
+ones that are, each marked *Not on this computer* with a switch. Switching one
+on adds the Profile while keeping the tab open, and it syncs through Koru Cloud
+from then on. Its row shows the current connection status, and after a failed
+attempt the same switch tries again. Choose the Profile from the Profile switcher when you want to work in
 it; its first active workspace opens. If the workspace is still arriving,
 Koru opens the Profile immediately with no workspaces and explains that they
 will appear when a device holding them comes online. It selects the first one
@@ -983,33 +992,38 @@ Down the left is the **sidebar** — `Ctrl+Shift+E`, or the sidebar button
 that says *Hide sidebar* / *Show sidebar* when you point at it. It runs the
 full height of the window and pushes everything else to the right. At its
 top is a lane with the Koru mark, **Search** and the sidebar button; under
-it a vertical rail with the **current workspace** first, then the **apps** —
+it a vertical rail with your **workspaces** first, a **…** under them, then
+the **apps** —
 Documents, Files, Tasks and the rest the build shows (`Alt+1`…`Alt+8` switch them by
 place: `Alt+1` is the top view, `Alt+2` the next;
 drag an icon up or down to put it where you want it, or with the rail
 focused by F6 press `Ctrl+Shift+↑`/`↓`, and Esc while dragging puts it back;
 the shortcuts go with the place, so moving Chats to the top makes it `Alt+1`;
 the order is remembered on this computer);
-then that app's own navigation. Press the current workspace square for its
-menu: switch workspace, create or import one, open Trash, or open Manage.
+then that app's own navigation. Press a workspace square to switch to it.
+The **…** under the squares opens the workspace menu: switch workspace,
+create or import one, or open Manage.
 Right-click a workspace row for its management actions. Help, Settings and
 your Profile stay at the bottom of the rail. The **?** opens help: what is new in
 this build, the full changelog, **Send feedback**, **Star us on GitHub**
 (Koru's repository, in your browser), and Koru's website and socials.
 Hide the sidebar and the lane's buttons fold into the title bar's left end;
-`Ctrl+Alt+W` still opens the workspace menu and `Ctrl+Alt+P` opens Profiles.
+`Ctrl+Alt+W` still opens the workspace switcher and `Ctrl+Alt+P` opens Profiles.
 `F6` walks the keyboard over the visible chrome, including the lane and rail;
 the arrows move within
 each, Enter presses, Escape returns to the page.
 
 Use a workspace row's **Pin to rail** control to keep it one click away.
-The rail shows your current workspace first and up to three saved pins,
-without repeating the current workspace. New pins are capped at three;
+The rail shows up to five saved pins in your order, the open one drawn
+selected where it stands; switching does not move them. A workspace you open
+that is not pinned is shown after them, and keeps that place when you switch
+to a pinned one, until you open another unpinned workspace. New pins are
+capped at five;
 additional saved pins received from another device or restored from Archive
 remain saved and available in the workspace menu. Unpinning is always available.
 Pin choices sync; their order stays on this computer. Drag a pinned square,
 or focus it with F6 and press `Ctrl+Shift+↑`/`↓`, to change that order.
-The current square stays first. Escape cancels a drag. A pending pin has a
+Any pinned square can be dragged, the open one too. Escape cancels a drag. A pending pin has a
 progress mark; if its listing needs repair, **Try again** remains in the menu.
 
 In a short window, **More views** (`⋯`) opens the apps that no longer fit on
@@ -1124,7 +1138,9 @@ wrong.
 
 **In Explore:** a single click opens a document in the current tab. Ctrl+click (or Shift+click) builds a multi-selection; right-click then offers **Open in new tab** (one tab each) and **Open in new window** (the whole set in one window).
 
-**Right-click any tab to pin it** — a document, a task list, the Trash, a terminal, Settings. Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps what it shows** — clicking another page in the pane, or a link on the pin, never replaces it, and a pinned task list stays on its list: choosing another list in the Tasks column opens it beside the pin. Pins come back after a restart, except Settings, Feedback, a version comparison, Socials and a run's pages, which stay pinned until you quit. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether new pins show a title; each pin can override that. Opening a page from search prefers a window that already has that tab.
+**Right-click any tab to pin it** — a document, a task list, the Trash, a terminal, Settings. Pinned tabs sit on the left, show the page icon (and the title if you ask), and stay at the front of the strip. **A pinned tab keeps what it shows** — clicking another page in the pane, or a link on the pin, never replaces it, and a pinned task list stays on its list: choosing another list in the Tasks column opens it beside the pin. Pins come back after a restart, except Settings, Feedback, a version comparison, Socials and a run's pages, which stay pinned until you quit. Unpin from the tab menu or *Remove from this list* on the Jump List. If pins are open, Welcome is not auto-opened. **+ → Welcome** selects the Welcome tab, or brings it back when it is closed. Your recent documents are under **+ → Documents**, with **Clear recents** at the bottom of the list. Settings controls whether pins show a title: selecting an option updates all open pins and sets the default for new pins. Each pin can override that choice until an option is selected again. Opening a page from search prefers a window that already has that tab.
+
+**Workspace tabs** (Settings → Appearance → Interface, under *Pinned tabs*) decides what happens to your tabs when you switch workspace. **Shared**, the default, keeps every open tab as you switch. **Per workspace** gives each workspace its own tabs: the ones you had open are put aside when you leave a workspace and come back when you return, and a workspace you have not opened this way starts on its own document. Pinned tabs stay in every workspace either way. With a split view, it is the column you are working in that changes; the other columns stay.
 
 **`+` and `Ctrl+Shift+A` open Add…**. Documents offers **New** (`Ctrl+T`) and
 your ten most recent pages. Agents and Shell each offer **Active** when a
@@ -1873,9 +1889,9 @@ automatically. If the account has Profiles, select the checkboxes for those you
 want to import and choose **Connect selected**. The first selected Profile opens
 as soon as it is saved locally; its workspaces and documents can arrive afterward.
 While waiting, Explore explains the pending synced data and still offers
-**Create workspace**. In the **Manage** tab's nav, click **Connect** beside another
-authorized Profile to add and open it on this device without leaving for the
-onboarding chooser. Peer enrollment and content continue in the background.
+**Create workspace**. On the **Manage** tab's **Koru Cloud** page, switch on
+another authorized Profile under **Which profiles sync** to add it to this
+device without leaving for the onboarding chooser. Peer enrollment and content continue in the background.
 Connected Profiles keep their account attribution even while
 identity details are unavailable.
 
@@ -3508,6 +3524,11 @@ Your choice is remembered when you reopen Koru. Until you choose one, Koru
 uses its default style, Tabler, and follows it if a later version changes it.
 Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
+
+**Scroll speed** is on the same page, under *Interface*: how far one notch
+of the mouse wheel moves a page, **1×** to **4×**. It starts at **2×**, twice
+the step Koru used before the setting existed. A trackpad that scrolls by
+pixels follows your fingers and is not changed by it.
 
 **Fonts and density** are on the **Appearance** page: a density control
 (Compact / Normal) and five font dropdowns — the **app** font
@@ -5897,8 +5918,14 @@ If a Profile has no active Workspace, the Explore column offers **Create
 workspace** first. Document creation commands lead to that same Workspace-name
 prompt instead of trying to save into the local Welcome placeholder.
 
-Click the **workspace name** — or press **`Ctrl+Alt+W`**, which leaves the
-Explore pane open or closed as you set it — and you get:
+**`Ctrl+Alt+W`** opens a quick switcher, like the `/` menu: your workspaces
+in a list under a search field, with the one you are in selected. Type to
+narrow the list to the names that match, move with the arrow keys, and press
+Enter to switch; Escape, or `Ctrl+Alt+W` again, closes it. It leaves the
+Explore pane open or closed as you set it.
+
+Click the **workspace name**, or the **…** under the workspace squares, and
+you get the full workspace menu:
 
 - every workspace in this profile, with the one you are in shown in bold.
   Clicking one switches to it; **Ctrl+click** opens it in its own window instead;
@@ -6443,7 +6470,7 @@ restart.
 | drag a tab | reorder it |
 | right-click a tab → Move to New Window | move it into its own window |
 | the two arrows in `LIBRARY` | fold / unfold the whole tree |
-| `Ctrl+Alt+W` | the workspace switcher (without changing the Explore pane) |
+| `Ctrl+Alt+W` | the quick workspace switcher: type to filter, Enter to switch (without changing the Explore pane) |
 | `Ctrl+Alt+P` | the profile switcher (without changing the Explore pane) |
 | `Ctrl+Shift+E` | show / hide the pane (the logo does the same) — VS Code's Explorer key |
 | `Ctrl+J` | show / hide the Context column |

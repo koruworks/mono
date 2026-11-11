@@ -266,6 +266,21 @@ pub(crate) fn role_of(agent: &AiProviderId, id: &str) -> Role {
     }
 }
 
+/// **A mode's colour**, the one place it is decided: the send button and
+/// the chip wear it, and the list's row for the mode wears it on its icon,
+/// so the menu says what each choice will look like (2026-11-10: the list
+/// had no colours while the button had them). Codex's automatic review and
+/// the agents' accept-edits modes approve safe work; a plain Auto mode
+/// stays neutral; unknown modes keep the accent role.
+pub(crate) fn tone_of(agent: &AiProviderId, id: &str) -> SplitTone {
+    match role_of(agent, id) {
+        Role::Full => SplitTone::Warning,
+        _ if matches!(id, "acceptEdits" | "accept-edits" | "auto-review") => SplitTone::Success,
+        Role::Auto => SplitTone::Neutral,
+        Role::Ask | Role::Other => SplitTone::Accent,
+    }
+}
+
 /// Whether `id` is `agent`'s *Full access*: drawn in the warning color and
 /// never stepped to by Shift+Tab.
 pub(crate) fn is_full_access(agent: &AiProviderId, id: &str) -> bool {
@@ -521,18 +536,7 @@ impl crate::ChatSurface {
     pub(crate) fn approval_presentation(&self) -> Option<(ModeRow, SplitTone)> {
         let (agent, _) = self.chat_modes()?;
         let row = self.current_approval_row()?;
-        let tone = match role_of(agent, &row.id) {
-            Role::Full => SplitTone::Warning,
-            _ if matches!(
-                row.id.as_str(),
-                "acceptEdits" | "accept-edits" | "auto-review"
-            ) =>
-            {
-                SplitTone::Success
-            }
-            Role::Auto => SplitTone::Neutral,
-            Role::Ask | Role::Other => SplitTone::Accent,
-        };
+        let tone = tone_of(agent, &row.id);
         Some((row, tone))
     }
 
@@ -619,11 +623,15 @@ impl crate::ChatSurface {
     /// current one's ✓, the keyboard's row lit.
     fn approval_mode_specs(&self) -> Vec<elements::ModeSpec> {
         let current = self.current_approval_mode();
+        let agent = self.chat_modes().map(|(agent, _)| agent.clone());
         self.approval_mode_rows()
             .into_iter()
             .enumerate()
             .map(|(index, row)| elements::ModeSpec {
                 key: elements::row_key(&row.id),
+                tone: agent
+                    .as_ref()
+                    .map_or(SplitTone::Accent, |agent| tone_of(agent, &row.id)),
                 icon: row.icon,
                 current: current.as_deref() == Some(row.id.as_str()),
                 lit: self.approval_mode_focus == Some(index),

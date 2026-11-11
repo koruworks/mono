@@ -121,7 +121,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         let scoped = session.scoped.clone();
         let owner = session.owner;
         let dataset = scoped.permit.dataset().ok_or(Failure::DatasetMismatch)?;
-        tracing::info!(
+        // Debug, not info (2026-11-10): one per workspace on every pass, so
+        // at info it buried everything a person would look for.
+        tracing::debug!(
             ?owner,
             dataset = ?dataset,
             attempt,
@@ -165,8 +167,15 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         let permit = &session.scoped.permit;
         match result {
             Ok(report) => {
-                tracing::info!(owner = ?session.owner, dataset = ?permit.dataset(),
-                    stage = ?report.stage, code = report.error_code, "cloud session: lane answered");
+                // A lane that answered with a code says something; a settled
+                // one is the ordinary end of every pass and goes to debug.
+                if report.error_code.is_some() {
+                    tracing::info!(owner = ?session.owner, dataset = ?permit.dataset(),
+                        stage = ?report.stage, code = report.error_code, "cloud session: lane answered");
+                } else {
+                    tracing::debug!(owner = ?session.owner, dataset = ?permit.dataset(),
+                        stage = ?report.stage, "cloud session: lane answered");
+                }
                 *hinted |= report.remote_hint;
                 if let Some(record) = self.records.get_mut(&permit.permit_id) {
                     record.stage = report.stage;

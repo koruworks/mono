@@ -468,6 +468,15 @@ impl ProfilesController {
                 {
                     self.pending_unlink = None;
                 }
+                // A delete waiting on this sign-in has nothing to resume:
+                // nothing was changed, and the page offers its choices again
+                // instead of saying *Deleting…* for ever.
+                if let Some(pending) = self.pending_hosted_delete.as_mut()
+                    && pending.stage == HostedDeleteStage::Reauthenticating
+                {
+                    pending.stage = HostedDeleteStage::Failed;
+                    self.hints.reset_focus = true;
+                }
                 self.notice = None;
             }
             AccountOperationResult::Profiles { profiles } => {
@@ -731,9 +740,17 @@ impl ProfilesController {
                     self.notice = Some("Sign in again to continue".into());
                 }
             }
+            // The hosted delete answers the provider-neutral
+            // `fresh_authentication_required` (API.md, profile deletion);
+            // only the last-authorization removal above words it for Google.
+            // Matching the Google code alone sent the delete's 428 to the
+            // generic failure below, which told the person to try again
+            // when Koru could connect — it could; it wanted a fresh sign-in.
             AccountOperationResult::Failed { code }
-                if code == "fresh_google_authentication_required"
-                    && self.pending_hosted_delete.is_some() =>
+                if matches!(
+                    code.as_str(),
+                    "fresh_authentication_required" | "fresh_google_authentication_required"
+                ) && self.pending_hosted_delete.is_some() =>
             {
                 if let Some(pending) = self.pending_hosted_delete.as_mut() {
                     pending.stage = HostedDeleteStage::Reauthenticating;

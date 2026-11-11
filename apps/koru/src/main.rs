@@ -243,6 +243,24 @@ impl Host for Manager {
         self.agent.take_local_profile_removal()
     }
 
+    fn acknowledge_profile_cleanup(
+        &self,
+        profile: koru_core::ProfileId,
+        stage: koru_agent_wire::ProfileCleanupStage,
+    ) {
+        self.agent.acknowledge_profile_cleanup(profile, stage);
+    }
+
+    fn take_profile_cleanup_acknowledgement(
+        &self,
+    ) -> Option<(
+        String,
+        koru_agent_wire::ProfileCleanupStage,
+        Result<(), String>,
+    )> {
+        self.agent.take_profile_cleanup_acknowledgement()
+    }
+
     fn bind_local_profile_account(
         &self,
         profile: koru_core::ProfileId,

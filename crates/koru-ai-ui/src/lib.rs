@@ -167,7 +167,6 @@ const COMPOSER_GAP: f32 = 8.0;
 const COMPOSER_MIN_LINES: usize = 1;
 const COMPOSER_MAX_LINES: usize = 8;
 const MIN_COMPOSER_W: f32 = 80.0;
-const HISTORY_ROW_H: f32 = 40.0;
 const MODEL_VISIBLE_ROWS: usize = 8;
 const ACTION_H: f32 = 28.0;
 const BLOCK_GAP: f32 = 8.0;
@@ -309,6 +308,8 @@ enum Focus {
     /// says which option, box or action.
     Questions(ToolInvocationId),
     WorkspaceSearch,
+    /// *Save chat*'s name field.
+    SaveName,
     OpenAiKey,
     OpenAiModel,
     OllamaEndpoint,
@@ -748,7 +749,12 @@ pub struct ChatSurface {
     destinations: Vec<DestinationOption>,
     workspace_catalog_error: Option<String>,
     selected_destination: usize,
+    /// *Save chat* is asking for the document's name (2026-11-10: a name,
+    /// not a list of every Profile's workspaces). The message it saves
+    /// through; the document goes to the workspace on screen, the first of
+    /// [`Self::destinations`].
     destination_open: Option<MessageId>,
+    save_name: model_picker::SharedInput,
     pending_link_chat: Option<ChatId>,
     /// **The profile this surface's window is in** (AI schema 13), as its
     /// host says: the chats it lists, the profile a new chat is made in,
@@ -801,6 +807,13 @@ pub struct ChatSurface {
     sent_message: Option<SentMessage>,
     pending_grants: Option<(GrantKey, uuid::Uuid)>,
     grants_ready: Option<GrantKey>,
+    /// **A queued message waiting on its workspace grant** (2026-11-10). An
+    /// agent's send asks for the context workspace first and goes once it
+    /// is granted; the composer path retries by re-reading the composer,
+    /// which for a queued message holds what the person is typing instead.
+    /// So the item waits here, and the grant's answer sends it — rather than
+    /// the queue reading the wait as a refusal and pausing.
+    queued_awaiting_grant: Option<(ChatId, queue::Queued)>,
     /// A title lookup is with the reader; one at a time, so background
     /// lookups never crowd a person's own command out of its queue.
     titles_in_flight: bool,
@@ -967,6 +980,7 @@ impl ChatSurface {
         let composer = ChatComposer::new(root.clone());
         let attachment_work = attachments::Work::new(root.clone());
         let workspace_search = model_picker::SharedInput::with_text(&mut engine, role::ui(), "");
+        let save_name = model_picker::SharedInput::with_text(&mut engine, role::ui(), "");
         let openai_key = TextInput::new(&mut engine, role::row());
         let openai_model = TextInput::new(&mut engine, role::row());
         let ollama_endpoint =
@@ -1137,6 +1151,7 @@ impl ChatSurface {
             workspace_catalog_error: None,
             selected_destination: 0,
             destination_open: None,
+            save_name,
             pending_link_chat: None,
             profile: None,
             wants_open_elsewhere: None,
@@ -1160,6 +1175,7 @@ impl ChatSurface {
             sent_message: None,
             pending_grants: None,
             grants_ready: None,
+            queued_awaiting_grant: None,
             titles_in_flight: false,
             clipboard_reading: false,
             viewer: None,
@@ -1427,6 +1443,7 @@ impl ChatSurface {
 
     pub fn invalidate(&mut self) {
         let workspace_search = self.workspace_search.value();
+        let save_name = self.save_name.value();
         let openai_key = self.openai_key.value();
         let openai_model = self.openai_model.value();
         let ollama_endpoint = self.ollama_endpoint.value();
@@ -1436,6 +1453,8 @@ impl ChatSurface {
         self.composer.invalidate();
         self.workspace_search =
             model_picker::SharedInput::with_text(&mut self.engine, role::ui(), &workspace_search);
+        self.save_name =
+            model_picker::SharedInput::with_text(&mut self.engine, role::ui(), &save_name);
         self.openai_key = TextInput::with_text(&mut self.engine, role::row(), &openai_key);
         self.openai_model = TextInput::with_text(&mut self.engine, role::row(), &openai_model);
         self.ollama_endpoint =
@@ -1743,6 +1762,21 @@ impl ChatSurface {
         if self.context_window_open && matches!(key, Key::Named(NamedKey::Escape)) {
             self.context_window_open = false;
             return true;
+        }
+        // *Save chat*'s name: Enter saves, Escape leaves, the rest is typing.
+        if let Some(message) = self.destination_open {
+            match key {
+                Key::Named(NamedKey::Escape) => {
+                    self.destination_open = None;
+                    self.focus = Focus::Composer;
+                    return true;
+                }
+                Key::Named(NamedKey::Enter) => return self.start_export(message),
+                _ => {
+                    let _ = self.save_name.key(&mut self.engine, key, text, mods);
+                    return true;
+                }
+            }
         }
         if self.tool_access_open && self.focus == Focus::WorkspaceSearch {
             if matches!(key, Key::Named(NamedKey::Escape)) {
@@ -2396,13 +2430,20 @@ impl ChatSurface {
             }
             return true;
         }
-        if self.destination_open.is_some() {
-            if let Some(index) = self.destination_at(x, y) {
-                self.selected_destination = index;
-                let message = self.destination_open.expect("picker is open");
+        if let Some(message) = self.destination_open {
+            let (panel, field, save) = save_layout(self.viewport);
+            if save.contains(x, y) {
                 return self.start_export(message);
             }
-            self.destination_open = None;
+            if field.contains(x, y) {
+                self.focus = Focus::SaveName;
+                self.save_name.click(&mut self.engine, field, x, y);
+                return true;
+            }
+            if !panel.contains(x, y) {
+                self.destination_open = None;
+                self.focus = Focus::Composer;
+            }
             return true;
         }
         // A sent picture opens in the viewer (R3), a sent file in the
@@ -3691,6 +3732,29 @@ impl ChatSurface {
                     return false;
                 }
                 self.waiting = self.message_on_its_way();
+                // A queued message was waiting on this grant: granted on the
+                // chat on screen, it goes now; otherwise it is first in line
+                // again, paused, as any queued send that did not go.
+                if let Some((waiting, item)) = self
+                    .queued_awaiting_grant
+                    .take_if(|(waiting, _)| *waiting == chat)
+                {
+                    match result {
+                        Ok(policy) if self.shown_chat_id() == Some(chat) => {
+                            if let Some(transcript) = &mut self.transcript {
+                                transcript.tool_policy = policy;
+                            }
+                            self.grants_ready = Some(key);
+                            self.send_queued_item(waiting, item);
+                        }
+                        Ok(_) => self.queue_back_paused(waiting, item),
+                        Err(message) => {
+                            self.queue_back_paused(waiting, item);
+                            self.status = Some(message);
+                        }
+                    }
+                    return true;
+                }
                 if self.shown_chat_id() != Some(chat) {
                     return true;
                 }
@@ -6775,10 +6839,8 @@ impl ChatSurface {
             if self.send_button().contains(x, y) {
                 return Some((5, 4));
             }
-            if self.destination_open.is_some()
-                && let Some(index) = self.destination_at(x, y)
-            {
-                return Some((8, index));
+            if self.destination_open.is_some() && save_layout(self.viewport).2.contains(x, y) {
+                return Some((8, 0));
             }
             None
         }
@@ -9248,7 +9310,11 @@ impl ChatSurface {
                 if self.destinations.is_empty() {
                     self.status = Some("No writable Koru workspace is available.".into());
                 } else {
+                    // Named first, saved to the workspace on screen.
+                    self.selected_destination = 0;
+                    self.save_name.set_text(&mut self.engine, &chat.title);
                     self.destination_open = Some(message);
+                    self.focus = Focus::SaveName;
                 }
                 true
             }
@@ -9299,7 +9365,15 @@ impl ChatSurface {
             self.status = Some("The selected Koru workspace is unavailable.".into());
             return true;
         };
+        // The name typed; an emptied field keeps the chat's own title rather
+        // than making a document with none.
+        let typed = self.save_name.value();
+        let title = match typed.trim() {
+            "" => chat.title.clone(),
+            name => name.to_owned(),
+        };
         self.destination_open = None;
+        self.focus = Focus::Composer;
         self.send_command(Command::Export(
             chat.id,
             ExportChatRequest {
@@ -9311,17 +9385,20 @@ impl ChatSurface {
                     workspace_id: destination.workspace_id,
                     parent_document_id: None,
                     index: None,
-                    title: chat.title,
+                    title,
                 },
             },
         ))
     }
 
+    /// **Save chat asks for a name** (2026-11-10): the heading, the name —
+    /// the chat's title to start with, selected for typing over — and where
+    /// it goes, the workspace on screen, beside *Save*.
     fn draw_destination_picker(&mut self, canvas: &mut Scene, root: Affine) {
         if self.destination_open.is_none() {
             return;
         }
-        let panel = destination_panel(self.viewport, self.destinations.len());
+        let (panel, field, save) = save_layout(self.viewport);
         scene::floating_panel(
             canvas,
             root,
@@ -9332,34 +9409,52 @@ impl ChatSurface {
             &scene::Panel::popover(8.0),
         );
         let p = theme::p();
-        for (index, destination) in self.destinations.iter().take(8).enumerate() {
-            let row = destination_row(panel, index);
-            if row.contains(self.pointer.0, self.pointer.1) || index == self.selected_destination {
-                scene::fill(
-                    canvas,
-                    root,
-                    p.row_selected,
-                    &scene::rrect(row.x, row.y, row.w, row.h, 6.0),
-                );
-            }
-            let label =
-                self.engine
-                    .simple_layout_wrapped(&destination.label, role::row(), row.w - 20.0);
+        let heading = self.engine.simple_layout(
+            koru_i18n::t(self.lang, koru_i18n::Key::AiSaveChatTitle),
+            role::row(),
+        );
+        scene::draw_layout_first_line(
+            canvas,
+            root,
+            &heading,
+            panel.x + 12.0,
+            panel.y + 12.0,
+            Some(p.text),
+        );
+        self.save_name.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            field,
+            koru_i18n::t(self.lang, koru_i18n::Key::AiSaveChatName),
+            self.focus == Focus::SaveName,
+        );
+        if let Some(destination) = self.destinations.get(self.selected_destination) {
+            let line = koru_i18n::fill(
+                koru_i18n::t(self.lang, koru_i18n::Key::AiSaveChatWhere),
+                &[&destination.label],
+            );
+            let room = (save.x - panel.x - 24.0).max(40.0);
+            let line = self.engine.simple_layout_wrapped(&line, role::meta(), room);
             scene::draw_layout_first_line(
                 canvas,
                 root,
-                &label,
-                row.x + 10.0,
-                row.y + 9.0,
-                Some(p.text),
+                &line,
+                panel.x + 12.0,
+                save.y + 7.0,
+                Some(p.text_dim),
             );
         }
-    }
-
-    fn destination_at(&self, x: f32, y: f32) -> Option<usize> {
-        let panel = destination_panel(self.viewport, self.destinations.len());
-        (0..self.destinations.len().min(8))
-            .find(|index| destination_row(panel, *index).contains(x, y))
+        draw_surface_button(
+            canvas,
+            root,
+            &mut self.engine,
+            save,
+            koru_i18n::t(self.lang, koru_i18n::Key::AiSaveChatSave),
+            ButtonRole::Primary,
+            save.contains(self.pointer.0, self.pointer.1),
+            false,
+        );
     }
 
     fn draw_setup(&mut self, canvas: &mut Scene, root: Affine) {
@@ -10300,24 +10395,18 @@ fn action_rect(card: Rect, index: usize) -> Rect {
     )
 }
 
-fn destination_panel(viewport: Rect, count: usize) -> Rect {
-    let rows = count.clamp(1, 8);
-    let width = (viewport.w - PAD * 4.0).clamp(180.0, 420.0);
-    Rect::new(
+/// *Save chat*'s panel, its name field and its *Save* button.
+fn save_layout(viewport: Rect) -> (Rect, Rect, Rect) {
+    let width = (viewport.w - PAD * 4.0).clamp(240.0, 420.0);
+    let panel = Rect::new(
         viewport.x + (viewport.w - width) * 0.5,
         viewport.y + 70.0,
         width,
-        rows as f32 * HISTORY_ROW_H + 8.0,
-    )
-}
-
-fn destination_row(panel: Rect, index: usize) -> Rect {
-    Rect::new(
-        panel.x + 4.0,
-        panel.y + 4.0 + index as f32 * HISTORY_ROW_H,
-        panel.w - 8.0,
-        HISTORY_ROW_H,
-    )
+        118.0,
+    );
+    let field = Rect::new(panel.x + 10.0, panel.y + 38.0, panel.w - 20.0, 32.0);
+    let save = Rect::new(panel.x + panel.w - 10.0 - 76.0, panel.y + 80.0, 76.0, 28.0);
+    (panel, field, save)
 }
 
 /// The sentence for a failed response, by its class, in the person's
@@ -10609,6 +10698,78 @@ mod tests {
             label: label.into(),
             name: label.rsplit(" / ").next().unwrap_or(label).into(),
         }
+    }
+
+    /// **Save chat asks for a name, not a workspace** (2026-11-10): the
+    /// chat's title to start with, the name typed is the document's, and it
+    /// goes to the workspace on screen — the first destination.
+    #[test]
+    fn save_chat_asks_for_the_documents_name_and_saves_it_here() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let transcript = transcript();
+        let chat = transcript.chat.id;
+        let title = transcript.chat.title.clone();
+        let here = WorkspaceId::new();
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.destinations = vec![
+            destination(here, "Koru / PM"),
+            destination(WorkspaceId::new(), "Personal / Personal"),
+        ];
+        let message = MessageId::new();
+
+        assert!(surface.perform_response_action(ResponseAction::Store(message)));
+        assert_eq!(surface.destination_open, Some(message));
+        assert_eq!(
+            surface.save_name.value(),
+            title,
+            "the chat's title to start"
+        );
+        assert_eq!(surface.focus, Focus::SaveName);
+
+        surface.save_name.set_text(&mut surface.engine, "Top news");
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+        let Command::Export(actual, request) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("Enter saves");
+        };
+        assert_eq!(actual, chat);
+        assert_eq!(request.through_message_id, message);
+        assert_eq!(request.destination.title, "Top news");
+        assert_eq!(
+            request.destination.workspace_id, here,
+            "the workspace on screen"
+        );
+        assert!(surface.destination_open.is_none());
+    }
+
+    /// Escape leaves without saving; an emptied name keeps the chat's title.
+    #[test]
+    fn save_chat_escape_cancels_and_an_empty_name_keeps_the_title() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let transcript = transcript();
+        let title = transcript.chat.title.clone();
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.destinations = vec![destination(WorkspaceId::new(), "Koru / PM")];
+        let message = MessageId::new();
+
+        assert!(surface.perform_response_action(ResponseAction::Store(message)));
+        assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()));
+        assert!(surface.destination_open.is_none());
+        assert!(commands.try_recv().is_err(), "nothing saved");
+
+        assert!(surface.perform_response_action(ResponseAction::Store(message)));
+        surface.save_name.set_text(&mut surface.engine, "   ");
+        assert!(surface.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+        let Command::Export(_, request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("Enter saves");
+        };
+        assert_eq!(request.destination.title, title);
     }
 
     #[test]
@@ -11112,6 +11273,82 @@ mod tests {
             Command::Send(request) => assert!(request.explicit_refs.is_empty()),
             _ => panic!("composer send must issue a turn"),
         }
+    }
+
+    /// **Steer, and a completed reply's next send, wait out the workspace
+    /// grant instead of pausing the queue** (2026-11-10). An agent's send
+    /// asks for the context workspace first; the queue used to read that
+    /// wait as a refusal, put the message back paused, and it never went.
+    #[test]
+    fn a_queued_agent_message_goes_once_its_workspace_is_granted() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-opencode").unwrap();
+        let chat = transcript.chat.id;
+        let workspace = WorkspaceId::new();
+        let mut policy = transcript.tool_policy.clone();
+        policy.workspace_ids = vec![workspace];
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.context_workspace = Some(workspace);
+        surface.composer.set_text("In the US");
+        assert!(surface.queue_composer());
+        surface.composer.set_text("half typed");
+
+        // No reply running: Steer sends it now.
+        assert!(surface.queue_action(queue::QueueHit::Steer(0)));
+        let Command::AddGrants(_, _, _, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the grant precedes the turn");
+        };
+        assert!(!surface.queues.is_paused(chat), "waiting is not a refusal");
+        assert_eq!(surface.queues.len(chat), 0, "it is on its way, not queued");
+        assert_eq!(surface.composer.text(), "half typed");
+        assert!(surface.reply_busy(), "a second Send next waits for it");
+
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Ok(policy),
+        });
+        let Command::Send(request) = commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the granted item is sent");
+        };
+        assert_eq!(request.markdown, "In the US");
+        assert_eq!(surface.composer.text(), "half typed", "what is typed stays");
+        assert!(surface.queued_awaiting_grant.is_none());
+    }
+
+    /// A refused grant puts the waiting item back first in line, paused.
+    #[test]
+    fn a_refused_grant_puts_the_queued_message_back_paused() {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        let mut transcript = transcript();
+        transcript.chat.current_model.provider = AiProviderId::parse("agent-opencode").unwrap();
+        let chat = transcript.chat.id;
+        surface.reader = Some(reader);
+        surface.transcript = Some(transcript);
+        surface.context_workspace = Some(WorkspaceId::new());
+        surface.composer.set_text("In the US");
+        assert!(surface.queue_composer());
+        assert!(surface.queue_action(queue::QueueHit::Steer(0)));
+        let Command::AddGrants(_, _, _, op) =
+            commands.recv_timeout(Duration::from_millis(50)).unwrap()
+        else {
+            panic!("the grant precedes the turn");
+        };
+        surface.apply_update(Update::GrantsAdded {
+            chat,
+            op,
+            result: Err("no access".into()),
+        });
+        assert_eq!(surface.queues.len(chat), 1);
+        assert!(surface.queues.is_paused(chat));
+        assert!(commands.try_recv().is_err(), "nothing was sent");
     }
 
     #[test]

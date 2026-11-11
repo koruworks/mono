@@ -42,6 +42,17 @@ impl LocalProfileInventory for GatewayProfileInventory {
             })
     }
 
+    fn restore_removed(&self, profile: koru_account_core::ProfileId) -> Result<(), ServiceError> {
+        let client =
+            koru_api_client::Client::connect_at(crate::segment(), &self.authorization_root)
+                .map_err(|_| ServiceError::retryable("profile_provisioning_unavailable"))?;
+        client
+            .store()
+            .restore_profile_local(profile)
+            .map(|_| ())
+            .map_err(|error| restore_refusal(error.code()))
+    }
+
     fn inventory(&self) -> Result<ProfileLifecycleInventory, ServiceError> {
         let client = match &self.root {
             Some(root) => koru_api_client::Client::open_at(koru_channel::segment(), root),
@@ -116,5 +127,23 @@ impl LocalProfileInventory for GatewayProfileInventory {
                 && candidate.account_binding == binding
                 && candidate.removed_at_millis.is_none()
         }))
+    }
+}
+
+/// What the Store's refusal to bring a Profile back means to the person who
+/// chose it. The two that no retry can change are terminal: a Profile deleted
+/// from the account (restored from the Trash, not from here), and one whose
+/// identity this computer never received.
+pub(crate) fn restore_refusal(code: koru_store_core::errors::Code) -> ServiceError {
+    use koru_store_core::errors::Code;
+    match code {
+        Code::ProfileRemoved => ServiceError::terminal("profile_deleted"),
+        Code::ProfileNotFound | Code::ProfileReserved => {
+            ServiceError::terminal("profile_not_authorized")
+        }
+        Code::VersionUnavailable | Code::CorruptState | Code::ProfileUnitScopeMismatch => {
+            ServiceError::terminal("profile_restore_unavailable")
+        }
+        _ => ServiceError::retryable("profile_provisioning_unavailable"),
     }
 }

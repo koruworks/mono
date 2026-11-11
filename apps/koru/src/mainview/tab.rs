@@ -761,11 +761,8 @@ impl TabView {
             // Only while typing in the note touched a task and the rows are
             // owed a re-ask once it settles; `None` otherwise.
             Self::Tasks(t) => t.task_touch_deadline(),
-            // **Only while a transport-mode write it started is unanswered.**
-            // This view sat in the group above until B10 gave it background
-            // work, and nothing moved it: the prompt wrote its answer into a
-            // channel that was never drained, so a person said "Move
-            // everything", saw no error, and the Store was never told.
+            // Only while it has background work out: a deletion preview, or
+            // the Cloud progress it is showing.
             Self::Manage(m) => View::maintenance_deadline(m),
             // The snooze chooser's minute tick, asked only of the tab in
             // front — the deadline list reads the active tab alone.

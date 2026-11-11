@@ -79,6 +79,12 @@ mod dependency;
 #[cfg(test)]
 mod tests;
 
+/// **How many saved pins the rail holds**: five (the user, 2026-11-10; it
+/// was three). The pin control refuses one more past it, and the rail shows
+/// the first this many in their saved order. One number for both, so a pin
+/// the control accepts is always one the rail can show.
+pub const RAIL_PINS: usize = 5;
+
 pub use action::{Action, Request};
 pub use controller::WorkspacesController;
 pub use links::{MANAGER_SCOPES, WorkspaceLinks};

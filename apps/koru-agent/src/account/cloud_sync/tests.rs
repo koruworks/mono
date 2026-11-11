@@ -22,6 +22,8 @@ fn remembered() -> DeviceCloudSync {
         profile,
         ProfileCloudSync {
             enabled: true,
+            // Kept through a write and a read, like the rest.
+            starts_on: true,
             workspaces: std::collections::BTreeMap::from([(
                 workspace,
                 WorkspaceCloudSync {

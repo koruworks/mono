@@ -57,10 +57,14 @@ fn short_rail_keeps_fixed_controls_and_promotion_does_not_save_or_drag() {
         for height in [554.0, 600.0, 900.0] {
             let rail = Rect::new(0.0, 46.0, theme::RAIL_W, height);
             let controls = view.rail_controls(rail);
-            assert_eq!(
-                controls.first(),
-                Some(&apps_rail::Hit::Workspace(view.current.unwrap()))
-            );
+            // The pins in their saved order, the unpinned open workspace
+            // after them, then the `…`.
+            let squares: Vec<_> = [1, 2, 3, 0]
+                .into_iter()
+                .map(|i| apps_rail::Hit::Workspace(view.workspaces[i].id))
+                .chain([apps_rail::Hit::WorkspaceMenu])
+                .collect();
+            assert_eq!(controls[..5], squares[..]);
             assert_eq!(controls.last(), Some(&apps_rail::Hit::Profile));
             assert!(controls.contains(&apps_rail::Hit::Help));
             let rects = view.apps_rail_rects(rail);
@@ -100,11 +104,14 @@ fn short_rail_keeps_fixed_controls_and_promotion_does_not_save_or_drag() {
 fn moving_a_visible_view_preserves_folded_slots_and_escape_restores_order() {
     testing::with(Features::ALL_ON, || {
         let mut view = ExploreView::new();
-        let rail = Rect::new(0.0, 0.0, theme::RAIL_W, 360.0);
+        // Tall enough for three views under the waiting square and the
+        // `…`, short enough to fold the rest.
+        let rail = Rect::new(0.0, 0.0, theme::RAIL_W, 400.0);
         let original = view.rail_modes();
         view.set_navigator_mode(*original.last().unwrap());
         let before = view.view_projection(rail.h);
         assert!(before.visible.len() >= 3);
+        assert!(before.visible.len() < original.len(), "some are folded");
         let rects = view.apps_rail_rects(rail);
         let (x, y) = rects.apps[0].1.centre();
         view.apps_rail_mouse_down(rail, x, y);

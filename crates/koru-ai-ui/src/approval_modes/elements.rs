@@ -49,6 +49,8 @@ pub(crate) fn row_key(id: &str) -> Key {
 pub(crate) struct ModeSpec {
     pub(crate) key: Key,
     pub(crate) icon: char,
+    /// The mode's colour, as the send button wears it: the icon's ink.
+    pub(crate) tone: koru_ui::split_button::SplitTone,
     pub(crate) title: String,
     pub(crate) help: Option<String>,
     /// *Full access*: the icon and the title in the notice ink.
@@ -84,10 +86,19 @@ pub(crate) static MODE_ROW_LIT_STATES: StateRecipe = StateRecipe {
 /// elided to the room left before the ✓'s lane, which is kept whether or
 /// not the ✓ shows.
 fn mode_row(spec: &ModeSpec) -> El {
+    use koru_ui::split_button::SplitTone;
     let ink = if spec.full_access {
         Ink::Notice
     } else {
         Ink::Primary
+    };
+    // The icon in the mode's colour; the title stays the reading colour,
+    // except *Full access*, which warns in both.
+    let icon_ink = match spec.tone {
+        SplitTone::Warning => Ink::Notice,
+        SplitTone::Success => Ink::Success,
+        SplitTone::Accent => Ink::Accent,
+        SplitTone::Neutral => ink,
     };
     let mut words = col(MODE_WORDS)
         .fill()
@@ -137,7 +148,7 @@ fn mode_row(spec: &ModeSpec) -> El {
         .child(
             icon(spec.icon, IconSize::XS)
                 .decorative()
-                .ink(ink)
+                .ink(icon_ink)
                 .pad_top(ICON_TOP)
                 .named(MODE_ICON),
         )

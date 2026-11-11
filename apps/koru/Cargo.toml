@@ -180,6 +180,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # host so LaunchServices URLs work; a future `applicationDockMenu:` can extend
 # that same delegate, but no Dock-recents implementation lives in this app yet.
 
+# The Help popover's release list, read from GitHub's releases API.
+serde.workspace = true
+serde_json.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",

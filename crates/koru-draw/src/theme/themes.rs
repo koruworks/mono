@@ -165,9 +165,16 @@ impl std::fmt::Debug for Theme {
 impl Theme {
     /// This theme's table at `contrast`.
     pub fn palette(&self, contrast: Contrast) -> &'static Palette {
-        match contrast {
+        let base = match contrast {
             Contrast::Standard => self.standard,
             Contrast::High => self.high_contrast,
+        };
+        // The person's accent for this theme's appearance, when they chose
+        // one: every palette read goes through here, so nothing else needs
+        // to know (2026-11-10).
+        match super::accent_color(self.is_dark()) {
+            Some(rgb) => super::accented(base, rgb),
+            None => base,
         }
     }
 

@@ -196,6 +196,23 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     /// every other unit. A replaced generation clears it, because a new
     /// authorization is a new question; a newer build clears it by existing.
     pub(super) refused_units: BTreeMap<CloudUnitRefV2, &'static str>,
+    /// Profiles this device has asked the service to select it for, under
+    /// this authorization: once each, whatever the answer. See
+    /// [`Self::select_held_profile`].
+    selected: BTreeSet<ProfileId>,
+    /// Held Profiles the service refused to select this device for, and
+    /// when. Their Workspaces are left out of the pass for
+    /// [`REFUSED_PROFILE_RETRY`], or until the authorization is replaced: a
+    /// sign-in that is not linked to the Profile is refused the same way
+    /// every time, and asking sixteen Workspaces on every pass told nobody
+    /// anything (2026-11-11). It is asked again after that, so a Profile
+    /// linked again is picked up with nothing restarted.
+    refused_profiles: BTreeMap<ProfileId, Instant>,
+    /// When the pass in hand started, for the rule above.
+    pass_at: Option<Instant>,
+    /// A selection was written during this pass, so the receipt the pass
+    /// read is from before it: the next pass comes at once.
+    selected_this_pass: bool,
     /// Q12 (c)'s ceiling: the binding step has already been run again during
     /// this pass, so a further binding-required answer is not a precondition
     /// this client can satisfy. Cleared at the top of every pass.
@@ -244,6 +261,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             service_units: BTreeMap::new(),
             local_units: BTreeMap::new(),
             refused_units: BTreeMap::new(),
+            selected: BTreeSet::new(),
+            refused_profiles: BTreeMap::new(),
+            pass_at: None,
+            selected_this_pass: false,
             binding_retried: false,
             records: BTreeMap::new(),
             deferred: Vec::new(),
@@ -385,6 +406,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         // A terminal per-unit refusal belongs to the authorization it was
         // answered under: a new generation asks once more, and only once.
         self.refused_units.clear();
+        self.selected.clear();
+        self.refused_profiles.clear();
+        self.selected_this_pass = false;
         self.records.clear();
         self.deferred.clear();
         self.deferred_failure = None;
@@ -535,6 +559,11 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         // behind the backoff, which is the outer retry a service that keeps
         // losing the binding row is answered with.
         self.binding_retried = false;
+        let now = clock.monotonic();
+        self.pass_at = Some(now);
+        self.refused_profiles
+            .retain(|_, refused| now.saturating_duration_since(*refused) < REFUSED_PROFILE_RETRY);
+        self.selected_this_pass = false;
         self.discovery_counts.clear();
         self.discovery_exhausted = false;
         for candidate in &self.carried {
@@ -767,18 +796,105 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             .max_by_key(|stage| stage.severity())
             .unwrap_or_else(|| failure.as_ref().map_or(Stage::Settled, stage_for));
         self.settle(clock, failure);
-        if hinted || !self.carried.is_empty() {
+        if hinted || !self.carried.is_empty() || self.selected_this_pass {
             self.schedule_change(clock);
         }
+    }
+
+    /// **A Profile the person put on this device is selected for it, once.**
+    ///
+    /// The service issues a Workspace's credential only to a device it has
+    /// recorded as provisioned for the Workspace's Profile. Three things write
+    /// that record: this device creating or attaching the Profile, another
+    /// of the person's devices finishing this one's enrollment, and the
+    /// selection route. A device that has just signed in and chosen an
+    /// existing Profile did not create it and has no peer online, so only
+    /// the third is left — and the v2 pass did not call it. Asking a peer
+    /// meanwhile leaves the record *pending*, which is refused. Every Workspace
+    /// of the chosen Profile was then refused `workspace_not_authorized` on
+    /// every pass, for ever (found in a rooted run's logs, 2026-11-11).
+    ///
+    /// So a refused Workspace whose Profile **is on this device**
+    /// ([`Host::held_profiles`]) is answered by selecting that Profile. Not
+    /// any Profile the account owns: one that is not here stays refused,
+    /// which is what keeps a Profile the person did not choose off this
+    /// device. Once per Profile per authorization, whatever the answer — the
+    /// record is the Profile's, so one selection covers all its Workspaces,
+    /// and a refused selection is not repeated on a timer.
+    ///
+    /// Answers whether a selection was written. The receipt this pass read
+    /// predates it, so the caller defers the Workspace and the pass runs
+    /// again at once rather than mixing two authority generations.
+    fn select_held_profile(&mut self, candidate: &Candidate) -> bool {
+        let Some(profile) = candidate.placement else {
+            return false;
+        };
+        let Ok(account) = self
+            .current_authority()
+            .map(|authority| authority.owner.account)
+        else {
+            return false;
+        };
+        let held = self
+            .host
+            .held_profiles(account)
+            .is_some_and(|held| held.contains(&profile));
+        if !held || self.selected.contains(&profile) || self.refused_profiles.contains_key(&profile)
+        {
+            return false;
+        }
+        let workspace = candidate.workspace_id;
+        let answer = self.authorized(|api, authority| api.select(authority, profile, workspace));
+        let selected = answer.is_ok();
+        tracing::info!(
+            target: "koru_cloud",
+            profile = ?profile,
+            selected,
+            code = answer.as_ref().err().map(Failure::code),
+            "cloud pass: asked the service to select a Profile this device holds"
+        );
+        match answer {
+            Ok(()) => {
+                self.selected.insert(profile);
+                self.selected_this_pass = true;
+            }
+            // Refused outright: this sign-in may not reach the Profile, and
+            // will not until the authorization changes. Anything else — the
+            // network, a busy service — is asked again on the next pass.
+            Err(Failure::Denied) => {
+                if let Some(now) = self.pass_at {
+                    self.refused_profiles.insert(profile, now);
+                }
+            }
+            Err(_) => {}
+        }
+        selected
     }
 
     /// Pages to the end of the catalog. Exhaustion is explicit: repeating a
     /// truncated enumeration must not silently starve later Workspaces.
     fn enumerate(&mut self) -> Result<(), Failure> {
-        let candidates = match self.contract {
+        let mut candidates = match self.contract {
             Some(CloudContract::V2) => self.enumerate_v2()?,
             _ => self.enumerate_v1()?,
         };
+        // **Only the Profiles that are on this device.** Discovery lists
+        // every Workspace the account may sync; a Workspace placed under a
+        // Profile the person has not put here is not this device's to ask
+        // for, so no credential is requested for it and nothing of it is
+        // created here. A Workspace with no placement is nobody's Profile's
+        // and is kept. A host with no such list is not limited.
+        if let Some(held) = self
+            .current_authority()
+            .ok()
+            .and_then(|authority| self.host.held_profiles(authority.owner.account))
+        {
+            candidates.retain(|candidate| {
+                candidate.placement.is_none_or(|profile| {
+                    held.contains(&profile) && !self.refused_profiles.contains_key(&profile)
+                })
+            });
+        }
         // Round robin by current placement before taking a bounded cohort:
         // a large Profile cannot occupy all sixteen slots ahead of every
         // other Profile, and the unassigned group is one group among them.
@@ -1088,14 +1204,28 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         candidate: Candidate,
     ) -> Result<Option<Admission>, Failure> {
         let workspace = candidate.workspace_id;
-        let token = self.authorized(|api, authority| {
+        // A Workspace of a Profile selected earlier in this pass: the
+        // receipt it came from predates the selection. Next pass.
+        if self.selected_this_pass
+            && candidate
+                .placement
+                .is_some_and(|profile| self.selected.contains(&profile))
+        {
+            return Err(Failure::NotReady);
+        }
+        let token = match self.authorized(|api, authority| {
             api.issue_token_v2(
                 authority,
                 CloudSyncScopeV2::Workspace {
                     workspace_id: workspace,
                 },
             )
-        })?;
+        }) {
+            Err(Failure::Denied) if self.select_held_profile(&candidate) => {
+                return Err(Failure::NotReady);
+            }
+            other => other?,
+        };
         let Some(
             dataset @ CloudReplicaPrincipalV1::Workspace {
                 workspace_id,
@@ -1228,6 +1358,13 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         if profile_id != cloud_id(profile.as_uuid()) {
             return Err(Failure::DatasetMismatch);
         }
+        // The service picks the Workspace this credential is issued under
+        // (one placed under the Profile) and says so only in the credential;
+        // the worker scopes the session to it.
+        let authority_workspace = token
+            .credential
+            .unverified_workspace_id()
+            .ok_or(Failure::DatasetMismatch)?;
         let permit = self.permit_v2(
             authority,
             &token,
@@ -1237,6 +1374,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                     ProfileUnitRef::Identity { profile },
                     ProfileUnitRef::Private { profile },
                 ],
+                authority_workspace_id: Some(cloud_id(authority_workspace)),
             },
         )?;
         Ok(Scoped {

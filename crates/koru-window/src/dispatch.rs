@@ -753,9 +753,20 @@ pub(crate) fn deliver<T: DispatchApp, H: WindowHandle>(
 
         Input::Wheel(delta) => {
             // A line of body text per notch, which is what the rest of the
-            // product scrolls by.
+            // product scrolls by, at the chosen wheel speed. A pixel delta is
+            // a trackpad following the finger and is not scaled, and neither
+            // is primary+wheel: that is the display zoom, whose step is its
+            // own, as in the Koru window.
+            let zooming = state.mods.control_key() || state.mods.super_key();
+            let speed = if zooming {
+                1.0
+            } else {
+                f32::from(theme::wheel_speed())
+            };
             let lines = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y * theme::text_metrics::DOC_BODY.line_height,
+                MouseScrollDelta::LineDelta(_, y) => {
+                    y * theme::text_metrics::DOC_BODY.line_height * speed
+                }
                 MouseScrollDelta::PixelDelta(pixels) => pixels.y as f32 / scale_of(handle),
             };
             Aftermath::settled(app.scroll_by(lines, state.mods))

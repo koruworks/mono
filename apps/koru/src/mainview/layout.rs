@@ -789,6 +789,21 @@ impl MainView {
         opened
     }
 
+    /// **Ctrl+Alt+W: the quick workspace switcher** (2026-11-10) — the
+    /// workspace page as a list under a search field, typed into at once.
+    /// The field is this view's; the pane leaves a slot for it.
+    pub(super) fn open_workspace_switcher(&mut self) -> bool {
+        // At the mouse while it is over the window (2026-11-10).
+        let (x, y) = self.pointer;
+        let over = x > 0.0 && y > 0.0 && x < self.viewport.0 && y < self.viewport.1;
+        let opened = self
+            .explore
+            .open_workspace_switcher(&mut self.engine, over.then_some((x, y)));
+        let area = self.explore_popover_area();
+        self.explore.reveal_popover_hover(area, self.viewport);
+        opened
+    }
+
     /// Show the profiles switcher without changing the Explore pane.
     pub(super) fn open_profiles_popover(&mut self) -> bool {
         super::chrome_debug::chrome_debug!("who/where popover opened on profiles");

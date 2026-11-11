@@ -4853,6 +4853,8 @@ dependencies = [
  "parley",
  "qrcode",
  "reqwest 0.12.28",
+ "serde",
+ "serde_json",
  "tempfile",
  "tracing",
  "unicode-segmentation",

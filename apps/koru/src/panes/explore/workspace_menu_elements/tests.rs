@@ -39,13 +39,7 @@ const VIEWPORT: (f32, f32) = (720.0, 600.0);
 fn fixed_actions_have_distinct_reachable_targets_and_the_list_keeps_a_row() {
     let view = opened();
     view.with_page(area(), VIEWPORT, |frame| {
-        let expected = [
-            MenuAction::Sync.key(),
-            MANAGE,
-            MenuAction::New.key(),
-            MenuAction::Import.key(),
-            MenuAction::Trash.key(),
-        ];
+        let expected = [MANAGE, MenuAction::New.key(), MenuAction::Import.key()];
         for key in expected {
             let node = frame.node(key).unwrap();
             let (x, y) = node.rect.centre();
@@ -63,7 +57,7 @@ fn fixed_actions_have_distinct_reachable_targets_and_the_list_keeps_a_row() {
         }
         let (list, _, _) = popover_elements::list_of(frame).unwrap();
         assert!(list.h >= metrics::ROW_MIN.value);
-        assert!(frame.node(MenuAction::Trash.key()).unwrap().rect.y > list.y + list.h);
+        assert!(frame.node(MenuAction::Import.key()).unwrap().rect.y > list.y + list.h);
         assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
     })
     .unwrap();
@@ -93,13 +87,15 @@ fn actions_route_and_only_import_keeps_the_parent_open() {
     assert!(!view.popover_open());
 }
 
+/// The channel icons live on the Profiles page; the workspace menu no
+/// longer carries them.
 #[test]
 fn both_channel_icons_have_distinct_keyboard_and_accessibility_destinations() {
     use koru_agent_wire::{AccountProfileCloud, AccountState, CloudConnectionStage};
     use koru_workspace_host::accessibility::{ControlPart, Occurrence, ViewSlot, WindowSlot};
     use winit::keyboard::{Key as WKey, NamedKey};
 
-    let configured = |profile_menu| {
+    let configured = || {
         let mut view = opened();
         view.set_linked_count(2);
         view.set_account_state(&AccountState {
@@ -110,16 +106,12 @@ fn both_channel_icons_have_distinct_keyboard_and_accessibility_destinations() {
             }],
             ..AccountState::default()
         });
-        if profile_menu {
-            view.toggle_profile_popover();
-        }
+        view.toggle_profile_popover();
         view
     };
-    for (profile_menu, action, outcome) in [
-        (false, MenuAction::Sync, Outcome::OpenSyncSettings),
-        (false, MenuAction::Cloud, Outcome::ManageCloud),
-        (true, MenuAction::Sync, Outcome::OpenSyncSettings),
-        (true, MenuAction::Cloud, Outcome::ManageCloud),
+    for (action, outcome) in [
+        (MenuAction::Sync, Outcome::OpenSyncSettings),
+        (MenuAction::Cloud, Outcome::ManageCloud),
     ] {
         let occurrence = Occurrence::surface(
             WindowSlot::from_raw(1),
@@ -127,7 +119,7 @@ fn both_channel_icons_have_distinct_keyboard_and_accessibility_destinations() {
             popover_elements::SURFACE,
             ControlPart::new(action.key().part),
         );
-        let mut view = configured(profile_menu);
+        let mut view = configured();
         let (x, y) = view
             .with_page(area(), VIEWPORT, |frame| {
                 assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
@@ -143,13 +135,13 @@ fn both_channel_icons_have_distinct_keyboard_and_accessibility_destinations() {
         assert_eq!(description, view.sync_control_name());
         assert_eq!(view.mouse_down(area(), VIEWPORT, x, y, false), outcome);
         assert!(!view.popover_open());
-        let mut view = configured(profile_menu);
+        let mut view = configured();
         assert_eq!(
             view.accessibility_action(area(), occurrence, accesskit::Action::Click, VIEWPORT),
             Some(outcome.clone())
         );
         for key in [NamedKey::Enter, NamedKey::Space] {
-            let mut view = configured(profile_menu);
+            let mut view = configured();
             assert_eq!(
                 view.accessibility_action(area(), occurrence, accesskit::Action::Focus, VIEWPORT),
                 Some(Outcome::Consumed)
@@ -188,7 +180,7 @@ fn notice_is_the_last_row_and_import_uses_its_row_as_anchor() {
         assert_eq!(y, frame.node(MenuAction::Import.key()).unwrap().rect.y);
         assert!(
             frame.node(NOTICE).unwrap().rect.y
-                > frame.node(MenuAction::Trash.key()).unwrap().rect.y
+                > frame.node(MenuAction::Import.key()).unwrap().rect.y
         );
     });
 }
@@ -232,21 +224,36 @@ fn configured_channels_are_independent_of_health_and_other_profiles() {
     }
 }
 
+/// **The menu is workspaces only.** No profile header, and none of Sync,
+/// Cloud or Trash — even with both channels configured, when they would
+/// have been drawn. The heading leads.
 #[test]
-fn profile_caption_is_inert_and_only_the_sync_button_is_actionable() {
-    let view = opened();
+fn the_summary_has_no_profile_header_and_no_sync_cloud_or_trash() {
+    use koru_agent_wire::{AccountProfileCloud, AccountState, CloudConnectionStage};
+    let mut view = opened();
+    view.set_linked_count(2);
+    view.set_account_state(&AccountState {
+        cloud_profiles: vec![AccountProfileCloud {
+            discovery: None,
+            profile_id: view.current_profile.unwrap().to_string(),
+            stage: CloudConnectionStage::Syncing,
+        }],
+        ..AccountState::default()
+    });
+    assert_eq!(view.sync_channels().controls().len(), 2, "both configured");
+    let rows = view.popover_rows();
+    assert_eq!(rows.first(), Some(&PopoverRow::WorkspacesHeading));
+    for gone in [MenuAction::Sync, MenuAction::Cloud, MenuAction::Trash] {
+        assert!(
+            !rows.contains(&PopoverRow::WorkspaceAction(gone)),
+            "{gone:?}"
+        );
+    }
     view.with_page(area(), VIEWPORT, |frame| {
-        let header = frame.node(HEADER).unwrap().rect;
-        assert_eq!(
-            frame.hit_at(header.x + 1.0, header.y + header.h / 2.0),
-            None
-        );
-        let button = frame.node(MenuAction::Sync.key()).unwrap().rect;
-        assert!(button.w < header.w);
-        assert_eq!(
-            frame.hit_at(button.centre().0, button.centre().1),
-            Some(MenuAction::Sync.key())
-        );
+        for gone in [MenuAction::Sync, MenuAction::Cloud, MenuAction::Trash] {
+            assert!(frame.node(gone.key()).is_none(), "{gone:?}");
+        }
+        assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
     })
     .unwrap();
 }

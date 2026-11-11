@@ -247,6 +247,46 @@ fn profile_deleted_elsewhere_notice(lang: koru_i18n::Lang, profile: DeletedProfi
     }
 }
 
+/// The notice for a deletion from another device that **this** device could
+/// not finish cleaning up: what happened, why it stopped, and what finishes
+/// it. Before this existed the failure was a line in the log, and the only
+/// thing a person saw was the Profile still sitting there.
+fn peer_cleanup_stalled_notice(
+    lang: koru_i18n::Lang,
+    name: Option<&str>,
+    failure: CascadeFailure,
+) -> String {
+    let headline = match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => koru_i18n::fill(
+            koru_i18n::t(lang, koru_i18n::Key::ProfileCleanupStalledNamed),
+            &[name],
+        ),
+        None => koru_i18n::t(lang, koru_i18n::Key::ProfileCleanupStalled).to_owned(),
+    };
+    // Two bodies because the two failures want opposite advice, exactly as
+    // `CascadeFailure` says: one is retried, the other fails the same way in
+    // this window every time.
+    let body = koru_i18n::t(
+        lang,
+        match failure {
+            CascadeFailure::NotPermitted => koru_i18n::Key::ProfileCleanupStalledNotPermitted,
+            CascadeFailure::Unsupported
+            | CascadeFailure::Incomplete
+            | CascadeFailure::StalePreview => koru_i18n::Key::ProfileCleanupStalledIncomplete,
+        },
+    );
+    format!("{headline}\n\n{body}")
+}
+
+/// The boundaries of a hosted removal's local cleanup, in the order the
+/// journal requires them.
+const CLEANUP_BOUNDARIES: [koru_agent_wire::ProfileCleanupStage; 4] = [
+    koru_agent_wire::ProfileCleanupStage::WorkspacesRemoved,
+    koru_agent_wire::ProfileCleanupStage::ProfileRemoved,
+    koru_agent_wire::ProfileCleanupStage::SettingsCleared,
+    koru_agent_wire::ProfileCleanupStage::NavigationSettled,
+];
+
 /// Move every active Workspace owned by one Profile to recoverable Trash.
 ///
 /// The error's detail is not kept: no caller showed it, and the code is what
@@ -577,11 +617,90 @@ impl<H: Host> App<H> {
         profile: koru_core::ProfileId,
         stage: koru_agent_wire::ProfileCleanupStage,
     ) {
-        self.host
-            .account_command(koru_agent_wire::AccountCommand::AcknowledgeProfileCleanup {
-                profile_id: profile.to_storage(),
-                stage,
-            });
+        self.host.acknowledge_profile_cleanup(profile, stage);
+    }
+
+    /// The Agent reports that a trusted device deleted `profile`.
+    ///
+    /// It is the first this window hears of the deletion, and the last moment
+    /// the Profile's name can still be read: the catalog refresh that follows
+    /// drops its row, and the notice is worded at the end of a cleanup that
+    /// runs after that. So the name is captured here — once. The report is
+    /// repeated for as long as the Agent's journal has not recorded the end
+    /// of the cleanup, and a later copy must not replace a name with the
+    /// nothing that is left to read by then.
+    pub(super) fn observe_peer_profile_deletion(&mut self, profile: koru_core::ProfileId) {
+        if self.cleaned_hosted_profiles.contains(&profile) {
+            // Already cleaned here, and the journal does not know. Tell it
+            // again; do not clean, switch or notify again. The last boundary
+            // is withheld while this window is still moving off the Profile.
+            let settled = !self.hosted_profile_removals.contains_key(&profile);
+            for stage in CLEANUP_BOUNDARIES {
+                if settled || stage != koru_agent_wire::ProfileCleanupStage::NavigationSettled {
+                    self.acknowledge_profile_cleanup(profile, stage);
+                }
+            }
+            return;
+        }
+        if !self.hosted_profile_removals.contains_key(&profile) {
+            let name = self.observed_profile_name(profile);
+            self.hosted_profile_removals.insert(
+                profile,
+                HostedProfileRemoval {
+                    source: HostedProfileRemovalSource::Peer,
+                    name,
+                },
+            );
+        }
+        self.start_profile_cascade(profile);
+    }
+
+    /// Say, once per Profile in this window, why a deletion from another
+    /// device has not finished here and what finishes it.
+    fn explain_stalled_peer_cleanup(
+        &mut self,
+        profile: koru_core::ProfileId,
+        failure: CascadeFailure,
+    ) {
+        let Some(removal) = self.hosted_profile_removals.get(&profile) else {
+            return;
+        };
+        if removal.source != HostedProfileRemovalSource::Peer
+            || !self.stalled_cleanup_notices.insert(profile)
+        {
+            return;
+        }
+        let message = peer_cleanup_stalled_notice(notice_lang(), removal.name.as_deref(), failure);
+        for pane in self.panes.values_mut() {
+            let _ = pane.view.show_notice(message.clone());
+            pane.window.request_redraw();
+        }
+    }
+
+    /// What the Agent's journal answered to each acknowledgement. The name
+    /// this device remembered is dropped only once the journal holds the last
+    /// boundary: until then the deletion can be announced again, on a later
+    /// launch as well, and its notice still has to name the Profile.
+    fn service_cleanup_acknowledgements(&mut self) {
+        while let Some((raw_profile, stage, result)) =
+            self.host.take_profile_cleanup_acknowledgement()
+        {
+            let Some(profile) = koru_core::ProfileId::parse(&raw_profile) else {
+                continue;
+            };
+            match result {
+                Ok(()) if stage == koru_agent_wire::ProfileCleanupStage::NavigationSettled => {
+                    self.runtime.profile_names.forget(profile);
+                }
+                Ok(()) => {}
+                Err(code) => tracing::warn!(
+                    target: "koru::profiles",
+                    code,
+                    ?stage,
+                    "the Agent did not record a Profile cleanup stage; the deletion will be announced again"
+                ),
+            }
+        }
     }
 
     pub(super) fn service_profile_cascades(&mut self) {
@@ -625,6 +744,7 @@ impl<H: Host> App<H> {
                     if changed {
                         self.invalidate_everywhere();
                     }
+                    self.explain_stalled_peer_cleanup(completion.profile, failure);
                 }
             }
         }
@@ -633,6 +753,7 @@ impl<H: Host> App<H> {
     pub(super) fn service_profile_removals(&mut self, event_loop: &ActiveEventLoop) {
         self.service_profile_offline();
         self.service_remote_deletion_checks();
+        self.service_cleanup_acknowledgements();
         while let Some((raw_profile, outcome)) = self.host.take_local_profile_removal() {
             let Some(profile) = koru_core::ProfileId::parse(&raw_profile) else {
                 continue;
@@ -794,14 +915,24 @@ impl<H: Host> App<H> {
                     pane.window.request_redraw();
                 }
             }
-            // **After the notice, never before it.** The local cleanup is the
-            // last thing that needed the remembered name, and a Profile that
-            // is gone from this device must not leave its name behind — not
-            // for a deletion elsewhere, and least of all for one the person
-            // asked for here. `forget` waits for the disk, because the next
-            // statements may relaunch this process (see
-            // [`crate::profile_names`]).
-            self.runtime.profile_names.forget(completion.profile);
+            // **After the notice, never before it**, and for a hosted removal
+            // not until the Agent's journal holds the last boundary
+            // ([`Self::service_cleanup_acknowledgements`]). A Profile that is
+            // gone from this device must not leave its name behind — but the
+            // name was dropped here unconditionally, the journal had not
+            // recorded anything, and every replayed notice then read "its
+            // name is not known here" about a Profile this device had named a
+            // moment earlier. A removal nothing will announce again, and a
+            // window about to relaunch, forget now; `forget` waits for the
+            // disk for that second case (see [`crate::profile_names`]).
+            let relaunching = removed_current && next.is_none();
+            if hosted_source.is_some() {
+                self.cleaned_hosted_profiles.insert(completion.profile);
+                self.stalled_cleanup_notices.remove(&completion.profile);
+            }
+            if hosted_source.is_none() || relaunching {
+                self.runtime.profile_names.forget(completion.profile);
+            }
             if hosted_source.is_some() && navigation_settled {
                 self.acknowledge_profile_cleanup(
                     completion.profile,

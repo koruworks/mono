@@ -407,8 +407,11 @@ pub enum PopoverAnchor {
     Heading,
     /// Beside the rail's profile square, its foot level with the square's.
     Rail,
-    /// Beside the current workspace square, aligned to its top.
+    /// Beside the rail's `…` under the workspace squares, aligned to its top.
     WorkspaceRail,
+    /// At the mouse: Ctrl+Alt+W's quick switcher opens where the pointer is
+    /// (2026-11-10), its corner on [`ExploreView::switcher_at`].
+    Pointer,
 }
 
 impl Popover {
@@ -628,8 +631,11 @@ struct RowDrag {
 pub enum ExploreChromeFocus {
     RailOverflow,
     Workspace(Option<WorkspaceId>),
+    /// The `…` under the workspace squares.
+    WorkspaceMenu,
     App(usize),
     RailHelp,
+    RailSettings,
     RailProfile,
 }
 
@@ -869,6 +875,20 @@ pub struct ExploreView {
     /// **Never asked per frame** — see where it is set.
     trash_count: usize,
     workspace_notice: Option<String>,
+    /// **The quick switcher's query** (2026-11-10): `Some` while Ctrl+Alt+W
+    /// shows the workspace page as a filtered list under a search field,
+    /// like the `/` menu. The field itself is the container's, which owns
+    /// the keyboard; it hands each change here.
+    workspace_filter: Option<String>,
+    /// The quick switcher's search field, painted inside the panel by the
+    /// page's own element so it is part of the floating panel (2026-11-10).
+    workspace_filter_field: Option<std::rc::Rc<std::cell::RefCell<koru_ui::text_field::TextField>>>,
+    /// Where the pointer was when Ctrl+Alt+W opened the quick switcher.
+    switcher_at: Option<(f32, f32)>,
+    /// **The visiting workspace**: the last workspace opened that is not
+    /// pinned, which keeps its square after the pins while a pinned one is
+    /// open, until another unpinned one takes its place (2026-11-10).
+    rail_visitor: Option<WorkspaceId>,
     workspace_controller: Option<crate::manage::SharedWorkspaces>,
     workspace_waiting: Option<String>,
     /// Which row's `…` menu is open, so the button stays visible while it is.
@@ -1083,47 +1103,6 @@ impl ExploreView {
             }
             Some(_) if cloud == SyncStatus::NotSetUp => SyncStatus::UpToDate,
             _ => cloud,
-        }
-    }
-
-    /// The second line under a profile's name. The open Profile says where
-    /// it syncs and how many other devices hold it; another says its email,
-    /// or that it is on this computer (the review's artboard).
-    ///
-    /// **Two facts at most**: the line has about 180 px, and *Needs
-    /// attention · Koru Cloud · 2 devices* was cut mid-word on screen. The
-    /// device count stands in for *Koru Cloud* when there is one — a Profile
-    /// other devices hold is a cloud Profile.
-    fn profile_detail(&self, profile: &ProfileSummary, lang: koru_i18n::Lang) -> String {
-        use koru_i18n::{Key, fill, t};
-        if self.current_profile != Some(profile.id) {
-            return if profile.email.is_empty() {
-                t(lang, Key::OnThisComputer).to_owned()
-            } else {
-                profile.email.clone()
-            };
-        }
-        let status = self.sync_status();
-        let first = match status {
-            SyncStatus::NotSetUp => t(lang, Key::OnThisComputer),
-            status => t(lang, status.key()),
-        };
-        let n = self.linked_count;
-        let second = if n > 0 {
-            let key = if n == 1 {
-                Key::DevicesCountOne
-            } else {
-                Key::DevicesCountMany
-            };
-            Some(fill(t(lang, key), &[&n.to_string()]))
-        } else if status != SyncStatus::NotSetUp {
-            Some(t(lang, Key::CloudTitle).to_owned())
-        } else {
-            None
-        };
-        match second {
-            Some(second) => format!("{first} · {second}"),
-            None => first.to_owned(),
         }
     }
 
@@ -3240,6 +3219,7 @@ impl ExploreView {
         self.current_profile = Some(current_profile);
         self.workspaces = workspaces;
         self.current = current;
+        self.note_rail_visitor();
         self.check_workspace_drag_membership();
         if let Some(id) = focused_workspace {
             let rows = self.popover_rows();
@@ -3674,22 +3654,17 @@ impl ExploreView {
     /// both are drawn.
     fn rows_for(&self, kind: PopoverKind) -> Vec<PopoverRow> {
         match kind {
-            PopoverKind::Help => help::Action::ALL
-                .into_iter()
-                .filter(|action| {
-                    *action != help::Action::Offer || self.help.projection().action.is_some()
-                })
-                .map(PopoverRow::Help)
-                .collect(),
+            PopoverKind::Help => self.help.rows().into_iter().map(PopoverRow::Help).collect(),
+            PopoverKind::Summary if self.workspace_filter.is_some() => {
+                self.filtered_workspace_rows()
+            }
             PopoverKind::Summary => {
                 let list = &self.workspaces;
                 let mut out = Vec::with_capacity(list.len() + 1);
-                out.extend(
-                    self.sync_channels()
-                        .controls()
-                        .into_iter()
-                        .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
-                );
+                // No Profile card and its sync controls at the top, and no
+                // Trash at the foot: the menu is the rail's `…` now, and it
+                // lists workspaces. Sync is the Profile menu's, Trash the
+                // column's floor row.
                 // **Unassigned first** (root-catalog §3.6): a workspace no
                 // Profile lists is reachable before this Profile's own rows,
                 // and only while there is one.
@@ -3725,7 +3700,6 @@ impl ExploreView {
                 out.extend([
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Import),
-                    PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Trash),
                 ]);
                 if self.workspace_waiting.is_some() || self.workspace_notice.is_some() {
                     out.push(PopoverRow::WorkspaceNotice);
@@ -3753,7 +3727,7 @@ impl ExploreView {
                         .into_iter()
                         .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
                 );
-                out.extend([MenuAction::Sync, MenuAction::Settings].map(PopoverRow::ProfileAction));
+                out.push(PopoverRow::ProfileAction(MenuAction::Sync));
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -3858,14 +3832,19 @@ impl ExploreView {
             PopoverKind::LibraryActions => self.actions_button(area).x.max(POPOVER_EDGE),
         };
         let x = x.min((viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE));
+        // **The quick switcher at the mouse**: its corner on the pointer,
+        // pulled back inside the window wherever it would cross an edge.
+        if p.anchor == PopoverAnchor::Pointer
+            && let Some((px, py)) = self.switcher_at
+        {
+            let x = px.min(viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE);
+            let y = py.min(viewport.1 - h - POPOVER_EDGE).max(POPOVER_EDGE);
+            return Some(Rect::new(x, y, w, h));
+        }
         let y = match p.kind {
             PopoverKind::Summary => {
-                let square = self
-                    .apps_rail_rects(rail)
-                    .workspaces
-                    .first()
-                    .map(|(_, r)| *r)
-                    .unwrap_or(rail);
+                let menu = self.apps_rail_rects(rail).workspace_menu;
+                let square = if menu.w > 0.0 { menu } else { rail };
                 square
                     .y
                     .min((viewport.1 - h - POPOVER_EDGE).max(POPOVER_EDGE))
@@ -4295,6 +4274,121 @@ impl ExploreView {
     ///
     /// Enter on a Profile row switches with the list left up; on the
     /// heading it opens the ⋯ menu; on a workspace it switches and shuts.
+    /// **Ctrl+Alt+W: the workspaces as a filtered list** (2026-11-10). The
+    /// workspace page with only its rows under a search field — no heading,
+    /// no unassigned group, no New or Import — so typing narrows it and
+    /// Enter switches. Shut again when it is already what is showing.
+    ///
+    /// **At the mouse** when it is over the window: the corner of the panel
+    /// on the pointer, kept inside the window. With no pointer to go by it
+    /// hangs off the rail as the menu does.
+    pub fn open_workspace_switcher(
+        &mut self,
+        engine: &mut TextEngine,
+        pointer: Option<(f32, f32)>,
+    ) -> bool {
+        if self.workspace_filter_active() {
+            return self.close_popover();
+        }
+        self.workspace_filter = Some(String::new());
+        self.workspace_filter_field = Some(std::rc::Rc::new(std::cell::RefCell::new(
+            koru_ui::text_field::TextField::new(engine, theme::role::ui()),
+        )));
+        self.switcher_at = pointer;
+        let anchor = if pointer.is_some() {
+            PopoverAnchor::Pointer
+        } else {
+            PopoverAnchor::WorkspaceRail
+        };
+        if self.live().is_some_and(|p| p.kind == PopoverKind::Summary) {
+            if let Some(p) = self.popover.as_mut() {
+                p.anchor = anchor;
+            }
+            self.hover_current_workspace();
+            return true;
+        }
+        self.toggle_popover_from(PopoverKind::Summary, anchor);
+        self.hover_current_workspace();
+        true
+    }
+
+    /// A key for the quick switcher's field: typed in, and the list narrowed
+    /// to what it now says.
+    pub fn workspace_filter_key(
+        &mut self,
+        engine: &mut TextEngine,
+        key: &winit::keyboard::Key,
+        text: Option<&str>,
+        mods: winit::keyboard::ModifiersState,
+    ) -> bool {
+        let Some(field) = self.workspace_filter_field.clone() else {
+            return false;
+        };
+        field.borrow_mut().key(engine, key, text, mods);
+        let query = field.borrow().value();
+        self.set_workspace_filter(&query);
+        true
+    }
+
+    /// Whether the quick switcher is the page showing.
+    pub fn workspace_filter_active(&self) -> bool {
+        self.workspace_filter.is_some()
+            && self.live().is_some_and(|p| p.kind == PopoverKind::Summary)
+    }
+
+    /// The field's text changed: narrow the list, and put the keyboard on
+    /// the first match — what Enter then opens.
+    pub fn set_workspace_filter(&mut self, query: &str) {
+        if self.workspace_filter.as_deref() == Some(query) {
+            return;
+        }
+        self.workspace_filter = Some(query.to_owned());
+        let first = (!self.filtered_workspace_rows().is_empty()).then_some(0);
+        if let Some(p) = self.popover.as_mut() {
+            p.hover = first;
+            p.scroll = 0.0;
+        }
+        self.popover_part = None;
+    }
+
+    /// The rows the quick switcher lists: the workspace page's own — pinned
+    /// first, archived only when it is the one open, deleted never — whose
+    /// names hold the query, ignoring case.
+    fn filtered_workspace_rows(&self) -> Vec<PopoverRow> {
+        let query = self
+            .workspace_filter
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+        let list = &self.workspaces;
+        let mut shown: Vec<usize> = (0..list.len())
+            .filter(|&i| {
+                let w = &list[i];
+                w.deleted_at.is_none()
+                    && (!w.archived || self.current == Some(w.id))
+                    && (query.is_empty() || w.name.to_lowercase().contains(&query))
+            })
+            .collect();
+        shown.sort_by_key(|&i| !list[i].pinned);
+        shown.into_iter().map(PopoverRow::Workspace).collect()
+    }
+
+    /// Where the quick switcher's field is, while it shows. Tests only: the
+    /// field paints itself as an element of the page.
+    #[cfg(test)]
+    pub fn popover_filter_rect(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
+        if !self.workspace_filter_active() {
+            return None;
+        }
+        self.with_page(area, viewport, |frame| {
+            frame
+                .node(popover_elements::WORKSPACE_FILTER)
+                .map(|node| node.rect)
+        })
+        .flatten()
+    }
+
     pub fn popover_key(&mut self, key: &winit::keyboard::Key) -> Option<Outcome> {
         use winit::keyboard::{Key, NamedKey};
         self.live()?;
@@ -4516,12 +4610,17 @@ impl ExploreView {
     pub fn apps_rail_mouse_down(&mut self, rail: Rect, x: f32, y: f32) -> Outcome {
         let rects = self.apps_rail_rects(rail);
         match self.rail_hit(rail, x, y) {
-            Some(apps_rail::Hit::Workspace(id)) if self.current != Some(id) => {
+            // **A square switches, and can be carried** — the open one too,
+            // so the run can be put in any order. The switch happens on
+            // release, which is what lets the same press start a drag.
+            Some(apps_rail::Hit::Workspace(id)) => {
                 self.close_popover();
                 self.begin_workspace_drag(id, &rects, y);
                 Outcome::Consumed
             }
-            Some(apps_rail::Hit::Workspace(_)) | Some(apps_rail::Hit::WaitingWorkspace) => {
+            // No workspace open: the waiting square still opens the menu,
+            // the one way to choose one.
+            Some(apps_rail::Hit::WaitingWorkspace) | Some(apps_rail::Hit::WorkspaceMenu) => {
                 self.toggle_popover(PopoverKind::Summary);
                 Outcome::Consumed
             }
@@ -4540,6 +4639,10 @@ impl ExploreView {
             }
             Some(apps_rail::Hit::Overflow) => Outcome::OpenRailOverflow,
             Some(apps_rail::Hit::Help) => Outcome::OpenHelp,
+            Some(apps_rail::Hit::Settings) => {
+                self.close_popover();
+                Outcome::OpenSettings
+            }
             Some(apps_rail::Hit::Profile) => {
                 self.toggle_profile_popover();
                 Outcome::Consumed
@@ -7610,8 +7713,9 @@ impl ExploreView {
                 icon_colour,
             );
         } else if let Some(icon) = &row.icon {
-            let label_bl = label_metrics.map(|m| label_y + m.baseline);
-            draw_page_emoji(scene, root, engine, icon, icon_x, r, label_bl);
+            let label_centre_y =
+                label_metrics.map(|m| label_y + m.baseline - (m.ascent - m.descent) * 0.5);
+            draw_page_emoji(scene, root, engine, icon, icon_x, r, label_centre_y);
         } else {
             // Every row under Canvases is a canvas; its row wears the glyph the
             // section's icon and the canvas's tab wear.

@@ -923,6 +923,17 @@ pub struct ProductionAccountService {
     responder_session: Option<Arc<crate::enrollment::ResponderSessionGate>>,
     local_profiles: Arc<dyn lifecycle::LocalProfileInventory>,
     cloud_sync: Option<Arc<dyn cloud_sync::CloudSyncPort>>,
+    /// Whether an account has Koru Cloud, as last answered. Memory only, and
+    /// read by one thing: a Profile waiting to start syncing
+    /// (`cloud_sync::cloud_subscription_known`).
+    cloud_subscribed: Option<(KoruIdentityId, bool)>,
+    /// When the service last accepted this sign-in: set with every token
+    /// pair it answers, published as `AccountState::session_checked_at_millis`.
+    session_checked_at_millis: Option<i64>,
+    /// The Profiles whose Store this process has already opened to Cloud, so
+    /// the reconcile opens each once rather than on every heartbeat. Memory
+    /// only: opening is safe to repeat, and a new process asks again.
+    cloud_opened: std::collections::BTreeSet<ProfileId>,
     lifecycle_repository: Arc<Mutex<lifecycle::LifecycleRepository>>,
     lifecycle_ownership: Arc<Mutex<lifecycle_ownership::Ownership>>,
     directory_namespace: Option<String>,
@@ -1007,6 +1018,9 @@ impl ProductionAccountService {
             responder_session: None,
             local_profiles: ports.local_profiles,
             cloud_sync: ports.cloud_sync,
+            cloud_subscribed: None,
+            session_checked_at_millis: None,
+            cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: Arc::new(Mutex::new(ports.lifecycle_repository)),
             lifecycle_ownership: Arc::new(Mutex::new(lifecycle_ownership::Ownership::default())),
             delivery: ports.delivery,
@@ -1096,6 +1110,8 @@ impl ProductionAccountService {
                 .durable_owner
                 .map(|owner| self.cloud_profiles(owner.account))
                 .unwrap_or_default(),
+            // Only while there is a session to speak of.
+            session_checked_at_millis: self.access.as_ref().and(self.session_checked_at_millis),
             ..Default::default()
         }
     }
@@ -1121,6 +1137,8 @@ impl ProductionAccountService {
                 .map_err(|_| ServiceError::terminal("credential_invalid"))?;
         self.access = Some(tokens.access_token);
         self.access_expires_at_millis = Some(access_expires_at_millis);
+        // The service has just accepted this sign-in.
+        self.session_checked_at_millis = self.clock.now_millis();
         self.unacknowledged_session_id = Some(credential.session_id.clone());
         // Access remains private to this operation until the exact credential
         // and its authenticated directory owner have both acknowledged.
@@ -1616,9 +1634,26 @@ impl ProductionAccountService {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
             let mut journal = self.journal();
-            let existing = journal
+            let mut existing = journal
                 .get(profile)
                 .map_err(|error| ServiceError::retryable(error.code))?;
+            // A pending delete the service refused before applying anything
+            // (a fresh sign-in was wanted) has nothing to replay. Left in
+            // place, it outlived the in-memory owner proof across a restart
+            // and refused every retry as owner-unproven; this also clears a
+            // row written before refusals of that kind were dropped at once.
+            if let Some(record) = &existing
+                && record.stage == koru_agent_wire::ProfileCleanupStage::HostedPending
+                && record
+                    .failure_code
+                    .as_deref()
+                    .is_some_and(lifecycle::refusal_applied_nothing)
+                && journal
+                    .abandon_unapplied(profile, record.operation)
+                    .map_err(|error| ServiceError::retryable(error.code))?
+            {
+                existing = None;
+            }
             ownership.validate(profile, account, existing.as_ref())?;
             if existing.is_none() {
                 let hosted_owner = self
@@ -1656,9 +1691,18 @@ impl ProductionAccountService {
             Ok(response) => response,
             Err(error) => {
                 let mapped = map_client_error(error);
-                self.journal()
-                    .record_failure(profile, pending.operation, mapped.code, now)
-                    .map_err(|error| ServiceError::retryable(error.code))?;
+                if lifecycle::refusal_applied_nothing(mapped.code) {
+                    // Nothing happened on the service: forget the intent, so
+                    // the delete after the fresh sign-in is a new one and
+                    // proves its owner again, restart or not.
+                    self.journal()
+                        .abandon_unapplied(profile, pending.operation)
+                        .map_err(|error| ServiceError::retryable(error.code))?;
+                } else {
+                    self.journal()
+                        .record_failure(profile, pending.operation, mapped.code, now)
+                        .map_err(|error| ServiceError::retryable(error.code))?;
+                }
                 return Err(mapped);
             }
         };
@@ -2313,6 +2357,9 @@ impl AccountService for ProductionAccountService {
             responder_session: self.responder_session.clone(),
             local_profiles: self.local_profiles.clone(),
             cloud_sync: self.cloud_sync.clone(),
+            cloud_subscribed: None,
+            session_checked_at_millis: None,
+            cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: self.lifecycle_repository.clone(),
             lifecycle_ownership: self.lifecycle_ownership.clone(),
             directory_namespace: self.directory_namespace.clone(),
@@ -2514,6 +2561,11 @@ impl AccountService for ProductionAccountService {
                     .client
                     .has_cloud_subscription(&self.authorization()?, &|| cancel.cancelled())
                     .ok();
+                // Remembered for a Profile waiting to start syncing: this is
+                // the moment a new subscription is first seen.
+                if let (Some(current), Some(owner)) = (current, self.durable_owner) {
+                    self.cloud_subscribed = Some((owner.account, current));
+                }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
                     credential: CredentialChange::Keep,
@@ -2726,6 +2778,10 @@ impl AccountService for ProductionAccountService {
                     )
                     .map_err(map_client_error)?;
                 self.remember_profile(&profile);
+                // Created with the account, so its Cloud sync starts on
+                // (ADR-000-createdwithaccount). `AttachProfile` below is a
+                // Profile that already existed, which is still asked.
+                self.cloud_sync_starts_on(profile.koru_identity_id, profile.profile_id);
                 Ok(profile_outcome(self, generation, profile))
             }
             AccountCommand::AttachProfile {
@@ -2917,11 +2973,26 @@ impl AccountService for ProductionAccountService {
                 profile_id,
                 expected_lifecycle_revision,
             } => {
-                let (lifecycle, exact_retry) = self.delete_profile(
+                let deleted = self.delete_profile(
                     parse_profile(&profile_id)?,
                     koru_account_core::ProfileLifecycleRevision::new(expected_lifecycle_revision),
                     cancel,
-                )?;
+                );
+                // Only a failed HTTP call was logged before, so a delete that
+                // was refused here, or that succeeded, left no line at all.
+                match &deleted {
+                    Ok(_) => tracing::info!(
+                        target: "koru_account",
+                        "profile delete: the service committed it"
+                    ),
+                    Err(error) => tracing::info!(
+                        target: "koru_account",
+                        code = error.code,
+                        retryable = error.retryable,
+                        "profile delete: not committed"
+                    ),
+                }
+                let (lifecycle, exact_retry) = deleted?;
                 let mut state = self.state(generation, AccountStage::SignedIn);
                 let follow_up = match self.next_pending_delete() {
                     Ok(next) => next,
@@ -2973,10 +3044,17 @@ impl AccountService for ProductionAccountService {
                 })
             }
             AccountCommand::InspectProfileLifecycle { profile_id } => {
+                // A settled row is the journal's memory of a finished
+                // deletion, kept so a re-delivered tombstone starts nothing.
+                // To a caller asking what is in flight it is what it was
+                // before the row was kept: nothing.
                 let lifecycle = self
                     .journal()
                     .get(parse_profile(&profile_id)?)
                     .map_err(|error| ServiceError::retryable(error.code))?
+                    .filter(|record| {
+                        record.stage != koru_agent_wire::ProfileCleanupStage::NavigationSettled
+                    })
                     .map(|record| record.wire());
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
@@ -2996,11 +3074,6 @@ impl AccountService for ProductionAccountService {
                     .acknowledge(profile, stage, now)
                     .map_err(|error| ServiceError::retryable(error.code))?
                     .map(|record| record.wire());
-                if stage == koru_agent_wire::ProfileCleanupStage::NavigationSettled {
-                    self.journal()
-                        .clear_completed(profile)
-                        .map_err(|error| ServiceError::retryable(error.code))?;
-                }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
                     credential: CredentialChange::Keep,
@@ -3020,9 +3093,19 @@ impl AccountService for ProductionAccountService {
                     ServiceError::terminal(crate::enrollment::ENROLLMENT_UNAVAILABLE)
                 })?;
                 self.provision_selected_profiles(&profiles, &authorization, cancel)?;
+                let chosen = profiles.clone();
                 let snapshot = enrollment
                     .select_profiles(profiles, authorization)
                     .map_err(ServiceError::terminal)?;
+                // Chosen onto this device from the account, so their Cloud
+                // sync starts on (ADR-000-createdwithaccount). Until the
+                // Store is opened to Cloud for them, nothing of theirs can
+                // arrive here at all: every pull is `mode_refuses_transport`.
+                if let Some(owner) = self.durable_owner {
+                    for profile in chosen {
+                        self.cloud_sync_starts_on(owner.account, profile);
+                    }
+                }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
                     credential: CredentialChange::Keep,

@@ -154,10 +154,17 @@ fn main() {
             } else {
                 koru_log::init_file(&paths.store_dir(), "koru-agent.log", log_filter)
             };
+            // Who started this process. Agents have been found starting and
+            // stopping within two seconds of each other, several in a row,
+            // with nothing in the log to say what launched them or why they
+            // went — and the guess made from the timing alone was wrong.
+            let (parent_pid, parent) = koru_agent::launched_by();
             tracing::info!(
                 target: "koru::startup",
                 version = env!("CARGO_PKG_VERSION"),
                 pid = std::process::id(),
+                parent_pid,
+                parent = %parent,
                 root = %paths.root().display(),
                 tray = show_tray,
                 "agent started"

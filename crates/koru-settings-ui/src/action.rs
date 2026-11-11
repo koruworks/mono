@@ -15,8 +15,8 @@ use koru_draw::theme::FontChoice;
 use koru_settings::{
     CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice, DensityChoice,
     DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, IconPackChoice,
-    LanguageChoice, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
-    ViewModeChoice,
+    LanguageChoice, ScrollSpeedChoice, TerminalCursorBlink, TerminalCursorHeight,
+    TerminalCursorWidth, ThemeChoice, ViewModeChoice,
 };
 
 /// Which of the five font roles a chip belongs to.
@@ -108,8 +108,11 @@ pub(crate) enum Action {
     CanvasBackground,
     ApplyLayoutToAll,
     Density(DensityChoice),
+    ScrollSpeed(ScrollSpeedChoice),
     IconPack(IconPackChoice),
     PinnedShowTitle(bool),
+    /// *Workspace tabs*: `true` for *Per workspace*, `false` for *Shared*.
+    WorkspaceTabs(bool),
     Font(FontRole, FontChoice),
     /// A document body size, in px, from `DocTextSize::ALL`.
     DocTextSize(u8),
@@ -117,6 +120,9 @@ pub(crate) enum Action {
     /// dark (`true`) theme:
     /// `0xRRGGBB`, or `None` for the theme's own.
     BaseColor(bool, Option<u32>),
+    /// The accent for the light (`false`) or dark (`true`) theme:
+    /// `0xRRGGBB`, or `None` for the theme's own.
+    AccentColor(bool, Option<u32>),
     /// A font role set to exactly this — the row for an installed family
     /// that is not installed here keeps it.
     FontSetting(FontRole, koru_settings::FontSetting),
@@ -170,6 +176,8 @@ pub(crate) enum Action {
     AgentGuide(&'static str),
     /// *Install*: run the vendor's install command for the agent, by key.
     InstallAgent(String),
+    /// *Update*: run the agent CLI's own updater, by key.
+    UpdateAgent(String),
     /// *Default permission for new chats*: `true` for the *Other agents*
     /// row, and the permission chosen.
     AgentPermission(bool, koru_settings::AgentPermission),
@@ -191,6 +199,9 @@ pub enum Request {
     MoreFonts(FontRole),
     /// *Apply to all documents*. Only the container can reach every open tab.
     ApplyLayoutToAllDocuments,
+    /// Apply the chosen title visibility to every open pin, even if this
+    /// option was already selected. The host owns the tab strips.
+    SetPinnedShowTitle(bool),
     /// The canvas swatch was pressed; the host cycles it and hands the new
     /// value back with [`set_canvas_background`](crate::SettingsSurface::set_canvas_background).
     CycleCanvasBackground,
@@ -254,6 +265,9 @@ pub enum Request {
     /// vendor's install command, where the person sees its output and
     /// answers its prompts, and checks the agent again when it ends.
     InstallAgent(String),
+    /// Update an agent's CLI, by key: the host asks the Agent to run the
+    /// CLI's own updater, and the card that reports its progress appears.
+    UpdateAgent(String),
     /// Store the permission new chats start in, on this machine: for the
     /// supported agents, or (`other`) for every other agent.
     SetAgentPermission {

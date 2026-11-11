@@ -67,6 +67,18 @@ pub trait LocalProfileInventory: Send + Sync {
         Err(ServiceError::retryable("profile_provisioning_unavailable"))
     }
 
+    /// **Bring back a Profile this computer removed earlier**, because the
+    /// person has just chosen it again under *Import Profiles*.
+    ///
+    /// The Store's own guarded restore (`restore_profile_local`): it refuses a
+    /// Profile that was deleted from the account rather than only removed
+    /// here, and checks the retained identity before the Profile becomes
+    /// visible. Its Workspaces stay in the Trash, where the removal put them.
+    /// Read-only host adapters fail closed.
+    fn restore_removed(&self, _profile: ProfileId) -> Result<(), ServiceError> {
+        Err(ServiceError::retryable("profile_restore_unavailable"))
+    }
+
     /// A fresh local presence check before granting reciprocal enrollment trust.
     fn authorize(
         &self,
@@ -237,9 +249,22 @@ impl LifecycleRepository {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| LifecycleError::storage())?;
-        if let Some(record) = read_record(&tx, profile)? {
-            tx.commit().map_err(|_| LifecycleError::storage())?;
-            return Ok(record);
+        match read_record(&tx, profile)? {
+            // A settled row is the memory of a deletion that finished, not a
+            // deletion in flight. Deleting the same Profile again is a new
+            // operation, so the memory makes way for it.
+            Some(record) if record.stage == ProfileCleanupStage::NavigationSettled => {
+                tx.execute(
+                    "DELETE FROM profile_cleanup WHERE profile_id = ?1",
+                    params![profile.to_string()],
+                )
+                .map_err(|_| LifecycleError::storage())?;
+            }
+            Some(record) => {
+                tx.commit().map_err(|_| LifecycleError::storage())?;
+                return Ok(record);
+            }
+            None => {}
         }
         let operation = ProfileLifecycleMutationId::mint();
         tx.execute(
@@ -631,28 +656,55 @@ impl LifecycleRepository {
         self.get(profile)
     }
 
-    pub fn clear_completed(&mut self, profile: ProfileId) -> Result<bool, LifecycleError> {
-        self.connection
-            .execute(
-                "DELETE FROM profile_cleanup
-                 WHERE profile_id = ?1 AND stage = 'navigation_settled'",
-                params![profile.to_string()],
-            )
-            .map(|changed| changed == 1)
-            .map_err(|_| LifecycleError::storage())
-    }
-
+    /// The row for `profile`, **settled ones included**.
+    ///
+    /// A row that reached `navigation_settled` is kept rather than deleted. It
+    /// is the only thing on this device that says a deletion was already
+    /// cleaned up: the signed tombstone stays in the trust store and peers
+    /// send it again on every device-list exchange, so with the row gone each
+    /// re-delivery looked like a deletion nobody had handled and the whole
+    /// cleanup — and its notice — ran again. A later revision replaces the
+    /// row ([`Self::observe_trust_deleted`], [`Self::begin_delete`]) and a
+    /// restore removes it ([`Self::observe_active`]).
     pub fn get(&self, profile: ProfileId) -> Result<Option<CleanupRecord>, LifecycleError> {
         read_record(&self.connection, profile)
     }
 
+    /// Forget a hosted delete the service refused **before applying
+    /// anything** ([`refusal_applied_nothing`]). Only the exact operation,
+    /// and only while it is still `hosted_pending`: a row the service
+    /// committed is never dropped here. Answers whether a row went.
+    ///
+    /// Kept, such a row had nothing to replay and only blocked the next
+    /// attempt: the owner proof is in memory, the journal (schema 2) has no
+    /// account column, so after an Agent restart every retry was refused as
+    /// `profile_lifecycle_owner_unproven` (2026-11-10).
+    pub fn abandon_unapplied(
+        &mut self,
+        profile: ProfileId,
+        operation: ProfileLifecycleMutationId,
+    ) -> Result<bool, LifecycleError> {
+        let removed = self
+            .connection
+            .execute(
+                "DELETE FROM profile_cleanup
+                 WHERE profile_id = ?1 AND operation_id = ?2 AND stage = 'hosted_pending'",
+                params![profile.to_string(), operation.to_string()],
+            )
+            .map_err(|_| LifecycleError::storage())?;
+        Ok(removed == 1)
+    }
+
+    /// Every deletion whose cleanup is still owed, oldest first. A settled
+    /// row owes nothing and is not here; see [`Self::get`] for why it exists.
     pub fn pending(&self) -> Result<Vec<CleanupRecord>, LifecycleError> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT profile_id, expected_revision, lifecycle_state, lifecycle_revision,
                         operation_id, stage, peer_targets_json, failure_code
-                 FROM profile_cleanup ORDER BY updated_at_millis, profile_id",
+                 FROM profile_cleanup WHERE stage != 'navigation_settled'
+                 ORDER BY updated_at_millis, profile_id",
             )
             .map_err(|_| LifecycleError::storage())?;
         let rows = statement
@@ -757,6 +809,17 @@ fn stage_index(stage: ProfileCleanupStage) -> u8 {
         ProfileCleanupStage::SettingsCleared => 4,
         ProfileCleanupStage::NavigationSettled => 5,
     }
+}
+
+/// A refusal of the hosted delete that proves the service applied nothing:
+/// the 428 that asks for a fresh sign-in is a precondition, checked before
+/// any lifecycle change. A pending row it leaves has nothing to replay.
+pub fn refusal_applied_nothing(code: &str) -> bool {
+    matches!(
+        code,
+        koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED
+            | koru_account_wire::ErrorCode::FRESH_GOOGLE_AUTHENTICATION_REQUIRED
+    )
 }
 
 pub fn exact_retry(status: ProfileLifecycleMutationStatusV1) -> bool {
@@ -957,9 +1020,88 @@ mod tests {
             repository = LifecycleRepository::open(&path).unwrap();
             assert_eq!(repository.get(profile).unwrap().unwrap().stage, stage);
         }
-        assert!(repository.clear_completed(profile).unwrap());
-        assert_eq!(repository.get(profile).unwrap(), None);
-        assert!(!repository.clear_completed(profile).unwrap());
+    }
+
+    /// The regression behind a notice that came back every few minutes: the
+    /// settled row used to be deleted, so the tombstone a peer re-sends on
+    /// every device-list exchange started the cleanup again.
+    #[test]
+    fn a_settled_deletion_is_remembered_and_a_redelivered_tombstone_owes_nothing() {
+        let mut repository = LifecycleRepository::in_memory();
+        let profile = profile();
+        let operation = ProfileLifecycleMutationId::mint();
+        let revision = ProfileLifecycleRevision::new(1);
+        repository
+            .observe_trust_deleted(profile, revision, operation, 1)
+            .unwrap();
+        for (index, stage) in [
+            ProfileCleanupStage::WorkspacesRemoved,
+            ProfileCleanupStage::ProfileRemoved,
+            ProfileCleanupStage::SettingsCleared,
+            ProfileCleanupStage::NavigationSettled,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            repository
+                .acknowledge(profile, stage, 2 + index as i64)
+                .unwrap();
+        }
+        assert!(repository.pending().unwrap().is_empty());
+
+        let redelivered = repository
+            .observe_trust_deleted(profile, revision, operation, 99)
+            .unwrap();
+        assert_eq!(redelivered.stage, ProfileCleanupStage::NavigationSettled);
+        assert!(repository.pending().unwrap().is_empty());
+
+        // The same Profile deleted again after a restore is a new deletion.
+        let again = repository
+            .observe_trust_deleted(
+                profile,
+                ProfileLifecycleRevision::new(3),
+                ProfileLifecycleMutationId::mint(),
+                100,
+            )
+            .unwrap();
+        assert_eq!(again.stage, ProfileCleanupStage::HostedCommitted);
+        assert_eq!(repository.pending().unwrap(), vec![again]);
+    }
+
+    #[test]
+    fn deleting_a_profile_again_replaces_the_memory_of_its_settled_deletion() {
+        let mut repository = LifecycleRepository::in_memory();
+        let profile = profile();
+        let first = repository
+            .begin_delete(profile, ProfileLifecycleRevision::INITIAL, 1)
+            .unwrap();
+        repository
+            .record_hosted(
+                profile,
+                first.operation,
+                &deleted(profile, first.operation),
+                2,
+            )
+            .unwrap();
+        for (index, stage) in [
+            ProfileCleanupStage::WorkspacesRemoved,
+            ProfileCleanupStage::ProfileRemoved,
+            ProfileCleanupStage::SettingsCleared,
+            ProfileCleanupStage::NavigationSettled,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            repository
+                .acknowledge(profile, stage, 3 + index as i64)
+                .unwrap();
+        }
+
+        let second = repository
+            .begin_delete(profile, ProfileLifecycleRevision::new(2), 10)
+            .unwrap();
+        assert_ne!(second.operation, first.operation);
+        assert_eq!(second.stage, ProfileCleanupStage::HostedPending);
     }
 
     #[test]

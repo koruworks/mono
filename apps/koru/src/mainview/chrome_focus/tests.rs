@@ -7,6 +7,12 @@ use crate::mainview::harness::container;
 use crate::panes::explore::NavigatorMode;
 use koru_keys::PRIMARY_SHIFT;
 
+/// The rail's stops before its views: each workspace square, then the `…`
+/// that opens the workspace menu.
+fn lead(v: &MainView) -> usize {
+    v.explore.apps_rail_rects(v.rail_area()).workspaces.len() + 1
+}
+
 fn press(v: &mut MainView, ws: &mut WorkspaceDoc, key: NamedKey) -> bool {
     v.key(ws, &Key::Named(key), None, ModifiersState::empty())
 }
@@ -63,6 +69,7 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         let shown = NavigatorMode::visible();
+        let lead = lead(&v);
         // Home leads the row; Documents, the active app, is second.
         let documents = shown
             .iter()
@@ -70,37 +77,45 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
             .expect("Documents is shown");
         assert_eq!(
             v.chrome_focus,
-            Some(ChromeStop::Apps(documents + 1)),
+            Some(ChromeStop::Apps(documents + lead)),
             "lands on the active app"
         );
         assert!(press(&mut v, &mut workspace.ws, NamedKey::ArrowRight));
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(documents + 1 + 1)));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(documents + lead + 1)));
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
         assert_eq!(
             v.explore.navigator_mode(),
             shown[documents + 1],
             "Enter shows the app"
         );
-        // Past the last app are Help and the profile square, then
-        // it wraps. ↓ walks the rail as → does.
-        for _ in 0..shown.len() + 2 {
+        // Past the last app are Help, App settings and the profile square,
+        // then it wraps. ↓ walks the rail as → does.
+        for _ in 0..shown.len() + lead + 2 {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);
         }
         assert_eq!(
             v.chrome_focus,
-            Some(ChromeStop::Apps(documents + 1)),
+            Some(ChromeStop::Apps(documents + lead)),
             "wrapped past the foot"
         );
-        // The workspace tile leads the rail and opens its menu.
-        for _ in 0..documents + 1 {
+        // The workspace squares lead the rail; Enter on the open one is
+        // already answered.
+        for _ in 0..documents + lead {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowLeft);
         }
         assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(0)));
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
         assert!(
-            v.explore.popover_open(),
-            "Enter on the workspace tile opens the menu"
+            !v.explore.popover_open(),
+            "Enter on the open workspace's square opens nothing"
         );
+        // The `…` after them opens the menu.
+        for _ in 0..lead - 1 {
+            press(&mut v, &mut workspace.ws, NamedKey::ArrowRight);
+        }
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(lead - 1)));
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
+        assert!(v.explore.popover_open(), "Enter on the `…` opens the menu");
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
         assert!(!v.explore.popover_open(), "Escape shuts the popover first");
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
@@ -168,22 +183,27 @@ fn the_move_chords_move_the_focused_rail_view_and_the_slots_keep_their_digits() 
         let default = NavigatorMode::visible();
         let chats = default.iter().position(|m| *m == NavigatorMode::Chats);
         let chats = chats.expect("Chats is shown");
+        let lead = lead(&v);
         // Onto Chats, and up the rail to the top: one place per chord.
         for _ in 0..chats {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);
         }
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(chats + 1)));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(chats + lead)));
         let up = Key::Named(NamedKey::ArrowUp);
         for at in (0..chats).rev() {
             assert!(v.key(&mut workspace.ws, &up, None, PRIMARY_SHIFT));
-            assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(at + 1)), "follows it");
+            assert_eq!(
+                v.chrome_focus,
+                Some(ChromeStop::Apps(at + lead)),
+                "follows it"
+            );
         }
         assert_eq!(v.explore.rail_modes()[0], NavigatorMode::Chats);
         assert!(
             v.key(&mut workspace.ws, &up, None, PRIMARY_SHIFT),
             "at the top the chord is still the view's"
         );
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(0 + 1)));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(lead)));
         assert_eq!(v.explore.rail_modes()[0], NavigatorMode::Chats);
         // First in the rail, so `Alt+1` — and Documents, one down, `Alt+2`.
         assert_eq!(
@@ -203,7 +223,7 @@ fn the_move_chords_move_the_focused_rail_view_and_the_slots_keep_their_digits() 
         );
         assert!(alt_digit(&mut v, &mut workspace.ws, "1"));
         assert_eq!(v.explore.navigator_mode(), NavigatorMode::Chats);
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(0 + 1)));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(lead)));
 
         // Down once: Chats under Documents.
         let down = Key::Named(NamedKey::ArrowDown);
@@ -212,7 +232,7 @@ fn the_move_chords_move_the_focused_rail_view_and_the_slots_keep_their_digits() 
             &v.explore.rail_modes()[..2],
             &[NavigatorMode::Documents, NavigatorMode::Chats]
         );
-        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(1 + 1)));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Apps(1 + lead)));
         // Enter shows the view the ring is on, which is the one that moved.
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
         assert_eq!(v.explore.navigator_mode(), NavigatorMode::Chats);
@@ -303,9 +323,9 @@ fn the_move_chords_leave_the_rail_alone_without_the_keyboard_on_it() {
 }
 
 /// **Enter on the rail's foot does what a press on it does**, on each of the
-/// two, and on the control the ring is drawn on: Help opens the help
-/// popover beside its `?`, the profile square its
-/// Profiles page. Enter and the ring read the foot from one place
+/// three, and on the control the ring is drawn on: Help opens the help
+/// popover beside its `?`, the profile square its Profiles page, and the
+/// settings square between them the Settings tab. Enter and the ring read the foot from one place
 /// (`rail_focus`); Enter used to read a copy that still counted *Manage
 /// apps* first, so Enter on Help did nothing and on the profile square
 /// opened Help (found in D96).
@@ -323,9 +343,9 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
         // Lane, then the rail, on the active view.
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         press(&mut v, &mut workspace.ws, NamedKey::F6);
-        let apps = v.explore.rail_modes().len() + 1;
+        let apps = v.explore.rail_modes().len() + lead(&v);
         let onto = |v: &mut MainView, ws: &mut WorkspaceDoc, foot: usize| {
-            for _ in 0..apps + 2 {
+            for _ in 0..apps + 3 {
                 if v.chrome_focus == Some(ChromeStop::Apps(apps + foot)) {
                     return;
                 }
@@ -349,7 +369,7 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
         v.explore
             .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
 
-        onto(&mut v, &mut workspace.ws, 1);
+        onto(&mut v, &mut workspace.ws, 2);
         assert_eq!(
             v.explore_chrome_focus(),
             Some(ExploreChromeFocus::RailProfile),
@@ -367,5 +387,24 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
             "and not the help popover"
         );
         v.explore.close_popover();
+        v.explore
+            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+
+        // Last, because it takes the keyboard to the tab it opens.
+        onto(&mut v, &mut workspace.ws, 1);
+        assert_eq!(
+            v.explore_chrome_focus(),
+            Some(ExploreChromeFocus::RailSettings),
+            "the ring is on the settings square, between the two"
+        );
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
+        assert!(
+            matches!(
+                v.tabs().active_tab().view,
+                crate::mainview::TabView::Settings(_)
+            ),
+            "Enter on the settings square opens Settings"
+        );
+        assert!(!v.explore.popover_open(), "and no popover");
     });
 }

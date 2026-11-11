@@ -5,7 +5,6 @@
 //! sees and what a screen reader is offered. Behaviour that is only about the
 //! controller's state is tested beside it (`manage/profiles/tests.rs`).
 use super::*;
-use koru_agent_wire::{AccountOperationResult, AccountProfileRow, AccountStage, AccountState};
 use koru_core::ProfileSummary;
 use koru_draw::geometry::Rect;
 use koru_workspace_host::accessibility::{Occurrence, ViewSlot, WindowSlot};
@@ -132,16 +131,14 @@ fn the_removal_notice_survives_the_fallback_and_not_the_next_click() {
 fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
     let a = ProfileId::new();
     let b = ProfileId::new();
-    let other = ProfileId::new();
     let area = Rect::new(16.0, 48.0, 168.0, 600.0);
-    let laid = nav::layout(area, &[a, b], &[other], true, 0.0);
+    let laid = nav::layout(area, &[a, b], true, 0.0);
     let order: Vec<_> = laid.rows.iter().map(|(entry, _)| *entry).collect();
     assert_eq!(
         order,
         vec![
             nav::Entry::Profile(a),
             nav::Entry::Profile(b),
-            nav::Entry::Other(other),
             nav::Entry::Hidden,
             nav::Entry::NewProfile,
             nav::Entry::Devices,
@@ -162,7 +159,6 @@ fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
     );
     assert!(laid.profiles_caption.y + laid.profiles_caption.h <= laid.rows[0].1.y);
     assert!(laid.computer_caption.y + laid.computer_caption.h <= row(&laid, nav::Entry::Devices).y);
-    assert!(laid.others_heading.is_some());
 
     // The tab's own hit test answers each row back to itself.
     let (view, personal, work) = manage();
@@ -194,15 +190,13 @@ fn row(laid: &nav::Laid, wanted: nav::Entry) -> Rect {
 }
 
 #[test]
-fn without_other_or_hidden_profiles_the_nav_has_no_room_for_them() {
+fn without_hidden_profiles_the_nav_has_no_room_for_them() {
     let laid = nav::layout(
         Rect::new(16.0, 48.0, 168.0, 600.0),
         &[ProfileId::new()],
-        &[],
         false,
         0.0,
     );
-    assert!(laid.others_heading.is_none());
     assert!(laid.hidden.is_none());
     assert_eq!(laid.rows.len(), 4);
 }
@@ -252,40 +246,6 @@ fn arrows_walk_the_nav_and_enter_shows_the_row() {
 }
 
 /// The account's Profiles that are not here sit under the list, and a row's
-/// *Connect* is the controller's inline connect.
-#[test]
-fn an_other_profile_connects_from_the_nav() {
-    let (mut view, _, _) = manage();
-    let missing = ProfileId::new();
-    view.delegate(|c| {
-        c.set_account(AccountState {
-            active_scope: 1,
-            generation: 10,
-            stage: AccountStage::SignedIn,
-            ..Default::default()
-        });
-        c.take_request();
-        c.complete(AccountOperationResult::Profiles {
-            profiles: vec![AccountProfileRow {
-                profile_id: missing.to_storage(),
-                koru_identity_id: "10000000-0000-4000-8000-000000000001".into(),
-                name: Some("Family".into()),
-                locale: None,
-                auth_identities: vec![],
-            }],
-        });
-        c.take_request();
-    });
-    assert_eq!(view.controller().connect_label(missing), Some("Connect"));
-    let rect = row_of(&view, nav::Entry::Other(missing));
-    assert!(press(&mut view, rect));
-    assert_eq!(view.controller().inline_connect(), Some((missing, false)));
-    // In flight, the row has nothing to press.
-    let (x, y) = rect.centre();
-    assert_eq!(view.nav_hit(x, y), None);
-    assert!(!view.focus_order().contains(&nav::Entry::Other(missing)));
-}
-
 #[test]
 fn the_nav_marks_the_open_profile_and_one_that_needs_attention() {
     let (mut view, personal, work) = manage();

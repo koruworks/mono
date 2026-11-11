@@ -43,7 +43,7 @@ use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{ImageCache, theme};
 use koru_workspace::Workspace;
-use koru_workspace_host::{Settings, View};
+use koru_workspace_host::View;
 use vello::Scene;
 use vello::kurbo::Affine;
 use winit::event::MouseScrollDelta;
@@ -238,9 +238,6 @@ pub struct WelcomeView {
     /// The interactive rectangles the last draw painted, in paint order — the
     /// evidence that hit-testing and drawing share one geometry.
     drawn: Vec<(Target, Rect)>,
-    /// Whether a pinned tab shows its title: a window preference the tab strip
-    /// reads from any open Welcome tab.
-    pinned_show_title: bool,
     /// The agent the MCP row registers the bridge with: Claude Code until
     /// the person picks another.
     mcp_agent: mcp::Agent,
@@ -273,7 +270,6 @@ impl WelcomeView {
             scroll: 0.0,
             laid: None,
             drawn: Vec::new(),
-            pinned_show_title: false,
             mcp_agent: mcp::Agent::ClaudeCode,
             mcp_command: mcp::command(mcp::Agent::ClaudeCode),
             agents_scroll: 0.0,
@@ -329,10 +325,6 @@ impl WelcomeView {
 
     pub fn take_wants(&mut self) -> Vec<WelcomeWant> {
         std::mem::take(&mut self.wants)
-    }
-
-    pub fn pinned_show_title(&self) -> bool {
-        self.pinned_show_title
     }
 
     fn tick(&mut self, row: RowId) {
@@ -691,12 +683,6 @@ impl View for WelcomeView {
         _pointer: (f32, f32),
     ) {
         self.draw_page(scene, root);
-    }
-
-    /// A pinned tab's title is drawn beside its icon; the *choice* is a
-    /// Settings row, and this view only carries it for the tab strip.
-    fn adopt_preferences(&mut self, settings: &Settings) {
-        self.pinned_show_title = settings.pinned_show_title;
     }
 }
 

@@ -61,6 +61,44 @@ pub(crate) const PIN: &str = "pin";
 
 pub(crate) const PAGE: Key = Key::surface(SURFACE, "popover");
 pub(crate) const HEADING: Key = Key::surface(SURFACE, "heading");
+/// The quick switcher's search field.
+pub(crate) const WORKSPACE_FILTER: Key = Key::surface(SURFACE, "workspace-filter");
+
+/// **The quick switcher's field, as an element**: the panel search box every
+/// panel wears ([`koru_ui::text_field::draw_panel_search`]), painted in the
+/// band it measures — so it lies inside the floating panel, and the
+/// inspector lists it there, rather than being drawn over it afterwards.
+struct FilterField {
+    field: std::rc::Rc<std::cell::RefCell<koru_ui::text_field::TextField>>,
+    placeholder: String,
+}
+
+impl koru_draw::el::Leaf for FilterField {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, koru_ui::text_field::search_band())
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &koru_draw::el::FrameCx,
+        _state: koru_draw::el::ElState,
+    ) {
+        koru_ui::text_field::draw_panel_search(
+            scene,
+            root,
+            &mut self.field.borrow_mut(),
+            engine,
+            &self.placeholder,
+            at.x,
+            at.y,
+            at.w,
+        );
+    }
+}
 
 pub(crate) fn primary(id: WorkspaceId) -> Key {
     Key::model(id.as_uuid().as_u128(), PRIMARY)
@@ -227,16 +265,6 @@ impl ExploreView {
         y: f32,
     ) -> Option<(Rect, String, Option<koru_keys::ShortcutId>)> {
         self.with_page(area, viewport, |frame| {
-            if let Some(node) = frame
-                .node(profiles::MenuAction::Settings.key())
-                .filter(|node| node.rect.contains(x, y))
-            {
-                return Some((
-                    node.rect,
-                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::ProfileAppSettings).into(),
-                    Some(koru_keys::ShortcutId::Settings),
-                ));
-            }
             if let Some(node) = [
                 profiles::MenuAction::Sync.key(),
                 super::workspace_menu_elements::MenuAction::Sync.key(),
@@ -321,6 +349,44 @@ impl ExploreView {
                 }
             }
         }
+        // **The quick switcher** (Ctrl+Alt+W): a search field over the rows
+        // and nothing else — the `/` menu's shape, with workspaces in it.
+        if self.workspace_filter.is_some() {
+            // The field is an element of the page, so it is painted inside
+            // the floating panel and listed under it (2026-11-10).
+            let mut page = col("Workspaces page")
+                .id(PAGE)
+                .semantics(Role::Menu)
+                .name(koru_i18n::Key::Workspaces)
+                .pad_bottom(alias::PANEL_PAD);
+            if let Some(field) = &self.workspace_filter_field {
+                page = page.child(
+                    row("Workspace filter").child(
+                        koru_draw::el::leaf(
+                            "Workspace filter field",
+                            FilterField {
+                                field: field.clone(),
+                                placeholder: koru_i18n::t(
+                                    crate::format::lang(),
+                                    koru_i18n::Key::WorkspaceFilterPlaceholder,
+                                )
+                                .to_owned(),
+                            },
+                        )
+                        .semantic()
+                        .id(WORKSPACE_FILTER)
+                        .fill(),
+                    ),
+                );
+            }
+            return page.child(
+                scroll_y(LIST)
+                    .fill()
+                    .min_h(metrics::ROW_MIN)
+                    .offset(scroll)
+                    .children(list),
+            );
+        }
         // An empty Profile (root-catalog §3.10) says so where its rows would
         // be; *New workspace* in the foot is the one way out of it.
         if list.is_empty() {
@@ -330,9 +396,7 @@ impl ExploreView {
             .id(PAGE)
             .semantics(Role::Menu)
             .name(koru_i18n::Key::Workspaces)
-            .pad_y(alias::PANEL_PAD)
-            .child(self.workspace_menu_header())
-            .child(super::workspace_menu_elements::rule());
+            .pad_y(alias::PANEL_PAD);
         if let Some(group) = self.unassigned_group() {
             page = page.child(group);
         }

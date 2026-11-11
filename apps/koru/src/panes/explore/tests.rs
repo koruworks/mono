@@ -1016,12 +1016,7 @@ fn a_long_switcher_caps_at_its_max_and_scrolls_only_its_list() {
     );
     let band = v.popover_list_band(a, VIEW).expect("a band");
     use workspace_menu_elements::MenuAction;
-    for action in [
-        MenuAction::Sync,
-        MenuAction::New,
-        MenuAction::Import,
-        MenuAction::Trash,
-    ] {
+    for action in [MenuAction::New, MenuAction::Import] {
         let row = PopoverRow::WorkspaceAction(action);
         assert_eq!(
             find(&before, row),
@@ -1082,30 +1077,6 @@ fn the_profile_description_is_email_or_on_this_computer() {
     assert_eq!(v.profile_description(&profiles[1]), "On this computer");
     assert!(v.set_linked_count(0));
     assert_eq!(v.profile_description(&profiles[1]), "On this computer");
-}
-
-/// An account state in which `profile` syncs to Koru Cloud.
-#[test]
-fn the_workspace_header_detail_still_says_where_and_how_many() {
-    let (mut view, profiles, _) = with_context(0);
-    let lang = koru_i18n::Lang::En;
-    assert_eq!(view.profile_detail(&profiles[1], lang), "On this computer");
-    view.set_linked_count(2);
-    assert_eq!(
-        view.profile_detail(&profiles[1], lang),
-        "On this computer · 2 devices"
-    );
-    assert_eq!(view.profile_detail(&profiles[0], lang), "koru@example.com");
-    view.set_account_state(&syncing(&profiles[1]));
-    assert_eq!(
-        view.profile_detail(&profiles[1], lang),
-        "Up to date · 2 devices"
-    );
-    view.set_linked_count(0);
-    assert_eq!(
-        view.profile_detail(&profiles[1], lang),
-        "Up to date · Koru Cloud"
-    );
 }
 
 /// An account state in which `profile` syncs to Koru Cloud.
@@ -1213,10 +1184,6 @@ fn the_sync_status_reads_the_organization_before_claiming_up_to_date() {
     assert!(
         v.sync_control_name()
             .contains(koru_i18n::t(lang, koru_i18n::Key::SyncPausedBySettingsHint))
-    );
-    assert!(
-        v.profile_detail(&profiles[1], lang)
-            .starts_with(koru_i18n::t(lang, koru_i18n::Key::SyncPausedBySettings))
     );
 
     // A Workspace placed under the open Profile, held by the peer.
@@ -1336,13 +1303,13 @@ fn the_popovers_primitives_nest_under_the_floating_panel() {
     }
 }
 
-/// The floor chip opens the main page, and pressing it again shuts it — one
-/// control, one popover, two pages behind it.
+/// The `…` under the workspace squares opens the main page, and pressing it
+/// again shuts it — one control, one popover, two pages behind it.
 #[test]
 fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    let chip = v.apps_rail_rects(v.rail_of(a)).workspaces[0].1;
+    let chip = v.apps_rail_rects(v.rail_of(a)).workspace_menu;
     let (cx, cy) = chip.centre();
     assert_eq!(
         v.apps_rail_mouse_down(v.rail_of(a), cx, cy),
@@ -1356,15 +1323,12 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     );
     assert!(v.popover_open());
     let rows = v.popover_rows();
-    assert_eq!(
-        rows[0],
-        PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync)
-    );
+    assert_eq!(rows[0], PopoverRow::WorkspacesHeading);
     assert!(rows.contains(&PopoverRow::Workspace(0)));
     assert_eq!(
         rows.last(),
         Some(&PopoverRow::WorkspaceAction(
-            workspace_menu_elements::MenuAction::Trash
+            workspace_menu_elements::MenuAction::Import
         ))
     );
     // Pressing the chip while it is open shuts it.
@@ -1375,8 +1339,20 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert!(!v.popover_open());
     v.advance_popover(Instant::now() + Duration::from_secs(1));
 
-    // The rail's profile square: the Profiles page, no views inside it.
+    // The rail's settings square: the destination, and a shut menu.
     let rail = v.rail_of(a);
+    let squares = v.apps_rail_rects(rail);
+    assert!(squares.help.y < squares.settings.y && squares.settings.y < squares.profile.y);
+    v.toggle_popover(PopoverKind::Summary);
+    let (gx, gy) = squares.settings.centre();
+    assert_eq!(v.apps_rail_mouse_down(rail, gx, gy), Outcome::OpenSettings);
+    assert!(
+        !v.popover_open(),
+        "a press on App settings shuts an open menu"
+    );
+    v.advance_popover(Instant::now() + Duration::from_secs(1));
+
+    // The rail's profile square: the Profiles page, no views inside it.
     let (sx, sy) = v.apps_rail_rects(rail).profile.centre();
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(v.popover_open());
@@ -1390,7 +1366,7 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert!(rows.contains(&PopoverRow::Profile(0)));
     assert_eq!(
         rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Settings))
+        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
     );
     // The square shuts it.
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
@@ -1422,15 +1398,15 @@ fn the_chords_open_their_pages_on_where_you_are() {
     assert!(!v.open_popover(PopoverKind::Profiles), "already showing");
 }
 
-/// Both pages hang from the same corner — the floor chip's — so a slide
-/// between them never jumps the panel sideways, and the panel sits **above**
-/// the chip, inside the window.
+/// Both pages hang beside the rail, so a slide between them never jumps the
+/// panel sideways; the workspace menu's top is level with the `…` that
+/// opens it, inside the window.
 #[test]
 fn both_pages_anchor_above_the_floor_chip() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    let chip = v.apps_rail_rects(v.rail_of(a)).workspaces[0].1;
-    // The chip's page rises from the chip.
+    let chip = v.apps_rail_rects(v.rail_of(a)).workspace_menu;
+    // The menu's page hangs from the `…`.
     v.toggle_popover(PopoverKind::Summary);
     let panel = v.popover_panel(a, VIEW).unwrap();
     assert_eq!(panel.x, v.rail_of(a).x + v.rail_of(a).w + POPOVER_GAP);
@@ -1453,6 +1429,50 @@ fn both_pages_anchor_above_the_floor_chip() {
         );
         assert!(panel.y >= 0.0);
     }
+}
+
+/// **The `…` follows the last workspace square and leads the views**, with
+/// three pins and an unpinned open workspace on the rail; a press on it
+/// opens the workspace menu, whose top is level with it.
+#[test]
+fn the_workspace_menu_square_follows_the_last_workspace_and_its_menu_hangs_from_it() {
+    let (mut v, profiles, _) = with_context(0);
+    let list: Vec<_> = (0..4)
+        .map(|i| {
+            let mut entry = ws(&format!("Workspace {i}"));
+            entry.pinned = i > 0;
+            entry
+        })
+        .collect();
+    v.set_context(profiles.clone(), profiles[1].id, list.clone(), list[0].id);
+    let a = area();
+    let rail = v.rail_of(a);
+    let rects = v.apps_rail_rects(rail);
+    assert_eq!(rects.workspaces.len(), 4, "three pins and the open one");
+    let (last, square) = *rects.workspaces.last().unwrap();
+    assert_eq!(last, Some(list[0].id), "the unpinned open one is last");
+    let more = rects.workspace_menu;
+    assert!(more.w > 0.0);
+    assert!(more.y >= square.y + square.h, "after the last square");
+    assert!(more.y + more.h <= rects.apps[0].1.y, "before the views");
+    let controls = v.rail_controls(rail);
+    let at = controls
+        .iter()
+        .position(|hit| *hit == apps_rail::Hit::WorkspaceMenu)
+        .unwrap();
+    assert_eq!(at, 4, "the fifth stop");
+    assert!(matches!(controls[at + 1], apps_rail::Hit::App(_)));
+
+    let (x, y) = more.centre();
+    assert_eq!(v.rail_hit(rail, x, y), Some(apps_rail::Hit::WorkspaceMenu));
+    assert_eq!(v.apps_rail_mouse_down(rail, x, y), Outcome::Consumed);
+    assert_eq!(
+        v.popover.as_ref().map(|p| p.kind),
+        Some(PopoverKind::Summary)
+    );
+    let panel = v.popover_panel(a, VIEW).unwrap();
+    assert_eq!(panel.y, more.y, "its top is level with the `…`");
+    assert_eq!(panel.x, rail.x + rail.w + POPOVER_GAP);
 }
 
 #[test]
@@ -1900,13 +1920,13 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfileAction(ProfileAction::Settings)),
-        "wraps from Manage profiles to App settings"
+        Some(PopoverRow::ProfileAction(ProfileAction::Sync)),
+        "wraps from Manage profiles to Global sync"
     );
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSettings),
-        "Enter activates App settings"
+        Some(Outcome::OpenSyncSettings),
+        "Enter activates Global sync"
     );
     assert!(!v.popover_open(), "the fixed action closes the menu");
     v.advance_popover(Instant::now() + Duration::from_secs(1));
@@ -1923,13 +1943,12 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
 
 /// Fixed Profile menu actions retain their destination regardless of Cloud state.
 #[test]
-fn the_profile_actions_offer_creation_global_sync_and_app_settings() {
+fn the_profile_actions_offer_creation_and_global_sync() {
     let a = area();
     for cloud in [false, true] {
         for (action, outcome) in [
             (ProfileAction::New, Outcome::NewProfile),
             (ProfileAction::Sync, Outcome::OpenSyncSettings),
-            (ProfileAction::Settings, Outcome::OpenSettings),
         ] {
             let (mut v, profiles, _) = with_context(0);
             if cloud {
@@ -1998,8 +2017,8 @@ fn left_and_right_fall_through_where_they_mean_nothing() {
     let (mut v, _, _) = with_context(0);
     v.toggle_popover(PopoverKind::Summary);
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
-    // The heading is furniture: one Down from nothing is the first workspace.
-    for _ in 0..3 {
+    // The heading's manage action, then the first workspace.
+    for _ in 0..2 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -2124,7 +2143,7 @@ fn the_workspace_heading_manage_action_works_by_pointer_and_keyboard() {
     );
     assert!(!v.popover_open());
     v.toggle_popover(PopoverKind::Summary);
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
+    // The heading's manage action is the first row the keyboard lands on.
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
@@ -2159,7 +2178,7 @@ fn reopening_from_the_chip_shows_the_main_page() {
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(!v.popover_open());
     v.advance_popover(Instant::now() + Duration::from_secs(1));
-    let (x, y) = v.apps_rail_rects(v.rail_of(a)).workspaces[0].1.centre();
+    let (x, y) = v.apps_rail_rects(v.rail_of(a)).workspace_menu.centre();
     assert_eq!(
         v.apps_rail_mouse_down(v.rail_of(a), x, y),
         Outcome::Consumed
@@ -2245,22 +2264,20 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::ProfileAction(ProfileAction::New),
             PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync),
             PopoverRow::ProfileAction(ProfileAction::Sync),
-            PopoverRow::ProfileAction(ProfileAction::Settings),
         ],
-        "PROFILES, every Profile, Add new Profile, device control, Global sync, App settings"
+        "PROFILES, every Profile, Add new Profile, device control, Global sync"
     );
-    // The chip's page: the heading and the workspaces, nothing else.
+    // The `…`'s page: the heading, the workspaces, New and Import — no
+    // sync control and no Trash.
     v.toggle_popover(PopoverKind::Summary);
     assert_eq!(
         v.popover_rows(),
         vec![
-            PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync),
             PopoverRow::WorkspacesHeading,
             PopoverRow::Workspace(0),
             PopoverRow::Workspace(1),
             PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
             PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Import),
-            PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Trash),
         ]
     );
 }
@@ -2296,7 +2313,7 @@ fn the_head_outranks_a_scrolled_row_behind_it() {
 fn double_clicking_the_floor_chip_does_nothing_extra() {
     let (mut v, _, _) = with_context(0);
     let a = area();
-    let (x, y) = v.apps_rail_rects(v.rail_of(a)).workspaces[0].1.centre();
+    let (x, y) = v.apps_rail_rects(v.rail_of(a)).workspace_menu.centre();
     v.toggle_popover(PopoverKind::Summary);
     assert_eq!(v.mouse_double_click(a, VIEW, x, y), Outcome::Consumed);
     assert!(v.popover_open(), "and it was left alone");
@@ -2376,9 +2393,8 @@ fn enter_runs_the_highlighted_row() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, list) = with_context(0);
     v.toggle_popover(PopoverKind::Summary);
-    // The heading is furniture: Down once from nothing is the first
-    // workspace.
-    for _ in 0..3 {
+    // The heading's manage action, then the first workspace.
+    for _ in 0..2 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -2436,7 +2452,8 @@ fn a_chip_colour_follows_the_email_and_not_the_name() {
 
 // ---------------------------------------------------- folder-profile rows
 
-/// The Profile menu exposes exactly the three approved fixed navigation rows.
+/// The Profile menu exposes exactly its two fixed navigation rows. App
+/// settings is the rail's square, not a row here.
 #[test]
 fn the_profiles_page_offers_no_folder_actions() {
     let (mut v, _, _) = with_context(4);
@@ -2444,7 +2461,7 @@ fn the_profiles_page_offers_no_folder_actions() {
     let rows = v.popover_rows();
     assert_eq!(
         rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Settings))
+        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
     );
     let actions: Vec<_> = rows
         .into_iter()
@@ -2453,14 +2470,7 @@ fn the_profiles_page_offers_no_folder_actions() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        actions,
-        [
-            ProfileAction::New,
-            ProfileAction::Sync,
-            ProfileAction::Settings
-        ]
-    );
+    assert_eq!(actions, [ProfileAction::New, ProfileAction::Sync]);
 }
 
 // ------------------------------------------------------------------ the fade

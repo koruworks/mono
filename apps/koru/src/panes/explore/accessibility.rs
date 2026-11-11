@@ -84,6 +84,9 @@ pub(crate) mod parts {
     pub const TRASH: ControlPart = ControlPart::new("trash");
     /// The rail's foot: Help, Settings and the profile square.
     pub const RAIL_HELP: ControlPart = ControlPart::new("rail-help");
+    /// The `…` under the workspace squares.
+    pub const RAIL_WORKSPACE_MENU: ControlPart = ControlPart::new("rail-workspace-menu");
+    pub const RAIL_SETTINGS: ControlPart = ControlPart::new("rail-settings");
     pub const RAIL_OVERFLOW: ControlPart = ControlPart::new("rail-overflow");
     pub const RAIL_PROFILE: ControlPart = ControlPart::new("rail-profile");
     /// The open popover, and the rows of it that name no object.
@@ -562,6 +565,8 @@ impl ExploreView {
                 cx.surface(MODE, ControlPart::new(mode.token()))
             }
             ExploreChromeFocus::RailHelp => cx.surface(EXPLORE, parts::RAIL_HELP),
+            ExploreChromeFocus::WorkspaceMenu => cx.surface(EXPLORE, parts::RAIL_WORKSPACE_MENU),
+            ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             ExploreChromeFocus::RailOverflow => cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
         })
@@ -826,8 +831,9 @@ impl ExploreView {
             && let koru_workspace_host::accessibility::ObjectKey::Model(id) = target.object
         {
             let id = koru_core::WorkspaceId::from_uuid(id);
+            // The open workspace's square is already answered; the menu is
+            // the `…` under the squares.
             if self.current == Some(id) {
-                self.toggle_workspace_menu();
                 return Some(Outcome::Consumed);
             }
             if self.workspaces.iter().any(|workspace| workspace.id == id) {
@@ -861,6 +867,14 @@ impl ExploreView {
             }
             EXPLORE => match target.part {
                 p if p == parts::RAIL_HELP => Some(Outcome::OpenHelp),
+                p if p == parts::RAIL_WORKSPACE_MENU => {
+                    self.toggle_workspace_menu();
+                    Some(Outcome::Consumed)
+                }
+                p if p == parts::RAIL_SETTINGS => {
+                    self.close_popover();
+                    Some(Outcome::OpenSettings)
+                }
                 p if p == parts::RAIL_OVERFLOW => {
                     (!self.view_projection(self.rail_of(area).h).folded.is_empty())
                         .then_some(Outcome::OpenRailOverflow)
@@ -960,6 +974,8 @@ fn element_occurrence(cx: &Context, key: koru_draw::el::Key) -> Occurrence {
         match key.part {
             "views" => return cx.surface(EXPLORE, parts::MODES),
             "help" => return cx.surface(EXPLORE, parts::RAIL_HELP),
+            "workspace-menu" => return cx.surface(EXPLORE, parts::RAIL_WORKSPACE_MENU),
+            "settings" => return cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             "overflow" => return cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             "profile" => return cx.surface(EXPLORE, parts::RAIL_PROFILE),
             part if NavigatorMode::parse(part).is_some() => {

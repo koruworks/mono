@@ -271,6 +271,11 @@ impl MainView {
             }
             return false;
         }
+        // The person is starting this agent's CLI: the moment an update for
+        // it is worth mentioning (`agent_cli_updates`).
+        if let Some(key) = profile.label.agent_key() {
+            self.offer_agent_cli_update(key);
+        }
         self.open_launch_tab(profile, project, split);
         true
     }

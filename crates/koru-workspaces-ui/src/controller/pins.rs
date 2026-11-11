@@ -56,7 +56,7 @@ impl WorkspacesController {
                         && self.effective_pinned(candidate)
                 })
                 .count()
-                >= 3
+                >= crate::RAIL_PINS
         {
             Key::WorkspacePinLimit
         } else {

@@ -28,7 +28,6 @@ pub(crate) const MANAGE_PROFILES: Key = Key::surface(SURFACE, "manage-profiles")
 pub enum MenuAction {
     New,
     Sync,
-    Settings,
 }
 
 impl MenuAction {
@@ -38,7 +37,6 @@ impl MenuAction {
             match self {
                 Self::New => "new-profile",
                 Self::Sync => "global-sync",
-                Self::Settings => "app-settings",
             },
         )
     }
@@ -46,18 +44,16 @@ impl MenuAction {
         match self {
             Self::New => Words::ProfileAddNew,
             Self::Sync => Words::ProfileGlobalSync,
-            Self::Settings => Words::ProfileAppSettings,
         }
     }
     pub(crate) fn outcome(self) -> Outcome {
         match self {
             Self::New => Outcome::NewProfile,
             Self::Sync => Outcome::OpenSyncSettings,
-            Self::Settings => Outcome::OpenSettings,
         }
     }
     pub(crate) fn from_key(key: Key) -> Option<Self> {
-        [Self::New, Self::Sync, Self::Settings]
+        [Self::New, Self::Sync]
             .into_iter()
             .find(|action| action.key() == key)
     }
@@ -184,8 +180,7 @@ impl ExploreView {
                 col("Profile menu actions")
                     .child(self.profile_menu_action(MenuAction::New))
                     .child(super::super::workspace_menu_elements::rule())
-                    .child(self.profile_menu_action(MenuAction::Sync))
-                    .child(self.profile_menu_action(MenuAction::Settings)),
+                    .child(self.profile_menu_action(MenuAction::Sync)),
             )
     }
 
@@ -306,16 +301,9 @@ impl ExploreView {
             .radius(Radius::M)
             .states(&WORKSPACE_ROW_STATES);
         item = item.child(
-            icon(
-                if action == MenuAction::New {
-                    icons::PLUS
-                } else {
-                    icons::FADERS
-                },
-                IconSize::L,
-            )
-            .decorative()
-            .ink(Ink::Secondary),
+            icon(icons::PLUS, IconSize::L)
+                .decorative()
+                .ink(Ink::Secondary),
         );
         item.child(
             text(t(crate::format::lang(), action.words()))
