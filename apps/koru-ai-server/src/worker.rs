@@ -115,6 +115,10 @@ pub struct WorkerConfig {
     /// session host (the automatic picture re-send).
     #[cfg(test)]
     test_bot_runtime_ready: bool,
+    /// The lifecycle driver's first wait of a round without progress, for
+    /// tests that need an operation to park in a second instead of minutes.
+    #[cfg(test)]
+    test_lifecycle_unit: Option<Duration>,
 }
 
 impl WorkerConfig {
@@ -170,6 +174,8 @@ impl WorkerConfig {
             test_bot_creation: None,
             #[cfg(test)]
             test_bot_runtime_ready: false,
+            #[cfg(test)]
+            test_lifecycle_unit: None,
         }
     }
 
@@ -199,6 +205,8 @@ impl WorkerConfig {
             test_bot_creation: None,
             #[cfg(test)]
             test_bot_runtime_ready: false,
+            #[cfg(test)]
+            test_lifecycle_unit: None,
         })
     }
 
@@ -233,6 +241,8 @@ impl WorkerConfig {
             test_bot_creation: None,
             #[cfg(test)]
             test_bot_runtime_ready: false,
+            #[cfg(test)]
+            test_lifecycle_unit: None,
         })
     }
 
@@ -1914,6 +1924,10 @@ fn run_worker(
         retiring: true,
         removed: HashSet::new(),
     };
+    #[cfg(test)]
+    if let Some(unit) = config.test_lifecycle_unit {
+        state.bot_lifecycle = bots::LifecycleDriver::with_unit(unit);
+    }
     // **A deleted profile's chats go with it**, once its deletion is final,
     // before any command is served; a Store that does not answer leaves
     // them for the next pass, as placement does.

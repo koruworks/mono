@@ -40,6 +40,16 @@ impl Repository {
     }
     /// Finite startup scan. Bound scanned associations, not only matches, so
     /// old completed history cannot make one worker command unbounded.
+    ///
+    /// Each row says whether the attempt may still owe its owner a Stop or an
+    /// Interrupt (`stop`: it ended failed, cancelled or interrupted, and its
+    /// owner may have admitted it) and whether its delivery is owed. A task
+    /// whose receipt is `rejected` was refused behind its fence: the owner
+    /// never admitted it and never will, so nothing of it runs and its
+    /// reconcile could only answer Missing. It owes nothing at a restart and
+    /// reads `stop` false, so the walk's owner calls grow with the tasks that
+    /// may owe something, not with history (the fourth lifecycle review's
+    /// F3). Its receipt is one primary-key lookup per scanned row.
     pub fn bot_recovery_page(
         &self,
         after: Option<InferenceAttemptId>,
@@ -49,9 +59,13 @@ impl Repository {
             return Err(invariant_failed());
         }
         let mut statement=self.connection.prepare("WITH page AS MATERIALIZED (
-            SELECT ai_attempt_id,delivery_state FROM bot_chat_runs WHERE ai_attempt_id>?1 ORDER BY ai_attempt_id LIMIT ?2)
-            SELECT page.ai_attempt_id,a.status IN ('failed','cancelled','interrupted'),page.delivery_state IN ('pending','unconfirmed')
-            FROM page JOIN inference_attempts a ON a.id=page.ai_attempt_id ORDER BY page.ai_attempt_id").map_err(storage_failed)?;
+            SELECT ai_attempt_id,delivery_state,user_scope_id,submission_id FROM bot_chat_runs WHERE ai_attempt_id>?1 ORDER BY ai_attempt_id LIMIT ?2)
+            SELECT page.ai_attempt_id,
+              a.status IN ('failed','cancelled','interrupted') AND coalesce(r.stage,'')<>'rejected',
+              page.delivery_state IN ('pending','unconfirmed')
+            FROM page JOIN inference_attempts a ON a.id=page.ai_attempt_id
+            LEFT JOIN bot_command_receipts r ON r.user_scope_id=page.user_scope_id AND r.request_id=page.submission_id
+            ORDER BY page.ai_attempt_id").map_err(storage_failed)?;
         let rows = statement
             .query_map(
                 params![after.map(|id| id.to_storage()).unwrap_or_default(), limit],

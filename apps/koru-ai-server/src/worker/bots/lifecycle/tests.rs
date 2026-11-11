@@ -75,29 +75,38 @@ fn archive(bot: &Bot) -> LifecycleOperation {
     }
 }
 
+/// Rounds put off for a reason outside the operation (a full pool, a
+/// restart's recovery walk still paging) back off as waits do, and park the
+/// operation after as many of them as waits do (the fourth lifecycle
+/// review's F3): before, they never parked it, so a walk that could not
+/// finish held it moving for good, and it could not be reversed.
 #[test]
-fn a_pool_that_stays_full_backs_off_to_the_cap_and_never_parks_the_operation() {
+fn a_pool_that_stays_full_backs_off_to_the_cap_and_parks_the_operation_after_the_limit() {
     let mut drive = Drive::default();
     let now = Instant::now();
     let mut waits = Vec::new();
-    for _ in 0..40 {
-        drive.defer(now);
+    for round in 1..PARK_AFTER {
+        assert!(!drive.defer(now, ROUND_UNIT), "round {round}");
         waits.push(drive.due.unwrap() - now);
     }
-    // Each refused send waits longer, from 500 ms up to the 32 s cap: forty
-    // refusals are forty sends spread over a quarter of an hour, not 4 Hz.
+    // Each refused send waits longer, from 500 ms up to the 32 s cap: the
+    // rounds are spread over minutes, not 4 Hz.
     assert_eq!(waits[0], Duration::from_millis(500));
     assert_eq!(waits[1], Duration::from_secs(1));
     assert!(waits.windows(2).all(|w| w[0] <= w[1]));
     assert_eq!(*waits.last().unwrap(), Duration::from_secs(32));
     let total: Duration = waits.iter().sum();
-    assert!(total > Duration::from_secs(15 * 60), "{total:?}");
-    // Deferral is not the operation's failure: it never counts to parking.
+    assert!(total > Duration::from_secs(2 * 60), "{total:?}");
+    // Deferral is not counted as the operation's own failure.
     assert_eq!(drive.retries, 0);
-    assert!(!drive.wait(now));
+    // The last one parks it, and still sets its next wait, so a park that
+    // cannot be written is retried after a wait, never in a tight loop.
+    assert!(drive.defer(now, ROUND_UNIT));
+    assert_eq!(drive.due, Some(now + Duration::from_secs(32)));
     // Progress resets both counts.
     drive.progressed();
     assert_eq!((drive.retries, drive.deferrals, drive.due), (0, 0, None));
+    assert!(!drive.wait(now, ROUND_UNIT));
 }
 
 #[test]
@@ -105,10 +114,10 @@ fn rounds_without_progress_park_after_the_limit_and_busy_is_never_due() {
     let mut drive = Drive::default();
     let now = Instant::now();
     for round in 1..PARK_AFTER {
-        assert!(!drive.wait(now), "round {round}");
-        assert_eq!(drive.due, Some(now + backoff(round)));
+        assert!(!drive.wait(now, ROUND_UNIT), "round {round}");
+        assert_eq!(drive.due, Some(now + backoff(ROUND_UNIT, round)));
     }
-    assert!(drive.wait(now));
+    assert!(drive.wait(now, ROUND_UNIT));
     let mut busy = Drive {
         busy: true,
         ..Drive::default()
@@ -116,7 +125,7 @@ fn rounds_without_progress_park_after_the_limit_and_busy_is_never_due() {
     assert!(!busy.due(now));
     busy.busy = false;
     assert!(busy.due(now));
-    busy.defer(now);
+    let _ = busy.defer(now, ROUND_UNIT);
     assert!(!busy.due(now));
     assert!(busy.due(now + Duration::from_secs(1)));
 }

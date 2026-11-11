@@ -92,6 +92,9 @@ pub(in crate::worker) struct LifecycleDriver {
     /// Where the next probe pass starts: just past the last parked operation
     /// the previous pass reached, `None` to start (again) from the first.
     probe_after: Option<ParkedCursor>,
+    /// The first wait of a round without progress ([`ROUND_UNIT`]; a test
+    /// may shorten it so twelve rounds take a second instead of minutes).
+    unit: Duration,
 }
 impl Default for LifecycleDriver {
     fn default() -> Self {
@@ -100,6 +103,16 @@ impl Default for LifecycleDriver {
             recovery: Some(None),
             probing: HashSet::new(),
             probe_after: None,
+            unit: ROUND_UNIT,
+        }
+    }
+}
+#[cfg(test)]
+impl LifecycleDriver {
+    pub(in crate::worker) fn with_unit(unit: Duration) -> Self {
+        Self {
+            unit,
+            ..Self::default()
         }
     }
 }
@@ -116,8 +129,11 @@ struct Drive {
     retries: u32,
     /// Consecutive rounds put off for a reason that is not the operation's:
     /// the provider-administration pool was full, or startup conversation
-    /// recovery was still paging. They back off the same way, and never
-    /// count toward parking.
+    /// recovery was still paging. They back off the same way, and park the
+    /// operation once they reach [`PARK_AFTER`] too, so an operation always
+    /// parks in the end and can be reversed: a recovery walk whose owner is
+    /// silent would otherwise hold it moving for good (the fourth lifecycle
+    /// review's F3).
     deferrals: u32,
     /// How much unsettled work the delegate reported last round, so a round
     /// in which some of it settled counts as progress.
@@ -126,19 +142,21 @@ struct Drive {
 impl Drive {
     /// A round with no progress. `true` when waiting has stopped helping and
     /// the operation should park.
-    fn wait(&mut self, now: Instant) -> bool {
+    fn wait(&mut self, now: Instant, unit: Duration) -> bool {
         self.retries += 1;
         if self.retries >= PARK_AFTER {
             return true;
         }
-        self.due = Some(now + backoff(self.retries));
+        self.due = Some(now + backoff(unit, self.retries));
         false
     }
     /// A round put off for a reason outside the operation: wait longer each
-    /// time, but this alone never parks it.
-    fn defer(&mut self, now: Instant) {
-        self.deferrals = (self.deferrals + 1).min(7);
-        self.due = Some(now + backoff(self.deferrals));
+    /// time. `true` once that has gone on for [`PARK_AFTER`] rounds: the
+    /// operation parks as its owner not answering.
+    fn defer(&mut self, now: Instant, unit: Duration) -> bool {
+        self.deferrals = self.deferrals.saturating_add(1);
+        self.due = Some(now + backoff(unit, self.deferrals));
+        self.deferrals >= PARK_AFTER
     }
     fn progressed(&mut self) {
         self.retries = 0;
@@ -464,8 +482,12 @@ fn lifecycle_evidence(
         .ok_or_else(|| bot_failure(BotError::Storage))
 }
 
-fn backoff(round: u32) -> Duration {
-    Duration::from_millis(250) * (1u32 << round.min(7))
+/// The first wait of a round that made no progress: 250 ms, doubling to
+/// 32 s at the seventh.
+const ROUND_UNIT: Duration = Duration::from_millis(250);
+
+fn backoff(unit: Duration, round: u32) -> Duration {
+    unit * (1u32 << round.min(7))
 }
 
 /// The Bot commands that only read, and so are answered for an archived Bot
@@ -1435,18 +1457,27 @@ impl WorkerState {
 
     /// No progress this time: wait longer, or park once waiting stops helping.
     fn wait_bot_lifecycle(&mut self, key: OperationKey, refusal: BotLifecycleRefusal) {
+        let unit = self.bot_lifecycle.unit;
         let Some(drive) = self.bot_lifecycle.driving.get_mut(&key) else {
             return;
         };
-        if drive.wait(Instant::now()) {
+        if drive.wait(Instant::now(), unit) {
             self.park_bot_lifecycle(key, refusal);
         }
     }
 
-    /// Put off for a reason that is not the operation's; never parks.
+    /// Put off for a reason that is not the operation's (a full pool, a
+    /// restart's recovery walk still paging). Past [`PARK_AFTER`] such rounds
+    /// it parks as its owner not answering, which is what keeps that walk
+    /// from paging: the person can then reverse it, and an owner that
+    /// answers again takes it up.
     fn defer_bot_lifecycle(&mut self, key: OperationKey) {
-        if let Some(drive) = self.bot_lifecycle.driving.get_mut(&key) {
-            drive.defer(Instant::now());
+        let unit = self.bot_lifecycle.unit;
+        let Some(drive) = self.bot_lifecycle.driving.get_mut(&key) else {
+            return;
+        };
+        if drive.defer(Instant::now(), unit) {
+            self.park_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable);
         }
     }
 
@@ -1472,8 +1503,10 @@ impl WorkerState {
             }
             Err(error) => {
                 tracing::warn!(target: "koru_ai::bots", ?error, operation = %key.1, "a Bot lifecycle operation could not be parked; it is retried");
+                let unit = self.bot_lifecycle.unit;
                 if let Some(drive) = self.bot_lifecycle.driving.get_mut(&key) {
-                    drive.defer(Instant::now());
+                    // Only its wait matters here: parking is what failed.
+                    let _ = drive.defer(Instant::now(), unit);
                 }
             }
         }
@@ -1514,7 +1547,7 @@ impl WorkerState {
                 }
             }
             // The pool is full: a later round tries again, each one waiting
-            // longer, without counting toward parking.
+            // longer, and parking only after as many rounds as a wait.
             Err(_) => self.defer_bot_lifecycle(key),
         }
     }
@@ -1714,7 +1747,8 @@ impl WorkerState {
     /// [`Self::complete_bot_lifecycle`].
     fn step_archive_settle(&mut self, key: OperationKey, op: &LifecycleOperation, bot: &Bot) {
         // A restart's conversation recovery is still loading interrupted
-        // tasks. Not this operation's doing, so it does not count to parking.
+        // tasks. Not this operation's doing, so it defers, which parks only
+        // after as many rounds as a wait does.
         if self.bot_chat_recovery.is_some() {
             return self.defer_bot_lifecycle(key);
         }
