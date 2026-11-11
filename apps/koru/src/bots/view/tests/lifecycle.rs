@@ -94,8 +94,8 @@ fn the_menu_and_its_questions_send_nothing_and_say_what_will_happen() {
 
 /// **Progress is the owner's**: *Finishing the bot's current work…* while
 /// it holds the Archive as moving; parked, the sentence with Continue and
-/// Cancel; Continue sends the same command by its request, Cancel the
-/// Restore naming it.
+/// Cancel, and only read meanwhile; Continue sends the same command by its
+/// request, Cancel the Restore naming it.
 #[test]
 fn progress_parked_continue_and_cancel() {
     let mut f = listed(&[]);
@@ -148,14 +148,39 @@ fn progress_parked_continue_and_cancel() {
     );
     let keys = f.keys();
     assert!(keys.contains(&actions::CONTINUE) && keys.contains(&actions::CANCEL_OPERATION));
-    // Parked: nothing on its own.
+    // Parked: never retried on its own — only read, on the slower clock,
+    // since the owner may take it up again by itself.
+    let now = std::time::Instant::now();
+    let due = f.view.lifecycle_deadline(now).expect("read again later");
+    assert!(
+        due > now + std::time::Duration::from_secs(1),
+        "the slower clock: {due:?}"
+    );
     f.view.lifecycle_read_now();
     f.view.shown_pass(None);
+    let writes: Vec<BotCommand> = f
+        .commands
+        .try_iter()
+        .filter_map(|command| match command {
+            Command::Write { command, .. } => Some(*command),
+            _ => None,
+        })
+        .collect();
     assert!(
-        f.commands
-            .try_iter()
-            .all(|command| !matches!(command, Command::Write { .. })),
-        "a parked operation is never retried on its own"
+        matches!(
+            writes.as_slice(),
+            [BotCommand::ReadLifecycleOperation { request_id, .. }] if *request_id == request
+        ),
+        "a read, never the Archive again: {writes:?}"
+    );
+    f.reply(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Incomplete,
+        ),
     );
     assert!(f.view.perform(region::Act::ContinueOperation));
     let (again, command) = f.wrote();
@@ -894,4 +919,49 @@ fn an_unsent_draft_survives_a_trash_and_its_restore() {
         "hi",
         "the draft is the person's still"
     );
+}
+
+/// **A tab left in front of a parked Archive sees the owner finish it** —
+/// the third review's blocker, through the tab. A tab restored after a
+/// restart adopts the Archive parked for its silent owner; the owner takes
+/// it up again by itself (`owner_answered_bot_lifecycle`) and completes it.
+/// The tab reads it while shown, and once the owner says completed it says
+/// the Bot is archived and offers Unarchive — no Continue left behind.
+#[test]
+fn a_tab_in_front_of_a_parked_archive_sees_the_owner_finish_it() {
+    let mut held = unpaused();
+    let parked = BotRequestId::mint();
+    held.open_operation = Some(koru_ai_core::bots::BotOpenLifecycle {
+        request_id: parked,
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::OwnerUnavailable),
+    });
+    let mut f = Fixture::opened(held.clone());
+    f.view.set_settings_open(false);
+    assert!(offers_continue_and_cancel(&f));
+    // Shown, its clock due: a read of the parked Archive.
+    f.view.lifecycle_read_now();
+    f.view.shown_pass(None);
+    let (asked, read) = f.wrote();
+    assert_eq!(asked, parked);
+    assert!(matches!(read, BotCommand::ReadLifecycleOperation { .. }));
+    f.reply(
+        parked,
+        progress(
+            &held,
+            parked,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    assert!(!f.view.lifecycle_busy(), "finished");
+    let keys = f.keys();
+    assert!(
+        !keys.contains(&actions::CONTINUE),
+        "no Continue left behind"
+    );
+    assert!(keys.contains(&actions::UNARCHIVE), "Unarchive names it");
+    assert_eq!(f.view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
 }

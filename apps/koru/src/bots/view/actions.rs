@@ -467,6 +467,7 @@ impl BotView {
         match bots.into_iter().find(|bot| Some(bot.id) == self.bot) {
             Some(bot) => {
                 self.lifecycle.know(&bot);
+                self.after_lifecycle();
                 if let Some(facts) = &mut self.facts {
                     facts.trashed = true;
                     facts.name = bot.config.name.clone();

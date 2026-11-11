@@ -16,10 +16,20 @@
 //!   It is read again only while the tab is shown: at once when the tab is
 //!   shown and when the conversation's status moves, and otherwise at the
 //!   settings' own pace for an operation the owner holds as pending
-//!   (250 ms, doubling to 2 s). Nothing is read while it is parked.
-//! - **A parked operation waits for the person.** It is never retried on its
-//!   own. *Continue* sends the same command again, by its request, which the
-//!   owner resumes; *Cancel* is the Restore naming it.
+//!   (250 ms, doubling to 2 s).
+//! - **A parked operation waits for the person, and is still read.** It is
+//!   never retried on its own. *Continue* sends the same command again, by
+//!   its request, which the owner resumes; *Cancel* is the Restore naming
+//!   it. But the owner takes a parked Archive or Trash up again by itself
+//!   when its execution owner answers (`owner_answered_bot_lifecycle`), so
+//!   while the tab is shown a parked operation is read on the same clock run
+//!   slower (2 s, doubling to 10 s): a tab left in front sees it move and
+//!   finish instead of offering Continue for ever.
+//! - **What is with the link is answered in the order it was sent** (the
+//!   link is one thread, first in first out), so the model keeps the order
+//!   of its own asks and knows whether an answer is the command's or a
+//!   read's: a read turned away for now is asked again, never taken for the
+//!   command's refusal.
 //! - **Every write carries the revision it read**, and a refusal is a
 //!   sentence by its code ([`refusal_words`]), never the server's English.
 //! - **What holds a Bot is the owner's to say.** A read of an archived Bot
@@ -31,6 +41,7 @@
 //! - **A finished operation is reported to the window** ([`Finished`]), which
 //!   tells the Bot's other tabs, the roster and the Trash to read again.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use koru_ai_core::ChatId;
@@ -48,6 +59,24 @@ use super::link::{Command, Failure};
 /// operation the owner holds as pending.
 const READ_FIRST: Duration = Duration::from_millis(250);
 const READ_MAX: Duration = Duration::from_secs(2);
+/// How soon a parked operation is read again while the tab is shown,
+/// doubling to [`PARKED_MAX`]: the same clock, slower, because a parked
+/// operation moves again only when its execution owner answers.
+const PARKED_FIRST: Duration = Duration::from_secs(2);
+const PARKED_MAX: Duration = Duration::from_secs(10);
+
+/// **What is with the link for an operation**, in the order it was sent.
+/// The link answers one at a time and in order, so the front is what the
+/// next answer about the operation's request is the answer to.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Flight {
+    /// The command that began it — or a Cancel's Restore.
+    Command,
+    /// *Continue*: the command again, by its request.
+    Resume,
+    /// A `ReadLifecycleOperation`.
+    Read,
+}
 
 /// What a person asked for on a whole Bot.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -82,8 +111,13 @@ pub(crate) struct Op {
     /// The command as sent, so *Continue* sends exactly it again. `None`
     /// for an operation learned from the Bot's read, rebuilt on *Continue*.
     command: Option<BotCommand>,
-    /// A command or a read for it is with the link.
-    in_flight: bool,
+    /// The commands and reads for it with the link, oldest first.
+    flights: VecDeque<Flight>,
+    /// **For a Cancel's Restore: the parked operation it reverses.** Taken
+    /// up again when the owner answers that it is still moving or already
+    /// finished (`bot_lifecycle_pending`, a conflict), so the tab reads what
+    /// it is now rather than saying the refusal.
+    cancels: Option<Box<Op>>,
     /// The owner has answered something about it: a read that answers
     /// `not_found` before that means the command never reached it.
     answered: bool,
@@ -98,6 +132,32 @@ pub(crate) struct Op {
     name: String,
     home: Option<WorkspaceId>,
     title: Option<String>,
+}
+
+impl Op {
+    /// Whether a command or a read for it is with the link.
+    fn in_flight(&self) -> bool {
+        !self.flights.is_empty()
+    }
+
+    /// **The owner holds it parked**: it waits for the person, and is read
+    /// on the slower clock while the tab is shown.
+    fn park(&mut self, now: Instant) {
+        self.stage = Stage::Parked;
+        self.backoff = (PARKED_FIRST * 2).min(PARKED_MAX);
+        self.next_read = Some(now.checked_add(PARKED_FIRST).unwrap_or(now));
+    }
+
+    /// Read it again at the next step of its clock — the bounded one while
+    /// it moves, the slower one while it is parked.
+    fn again(&mut self, now: Instant) {
+        let (wait, most) = match self.stage {
+            Stage::Moving => (self.backoff, READ_MAX),
+            Stage::Parked => (self.backoff.max(PARKED_FIRST), PARKED_MAX),
+        };
+        self.next_read = Some(now.checked_add(wait).unwrap_or(now));
+        self.backoff = (wait * 2).min(most);
+    }
 }
 
 /// What a finished operation leaves the tab saying.
@@ -218,33 +278,61 @@ impl Lifecycle {
         // continued from another tab — is dropped, and the one it names is
         // followed in its place.
         let named = bot.open_operation.as_ref();
-        if self.op.as_ref().is_some_and(|op| op.in_flight) {
+        if self.op.as_ref().is_some_and(Op::in_flight) {
+            return;
+        }
+        let now = Instant::now();
+        // **The operation followed, finished**: the owner no longer names it
+        // open, and names it as what holds the Bot — a parked Archive the
+        // owner took up again by itself and completed while nobody pressed
+        // anything. Said as the finish it is, never as a refusal.
+        let finished = self.op.as_ref().is_some_and(|op| {
+            named.is_none_or(|open| open.request_id != op.request)
+                && bot
+                    .held_by
+                    .as_ref()
+                    .is_some_and(|holder| holder.request_id == op.request)
+        });
+        if finished {
+            self.finish();
+            // This read already says what the tab shows.
+            self.read_bot_owed = false;
             return;
         }
         match (named, self.op.as_mut()) {
             // **The same operation, at the stage the owner says now**: a
             // parked Archive or Trash the owner took up again by itself
             // (its execution owner answered) is moving and read on the
-            // clock; a moving one the owner parked waits for the person.
+            // clock; a moving one the owner parked waits for the person,
+            // read on the slower clock.
             (Some(open), Some(op)) if op.request == open.request_id => {
                 let parked = open.stage == BotLifecycleStage::Incomplete;
                 match (op.stage, parked) {
                     (Stage::Parked, false) => {
                         op.stage = Stage::Moving;
-                        op.next_read = Some(Instant::now());
+                        op.next_read = Some(now);
                         op.backoff = READ_FIRST;
                         op.unanswered = false;
                         self.outcome = None;
                     }
-                    (Stage::Moving, true) => {
-                        op.stage = Stage::Parked;
-                        op.next_read = None;
-                        op.backoff = READ_FIRST;
-                    }
+                    (Stage::Moving, true) => op.park(now),
                     _ => {}
                 }
             }
-            _ => self.op = named.map(|open| adopted(open, bot, Instant::now())),
+            _ => {
+                self.op = named.map(|open| adopted(open, bot, now));
+                // A refusal this read contradicts is no longer said: an
+                // operation it names is shown instead, and once none is
+                // open, *another change is still finishing* is not true.
+                if self.op.is_some()
+                    || self
+                        .outcome
+                        .as_ref()
+                        .is_some_and(|outcome| contradicted(outcome, bot))
+                {
+                    self.outcome = None;
+                }
+            }
         }
     }
 
@@ -340,7 +428,8 @@ impl Lifecycle {
             reverses,
             stage: Stage::Moving,
             command: Some(command),
-            in_flight: true,
+            flights: VecDeque::from([Flight::Command]),
+            cancels: None,
             answered: false,
             unanswered: false,
             next_read: None,
@@ -376,7 +465,8 @@ impl Lifecycle {
             reverses: None,
             stage: Stage::Moving,
             command: Some(command),
-            in_flight: true,
+            flights: VecDeque::from([Flight::Command]),
+            cancels: None,
             answered: false,
             unanswered: false,
             next_read: None,
@@ -398,8 +488,10 @@ impl Lifecycle {
             Some(command) => command,
             None => resume_command(op, bot)?,
         };
+        // A read of it may still be with the link: its answer comes first,
+        // and is older than this.
         op.stage = Stage::Moving;
-        op.in_flight = true;
+        op.flights.push_back(Flight::Resume);
         op.unanswered = false;
         op.next_read = None;
         op.backoff = READ_FIRST;
@@ -443,23 +535,32 @@ impl Lifecycle {
             ),
             _ => return None,
         };
+        let (chat, reverses) = (parked.chat, Some(parked.kind));
+        let (name, home, title) = (parked.name.clone(), parked.home, parked.title.clone());
+        // Kept, to be read again if the owner answers that it is moving or
+        // done already. A read of it still with the link is answered under
+        // its own request, before this Restore, and is no one's then.
+        let mut cancels = self.op.take().map(Box::new);
+        if let Some(parked) = &mut cancels {
+            parked.flights.clear();
+        }
         let op = Op {
             request,
             kind,
-            chat: parked.chat,
-            reverses: Some(parked.kind),
+            chat,
+            reverses,
             stage: Stage::Moving,
             command: Some(command),
-            in_flight: true,
+            flights: VecDeque::from([Flight::Command]),
+            cancels,
             answered: false,
             unanswered: false,
             next_read: None,
             backoff: READ_FIRST,
-            name: parked.name.clone(),
-            home: parked.home,
-            title: parked.title.clone(),
+            name,
+            home,
+            title,
         };
-        self.op = None;
         Some(self.send(op))
     }
 
@@ -477,24 +578,25 @@ impl Lifecycle {
     }
 
     /// **Read the operation now** — the tab was shown, or its conversation's
-    /// status moved. Nothing for a parked operation: it waits for the person.
+    /// status moved: a moving one, and a parked one, which the owner may
+    /// have taken up again by itself.
     pub(crate) fn read_now(&mut self, now: Instant) {
         if let Some(op) = &mut self.op
-            && op.stage == Stage::Moving
-            && !op.in_flight
+            && !op.in_flight()
         {
             op.next_read = Some(now);
         }
     }
 
     /// The `ReadLifecycleOperation` owed by `now`, marked as with the link.
+    /// One at a time, and none while a command for it is on its way.
     pub(crate) fn read(&mut self, now: Instant) -> Option<Command> {
         let bot = self.bot?;
         let op = self.op.as_mut()?;
-        if op.stage != Stage::Moving || op.in_flight || !op.next_read.is_some_and(|at| at <= now) {
+        if op.in_flight() || !op.next_read.is_some_and(|at| at <= now) {
             return None;
         }
-        op.in_flight = true;
+        op.flights.push_back(Flight::Read);
         Some(Command::Write {
             bot,
             request: op.request,
@@ -506,25 +608,24 @@ impl Lifecycle {
     }
 
     /// When a pass is next owed: a short tick while something is with the
-    /// link, the next read while the owner holds it as moving. `None` while
-    /// it is parked or there is none.
+    /// link, else the next read — on the bounded clock while the owner holds
+    /// it as moving, on the slower one while it is parked. `None` when there
+    /// is none. The window asks this only of a tab it shows.
     pub(crate) fn deadline(&self, now: Instant) -> Option<Instant> {
         let op = self.op.as_ref()?;
-        if op.in_flight {
+        if op.in_flight() {
             return now.checked_add(Duration::from_millis(50));
         }
-        match op.stage {
-            Stage::Moving => op.next_read,
-            Stage::Parked => None,
-        }
+        op.next_read
     }
 
-    /// The link would not take `request`'s command or read.
+    /// The link would not take `request`'s command or read: the last one
+    /// handed to it.
     pub(crate) fn unsent(&mut self, request: BotRequestId, now: Instant) {
         let Some(op) = self.op.as_mut().filter(|op| op.request == request) else {
             return;
         };
-        op.in_flight = false;
+        op.flights.pop_back();
         if op.answered {
             // The owner holds it: ask again on a later pass.
             op.next_read = Some(now.checked_add(op.backoff).unwrap_or(now));
@@ -546,7 +647,8 @@ impl Lifecycle {
         let Some(op) = self.op.as_mut().filter(|op| op.request == request) else {
             return false;
         };
-        op.in_flight = false;
+        // What this answer answers: the oldest ask still with the link.
+        let flight = op.flights.pop_front().unwrap_or(Flight::Command);
         let kind = op.kind;
         // An answer about something else is no answer: what happened is
         // as unknown as after a lost connection.
@@ -561,19 +663,37 @@ impl Lifecycle {
         match result {
             Ok(operation) => {
                 op.answered = true;
-                self.fold(&operation, now);
+                self.fold(&operation, flight, now);
             }
             Err(Failure::Unanswered) => {
                 // **The outcome is unknown** — a lost connection, a worker
                 // that timed out, a reply that did not parse: the command
                 // may well have run. A repeat of the read is progress, so
                 // ask about it on the clock rather than claim either.
-                op.next_read = Some(now.checked_add(op.backoff).unwrap_or(now));
-                op.backoff = (op.backoff * 2).min(READ_MAX);
+                op.again(now);
             }
             // A read of an operation the owner never received.
             Err(Failure::Refused(code)) if code == "not_found" && !op.answered => {
                 self.refuse(Words::BotsErrUnreachable);
+            }
+            // **Continue, or Cancel, answered that the operation is moving
+            // or done already** — the owner took a parked Archive or Trash
+            // up again by itself, and may have finished it: a rebuilt
+            // Continue no longer matches (`request_conflict`), a Cancel of a
+            // moving one waits for it (`bot_lifecycle_pending`). Neither is
+            // said: the operation and the Bot are read, and what they show
+            // is what the tab says.
+            Err(Failure::Refused(code))
+                if moved_meanwhile(&code) && (flight == Flight::Resume || op.cancels.is_some()) =>
+            {
+                let mut followed = match op.cancels.take() {
+                    Some(parked) => *parked,
+                    None => self.op.take().expect("the operation answered"),
+                };
+                followed.flights.clear();
+                followed.next_read = Some(now);
+                self.op = Some(followed);
+                self.read_bot_owed = true;
             }
             Err(Failure::Refused(code)) => self.refuse(words_for(kind, &code)),
         }
@@ -587,24 +707,40 @@ impl Lifecycle {
         self.read_bot_owed = true;
     }
 
-    fn fold(&mut self, progress: &BotLifecycleProgress, now: Instant) {
+    fn fold(&mut self, progress: &BotLifecycleProgress, flight: Flight, now: Instant) {
         let Some(op) = self.op.as_mut() else {
             return;
         };
+        // **A read older than a command still with the link** — a parked
+        // operation's read, then *Continue*: the command's answer follows
+        // and says where it stands now; this one is from before it.
+        if flight == Flight::Read && !op.flights.is_empty() {
+            return;
+        }
         match progress.stage {
             BotLifecycleStage::Completed => self.finish(),
+            // Still parked: read again on the slower clock, each time a
+            // little later.
+            BotLifecycleStage::Incomplete
+                if op.stage == Stage::Parked && flight == Flight::Read =>
+            {
+                op.again(now);
+            }
             BotLifecycleStage::Incomplete => {
-                op.stage = Stage::Parked;
-                op.next_read = None;
-                op.backoff = READ_FIRST;
+                op.park(now);
                 // A Bot read shows its revision now: Cancel names it.
                 self.read_bot_owed = true;
             }
             _ => {
-                let wait = op.backoff;
-                op.stage = Stage::Moving;
-                op.next_read = Some(now.checked_add(wait).unwrap_or(now));
-                op.backoff = (wait * 2).min(READ_MAX);
+                if op.stage == Stage::Parked {
+                    // **Taken up again** — by the owner itself, or another
+                    // tab's Continue: followed on the bounded clock from
+                    // its first step, and whatever was refused is not true.
+                    op.stage = Stage::Moving;
+                    op.backoff = READ_FIRST;
+                    self.outcome = None;
+                }
+                op.again(now);
             }
         }
     }
@@ -677,24 +813,55 @@ impl Lifecycle {
 ///
 /// **A moving one is read on the bounded clock from now**, as one this tab
 /// sent is, so a tab that learned it after a restart or from another tab
-/// sees it finish; a parked one waits for the person.
+/// sees it finish; a parked one waits for the person, read on the slower
+/// clock — the owner takes it up again by itself when its execution owner
+/// answers, which is the very case a restart parks.
 fn adopted(open: &BotOpenLifecycle, bot: &Bot, now: Instant) -> Op {
-    let parked = open.stage == BotLifecycleStage::Incomplete;
-    Op {
+    let mut op = Op {
         request: open.request_id,
         kind: open.kind,
         chat: open.chat_id,
         reverses: None,
-        stage: if parked { Stage::Parked } else { Stage::Moving },
+        stage: Stage::Moving,
         command: None,
-        in_flight: false,
+        flights: VecDeque::new(),
+        cancels: None,
         answered: true,
         unanswered: false,
-        next_read: (!parked).then_some(now),
+        next_read: Some(now),
         backoff: READ_FIRST,
         name: bot.config.name.clone(),
         home: Some(bot.home_workspace),
         title: None,
+    };
+    if open.stage == BotLifecycleStage::Incomplete {
+        op.park(now);
+    }
+    op
+}
+
+/// **Codes that say a parked operation moved on its own** when they answer
+/// its Continue or Cancel: `request_conflict` (a rebuilt Continue no longer
+/// matches an operation that is no longer parked —
+/// `repeat_bot_lifecycle`), `revision_conflict` (the Bot moved since it was
+/// read) and `bot_lifecycle_pending` (a Cancel of an operation moving again
+/// — `restore_bot`'s hold). The operation is read before anything is said.
+fn moved_meanwhile(code: &str) -> bool {
+    matches!(
+        code,
+        "request_conflict" | "revision_conflict" | super::settings::BOT_PENDING
+    )
+}
+
+/// Whether a read of `bot` makes `outcome` untrue: *another change is still
+/// finishing* with none open, *archived* or *in Trash* for a Bot that is
+/// not. A refusal about the attempt itself — busy, not answering — stays.
+fn contradicted(outcome: &Outcome, bot: &Bot) -> bool {
+    match outcome {
+        Outcome::Refused(Words::BotsErrPending) => bot.open_operation.is_none(),
+        Outcome::Refused(Words::BotsErrArchived) => bot.lifecycle != BotLifecycle::Archived,
+        Outcome::Refused(Words::BotsErrBotTrashed) => bot.lifecycle != BotLifecycle::Trashed,
+        _ => false,
     }
 }
 

@@ -984,6 +984,10 @@ impl BotView {
                 // parked or moving operation rather than finding no Bot.
                 self.know(BotFacts::from(bot.clone()));
                 self.lifecycle.know(&bot);
+                // A read may finish the operation followed — one the owner
+                // completed by itself — which the tab acts on as on an
+                // answer.
+                self.after_lifecycle();
             }
             // A trashed Bot's read answers *not found* (P1.7): its home's
             // Trash filter says whether that is where it is.

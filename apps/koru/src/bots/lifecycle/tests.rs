@@ -123,9 +123,10 @@ fn a_moving_operation_is_read_until_it_completes() {
     assert!(model.deadline(now).is_none(), "nothing more to read");
 }
 
-/// **A parked operation waits for the person**: no read, no retry of its
-/// own; Continue sends the same command by its request, Cancel the Restore
-/// naming it.
+/// **A parked operation waits for the person**: no retry of its own — only
+/// reads, on the slower clock (2 s, doubling to 10 s), because the owner
+/// takes a parked Archive or Trash up again by itself; Continue sends the
+/// same command by its request, Cancel the Restore naming it.
 #[test]
 fn a_parked_operation_waits_then_continues_or_cancels() {
     let (mut model, mut bot) = fixture();
@@ -142,9 +143,43 @@ fn a_parked_operation_waits_then_continues_or_cancels() {
         now,
     );
     assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
-    model.read_now(now);
-    assert!(model.read(now + Duration::from_secs(60)).is_none());
-    assert!(model.deadline(now).is_none(), "no clock while parked");
+    assert!(model.take_read_bot_owed(), "parked: the Bot is read once");
+    assert!(model.read(now).is_none(), "not at once");
+    assert_eq!(model.deadline(now), Some(now + Duration::from_secs(2)));
+    // Each read that finds it still parked waits longer: 2, 4, 8, 10, 10 s.
+    let mut at = now;
+    for wait in [2, 4, 8, 10, 10] {
+        at += Duration::from_secs(wait);
+        assert!(
+            model.read(at - Duration::from_millis(1)).is_none(),
+            "{wait}"
+        );
+        let (asked, read) = sent(model.read(at).expect("read on the slower clock"));
+        assert_eq!(asked, request);
+        assert_eq!(
+            read,
+            BotCommand::ReadLifecycleOperation {
+                request_id: request,
+                bot_id: bot.id
+            },
+            "a read, never the Trash again"
+        );
+        model.answer(
+            request,
+            progress(
+                &bot,
+                request,
+                BotLifecycleKind::Trash,
+                BotLifecycleStage::Incomplete,
+            ),
+            at,
+        );
+        assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    }
+    assert!(
+        !model.take_read_bot_owed(),
+        "the Bot is read once, when it parked — not again for every read"
+    );
     let (again, command) = sent(model.continue_parked(&bot).expect("continue"));
     assert_eq!((again, command), (request, original), "the same command");
     model.answer(
@@ -695,7 +730,12 @@ fn a_read_that_names_the_same_operation_at_a_new_stage_updates_it() {
     bot.open_operation = Some(open(BotLifecycleStage::Incomplete));
     model.know(&bot);
     assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
-    assert_eq!(model.deadline(Instant::now()), None, "waits for the person");
+    let soon = Instant::now() + Duration::from_secs(1);
+    assert!(
+        model.deadline(soon).is_some_and(|due| due > soon),
+        "waits for the person, read on the slower clock"
+    );
+    assert!(model.read(soon).is_none(), "not yet");
     bot.open_operation = Some(open(BotLifecycleStage::Settling));
     model.know(&bot);
     assert_eq!(model.op().map(|op| op.stage), Some(Stage::Moving));
@@ -750,4 +790,258 @@ fn a_writes_answer_never_drops_an_operation() {
     // A read that no longer names it is what drops it.
     model.know(&saved);
     assert!(model.op().is_none(), "the read's word");
+}
+
+/// A Bot whose Archive the owner parked because its execution owner did not
+/// answer, as `read_bot` names it after a restart (`Bot.open_operation`).
+fn parked_for_its_owner(bot: &mut Bot) -> BotRequestId {
+    let request = BotRequestId::mint();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: request,
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::OwnerUnavailable),
+    });
+    request
+}
+
+/// The Bot once the owner completed `request`'s Archive: archived, nothing
+/// open, held by that Archive (`with_lifecycle_holders`), its revision moved.
+fn archived_by(bot: &Bot, request: BotRequestId) -> Bot {
+    let mut archived = bot.clone();
+    archived.revision += 1;
+    archived.lifecycle = BotLifecycle::Archived;
+    archived.open_operation = None;
+    archived.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: request,
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 1,
+    });
+    archived
+}
+
+/// **A parked Archive the owner takes up again by itself is seen moving and
+/// finishing** — the third review's blocker. A tab restored after a restart
+/// adopts the Archive parked for its silent owner; `owner_answered_bot_lifecycle`
+/// (`apps/koru-ai-server/src/worker/bots/lifecycle.rs`) resumes it with no
+/// command once the owner answers: parked, then moving, then completed. The
+/// tab left in front reads it on the slower clock, so it follows it on the
+/// bounded clock once it moves and says it is archived — never *This didn't
+/// finish… Continue* for ever.
+#[test]
+fn a_parked_archive_the_owner_takes_up_by_itself_is_read_until_it_finishes() {
+    let (mut model, mut bot) = fixture();
+    let request = parked_for_its_owner(&mut bot);
+    model.know(&bot);
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    let now = Instant::now() + Duration::from_millis(1);
+    let due = model
+        .deadline(now)
+        .expect("a parked operation is read again");
+    assert!(due > now && due <= now + Duration::from_secs(2), "{due:?}");
+    let (asked, read) = sent(model.read(due).expect("read on the slower clock"));
+    assert_eq!(asked, request);
+    assert!(matches!(read, BotCommand::ReadLifecycleOperation { .. }));
+    // The owner answered meanwhile: it moves again, with nobody pressing.
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Settling,
+        ),
+        due,
+    );
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Moving));
+    let next = model.deadline(due).expect("followed");
+    assert!(
+        next <= due + Duration::from_millis(250),
+        "the bounded clock again"
+    );
+    sent(model.read(next).expect("read"));
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+        next,
+    );
+    assert_eq!(model.outcome(), Some(&Outcome::Archived));
+    assert_eq!(model.archive_source(), Some(request));
+    assert_eq!(model.take_finished().len(), 1, "the window's book");
+}
+
+/// **Continue on a parked Archive the owner finished meanwhile says what the
+/// read shows** — the third review's probe, turned round. Continue rebuilds
+/// the command at the read revision; `repeat_bot_lifecycle` accepts a
+/// different fingerprint only while parked, so it answers
+/// `request_conflict`. That is not *another change is still finishing*: the
+/// operation is read at once, and so is the Bot, and an archived Bot held by
+/// that very Archive is said as archived, with Unarchive.
+#[test]
+fn continue_after_the_owner_finished_a_parked_archive_says_what_the_read_shows() {
+    let (mut model, mut bot) = fixture();
+    bot.revision = 8;
+    let request = parked_for_its_owner(&mut bot);
+    model.know(&bot);
+    let (_, command) = sent(model.continue_parked(&bot).unwrap());
+    assert!(matches!(
+        command,
+        BotCommand::Archive {
+            expected_revision: 8,
+            ..
+        }
+    ));
+    let now = Instant::now();
+    model.answer(
+        request,
+        Err(Failure::Refused("request_conflict".into())),
+        now,
+    );
+    assert_eq!(model.outcome(), None, "nothing said before the read");
+    assert!(model.busy(), "still followed");
+    assert!(model.take_read_bot_owed(), "the Bot is read");
+    let (asked, read) = sent(model.read(now).expect("the operation is read at once"));
+    assert_eq!(asked, request);
+    assert!(matches!(read, BotCommand::ReadLifecycleOperation { .. }));
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+        now,
+    );
+    assert_eq!(model.outcome(), Some(&Outcome::Archived));
+    assert_eq!(model.archive_source(), Some(request));
+
+    // The Bot's read may answer first: it names the Archive as what holds
+    // the Bot, which is the same finish.
+    let (mut model, mut bot) = fixture();
+    let request = parked_for_its_owner(&mut bot);
+    model.know(&bot);
+    sent(model.continue_parked(&bot).unwrap());
+    model.answer(
+        request,
+        Err(Failure::Refused("request_conflict".into())),
+        Instant::now(),
+    );
+    model.know(&archived_by(&bot, request));
+    assert_eq!(model.outcome(), Some(&Outcome::Archived));
+    assert!(!model.busy());
+    assert_eq!(model.archive_source(), Some(request));
+}
+
+/// **Cancel on a parked Archive the owner took up again** is answered
+/// `bot_lifecycle_pending` (`restore_bot` holds a Restore of a source that
+/// is moving): the parked Archive is followed again and read at once, and
+/// the tab says what the read shows — here that it finished — never that
+/// another change is still finishing.
+#[test]
+fn cancel_of_an_archive_moving_again_reads_it_rather_than_refusing() {
+    let (mut model, mut bot) = fixture();
+    let request = parked_for_its_owner(&mut bot);
+    model.know(&bot);
+    let (undo, _) = sent(model.cancel_parked(&bot).unwrap());
+    let now = Instant::now();
+    model.answer(
+        undo,
+        Err(Failure::Refused("bot_lifecycle_pending".into())),
+        now,
+    );
+    assert_eq!(model.outcome(), None, "nothing said before the read");
+    assert_eq!(
+        model.op().map(|op| op.request),
+        Some(request),
+        "the Archive is followed again"
+    );
+    let (asked, _) = sent(model.read(now).expect("read at once"));
+    assert_eq!(asked, request);
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Settling,
+        ),
+        now,
+    );
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Moving));
+    assert_eq!(model.outcome(), None);
+    model.know(&archived_by(&bot, request));
+    assert_eq!(model.outcome(), Some(&Outcome::Archived));
+}
+
+/// **A read older than Continue says nothing about it**: a parked
+/// operation's read is with the link when the person presses Continue; the
+/// link answers in order, so the read's *still parked* comes first and is
+/// from before the Continue, whose own answer says it moves.
+#[test]
+fn a_parked_read_answered_after_continue_does_not_park_it_again() {
+    let (mut model, mut bot) = fixture();
+    let request = parked_for_its_owner(&mut bot);
+    model.know(&bot);
+    let later = Instant::now() + Duration::from_secs(3);
+    sent(model.read(later).expect("read on the slower clock"));
+    sent(model.continue_parked(&bot).expect("continue meanwhile"));
+    let parked = progress(
+        &bot,
+        request,
+        BotLifecycleKind::Archive,
+        BotLifecycleStage::Incomplete,
+    );
+    model.answer(request, parked, later);
+    assert_eq!(
+        model.op().map(|op| op.stage),
+        Some(Stage::Moving),
+        "the read is older than the Continue"
+    );
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Settling,
+        ),
+        later,
+    );
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Moving));
+}
+
+/// **A read that names the Bot's state clears a refusal it contradicts**:
+/// *another change is still finishing* is not said once the Bot's read
+/// names no open operation.
+#[test]
+fn a_read_with_nothing_open_clears_another_change_is_finishing() {
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Trash, &bot).unwrap());
+    model.answer(
+        request,
+        Err(Failure::Refused("bot_lifecycle_pending".into())),
+        Instant::now(),
+    );
+    assert_eq!(
+        model.outcome(),
+        Some(&Outcome::Refused(Words::BotsErrPending))
+    );
+    model.know(&bot);
+    assert_eq!(model.outcome(), None, "nothing is finishing now");
+    // A refusal about the attempt itself is not the read's to undo.
+    let (request, _) = sent(model.begin(Ask::Trash, &bot).unwrap());
+    model.answer(
+        request,
+        Err(Failure::Refused("ai_worker_saturated".into())),
+        Instant::now(),
+    );
+    model.know(&bot);
+    assert_eq!(model.outcome(), Some(&Outcome::Refused(Words::BotsErrBusy)));
 }
