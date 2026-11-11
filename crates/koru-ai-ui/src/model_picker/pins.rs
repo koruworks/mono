@@ -850,3 +850,11 @@ fn a_choice_settles_the_list_against_the_new_models_footer() {
     );
     assert_eq!(surface.picker.highlight, Some(last));
 }
+
+/// **The control's *Default* is the agent's** (§2.4): the control writes an
+/// agent's own default as `picker::DEFAULT_MODEL`, and the chat sends it as
+/// the AI service's `AGENT_DEFAULT_MODEL`. They are one id.
+#[test]
+fn the_controls_default_model_is_the_agents() {
+    assert_eq!(cfg::DEFAULT_MODEL, AGENT_DEFAULT_MODEL);
+}
