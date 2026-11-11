@@ -11,6 +11,7 @@ pub use branch::HistoricalBotRun;
 pub use lifecycle::{
     BotHold, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
 };
+mod creation;
 mod reads;
 
 fn bad(_: impl std::fmt::Display) -> BotError {
@@ -453,18 +454,9 @@ impl Repository {
                 return Err(BotError::FolderLocked);
             }
         } else {
-            if tx
-                .query_row(
-                    "SELECT 1 FROM bots WHERE bot_id=?1",
-                    [bot.id.to_storage()],
-                    |_| Ok(()),
-                )
-                .optional()
-                .map_err(bad)?
-                .is_some()
-            {
-                return Err(BotError::Conflict);
-            }
+            // The one BotId reservation, shared with creation (P1.8): a live
+            // Bot, a purged one's tombstone or another unfinished creation.
+            creation::reserve_bot_id(&tx, bot.user_scope, bot.id)?;
             tx.execute("INSERT INTO chats(id,title,current_provider,current_model,current_reasoning,created_at_ms,updated_at_ms,profile_id,agent_working_folder,agent_mode,agent_fast)
               VALUES(?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10)",params![bot.main_chat.to_storage(),bot.config.name,bot.config.model.provider.as_str(),bot.config.model.requested_model,bot.config.model.default_reasoning.as_token(),bot.created_at_ms,profile.to_storage(),bot.config.working_folder,bot.config.mode,bot.config.fast]).map_err(bad)?;
         }
