@@ -14,6 +14,8 @@ pub mod policy;
 pub mod replay;
 pub use lifecycle::*;
 pub use policy::*;
+pub mod creation;
+pub use creation::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -144,6 +146,14 @@ pub trait BotAuthority: Send + Sync {
                 .map(|page| (page.clone(), self.page(page)))
                 .collect(),
         })
+    }
+    /// Trusted creation only (P1.8 B2): plant a Bot's Role page through the
+    /// Store's strict creation origin with exactly the recorded candidate,
+    /// key, hash and seed, then read back its stored origin and whether it
+    /// is live. `Conflict` when the candidate exists with another origin;
+    /// `Unavailable` whenever the page may or may not have been written.
+    fn create_role_page(&self, _seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        Err(BotError::Unavailable)
     }
 }
 
@@ -288,6 +298,31 @@ pub enum BotCommand {
     ListActivity {
         workspace: WorkspaceId,
     },
+    /// Create a Bot together with its Role page and working folder (P1.8).
+    /// Answered with the creation's progress; the same request and input
+    /// returns its current progress or the completed Bot, and changed input
+    /// under the same request is `request_conflict`.
+    CreateBotWithRole {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        home_workspace: WorkspaceId,
+        role: BotRoleInput,
+        folder: BotFolderChoice,
+        config: BotCreationConfig,
+        access: BotAccess,
+        selected_pages: Vec<BotPage>,
+    },
+    /// One creation's progress, under current authority.
+    ReadBotCreation {
+        request_id: BotRequestId,
+    },
+    /// One page of a workspace's unfinished creations, oldest first.
+    /// `limit` is 1 to 100.
+    ListBotCreations {
+        workspace: WorkspaceId,
+        cursor: Option<BotCreationCursor>,
+        limit: u16,
+    },
 }
 
 impl BotCommand {
@@ -317,6 +352,8 @@ pub enum BotResponse {
     List { bots: Vec<Bot> },
     Chats { page: BotChatPage },
     Activity { activity: BotActivityPage },
+    Creation { creation: BotCreation },
+    Creations { page: BotCreationPage },
 }
 
 /// The most conversations one [`BotCommand::ListActivity`] reply names.
@@ -431,6 +468,12 @@ pub enum BotReceiptOutcome {
         verified_page: Option<BotPage>,
         verified_version: Option<Vec<u8>>,
     },
+    /// A Bot created together with its Role page and folder (P1.8 §1's
+    /// stored receipt format addition). Version 2 only.
+    CreationV2 {
+        version: u32,
+        creation: BotCreationRecord,
+    },
 }
 
 impl BotReceiptOutcome {
@@ -461,6 +504,10 @@ impl BotReceiptOutcome {
             {
                 Ok(())
             }
+            Self::CreationV2 {
+                version: 2,
+                creation,
+            } => creation.validate(),
             _ => Err(BotError::Invalid),
         }
     }

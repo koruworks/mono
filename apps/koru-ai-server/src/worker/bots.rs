@@ -245,7 +245,10 @@ fn execute_bot_command(
         | BotCommand::ReadLifecycleOperation { .. }
         | BotCommand::ListLifecycle { .. }
         | BotCommand::ListBotChats { .. }
-        | BotCommand::ListActivity { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ListActivity { .. }
+        | BotCommand::CreateBotWithRole { .. }
+        | BotCommand::ReadBotCreation { .. }
+        | BotCommand::ListBotCreations { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

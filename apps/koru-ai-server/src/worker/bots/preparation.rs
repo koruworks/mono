@@ -285,6 +285,11 @@ impl WorkerState {
                     BotCommand::ListActivity { workspace } => {
                         workspaces.insert(*workspace);
                     }
+                    BotCommand::ListBotCreations { workspace, .. } => {
+                        workspaces.insert(*workspace);
+                    }
+                    // Not served yet: the owner answers them unavailable.
+                    BotCommand::CreateBotWithRole { .. } | BotCommand::ReadBotCreation { .. } => {}
                 }
             }
             // A held conversation is refused by the guard once its owner is
@@ -472,6 +477,10 @@ pub(super) fn bot_targets(
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
             // The workspace alone is proved; the read names no Bot or chat.
             BotCommand::ListActivity { .. } => return Ok(Some(Vec::new())),
+            // A creation names no Bot that exists yet; its owner is proved.
+            BotCommand::CreateBotWithRole { .. }
+            | BotCommand::ReadBotCreation { .. }
+            | BotCommand::ListBotCreations { .. } => return Ok(Some(Vec::new())),
         };
         match super::lifecycle::provable_bot(repository, id, command) {
             Ok(Some(bot)) => {

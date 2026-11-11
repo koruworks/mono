@@ -3601,6 +3601,117 @@
               "workspace"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Create a Bot together with its Role page and working folder (P1.8).\nAnswered with the creation's progress; the same request and input\nreturns its current progress or the completed Bot, and changed input\nunder the same request is `request_conflict`.",
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/BotAccess"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "create_bot_with_role"
+                ],
+                "type": "string"
+              },
+              "config": {
+                "$ref": "#/components/schemas/BotCreationConfig"
+              },
+              "folder": {
+                "$ref": "#/components/schemas/BotFolderChoice"
+              },
+              "home_workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "role": {
+                "$ref": "#/components/schemas/BotRoleInput"
+              },
+              "selected_pages": {
+                "items": {
+                  "$ref": "#/components/schemas/BotPage"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "home_workspace",
+              "role",
+              "folder",
+              "config",
+              "access",
+              "selected_pages"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One creation's progress, under current authority.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "read_bot_creation"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One page of a workspace's unfinished creations, oldest first.\n`limit` is 1 to 100.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "list_bot_creations"
+                ],
+                "type": "string"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotCreationCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "limit": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "command",
+              "workspace",
+              "limit"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -3652,6 +3763,298 @@
         ],
         "type": "object"
       },
+      "BotCreation": {
+        "description": "One creation, as its authorized owner reads it.",
+        "properties": {
+          "bot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Bot"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The Bot, once `completed` and while it is readable."
+          },
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "home_workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/BotCreationPhase"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotCreationReason"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "role_page": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotPage"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The Role page: an existing one from the start; an authored one from\n`role_verified`, also while the Bot is not created yet. While an\nauthored page is `role_pending` its candidate is recorded but not\nshown, because its existence is not yet proven."
+          },
+          "stage": {
+            "$ref": "#/components/schemas/BotCreationStage"
+          }
+        },
+        "required": [
+          "request_id",
+          "bot_id",
+          "home_workspace",
+          "name",
+          "stage",
+          "phase"
+        ],
+        "type": "object"
+      },
+      "BotCreationConfig": {
+        "additionalProperties": false,
+        "description": "A new Bot's name and runtime defaults. Its Role and folder come from the\ncreation's own choices.",
+        "properties": {
+          "fast": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "mode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "model": {
+            "$ref": "#/components/schemas/StrictModel"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "model"
+        ],
+        "type": "object"
+      },
+      "BotCreationCursor": {
+        "additionalProperties": false,
+        "description": "The position after the last creation of a page (oldest first).",
+        "properties": {
+          "created_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          }
+        },
+        "required": [
+          "created_at_ms",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "BotCreationPage": {
+        "description": "One page of a workspace's unfinished creations, oldest first;\n`next_cursor` is absent on the last page.",
+        "properties": {
+          "creations": {
+            "items": {
+              "$ref": "#/components/schemas/BotCreation"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotCreationCursor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "creations"
+        ],
+        "type": "object"
+      },
+      "BotCreationPhase": {
+        "description": "The step a creation reached. Each is durable before the effect it guards.",
+        "oneOf": [
+          {
+            "description": "The intent and the BotId reservation are recorded; nothing else.",
+            "enum": [
+              "intent"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The folder may have been created; a recovery adopts exactly it.",
+            "enum": [
+              "folder_pending"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The folder binding is verified and recorded.",
+            "enum": [
+              "folder_ready"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Role page may have been asked for; a recovery replays the same\ncandidate, key and seed hash.",
+            "enum": [
+              "role_pending"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Role page's original creation is verified against the seed.",
+            "enum": [
+              "role_verified"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "BotCreationReason": {
+        "description": "Why a creation stopped or was refused. Stable codes, never prose.",
+        "oneOf": [
+          {
+            "description": "The owner, workspace or its placement could not be confirmed now.",
+            "enum": [
+              "owner_unavailable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Store did not answer, or its answer may have been lost.",
+            "enum": [
+              "store_unavailable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The folder could not be created or read.",
+            "enum": [
+              "folder_unavailable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Something already occupies the managed folder on first acceptance.",
+            "enum": [
+              "folder_occupied"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The folder resolves somewhere other than its intended binding.",
+            "enum": [
+              "folder_mismatch"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The selected folder is not an existing folder.",
+            "enum": [
+              "folder_invalid"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Role candidate exists with a different or unprovable origin.",
+            "enum": [
+              "role_conflict"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Role page is not a live page of the home workspace now.",
+            "enum": [
+              "role_unavailable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A selected page is not readable now.",
+            "enum": [
+              "page_unavailable"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The final transaction failed and rolled back; Retry repeats it alone.",
+            "enum": [
+              "storage_failed"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "BotCreationStage": {
+        "description": "Where a creation stands, as the person reads it.",
+        "oneOf": [
+          {
+            "description": "The owner is working on it.",
+            "enum": [
+              "pending"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "It stopped with a `reason`; the same request (Retry) resumes it.\nWhatever it already made is kept and named.",
+            "enum": [
+              "incomplete"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Bot exists.",
+            "enum": [
+              "completed"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Refused before it made anything; the BotId is free again.",
+            "enum": [
+              "rejected"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "BotDeliveryReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -3691,6 +4094,47 @@
           "confirmed_at_ms"
         ],
         "type": "object"
+      },
+      "BotFolderChoice": {
+        "description": "Where the new Bot's work happens.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "A folder the owner creates for this Bot alone, at\n`<AI root>/bots/<BotId>/work`. Nothing in the request names it, and\nany other field beside `kind` is refused.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "managed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A folder that already exists, given as an absolute path. It is\nvalidated, never created or emptied.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "selected"
+                ],
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "BotId": {
         "format": "uuid",
@@ -4348,6 +4792,91 @@
             "required": [
               "result",
               "activity"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "creation": {
+                "$ref": "#/components/schemas/BotCreation"
+              },
+              "result": {
+                "enum": [
+                  "creation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "creation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotCreationPage"
+              },
+              "result": {
+                "enum": [
+                  "creations"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotRoleInput": {
+        "description": "The Role a new Bot starts with.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "An ordinary page that already exists in the home workspace. It stays\nshared: the Bot does not own it.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "existing"
+                ],
+                "type": "string"
+              },
+              "page": {
+                "$ref": "#/components/schemas/BotPage"
+              }
+            },
+            "required": [
+              "kind",
+              "page"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A new ordinary page the owner creates in the home workspace from this\ntitle and Markdown, owned by the Bot through its creation receipt.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "authored"
+                ],
+                "type": "string"
+              },
+              "markdown": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "title",
+              "markdown"
             ],
             "type": "object"
           }
