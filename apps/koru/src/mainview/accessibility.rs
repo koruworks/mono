@@ -490,6 +490,19 @@ impl MainView {
             rev.str(dialog.title());
             rev.str(dialog.body());
         }
+        // The window's own confirmation: its words, and which answer Enter
+        // presses (it moves with the keyboard's Tab).
+        if let Some((dialog, _)) = &self.confirm {
+            rev.str(dialog.title());
+            rev.str(dialog.body());
+            rev.byte(match dialog.default_action() {
+                None => 0,
+                Some(koru_ui::confirm::Outcome::Cancel) => 1,
+                Some(koru_ui::confirm::Outcome::Confirm) => 2,
+                Some(koru_ui::confirm::Outcome::Alternative) => 3,
+                Some(koru_ui::confirm::Outcome::Keep) => 4,
+            });
+        }
         // The media viewer's zoom is spoken, so a zoom is news; its toolbar
         // moves with the window, which is folded in below.
         if let Some(viewer) = self.lifted_viewer_semantics(koru_i18n::Lang::En) {
@@ -568,6 +581,15 @@ impl MainView {
             return false;
         }
         if self.profile_wait_action(target, action) {
+            return true;
+        }
+        // **An answer of the window's confirmation**, clicked: answered as a
+        // press on it is, and the drain that follows a press runs too.
+        if action == Action::Click
+            && let Some(outcome) = menus::confirm_answer_of(self, target)
+        {
+            self.settle_confirm_outcome(outcome);
+            self.drain_trash_all(ws);
             return true;
         }
         if self.media_viewer_action(target, action) {

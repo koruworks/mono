@@ -366,3 +366,29 @@ fn text_without_a_badge_uses_the_full_width() {
         .rect();
     assert_eq!(title.x0 as f32, panel.x + PAD + BADGE + 14.0);
 }
+
+/// **The answers a host publishes are the ones drawn**, left to right, each
+/// with its label and the rectangle a press lands on — so a host can mark
+/// [`Confirm::default_action`]'s answer as the default and an assistive
+/// technology hears what Enter will do.
+#[test]
+fn the_answers_are_published_as_drawn() {
+    let mut engine = engine();
+    let c = confirm();
+    let answers = c.answers(&mut engine, VIEWPORT);
+    assert_eq!(
+        answers
+            .iter()
+            .map(|(outcome, label, _)| (*outcome, label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (Outcome::Cancel, "Cancel"),
+            (Outcome::Confirm, "Move to Trash")
+        ]
+    );
+    let mut c = c;
+    for (outcome, _, rect) in answers {
+        let (x, y) = (rect.x + rect.w * 0.5, rect.y + rect.h * 0.5);
+        assert_eq!(c.mouse_down(&mut engine, VIEWPORT, x, y), outcome);
+    }
+}

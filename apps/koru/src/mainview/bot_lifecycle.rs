@@ -16,6 +16,14 @@
 //! and after a restart. The window keeps no record of its own: an operation
 //! a tab finishes only tells the Bot's other tabs, the roster and the Trash
 //! to read again.
+//!
+//! **Cancel is the default when the question will stop a reply running
+//! now** (QUESTIONS O46): the Bot or the conversation comes back, the reply
+//! does not. What is running is what the window already knows when it asks
+//! — the asking tab's own conversation and the roster's activity read while
+//! fresh (`bots::stops`) — and when it does not know, Cancel too. Only a
+//! known idle keeps Enter confirming (ADR-265's row for a reversible,
+//! explicitly invoked action).
 
 use koru_ai_core::bots::BotId;
 use koru_i18n::{Key as Words, t};
@@ -26,6 +34,7 @@ use super::tab::TabView;
 use super::trash::ConfirmSubject;
 use crate::bots::BotView;
 use crate::bots::lifecycle::Ask;
+use crate::bots::stops::{self, Facts, Scope, WorkNow};
 
 impl MainView {
     /// **The tab that asked**, by its own identity (`Tab::id`), while it is
@@ -144,15 +153,32 @@ impl MainView {
             view.dialog_closed();
             return sent;
         };
-        let lang = crate::format::lang();
+        let work = self.bot_work_now(tab, Scope::Bot(bot));
+        let lead = self
+            .asking_bot_tab(tab, bot)
+            .and_then(|view| view.stops_words(work, false));
         self.confirm = Some((
-            koru_ui::Confirm::localized(title, body, verb, t(lang, Words::BotsDialogCancel))
-                // Reversible, and explicitly invoked: ADR-265's second row.
-                // Archive and Trash both come back, paused.
-                .defaulting_to_confirm(),
+            bot_question(title, body, verb, lead, work),
             ConfirmSubject::BotLifecycle { bot, tab, ask },
         ));
         true
+    }
+
+    /// **What an Archive or a Trash of `scope` would stop**, from what the
+    /// window knows now and nothing it would have to ask: the asking tab's
+    /// own conversation and the roster's activity read while fresh
+    /// (`BotsRoster::activity_now`).
+    pub(super) fn bot_work_now(&self, tab: u64, scope: Scope) -> WorkNow {
+        let bot = match scope {
+            Scope::Bot(bot) | Scope::Conversation(bot, _) => bot,
+        };
+        let facts = Facts {
+            own: self
+                .asking_bot_tab(tab, bot)
+                .and_then(|view| view.own_work()),
+            activity: self.explore.bots().activity_now(std::time::Instant::now()),
+        };
+        stops::work_now(scope, facts)
     }
 
     /// **Ask before one conversation goes to Trash** — a row's menu or its
@@ -173,10 +199,12 @@ impl MainView {
         let Some((title, body, verb)) = view.conversation_trash_words(chat) else {
             return false;
         };
-        let lang = crate::format::lang();
+        // A row's Delete opens this question: Delete then Enter must not
+        // stop a reply running in that conversation.
+        let work = self.bot_work_now(tab, Scope::Conversation(bot, chat));
+        let lead = view.stops_words(work, true);
         self.confirm = Some((
-            koru_ui::Confirm::localized(title, body, verb, t(lang, Words::BotsDialogCancel))
-                .defaulting_to_confirm(),
+            bot_question(title, body, verb, lead, work),
             ConfirmSubject::TrashBotConversation { bot, tab, chat },
         ));
         true
@@ -353,6 +381,37 @@ impl MainView {
         self.explore.bots_mut().owe_lifecycle_refresh();
         self.bot_trash.owe_refresh();
         true
+    }
+}
+
+/// **A Bot's Archive or Trash question**: its words, with the paragraph
+/// saying a reply will be stopped above the body when there is one, and
+/// **the default answer by what it would stop** — Cancel unless the window
+/// knows nothing is running. Escape cancels either way and Tab reaches both
+/// answers (`koru_ui::Confirm`).
+fn bot_question(
+    title: String,
+    body: String,
+    verb: String,
+    lead: Option<String>,
+    work: WorkNow,
+) -> koru_ui::Confirm {
+    let lang = crate::format::lang();
+    // Two whole paragraphs, each its own sentence in every language: the
+    // stop, then what always happens.
+    let body = match lead {
+        Some(lead) => format!("{lead}\n\n{body}"),
+        None => body,
+    };
+    let question = koru_ui::Confirm::localized(title, body, verb, t(lang, Words::BotsDialogCancel));
+    if work.cancel_by_default() {
+        // Cancel, the type's own default: a reply running now — or work the
+        // window cannot rule out — would be stopped for good.
+        question
+    } else {
+        // Reversible, explicitly invoked, and nothing running: ADR-265's
+        // second row. Archive and Trash both come back, paused.
+        question.defaulting_to_confirm()
     }
 }
 

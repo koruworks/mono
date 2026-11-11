@@ -17,6 +17,14 @@
 //!   taken by something it cannot see. Recorded in
 //!   `docs/features/accessibility/README.md`.
 //!
+//! **The window's own confirmation** (`MainView::confirm`) is the one dialog
+//! of that table projected with its answers: its question as its name, and
+//! each answer a button, **the one Enter presses marked as the default**
+//! (`Role::DefaultButton`, from `Confirm::default_action`) — so a person
+//! who cannot see the ring hears whether Enter cancels or confirms, which
+//! the Bots' Archive and Trash questions now decide by what they would stop
+//! (QUESTIONS O46). A click answers as a press does.
+//!
 //! ## Instance identity, and the stale action it refuses
 //!
 //! A menu's rows are fixed to a subject when it opens: *the tab menu* over tab
@@ -59,6 +67,22 @@ enum Level {
 /// the tree.
 const ITEM: ControlPart = ControlPart::new("item");
 
+/// The window's confirmation's answers, by what each answers — never by its
+/// label or its place.
+const CONFIRM_CANCEL: ControlPart = ControlPart::new("confirm-cancel");
+const CONFIRM_ALTERNATIVE: ControlPart = ControlPart::new("confirm-alternative");
+const CONFIRM_ANSWER: ControlPart = ControlPart::new("confirm-answer");
+
+fn answer_part(outcome: koru_ui::confirm::Outcome) -> Option<ControlPart> {
+    use koru_ui::confirm::Outcome;
+    match outcome {
+        Outcome::Cancel => Some(CONFIRM_CANCEL),
+        Outcome::Alternative => Some(CONFIRM_ALTERNATIVE),
+        Outcome::Confirm => Some(CONFIRM_ANSWER),
+        Outcome::Keep => None,
+    }
+}
+
 impl MainView {
     /// The blocking surface, alone.
     pub(super) fn blocker_semantics(&self, cx: &Shell, blockers: Blockers) -> SemanticNode {
@@ -74,6 +98,11 @@ impl MainView {
                     cx.viewport.1,
                 ))
                 .modal();
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
+            && let Some(node) = self.confirm_semantics(cx, blockers)
+        {
+            return node;
         }
         if let Some(node) = self.menu_semantics(cx) {
             return node;
@@ -172,6 +201,46 @@ impl MainView {
             return occurrence;
         }
         cx.surface(SHELL, blocker_part(blockers))
+    }
+
+    /// **The window's confirmation, with its answers**: the question as the
+    /// dialog's name and its body as its description; each answer a button
+    /// at the rectangle it is drawn at, the one Enter presses now
+    /// (`Confirm::default_action`) a `DefaultButton`. A dialog declaring no
+    /// default marks none.
+    fn confirm_semantics(&self, cx: &Shell, blockers: Blockers) -> Option<SemanticNode> {
+        let (dialog, _) = self.confirm.as_ref()?;
+        let default = dialog.default_action();
+        let answers = crate::input_engine::with(|engine| dialog.answers(engine, cx.viewport));
+        let buttons = answers
+            .into_iter()
+            .filter_map(|(outcome, label, rect)| {
+                let role = if default == Some(outcome) {
+                    Role::DefaultButton
+                } else {
+                    Role::Button
+                };
+                Some(
+                    SemanticNode::new(cx.surface(SHELL, answer_part(outcome)?), role)
+                        .with_label(label)
+                        .with_bounds(rect)
+                        .with_action(Action::Click),
+                )
+            })
+            .collect();
+        Some(
+            SemanticNode::new(cx.surface(SHELL, blocker_part(blockers)), Role::Dialog)
+                .with_label(dialog.title())
+                .with_description(dialog.body())
+                .with_bounds(koru_draw::geometry::Rect::new(
+                    0.0,
+                    0.0,
+                    cx.viewport.0,
+                    cx.viewport.1,
+                ))
+                .modal()
+                .with_children(buttons),
+        )
     }
 
     /// The three menu levels, outermost first. `None` for a level that is not
@@ -386,6 +455,9 @@ fn prompt_keyword(kind: koru_workspace_host::routing::PromptKind) -> &'static st
 /// id from before the menu opened, and performing it would be the shell acting
 /// on a control the keyboard cannot currently reach.
 pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
+    if confirm_answer_of(view, target).is_some() {
+        return true;
+    }
     if let Some(id) = instance_of(target, MENU) {
         return view.menu_row_at(id).is_some() || view.names_a_live_menu(id);
     }
@@ -405,6 +477,24 @@ pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
         return true;
     }
     is_reminder_popover(view.blockers()) && super::reminders::is_popover_target(view, target)
+}
+
+/// **The answer a request names on the window's standing confirmation**, if
+/// it names one of its buttons and the confirmation is what stands.
+pub(super) fn confirm_answer_of(
+    view: &MainView,
+    target: Occurrence,
+) -> Option<koru_ui::confirm::Outcome> {
+    use koru_ui::confirm::Outcome;
+    if view.blockers() != Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
+        || view.confirm.is_none()
+        || super::surface_of(target) != Some(SHELL)
+    {
+        return None;
+    }
+    [Outcome::Cancel, Outcome::Alternative, Outcome::Confirm]
+        .into_iter()
+        .find(|outcome| answer_part(*outcome) == Some(target.part))
 }
 
 /// Whether the standing blocker is the reminder popover — either of its two

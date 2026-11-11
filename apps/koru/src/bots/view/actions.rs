@@ -44,6 +44,7 @@ use super::controls::IconLeaf;
 use super::{BotView, SURFACE};
 use crate::bots::lifecycle::{Ask, Finished, Outcome, Stage, parked_words};
 use crate::bots::link::{Command, Failure};
+use crate::bots::stops::WorkNow;
 
 /// The header's ⋯.
 pub(crate) const ACTIONS_BUTTON: Key = Key::surface(SURFACE, "bot-actions");
@@ -163,6 +164,31 @@ impl BotView {
             t(self.lang, body).to_owned(),
             t(self.lang, confirm).to_owned(),
         ))
+    }
+
+    /// **What this tab knows itself of work running now**: the
+    /// conversation it shows and that conversation's status, as the
+    /// window's pass last set it from the chat surface. Evidence that a
+    /// reply runs or waits on the person, never that none does
+    /// (`bots::stops`). `None` while the conversation is let go.
+    pub(crate) fn own_work(&self) -> Option<(ChatId, koru_chats_ui::ChatStatus)> {
+        self.conversation().map(|view| (self.chat, view.status()))
+    }
+
+    /// **The first paragraph of an Archive or Trash question when it will
+    /// stop a reply**: running, or waiting on the person, in the Bot
+    /// (`conversation` `None`) or in one conversation. `None` when the
+    /// window knows nothing runs, or does not know (the question then
+    /// defaults to Cancel and says what it always says).
+    pub(crate) fn stops_words(&self, work: WorkNow, conversation: bool) -> Option<String> {
+        let words = match (work, conversation) {
+            (WorkNow::Running, false) => Words::BotsStopsRunning,
+            (WorkNow::NeedsYou, false) => Words::BotsStopsWaiting,
+            (WorkNow::Running, true) => Words::BotsConversationStopsRunning,
+            (WorkNow::NeedsYou, true) => Words::BotsConversationStopsWaiting,
+            (WorkNow::Idle | WorkNow::Unknown, _) => return None,
+        };
+        Some(t(self.lang, words).to_owned())
     }
 
     /// **Begin `ask`** — the person confirmed it, or it needs no question.

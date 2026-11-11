@@ -89,6 +89,12 @@ pub(crate) const MORE_WORK: Key = Key::surface(SURFACE, "more-work");
 /// An activity sub-row's part. The sub-row is the conversation's model key
 /// with this part.
 pub(crate) const ACTIVITY_PART: &str = "bot-activity";
+/// **How long an activity read counts as what is running now** for the
+/// question before an Archive or a Trash (`bots::stops`). Work a window
+/// does not see start — a task started through the API, another device's
+/// reply — moves nothing here, so an older read is not trusted to say
+/// nothing runs, and the question then defaults to Cancel.
+pub(crate) const ACTIVITY_FRESH: std::time::Duration = std::time::Duration::from_secs(30);
 /// The Archived filter's *Show archived bots* / *Hide archived bots* (S14).
 pub(crate) const ARCHIVED_TOGGLE: Key = Key::surface(SURFACE, "archived-toggle");
 /// The Archived filter's heading.
@@ -302,6 +308,11 @@ pub(crate) struct BotsRoster {
     activity_owed: bool,
     activity_seq: u64,
     activity_in_flight: bool,
+    /// **When the activity shown was answered**, while it is still what the
+    /// window knows of running work: cleared by a failed read, by the
+    /// roster being hidden (nothing is read while hidden) and by a change
+    /// of workspace.
+    activity_read_at: Option<std::time::Instant>,
     /// A sub-row asked for: the Bot and the conversation, for the window.
     wants_open_chat: Option<(BotId, koru_ai_core::ChatId)>,
     work: Cell<Work>,
@@ -441,6 +452,7 @@ impl BotsRoster {
         self.activity.clear();
         self.activity_truncated = false;
         self.activity_in_flight = false;
+        self.activity_read_at = None;
         self.activity_seq = self.activity_seq.wrapping_add(1);
         self.wants_open_chat = None;
         self.archived.clear();
@@ -471,6 +483,8 @@ impl BotsRoster {
         if !shown {
             self.fresh = false;
             self.archived_fresh = false;
+            // Nothing tells a hidden roster that work started or stopped.
+            self.activity_read_at = None;
             self.focus = None;
             self.hover = None;
             // Nothing is listed while hidden: shown again, it lists once.
@@ -731,6 +745,21 @@ impl BotsRoster {
         self.activity_truncated
     }
 
+    /// **The activity read, while it is what is running now** — for the
+    /// question before an Archive or a Trash (`bots::stops`), which sends
+    /// nothing to find out. Its entries and whether it stopped before the
+    /// end, only when it answered for this workspace, nothing was owed or on
+    /// its way since (a Bot tab's work moving owes a read), the roster has
+    /// been shown throughout, and it is no older than [`ACTIVITY_FRESH`].
+    /// `None` otherwise: the window does not know.
+    pub(crate) fn activity_now(&self, now: std::time::Instant) -> Option<(&[BotActivity], bool)> {
+        let at = self.activity_read_at?;
+        let fresh = now.saturating_duration_since(at) <= ACTIVITY_FRESH
+            && !self.activity_owed
+            && !self.activity_in_flight;
+        fresh.then_some((self.activity.as_slice(), self.activity_truncated))
+    }
+
     /// One Bot's running and Needs-you conversations, as the rows' marks.
     pub(crate) fn activity_of(
         &self,
@@ -945,11 +974,34 @@ impl BotsRoster {
             return false;
         }
         self.activity_in_flight = false;
-        if let Ok(page) = result {
-            self.activity = page.entries;
-            self.activity_truncated = page.truncated;
+        match result {
+            Ok(page) => {
+                self.activity = page.entries;
+                self.activity_truncated = page.truncated;
+                self.activity_read_at = Some(std::time::Instant::now());
+            }
+            // What was shown stays on the rows, but it is not what the
+            // window knows is running now.
+            Err(_) => self.activity_read_at = None,
         }
         true
+    }
+
+    /// The activity as a read answered `at`, the roster shown: a test
+    /// standing in for `ListActivity`'s answer at a time of its choosing.
+    #[cfg(test)]
+    pub(crate) fn activity_read_for_test(
+        &mut self,
+        entries: Vec<BotActivity>,
+        truncated: bool,
+        at: std::time::Instant,
+    ) {
+        self.shown = true;
+        self.activity = entries;
+        self.activity_truncated = truncated;
+        self.activity_owed = false;
+        self.activity_in_flight = false;
+        self.activity_read_at = Some(at);
     }
 
     fn has(&self, id: BotId) -> bool {

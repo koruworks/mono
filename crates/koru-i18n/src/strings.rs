@@ -3594,13 +3594,21 @@ pub enum Key {
     BotsDeliveringResume,
     /// The Bot's read names an access change still being delivered to what runs it (`pending_change`, kind `update_access`). Non-English columns machine-written, awaiting a native read.
     BotsDeliveringAccess,
+    /// A reply of the Bot is running now: an Archive or a Trash of the Bot stops it for good. The first paragraph of the Archive or Trash question, above its body, when the window knows (`bots::stops`); the question's default is then Cancel (QUESTIONS O46). Non-English columns machine-written, awaiting a native read.
+    BotsStopsRunning,
+    /// A reply of the Bot is waiting on the person (an approval, a permission): an Archive or a Trash of the Bot stops it for good. The first paragraph of the Archive or Trash question, above its body, when the window knows (`bots::stops`); the question's default is then Cancel (QUESTIONS O46). Non-English columns machine-written, awaiting a native read.
+    BotsStopsWaiting,
+    /// A reply is running in the conversation now: its Trash stops it for good. The first paragraph of the Archive or Trash question, above its body, when the window knows (`bots::stops`); the question's default is then Cancel (QUESTIONS O46). Non-English columns machine-written, awaiting a native read.
+    BotsConversationStopsRunning,
+    /// A reply in the conversation is waiting on the person: its Trash stops it for good. The first paragraph of the Archive or Trash question, above its body, when the window knows (`bots::stops`); the question's default is then Cancel (QUESTIONS O46). Non-English columns machine-written, awaiting a native read.
+    BotsConversationStopsWaiting,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2429] = [
+    pub const ALL: [Key; 2433] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6030,6 +6038,10 @@ impl Key {
         Key::BotsDeliveringPause,
         Key::BotsDeliveringResume,
         Key::BotsDeliveringAccess,
+        Key::BotsStopsRunning,
+        Key::BotsStopsWaiting,
+        Key::BotsConversationStopsRunning,
+        Key::BotsConversationStopsWaiting,
     ];
 }
 
@@ -19378,4 +19390,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsDeliveringPause, en: "Koru is still telling what runs this bot to pause it. Other changes wait until that's done.", es: "Koru todavía está indicando a lo que ejecuta este bot que lo pause. Los demás cambios esperan hasta que termine.", pt_br: "O Koru ainda está avisando o que executa este bot para pausá-lo. As outras alterações esperam até que isso termine.", de: "Koru teilt dem, was diesen Bot ausführt, noch mit, ihn zu pausieren. Andere Änderungen warten, bis das erledigt ist.", fr: "Koru indique encore à ce qui exécute ce bot de le mettre en pause. Les autres modifications attendent que ce soit fait.", ar: "لا يزال Koru يُبلغ ما يشغّل هذا البوت بإيقافه مؤقتًا. تنتظر التغييرات الأخرى حتى يكتمل ذلك.", zh_hans: "Koru 仍在通知运行此 Bot 的程序暂停它。其他更改会等到这一步完成。", ja: "Koru はこの Bot を実行しているものに、一時停止するようまだ伝えています。ほかの変更はそれが終わるまで待機します。" },
     Row { key: Key::BotsDeliveringResume, en: "Koru is still telling what runs this bot to resume it. Other changes wait until that's done.", es: "Koru todavía está indicando a lo que ejecuta este bot que lo reanude. Los demás cambios esperan hasta que termine.", pt_br: "O Koru ainda está avisando o que executa este bot para retomá-lo. As outras alterações esperam até que isso termine.", de: "Koru teilt dem, was diesen Bot ausführt, noch mit, ihn fortzusetzen. Andere Änderungen warten, bis das erledigt ist.", fr: "Koru indique encore à ce qui exécute ce bot de le reprendre. Les autres modifications attendent que ce soit fait.", ar: "لا يزال Koru يُبلغ ما يشغّل هذا البوت باستئنافه. تنتظر التغييرات الأخرى حتى يكتمل ذلك.", zh_hans: "Koru 仍在通知运行此 Bot 的程序恢复它。其他更改会等到这一步完成。", ja: "Koru はこの Bot を実行しているものに、再開するようまだ伝えています。ほかの変更はそれが終わるまで待機します。" },
     Row { key: Key::BotsDeliveringAccess, en: "Koru is still giving what runs this bot its new access. Other changes wait until that's done.", es: "Koru todavía está dando a lo que ejecuta este bot su nuevo acceso. Los demás cambios esperan hasta que termine.", pt_br: "O Koru ainda está passando o novo acesso para o que executa este bot. As outras alterações esperam até que isso termine.", de: "Koru gibt dem, was diesen Bot ausführt, noch seinen neuen Zugriff. Andere Änderungen warten, bis das erledigt ist.", fr: "Koru transmet encore son nouvel accès à ce qui exécute ce bot. Les autres modifications attendent que ce soit fait.", ar: "لا يزال Koru يمنح ما يشغّل هذا البوت صلاحية الوصول الجديدة. تنتظر التغييرات الأخرى حتى يكتمل ذلك.", zh_hans: "Koru 仍在把新的访问权限交给运行此 Bot 的程序。其他更改会等到这一步完成。", ja: "Koru はこの Bot を実行しているものに、新しいアクセス権をまだ渡しています。ほかの変更はそれが終わるまで待機します。" },
+    // ------------------------------------------- Bots P1.8: an Archive or Trash that stops a reply running now
+    Row { key: Key::BotsStopsRunning, en: "A reply is running in this bot now. It will be stopped, and it won't pick up again when the bot comes back.", es: "Hay una respuesta en curso en este bot ahora mismo. Se detendrá y no se reanudará cuando el bot vuelva.", pt_br: "Há uma resposta em andamento neste bot agora. Ela será interrompida e não continuará quando o bot voltar.", de: "In diesem Bot läuft gerade eine Antwort. Sie wird gestoppt und setzt nicht wieder ein, wenn der Bot zurückkommt.", fr: "Une réponse est en cours dans ce bot en ce moment. Elle sera arrêtée et ne reprendra pas quand le bot reviendra.", ar: "هناك رد قيد التشغيل في هذا البوت الآن. سيُوقَف، ولن يُستأنف عند عودة البوت.", zh_hans: "此 Bot 中现在有一个回复正在运行。它将被停止，Bot 恢复后也不会继续。", ja: "この Bot では今、返信を実行中です。返信は停止され、Bot が戻っても再開されません。" },
+    Row { key: Key::BotsStopsWaiting, en: "A reply in this bot is waiting for you now. It will be stopped, and it won't pick up again when the bot comes back.", es: "Una respuesta de este bot está esperando tu decisión ahora mismo. Se detendrá y no se reanudará cuando el bot vuelva.", pt_br: "Uma resposta deste bot está aguardando você agora. Ela será interrompida e não continuará quando o bot voltar.", de: "Eine Antwort in diesem Bot wartet gerade auf Sie. Sie wird gestoppt und setzt nicht wieder ein, wenn der Bot zurückkommt.", fr: "Une réponse de ce bot vous attend en ce moment. Elle sera arrêtée et ne reprendra pas quand le bot reviendra.", ar: "هناك رد في هذا البوت ينتظرك الآن. سيُوقَف، ولن يُستأنف عند عودة البوت.", zh_hans: "此 Bot 中现在有一个回复正在等你处理。它将被停止，Bot 恢复后也不会继续。", ja: "この Bot の返信が今、あなたの対応を待っています。返信は停止され、Bot が戻っても再開されません。" },
+    Row { key: Key::BotsConversationStopsRunning, en: "A reply is running in this conversation now. It will be stopped, and it won't pick up again if you restore the conversation.", es: "Hay una respuesta en curso en esta conversación ahora mismo. Se detendrá y no se reanudará si restauras la conversación.", pt_br: "Há uma resposta em andamento nesta conversa agora. Ela será interrompida e não continuará se você restaurar a conversa.", de: "In dieser Unterhaltung läuft gerade eine Antwort. Sie wird gestoppt und setzt nicht wieder ein, wenn Sie die Unterhaltung wiederherstellen.", fr: "Une réponse est en cours dans cette conversation en ce moment. Elle sera arrêtée et ne reprendra pas si vous restaurez la conversation.", ar: "هناك رد قيد التشغيل في هذه المحادثة الآن. سيُوقَف، ولن يُستأنف إذا استعدت المحادثة.", zh_hans: "此对话中现在有一个回复正在运行。它将被停止，即使你恢复此对话也不会继续。", ja: "この会話では今、返信を実行中です。返信は停止され、会話を復元しても再開されません。" },
+    Row { key: Key::BotsConversationStopsWaiting, en: "A reply in this conversation is waiting for you now. It will be stopped, and it won't pick up again if you restore the conversation.", es: "Una respuesta de esta conversación está esperando tu decisión ahora mismo. Se detendrá y no se reanudará si restauras la conversación.", pt_br: "Uma resposta desta conversa está aguardando você agora. Ela será interrompida e não continuará se você restaurar a conversa.", de: "Eine Antwort in dieser Unterhaltung wartet gerade auf Sie. Sie wird gestoppt und setzt nicht wieder ein, wenn Sie die Unterhaltung wiederherstellen.", fr: "Une réponse de cette conversation vous attend en ce moment. Elle sera arrêtée et ne reprendra pas si vous restaurez la conversation.", ar: "هناك رد في هذه المحادثة ينتظرك الآن. سيُوقَف، ولن يُستأنف إذا استعدت المحادثة.", zh_hans: "此对话中现在有一个回复正在等你处理。它将被停止，即使你恢复此对话也不会继续。", ja: "この会話の返信が今、あなたの対応を待っています。返信は停止され、会話を復元しても再開されません。" },
 ];

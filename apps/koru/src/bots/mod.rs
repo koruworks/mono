@@ -30,6 +30,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod link;
 pub(crate) mod roster;
 pub(crate) mod settings;
+pub(crate) mod stops;
 pub(crate) mod trash;
 pub(crate) mod view;
 

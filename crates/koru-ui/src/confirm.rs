@@ -236,6 +236,22 @@ impl Confirm {
         }
     }
 
+    /// **The answers as a host publishes them to an assistive technology**:
+    /// each answer, its label and where it is drawn, left to right. What
+    /// Enter presses is [`Self::default_action`], so a host marks that answer
+    /// as the default and the tree says what the keyboard will do. Read-only:
+    /// it changes nothing about the dialog.
+    pub fn answers(
+        &self,
+        engine: &mut TextEngine,
+        viewport: (f32, f32),
+    ) -> Vec<(Outcome, String, Rect)> {
+        self.targets(engine, viewport)
+            .into_iter()
+            .map(|(hit, rect)| (answer(hit), self.label_of(hit).to_owned(), rect))
+            .collect()
+    }
+
     pub fn title(&self) -> &str {
         &self.title
     }

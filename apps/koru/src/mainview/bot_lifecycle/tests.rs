@@ -535,3 +535,273 @@ fn empty_trash_with_only_bot_rows_says_bots_cannot_be_deleted_yet() {
         dialog.body()
     );
 }
+
+// ------------------- Cancel is the default when a reply would be stopped
+
+/// What the window knows of running work, case by case.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Known {
+    Running,
+    NeedsYou,
+    Idle,
+    Unknown,
+}
+
+/// The three questions.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Question {
+    Archive,
+    Trash,
+    TrashConversation,
+}
+
+/// Ask `question` with the roster's activity read as `known` says: an
+/// entry for `chat` running or waiting, as `list_activity` answers
+/// (`apps/koru-ai-server/src/worker/bots/reads.rs`), none, or never read.
+fn ask_with(question: Question, known: Known) -> (MainView, Receiver<Command>, Bot, u64) {
+    let (mut v, commands, bot) = with_bot_tab();
+    let tab = front(&mut v);
+    // A whole Bot's question counts any of its conversations — here not the
+    // one its tab shows; a conversation's, that conversation alone.
+    let chat = match question {
+        Question::TrashConversation => bot.main_chat,
+        Question::Archive | Question::Trash => koru_ai_ui::ChatId::new(),
+    };
+    let entries = |state| {
+        vec![koru_ai_core::bots::BotActivity {
+            bot_id: bot.id,
+            chat_id: chat,
+            state,
+        }]
+    };
+    let read = match known {
+        Known::Running => Some(entries(koru_ai_core::bots::BotActivityState::Running)),
+        Known::NeedsYou => Some(entries(koru_ai_core::bots::BotActivityState::NeedsYou)),
+        Known::Idle => Some(Vec::new()),
+        Known::Unknown => None,
+    };
+    if let Some(read) = read {
+        v.explore
+            .bots_mut()
+            .activity_read_for_test(read, false, std::time::Instant::now());
+    }
+    let asked = match question {
+        Question::Archive => v.choose_bot_lifecycle(bot.id, tab, MenuAction::ArchiveBot),
+        Question::Trash => v.choose_bot_lifecycle(bot.id, tab, MenuAction::TrashBot),
+        Question::TrashConversation => v.ask_trash_bot_conversation(bot.id, tab, bot.main_chat),
+    };
+    assert!(asked, "{question:?} {known:?}: it asks");
+    (v, commands, bot, tab)
+}
+
+/// The window's published tree while its question stands: the dialog.
+fn dialog_node(v: &MainView) -> koru_workspace_host::accessibility::SemanticNode {
+    let tree = v.semantics(
+        koru_workspace_host::accessibility::ViewSlot::from_raw(1),
+        koru_workspace_host::accessibility::Scope::Whole,
+    );
+    fn find(
+        nodes: &[koru_workspace_host::accessibility::SemanticNode],
+    ) -> Option<koru_workspace_host::accessibility::SemanticNode> {
+        nodes.iter().find_map(|node| {
+            (node.role == accesskit::Role::Dialog)
+                .then(|| node.clone())
+                .or_else(|| find(&node.children))
+        })
+    }
+    find(&tree).expect("the question is published")
+}
+
+/// **Cancel is the default when an Archive, a Trash or a conversation's
+/// Trash will stop work running now** (QUESTIONS O46, the owner's): a reply
+/// running or waiting on the person — in any of the Bot's conversations for
+/// the whole Bot, in that conversation for its Trash — or work the window
+/// cannot rule out (the activity never read). The question then says a
+/// reply will be stopped when it knows one is. Only a known idle keeps
+/// Enter confirming, with the words as they always were. For every case:
+/// Enter presses the default, Escape cancels, Tab reaches both answers, and
+/// the published tree marks the default — and only it — as the default
+/// button.
+#[test]
+fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
+    use koru_ui::confirm::Outcome;
+    use winit::keyboard::{Key, NamedKey};
+    let lang = crate::format::lang();
+    for question in [
+        Question::Archive,
+        Question::Trash,
+        Question::TrashConversation,
+    ] {
+        for known in [Known::Running, Known::NeedsYou, Known::Idle, Known::Unknown] {
+            let case = format!("{question:?} {known:?}");
+            let (mut v, commands, _bot, _tab) = ask_with(question, known);
+            let conversation = question == Question::TrashConversation;
+            let (dialog, _) = v.confirm.as_ref().expect("it asks");
+            let default = if known == Known::Idle {
+                Outcome::Confirm
+            } else {
+                Outcome::Cancel
+            };
+            assert_eq!(dialog.default_action(), Some(default), "{case}");
+            let lead = match (known, conversation) {
+                (Known::Running, false) => Some(Words::BotsStopsRunning),
+                (Known::NeedsYou, false) => Some(Words::BotsStopsWaiting),
+                (Known::Running, true) => Some(Words::BotsConversationStopsRunning),
+                (Known::NeedsYou, true) => Some(Words::BotsConversationStopsWaiting),
+                _ => None,
+            };
+            let leads = [
+                Words::BotsStopsRunning,
+                Words::BotsStopsWaiting,
+                Words::BotsConversationStopsRunning,
+                Words::BotsConversationStopsWaiting,
+            ];
+            match lead {
+                Some(words) => assert!(
+                    dialog
+                        .body()
+                        .starts_with(&format!("{}\n\n", t(lang, words))),
+                    "{case}: {}",
+                    dialog.body()
+                ),
+                None => assert!(
+                    leads
+                        .iter()
+                        .all(|words| !dialog.body().contains(t(lang, *words))),
+                    "{case}: nothing said to be running: {}",
+                    dialog.body()
+                ),
+            }
+            assert!(
+                dialog
+                    .body()
+                    .contains("including a session you have taken over"),
+                "{case}: what always happens is still said"
+            );
+            // The tree marks the default answer, and only it.
+            v.seat_accessibility(koru_workspace_host::accessibility::WindowSlot::from_raw(1));
+            let node = dialog_node(&v);
+            assert_eq!(
+                node.label.as_deref(),
+                Some(dialog_title(&v).as_str()),
+                "{case}"
+            );
+            let defaults: Vec<_> = node
+                .children
+                .iter()
+                .filter(|child| child.role == accesskit::Role::DefaultButton)
+                .filter_map(|child| child.label.clone())
+                .collect();
+            let cancel = t(lang, Words::BotsDialogCancel).to_owned();
+            let expected = if default == Outcome::Cancel {
+                cancel.clone()
+            } else {
+                dialog_verb(question, lang)
+            };
+            assert_eq!(defaults, [expected], "{case}");
+            assert_eq!(node.children.len(), 2, "{case}: both answers published");
+            // The keyboard: Enter presses the default and Escape cancels —
+            // through the window, so a Cancel sends nothing and a yes sends.
+            let (dialog, subject) = v.confirm.take().unwrap();
+            let mut dialog = dialog;
+            assert_eq!(
+                dialog.key(&Key::Named(NamedKey::Escape)),
+                Outcome::Cancel,
+                "{case}"
+            );
+            let out = dialog.key(&Key::Named(NamedKey::Enter));
+            assert_eq!(out, default, "{case}");
+            v.confirm = Some((dialog, subject));
+            v.settle_confirm_outcome(out);
+            let sent = writes(&commands);
+            assert_eq!(
+                sent.is_empty(),
+                default == Outcome::Cancel,
+                "{case}: {sent:?}"
+            );
+            // Tab reaches both answers.
+            let (mut v, _commands, _bot, _tab) = ask_with(question, known);
+            let (dialog, _) = v.confirm.as_mut().unwrap();
+            assert_eq!(dialog.key(&Key::Named(NamedKey::Tab)), Outcome::Keep);
+            assert_eq!(
+                dialog.default_action(),
+                Some(Outcome::Confirm),
+                "{case}: Tab reaches the answer"
+            );
+            assert_eq!(dialog.key(&Key::Named(NamedKey::Tab)), Outcome::Keep);
+            assert_eq!(
+                dialog.default_action(),
+                Some(Outcome::Cancel),
+                "{case}: and Cancel"
+            );
+        }
+    }
+}
+
+/// The question's title, as asked.
+fn dialog_title(v: &MainView) -> String {
+    v.confirm
+        .as_ref()
+        .map(|(dialog, _)| dialog.title().to_owned())
+        .unwrap_or_default()
+}
+
+/// The answering button's word for `question`.
+fn dialog_verb(question: Question, lang: koru_i18n::Lang) -> String {
+    t(
+        lang,
+        match question {
+            Question::Archive => Words::BotsArchiveConfirm,
+            Question::Trash | Question::TrashConversation => Words::BotsTrashConfirm,
+        },
+    )
+    .to_owned()
+}
+
+/// **The tab's own conversation is evidence of work running**: with no
+/// activity read, a reply the tab shows running makes Cancel the default
+/// and says so. A click on the published default answer cancels, as a
+/// press would, and sends nothing; a click on the other confirms.
+#[test]
+fn the_tabs_own_running_reply_makes_cancel_the_default_and_a_click_answers() {
+    use koru_ui::confirm::Outcome;
+    let (mut v, commands, bot) = with_bot_tab();
+    let tab = front(&mut v);
+    let TabView::Bot(view) = &mut v.tabs_mut().active_mut().view else {
+        panic!("a Bot tab");
+    };
+    view.conversation_mut()
+        .expect("bound")
+        .set_status(koru_chats_ui::ChatStatus::Working, false);
+    assert!(v.choose_bot_lifecycle(bot.id, tab, MenuAction::ArchiveBot));
+    let (dialog, _) = v.confirm.as_ref().expect("it asks");
+    assert_eq!(dialog.default_action(), Some(Outcome::Cancel));
+    let lang = crate::format::lang();
+    assert!(dialog.body().starts_with(t(lang, Words::BotsStopsRunning)));
+    v.seat_accessibility(koru_workspace_host::accessibility::WindowSlot::from_raw(1));
+    let node = dialog_node(&v);
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    let default = node
+        .children
+        .iter()
+        .find(|child| child.role == accesskit::Role::DefaultButton)
+        .expect("a default")
+        .occurrence;
+    assert!(v.accessibility_action(&mut ws, default, accesskit::Action::Click, None));
+    assert!(v.confirm.is_none(), "answered");
+    assert!(writes(&commands).is_empty(), "Cancel sends nothing");
+    assert!(v.choose_bot_lifecycle(bot.id, tab, MenuAction::ArchiveBot));
+    let other = dialog_node(&v)
+        .children
+        .iter()
+        .find(|child| child.role == accesskit::Role::Button)
+        .expect("the other answer")
+        .occurrence;
+    assert!(v.accessibility_action(&mut ws, other, accesskit::Action::Click, None));
+    let sent = writes(&commands);
+    assert!(
+        matches!(sent.as_slice(), [BotCommand::Archive { bot_id, .. }] if *bot_id == bot.id),
+        "{sent:?}"
+    );
+}

@@ -1529,3 +1529,59 @@ fn unfinished_creations_past_one_listing_say_there_are_more() {
         assert!(!t(lang, Words::BotsUnfinishedMore).trim().is_empty());
     }
 }
+
+/// **The activity read is what is running now only while it is fresh**
+/// (QUESTIONS O46: the question before an Archive or a Trash sends nothing
+/// to find out). Answered by `ListActivity` (`list_activity`,
+/// `apps/koru-ai-server/src/worker/bots/reads.rs`, through the real link):
+/// it counts; not once a Bot tab's work moved (a read owed), while that
+/// read is on its way, once it fails, once the roster is hidden, or once it
+/// is older than `ACTIVITY_FRESH`.
+#[test]
+fn the_activity_counts_as_running_now_only_while_fresh() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    let now = std::time::Instant::now();
+    assert!(f.roster.activity_now(now).is_none(), "never read");
+    f.shown_with(vec![scout.clone()]);
+    let seq = f.activity_asked();
+    assert!(f.roster.activity_now(now).is_none(), "on its way");
+    assert!(f.roster.take_activity(
+        seq,
+        f.home,
+        Ok(activity_page(
+            vec![(scout.id, scout.main_chat, BotActivityState::Running)],
+            false
+        ))
+    ));
+    let now = std::time::Instant::now();
+    let (entries, truncated) = f.roster.activity_now(now).expect("fresh");
+    assert_eq!(entries.len(), 1);
+    assert!(!truncated);
+    assert!(
+        f.roster
+            .activity_now(now + ACTIVITY_FRESH + std::time::Duration::from_secs(1))
+            .is_none(),
+        "too old"
+    );
+    // A Bot tab saw its work move: the read is owed, so not what runs now.
+    f.roster.owe_activity();
+    assert!(f.roster.activity_now(now).is_none(), "owed");
+    f.roster.maintain();
+    let again = f.activity_asked();
+    assert!(f.roster.take_activity(again, f.home, Err(Failure::lost())));
+    assert_eq!(f.roster.activity().len(), 1, "the rows keep what was shown");
+    assert!(
+        f.roster.activity_now(now).is_none(),
+        "a failed read knows nothing"
+    );
+    // Hidden: nothing tells it what moved.
+    f.roster
+        .activity_read_for_test(Vec::new(), false, std::time::Instant::now());
+    assert!(f.roster.activity_now(std::time::Instant::now()).is_some());
+    f.roster.set_shown(false);
+    assert!(
+        f.roster.activity_now(std::time::Instant::now()).is_none(),
+        "hidden"
+    );
+}
