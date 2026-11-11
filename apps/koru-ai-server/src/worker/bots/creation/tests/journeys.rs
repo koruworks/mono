@@ -599,6 +599,52 @@ fn a_completed_folder_that_disappears_is_never_recreated() {
 }
 
 #[test]
+fn a_completed_creation_reads_with_its_archived_bot_and_without_a_trashed_one() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, bot_id) = request_of(&command);
+    h.creation(command.clone()).unwrap();
+    assert_eq!(h.settle(request).stage, BotCreationStage::Completed);
+    let repo = h.stop();
+    // Archived: the creation still reads, with the Bot as it reads now.
+    repo.fixture_execute_batch(&format!(
+        "UPDATE bots SET lifecycle='archived' WHERE bot_id='{}'",
+        bot_id.to_storage()
+    ))
+    .unwrap();
+    let h = start(repo, &owner, &fs);
+    let archived = h.read(request).unwrap();
+    assert_eq!(archived.stage, BotCreationStage::Completed);
+    assert_eq!(
+        archived.bot.map(|bot| (bot.id, bot.lifecycle)),
+        Some((bot_id, BotLifecycle::Archived))
+    );
+    // The exact retry is a read too: it answers the same, and changes nothing.
+    assert_eq!(
+        h.creation(command.clone()).unwrap().stage,
+        BotCreationStage::Completed
+    );
+    let repo = h.stop();
+    // Trashed: the creation is the owner's record and stays readable, but
+    // the Bot is not shown, as a Bot read answers `not_found` for it.
+    repo.fixture_execute_batch(&format!(
+        "UPDATE bots SET lifecycle='trashed' WHERE bot_id='{}'",
+        bot_id.to_storage()
+    ))
+    .unwrap();
+    let h = start(repo, &owner, &fs);
+    let trashed = h.read(request).unwrap();
+    assert_eq!(trashed.stage, BotCreationStage::Completed);
+    assert_eq!(trashed.bot, None);
+    assert_eq!(trashed.bot_id, bot_id);
+    assert_eq!(h.list(owner.workspace, None, 10).unwrap().creations, vec![]);
+    assert_eq!(owner.store_calls(), 1);
+    h.stop();
+}
+
+#[test]
 fn the_list_pages_unfinished_creations_oldest_first() {
     let owner = FakeOwner::new();
     let fs = FakeFs::with(&[root()]);

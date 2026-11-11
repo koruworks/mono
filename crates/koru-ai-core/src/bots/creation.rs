@@ -471,6 +471,8 @@ impl BotCreationRecord {
             folder_frozen_at_ms: None,
             created_at_ms: now,
             updated_at_ms: now,
+            lifecycle: Default::default(),
+            open_operation: None,
         })
     }
 
