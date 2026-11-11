@@ -36,4 +36,17 @@ fn every_top_level_shape_has_a_schema() {
     let _ = schemars::schema_for!(UsageFact);
     let _ = schemars::schema_for!(ModelIdentity);
     let _ = schemars::schema_for!(RunEvent);
+    // The Run view `/v1/runs` and the Bots API's `read_run` answer.
+    let view = serde_json::to_value(schemars::schema_for!(RunView)).unwrap();
+    for named in [
+        "RunExecution",
+        "TimelineWindow",
+        "TimelineItem",
+        "RunHeader",
+    ] {
+        assert!(
+            view["$defs"].get(named).is_some(),
+            "{named} missing from RunView"
+        );
+    }
 }

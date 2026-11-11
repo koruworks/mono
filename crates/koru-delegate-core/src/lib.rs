@@ -51,6 +51,7 @@ mod text;
 mod timeline;
 mod tool_failures;
 mod turn;
+mod view;
 
 pub use actor::ActorRef;
 pub use attempt::{
@@ -104,6 +105,7 @@ pub use tool_failures::{
     ToolKind,
 };
 pub use turn::{TurnIdentity, TurnOriginator};
+pub use view::{RunExecution, RunView, TimelineItem, TimelineWindow};
 
 // The vocabulary this crate speaks but does not own, re-exported so a
 // dependant names one crate for a run and its parts.

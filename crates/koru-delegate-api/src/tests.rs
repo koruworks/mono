@@ -18,6 +18,8 @@ use uuid::Uuid;
 use crate::ipc::{Caller, Request, Response, WIRE_VERSION};
 use crate::*;
 
+mod run_view;
+
 fn v4(n: u8) -> Uuid {
     format!("00000000-0000-4000-8000-0000000000{n:02x}")
         .parse()
