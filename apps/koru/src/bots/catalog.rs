@@ -497,9 +497,12 @@ impl Catalog {
     }
 
     /// The agent a new Bot starts on: the person's default agent where it is
-    /// registered and not turned off, else the first ready one in their
-    /// order, else the first. Never a fallback the person did not see: the
-    /// form shows it and its readiness (S8, `BotView::seed_agent`).
+    /// registered and not turned off, else the first one in their order
+    /// already known to be ready, else the first. The form seeds its draft
+    /// once, as soon as the agents are listed — usually before any
+    /// readiness has answered, so in practice that is the default agent or
+    /// the first — and never swaps the agent afterwards: the person sees it
+    /// and its readiness (S8, `BotView::seed_agent`).
     pub(crate) fn preferred(&self, settings: &AgentSettings) -> Option<AiProviderId> {
         let agents = self.control_agents(settings);
         let shown: Vec<&Agent<'_, AiProviderId>> =

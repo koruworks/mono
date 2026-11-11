@@ -136,6 +136,13 @@ pub(crate) struct CreateForm {
     /// A Create has gone at least once with these identities: the owner may
     /// hold the creation even if no answer came.
     sent: bool,
+    /// **A Create went and no answer said whether the owner took it.** The
+    /// inputs stay as they were sent and a read is owed: the owner's
+    /// creation, or `not_found` (never taken — the draft is the person's
+    /// again, under the same identities). An edit sent under the same
+    /// request could otherwise be refused, or worse, the form could say
+    /// one thing while the owner makes another.
+    uncertain: bool,
     notice: Option<Words>,
     /// A read is owed: the tab was shown again, or an answer said the
     /// creation may be other than it looks.
@@ -170,6 +177,7 @@ impl CreateForm {
             ended: None,
             in_flight: None,
             sent: false,
+            uncertain: false,
             notice: None,
             read_owed: false,
             next_read: None,
@@ -221,7 +229,7 @@ impl CreateForm {
     /// holds no creation for this draft. Once it does, Retry resumes what
     /// was recorded, so an edit could not reach it.
     pub(crate) fn editable(&self) -> bool {
-        self.in_flight.is_none() && self.live.is_none()
+        self.in_flight.is_none() && self.live.is_none() && !self.uncertain
     }
 
     // ------------------------------------------------------------ inputs
@@ -562,6 +570,7 @@ impl CreateForm {
                 if creation.request_id == self.request && creation.bot_id == self.bot =>
             {
                 self.notice = None;
+                self.uncertain = false;
                 match creation.stage {
                     BotCreationStage::Pending => {
                         let wait = if self
@@ -610,13 +619,22 @@ impl CreateForm {
                     self.backoff = (self.backoff * 2).min(READ_MAX);
                     self.next_read = Some(now.checked_add(self.backoff).unwrap_or(now));
                 }
+                // A Create unanswered: the owner may hold it. Read what it
+                // holds before the person can change anything.
+                Some(Sent::Create) => {
+                    self.notice = Some(Words::BotsErrUnreachable);
+                    self.uncertain = true;
+                    self.read_owed = true;
+                }
                 _ => self.notice = Some(Words::BotsErrUnreachable),
             },
             Err(Failure::Refused(code)) => {
                 match (sent, code.as_str()) {
                     // A read of a creation the owner never accepted: there
                     // is none, and the draft is the person's to send.
-                    (Some(Sent::Read), "not_found") if self.live.is_none() => {}
+                    (Some(Sent::Read), "not_found") if self.live.is_none() => {
+                        self.uncertain = false;
+                    }
                     // The same request with other inputs: show what the
                     // owner holds.
                     (_, "request_conflict") => {
@@ -639,6 +657,7 @@ impl CreateForm {
         self.bot = BotId::mint();
         self.live = None;
         self.sent = false;
+        self.uncertain = false;
         self.read_owed = false;
         self.next_read = None;
         self.backoff = READ_FIRST;

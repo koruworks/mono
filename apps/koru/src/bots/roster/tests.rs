@@ -963,3 +963,173 @@ fn a_stale_or_failed_creations_answer_keeps_what_was_listed() {
         );
     }
 }
+
+/// **A creation retried from the Unfinished group is followed until it
+/// finishes**: while it moves and the roster is shown, the roster lists
+/// again on the create form's bounded clock; once the owner no longer lists
+/// it as unfinished it leaves the group. An Abandon of one that finished
+/// meanwhile — `abandon_bot_creation` answers a completed creation
+/// `request_conflict` — says it was created, not that the request differed.
+#[test]
+fn a_retried_creation_is_followed_until_it_finishes() {
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    f.roster.maintain();
+    let seq = f.asked();
+    let stuck = unfinished(f.home, "Scout", true);
+    let mut moving = stuck.clone();
+    moving.stage = BotCreationStage::Pending;
+    moving.reason = None;
+    moving.retryable = false;
+    for (listed, seq) in [(stuck.clone(), seq)] {
+        f.answers
+            .send(Answer::Listed {
+                seq,
+                workspace: f.home,
+                result: Ok(Vec::new()),
+            })
+            .unwrap();
+        f.answers
+            .send(Answer::Creations {
+                seq,
+                workspace: f.home,
+                result: Ok(vec![listed]),
+            })
+            .unwrap();
+    }
+    f.roster.maintain();
+    let _ = f.commands.try_iter().count();
+    assert!(f.roster.retry(stuck.request_id));
+    let _ = f.commands.try_iter().count();
+    f.answers
+        .send(Answer::Wrote {
+            bot: stuck.bot_id,
+            request: stuck.request_id,
+            result: Ok(BotResponse::Creation {
+                creation: moving.clone(),
+            }),
+        })
+        .unwrap();
+    f.roster.maintain();
+    f.roster.maintain();
+    let seq = f.asked();
+    f.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: f.home,
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(vec![moving.clone()]),
+        })
+        .unwrap();
+    f.roster.maintain();
+    assert!(f.roster.awaiting(), "a moving creation keeps the clock");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    f.roster.maintain();
+    let seq = f.asked();
+    // Finished: the owner lists the Bot, and no unfinished creation.
+    let made = bot(stuck.bot_id, f.home, "Scout", false);
+    f.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: f.home,
+            result: Ok(vec![made.clone()]),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    f.roster.maintain();
+    assert!(f.roster.creations().is_empty(), "it left the group");
+    assert_eq!(f.ids(), vec![made.id], "and its Bot is listed");
+    let _ = f.commands.try_iter().count();
+    f.roster.set_shown(false);
+    assert!(!f.roster.awaiting(), "no clock once nothing moves");
+
+    // An Abandon of a creation that finished meanwhile.
+    let mut g = fixture();
+    g.roster.set_shown(true);
+    g.roster.maintain();
+    let seq = g.asked();
+    let other = unfinished(g.home, "CFO", false);
+    g.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: g.home,
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    g.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: g.home,
+            result: Ok(vec![other.clone()]),
+        })
+        .unwrap();
+    g.roster.maintain();
+    assert!(g.roster.abandon(other.request_id));
+    g.answers
+        .send(Answer::Wrote {
+            bot: other.bot_id,
+            request: other.request_id,
+            result: Err(Failure::Refused("request_conflict".into())),
+        })
+        .unwrap();
+    g.roster.maintain();
+    assert_eq!(g.roster.creation_refused(), Some(Words::BotsCreateCreated));
+    assert!(g.roster.creations().is_empty());
+}
+
+/// **No Unarchive while another operation of the Bot is open**: the owner
+/// would refuse it (`refuse_archived`/`bot_command_hold` in
+/// `worker/bots/lifecycle.rs`).
+#[test]
+fn no_unarchive_while_another_operation_is_open() {
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    f.roster.maintain();
+    f.asked();
+    f.roster.toggle_archived();
+    f.roster.maintain();
+    let seq = loop {
+        match f.commands.try_recv().expect("the Archived filter is asked") {
+            Command::Lifecycle { seq, .. } => break seq,
+            _ => continue,
+        }
+    };
+    let mut archived = f.bot("Scout");
+    archived.lifecycle = BotLifecycle::Archived;
+    archived.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 1,
+    });
+    archived.open_operation = Some(koru_ai_core::bots::BotOpenLifecycle {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Trash,
+        chat_id: None,
+        stage: koru_ai_core::bots::BotLifecycleStage::Settling,
+        refusal: None,
+    });
+    f.answers
+        .send(Answer::Lifecycle {
+            seq,
+            workspace: f.home,
+            lifecycle: BotLifecycle::Archived,
+            result: Ok(vec![archived.clone()]),
+        })
+        .unwrap();
+    f.roster.maintain();
+    assert!(!f.roster.can_unarchive(archived.id));
+    assert!(!f.roster.unarchive(archived.id), "nothing sent");
+    assert!(!frame_of(&f.roster).contains(unarchive_key(archived.id)));
+}

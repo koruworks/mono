@@ -330,6 +330,12 @@ pub(crate) struct BotsRoster {
     creations_in_flight: bool,
     /// A Retry or an Abandon on its way, by the creation's request.
     creations_acting: std::collections::HashSet<BotRequestId>,
+    /// **When a moving creation is listed again**: the create form's
+    /// bounded clock (250 ms doubling to two seconds), only while shown and
+    /// only while one of them moves, so a creation retried from here leaves
+    /// the group when it finishes and its Bot is listed.
+    creations_next: Option<std::time::Instant>,
+    creations_backoff: std::time::Duration,
     /// Why the last Retry or Abandon from here did not happen.
     creation_refused: Option<Words>,
     /// The creation abandoned from here last: what it left, said once.
@@ -437,6 +443,10 @@ impl BotsRoster {
         self.creations_in_flight = false;
         self.creation_refused = None;
         self.abandoned = None;
+        // An answer still on its way is the old workspace's, never this one's.
+        self.unarchiving.clear();
+        self.creations_acting.clear();
+        self.creations_next = None;
         true
     }
 
@@ -453,6 +463,8 @@ impl BotsRoster {
             self.archived_fresh = false;
             self.focus = None;
             self.hover = None;
+            // Nothing is listed while hidden: shown again, it lists once.
+            self.creations_next = None;
         }
         true
     }
@@ -462,6 +474,14 @@ impl BotsRoster {
     pub(crate) fn maintain(&mut self) -> bool {
         if !self.shown {
             return false;
+        }
+        // A moving creation's clock came due: list again.
+        if self
+            .creations_next
+            .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            self.creations_next = None;
+            self.fresh = false;
         }
         let asked = !self.fresh && self.refresh();
         let archived = self.archived_open && !self.archived_fresh && self.ask_archived();
@@ -511,8 +531,16 @@ impl BotsRoster {
     }
 
     /// Whether `bot`'s row offers *Unarchive*: the owner names its Archive.
+    ///
+    /// Not while another operation of the Bot is open (`open_operation`):
+    /// the owner would refuse it, and that operation is the tab's to follow.
     pub(crate) fn can_unarchive(&self, bot: BotId) -> bool {
         self.archive_source(bot).is_some()
+            && self
+                .archived
+                .iter()
+                .find(|row| row.id == bot)
+                .is_some_and(|row| row.open_operation.is_none())
     }
 
     /// **Another surface of the window changed a Bot's lifecycle**: both
@@ -550,6 +578,9 @@ impl BotsRoster {
     /// the Archived filter listed. Nothing is shown as unarchived until the
     /// owner says so. `false` when nothing was sent.
     pub(crate) fn unarchive(&mut self, bot: BotId) -> bool {
+        if !self.can_unarchive(bot) {
+            return false;
+        }
         let (Some(listed), Some(source), Some(link)) = (
             self.archived.iter().find(|row| row.id == bot),
             self.archive_source(bot),
@@ -851,6 +882,7 @@ impl BotsRoster {
                     })
                     .collect();
             }
+            self.schedule_creations();
             changed = true;
         }
         for (request, result) in wrote {
@@ -920,6 +952,7 @@ impl BotsRoster {
                 || self.activity_in_flight
                 || self.archived_in_flight
                 || self.creations_in_flight
+                || self.creations_next.is_some()
                 || !self.unarchiving.is_empty()
                 || !self.creations_acting.is_empty())
     }
@@ -1592,6 +1625,26 @@ impl BotsRoster {
 
     /// Fold a Retry's or an Abandon's answer. `true` when it was one of
     /// this roster's.
+    /// **Keep the clock while a listed creation moves**: the next listing
+    /// at the current step, doubling to two seconds; none once none moves.
+    fn schedule_creations(&mut self) {
+        const FIRST: std::time::Duration = std::time::Duration::from_millis(250);
+        const MAX: std::time::Duration = std::time::Duration::from_secs(2);
+        let moving = self
+            .creations
+            .iter()
+            .any(|creation| creation.stage == BotCreationStage::Pending);
+        if !moving {
+            self.creations_next = None;
+            self.creations_backoff = FIRST;
+            return;
+        }
+        let wait = self.creations_backoff.max(FIRST);
+        let now = std::time::Instant::now();
+        self.creations_next = Some(now.checked_add(wait).unwrap_or(now));
+        self.creations_backoff = (wait * 2).min(MAX);
+    }
+
     fn take_creation(
         &mut self,
         request: BotRequestId,
@@ -1623,6 +1676,12 @@ impl BotsRoster {
             }
             Ok(_) => self.creation_refused = Some(Words::BotsErrNotApplied),
             Err(Failure::Unreachable) => self.creation_refused = Some(Words::BotsErrUnreachable),
+            // A finished creation answers Abandon `request_conflict`
+            // (`abandon_bot_creation`): it was made, not refused.
+            Err(Failure::Refused(code)) if code == "request_conflict" => {
+                self.creations.retain(|row| row.request_id != request);
+                self.creation_refused = Some(Words::BotsCreateCreated);
+            }
             Err(Failure::Refused(code)) => {
                 self.creation_refused = Some(super::settings::refusal_words(&code));
             }

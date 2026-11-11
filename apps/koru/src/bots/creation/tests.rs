@@ -116,18 +116,45 @@ fn a_duplicate_press_sends_nothing() {
     assert!(form.retry().is_none(), "nothing to retry while it moves");
 }
 
-/// **A Create the link did not answer keeps the draft**, and the next press
-/// is the same creation: the owner replays it if it got there.
+/// **A Create the link did not answer locks the draft until the owner
+/// says what it holds**: acceptance is unknown, so nothing can be edited
+/// and sent under the same request with other input, and a read is owed.
+/// The owner's creation is then what is shown; `not_found` (never taken,
+/// as `read_bot_creation` answers an unknown request) gives the draft back
+/// under the same identities, and the next Create is the same command.
 #[test]
-fn an_unanswered_create_keeps_the_draft_and_resends_the_same_creation() {
+fn an_unanswered_create_locks_the_draft_until_a_read_answers() {
     let mut form = ready();
     let first = form.create(None).expect("sent");
-    form.answer(form.request(), Err(Failure::Unreachable), Instant::now());
+    let request = form.request();
+    form.answer(request, Err(Failure::Unreachable), Instant::now());
     assert_eq!(form.notice(), Some(Words::BotsErrUnreachable));
-    assert!(form.editable(), "the draft is the person's again");
-    assert_eq!(form.draft().name, "Scout");
-    let again = form.create(None).expect("sent again");
-    assert_eq!(first, again, "the same command, by the same identities");
+    assert!(!form.editable(), "acceptance is unknown");
+    form.edit_name("Other");
+    assert_eq!(form.draft().name, "Scout", "no edit reaches it");
+    assert!(form.create(None).is_none(), "nothing sent under it");
+    let read = form.read(Instant::now()).expect("a read is owed");
+    assert_eq!(request_of(&read), request);
+    form.answer(
+        request,
+        Err(Failure::Refused("not_found".into())),
+        Instant::now(),
+    );
+    assert!(form.editable(), "never taken: the person's again");
+    assert_eq!(form.request(), request, "the same identities");
+    assert_eq!(form.create(None).expect("sent again"), first);
+
+    // Taken after all: the owner's creation is what the form shows.
+    let mut taken = ready();
+    taken.create(None).expect("sent");
+    let request = taken.request();
+    taken.answer(request, Err(Failure::Unreachable), Instant::now());
+    let _ = taken.read(Instant::now()).expect("read");
+    let moving = creation(&taken, BotCreationStage::Pending);
+    answer(&mut taken, moving, Instant::now());
+    assert!(!taken.editable());
+    assert_eq!(taken.live().map(|live| live.name.as_str()), Some("Scout"));
+    assert_eq!(taken.draft().name, "Scout", "the form says what was sent");
 }
 
 /// **Each stop reason has its sentence**, and Retry is offered exactly when
