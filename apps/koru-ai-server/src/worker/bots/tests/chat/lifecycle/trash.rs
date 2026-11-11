@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Trash and Restore of a Bot through the full worker (P1.7 S7), with the Archive tests' fake delegate owner. Trash
+//! Trash and Restore of a Bot and of one conversation through the full
+//! worker (P1.7 S6, S7), with the Archive tests' fake delegate owner. Trash
 //! stops work as the person's Stop, exactly as Archive does, and then only
 //! hides: no page, Run record or folder moves (O41). Every test asserts that
 //! no delegate Run `Trash`/`Restore` was sent and that the Store was never
@@ -29,6 +30,24 @@ fn trash_at(
     )
 }
 
+fn trash_chat_at(
+    client: &AiWorkerClient,
+    bot: &Bot,
+    chat: ChatId,
+    request: BotRequestId,
+    expected_revision: u64,
+) -> ApiResult<BotLifecycleProgress> {
+    lifecycle(
+        client,
+        BotCommand::TrashChat {
+            request_id: request,
+            bot_id: bot.id,
+            chat_id: chat,
+            expected_revision,
+        },
+    )
+}
+
 fn restore_at(
     client: &AiWorkerClient,
     bot: &Bot,
@@ -40,6 +59,25 @@ fn restore_at(
         BotCommand::Restore {
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
+            expected_revision,
+            source_request_id: source,
+        },
+    )
+}
+
+fn restore_chat_at(
+    client: &AiWorkerClient,
+    bot: &Bot,
+    chat: ChatId,
+    source: BotRequestId,
+    expected_revision: u64,
+) -> ApiResult<BotLifecycleProgress> {
+    lifecycle(
+        client,
+        BotCommand::RestoreChat {
+            request_id: BotRequestId::mint(),
+            bot_id: bot.id,
+            chat_id: chat,
             expected_revision,
             source_request_id: source,
         },
@@ -67,6 +105,23 @@ fn trashed_revision(client: &AiWorkerClient, bot: &Bot) -> u64 {
         .find(|b| b.id == bot.id)
         .expect("listed in Trash")
         .revision
+}
+
+fn chats_of(client: &AiWorkerClient, bot: &Bot) -> Vec<ChatId> {
+    let BotResponse::Chats { page } = client
+        .bots(
+            context(true),
+            BotCommand::ListBotChats {
+                bot_id: bot.id,
+                cursor: None,
+                limit: 100,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("conversations")
+    };
+    page.chats.into_iter().map(|c| c.chat.id).collect()
 }
 
 fn read_code(client: &AiWorkerClient, chat: ChatId) -> Option<String> {
@@ -130,6 +185,36 @@ fn api_task_in(
         fence.run = task.view.run;
     }
     task
+}
+
+/// A native effect the owner still holds for `run`.
+fn held_effect(bot: &Bot, run: d::RunId) -> d::NativePendingEffect {
+    let operation_id = Uuid::new_v4();
+    d::NativePendingEffect {
+        owner: owner_of(bot),
+        bot: bot.id,
+        key: d::NativeResultKey {
+            run,
+            attempt: d::RunAttemptId::mint(),
+            generation: d::AttemptGeneration::from_raw(1).unwrap(),
+            turn: s::AgentTurnId::mint(),
+            operation_id,
+        },
+        binding: koru_store_core::NativeEffectBinding {
+            user_scope: bot.user_scope,
+            scope: "fixture".into(),
+            request_key: Uuid::new_v4(),
+            workspace: bot.home_workspace,
+            document: DocumentId::new(),
+            kind: koru_store_core::NativeEffectKind::CreateDocument,
+            request_fingerprint: [7; 32],
+        },
+        cursor: d::NativeRecoveryCursor {
+            created_at_ms: 1,
+            run,
+            operation_id,
+        },
+    }
 }
 
 /// No delegate-side Run Trash/Restore, and no Store call, ever (O41).
@@ -293,6 +378,63 @@ fn trash_waits_for_an_executing_api_task_and_queued_work_never_starts() {
 }
 
 #[test]
+fn a_conversation_trashed_on_its_own_stays_in_trash_through_the_bots_trash_and_restore() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let alone = another_chat(&mut repository, &authority, &bot);
+    let port = Arc::new(Archiving::default());
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    let chat_trash = BotRequestId::mint();
+    trash_chat_at(&client, &bot, alone, chat_trash, bot.revision).unwrap();
+    let done = settled(&client, bot.id, chat_trash);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    assert_eq!(done.left_in_place, left_in_place());
+    // One conversation's Trash neither pauses the Bot nor moves its revision.
+    assert!(port.barriers.lock().unwrap().is_empty());
+    assert!(port.policies.lock().unwrap().is_empty());
+    let current = read_bot(&client, bot.id);
+    assert!(!current.paused);
+    assert_eq!(current.revision, bot.revision);
+    assert_eq!(chats_of(&client, &bot), vec![bot.main_chat]);
+    // The Bot's Trash captures it as already in Trash.
+    let trash = BotRequestId::mint();
+    trash_at(&client, &bot, trash, bot.revision).unwrap();
+    let done = settled(&client, bot.id, trash);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    let kept = done
+        .members
+        .iter()
+        .find(|m| m.subject == BotLifecycleSubject::Chat { chat_id: alone })
+        .unwrap();
+    assert_eq!(kept.stage, BotLifecycleMemberStage::Retained);
+    assert_eq!(kept.retained, Some(BotLifecycleRetained::AlreadyTrashed));
+    // While the Bot is in Trash, nothing of it is restored on its own.
+    let revision = trashed_revision(&client, &bot);
+    assert_eq!(
+        restore_chat_at(&client, &bot, alone, chat_trash, revision)
+            .unwrap_err()
+            .code,
+        TRASHED
+    );
+    restore_at(&client, &bot, trash, revision).unwrap();
+    // Back: the main conversation; the one trashed on its own stays.
+    assert_eq!(read_code(&client, bot.main_chat), None);
+    assert_eq!(read_code(&client, alone).as_deref(), Some(TRASHED));
+    assert_eq!(chats_of(&client, &bot), vec![bot.main_chat]);
+    // Its own Restore brings it back, and runs nothing.
+    let current = read_bot(&client, bot.id);
+    let back = restore_chat_at(&client, &bot, alone, chat_trash, current.revision).unwrap();
+    assert_eq!(back.stage, BotLifecycleStage::Completed);
+    assert_eq!(read_code(&client, alone), None);
+    assert_eq!(chats_of(&client, &bot).len(), 2);
+    assert_eq!(port.native.state.lock().unwrap().begin, 0);
+    no_owner_effects(&port);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+#[test]
 fn an_archived_bot_is_trashed_and_restored_to_the_archive() {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
@@ -341,6 +483,188 @@ fn an_archived_bot_is_trashed_and_restored_to_the_archive() {
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+#[test]
+fn trashing_one_conversation_leaves_a_running_sibling_untouched() {
+    let Running {
+        worker,
+        client,
+        returned: _returned,
+        port,
+        bot,
+        attempt,
+    } = running(false);
+    let BotResponse::Chat { reference } = client
+        .bots(
+            context(true),
+            BotCommand::CreateChat {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("conversation")
+    };
+    let other = reference.chat_id;
+    let request = BotRequestId::mint();
+    trash_chat_at(&client, &bot, other, request, bot.revision).unwrap();
+    let done = settled(&client, bot.id, request);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    // The sibling's task was never stopped, interrupted or paused.
+    let run = port.conversation_run();
+    assert_eq!(port.stops_of(run), 0);
+    assert_eq!(port.native.state.lock().unwrap().stop_calls, 0);
+    assert!(port.interrupts.lock().unwrap().is_empty());
+    assert!(port.barriers.lock().unwrap().is_empty());
+    assert!(port.policies.lock().unwrap().is_empty());
+    let current = read_bot(&client, bot.id);
+    assert!(!current.paused);
+    assert_eq!(current.revision, bot.revision);
+    // Still live: not ended by anything.
+    assert!(
+        !client
+            .read_attempt(context(true), attempt)
+            .unwrap()
+            .attempt
+            .status
+            .is_terminal()
+    );
+    assert_eq!(read_code(&client, other).as_deref(), Some(TRASHED));
+    assert_eq!(read_code(&client, bot.main_chat), None);
+    // The sibling keeps working: the person's Stop still reaches it.
+    client.cancel_attempt(context(true), attempt).unwrap();
+    until("the sibling stopped", || {
+        port.native.state.lock().unwrap().stop_calls >= 1
+    });
+    no_owner_effects(&port);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+#[test]
+fn trashing_one_conversation_stops_only_its_own_api_task_and_ignores_others_effects() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let other = another_chat(&mut repository, &authority, &bot);
+    let queued = api_task_in(
+        &mut repository,
+        &bot,
+        other,
+        d::BotAdmissionState::Queued,
+        0,
+    );
+    // Work AI cannot place in that conversation (no submission of it names
+    // it), with a native effect still held: neither is that conversation's.
+    let sibling = api_task(&bot, d::BotAdmissionState::Executing, usize::MAX);
+    let (queued_run, sibling_run) = (queued.view.run, sibling.view.run);
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().extend([queued, sibling]);
+    port.effects
+        .lock()
+        .unwrap()
+        .push(held_effect(&bot, sibling_run));
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    let request = BotRequestId::mint();
+    trash_chat_at(&client, &bot, other, request, bot.revision).unwrap();
+    let done = settled(&client, bot.id, request);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    // Its queued task was cancelled without starting; nothing else was touched.
+    assert_eq!(port.stops_of(queued_run), 1);
+    assert_eq!(port.stops_of(sibling_run), 0);
+    assert_eq!(port.interrupts_of(sibling_run), 0);
+    assert_eq!(
+        port.api.lock().unwrap()[1].view.state,
+        d::BotAdmissionState::Executing
+    );
+    assert_eq!(port.native.state.lock().unwrap().begin, 0);
+    assert!(!read_bot(&client, bot.id).paused);
+    assert_eq!(read_code(&client, other).as_deref(), Some(TRASHED));
+    no_owner_effects(&port);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+#[test]
+fn trashing_the_main_conversation_waits_for_its_native_effect_then_restores_the_same_history() {
+    let Running {
+        worker,
+        client,
+        returned: _returned,
+        port,
+        bot,
+        attempt: _,
+    } = running(false);
+    let run = port.conversation_run();
+    let before: Vec<_> = client
+        .read_chat(context(true), bot.main_chat)
+        .unwrap()
+        .messages
+        .iter()
+        .map(|m| m.id)
+        .collect();
+    // A native effect of the main conversation's Run is still in flight.
+    port.effects.lock().unwrap().push(held_effect(&bot, run));
+    let request = BotRequestId::mint();
+    trash_chat_at(&client, &bot, bot.main_chat, request, bot.revision).unwrap();
+    until("the task was stopped as the person's Stop", || {
+        port.stops_of(run) >= 1 && port.native.state.lock().unwrap().stopped
+    });
+    std::thread::sleep(Duration::from_millis(800));
+    let waiting = read_operation(&client, bot.id, request);
+    assert_eq!(waiting.stage, BotLifecycleStage::Settling, "{waiting:?}");
+    // The conversation is held meanwhile; the Bot is not.
+    assert_eq!(
+        client
+            .send_turn(context(true), request_for(&bot, bot.main_chat))
+            .map(|_| ())
+            .unwrap_err()
+            .code,
+        PENDING
+    );
+    assert!(!read_bot(&client, bot.id).paused);
+    // The effect drains; then the conversation goes into Trash.
+    port.effects.lock().unwrap().clear();
+    let done = settled(&client, bot.id, request);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    // O7: the association stays, no replacement is made, a new one can be.
+    let current = read_bot(&client, bot.id);
+    assert_eq!(current.main_chat, bot.main_chat);
+    assert_eq!(read_code(&client, bot.main_chat).as_deref(), Some(TRASHED));
+    assert!(chats_of(&client, &bot).is_empty());
+    let BotResponse::Chat { reference } = client
+        .bots(
+            context(true),
+            BotCommand::CreateChat {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("a new conversation")
+    };
+    assert_ne!(reference.chat_id, bot.main_chat);
+    assert_eq!(chats_of(&client, &bot), vec![reference.chat_id]);
+    // Restore returns the same conversation and history; nothing runs.
+    let begins = port.native.state.lock().unwrap().begin;
+    restore_chat_at(&client, &bot, bot.main_chat, request, current.revision).unwrap();
+    let after: Vec<_> = client
+        .read_chat(context(true), bot.main_chat)
+        .unwrap()
+        .messages
+        .iter()
+        .map(|m| m.id)
+        .collect();
+    assert_eq!(after, before);
+    assert_eq!(chats_of(&client, &bot)[0], bot.main_chat);
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(port.native.state.lock().unwrap().begin, begins);
+    no_owner_effects(&port);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
 /// A whole-Bot Trash captured by an earlier worker, as the driver captures it.
 fn captured_trash(repository: &mut Repository, bot: &Bot) -> BotRequestId {
     let request = BotRequestId::mint();
@@ -381,6 +705,15 @@ fn captured_trash(repository: &mut Repository, bot: &Bot) -> BotRequestId {
     request
 }
 
+/// One conversation's Trash captured by an earlier worker.
+fn captured_chat_trash(repository: &mut Repository, bot: &Bot, chat: ChatId) -> BotRequestId {
+    let mut capture =
+        super::super::super::holds::capture(bot, BotLifecycleKind::TrashChat, Some(chat));
+    capture.operation = BotRequestId::mint();
+    repository.capture_bot_lifecycle(&capture).unwrap();
+    capture.operation
+}
+
 #[test]
 fn a_restart_resumes_a_captured_bot_trash_and_its_restore_follows_another_restart() {
     let (mut repository, authority, create) = fixture();
@@ -408,6 +741,36 @@ fn a_restart_resumes_a_captured_bot_trash_and_its_restore_follows_another_restar
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+#[test]
+fn a_restart_resumes_a_captured_conversation_trash_and_its_restore_follows_another_restart() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let other = another_chat(&mut repository, &authority, &bot);
+    // Captured, before any owner call, by an earlier worker.
+    let chat_trash = captured_chat_trash(&mut repository, &bot, other);
+    let port = Arc::new(Archiving::default());
+    let (worker, returned) = spawn(repository, authority.clone(), port.clone());
+    let client = worker.client();
+    assert_eq!(
+        settled(&client, bot.id, chat_trash).stage,
+        BotLifecycleStage::Completed
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+    let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    assert_eq!(read_code(&client, other).as_deref(), Some(TRASHED));
+    restore_chat_at(&client, &bot, other, chat_trash, bot.revision).unwrap();
+    assert_eq!(read_code(&client, other), None);
+    // Nothing was paused and nothing ran.
+    assert!(port.barriers.lock().unwrap().is_empty());
+    assert_eq!(port.native.state.lock().unwrap().begin, 0);
+    no_owner_effects(&port);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
 /// Starts the Trash under test: of the whole Bot, or of `chat` alone.
 type Begin =
     fn(&AiWorkerClient, &Bot, ChatId, BotRequestId, u64) -> ApiResult<BotLifecycleProgress>;
@@ -420,6 +783,16 @@ fn begin_bot_trash(
     revision: u64,
 ) -> ApiResult<BotLifecycleProgress> {
     trash_at(client, bot, request, revision)
+}
+
+fn begin_chat_trash(
+    client: &AiWorkerClient,
+    bot: &Bot,
+    chat: ChatId,
+    request: BotRequestId,
+    revision: u64,
+) -> ApiResult<BotLifecycleProgress> {
+    trash_chat_at(client, bot, chat, request, revision)
 }
 
 /// A Trash whose work has not ended keeps settling across an AI-only
@@ -509,6 +882,11 @@ fn an_unfinished_bot_trash_keeps_settling_across_a_restart() {
 }
 
 #[test]
+fn an_unfinished_conversation_trash_keeps_settling_across_a_restart() {
+    unfinished_trash_keeps_settling(begin_chat_trash);
+}
+
+#[test]
 fn every_change_to_a_trashed_bot_or_its_conversation_answers_its_code() {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
@@ -584,6 +962,12 @@ fn every_change_to_a_trashed_bot_or_its_conversation_answers_its_code() {
         BotCommand::Trash {
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
+            expected_revision: revision,
+        },
+        BotCommand::TrashChat {
+            request_id: BotRequestId::mint(),
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
             expected_revision: revision,
         },
     ];

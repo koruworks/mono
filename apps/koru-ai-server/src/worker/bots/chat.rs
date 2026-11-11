@@ -60,6 +60,11 @@ impl LiveChat {
             },
         )
     }
+    /// The conversation this task belongs to, as its submission names it:
+    /// what a conversation's Trash settles by (P1.7 S6).
+    pub(in crate::worker) fn lifecycle_chat(&self) -> uuid::Uuid {
+        self.submission.provenance.chat_id
+    }
 }
 
 fn bot_route_error() -> AiError {

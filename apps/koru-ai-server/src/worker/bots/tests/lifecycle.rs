@@ -96,8 +96,9 @@ fn lifecycle_progress_reads_back_and_changes_refuse_until_built() {
             )
             .is_err()
     );
-    // Archive (S4) and Trash (S7) are built; without their delegate owner
-    // they refuse as unavailable before anything is captured.
+    // Archive (S4), Trash (S7) and a conversation's Trash (S6) are built;
+    // without their delegate owner they refuse as unavailable before
+    // anything is captured.
     for command in [
         BotCommand::Archive {
             request_id: BotRequestId::mint(),
@@ -109,20 +110,20 @@ fn lifecycle_progress_reads_back_and_changes_refuse_until_built() {
             bot_id: bot.id,
             expected_revision: bot.revision,
         },
-    ] {
-        assert_eq!(
-            client.bots(context(true), command).unwrap_err().code,
-            BotError::Unavailable.code()
-        );
-    }
-    // A conversation's Trash and permanent deletion are not built yet.
-    for command in [
         BotCommand::TrashChat {
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
             chat_id: bot.main_chat,
             expected_revision: bot.revision,
         },
+    ] {
+        assert_eq!(
+            client.bots(context(true), command).unwrap_err().code,
+            BotError::Unavailable.code()
+        );
+    }
+    // Permanent deletion is not built in this version.
+    for command in [
         BotCommand::PurgeBot {
             request_id: BotRequestId::mint(),
             bot_id: bot.id,

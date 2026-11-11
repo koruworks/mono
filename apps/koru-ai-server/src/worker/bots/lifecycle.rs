@@ -34,21 +34,28 @@
 //! (`left_in_place`). No Store function and no delegate `Trash`/`Restore`
 //! is called.
 //!
+//! Trash of one conversation captures only it and settles only its work,
+//! with no pause and no Bot-wide barrier, so the Bot's other conversations
+//! keep running: no submission of it is waiting, the delegate reports none
+//! of its Runs unsettled (each it reports is stopped as the person's Stop),
+//! no live task of it remains, and the delegate holds no native effect for
+//! any of its Runs. Then one transaction puts it into Trash.
+//!
 //! A restart resumes from the journal's stage, never recaptures, and re-asks
 //! every owner idempotently; nothing the driver remembers decides what has
 //! settled. An operation that cannot progress is parked `incomplete` with
 //! its reason; it is never retried on its own. The Bot's read names it, and
-//! the same request, or one naming only its id, resumes it. Unarchive and the
-//! Restore of a Trash are each applied in one transaction with no owner
-//! call; the Bot comes back paused and nothing starts. Trash of one
-//! conversation and Purge refuse until their slices.
+//! the same request, or one naming only its id, resumes it. Unarchive, the
+//! Restore of a Trash and the Restore of a conversation's Trash are each
+//! applied in one transaction with no owner call; the Bot comes back paused
+//! and nothing starts. Purge refuses until its slice.
 use super::*;
 use koru_ai_sqlite::{BotHold, LifecycleCapture, LifecycleMemberDraft, LifecycleOperation};
 use koru_ai_wire::bot_lifecycle_codes;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use koru_delegate_core::{
-    BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierState, BotRunKey, NativeDrainReason,
-    RunId,
+    BotAdmissionView, BotExecutionFence, BotPolicyBarrier, BotPolicyBarrierKey,
+    BotPolicyBarrierState, BotRunKey, NativeDrainReason, RunId,
 };
 
 type OperationKey = (UserScopeId, BotRequestId);
@@ -61,6 +68,9 @@ const QUEUED_PAGE: u16 = 16;
 /// The most queued admissions one delegate read returns. A Bot holds at
 /// most 50 queued (`BOT_PENDING_LIMIT`), so one page is normally all of them.
 const UNSETTLED_PAGE: u16 = 64;
+/// The most pages of a Bot's held native effects one conversation's
+/// settling read asks for; past them the conversation counts as unsettled.
+const EFFECT_PAGES: usize = 4;
 
 /// What the writer drives. Nothing here is durable: the journal is, and the
 /// delegate is the authority on what still runs.
@@ -138,6 +148,16 @@ enum Step {
     /// the person's Stop, each of those that is not a live conversation task
     /// of this writer (`live`), which stops through its own lane.
     Settle { bot: BotId, live: HashSet<RunId> },
+    /// One conversation's settling read: the Bot's unsettled admissions and
+    /// the native effects the delegate still holds for it. The writer
+    /// narrows both to the conversation's own Runs, which only it can name.
+    ChatRead { bot: BotId },
+    /// The person's Stop for each of the conversation's Runs the last read
+    /// reported unsettled that no live conversation task drives.
+    Stop {
+        bot: BotId,
+        runs: Vec<(RunId, Option<BotExecutionFence>)>,
+    },
 }
 pub(in crate::worker) struct LifecycleResult {
     key: OperationKey,
@@ -146,6 +166,20 @@ pub(in crate::worker) struct LifecycleResult {
 enum Outcome {
     Policy(Result<BotPolicyBarrierState, koru_delegate_api::Failure>),
     Settle(Result<Unsettled, koru_delegate_api::Failure>),
+    ChatRead(Result<ChatWork, koru_delegate_api::Failure>),
+    /// The Stops went out; their answers are read again next round.
+    Stopped,
+}
+/// The delegate's answer for one conversation's settling round, for the
+/// whole Bot: the writer keeps what belongs to the conversation.
+struct ChatWork {
+    admissions: Vec<BotAdmissionView>,
+    /// More queued work exists past the page.
+    more: bool,
+    /// The Run of every native effect the delegate still holds for the Bot.
+    effects: Vec<RunId>,
+    /// More held effects exist past the pages read.
+    effects_more: bool,
 }
 /// The delegate's answer for one settling round.
 struct Unsettled {
@@ -165,6 +199,8 @@ impl LifecycleJob {
         let failed = match &self.step {
             Step::Policy(_) => Outcome::Policy(Err(unavailable())),
             Step::Settle { .. } => Outcome::Settle(Err(unavailable())),
+            Step::ChatRead { .. } => Outcome::ChatRead(Err(unavailable())),
+            Step::Stop { .. } => Outcome::Stopped,
         };
         let outcome = catch_unwind(AssertUnwindSafe(|| self.execute())).unwrap_or(failed);
         LifecycleResult { key, outcome }
@@ -239,7 +275,88 @@ impl LifecycleJob {
                     })
                 }))
             }
+            Step::ChatRead { bot } => {
+                let owner = delegate_owner(self.owner);
+                Outcome::ChatRead(checked.ok_or_else(unavailable).and_then(|_| {
+                    let BotReply::UnsettledWork { work } =
+                        self.delegate.execute(DelegateCommand::UnsettledWork {
+                            owner,
+                            bot,
+                            limit: UNSETTLED_PAGE,
+                        })?
+                    else {
+                        return Err(unavailable());
+                    };
+                    if work
+                        .admissions
+                        .iter()
+                        .any(|a| a.admission.key.owner != owner || a.admission.key.bot != bot)
+                    {
+                        return Err(unavailable());
+                    }
+                    // Held native effects of the Bot, a bounded number of
+                    // pages. Any of the conversation's keeps it unsettled.
+                    let mut effects = Vec::new();
+                    let mut after = None;
+                    let mut effects_more = false;
+                    for page in 0..EFFECT_PAGES {
+                        let BotReply::NativePendingEffects { page: found } = self
+                            .delegate
+                            .execute(DelegateCommand::PendingNativeEffects {
+                                owner,
+                                bot: Some(bot),
+                                after: after.take(),
+                                limit: UNSETTLED_PAGE,
+                            })?
+                        else {
+                            return Err(unavailable());
+                        };
+                        if found
+                            .targets
+                            .iter()
+                            .any(|t| t.owner != owner || t.bot != bot)
+                        {
+                            return Err(unavailable());
+                        }
+                        effects.extend(found.targets.iter().map(|t| t.key.run));
+                        match found.next {
+                            Some(next) if page + 1 < EFFECT_PAGES => after = Some(next),
+                            Some(_) => effects_more = true,
+                            None => break,
+                        }
+                    }
+                    Ok(ChatWork {
+                        admissions: work.admissions.into_iter().map(|a| a.admission).collect(),
+                        more: work.more,
+                        effects,
+                        effects_more,
+                    })
+                }))
+            }
+            Step::Stop { bot, runs } => {
+                let owner = delegate_owner(self.owner);
+                if checked.is_some() {
+                    for (run, fence) in runs {
+                        // The person's Stop with the owner's reported fence;
+                        // whatever it answers, the next read says what ended.
+                        let _ = self.delegate.execute(DelegateCommand::Stop {
+                            key: BotRunKey { owner, bot, run },
+                            fence,
+                        });
+                    }
+                }
+                Outcome::Stopped
+            }
         }
+    }
+}
+
+/// The conversation a Start/Continue receipt's submission names; a pause
+/// receipt names none.
+fn submission_chat(receipt: &BotAdmissionReceipt) -> Option<Uuid> {
+    match receipt {
+        BotAdmissionReceipt::Submission(r) => Some(r.intent.submission.provenance.chat_id),
+        BotAdmissionReceipt::Pause(_) => None,
     }
 }
 
@@ -389,6 +506,8 @@ impl WorkerState {
                 Some(self.archive_bot(context, command))
             }
             BotCommand::Restore { .. } => Some(self.restore_bot(context, command)),
+            BotCommand::TrashChat { .. } => Some(self.trash_bot_chat(context, command)),
+            BotCommand::RestoreChat { .. } => Some(self.restore_bot_chat(context, command)),
             _ if command.lifecycle_kind().is_some() => Some(Err(lifecycle_unavailable())),
             _ => self
                 .bot_command_hold(context, command)
@@ -837,6 +956,172 @@ impl WorkerState {
         })
     }
 
+    /// Trash of one conversation: capture only it, or answer a repeat with
+    /// its progress (see [`Self::repeat_bot_lifecycle`]). The Bot is not
+    /// paused and gets no barrier; the open operation holds that conversation
+    /// alone, and the driver settles only its work. The main conversation is
+    /// trashed the same way: its association stays and no replacement is
+    /// made (O7).
+    fn trash_bot_chat(
+        &mut self,
+        context: &CommandContext,
+        command: &BotCommand,
+    ) -> ApiResult<BotResponse> {
+        let BotCommand::TrashChat {
+            request_id,
+            bot_id,
+            chat_id,
+            expected_revision,
+        } = command
+        else {
+            return Err(not_found());
+        };
+        let (owner, bot, fingerprint) = self.lifecycle_subject(context, command, *bot_id)?;
+        if self
+            .repository
+            .bot_for_chat(*chat_id)
+            .map_err(bot_failure)?
+            != Some(*bot_id)
+        {
+            return Err(not_found());
+        }
+        let existing = self
+            .repository
+            .bot_lifecycle_operation(owner.user_scope, *request_id)
+            .map_err(bot_failure)?;
+        if existing.is_none() {
+            match bot.lifecycle {
+                BotLifecycle::Trashed => return Err(hold_failure(BotHold::Trashed)),
+                BotLifecycle::Archived => return Err(archived_failure()),
+                BotLifecycle::Active => {}
+            }
+            if self
+                .repository
+                .bot_chat_in_trash(*chat_id)
+                .map_err(bot_failure)?
+            {
+                return Err(hold_failure(BotHold::Trashed));
+            }
+        }
+        if self.bot_delegate.is_none() || self.provider_admin.is_none() {
+            return Err(bot_failure(BotError::Unavailable));
+        }
+        let operation = match existing {
+            Some(op) => self.repeat_bot_lifecycle(
+                op,
+                (owner, *bot_id),
+                BotLifecycleKind::TrashChat,
+                Some(*chat_id),
+                &fingerprint,
+            )?,
+            None => self
+                .repository
+                .capture_bot_lifecycle(&LifecycleCapture {
+                    operation: *request_id,
+                    owner,
+                    bot: *bot_id,
+                    kind: BotLifecycleKind::TrashChat,
+                    chat: Some(*chat_id),
+                    fingerprint,
+                    expected_revision: *expected_revision,
+                    source: None,
+                    members: vec![LifecycleMemberDraft {
+                        subject: BotLifecycleSubject::Chat { chat_id: *chat_id },
+                        reason: BotLifecycleReason::OwnedConversation,
+                        prior_state: BotLifecyclePriorState::Live,
+                        intended: BotLifecycleIntended::Hide,
+                        retained: None,
+                    }],
+                    now: Timestamp::now().millis(),
+                })
+                .map_err(bot_failure)?,
+        };
+        if !matches!(
+            operation.stage,
+            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
+        ) {
+            self.bot_lifecycle
+                .driving
+                .entry((owner.user_scope, *request_id))
+                .or_default();
+        }
+        Ok(BotResponse::Lifecycle {
+            operation: operation.progress(),
+        })
+    }
+
+    /// Restore of one conversation's Trash, completed or parked: one AI
+    /// transaction removes exactly that operation's Trash row, so the same
+    /// conversation and history come back. Nothing runs. A conversation that
+    /// a whole-Bot Trash captured as already in Trash comes back only
+    /// through this, its own operation's Restore.
+    fn restore_bot_chat(
+        &mut self,
+        context: &CommandContext,
+        command: &BotCommand,
+    ) -> ApiResult<BotResponse> {
+        let BotCommand::RestoreChat {
+            request_id,
+            bot_id,
+            chat_id,
+            expected_revision,
+            source_request_id,
+        } = command
+        else {
+            return Err(not_found());
+        };
+        let (owner, bot, fingerprint) = self.lifecycle_subject(context, command, *bot_id)?;
+        let source = self
+            .repository
+            .bot_lifecycle_operation(owner.user_scope, *source_request_id)
+            .map_err(bot_failure)?
+            .filter(|source| source.bot == *bot_id && source.owner == owner)
+            .ok_or_else(not_found)?;
+        if source.kind != BotLifecycleKind::TrashChat || source.chat != Some(*chat_id) {
+            return Err(bot_failure(BotError::Invalid));
+        }
+        let replay = self
+            .repository
+            .bot_lifecycle_operation(owner.user_scope, *request_id)
+            .map_err(bot_failure)?
+            .is_some();
+        if !replay {
+            match bot.lifecycle {
+                BotLifecycle::Trashed => return Err(hold_failure(BotHold::Trashed)),
+                BotLifecycle::Archived => return Err(archived_failure()),
+                BotLifecycle::Active => {}
+            }
+            // A moving conversation Trash is reversed once it completes or parks.
+            if !matches!(
+                source.stage,
+                BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
+            ) {
+                return Err(hold_failure(BotHold::Pending));
+            }
+        }
+        let operation = self
+            .repository
+            .restore_bot_chat(&LifecycleCapture {
+                operation: *request_id,
+                owner,
+                bot: *bot_id,
+                kind: BotLifecycleKind::RestoreChat,
+                chat: Some(*chat_id),
+                fingerprint,
+                expected_revision: *expected_revision,
+                source: Some(*source_request_id),
+                members: vec![],
+                now: Timestamp::now().millis(),
+            })
+            .map_err(bot_failure)?;
+        self.bot_lifecycle
+            .driving
+            .remove(&(owner.user_scope, *source_request_id));
+        Ok(BotResponse::Lifecycle {
+            operation: operation.progress(),
+        })
+    }
+
     /// The native-policy evidence for an active Bot while an Archive or a
     /// Trash is unfinished: its own effects-off barrier, so no native
     /// effect starts under the Bot being settled. `None` only when no such
@@ -980,14 +1265,15 @@ impl WorkerState {
             }
             Err(_) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable),
         };
-        // Archive and Trash are driven; Restore is applied at once, and the
-        // other kinds are refused at capture.
-        if !matches!(op.kind, BotLifecycleKind::Archive | BotLifecycleKind::Trash)
-            || matches!(
-                op.stage,
-                BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
-            )
-        {
+        // Archive, Trash and Trash of one conversation are driven; Restore
+        // is applied at once, and Purge is refused at capture.
+        if !matches!(
+            op.kind,
+            BotLifecycleKind::Archive | BotLifecycleKind::Trash | BotLifecycleKind::TrashChat
+        ) || matches!(
+            op.stage,
+            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
+        ) {
             self.bot_lifecycle.driving.remove(&key);
             return;
         }
@@ -999,8 +1285,8 @@ impl WorkerState {
             (BotLifecycleStage::Captured, _) if op.pause_request.is_some() => {
                 self.step_archive_barrier(key, &op, &bot)
             }
-            // Nothing to pause: Trash of an archived Bot (already paused and
-            // settled). Settling still asks the owner.
+            // Nothing to pause: Trash of one conversation, or of an archived
+            // Bot (already paused and settled). Settling still asks the owner.
             (BotLifecycleStage::Captured, _) => match self.repository.advance_bot_lifecycle(
                 key.0,
                 key.1,
@@ -1012,6 +1298,9 @@ impl WorkerState {
                 Ok(true) => self.progressed_bot_lifecycle(key),
                 _ => self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable),
             },
+            (BotLifecycleStage::Settling, BotLifecycleKind::TrashChat) => {
+                self.step_chat_settle(key, &op, &bot)
+            }
             (BotLifecycleStage::Settling, _) => self.step_archive_settle(key, &op, &bot),
             _ => {
                 self.bot_lifecycle.driving.remove(&key);
@@ -1266,10 +1555,215 @@ impl WorkerState {
                     self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
                 }
             }
-            Outcome::Policy(Err(_)) | Outcome::Settle(Err(_)) => {
+            Outcome::Policy(Err(_)) | Outcome::Settle(Err(_)) | Outcome::ChatRead(Err(_)) => {
                 self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable)
             }
             Outcome::Settle(Ok(unsettled)) => self.settle_bot_archive(key, &op, unsettled),
+            Outcome::ChatRead(Ok(work)) => self.settle_bot_chat_trash(key, &op, work),
+            // The round was already counted when its read was applied; the
+            // next read says what the Stops ended.
+            Outcome::Stopped => {}
+        }
+    }
+
+    /// `settling` of one conversation's Trash: that conversation's
+    /// submissions the owner has not acknowledged are handed on first (the
+    /// conversation's hold refuses new ones, so the set closes; the Bot is
+    /// not paused, so each is admitted and then stopped). Then the delegate
+    /// is asked what of the Bot is unsettled and which native effects it
+    /// holds, and [`Self::settle_bot_chat_trash`] keeps the conversation's.
+    fn step_chat_settle(&mut self, key: OperationKey, op: &LifecycleOperation, bot: &Bot) {
+        if self.bot_chat_recovery.is_some() {
+            return self.defer_bot_lifecycle(key);
+        }
+        let Some(chat) = op.chat else {
+            return self.wait_bot_lifecycle(key, BotLifecycleRefusal::MemberConflict);
+        };
+        match self.unresolved_chat_submissions(op, bot, chat) {
+            Some(true) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning),
+            Some(false) => {
+                return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable);
+            }
+            None => {}
+        }
+        self.submit_bot_lifecycle(key, op, bot, Step::ChatRead { bot: op.bot });
+    }
+
+    /// One conversation's Start/Continue submissions its owner has not
+    /// acknowledged, each handed to the existing coordination. `None` when
+    /// there are none; `Some(false)` when the journal could not be read. A
+    /// full page might hide one of them, so it counts as unresolved.
+    fn unresolved_chat_submissions(
+        &mut self,
+        op: &LifecycleOperation,
+        bot: &Bot,
+        chat: ChatId,
+    ) -> Option<bool> {
+        let queued = match self
+            .repository
+            .bot_unresolved_submissions(op.bot, UNSETTLED_PAGE)
+        {
+            Ok(queued) => queued,
+            Err(_) => return Some(false),
+        };
+        let mut unresolved = queued.len() >= usize::from(UNSETTLED_PAGE);
+        for (scope, request) in queued {
+            if scope != op.owner.user_scope {
+                continue;
+            }
+            match self
+                .repository
+                .bot_admission_receipt(op.owner, op.bot, request)
+            {
+                Ok(Some(receipt)) if submission_chat(&receipt) == Some(chat.as_uuid()) => {
+                    self.queue_bot_receipt(bot, receipt, None);
+                    unresolved = true;
+                }
+                Ok(_) => {}
+                Err(_) => return Some(false),
+            }
+        }
+        unresolved.then_some(true)
+    }
+
+    /// The Runs of one conversation that this writer drives as live tasks,
+    /// with the attempt each belongs to.
+    fn live_chat_tasks(&self, bot: BotId, chat: ChatId) -> HashMap<RunId, InferenceAttemptId> {
+        self.bot_chats
+            .iter()
+            .filter_map(|(id, live)| {
+                let (run, ..) = live.lifecycle_view();
+                (run.bot == bot && live.lifecycle_chat() == chat.as_uuid())
+                    .then_some((run.run, *id))
+            })
+            .collect()
+    }
+
+    /// The delegate's account of the Bot's work, narrowed to one
+    /// conversation by the AI submission behind each Run, and applied: its
+    /// live task is stopped through its own Stop lane, any other of its
+    /// unsettled Runs by the person's Stop by key (a queued one never
+    /// starts), and a native effect still held for one of its Runs is handed
+    /// to the existing drain. The sibling conversations' work is not
+    /// touched. Once a round finds none of it, one transaction puts the
+    /// conversation into Trash.
+    fn settle_bot_chat_trash(
+        &mut self,
+        key: OperationKey,
+        op: &LifecycleOperation,
+        work: ChatWork,
+    ) {
+        let Some(chat) = op.chat else {
+            return self.wait_bot_lifecycle(key, BotLifecycleRefusal::MemberConflict);
+        };
+        let target = chat.as_uuid();
+        let mut unsettled = Vec::new();
+        for admission in work.admissions {
+            match self
+                .repository
+                .bot_admission_receipt(op.owner, op.bot, admission.key.request)
+            {
+                Ok(Some(receipt)) if submission_chat(&receipt) == Some(target) => {
+                    unsettled.push(admission);
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable);
+                }
+            }
+        }
+        let mut effects = Vec::new();
+        for run in work.effects {
+            match self
+                .repository
+                .bot_submission_for_run(op.owner, op.bot, run)
+            {
+                Ok(Some(receipt)) if receipt.intent.submission.provenance.chat_id == target => {
+                    effects.push(run);
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable);
+                }
+            }
+        }
+        let live = self.live_chat_tasks(op.bot, chat);
+        let mut stop = Vec::new();
+        for admission in &unsettled {
+            match live.get(&admission.run) {
+                Some(attempt) => {
+                    self.stop_bot_chat_for_lifecycle(*attempt);
+                }
+                None => stop.push((admission.run, admission.fence.clone())),
+            }
+        }
+        for run in &effects {
+            self.queue_native_recovery(
+                delegate_owner(op.owner),
+                op.bot,
+                Some(*run),
+                None,
+                NativeDrainReason::RunRecovery,
+            );
+        }
+        // A live task the delegate already settled is still delivering its
+        // history; the Trash waits for it too.
+        let remaining = unsettled.len()
+            + live.len()
+            + effects.len()
+            + usize::from(work.more)
+            + usize::from(work.effects_more);
+        if remaining > 0 {
+            let progressed = self
+                .bot_lifecycle
+                .driving
+                .get(&key)
+                .and_then(|drive| drive.remaining)
+                .is_some_and(|before| remaining < before);
+            if let Some(drive) = self.bot_lifecycle.driving.get_mut(&key) {
+                drive.remaining = Some(remaining);
+            }
+            if progressed {
+                self.progressed_bot_lifecycle(key);
+            } else {
+                self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
+            }
+            // Not after a park: a parked operation sends nothing more.
+            if !stop.is_empty()
+                && self.bot_lifecycle.driving.contains_key(&key)
+                && let Some(bot) = self.lifecycle_bot(op)
+            {
+                self.submit_bot_lifecycle(
+                    key,
+                    op,
+                    &bot,
+                    Step::Stop {
+                        bot: op.bot,
+                        runs: stop,
+                    },
+                );
+            }
+            return;
+        }
+        // The delegate has just said none of it is unsettled; no submission
+        // of it may be waiting to reach the owner either.
+        match self.lifecycle_bot(op) {
+            Some(bot) => {
+                if self.unresolved_chat_submissions(op, &bot, chat).is_some() {
+                    return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
+                }
+            }
+            None => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::RevisionChanged),
+        }
+        match self
+            .repository
+            .complete_bot_chat_trash(key.0, key.1, Timestamp::now().millis())
+        {
+            Ok(_) => {
+                tracing::info!(target: "koru_ai::bots", operation = %key.1, "Bot conversation moved to Trash");
+                self.bot_lifecycle.driving.remove(&key);
+            }
+            Err(_) => self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable),
         }
     }
 
