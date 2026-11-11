@@ -259,6 +259,8 @@ impl Settings {
         }
     }
 
+    /// Whether the access choice is an unsaved edit. Test only.
+    #[cfg(test)]
     pub(crate) fn access_edited(&self) -> bool {
         self.access_draft.is_some()
     }

@@ -1248,7 +1248,10 @@ impl Tab {
         Self::ai_chat_view(AiChatView::on_document(document, title))
     }
 
-    /// A Koru AI chat tab seated on an existing conversation.
+    /// A Koru AI chat tab seated on an existing conversation. Test only:
+    /// every door of the window goes through `MainView::chat_tab`, which
+    /// places a Bot's conversation in its Bot's tab.
+    #[cfg(test)]
     pub fn ai_chat_existing(id: koru_ai_ui::ChatId) -> Self {
         Self::ai_chat_existing_at(id, None)
     }

@@ -336,7 +336,9 @@ impl BotView {
 
     /// **A Bot opened from the roster**: the roster's answer is fresh, so
     /// the tab knows its Bot and binds its conversation at once; it asks
-    /// the Bot service nothing more until it is opened again.
+    /// the Bot service nothing more until it is opened again. Test only:
+    /// the window opens a Bot on a chosen conversation ([`Self::opened_on`]).
+    #[cfg(test)]
     pub(crate) fn opened(bot: &RosterBot) -> Self {
         Self::opened_on(bot, bot.main_chat, None)
     }
@@ -452,16 +454,19 @@ impl BotView {
         self.facts.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn load(&self) -> Load {
         self.load
     }
 
+    #[cfg(test)]
     pub(crate) fn work(&self) -> Work {
         self.work.get()
     }
 
     /// The settings as they stand: what the owner holds, the person's
-    /// edits and the changes on their way.
+    /// edits and the changes on their way. Test only.
+    #[cfg(test)]
     pub(crate) fn settings(&self) -> &Settings {
         &self.settings
     }
@@ -1040,7 +1045,8 @@ impl BotView {
 
     // ------------------------------------------------- the window's F6
 
-    /// Whether the settings are open in the conversation's place.
+    /// Whether the settings are open in the conversation's place. Test only.
+    #[cfg(test)]
     pub(crate) fn settings_shown(&self) -> bool {
         self.settings_open
     }

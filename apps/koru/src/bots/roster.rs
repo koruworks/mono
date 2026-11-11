@@ -240,6 +240,8 @@ pub(crate) struct BotsRoster {
 }
 
 impl BotsRoster {
+    /// Test only: the window's paths never need it.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -283,6 +285,8 @@ impl BotsRoster {
         &self.bots
     }
 
+    /// What the roster has done, for a test to count.
+    #[cfg(test)]
     pub(crate) fn work(&self) -> Work {
         self.work.get()
     }
