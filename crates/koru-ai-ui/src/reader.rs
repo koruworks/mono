@@ -434,6 +434,10 @@ fn run(
     // create for it (its folder, the first message) are answered with that
     // failure instead of reaching a service that has no such chat.
     let mut refused: Option<(ChatId, koru_ai_wire::Failure)> = None;
+    // **While this lives, someone reads the updates.** It drops when the
+    // surface's `Reader` is gone (its commands end this loop); a response
+    // stream's recovery thread holds it weakly and stops then.
+    let alive = std::sync::Arc::new(());
     while let Ok(command) = commands.recv() {
         if let Some(update) = refused_answer(refused.as_ref(), &command) {
             if updates.send(update).is_err() {
@@ -797,7 +801,13 @@ fn run(
                 });
             }
             Command::Send(request) => match client.ai().send_turn(&request) {
-                Ok(stream) => stream_attempt(client.clone(), request.chat_id, stream, &updates),
+                Ok(stream) => stream_attempt(
+                    client.clone(),
+                    request.chat_id,
+                    stream,
+                    &updates,
+                    std::sync::Arc::downgrade(&alive),
+                ),
                 // The surface gives the message back (chat-attachments §10).
                 Err(failure) => {
                     let _ = updates.send(Update::SendFailed(failure));
@@ -824,7 +834,13 @@ fn run(
                 );
             }
             Command::Retry(chat, request) => match client.ai().retry_turn(chat, &request) {
-                Ok(stream) => stream_attempt(client.clone(), chat, stream, &updates),
+                Ok(stream) => stream_attempt(
+                    client.clone(),
+                    chat,
+                    stream,
+                    &updates,
+                    std::sync::Arc::downgrade(&alive),
+                ),
                 Err(failure) => {
                     let _ = updates.send(Update::Failure(failure.message));
                 }
@@ -1056,6 +1072,7 @@ fn stream_attempt(
     chat_id: ChatId,
     stream: koru_api_client::AiResponseStream,
     updates: &SyncSender<Update>,
+    alive: std::sync::Weak<()>,
 ) {
     let accepted = stream.accepted.clone();
     let attempt_id = accepted.attempt_id;
@@ -1121,75 +1138,128 @@ fn stream_attempt(
             {
                 return;
             }
-            recover_attempt(&client, chat_id, attempt_id, &stream_updates);
+            recover_attempt(&client, chat_id, attempt_id, &stream_updates, &alive);
         })
         .ok();
 }
+
+/// How soon a recovery reads again while the attempt is not terminal yet or
+/// a read failed in a way the service says will pass, doubling to
+/// [`RECOVERY_MAX`] — the bounded clock the Bot surfaces read an operation
+/// on (250 ms doubling to 2 s), instead of a fixed 250 ms forever.
+const RECOVERY_FIRST: Duration = Duration::from_millis(250);
+const RECOVERY_MAX: Duration = Duration::from_secs(2);
 
 fn recover_attempt(
     client: &koru_api_client::Client,
     chat_id: ChatId,
     attempt_id: InferenceAttemptId,
     updates: &SyncSender<Update>,
+    alive: &std::sync::Weak<()>,
 ) {
-    const RECOVERY_POLL: Duration = Duration::from_millis(250);
-    const RECOVERY_LOG_EVERY: u64 = 120;
+    let lang = koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref());
+    let outcome = recover(
+        || {
+            client
+                .ai()
+                .read_attempt(attempt_id)
+                .map(|response| response.attempt.status)
+        },
+        || {
+            client
+                .ai()
+                .read_chat(chat_id)
+                .map(|transcript| decorate_transcript(client, transcript))
+        },
+        || alive.upgrade().is_some(),
+        std::thread::sleep,
+        attempt_id,
+        lang,
+    );
+    if let Some(update) = outcome {
+        let _ = updates.send(update);
+    }
+}
 
+/// **Recover an attempt whose response stream ended early**, from the
+/// service's authoritative state: read the attempt until it is terminal,
+/// then its chat. The answer for the surface, or `None` when nobody reads
+/// the updates any more (the surface's reader is gone), which ends it.
+///
+/// - **A failure the service says will pass** (`retryable`, as a lost
+///   connection is) is read again on the bounded clock; an ordinary chat's
+///   recovery waits through it as before.
+/// - **Any other failure ends it**, said as what it is: an attempt the
+///   service authoritatively does not have reads as the recovery failing;
+///   a hold — a Bot conversation in Trash (`bot_conversation_trashed`), its
+///   Bot in Trash (`bot_trashed`) or archived (`bot_archived`) — reads as
+///   that hold's own sentence ([`crate::failure_text`]). Before, only the
+///   first ended it, and a hold was read every 250 ms forever.
+fn recover(
+    mut read_attempt: impl FnMut() -> Result<AttemptStatus, koru_ai_wire::Failure>,
+    mut read_chat: impl FnMut() -> Result<ChatTranscript, koru_ai_wire::Failure>,
+    alive: impl Fn() -> bool,
+    mut pause: impl FnMut(Duration),
+    attempt_id: InferenceAttemptId,
+    lang: koru_i18n::Lang,
+) -> Option<Update> {
+    const RECOVERY_LOG_EVERY: u64 = 120;
     let started = std::time::Instant::now();
     let mut polls = 0_u64;
+    let mut wait = RECOVERY_FIRST;
     loop {
+        if !alive() {
+            tracing::debug!(
+                target: "koru_ai::ui_stream",
+                attempt = %attempt_id,
+                recovery_polls = polls,
+                "AI UI recovery stopped: nobody reads its answer any more"
+            );
+            return None;
+        }
         polls = polls.saturating_add(1);
-        match client.ai().read_attempt(attempt_id) {
-            Ok(response) if response.attempt.status.is_terminal() => {
-                match client.ai().read_chat(chat_id) {
-                    Ok(transcript) => {
-                        tracing::info!(
-                            target: "koru_ai::ui_stream",
-                            attempt = %attempt_id,
-                            chat = %chat_id,
-                            status = ?response.attempt.status,
-                            recovery_polls = polls,
-                            elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
-                            "AI UI recovered a terminal attempt after response stream loss"
-                        );
-                        let _ = updates.send(Update::Recovered {
-                            attempt: attempt_id,
-                            status: response.attempt.status,
-                            transcript: decorate_transcript(client, transcript),
-                        });
-                        return;
-                    }
-                    Err(failure) if polls % RECOVERY_LOG_EVERY == 1 => {
-                        tracing::debug!(
-                            target: "koru_ai::ui_stream",
-                            attempt = %attempt_id,
-                            recovery_polls = polls,
-                            error_class = %failure.code,
-                            "AI UI terminal transcript recovery is still waiting"
-                        );
-                    }
-                    Err(_) => {}
+        let failure = match read_attempt() {
+            Ok(status) if status.is_terminal() => match read_chat() {
+                Ok(transcript) => {
+                    tracing::info!(
+                        target: "koru_ai::ui_stream",
+                        attempt = %attempt_id,
+                        status = ?status,
+                        recovery_polls = polls,
+                        elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                        "AI UI recovered a terminal attempt after response stream loss"
+                    );
+                    return Some(Update::Recovered {
+                        attempt: attempt_id,
+                        status,
+                        transcript,
+                    });
                 }
-            }
-            Ok(_) => {}
-            Err(failure) if authoritatively_missing(&failure) => {
+                Err(failure) => Some(failure),
+            },
+            Ok(_) => None,
+            Err(failure) => Some(failure),
+        };
+        if let Some(failure) = &failure {
+            if !failure.retryable {
                 tracing::warn!(
                     target: "koru_ai::ui_stream",
                     attempt = %attempt_id,
-                    chat = %chat_id,
                     recovery_polls = polls,
+                    error_class = %failure.code,
                     "AI UI could not recover an accepted attempt from authoritative state"
                 );
-                let lang = koru_i18n::Lang::for_system(
-                    koru_window::system_locale::system_locale().as_deref(),
-                );
-                let _ = updates.send(Update::RecoveryFailed {
+                let message = if authoritatively_missing(failure) {
+                    koru_i18n::t(lang, koru_i18n::Key::AiResponseRecoveryFailed).into()
+                } else {
+                    crate::failure_text(failure, lang)
+                };
+                return Some(Update::RecoveryFailed {
                     attempt: attempt_id,
-                    message: koru_i18n::t(lang, koru_i18n::Key::AiResponseRecoveryFailed).into(),
+                    message,
                 });
-                return;
             }
-            Err(failure) if polls % RECOVERY_LOG_EVERY == 1 => {
+            if polls % RECOVERY_LOG_EVERY == 1 {
                 tracing::debug!(
                     target: "koru_ai::ui_stream",
                     attempt = %attempt_id,
@@ -1198,9 +1268,9 @@ fn recover_attempt(
                     "AI UI attempt recovery is still waiting"
                 );
             }
-            Err(_) => {}
         }
-        std::thread::sleep(RECOVERY_POLL);
+        pause(wait);
+        wait = (wait * 2).min(RECOVERY_MAX);
     }
 }
 
@@ -1430,8 +1500,8 @@ pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(16);
 #[cfg(test)]
 mod tests {
     use super::{
-        CLIENT_SCOPES, Command, Update, authoritatively_missing, off_thread, refused_answer,
-        workspace_catalog_failure,
+        CLIENT_SCOPES, Command, RECOVERY_FIRST, RECOVERY_MAX, Update, authoritatively_missing,
+        off_thread, recover, refused_answer, workspace_catalog_failure,
     };
 
     /// **What waits behind a failed create is answered with its failure**: a
@@ -1570,5 +1640,135 @@ mod tests {
         assert!(authoritatively_missing(&failure("not_found", false)));
         assert!(!authoritatively_missing(&failure("not_found", true)));
         assert!(!authoritatively_missing(&failure("transport", true)));
+    }
+
+    fn refusal(code: &str, retryable: bool) -> Failure {
+        Failure {
+            code: code.into(),
+            message: "The owner's English developer text.".into(),
+            retryable,
+            details: Default::default(),
+        }
+    }
+
+    /// The transcript read, for a test that never reaches it.
+    fn no_transcript() -> Result<koru_ai_wire::ChatTranscript, Failure> {
+        panic!("the attempt is not terminal")
+    }
+
+    /// **A hold ends a recovery, said as the hold it is.** A Bot
+    /// conversation in Trash, its Bot in Trash or archived answer the
+    /// recovery's reads with their non-retryable lifecycle codes (the AI
+    /// server's `hold_failure`): the recovery stops at once and the surface
+    /// reads that hold's own sentence, never "recovering" every 250 ms
+    /// forever.
+    #[test]
+    fn a_non_retryable_hold_ends_a_recovery_in_its_own_words() {
+        let lang = koru_i18n::Lang::En;
+        let attempt = koru_ai_core::InferenceAttemptId::new();
+        for code in [
+            koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED,
+            koru_ai_wire::bot_lifecycle_codes::TRASHED,
+            "bot_archived",
+        ] {
+            // Terminal attempt, refused transcript: the chat is held.
+            let mut pauses = 0;
+            let said = recover(
+                || Ok(koru_ai_core::AttemptStatus::Cancelled),
+                || Err(refusal(code, false)),
+                || true,
+                |_| pauses += 1,
+                attempt,
+                lang,
+            );
+            let Some(Update::RecoveryFailed {
+                attempt: failed,
+                message,
+            }) = said
+            else {
+                panic!("{code}: ended in words");
+            };
+            assert_eq!(failed, attempt);
+            assert_eq!(message, crate::failure_text(&refusal(code, false), lang));
+            assert!(
+                !message.contains("English developer text"),
+                "{code}: {message}"
+            );
+            assert_eq!(pauses, 0, "{code}: not read again");
+            // The attempt's own read refused the same way ends it too.
+            let said = recover(
+                || Err(refusal(code, false)),
+                no_transcript,
+                || true,
+                |_| panic!("{code}: not read again"),
+                attempt,
+                lang,
+            );
+            assert!(
+                matches!(said, Some(Update::RecoveryFailed { .. })),
+                "{code}"
+            );
+        }
+    }
+
+    /// **A failure the service says will pass is waited through, on a
+    /// bounded clock** — an ordinary chat's recovery keeps its behaviour
+    /// for a lost connection — 250 ms doubling to 2 s rather than a fixed
+    /// 250 ms; an attempt the service authoritatively does not have still
+    /// ends it with the recovery's own sentence.
+    #[test]
+    fn a_retryable_failure_is_read_again_on_a_bounded_clock() {
+        let lang = koru_i18n::Lang::En;
+        let mut reads = 0;
+        let mut pauses = Vec::new();
+        let said = recover(
+            || {
+                reads += 1;
+                match reads {
+                    1 | 2 => Err(refusal("gateway_unavailable", true)),
+                    3 | 4 => Ok(koru_ai_core::AttemptStatus::Streaming),
+                    5 => Err(refusal("gateway_unavailable", true)),
+                    _ => Err(refusal("not_found", false)),
+                }
+            },
+            no_transcript,
+            || true,
+            |wait| pauses.push(wait),
+            koru_ai_core::InferenceAttemptId::new(),
+            lang,
+        );
+        assert_eq!(reads, 6);
+        let ms = |n| std::time::Duration::from_millis(n);
+        assert_eq!(pauses, [ms(250), ms(500), ms(1000), ms(2000), ms(2000)]);
+        assert_eq!((RECOVERY_FIRST, RECOVERY_MAX), (ms(250), ms(2000)));
+        let Some(Update::RecoveryFailed { message, .. }) = said else {
+            panic!("ended");
+        };
+        assert_eq!(
+            message,
+            koru_i18n::t(lang, koru_i18n::Key::AiResponseRecoveryFailed)
+        );
+    }
+
+    /// **Nobody reading the answer ends a recovery**: once the surface's
+    /// reader is gone — a Bot tab let go of its chat, a window closed — the
+    /// recovery thread stops before its next read rather than polling for a
+    /// receiver that no longer exists.
+    #[test]
+    fn a_recovery_stops_when_nobody_reads_its_answer() {
+        let reads = std::cell::Cell::new(0);
+        let said = recover(
+            || {
+                reads.set(reads.get() + 1);
+                Ok(koru_ai_core::AttemptStatus::Streaming)
+            },
+            no_transcript,
+            || reads.get() < 3,
+            |_| {},
+            koru_ai_core::InferenceAttemptId::new(),
+            koru_i18n::Lang::En,
+        );
+        assert!(said.is_none(), "nothing to say to nobody");
+        assert_eq!(reads.get(), 3, "no read after the reader went");
     }
 }
