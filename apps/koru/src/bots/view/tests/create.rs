@@ -933,3 +933,142 @@ fn the_create_forms_mode_chip_wears_the_modes_color_and_reads_inert_while_creati
     assert_eq!(ink_of(&drawn, "lead ink"), "Ink::Secondary");
     assert_eq!(ink_of(&drawn, "label ink"), "Ink::Secondary");
 }
+
+/// Where `key` is drawn in the form, in the tab's coordinates.
+fn rect_of(view: &BotView, key: Key) -> koru_draw::geometry::Rect {
+    view.with_frame(|_, frame| frame.node(key).map(|node| node.rect))
+        .unwrap_or_else(|| panic!("{key:?} is drawn"))
+}
+
+/// **A Create the owner refuses because its agent cannot run says so,
+/// naming the agent, beside *Create bot*** — never *That wasn't done* at
+/// the top of a form scrolled to its end (the first window run's finding
+/// 3). Refused as the owner's creation check refuses an agent whose models
+/// cannot be listed (`validate_model_evidence` → `agent_models_failure`,
+/// `apps/koru-ai-server/src/worker/bots.rs`, `agents.rs`); still listing
+/// has its own sentence. The draft stays, and Create can be pressed again.
+#[test]
+fn a_create_refused_for_its_agent_names_the_agent_beside_create() {
+    for (code, words) in [
+        ("agent_models_failed", Words::BotsCreateAgentNotReady),
+        ("runtime_unavailable", Words::BotsCreateAgentNotReady),
+        ("agent_models_listing", Words::BotsCreateAgentStillListing),
+    ] {
+        let mut c = shown_with_default("claude");
+        c.fill();
+        assert!(
+            c.view.perform(Act::Create),
+            "{code}: Claude not ready is not refused here"
+        );
+        let _ = c.sent();
+        c.answers
+            .send(Answer::Wrote {
+                bot: c.form().bot(),
+                request: c.form().request(),
+                result: Err(Failure::Refused(code.into())),
+            })
+            .unwrap();
+        c.view.poll();
+        crate::bots::tests::assert_bot_tab_publishable(code, &c.view);
+        let lang = c.view.lang;
+        let said = koru_i18n::fill(t(lang, words), &["Claude"]);
+        assert_eq!(
+            published(&c.view, CREATE_NOTICE).as_deref(),
+            Some(said.as_str()),
+            "{code}"
+        );
+        assert_ne!(said, t(lang, Words::BotsErrNotDone));
+        // Beside the button: after everything else in the form, right
+        // above *Create bot*.
+        let notice = rect_of(&c.view, CREATE_NOTICE);
+        let button = rect_of(&c.view, CREATE_BUTTON);
+        let disclosures = rect_of(&c.view, crate::bots::view::region::RUNTIME_LIMITS);
+        assert!(notice.y > disclosures.y, "{code}: after the form's cards");
+        assert!(notice.y < button.y, "{code}: just above Create");
+        assert!(
+            button.y - (notice.y + notice.h) < 48.0,
+            "{code}: beside it, not a screen away"
+        );
+        assert!(c.form().editable(), "{code}: the draft is the person's");
+    }
+}
+
+/// **No agent offered can run: *Create bot* is inert, and the form says
+/// why beside it** — the design's own refusal (*No agent is set up on this
+/// computer yet…*, DESIGN.md *Creating a bot*), before anything is sent.
+/// One agent not ready while another can run is named on the card and not
+/// refused. Readiness as `validate_provider` answers it.
+#[test]
+fn with_no_agent_able_to_run_create_is_inert_and_says_why() {
+    use koru_ai_ui::agent_catalog::config::picker::Readiness;
+    let mut c = shown_with_default("claude");
+    c.fill();
+    assert!(c.view.create_problem().is_none(), "Codex can run");
+    let codex = AiProviderId::parse("agent-codex").unwrap();
+    c.view
+        .catalog
+        .force_readiness_for_test(&codex, Readiness::NotInstalled);
+    assert_eq!(c.view.create_problem(), Some(Words::BotsAgentRequired));
+    assert_eq!(
+        published(&c.view, CREATE_PROBLEM).as_deref(),
+        Some(t(c.view.lang, Words::BotsAgentRequired))
+    );
+    assert!(!c.view.perform(Act::Create), "inert");
+    c.nothing_sent();
+    let create = all_controls(&c.view)
+        .into_iter()
+        .find(|control| control.key == CREATE_BUTTON)
+        .expect("drawn");
+    assert!(create.disabled, "published disabled");
+}
+
+/// **The card says where the chosen agent's readiness stands**: still
+/// being checked while the catalog asks, not ready as the service said,
+/// could not be told past the limit — by the agent's name, never a spinner
+/// alone.
+#[test]
+fn the_card_says_where_the_agents_readiness_stands() {
+    use koru_ai_ui::agent_catalog::config::picker::Readiness;
+    let mut c = shown_with_default("claude");
+    let claude = AiProviderId::parse("agent-claude").unwrap();
+    let lang = c.view.lang;
+    for (readiness, words) in [
+        (Readiness::Checking, Words::BotsAgentChecking),
+        (Readiness::SignedOut, Words::BotsAgentNotReady),
+    ] {
+        c.view.catalog.force_readiness_for_test(&claude, readiness);
+        assert_eq!(
+            c.view.agent_readiness_words(),
+            Some(koru_i18n::fill(t(lang, words), &["Claude"])),
+            "{readiness:?}"
+        );
+    }
+}
+
+/// **A create tab's header says what the tab is** — *New bot*, then the
+/// name typed — and never *Loading this bot…*, which stood under it for
+/// the form's whole life (the first window run's finding 6): a create tab
+/// reads no Bot.
+#[test]
+fn a_create_tabs_header_names_the_new_bot_and_loads_nothing() {
+    let mut c = shown();
+    let lang = c.view.lang;
+    let lines = |c: &Create| -> Vec<String> {
+        c.view
+            .header_lines()
+            .into_iter()
+            .map(|(_, _, words)| words)
+            .collect()
+    };
+    let loading = t(lang, Words::BotsBotLoading).to_owned();
+    let shown = lines(&c);
+    assert_eq!(
+        shown.first().map(String::as_str),
+        Some(t(lang, Words::BotsNewBot))
+    );
+    assert!(!shown.contains(&loading), "{shown:?}");
+    c.fill();
+    let shown = lines(&c);
+    assert_eq!(shown.first().map(String::as_str), Some("Scout"));
+    assert!(!shown.contains(&loading), "{shown:?}");
+}

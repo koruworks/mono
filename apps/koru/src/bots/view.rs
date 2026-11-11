@@ -1091,6 +1091,11 @@ impl BotView {
     ///
     /// A create tab says nothing here: its form says where it stands (S8).
     fn notice(&self) -> Option<Words> {
+        // A create tab reads no Bot: *Loading this bot…* stood under *New
+        // bot* for the form's whole life (the first window run's finding 6).
+        if self.create.is_some() {
+            return None;
+        }
         match self.opening() {
             Some(Opening::Asking) => return Some(Words::BotsChatOpening),
             Some(Opening::Failed) => return Some(Words::BotsConversationUnavailable),
@@ -1889,12 +1894,18 @@ impl View for BotView {
         let creating = (!self.stale).then(|| self.create_deadline(now)).flatten();
         // A Bot read owed again on its clock, shown only.
         let reread = self.bot_read_next.filter(|_| !self.stale);
+        // An agent's readiness still being checked, asked again on its
+        // clock while the form that shows it is (S6, finding 3).
+        let checking = (!self.stale && self.form_open())
+            .then(|| self.catalog.deadline())
+            .flatten();
         let mine = [
             read,
             self.settings.deadline(now),
             self.lifecycle_deadline(now),
             creating,
             reread,
+            checking,
         ]
         .into_iter()
         .flatten()

@@ -815,6 +815,7 @@ impl<'v, 'a, P: AgentId> Picker<'v, 'a, P> {
         // A query's results span every entry (D67): no mark reads as the
         // list's while one is typed.
         let searching = !query.is_empty();
+        let lang = self.lang();
         Spec {
             hide_rail,
             marks: rail
@@ -824,9 +825,19 @@ impl<'v, 'a, P: AgentId> Picker<'v, 'a, P> {
                     key: elements::mark_key(entry),
                     name: match entry {
                         RailEntry::Favorites => MarkName::Key(Key::AiPickerFavorites),
-                        RailEntry::Agent(_) | RailEntry::Provider(_) => {
-                            MarkName::Content(self.entry_name(entry))
-                        }
+                        // **An agent that is not ready says so in its
+                        // name**: its mark is only dimmed, which a screen
+                        // reader cannot hear — *Claude, Not installed*.
+                        RailEntry::Agent(agent) => MarkName::Content(
+                            match self.inputs.readiness(agent).and_then(|r| r.word(lang)) {
+                                Some(word) => koru_i18n::fill(
+                                    t(lang, Key::AiPickerRowWith),
+                                    &[self.entry_name(entry).as_str(), word.as_str()],
+                                ),
+                                None => self.entry_name(entry),
+                            },
+                        ),
+                        RailEntry::Provider(_) => MarkName::Content(self.entry_name(entry)),
                     },
                     provider: self.entry_mark(entry),
                     dim: match entry {

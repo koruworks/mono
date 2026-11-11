@@ -53,6 +53,17 @@ use koru_ai_ui::agent_catalog::{self, CatalogAgent, CatalogListing, ListingFailu
 /// are each `ai.manage_providers`.
 const SCOPES: &[&str] = &["ai.manage_providers"];
 
+/// **How long an agent may go on answering *checking*** — or not answer —
+/// **before the catalog stops asking and says it could not tell.** The
+/// readiness probe answers *checking* while it re-probes, and a machine
+/// where nothing can run (no runtime installed, no network) can answer that
+/// for good: the first window run showed *Checking…* for more than two
+/// minutes, with no sentence and no end.
+pub(crate) const CHECKING_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+/// The bounded clock a readiness still being checked is asked again on.
+const READINESS_FIRST: std::time::Duration = std::time::Duration::from_secs(1);
+const READINESS_MAX: std::time::Duration = std::time::Duration::from_secs(8);
+
 /// Commands waiting for the thread: the agents, and an agent or two's
 /// readiness and listing.
 const COMMAND_CAPACITY: usize = 16;
@@ -277,6 +288,19 @@ pub(crate) struct AgentSettings {
     pub default_agent: Option<String>,
 }
 
+/// **Where one agent's readiness stands**, for the sentence a Bot's card
+/// says about it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Standing {
+    Ready,
+    /// Answered *checking*, or not answered yet — and still being asked.
+    Checking,
+    /// Settled: installed or not, signed in or not, as the service said.
+    NotReady(Readiness),
+    /// Still checking, or unanswered, past [`CHECKING_LIMIT`].
+    Unknown,
+}
+
 /// What is known of one agent's models.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Known {
@@ -302,6 +326,15 @@ pub(crate) struct Catalog {
     readiness: HashMap<AiProviderId, Readiness>,
     readiness_seq: HashMap<AiProviderId, u64>,
     readiness_owed: HashSet<AiProviderId>,
+    /// **Agents whose readiness is still being checked** — answered
+    /// *checking*, or not answered — and since when: asked again on the
+    /// bounded clock until [`CHECKING_LIMIT`].
+    checking: HashMap<AiProviderId, std::time::Instant>,
+    /// Agents that went on checking past the limit: said as *could not
+    /// tell*, never as checking forever.
+    unsettled: HashSet<AiProviderId>,
+    readiness_next: Option<std::time::Instant>,
+    readiness_backoff: std::time::Duration,
     listings: HashMap<AiProviderId, Known>,
     listing_seq: HashMap<AiProviderId, u64>,
     /// Listings to ask for, and whether each is a ↻.
@@ -328,8 +361,50 @@ impl Catalog {
         self.agents.as_deref().unwrap_or_default()
     }
 
+    /// How ready `id` is, as the control is told: what the service said,
+    /// and **`CheckFailed` once it went on checking past the limit** — the
+    /// control's own word for a check that did not settle — so the rail and
+    /// the list end in a word, never *Checking…* for good.
     pub(crate) fn readiness(&self, id: &AiProviderId) -> Option<Readiness> {
+        if self.unsettled.contains(id) {
+            return Some(Readiness::CheckFailed);
+        }
         self.readiness.get(id).copied()
+    }
+
+    /// **Where `id`'s readiness stands, for the sentence on the card**.
+    pub(crate) fn standing(&self, id: &AiProviderId) -> Standing {
+        if self.unsettled.contains(id) {
+            return Standing::Unknown;
+        }
+        match self.readiness.get(id) {
+            Some(Readiness::Ready) => Standing::Ready,
+            Some(Readiness::Checking) | None => Standing::Checking,
+            Some(other) => Standing::NotReady(*other),
+        }
+    }
+
+    /// **Every agent offered is known not to be able to run**: listed, and
+    /// each one shown is settled not ready (or could not be told). The
+    /// create form then refuses in words, before anything is sent
+    /// (*No agent is set up on this computer yet…*). `false` while any is
+    /// ready or still being checked, and before the agents are listed.
+    pub(crate) fn none_can_run(&self, settings: &AgentSettings) -> bool {
+        let agents = self.control_agents(settings);
+        let shown: Vec<&Agent<'_, AiProviderId>> =
+            agents.iter().filter(|agent| !agent.hidden).collect();
+        !shown.is_empty()
+            && shown.iter().all(|agent| {
+                matches!(
+                    self.standing(&agent.id),
+                    Standing::NotReady(_) | Standing::Unknown
+                )
+            })
+    }
+
+    /// When the readiness still being checked is next asked, while it is.
+    pub(crate) fn deadline(&self) -> Option<std::time::Instant> {
+        self.readiness_next
     }
 
     pub(crate) fn listing(&self, id: &AiProviderId) -> Option<&CatalogListing> {
@@ -356,6 +431,12 @@ impl Catalog {
     /// kept; ↻ is how a person asks for a new one.
     pub(crate) fn shown(&mut self) {
         self.agents_owed = true;
+        // Asked afresh: an agent that could not be told is checked again,
+        // with a new limit, rather than said as unknown for good.
+        self.checking.clear();
+        self.unsettled.clear();
+        self.readiness_next = None;
+        self.readiness_backoff = READINESS_FIRST;
     }
 
     /// **`agent`'s listing is wanted** (the control's `Outcome::Catalog`, or
@@ -384,14 +465,48 @@ impl Catalog {
     /// **The pass a shown tab runs**: start the link the first time, send
     /// what is owed, fold what came back. `true` when what is shown moved.
     pub(crate) fn pass(&mut self, root: Option<PathBuf>) -> bool {
+        self.pass_at(root, std::time::Instant::now())
+    }
+
+    /// [`Self::pass`] at `now`: what a test drives to stand in for the time
+    /// passing.
+    pub(crate) fn pass_at(&mut self, root: Option<PathBuf>, now: std::time::Instant) -> bool {
         if !self.started {
             self.started = true;
             self.link = CatalogLink::start(root);
             self.agents_owed = true;
         }
-        let moved = self.fold();
+        let moved = self.fold(now);
+        // A readiness still being checked, due again.
+        if self.readiness_next.is_some_and(|at| at <= now) {
+            self.readiness_next = None;
+            let due: Vec<AiProviderId> = self
+                .checking
+                .keys()
+                .filter(|agent| !self.readiness_seq.contains_key(*agent))
+                .cloned()
+                .collect();
+            self.readiness_owed.extend(due);
+        }
         self.send_owed();
         moved
+    }
+
+    /// `agent`'s readiness did not settle at `now` — *checking*, or no
+    /// answer: asked again on the clock, or said as unknown past the limit.
+    /// `true` when that changed what is shown.
+    fn still_checking(&mut self, agent: AiProviderId, now: std::time::Instant) -> bool {
+        let since = *self.checking.entry(agent.clone()).or_insert(now);
+        if now.saturating_duration_since(since) >= CHECKING_LIMIT {
+            self.checking.remove(&agent);
+            return self.unsettled.insert(agent);
+        }
+        if self.readiness_next.is_none() {
+            let wait = self.readiness_backoff.max(READINESS_FIRST);
+            self.readiness_next = Some(now.checked_add(wait).unwrap_or(now));
+            self.readiness_backoff = (wait * 2).min(READINESS_MAX);
+        }
+        false
     }
 
     /// Whether an answer is owed: the tab keeps a short clock while one is,
@@ -454,7 +569,7 @@ impl Catalog {
         self.link = Some(link);
     }
 
-    fn fold(&mut self) -> bool {
+    fn fold(&mut self, now: std::time::Instant) -> bool {
         let Some(link) = &self.link else {
             return false;
         };
@@ -478,10 +593,28 @@ impl Catalog {
                     if self.readiness_seq.get(&agent) == Some(&seq) =>
                 {
                     self.readiness_seq.remove(&agent);
-                    if let Ok(readiness) = result
-                        && self.readiness.insert(agent, readiness) != Some(readiness)
-                    {
-                        moved = true;
+                    match result {
+                        // Settled, either way: no more asking, and an agent
+                        // once unknown is what the service says now.
+                        Ok(readiness) if readiness != Readiness::Checking => {
+                            self.checking.remove(&agent);
+                            moved |= self.unsettled.remove(&agent);
+                            moved |= self.readiness.insert(agent, readiness) != Some(readiness);
+                        }
+                        // Still being checked, or not answered (a failed read
+                        // keeps what was shown): asked again, within limits.
+                        Ok(readiness) => {
+                            moved |=
+                                self.readiness.insert(agent.clone(), readiness) != Some(readiness);
+                            moved |= self.still_checking(agent, now);
+                        }
+                        // A failed read keeps a readiness that settled.
+                        Err(_)
+                            if self
+                                .readiness
+                                .get(&agent)
+                                .is_some_and(|known| *known != Readiness::Checking) => {}
+                        Err(_) => moved |= self.still_checking(agent, now),
                     }
                 }
                 Answer::Listing { seq, agent, result }

@@ -204,3 +204,111 @@ fn the_controls_agents_follow_the_persons_order_and_switches() {
     with_default.default_agent = Some("opencode".into());
     assert_eq!(catalog.preferred(&with_default), Some(id("agent-opencode")));
 }
+
+/// Answer every readiness read owed with `result` for `agent`; how many.
+fn answer_readiness(
+    commands: &Receiver<Command>,
+    answers: &SyncSender<Answer>,
+    result: Result<Readiness, Failure>,
+) -> usize {
+    let mut n = 0;
+    while let Ok(command) = commands.try_recv() {
+        if let Command::Readiness { seq, agent } = command {
+            answers
+                .send(Answer::Readiness {
+                    seq,
+                    agent,
+                    result: result.clone(),
+                })
+                .unwrap();
+            n += 1;
+        }
+    }
+    n
+}
+
+/// **A readiness still being checked ends in a sentence, never a spinner
+/// forever** (the first window run's finding 3: *Checking…* for more than
+/// two minutes on a machine where nothing can run). An agent answering
+/// *checking* — as `validate_provider` answers while its probe re-runs
+/// (`agent_checking`, `koru_ai_ui::agents::AgentStatus::from_validation`) —
+/// or not answering is asked again on the bounded clock; past
+/// `CHECKING_LIMIT` the catalog stops asking and says it could not tell:
+/// the control is told `CheckFailed`, the card `Standing::Unknown`, and the
+/// form, with no agent able to run, refuses before anything is sent. A
+/// settled answer later, or the form shown again, puts that right.
+#[test]
+fn a_readiness_still_being_checked_is_asked_again_and_then_said_unknown() {
+    let (link, commands, answers) = CatalogLink::test_pair();
+    let mut catalog = Catalog::with_link(link);
+    let settings = AgentSettings::default();
+    let start = std::time::Instant::now();
+    catalog.shown();
+    catalog.pass_at(None, start);
+    asked(&commands);
+    answers
+        .send(Answer::Agents {
+            seq: 1,
+            result: Ok(vec![agent("agent-claude", "claude", "Claude")]),
+        })
+        .unwrap();
+    catalog.pass_at(None, start);
+    let claude = id("agent-claude");
+    assert_eq!(
+        catalog.standing(&claude),
+        Standing::Checking,
+        "not answered yet"
+    );
+    assert!(!catalog.none_can_run(&settings), "nothing known yet");
+    assert_eq!(
+        answer_readiness(&commands, &answers, Ok(Readiness::Checking)),
+        1
+    );
+    catalog.pass_at(None, start);
+    assert_eq!(catalog.standing(&claude), Standing::Checking);
+    let due = catalog.deadline().expect("asked again on a clock");
+    assert!(due > start, "{due:?}");
+    // Due: asked again. Unanswered this time: still checking.
+    catalog.pass_at(None, due);
+    assert_eq!(
+        answer_readiness(&commands, &answers, Err(Failure::lost())),
+        1,
+        "asked again when due"
+    );
+    catalog.pass_at(None, due);
+    assert_eq!(catalog.standing(&claude), Standing::Checking);
+    // Past the limit: no more asking, and it says it could not tell.
+    let late = start + CHECKING_LIMIT + std::time::Duration::from_secs(1);
+    catalog.pass_at(None, late);
+    answer_readiness(&commands, &answers, Ok(Readiness::Checking));
+    catalog.pass_at(None, late);
+    assert_eq!(catalog.standing(&claude), Standing::Unknown);
+    assert_eq!(catalog.readiness(&claude), Some(Readiness::CheckFailed));
+    assert_eq!(catalog.deadline(), None, "the clock stops");
+    assert!(catalog.none_can_run(&settings), "no agent offered can run");
+    catalog.pass_at(None, late + std::time::Duration::from_secs(60));
+    assert!(asked(&commands).is_empty(), "nothing asked after the limit");
+    // Shown again: asked afresh, and a settled answer is what it says.
+    catalog.shown();
+    catalog.pass_at(None, late);
+    let seq: u64 = asked(&commands)[0]
+        .trim_start_matches("agents ")
+        .parse()
+        .unwrap();
+    answers
+        .send(Answer::Agents {
+            seq,
+            result: Ok(vec![agent("agent-claude", "claude", "Claude")]),
+        })
+        .unwrap();
+    catalog.pass_at(None, late);
+    assert_eq!(catalog.standing(&claude), Standing::Checking);
+    answer_readiness(&commands, &answers, Ok(Readiness::NotInstalled));
+    catalog.pass_at(None, late);
+    assert_eq!(
+        catalog.standing(&claude),
+        Standing::NotReady(Readiness::NotInstalled)
+    );
+    assert_eq!(catalog.deadline(), None, "settled: nothing more to ask");
+    assert!(catalog.none_can_run(&settings));
+}

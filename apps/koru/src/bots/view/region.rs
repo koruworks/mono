@@ -846,17 +846,26 @@ impl BotView {
     }
 
     /// **The agent's readiness, when it is not ready**: said by its name,
-    /// never replaced by another agent.
+    /// never replaced by another agent — not ready as the service said;
+    /// still being checked, while the catalog asks; could not be told,
+    /// once it stopped (`catalog::CHECKING_LIMIT`). Nothing before the
+    /// agents are listed, and nothing for a ready one.
     pub(super) fn agent_readiness_words(&self) -> Option<String> {
-        use koru_ai_ui::agent_catalog::config::picker::Readiness;
+        use crate::bots::catalog::Standing;
         let provider = self.agent_provider()?;
-        match self.catalog.readiness(&provider)? {
-            Readiness::Ready | Readiness::Checking => None,
-            _ => Some(koru_i18n::fill(
-                t(self.lang, Words::BotsAgentNotReady),
-                &[self.agent_label().as_str()],
-            )),
+        if self.catalog.agents().is_empty() {
+            return None;
         }
+        let words = match self.catalog.standing(&provider) {
+            Standing::Ready => return None,
+            Standing::Checking => Words::BotsAgentChecking,
+            Standing::NotReady(_) => Words::BotsAgentNotReady,
+            Standing::Unknown => Words::BotsAgentReadinessUnknown,
+        };
+        Some(koru_i18n::fill(
+            t(self.lang, words),
+            &[self.agent_label().as_str()],
+        ))
     }
 
     /// **The honest disclosures**, as plain sentences: where the Bot runs

@@ -3641,13 +3641,21 @@ pub enum Key {
     BotsConversationStopsRunning,
     /// A reply in the conversation is waiting on the person: its Trash stops it for good. The first paragraph of the Archive or Trash question, above its body, when the window knows (`bots::stops`); the question's default is then Cancel (QUESTIONS O46). Non-English columns machine-written, awaiting a native read.
     BotsConversationStopsWaiting,
+    /// The Bot's agent (`{}`, its name) still answers that its readiness is being checked: said on the *Agent and model* card for as long as the catalog keeps asking (`bots::catalog::CHECKING_LIMIT`). Non-English columns machine-written, awaiting a native read.
+    BotsAgentChecking,
+    /// The agent (`{}`) kept answering *checking*, or did not answer, past the catalog's limit: Koru stops asking and says it could not tell, rather than a spinner forever. Non-English columns machine-written, awaiting a native read.
+    BotsAgentReadinessUnknown,
+    /// Create was refused because the chosen agent (`{}`) cannot run on this computer (`agent_models_failed`, `runtime_unavailable`, `provider_unavailable`): said beside *Create bot*. Non-English columns machine-written, awaiting a native read.
+    BotsCreateAgentNotReady,
+    /// Create was refused because the chosen agent (`{}`) is still listing its models (`agent_models_listing`). Non-English columns machine-written, awaiting a native read.
+    BotsCreateAgentStillListing,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2458] = [
+    pub const ALL: [Key; 2462] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6106,6 +6114,10 @@ impl Key {
         Key::BotsStopsWaiting,
         Key::BotsConversationStopsRunning,
         Key::BotsConversationStopsWaiting,
+        Key::BotsAgentChecking,
+        Key::BotsAgentReadinessUnknown,
+        Key::BotsCreateAgentNotReady,
+        Key::BotsCreateAgentStillListing,
     ];
 }
 
@@ -19547,4 +19559,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsStopsWaiting, en: "A reply in this bot is waiting for you now. It will be stopped, and it won't pick up again when the bot comes back.", es: "Una respuesta de este bot está esperando tu decisión ahora mismo. Se detendrá y no se reanudará cuando el bot vuelva.", pt_br: "Uma resposta deste bot está aguardando você agora. Ela será interrompida e não continuará quando o bot voltar.", de: "Eine Antwort in diesem Bot wartet gerade auf Sie. Sie wird gestoppt und setzt nicht wieder ein, wenn der Bot zurückkommt.", fr: "Une réponse de ce bot vous attend en ce moment. Elle sera arrêtée et ne reprendra pas quand le bot reviendra.", ar: "هناك رد في هذا البوت ينتظرك الآن. سيُوقَف، ولن يُستأنف عند عودة البوت.", zh_hans: "此 Bot 中现在有一个回复正在等你处理。它将被停止，Bot 恢复后也不会继续。", ja: "この Bot の返信が今、あなたの対応を待っています。返信は停止され、Bot が戻っても再開されません。" },
     Row { key: Key::BotsConversationStopsRunning, en: "A reply is running in this conversation now. It will be stopped, and it won't pick up again if you restore the conversation.", es: "Hay una respuesta en curso en esta conversación ahora mismo. Se detendrá y no se reanudará si restauras la conversación.", pt_br: "Há uma resposta em andamento nesta conversa agora. Ela será interrompida e não continuará se você restaurar a conversa.", de: "In dieser Unterhaltung läuft gerade eine Antwort. Sie wird gestoppt und setzt nicht wieder ein, wenn Sie die Unterhaltung wiederherstellen.", fr: "Une réponse est en cours dans cette conversation en ce moment. Elle sera arrêtée et ne reprendra pas si vous restaurez la conversation.", ar: "هناك رد قيد التشغيل في هذه المحادثة الآن. سيُوقَف، ولن يُستأنف إذا استعدت المحادثة.", zh_hans: "此对话中现在有一个回复正在运行。它将被停止，即使你恢复此对话也不会继续。", ja: "この会話では今、返信を実行中です。返信は停止され、会話を復元しても再開されません。" },
     Row { key: Key::BotsConversationStopsWaiting, en: "A reply in this conversation is waiting for you now. It will be stopped, and it won't pick up again if you restore the conversation.", es: "Una respuesta de esta conversación está esperando tu decisión ahora mismo. Se detendrá y no se reanudará si restauras la conversación.", pt_br: "Uma resposta desta conversa está aguardando você agora. Ela será interrompida e não continuará se você restaurar a conversa.", de: "Eine Antwort in dieser Unterhaltung wartet gerade auf Sie. Sie wird gestoppt und setzt nicht wieder ein, wenn Sie die Unterhaltung wiederherstellen.", fr: "Une réponse de cette conversation vous attend en ce moment. Elle sera arrêtée et ne reprendra pas si vous restaurez la conversation.", ar: "هناك رد في هذه المحادثة ينتظرك الآن. سيُوقَف، ولن يُستأنف إذا استعدت المحادثة.", zh_hans: "此对话中现在有一个回复正在等你处理。它将被停止，即使你恢复此对话也不会继续。", ja: "この会話の返信が今、あなたの対応を待っています。返信は停止され、会話を復元しても再開されません。" },
+    // ------------------------------------------- Bots P1.8: the first window run
+    Row { key: Key::BotsAgentChecking, en: "Koru is still checking whether {} is ready on this computer.", es: "Koru todavía está comprobando si {} está listo en este equipo.", pt_br: "O Koru ainda está verificando se {} está pronto neste computador.", de: "Koru prüft noch, ob {} auf diesem Computer bereit ist.", fr: "Koru vérifie encore si {} est prêt sur cet ordinateur.", ar: "لا يزال Koru يتحقق مما إذا كان {} جاهزًا على هذا الكمبيوتر.", zh_hans: "Koru 仍在检查 {} 在这台电脑上是否已就绪。", ja: "Koru は、{} がこのコンピューターで準備できているかをまだ確認しています。" },
+    Row { key: Key::BotsAgentReadinessUnknown, en: "Koru couldn't tell whether {} is ready on this computer. Check that it's installed and signed in, then try again.", es: "Koru no pudo saber si {} está listo en este equipo. Comprueba que esté instalado y con la sesión iniciada, y vuelve a intentarlo.", pt_br: "O Koru não conseguiu saber se {} está pronto neste computador. Verifique se está instalado e com a sessão iniciada e tente de novo.", de: "Koru konnte nicht feststellen, ob {} auf diesem Computer bereit ist. Prüfen Sie, ob es installiert und angemeldet ist, und versuchen Sie es erneut.", fr: "Koru n'a pas pu déterminer si {} est prêt sur cet ordinateur. Vérifiez qu'il est installé et connecté, puis réessayez.", ar: "تعذّر على Koru معرفة ما إذا كان {} جاهزًا على هذا الكمبيوتر. تحقّق من أنه مثبّت وأنك سجّلت الدخول فيه، ثم حاول مرة أخرى.", zh_hans: "Koru 无法确定 {} 在这台电脑上是否已就绪。请检查它是否已安装并已登录，然后重试。", ja: "Koru は、{} がこのコンピューターで準備できているかを確認できませんでした。インストールされ、サインインしているかを確認してから、もう一度お試しください。" },
+    Row { key: Key::BotsCreateAgentNotReady, en: "{} isn't ready on this computer, so the bot wasn't created. Set it up, then create the bot again.", es: "{} no está listo en este equipo, así que el bot no se creó. Configúralo y vuelve a crear el bot.", pt_br: "{} não está pronto neste computador, então o bot não foi criado. Configure-o e crie o bot de novo.", de: "{} ist auf diesem Computer nicht bereit, daher wurde der Bot nicht erstellt. Richten Sie es ein und erstellen Sie den Bot erneut.", fr: "{} n'est pas prêt sur cet ordinateur, le bot n'a donc pas été créé. Configurez-le, puis créez à nouveau le bot.", ar: "{} غير جاهز على هذا الكمبيوتر، لذا لم يُنشأ البوت. أعدّه ثم أنشئ البوت مرة أخرى.", zh_hans: "{} 在这台电脑上尚未就绪，因此未创建机器人。请先设置它，然后重新创建机器人。", ja: "{} はこのコンピューターで準備ができていないため、ボットは作成されませんでした。設定してから、もう一度ボットを作成してください。" },
+    Row { key: Key::BotsCreateAgentStillListing, en: "{} is still listing its models, so the bot wasn't created. Try again in a moment.", es: "{} todavía está obteniendo la lista de sus modelos, así que el bot no se creó. Inténtalo de nuevo en un momento.", pt_br: "{} ainda está listando os modelos, então o bot não foi criado. Tente de novo em instantes.", de: "{} listet seine Modelle noch auf, daher wurde der Bot nicht erstellt. Versuchen Sie es gleich noch einmal.", fr: "{} est encore en train de lister ses modèles, le bot n'a donc pas été créé. Réessayez dans un instant.", ar: "لا يزال {} يعرض قائمة نماذجه، لذا لم يُنشأ البوت. حاول مجددًا بعد لحظة.", zh_hans: "{} 仍在列出其模型，因此未创建机器人。请稍后再试。", ja: "{} はまだモデルを一覧にしているため、ボットは作成されませんでした。少し待ってからもう一度お試しください。" },
 ];

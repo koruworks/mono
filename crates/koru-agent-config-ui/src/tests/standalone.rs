@@ -845,3 +845,38 @@ fn both_controls_publish_their_rows_to_assistive_technology() {
     assert_eq!(nodes[0].children[1].selected, Some(true));
     assert_eq!(list.focused_key(), nodes[0].children[0].key);
 }
+
+/// **An agent that is not ready says so in its rail mark's name**, which
+/// is all a screen reader has of it — the mark is only dimmed. A ready
+/// agent is its name alone (the first window run of Bots: every agent
+/// listed with no mark of not being ready).
+#[test]
+fn a_rail_mark_names_an_agent_that_is_not_ready() {
+    let (mut host, mut lent) = (Host::new(), Lent::new());
+    open(&mut host, &mut lent);
+    let names: Vec<(String, String)> = read(&host, &lent, |picker| {
+        picker
+            .spec()
+            .marks
+            .iter()
+            .filter_map(|mark| match &mark.name {
+                elements::MarkName::Content(name) => {
+                    Some((format!("{:?}", mark.key), name.clone()))
+                }
+                elements::MarkName::Key(_) => None,
+            })
+            .collect()
+    });
+    let named = |label: &str| {
+        names
+            .iter()
+            .find(|(_, name)| name.starts_with(label))
+            .map(|(_, name)| name.clone())
+            .unwrap_or_else(|| panic!("{label} on the rail: {names:?}"))
+    };
+    assert_eq!(named("Claude"), "Claude");
+    assert_eq!(
+        named("Missing"),
+        format!("Missing, {}", words(koru_i18n::Key::TerminalNotInstalled))
+    );
+}

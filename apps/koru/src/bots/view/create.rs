@@ -343,32 +343,6 @@ impl BotView {
             .pad_x(alias::NAV_PAD)
             .pad_y(Space::S3)
             .gap(Space::S4);
-        if let Some(notice) = form.notice() {
-            content = content.child(line(
-                "Bot create notice",
-                CREATE_NOTICE,
-                self.words(notice),
-                Ink::Accent,
-            ));
-        }
-        // Koru could not confirm whether the bot was made: the person's own
-        // way forward, which alone takes new identities.
-        if form.can_start_over() {
-            content = content.child(
-                row("Bot create unconfirmed actions")
-                    .gap(Space::S2)
-                    .items_center()
-                    .child(self.button(
-                        engine,
-                        "Bot start over",
-                        START_OVER,
-                        self.words(Words::BotsCreateStartOver),
-                        ActionStyle::Secondary,
-                        false,
-                    ))
-                    .child(spacer()),
-            );
-        }
         if let Some(ended) = form.ended() {
             content = content.child(self.ended_block(engine, ended));
         }
@@ -432,8 +406,36 @@ impl BotView {
             .child(card_title(t(self.lang, Words::BotsFolder)))
             .child(self.create_folder_card(engine, create))
             .child(self.disclosures());
+        // **What the last press came to, beside the button that was
+        // pressed** — never only at the top of a form scrolled to its end
+        // (the first window run's finding 3): a refusal's sentence, and
+        // *Start over* when Koru could not confirm whether the bot was made.
+        if let Some(notice) = form.notice() {
+            content = content.child(line(
+                "Bot create notice",
+                CREATE_NOTICE,
+                self.create_notice_words(notice),
+                Ink::Accent,
+            ));
+        }
+        if form.can_start_over() {
+            content = content.child(
+                row("Bot create unconfirmed actions")
+                    .gap(Space::S2)
+                    .items_center()
+                    .child(self.button(
+                        engine,
+                        "Bot start over",
+                        START_OVER,
+                        self.words(Words::BotsCreateStartOver),
+                        ActionStyle::Secondary,
+                        false,
+                    ))
+                    .child(spacer()),
+            );
+        }
         let mut actions = row("Bot create actions").gap(Space::S2).items_center();
-        actions = match form.problem() {
+        actions = match self.create_problem() {
             Some(problem) if form.editable() => actions.child(
                 line(
                     "Bot create problem",
@@ -459,7 +461,7 @@ impl BotView {
                 CREATE_BUTTON,
                 self.words(Words::BotsCreateAction),
                 ActionStyle::Primary,
-                !form.can_create(),
+                !self.can_create(),
             ))
         } else {
             actions
@@ -794,6 +796,39 @@ impl BotView {
         abandoned_lines(self.lang, ended)
     }
 
+    /// A refusal's sentence, the agent named where it is about the agent.
+    pub(super) fn create_notice_words(&self, notice: Words) -> String {
+        if crate::bots::creation::names_the_agent(notice) {
+            koru_i18n::fill(t(self.lang, notice), &[self.agent_label().as_str()])
+        } else {
+            self.words(notice)
+        }
+    }
+
+    /// **The first thing the form refuses, in words**: the draft's own
+    /// limits, then *No agent is set up on this computer yet…* once every
+    /// agent offered is known not to be able to run — the design's own
+    /// refusal for it (DESIGN.md, *Creating a bot*), said before anything
+    /// is sent rather than as the owner's refusal after it. One agent not
+    /// ready while another can run is named on the card and not refused:
+    /// the person may mean to set it up (the first window run's finding 3).
+    pub(super) fn create_problem(&self) -> Option<Words> {
+        let form = &self.create.as_deref()?.form;
+        form.problem().or_else(|| {
+            self.catalog
+                .none_can_run(&self.agent_settings)
+                .then_some(Words::BotsAgentRequired)
+        })
+    }
+
+    /// Whether *Create bot* would send: nothing refused, nothing on its way.
+    pub(super) fn can_create(&self) -> bool {
+        self.create
+            .as_deref()
+            .is_some_and(|create| create.form.editable())
+            && self.create_problem().is_none()
+    }
+
     /// The words of one of the form's own lines, by its key.
     pub(super) fn create_line_words(&self, key: Key) -> Option<String> {
         let create = self.create.as_deref()?;
@@ -807,8 +842,8 @@ impl BotView {
         }
         let agent = self.agent_name();
         Some(match key {
-            k if k == CREATE_NOTICE => self.words(form.notice()?),
-            k if k == CREATE_PROBLEM => self.words(form.problem()?),
+            k if k == CREATE_NOTICE => self.create_notice_words(form.notice()?),
+            k if k == CREATE_PROBLEM => self.words(self.create_problem()?),
             k if k == CREATING => self.words(Words::BotsCreating),
             k if k == ROLE_UNCONFIRMED => self.words(Words::BotsRolePageUnconfirmed),
             k if k == ROLE_HINT => self.words(Words::BotsRoleHint),
@@ -863,6 +898,10 @@ impl BotView {
         };
         let command = match act {
             Act::Create => {
+                // Inert while no agent offered can run: said beside it.
+                if !self.can_create() {
+                    return false;
+                }
                 let asking = self.asking_mode();
                 let Some(create) = self.create.as_deref_mut() else {
                     return false;

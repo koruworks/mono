@@ -669,6 +669,14 @@ impl CreateForm {
                     (Some(Sent::Create), "invalid_request") if self.draft.folder.is_some() => {
                         self.notice = Some(Words::BotsFolderRefused);
                     }
+                    // **The chosen agent cannot run here**, as the owner's
+                    // creation check says when it asks the agent for its
+                    // models (`validate_model_evidence`, `apps/koru-ai-server/
+                    // src/worker/bots.rs`): its own sentence, naming the
+                    // agent at draw time, never *That wasn't done*.
+                    (_, code) if agent_refusal(code).is_some() => {
+                        self.notice = agent_refusal(code);
+                    }
                     _ => self.notice = Some(super::settings::general_refusal_words(&code)),
                 }
             }
@@ -761,6 +769,36 @@ pub(crate) fn stage_words(creation: &BotCreation) -> Vec<Words> {
         BotCreationStage::Abandoned => {}
     }
     words
+}
+
+/// **The codes a Create is refused with when its agent cannot run**, and
+/// the sentence each says, naming the agent (`{}`). The owner asks the
+/// agent for its models before it creates anything
+/// (`validate_model_evidence`, `apps/koru-ai-server/src/worker/bots.rs`):
+/// no session host or a model it does not list is `runtime_unavailable`, a
+/// listing that failed is `agent_models_failed` (the session host's
+/// `provider_unavailable` beneath it, which the owner does not pass on but
+/// is mapped too should it ever be), and one still being built is
+/// `agent_models_listing`. **None of them says why** — not installed, not
+/// signed in, too old — so the sentence says what is true of all of them.
+pub(crate) const AGENT_REFUSALS: [(&str, Words); 4] = [
+    ("runtime_unavailable", Words::BotsCreateAgentNotReady),
+    ("agent_models_failed", Words::BotsCreateAgentNotReady),
+    ("provider_unavailable", Words::BotsCreateAgentNotReady),
+    ("agent_models_listing", Words::BotsCreateAgentStillListing),
+];
+
+/// The agent sentence for a Create refused with `code`, if it is one.
+pub(crate) fn agent_refusal(code: &str) -> Option<Words> {
+    AGENT_REFUSALS
+        .iter()
+        .find(|(known, _)| *known == code)
+        .map(|(_, words)| *words)
+}
+
+/// Whether `words` names the draft's agent (`{}`), to be filled at draw.
+pub(crate) fn names_the_agent(words: Words) -> bool {
+    AGENT_REFUSALS.iter().any(|(_, known)| *known == words)
 }
 
 #[cfg(test)]
