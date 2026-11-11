@@ -29,9 +29,14 @@
 //! [`conversations`]). The header says when the conversation shown is the
 //! Bot's main one.
 //!
+//! **Its lifecycle** (S14): the header's ⋯ — Archive and Move to Trash, or
+//! Unarchive — a conversation row's Move to Trash, each asked about by the
+//! window first, the operation's progress, a parked one's Continue and
+//! Cancel, and what is true when it is done ([`actions`]).
+//!
 //! **What it does not show, deliberately.** No agent or model settings, no
-//! lifecycle menu, and no Rename, Pin or Trash on a conversation: each is a
-//! later slice with its own dependency, and a control that leads nowhere is a
+//! Rename or Pin on a conversation, and no permanent delete: each is a later
+//! slice with its own dependency, and a control that leads nowhere is a
 //! promise the tab cannot keep.
 //!
 //! ## One conversation, one container
@@ -79,11 +84,13 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key as WinitKey, ModifiersState};
 use winit::window::CursorIcon;
 
+use super::lifecycle::Lifecycle;
 use super::link::{Answer, BotsLink, Command, Failure};
 use super::roster::RosterBot;
 use super::settings::Settings;
 use crate::ai_chat_view::AiChatView;
 
+mod actions;
 mod controls;
 pub(crate) mod conversations;
 pub(crate) mod list;
@@ -137,8 +144,11 @@ pub(crate) struct BotFacts {
     pub name: String,
     pub paused: bool,
     /// Archived (P1.7): its history reads and every change is refused with
-    /// `bot_archived`. Nothing in this build archives or unarchives a Bot.
+    /// `bot_archived` until it is unarchived (S14).
     pub archived: bool,
+    /// In Trash (P1.7): the Bot and its conversations are hidden; nothing
+    /// else moved. Its tab says so and offers Restore (S14).
+    pub trashed: bool,
     pub home: WorkspaceId,
     pub provider: AiProviderId,
     pub main_chat: ChatId,
@@ -150,8 +160,10 @@ impl From<&RosterBot> for BotFacts {
             id: bot.id,
             name: bot.name.clone(),
             paused: bot.paused,
-            // The roster lists active Bots only (`BotCommand::List`).
+            // The roster lists active Bots only (`BotCommand::List`); an
+            // archived row of its Archived filter is corrected by its read.
             archived: false,
+            trashed: false,
             home: bot.home,
             provider: bot.provider.clone(),
             main_chat: bot.main_chat,
@@ -166,6 +178,7 @@ impl From<Bot> for BotFacts {
             name: bot.config.name,
             paused: bot.paused,
             archived: bot.lifecycle == BotLifecycle::Archived,
+            trashed: bot.lifecycle == BotLifecycle::Trashed,
             home: bot.home_workspace,
             provider: bot.config.model.provider,
             main_chat: bot.main_chat,
@@ -204,6 +217,9 @@ pub(crate) enum Opening {
     /// The read did not answer: the tab says the conversation cannot be
     /// opened right now, and is asked about again when it is next shown.
     Failed,
+    /// The owner says the conversation is in Trash (S14): the tab says so,
+    /// and is not asked about again on its own.
+    Trashed,
 }
 
 pub(crate) struct BotView {
@@ -287,6 +303,34 @@ pub(crate) struct BotView {
     /// The conversation's status when the window last asked, so it can tell
     /// the roster that a conversation's work moved (S10).
     seen_status: koru_chats_ui::ChatStatus,
+    // ------------------------------------------- the lifecycle (S14)
+    /// Archive, Trash, Unarchive, Restore and a conversation's Trash: what
+    /// is on its way and what the owner last said. Boxed for the reason the
+    /// settings are.
+    lifecycle: Box<Lifecycle>,
+    /// The trashed Bot as the owner's Trash filter lists it — its revision
+    /// is what a Restore carries, and its read answers *not found*.
+    trashed_bot: Option<Box<Bot>>,
+    /// A Trash filter read is owed: the Bot went to Trash, or its read said
+    /// it is not found.
+    trash_read_owed: bool,
+    trash_in_flight: bool,
+    trash_seq: u64,
+    /// The header's ⋯ was pressed: its menu, at its anchor, for the window.
+    actions_request: Option<(f32, f32)>,
+    /// A conversation row's menu, at its anchor, or its Delete: for the
+    /// window, which asks before anything is sent.
+    conversation_menu: Option<(ChatId, (f32, f32))>,
+    conversation_trash: Option<ChatId>,
+    /// Where the keyboard goes back when the window's menu or dialog that a
+    /// control of this tab opened closes.
+    return_focus: Option<Key>,
+    /// The conversation the tab showed went to Trash and the Bot listed no
+    /// other to show: the tab says so and offers *New conversation*.
+    chat_in_trash: bool,
+    /// Why the list did not act on a row's Trash: several picked, or another
+    /// operation is still finishing.
+    list_notice: Option<Words>,
 }
 
 impl BotView {
@@ -331,6 +375,17 @@ impl BotView {
             column_right: Cell::new(f32::NEG_INFINITY),
             pointer: Cell::new((0.0, 0.0)),
             seen_status: koru_chats_ui::ChatStatus::Idle,
+            lifecycle: Box::default(),
+            trashed_bot: None,
+            trash_read_owed: false,
+            trash_in_flight: false,
+            trash_seq: 0,
+            actions_request: None,
+            conversation_menu: None,
+            conversation_trash: None,
+            return_focus: None,
+            chat_in_trash: false,
+            list_notice: None,
         }
     }
 
@@ -404,6 +459,13 @@ impl BotView {
     pub(crate) fn opening_failed(&mut self) {
         if self.bot.is_none() {
             self.opening = Opening::Failed;
+        }
+    }
+
+    /// The owner says the conversation is in Trash (S14).
+    pub(crate) fn opening_in_trash(&mut self) {
+        if self.bot.is_none() {
+            self.opening = Opening::Trashed;
         }
     }
 
@@ -544,6 +606,21 @@ impl BotView {
     /// Bot's — the main one, unless this tab is on another of its chats.
     fn know(&mut self, facts: BotFacts) {
         self.conversations.set_bot(facts.id);
+        self.lifecycle.set_bot(facts.id);
+        // A conversation's Trash is offered only while the Bot is active:
+        // the owner refuses it for an archived Bot (`bot_archived`).
+        self.conversations
+            .offer_trash(!facts.archived && !facts.trashed);
+        if facts.trashed {
+            // Hidden with its conversations: nothing of it is bound or
+            // read, and the settings it would refuse are closed.
+            if self.settings_open {
+                self.set_settings_open(false);
+            }
+            self.facts = Some(facts);
+            self.load = Load::Ready;
+            return;
+        }
         let conversation = koru_ai_ui::OwnedConversation {
             chat: self.chat,
             destination: facts.home,
@@ -582,9 +659,15 @@ impl BotView {
         if self.stale && !self.in_flight {
             self.stale = false;
             self.asked = false;
-            // Changed elsewhere meanwhile, maybe: the list reads once too.
+            // Changed elsewhere meanwhile, maybe: the list reads once too,
+            // and an operation on its way is read now (S14).
             self.conversations.owe_read();
+            self.lifecycle_read_now();
+            if self.facts.as_ref().is_some_and(|facts| facts.trashed) {
+                self.trash_read_owed = true;
+            }
         }
+        let lifecycle = self.lifecycle_pass(std::time::Instant::now());
         if self.settings.take_read_owed() {
             self.asked = false;
         }
@@ -597,8 +680,9 @@ impl BotView {
             self.started_chat = true;
             conversation.activate();
         }
-        let listed = self.list_pass();
-        asked || answered || polled || listed
+        // A trashed Bot lists nothing: its list would be refused.
+        let listed = !self.facts.as_ref().is_some_and(|facts| facts.trashed) && self.list_pass();
+        asked || answered || polled || listed || lifecycle
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -624,6 +708,7 @@ impl BotView {
         self.work.set(work);
         if !sent {
             self.settings.unsent(request);
+            self.lifecycle.unsent(request, std::time::Instant::now());
         }
     }
 
@@ -657,6 +742,7 @@ impl BotView {
         let mut taken = None;
         let mut wrote = Vec::new();
         let mut pages = Vec::new();
+        let mut trash = None;
         for answer in link.drain() {
             match answer {
                 Answer::Chats { seq, bot, result } => pages.push((seq, bot, result)),
@@ -668,6 +754,12 @@ impl BotView {
                     request,
                     result,
                 } if Some(bot) == self.bot => wrote.push((request, result)),
+                Answer::Lifecycle {
+                    seq,
+                    lifecycle: BotLifecycle::Trashed,
+                    result,
+                    ..
+                } if seq == self.trash_seq => trash = Some(result),
                 _ => {}
             }
         }
@@ -676,7 +768,19 @@ impl BotView {
             changed |= self.conversations.answer(seq, bot, result);
         }
         let now = std::time::Instant::now();
+        if let Some(result) = trash {
+            self.trash_in_flight = false;
+            self.take_trash_listing(result);
+            changed = true;
+        }
         for (request, result) in wrote {
+            // A lifecycle operation's answer is the lifecycle's (S14).
+            if self.lifecycle.owns(request) {
+                self.lifecycle.answer(request, result, now);
+                self.after_lifecycle();
+                changed = true;
+                continue;
+            }
             // *New conversation*'s answer is the list's, not the settings'.
             if self.conversations.wrote(request, &result) {
                 // Archived meanwhile: read the Bot again, so the header
@@ -691,6 +795,7 @@ impl BotView {
             let settled = self.settings.answer(request, result, now);
             changed |= settled.matched;
             if let Some(bot) = settled.bot {
+                self.lifecycle.know(&bot);
                 self.know(BotFacts::from(bot));
             }
         }
@@ -710,7 +815,16 @@ impl BotView {
             // A Bot that says it is another is not this tab's.
             Ok(bot) if Some(bot.id) == self.bot => {
                 self.settings.know(bot.clone());
+                self.lifecycle.know(&bot);
+                if bot.lifecycle != BotLifecycle::Trashed {
+                    self.trashed_bot = None;
+                }
                 self.know(BotFacts::from(bot));
+            }
+            // A trashed Bot's read answers *not found* (P1.7): its home's
+            // Trash filter says whether that is where it is.
+            Err(Failure::Refused(code)) if code == "not_found" && self.facts.is_some() => {
+                self.trash_read_owed = true;
             }
             Ok(_) | Err(_) => self.load = Load::Unavailable,
         }
@@ -723,6 +837,7 @@ impl BotView {
         match self.opening() {
             Some(Opening::Asking) => return Some(Words::BotsChatOpening),
             Some(Opening::Failed) => return Some(Words::BotsConversationUnavailable),
+            Some(Opening::Trashed) => return Some(Words::BotsLinkInTrash),
             None => {}
         }
         match (self.load, self.facts.is_some()) {
@@ -789,7 +904,14 @@ impl BotView {
                         .ink(Ink::Hint),
                 );
             }
-            title = title.child(self.settings_button(engine));
+            // The lifecycle's ⋯ (S14), while it has a row to offer, and
+            // *Settings*, which a trashed Bot does not have.
+            if self.header_shows_actions() {
+                title = title.child(self.actions_button());
+            }
+            if !facts.trashed {
+                title = title.child(self.settings_button(engine));
+            }
             header = header.child(title);
             if self.chat == facts.main_chat {
                 header = header.child(
@@ -818,6 +940,9 @@ impl BotView {
                     .ink(Ink::Hint)
                     .wrap(),
             );
+            if let Some(block) = self.lifecycle_block(engine) {
+                header = header.child(block);
+            }
         }
         if let Some(notice) = self.notice() {
             header = header.child(
@@ -840,6 +965,10 @@ impl BotView {
     /// which takes what is left.
     pub(crate) fn tree(&self, engine: &mut koru_draw::text::TextEngine) -> El {
         let tab = col("Bot tab").id(ROOT).child(self.header(engine));
+        // A trashed Bot is its header alone: what it says, and Restore.
+        if self.facts.as_ref().is_some_and(|facts| facts.trashed) {
+            return tab;
+        }
         let conversation = boxed("Bot conversation").id(CONVERSATION).fill();
         if self.settings_open {
             tab.child(self.region(engine))
@@ -959,6 +1088,13 @@ impl BotView {
                 NOTICE,
                 self.notice().map(|notice| t(self.lang, notice).to_owned()),
             );
+            // What the lifecycle says (S14): an operation on its way, what
+            // holds the Bot, what an operation just did.
+            line(
+                actions::LIFECYCLE_NOTICE,
+                self.lifecycle_said()
+                    .map(|said| t(self.lang, said.words).to_owned()),
+            );
             out
         })
     }
@@ -991,6 +1127,10 @@ impl BotView {
         rev.str(self.home_name.as_deref().unwrap_or(""))
             .f32(self.size.0)
             .f32(self.size.1);
+        if let Some(facts) = &self.facts {
+            rev.bool(facts.trashed);
+        }
+        self.revise_lifecycle(rev);
         // The conversation shown, and the list beside it (S8).
         rev.uuid(self.chat.as_uuid())
             .byte(self.conversations.load() as u8)
@@ -1071,8 +1211,15 @@ impl BotView {
             return false;
         }
         self.blur_name_field();
-        self.focus = Some(region::SETTINGS_BUTTON);
-        true
+        // A trashed Bot has no *Settings*: its first control is the
+        // keyboard's landing, when it has one.
+        let trashed = self.facts.as_ref().is_some_and(|facts| facts.trashed);
+        self.focus = if trashed {
+            self.focus_order().first().copied()
+        } else {
+            Some(region::SETTINGS_BUTTON)
+        };
+        self.focus.is_some()
     }
 
     /// **`F6` moved on, or a press landed outside the tab**: none of the
@@ -1119,6 +1266,9 @@ impl View for BotView {
         if let Some(handled) = self.region_key(key, text, mods) {
             return handled;
         }
+        if !self.shows_conversation() {
+            return false;
+        }
         self.conversation
             .as_mut()
             .is_some_and(|conversation| View::key(conversation, ws, key, text, mods))
@@ -1136,7 +1286,7 @@ impl View for BotView {
         if let Some(handled) = self.region_press(x, y) {
             return handled;
         }
-        if !self.on_conversation(x, y) {
+        if !self.shows_conversation() || !self.on_conversation(x, y) {
             return false;
         }
         self.focus = None;
@@ -1164,7 +1314,7 @@ impl View for BotView {
         let listed =
             (over_column || self.conversations.surface.hover().is_some()) && self.list_move(x, y);
         let lit = lit || listed;
-        if over_column {
+        if over_column || !self.shows_conversation() {
             return lit;
         }
         let chat = self
@@ -1188,7 +1338,7 @@ impl View for BotView {
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
-        if self.settings_open || !self.on_conversation(x, y) {
+        if self.settings_open || !self.shows_conversation() || !self.on_conversation(x, y) {
             return false;
         }
         self.conversation
@@ -1222,6 +1372,9 @@ impl View for BotView {
                 MouseScrollDelta::PixelDelta(position) => position.y as f32,
             };
             self.list_scroll(x, y, dy);
+            return;
+        }
+        if !self.shows_conversation() {
             return;
         }
         if let Some(conversation) = &mut self.conversation {
@@ -1344,6 +1497,11 @@ impl View for BotView {
             self.paint_picker(scene_out, root);
             return;
         }
+        // Nothing of a conversation the tab cannot show: a trashed Bot's, or
+        // one that went to Trash with nothing to take its place (S14).
+        if !self.shows_conversation() {
+            return;
+        }
         if let Some(conversation) = &mut self.conversation {
             let a = conversation_area;
             let _conversation = koru_draw::inspect::scope(
@@ -1385,15 +1543,19 @@ impl View for BotView {
         // asked about only while the tab is shown, which is the only time the
         // window asks this. The list's page on its way too (S8).
         let read = read.or_else(|| {
-            self.conversations.awaiting().then(|| {
+            (self.conversations.awaiting() || self.trash_awaiting()).then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
                     .unwrap_or(now)
             })
         });
-        let mine = match (read, self.settings.deadline(now)) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        let mine = [
+            read,
+            self.settings.deadline(now),
+            self.lifecycle_deadline(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let chat = self
             .conversation
             .as_ref()
@@ -1408,8 +1570,13 @@ impl View for BotView {
         let folded = self.poll();
         // Never from a tab the window has said is hidden.
         let polled = !self.stale && self.send_polls();
-        let listed = !self.stale && self.facts.is_some() && self.list_pass();
-        let folded = folded || polled || listed;
+        let lifecycle = !self.stale && self.lifecycle_pass(now);
+        // A read of the Bot an operation left owed goes on the next shown
+        // pass, as every other read of it does.
+        let listed = !self.stale
+            && self.facts.as_ref().is_some_and(|facts| !facts.trashed)
+            && self.list_pass();
+        let folded = folded || polled || listed || lifecycle;
         let chat = self
             .conversation
             .as_mut()

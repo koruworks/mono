@@ -111,6 +111,18 @@ pub enum MenuSubject {
         /// The picked chats, in list order.
         chats: Vec<koru_ai_ui::ChatId>,
     },
+    /// **A Bot tab header's ⋯** (Bots P1.8 S14): the Bot's lifecycle rows.
+    /// By the Bot's id, never a tab index: the window finds the Bot's tab
+    /// when a row is chosen.
+    Bot {
+        bot: koru_ai_core::bots::BotId,
+    },
+    /// **A conversation row's menu in a Bot's tab** (S14): one
+    /// conversation's Trash. The Bot and the conversation by id.
+    BotConversation {
+        bot: koru_ai_core::bots::BotId,
+        chat: koru_ai_ui::ChatId,
+    },
     /// A schedule row or one of its metadata rows, captured by stable id.
     AgentSchedules {
         schedules: Vec<koru_delegate_core::ScheduleId>,
@@ -329,6 +341,18 @@ pub enum MenuAction {
     /// stays with a sentence under it when its agent could not be stopped
     /// (UC13).
     DeleteAiChat,
+    /// **Archive a Bot** (S14): asks first, then the owner stops its work
+    /// as the person's Stop and archives it.
+    ArchiveBot,
+    /// **Move a Bot to Trash** (S14): asks first; its conversations go with
+    /// it and nothing else moves.
+    TrashBot,
+    /// **Unarchive a Bot** (S14): the Restore naming the Archive that holds
+    /// it. Offered only when the window knows that operation.
+    UnarchiveBot,
+    /// **Move one Bot conversation to Trash** (S14): asks first; only its
+    /// work is stopped.
+    TrashBotConversation,
     /// *Rename…* on a chat row's menu (koru-ai D86): the field `F2` opens,
     /// over the row. Its own row rather than [`Rename`](Self::Rename)
     /// because this menu shows no chords for now.
@@ -1175,6 +1199,30 @@ impl MenuAction {
                     koru_i18n::Key::ChatsUnpin,
                 ));
             }
+            MenuAction::ArchiveBot => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsArchive,
+                ));
+            }
+            MenuAction::TrashBot => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsTrash,
+                ));
+            }
+            MenuAction::UnarchiveBot => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsUnarchive,
+                ));
+            }
+            MenuAction::TrashBotConversation => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsTrashConversation,
+                ));
+            }
             MenuAction::DeleteAiChat => {
                 let lang = crate::format::lang();
                 let count = CHAT_DELETE_COUNT.with(|cell| *cell.borrow());
@@ -1556,7 +1604,10 @@ impl MenuAction {
             MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
             MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
             MenuAction::PageAddExisting => Some(koru_draw::icons::LINK),
-            MenuAction::ListDelete | MenuAction::DeleteAiChat => Some(koru_draw::icons::TRASH),
+            MenuAction::ListDelete
+            | MenuAction::DeleteAiChat
+            | MenuAction::TrashBot
+            | MenuAction::TrashBotConversation => Some(koru_draw::icons::TRASH),
             MenuAction::Attributes => Some(koru_draw::icons::FADERS),
             MenuAction::AttributeTags => Some(koru_draw::icons::TAG),
             MenuAction::AttributeColor => Some(koru_draw::icons::PALETTE),
@@ -1638,6 +1689,8 @@ impl MenuAction {
                 | MenuAction::DeleteProject
                 | MenuAction::DeleteRun
                 | MenuAction::DeleteAiChat
+                | MenuAction::TrashBot
+                | MenuAction::TrashBotConversation
                 | MenuAction::DeletePermanently
                 | MenuAction::EmptyTrash
                 | MenuAction::SessionTerminate
@@ -1778,6 +1831,12 @@ impl koru_ui::MenuItem for MenuAction {
             MenuAction::DeleteRun => {
                 RUN_DELETE_REFUSAL.with(|cell| cell.borrow().map(Cow::Borrowed))
             }
+            // Dimmed only while another lifecycle operation of the Bot is
+            // moving or parked: the owner holds one at a time.
+            MenuAction::TrashBotConversation => Some(Cow::Borrowed(koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::BotsErrPending,
+            ))),
             MenuAction::ScheduleRename
             | MenuAction::ScheduleEdit
             | MenuAction::SchedulePause

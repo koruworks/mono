@@ -104,6 +104,21 @@ pub(super) enum ConfirmSubject {
     /// row, with a sentence under it, if the service refuses — a chat whose
     /// agent could not be stopped is not gone (UC13).
     DeleteChats(Vec<koru_ai_ui::ChatId>),
+    /// **A Bot's Archive or Move to Trash** (Bots P1.8 S14). A yes hands
+    /// the ask to the Bot's tab, which sends it at the revision it read and
+    /// shows it as moving until the owner says it is done; a no sends
+    /// nothing. Either way the keyboard goes back to the tab's ⋯.
+    BotLifecycle {
+        bot: koru_ai_core::bots::BotId,
+        ask: crate::bots::lifecycle::Ask,
+    },
+    /// **One Bot conversation to Trash** (S14), the same way: only that
+    /// conversation's work is stopped, and its row leaves when the owner
+    /// says so.
+    TrashBotConversation {
+        bot: koru_ai_core::bots::BotId,
+        chat: koru_ai_ui::ChatId,
+    },
 }
 
 /// More nested documents than this and the deletion is confirmed first.
@@ -210,8 +225,12 @@ impl MainView {
         // **A run goes to the delegate worker first.** Its restore is two
         // halves and only the second is a manifest edit; sending it down the
         // document path would find no such document and fail in silence.
+        // **A Bot row goes to the Bot owner** (S14): it is no document, and
+        // its Restore names the Trash this window's book knows.
+        let (bots, nodes) = self.split_trash_bots(nodes);
+        let restored_bots = self.restore_trashed_bots(bots);
         let (runs, nodes) = self.split_runs(nodes);
-        let restored_runs = self.restore_runs(runs);
+        let restored_runs = self.restore_runs(runs) || restored_bots;
         // The same call the toast's Undo makes, so "Undo" and "Restore" cannot
         // drift — and a forward operation rather than `undo`, which still
         // declines on a node another peer deleted.
@@ -300,6 +319,9 @@ impl MainView {
         let Some((nodes, asked)) = self.pending_delete_forever.take() else {
             return false;
         };
+        // **A Bot row is never deleted for good**: that is not built (S14).
+        // It leaves the question rather than being counted in it.
+        let (_, nodes) = self.split_trash_bots(nodes);
         if nodes.is_empty() {
             return false;
         }
@@ -385,6 +407,16 @@ impl MainView {
                 body.push_str(&koru_i18n::fill(
                     koru_i18n::t(lang, koru_i18n::Key::TrashEmptyRunsNote),
                     &[&koru_i18n::number::decimal(lang, runs.len() as u64)],
+                ));
+            }
+            // **What the empty leaves** (S14): Bots and Bot conversations are
+            // not counted and not deleted — permanent deletion of a Bot is
+            // not built — and the question says so rather than claiming them.
+            if self.trashed_bot_rows() > 0 {
+                body.push(' ');
+                body.push_str(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::TrashEmptyBotsNote,
                 ));
             }
             self.confirm = Some((
@@ -475,6 +507,15 @@ impl MainView {
                     // rather than a node for exactly that reason.
                     super::ToastPayload::RestoreRuns(runs) => {
                         self.restore_runs(runs);
+                    }
+                    // A link's Bot conversation in Trash (S14): through the
+                    // Trash's own feed, whose receipt says what happened.
+                    super::ToastPayload::RestoreBotChat { bot, chat } => {
+                        self.bot_trash.start(crate::search::gateway_root());
+                        self.bot_trash.restore(
+                            crate::bots::trash::BotSubject::Chat { bot, chat },
+                            &self.bot_book,
+                        );
                     }
                     super::ToastPayload::Restore(nodes) => {
                         // **`restore`, not general history undo.** The toast
@@ -700,6 +741,19 @@ impl MainView {
             self.ask_pane(koru_workspace_host::PaneRequest::VoiceConsent(confirmed));
             return true;
         }
+        // **A Bot's question is answered by its tab**, either way: a yes
+        // sends, a no sends nothing, and the keyboard goes back to the
+        // control that asked (S14).
+        if let ConfirmSubject::BotLifecycle { bot, .. }
+        | ConfirmSubject::TrashBotConversation { bot, .. } = &subject
+        {
+            let bot = *bot;
+            self.settle_bot_confirm(&subject, confirmed);
+            if let Some(view) = self.bot_view_mut(bot) {
+                view.dialog_closed();
+            }
+            return true;
+        }
         if !confirmed {
             // Cancelling clears the request as well as the dialog — a pending
             // deletion that survived a Cancel would go off on the next drain.
@@ -796,6 +850,8 @@ impl MainView {
                     self.explore.chats_mut().delete(chat);
                 }
             }
+            // Answered above, by the Bot's tab.
+            ConfirmSubject::BotLifecycle { .. } | ConfirmSubject::TrashBotConversation { .. } => {}
         }
         true
     }

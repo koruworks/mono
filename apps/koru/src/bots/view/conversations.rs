@@ -12,10 +12,12 @@
 //!   thread (main first, then newest; Trash left out), and *Show more*
 //!   follows the page's cursor. A re-read asks again from the start for as
 //!   many rows as were shown, up to one page's bound.
-//! - **Open only.** The owner refuses Rename and Pin for a Bot conversation,
-//!   and moving one to Trash is a lifecycle operation this build does not
-//!   offer, so the rows have no pin, no ⋯ and no Delete
-//!   (`ChatsSurface::set_row_actions`, the third shared contract change,
+//! - **Open, and Move to Trash.** The owner refuses Rename and Pin for a
+//!   Bot conversation, so the rows have no pin; their ⋯, right-click and
+//!   Delete ask the tab for one conversation's Trash (S14), a lifecycle
+//!   operation the window confirms and the owner settles. The row leaves
+//!   only when the owner says it is done ([`Conversations::remove`]). An
+//!   archived Bot's rows only open (`ChatsSurface::set_row_actions`,
 //!   QUESTIONS O31.3).
 //! - **New conversation** is the owner's `CreateChat`; the tab then shows the
 //!   conversation it made. Branch is the conversation's own, and the branch
@@ -119,6 +121,43 @@ impl Conversations {
     /// The Bot's main conversation, as the list says.
     pub(crate) fn main(&self) -> Option<ChatId> {
         self.main
+    }
+
+    /// **Whether the Bot's main conversation is in Trash**, as the owner's
+    /// list says it: listed from the start and no row of it is the main one.
+    /// The owner lists the main conversation first unless it is in Trash.
+    pub(crate) fn main_missing(&self) -> bool {
+        self.load == Load::Ready && self.main.is_none()
+    }
+
+    /// **Offer one conversation's Trash on the rows, or not** (S14): the ⋯
+    /// menu, its right-click and menu key, and Delete — through the shared
+    /// list's row-actions mask, which is pure data. Pin is the owner's to
+    /// refuse and stays off. Off while the Bot is archived or trashed.
+    pub(crate) fn offer_trash(&mut self, offered: bool) {
+        self.surface.set_row_actions(if offered {
+            RowActions {
+                pin: false,
+                menu: true,
+                delete: true,
+            }
+        } else {
+            RowActions::OPEN_ONLY
+        });
+    }
+
+    /// **The owner put `chat` in Trash**: its row leaves the list now — the
+    /// owner said so — and the list reads again behind it.
+    pub(crate) fn remove(&mut self, chat: ChatId) {
+        self.listed.retain(|held| held.id != chat);
+        if self.main == Some(chat) {
+            self.main = None;
+        }
+        self.surface.take_deleted(chat, Ok(()));
+        // The surface records it for a host that closes tabs; this host
+        // moves its own tab instead.
+        let _ = self.surface.take_deleted_chats();
+        self.owe_read();
     }
 
     /// Whether *Show more* has a page to ask for.
@@ -239,6 +278,10 @@ impl Conversations {
             Ok(page) => {
                 if !asking.more {
                     self.listed.clear();
+                    // The main conversation is listed first, or not at all:
+                    // a read from the start that does not list it says it is
+                    // in Trash (O7).
+                    self.main = None;
                 }
                 for conversation in page.chats {
                     if conversation.label.bot_id != bot {

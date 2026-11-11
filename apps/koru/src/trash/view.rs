@@ -72,6 +72,13 @@ pub struct Entry {
     /// good are each two halves, and only one half is the manifest's. The
     /// container reads this to send the other half to the delegate worker.
     pub run: Option<koru_delegate_core::RunId>,
+    /// **The Bot or Bot conversation this row is** (Bots P1.8 S14), when it
+    /// is one. Not a workspace document at all: its Restore is the Bot
+    /// owner's, and it is never deleted for good — that is not built.
+    pub bot: Option<crate::bots::trash::BotSubject>,
+    /// Whether the row offers Restore. Every page and run does; a Bot row
+    /// only when the window knows the Trash its Restore names.
+    pub restorable: bool,
 }
 
 /// Newest delete first. Missing timestamps sink to the bottom so a row without
@@ -105,8 +112,26 @@ pub enum Request {
     HeaderMenu { at: (f32, f32) },
 }
 
-pub(super) const TITLE_TEXT: &str = "Trash";
-pub(super) const SUBTITLE_TEXT: &str = "Items remain here until they are permanently deleted.";
+/// The page's title, in the person's language (DESIGN.md: Trash text is
+/// localized).
+pub(super) fn title_text() -> &'static str {
+    koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashTitle)
+}
+
+/// The page's subtitle.
+pub(super) fn subtitle_text() -> &'static str {
+    koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashSubtitle)
+}
+
+/// *You*, for a row this window binned.
+fn you() -> String {
+    koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashYou).to_owned()
+}
+
+/// *Someone else*, for a row whose client wrote no label. Never a guess.
+fn someone_else() -> String {
+    koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashSomeoneElse).to_owned()
+}
 
 pub struct TrashView {
     pub(super) viewport: (f32, f32),
@@ -153,6 +178,10 @@ pub struct TrashView {
     /// list, so they arrive here by their own road, named by the two words
     /// a person recognises rather than by the manifest's `run-9f2c11ab`.
     runs: Vec<koru_runs_ui::TrashedRunRow>,
+    /// **The trashed Bots and Bot conversations** (Bots P1.8 S14), pushed by
+    /// the container from the Bot owner's Trash filter and the window's
+    /// book. Not documents: they arrive by their own road, as runs do.
+    bots: Vec<crate::bots::trash::TrashedBotRow>,
 }
 
 impl Default for TrashView {
@@ -179,6 +208,7 @@ impl TrashView {
             pending: None,
             documents: None,
             runs: Vec::new(),
+            bots: Vec::new(),
         }
     }
 
@@ -208,6 +238,17 @@ impl TrashView {
             return false;
         }
         self.runs = runs;
+        self.stale = true;
+        true
+    }
+
+    /// The trashed Bots and Bot conversations. Same contract as
+    /// [`set_runs`](Self::set_runs).
+    pub(crate) fn set_bots(&mut self, bots: Vec<crate::bots::trash::TrashedBotRow>) -> bool {
+        if self.bots == bots {
+            return false;
+        }
+        self.bots = bots;
         self.stale = true;
         true
     }
@@ -250,16 +291,20 @@ impl TrashView {
                         // confirm and the row's `· N nested` suffix quote.
                         nested: documents.iter().filter(|c| c.parent == Some(e.id)).count(),
                         deleted_by: match e.trashed_by.as_deref() {
-                            Some(who) if Some(who) == self.actor.as_deref() => "You".into(),
+                            Some(who) if Some(who) == self.actor.as_deref() => you(),
                             Some(who) => who.to_owned(),
-                            None => "Someone else".into(),
+                            None => someone_else(),
                         },
                         run: None,
+                        bot: None,
+                        restorable: true,
                     }
                 })
                 .collect();
             self.entries.extend(self.run_entries());
+            self.entries.extend(self.bot_entries());
             sort_newest_first(&mut self.entries);
+            self.keep_selection();
             return true;
         }
         self.entries = ws
@@ -296,21 +341,29 @@ impl TrashView {
                     trashed_at_ms: e.trashed_at,
                     nested: e.nested,
                     deleted_by: match e.trashed_by.as_deref() {
-                        Some(who) if Some(who) == self.actor.as_deref() => "You".into(),
+                        Some(who) if Some(who) == self.actor.as_deref() => you(),
                         Some(who) => who.to_owned(),
                         // No label at all — an unnamed profile, or a build that
                         // never wrote one. Say that it was somebody rather than
                         // naming the wrong person.
-                        None => "Someone else".into(),
+                        None => someone_else(),
                     },
                     run: None,
+                    bot: None,
+                    restorable: true,
                 }
             })
             .collect();
         self.entries.extend(self.run_entries());
+        self.entries.extend(self.bot_entries());
         sort_newest_first(&mut self.entries);
-        // A selection naming something that has left the bin — restored here or
-        // by a peer — falls back to nothing rather than to a neighbour.
+        self.keep_selection();
+        true
+    }
+
+    /// A selection naming something that has left the bin — restored here or
+    /// by a peer — falls back to nothing rather than to a neighbour.
+    fn keep_selection(&mut self) {
         self.selection
             .retain(|id| self.entries.iter().any(|e| e.node == *id));
         if self
@@ -319,7 +372,63 @@ impl TrashView {
         {
             self.selection_anchor = None;
         }
-        true
+    }
+
+    /// The trashed Bots and Bot conversations, as rows of the same table:
+    /// keyed by the Bot's or the conversation's own id, the way a run's row
+    /// is keyed by the run's. *Deleted by* is this person: only the owner's
+    /// own Bots are listed.
+    fn bot_entries(&self) -> Vec<Entry> {
+        self.bots
+            .iter()
+            .map(|row| Entry {
+                node: NodeId::from_uuid(row.subject.uuid()),
+                name: row.name.clone(),
+                icon: None,
+                is_file: false,
+                mime: None,
+                origin: if row.restorable {
+                    row.origin.clone()
+                } else {
+                    format!(
+                        "{} · {}",
+                        row.origin,
+                        koru_i18n::t(
+                            crate::format::lang(),
+                            koru_i18n::Key::TrashRestoreUnavailable
+                        )
+                    )
+                },
+                trashed_at_ms: row.trashed_at_ms,
+                nested: 0,
+                deleted_by: you(),
+                run: None,
+                bot: Some(row.subject),
+                restorable: row.restorable,
+            })
+            .collect()
+    }
+
+    /// The Bot rows among `nodes`, and the rest. Read by the container,
+    /// which restores a Bot row through the Bot owner and never deletes one.
+    pub(crate) fn split_bots(
+        &self,
+        nodes: Vec<NodeId>,
+    ) -> (Vec<crate::bots::trash::BotSubject>, Vec<NodeId>) {
+        let mut bots = Vec::new();
+        let mut rest = Vec::new();
+        for node in nodes {
+            match self
+                .entries
+                .iter()
+                .find(|entry| entry.node == node)
+                .and_then(|entry| entry.bot)
+            {
+                Some(subject) => bots.push(subject),
+                None => rest.push(node),
+            }
+        }
+        (bots, rest)
     }
 
     /// The bin's runs, as rows of the same table.
@@ -352,8 +461,10 @@ impl TrashView {
                 },
                 trashed_at_ms: row.trashed_at_ms,
                 nested: 0,
-                deleted_by: "You".into(),
+                deleted_by: you(),
                 run: Some(row.run),
+                bot: None,
+                restorable: true,
             })
             .collect()
     }
@@ -440,10 +551,10 @@ impl TrashView {
     /// Called whenever the viewport changes, which is also when the font role or
     /// the density could have. Cheap — two `simple_layout`s of fixed strings.
     fn measure_header(&mut self) {
-        let title = self.engine.simple_layout(TITLE_TEXT, super::draw::TITLE);
+        let title = self.engine.simple_layout(title_text(), super::draw::TITLE);
         let sub = self
             .engine
-            .simple_layout(SUBTITLE_TEXT, koru_draw::theme::role::meta());
+            .simple_layout(subtitle_text(), koru_draw::theme::role::meta());
         self.header_h = self.title_top() + title.height() + TITLE_GAP + sub.height() + SUBTITLE_GAP;
     }
 
@@ -494,10 +605,13 @@ impl TrashView {
         let r = self.table().row_rect(&bands, i);
         // Inside-out: the controls sit *in* the row, so they outrank it.
         let c = self.controls(r);
-        if c[0].contains(x, y) {
+        let entry = self.entries.get(i);
+        // A Bot row has no ⋯ — its only answer is Restore, when it can be
+        // asked for here — and no Delete permanently, which is not built.
+        if c[0].contains(x, y) && entry.is_some_and(|e| e.restorable) {
             return Some(Hit::Restore(i));
         }
-        if c[1].contains(x, y) {
+        if c[1].contains(x, y) && entry.is_some_and(|e| e.bot.is_none()) {
             return Some(Hit::Dots(i));
         }
         Some(Hit::Row(i))

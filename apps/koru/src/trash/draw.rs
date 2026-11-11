@@ -7,8 +7,8 @@
 //! `view.rs`, so a control and its hit test cannot drift.
 
 use super::view::{
-    CONTROL_GAP, DOTS_W, Hit, LANE_W, PAD, RESTORE_W, SUBTITLE_TEXT, TITLE_GAP, TITLE_TEXT,
-    TrashView,
+    CONTROL_GAP, DOTS_W, Hit, LANE_W, PAD, RESTORE_W, TITLE_GAP, TrashView, subtitle_text,
+    title_text,
 };
 use crate::format::{deleted_ago, nested_suffix};
 use koru_draw::geometry::Rect;
@@ -51,11 +51,11 @@ impl TrashView {
         // `title_top`, not `PAD`: a layout reserves half its leading above the
         // glyphs, so drawing at `PAD` puts more air on top than down the side.
         let top = self.title_top();
-        let title = self.engine.simple_layout(TITLE_TEXT, TITLE);
+        let title = self.engine.simple_layout(title_text(), TITLE);
         scene::draw_layout_first_line(scene, root, &title, PAD, top, Some(p.text));
         let sub = self
             .engine
-            .simple_layout(SUBTITLE_TEXT, theme::role::meta());
+            .simple_layout(subtitle_text(), theme::role::meta());
         scene::draw_layout_first_line(
             scene,
             root,
@@ -217,22 +217,28 @@ impl TrashView {
             // reflowing as the pointer travels.
             if on_row {
                 let c = t.trailing_rects(r, LANE_W, &[RESTORE_W, DOTS_W], CONTROL_GAP);
-                t.paint_trailing_button(
-                    scene,
-                    root,
-                    &mut self.engine,
-                    c[0],
-                    "Restore",
-                    self.hover == Some(Hit::Restore(i)),
-                    false,
-                );
-                t.paint_trailing_dots(
-                    scene,
-                    root,
-                    &mut self.engine,
-                    c[1],
-                    self.hover == Some(Hit::Dots(i)),
-                );
+                // A Bot row offers Restore only when it can be asked for
+                // here, and no ⋯: it is never deleted for good.
+                if entry.restorable {
+                    t.paint_trailing_button(
+                        scene,
+                        root,
+                        &mut self.engine,
+                        c[0],
+                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashRestore),
+                        self.hover == Some(Hit::Restore(i)),
+                        false,
+                    );
+                }
+                if entry.bot.is_none() {
+                    t.paint_trailing_dots(
+                        scene,
+                        root,
+                        &mut self.engine,
+                        c[1],
+                        self.hover == Some(Hit::Dots(i)),
+                    );
+                }
             }
         }
     }

@@ -112,3 +112,25 @@ fn no_link_asks_nothing_and_a_learned_label_is_kept() {
         })
     );
 }
+
+/// **A conversation in Trash is said, not remembered** (S14): the owner's
+/// `bot_conversation_trashed` (and the Bot-level `bot_trashed`) resolve as
+/// in Trash, and nothing is learned about whose it is.
+#[test]
+fn a_conversation_in_trash_resolves_as_trashed_and_is_not_remembered() {
+    for code in ["bot_conversation_trashed", "bot_trashed"] {
+        let (link, _commands, answers) = BotsLink::test_pair();
+        let mut labels = ChatLabels::with_link(link);
+        let chat = ChatId::new();
+        assert!(labels.ask(chat, None));
+        answers
+            .send(Answer::Labelled {
+                chat,
+                result: Err(Failure::Refused(code.into())),
+            })
+            .unwrap();
+        assert_eq!(labels.poll(), vec![(chat, Resolved::Trashed)], "{code}");
+        assert!(labels.known(chat).is_none(), "{code}");
+        assert!(!labels.awaiting(), "{code}");
+    }
+}

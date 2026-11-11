@@ -40,7 +40,8 @@ impl Fixture {
                 Command::List { .. }
                 | Command::Write { .. }
                 | Command::Label { .. }
-                | Command::Activity { .. } => {
+                | Command::Activity { .. }
+                | Command::Lifecycle { .. } => {
                     panic!("a Bot tab only reads its Bot here")
                 }
             }
@@ -203,8 +204,8 @@ fn the_header_is_words_in_its_tree_and_no_control() {
             .collect();
         assert_eq!(
             targets,
-            [region::SETTINGS_BUTTON],
-            "the header's one control"
+            [actions::ACTIONS_BUTTON, region::SETTINGS_BUTTON],
+            "the header's controls: the lifecycle's ⋯ (S14), then Settings"
         );
         assert!(
             frame.named("Bot tab").next().is_some()
@@ -291,7 +292,20 @@ fn an_archived_bot_says_so_in_words_beside_its_name() {
     assert!(f.view.facts().is_some_and(|facts| facts.archived));
     let lines = f.view.header_lines();
     let keys: Vec<Key> = lines.iter().map(|line| line.0).collect();
-    assert_eq!(keys, [NAME, PAUSED, ARCHIVED, MAIN_MARK, SAVES, LIMIT]);
+    // An Archive this window does not know cannot be undone from here,
+    // and the header says so (S14).
+    assert_eq!(
+        keys,
+        [
+            NAME,
+            PAUSED,
+            ARCHIVED,
+            MAIN_MARK,
+            SAVES,
+            LIMIT,
+            actions::LIFECYCLE_NOTICE
+        ]
+    );
     assert_eq!(
         lines
             .iter()
@@ -382,8 +396,11 @@ impl Fixture {
                     assert_eq!(bot, self.bot.id);
                     return (request, *command);
                 }
-                // The conversation list's own reads (S8).
-                Command::ListChats { .. } => continue,
+                // The conversation list's own reads (S8), and the reads a
+                // lifecycle answer leaves owed (S14): not writes.
+                Command::ListChats { .. } | Command::Read { .. } | Command::Lifecycle { .. } => {
+                    continue;
+                }
                 _ => panic!("not a write"),
             }
         }
@@ -677,7 +694,10 @@ fn the_controls_publish_names_in_the_keyboards_order() {
     let f = Fixture::opened(unpaused());
     let lang = f.view.lang;
     let roots = f.view.controls();
-    assert_eq!(roots.len(), 2, "Settings, then the region");
+    assert_eq!(roots.len(), 3, "the ⋯, Settings, then the region");
+    assert_eq!(roots[0].key, actions::ACTIONS_BUTTON);
+    assert_eq!(roots[0].label, t(lang, Words::BotsActions));
+    let roots = &roots[1..];
     assert_eq!(roots[0].key, SETTINGS_BUTTON);
     assert_eq!(roots[0].label, t(lang, Words::BotsSettings));
     assert_eq!(roots[0].selected, Some(true), "the region is open");
@@ -698,7 +718,8 @@ fn the_controls_publish_names_in_the_keyboards_order() {
         }
     }
     let mut all = Vec::new();
-    walk(&roots, &mut all);
+    // Every published control, the ⋯ included.
+    walk(&f.view.controls(), &mut all);
     assert!(
         all.iter().all(|c| !c.label.trim().is_empty()),
         "every node is named"
@@ -1008,13 +1029,22 @@ fn bot_page(
     }
 }
 
-/// A Bot tab that knows its Bot, shown, its list answered with `rows`.
+/// A Bot tab that knows its Bot, shown, its list answered with `rows` —
+/// and the main conversation first, as the owner always lists it unless
+/// it is in Trash.
 fn listed(rows: &[(ChatId, koru_ai_core::bots::BotChatPurpose)]) -> Fixture {
     let mut f = Fixture::opened(unpaused());
     f.view.set_settings_open(false);
     f.view.shown_pass(None);
     let seq = f.listed();
-    let page = bot_page(&f.bot, rows);
+    let mut rows = rows.to_vec();
+    if !rows.iter().any(|(chat, _)| *chat == f.bot.main_chat) {
+        rows.insert(
+            0,
+            (f.bot.main_chat, koru_ai_core::bots::BotChatPurpose::Main),
+        );
+    }
+    let page = bot_page(&f.bot, &rows);
     f.answers
         .send(Answer::Chats {
             seq,
@@ -1052,9 +1082,15 @@ fn the_tab_lists_its_conversations_and_shows_the_one_chosen() {
         })
         .unwrap();
     assert!(f.view.poll());
+    // An active Bot's rows offer one conversation's Trash (S14): the ⋯
+    // menu and Delete, never the pin.
     assert_eq!(
         f.view.conversations.surface.row_actions(),
-        koru_chats_ui::RowActions::OPEN_ONLY
+        koru_chats_ui::RowActions {
+            pin: false,
+            menu: true,
+            delete: true
+        }
     );
     assert_eq!(f.view.conversations.listed().len(), 2);
     let tree = f.view.with_frame(|_, frame| {
@@ -1185,9 +1221,12 @@ fn a_hidden_tabs_list_reads_once_when_shown_again() {
         })
         .unwrap();
     f.view.poll();
-    assert_eq!(f.view.conversations.listed().len(), 1, "kept");
+    assert_eq!(f.view.conversations.listed().len(), 2, "kept");
     assert_eq!(
         f.view.conversations.notice(),
         Some(Words::BotsConversationsUnavailable)
     );
 }
+
+/// The lifecycle half of the tab (S14).
+mod lifecycle;

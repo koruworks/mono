@@ -43,7 +43,10 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
-use koru_ai_core::bots::{Bot, BotActivity, BotActivityPage, BotActivityState, BotId};
+use koru_ai_core::bots::{
+    Bot, BotActivity, BotActivityPage, BotActivityState, BotCommand, BotId, BotLifecycle,
+    BotLifecycleKind, BotLifecycleStage, BotRequestId, BotResponse,
+};
 use koru_chats_ui::ChatStatus;
 use koru_draw::el::{
     Action, El, Frame, FrameCx, Interaction, Key, Look, Ring, Role, StateRecipe, TextCache, col,
@@ -75,6 +78,27 @@ pub(crate) const MORE_WORK: Key = Key::surface(SURFACE, "more-work");
 /// An activity sub-row's part. The sub-row is the conversation's model key
 /// with this part.
 pub(crate) const ACTIVITY_PART: &str = "bot-activity";
+/// The Archived filter's *Show archived bots* / *Hide archived bots* (S14).
+pub(crate) const ARCHIVED_TOGGLE: Key = Key::surface(SURFACE, "archived-toggle");
+/// The Archived filter's heading.
+pub(crate) const ARCHIVED_HEADING: Key = Key::surface(SURFACE, "archived-heading");
+/// The Archived filter's sentence: loading, none, not answering, or that a
+/// Bot archived before Koru last started cannot be unarchived from here.
+pub(crate) const ARCHIVED_NOTICE: Key = Key::surface(SURFACE, "archived-notice");
+/// An archived row's part, under the Bot's own id.
+pub(crate) const ARCHIVED_PART: &str = "bot-archived";
+/// An archived row's *Unarchive*, under the Bot's own id.
+pub(crate) const UNARCHIVE_PART: &str = "bot-unarchive";
+
+/// An archived row's key.
+pub(crate) fn archived_key(bot: BotId) -> Key {
+    Key::model(bot.as_uuid().as_u128(), ARCHIVED_PART)
+}
+
+/// An archived row's *Unarchive*.
+pub(crate) fn unarchive_key(bot: BotId) -> Key {
+    Key::model(bot.as_uuid().as_u128(), UNARCHIVE_PART)
+}
 
 /// An activity sub-row's key: its conversation's own id.
 pub(crate) fn activity_key(chat: koru_ai_core::ChatId) -> Key {
@@ -237,6 +261,26 @@ pub(crate) struct BotsRoster {
     cache: RefCell<TextCache>,
     started: bool,
     link: Option<BotsLink>,
+    // ------------------------------------- the Archived filter (S14)
+    /// The filter is open: the workspace's archived Bots are listed under
+    /// the active ones, from the owner's `ListLifecycle`.
+    archived_open: bool,
+    archived: Vec<Bot>,
+    archived_load: Load,
+    archived_seq: u64,
+    archived_in_flight: bool,
+    /// The archived list was read since it was opened or the roster was
+    /// last shown; `false` means the next shown pass asks.
+    archived_fresh: bool,
+    /// The finished Archive holding each Bot, as the window's book says:
+    /// what an Unarchive names.
+    archive_sources: std::collections::HashMap<BotId, BotRequestId>,
+    /// Unarchives on their way, by their request.
+    unarchiving: std::collections::HashMap<BotRequestId, (BotId, String)>,
+    finished: Vec<super::lifecycle::Finished>,
+    /// Why the last Unarchive did not happen.
+    unarchive_refused: Option<Words>,
+    hover_archived: Option<Key>,
 }
 
 impl BotsRoster {
@@ -324,6 +368,11 @@ impl BotsRoster {
         self.activity_in_flight = false;
         self.activity_seq = self.activity_seq.wrapping_add(1);
         self.wants_open_chat = None;
+        self.archived.clear();
+        self.archived_load = Load::Cold;
+        self.archived_fresh = false;
+        self.archived_in_flight = false;
+        self.archived_seq = self.archived_seq.wrapping_add(1);
         true
     }
 
@@ -337,6 +386,7 @@ impl BotsRoster {
         self.shown = shown;
         if !shown {
             self.fresh = false;
+            self.archived_fresh = false;
             self.focus = None;
             self.hover = None;
         }
@@ -350,9 +400,182 @@ impl BotsRoster {
             return false;
         }
         let asked = !self.fresh && self.refresh();
+        let archived = self.archived_open && !self.archived_fresh && self.ask_archived();
         let answered = self.poll();
         let activity = self.ask_activity();
-        asked || answered || activity
+        asked || answered || activity || archived
+    }
+
+    // ------------------------------------------- the Archived filter (S14)
+
+    /// Whether the Archived filter is open.
+    pub(crate) fn archived_open(&self) -> bool {
+        self.archived_open
+    }
+
+    /// The archived Bots, as the owner last listed them.
+    pub(crate) fn archived(&self) -> &[Bot] {
+        &self.archived
+    }
+
+    pub(crate) fn archived_load(&self) -> Load {
+        self.archived_load
+    }
+
+    /// **Open or close the Archived filter.** Opening asks the owner once;
+    /// closing keeps nothing on its way.
+    pub(crate) fn toggle_archived(&mut self) -> bool {
+        self.archived_open = !self.archived_open;
+        if self.archived_open {
+            self.archived_fresh = false;
+        }
+        self.unarchive_refused = None;
+        true
+    }
+
+    /// The window's book: the finished Archive holding each Bot, which an
+    /// Unarchive names. `true` when it changed what a row offers.
+    pub(crate) fn set_archive_sources(
+        &mut self,
+        sources: std::collections::HashMap<BotId, BotRequestId>,
+    ) -> bool {
+        if self.archive_sources == sources {
+            return false;
+        }
+        self.archive_sources = sources;
+        true
+    }
+
+    /// Whether `bot`'s row offers *Unarchive*: the window knows its Archive.
+    pub(crate) fn can_unarchive(&self, bot: BotId) -> bool {
+        self.archive_sources.contains_key(&bot)
+    }
+
+    /// **Another surface of the window changed a Bot's lifecycle**: both
+    /// lists are read again on the next shown pass.
+    pub(crate) fn owe_lifecycle_refresh(&mut self) {
+        self.fresh = false;
+        self.archived_fresh = false;
+    }
+
+    fn ask_archived(&mut self) -> bool {
+        let (Some(workspace), Some(link)) = (self.workspace, &self.link) else {
+            return false;
+        };
+        let seq = self.archived_seq.wrapping_add(1);
+        if !link.send(Command::Lifecycle {
+            seq,
+            workspace,
+            lifecycle: BotLifecycle::Archived,
+        }) {
+            return false;
+        }
+        self.archived_seq = seq;
+        self.archived_fresh = true;
+        self.archived_in_flight = true;
+        if self.archived_load == Load::Cold {
+            self.archived_load = Load::Loading;
+        }
+        let mut work = self.work.get();
+        work.commands += 1;
+        self.work.set(work);
+        true
+    }
+
+    /// **Unarchive `bot`**: the Restore naming its Archive, at the revision
+    /// the Archived filter listed. Nothing is shown as unarchived until the
+    /// owner says so. `false` when nothing was sent.
+    pub(crate) fn unarchive(&mut self, bot: BotId) -> bool {
+        let (Some(listed), Some(source), Some(link)) = (
+            self.archived.iter().find(|row| row.id == bot),
+            self.archive_sources.get(&bot).copied(),
+            &self.link,
+        ) else {
+            return false;
+        };
+        if self.unarchiving.values().any(|(id, _)| *id == bot) {
+            return false;
+        }
+        let request = BotRequestId::mint();
+        let command = BotCommand::Restore {
+            request_id: request,
+            bot_id: bot,
+            expected_revision: listed.revision,
+            source_request_id: source,
+        };
+        let name = listed.config.name.clone();
+        if !link.send(Command::Write {
+            bot,
+            request,
+            command: Box::new(command),
+        }) {
+            self.unarchive_refused = Some(Words::BotsErrUnreachable);
+            return true;
+        }
+        let mut work = self.work.get();
+        work.commands += 1;
+        self.work.set(work);
+        self.unarchive_refused = None;
+        self.unarchiving.insert(request, (bot, name));
+        true
+    }
+
+    /// Whether `bot`'s Unarchive is on its way.
+    pub(crate) fn unarchiving(&self, bot: BotId) -> bool {
+        self.unarchiving.values().any(|(id, _)| *id == bot)
+    }
+
+    /// The Unarchives that finished, for the window's book. Taken once.
+    pub(crate) fn take_finished(&mut self) -> Vec<super::lifecycle::Finished> {
+        std::mem::take(&mut self.finished)
+    }
+
+    /// Fold an Unarchive's answer. `true` when it was one of this roster's.
+    fn take_unarchived(
+        &mut self,
+        request: BotRequestId,
+        result: Result<BotResponse, Failure>,
+    ) -> bool {
+        let Some((bot, name)) = self.unarchiving.remove(&request) else {
+            return false;
+        };
+        match result {
+            Ok(BotResponse::Lifecycle { operation })
+                if operation.request_id == request
+                    && operation.stage == BotLifecycleStage::Completed =>
+            {
+                self.finished.push(super::lifecycle::Finished {
+                    bot,
+                    name,
+                    home: self.workspace,
+                    kind: BotLifecycleKind::Restore,
+                    request,
+                    reverses: Some(BotLifecycleKind::Archive),
+                    chat: None,
+                    at_ms: 0,
+                });
+                self.archive_sources.remove(&bot);
+            }
+            Ok(_) => self.unarchive_refused = Some(Words::BotsErrNotApplied),
+            Err(Failure::Unreachable) => self.unarchive_refused = Some(Words::BotsErrUnreachable),
+            Err(Failure::Refused(code)) => {
+                self.unarchive_refused = Some(super::lifecycle::refusal_words(&code));
+            }
+        }
+        // Either way the lists are the owner's to say again.
+        self.fresh = false;
+        self.archived_fresh = false;
+        true
+    }
+
+    /// The archived Bot a row asked for, as the window opens it: its tab
+    /// reads it and shows it as archived.
+    fn archived_row(&self, bot: BotId) -> Option<RosterBot> {
+        self.archived
+            .iter()
+            .find(|row| row.id == bot)
+            .cloned()
+            .map(RosterBot::from)
     }
 
     /// **An activity read is owed** — the window saw a Bot conversation's
@@ -476,9 +699,11 @@ impl BotsRoster {
         };
         let mut changed = false;
         let mut activity = Vec::new();
+        let mut archived = Vec::new();
+        let mut wrote = Vec::new();
         for answer in link.drain() {
-            // The roster asks for lists and for activity; any other answer
-            // is not its.
+            // The roster asks for lists, for activity, for its Archived
+            // filter and its Unarchives; any other answer is not its.
             let (seq, workspace, result) = match answer {
                 Answer::Listed {
                     seq,
@@ -493,6 +718,21 @@ impl BotsRoster {
                     activity.push((seq, workspace, result));
                     continue;
                 }
+                Answer::Lifecycle {
+                    seq,
+                    workspace,
+                    lifecycle: BotLifecycle::Archived,
+                    result,
+                } => {
+                    archived.push((seq, workspace, result));
+                    continue;
+                }
+                Answer::Wrote {
+                    request, result, ..
+                } => {
+                    wrote.push((request, result));
+                    continue;
+                }
                 _ => continue,
             };
             if seq != self.seq || Some(workspace) != self.workspace {
@@ -504,6 +744,24 @@ impl BotsRoster {
         }
         for (seq, workspace, result) in activity {
             changed |= self.take_activity(seq, workspace, result);
+        }
+        for (seq, workspace, result) in archived {
+            if seq != self.archived_seq || Some(workspace) != self.workspace {
+                continue;
+            }
+            self.archived_in_flight = false;
+            match result {
+                Ok(bots) => {
+                    self.archived = bots;
+                    self.archived_load = Load::Ready;
+                }
+                // What was listed stays; the sentence says it may be old.
+                Err(_) => self.archived_load = Load::Unavailable,
+            }
+            changed = true;
+        }
+        for (request, result) in wrote {
+            changed |= self.take_unarchived(request, result);
         }
         changed
     }
@@ -560,14 +818,33 @@ impl BotsRoster {
     /// Whether an answer is owed — the one reason the window keeps a wake
     /// clock for the roster.
     pub(crate) fn awaiting(&self) -> bool {
-        self.shown && (self.in_flight || self.activity_in_flight)
+        self.shown
+            && (self.in_flight
+                || self.activity_in_flight
+                || self.archived_in_flight
+                || !self.unarchiving.is_empty())
     }
 
     /// The Bot a row, a key or an accessibility action asked for, taken
-    /// once, with what its tab needs: the window opens or focuses it.
+    /// once, with what its tab needs: the window opens or focuses it. An
+    /// archived row opens too: its conversations stay readable.
     pub(crate) fn take_wants_open(&mut self) -> Option<RosterBot> {
         let bot = self.wants_open.take()?;
-        self.bots.iter().find(|row| row.id == bot).cloned()
+        self.bots
+            .iter()
+            .find(|row| row.id == bot)
+            .cloned()
+            .or_else(|| self.archived_row(bot))
+    }
+
+    /// Ask for an archived Bot's tab — its row's press.
+    pub(crate) fn ask_open_archived(&mut self, bot: BotId) -> bool {
+        if !self.archived.iter().any(|row| row.id == bot) {
+            return false;
+        }
+        self.selected = Some(bot);
+        self.wants_open = Some(bot);
+        true
     }
 
     /// **The Bot whose main conversation is `chat`**, as far as this roster
@@ -653,6 +930,10 @@ impl BotsRoster {
     /// A press in the roster's band. Always the roster's: a press on its
     /// background must not fall through to the view beside the column.
     pub(crate) fn mouse_down(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
+        if let Some(key) = self.archived_at(area, top, x, y) {
+            self.press_archived(key);
+            return true;
+        }
         if let Some(chat) = self.activity_at(area, top, x, y) {
             self.ask_open_chat(chat);
         } else if let Some(bot) = self.bot_at(area, top, x, y) {
@@ -673,21 +954,59 @@ impl BotsRoster {
             .find(|chat| activity_key(*chat) == key)
     }
 
+    /// The Archived filter's control under a point: its toggle, an archived
+    /// row, or a row's *Unarchive*.
+    fn archived_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<Key> {
+        let key = self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y))?;
+        (key == ARCHIVED_TOGGLE || key.part == ARCHIVED_PART || key.part == UNARCHIVE_PART)
+            .then_some(key)
+    }
+
+    /// **Do what an Archived filter control asks** — the pointer's press and
+    /// an assistive technology's click alike. `true` when it was one.
+    pub(crate) fn press_archived(&mut self, key: Key) -> bool {
+        if key == ARCHIVED_TOGGLE {
+            return self.toggle_archived();
+        }
+        let koru_draw::el::Object::Model(id) = key.object else {
+            return false;
+        };
+        let Some(bot) = self
+            .archived
+            .iter()
+            .map(|row| row.id)
+            .find(|bot| bot.as_uuid().as_u128() == id)
+        else {
+            return false;
+        };
+        if key.part == UNARCHIVE_PART {
+            return self.unarchive(bot);
+        }
+        self.ask_open_archived(bot)
+    }
+
     /// The pointer moved. `true` when the row under it changed.
     pub(crate) fn mouse_move(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        let activity = self.activity_at(area, top, x, y);
-        let hover = if activity.is_some() {
+        let archived = self.archived_at(area, top, x, y);
+        let activity = if archived.is_some() {
+            None
+        } else {
+            self.activity_at(area, top, x, y)
+        };
+        let hover = if activity.is_some() || archived.is_some() {
             None
         } else {
             self.bot_at(area, top, x, y)
         };
         let moved = std::mem::replace(&mut self.hover_activity, activity) != activity;
-        std::mem::replace(&mut self.hover, hover) != hover || moved
+        let lit = std::mem::replace(&mut self.hover_archived, archived) != archived;
+        std::mem::replace(&mut self.hover, hover) != hover || moved || lit
     }
 
     pub(crate) fn clear_hover(&mut self) -> bool {
         let activity = self.hover_activity.take().is_some();
-        self.hover.take().is_some() || activity
+        let archived = self.hover_archived.take().is_some();
+        self.hover.take().is_some() || activity || archived
     }
 
     pub(crate) fn scroll_by(&mut self, dy: f32) {
@@ -860,11 +1179,14 @@ impl BotsRoster {
             root = root.child(Self::sentence("Bots notice", NOTICE, t(self.lang, notice)));
         }
         if self.load == Load::Ready && self.bots.is_empty() {
-            return root.child(Self::sentence(
-                "Bots empty",
-                EMPTY,
-                t(self.lang, Words::BotsEmpty),
-            ));
+            // No active Bot: the Archived filter is still there (S14).
+            return root
+                .child(Self::sentence(
+                    "Bots empty",
+                    EMPTY,
+                    t(self.lang, Words::BotsEmpty),
+                ))
+                .child(self.archived_section());
         }
         if self.activity_truncated {
             root = root.child(Self::sentence(
@@ -881,15 +1203,161 @@ impl BotsRoster {
                 .scrollbar()
                 .semantics(Role::List)
                 .name(Words::BotsTitle)
-                .children(self.bots.iter().map(|bot| self.bot_row(bot))),
+                .children(self.bots.iter().map(|bot| self.bot_row(bot)))
+                .child(self.archived_section()),
         )
+    }
+
+    /// **The Archived filter** (S14; EXPERIENCE: archived Bots stay "in an
+    /// Archived filter outside the active roster"), under the active rows:
+    /// its toggle, and while open its heading, its sentence and one row per
+    /// archived Bot, each opening the Bot's tab — its conversations stay
+    /// readable — with *Unarchive* when the window knows the Archive.
+    fn archived_section(&self) -> El {
+        let toggle_words = if self.archived_open {
+            Words::BotsHideArchived
+        } else {
+            Words::BotsShowArchived
+        };
+        let toggle = row("Bots archived toggle")
+            .id(ARCHIVED_TOGGLE)
+            .min_h(metrics::NAV_ROW_MIN)
+            .pad_x(alias::ROW_PLATE_INSET)
+            .items_center()
+            .radius(Radius::M)
+            .states(&BOT_ROW_STATES)
+            .hit()
+            .action(Action::Click)
+            .semantics(Role::Button)
+            .name(toggle_words)
+            .child(
+                text(t(self.lang, toggle_words))
+                    .named("Bots archived toggle label")
+                    .role(roles::META)
+                    .ink(Ink::Hint)
+                    .fill()
+                    .truncate(),
+            );
+        let mut section = col("Bots archived")
+            .pad_x(alias::ROW_PLATE_INSET)
+            .pad_top(Space::S2)
+            .gap(Space::S1)
+            .child(toggle);
+        if !self.archived_open {
+            return section;
+        }
+        section = section.child(
+            text(t(self.lang, Words::BotsArchived))
+                .named("Bots archived heading")
+                .id(ARCHIVED_HEADING)
+                .role(roles::META)
+                .ink(Ink::Secondary)
+                .truncate(),
+        );
+        if let Some(words) = self.archived_notice() {
+            section = section.child(
+                text(t(self.lang, words))
+                    .named("Bots archived notice")
+                    .id(ARCHIVED_NOTICE)
+                    .role(roles::META)
+                    .ink(Ink::Hint)
+                    .wrap(),
+            );
+        }
+        for bot in &self.archived {
+            section = section.child(self.archived_bot_row(bot));
+        }
+        section
+    }
+
+    /// **The Archived filter's sentence**, while it is open: loading, none,
+    /// not answering, why an Unarchive did not happen — or that a Bot
+    /// archived before this window started cannot be unarchived from here,
+    /// said once rather than as a dead button.
+    pub(crate) fn archived_notice(&self) -> Option<Words> {
+        if !self.archived_open {
+            return None;
+        }
+        match self.archived_load {
+            Load::Cold | Load::Loading if self.archived.is_empty() => {
+                Some(Words::BotsArchivedLoading)
+            }
+            Load::Unavailable => Some(Words::BotsArchivedUnavailable),
+            Load::Ready if self.archived.is_empty() => Some(Words::BotsArchivedEmpty),
+            _ if self.unarchive_refused.is_some() => self.unarchive_refused,
+            _ if self.archived.iter().any(|bot| !self.can_unarchive(bot.id)) => {
+                Some(Words::BotsUndoUnavailable)
+            }
+            _ => None,
+        }
+    }
+
+    /// One archived Bot: its name, opening its tab, and *Unarchive*.
+    fn archived_bot_row(&self, bot: &Bot) -> El {
+        let key = archived_key(bot.id);
+        let mut line = row("Bot archived row")
+            .id(key)
+            .fill()
+            .min_h(metrics::NAV_ROW_MIN)
+            .pad_x(alias::ROW_PLATE_INSET)
+            .gap(Space::S2)
+            .items_center()
+            .radius(Radius::M)
+            .states(&BOT_ROW_STATES)
+            .hit()
+            .action(Action::Click)
+            .semantics(Role::ListItem)
+            .name_text(bot.config.name.clone())
+            .selected(self.selected == Some(bot.id))
+            .child(icon(icons::ROBOT, IconSize::S).decorative())
+            .child(
+                text(&bot.config.name)
+                    .named("Bot archived name")
+                    .role(roles::ROW)
+                    .ink(Ink::Secondary)
+                    .fill()
+                    .truncate(),
+            );
+        if self.unarchiving(bot.id) {
+            line = line.child(
+                text(t(self.lang, Words::BotsRestoring))
+                    .named("Bot unarchiving")
+                    .role(roles::META)
+                    .ink(Ink::Hint),
+            );
+        } else if self.can_unarchive(bot.id) {
+            let words = t(self.lang, Words::BotsUnarchive);
+            line = line.child(
+                row("Bot unarchive")
+                    .id(unarchive_key(bot.id))
+                    .pad_x(Space::S2)
+                    .min_h(metrics::NAV_ROW_MIN)
+                    .items_center()
+                    .radius(Radius::M)
+                    .states(&BOT_ROW_STATES)
+                    .hit()
+                    .action(Action::Click)
+                    .semantics(Role::Button)
+                    .name_text(koru_i18n::fill(
+                        t(self.lang, Words::BotsUnarchiveNamed),
+                        &[bot.config.name.as_str()],
+                    ))
+                    .child(
+                        text(words)
+                            .named("Bot unarchive label")
+                            .role(roles::META)
+                            .ink(Ink::Accent),
+                    ),
+            );
+        }
+        line
     }
 
     fn interaction(&self) -> Interaction {
         Interaction {
             hot: self
-                .hover_activity
-                .map(activity_key)
+                .hover_archived
+                .or(self.hover_activity.map(activity_key))
                 .or(self.hover.map(row_key)),
             pressed: None,
             focused: self.focus.map(row_key),

@@ -20,8 +20,10 @@
 //! **Not found is ordinary.** A chat the owner's reader cannot find either is
 //! not a Bot conversation this person can open; it opens as an ordinary chat
 //! does today, and the ordinary tab says what it says about a missing chat.
-//! Any other failure is *not known*: the tab says it cannot be opened and asks
-//! again the next time it is shown.
+//! **In Trash is said** (`bot_conversation_trashed`, S14): the window tells
+//! the person once and does not ask again on its own. Any other failure is
+//! *not known*: the tab says it cannot be opened and asks again the next
+//! time it is shown.
 //!
 //! **Without a link** — under test, or when the thread could not be spawned —
 //! nothing can be asked, and a chat the window does not know opens as an
@@ -52,6 +54,11 @@ pub(crate) enum Resolved {
     /// Nothing answered, or the owner refused for a reason that says nothing
     /// about whose the conversation is. Not remembered: asked again later.
     Unavailable,
+    /// **The owner says the conversation is in Trash** (`bot_conversation_
+    /// trashed`, S14): a Bot's, whose Bot it does not say. Not remembered,
+    /// and not asked about again on its own — the window says it is in
+    /// Trash, and offers Restore when its book knows that Trash.
+    Trashed,
 }
 
 /// What the resolver has done, so a test can assert a count.
@@ -182,6 +189,13 @@ impl ChatLabels {
                 Err(Failure::Refused(code)) if code == "not_found" => {
                     self.learn_ordinary(chat);
                     Resolved::Known(Known::Ordinary)
+                }
+                // In Trash: the conversation, or its whole Bot.
+                Err(Failure::Refused(code))
+                    if code == super::settings::BOT_TRASHED
+                        || code == super::settings::BOT_TRASHED_BOT =>
+                {
+                    Resolved::Trashed
                 }
                 Err(_) => Resolved::Unavailable,
             };

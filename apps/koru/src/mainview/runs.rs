@@ -322,7 +322,7 @@ impl MainView {
         changed
     }
 
-    fn has_trash_tabs(&self) -> bool {
+    pub(super) fn has_trash_tabs(&self) -> bool {
         self.panes.iter_groups().any(|(_, group)| {
             group
                 .tabs()

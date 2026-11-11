@@ -108,6 +108,44 @@ impl Leaf for ButtonLeaf {
     }
 }
 
+/// **An icon-only action**: the shared inline `icon_button` — a page's or a
+/// row's `⋯` — in a square as tall as an action. Its name is the element's;
+/// its keyboard ring is the element's focus treatment.
+pub(crate) struct IconLeaf {
+    pub(crate) glyph: char,
+    pub(crate) disabled: bool,
+}
+
+impl Leaf for IconLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (ActionButton::H, ActionButton::H)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        state: ElState,
+    ) {
+        koru_ui::icon_button::draw_with(
+            scene,
+            root,
+            engine,
+            at,
+            self.glyph,
+            koru_ui::icon_button::State {
+                hovered: state.hovered,
+                active: false,
+                disabled: self.disabled,
+            },
+            koru_ui::icon_button::Metrics::INLINE,
+        );
+    }
+}
+
 /// The access choice: the shared `Segmented` track over the two approved
 /// choices. Its segments are found from the same layout the paint uses
 /// ([`segment_at`]).

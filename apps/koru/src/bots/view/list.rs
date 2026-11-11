@@ -49,6 +49,8 @@ pub(crate) const MORE_CONVERSATIONS: Key = Key::surface(SURFACE, "more-conversat
 pub(crate) const CONVERSATIONS_NOTICE: Key = Key::surface(SURFACE, "conversations-notice");
 /// Why *New conversation* made none.
 pub(crate) const CREATE_REFUSED: Key = Key::surface(SURFACE, "create-refused");
+/// Why a row's Move to Trash was not asked about (S14).
+pub(crate) const TRASH_NOTICE: Key = Key::surface(SURFACE, "conversation-trash-notice");
 /// A conversation row's part, under the conversation's own id.
 pub(crate) const CONVERSATION_PART: &str = "bot-conversation";
 
@@ -136,6 +138,17 @@ impl BotView {
                     .wrap(),
             );
         }
+        // Why a row's Trash was not asked about (S14).
+        if let Some(notice) = self.list_notice() {
+            column = column.child(
+                text(t(self.lang, notice))
+                    .named("Bot conversation trash notice")
+                    .id(TRASH_NOTICE)
+                    .role(roles::META)
+                    .ink(Ink::Accent)
+                    .wrap(),
+            );
+        }
         column
     }
 
@@ -195,6 +208,22 @@ impl BotView {
         if let Some(chat) = self.conversations.surface.take_wants_open() {
             changed |= self.show_conversation(chat);
         }
+        // A row's ⋯ or Delete asked for one conversation's Trash (S14).
+        changed |= self.take_list_asks();
+        // The tab is on the Bot's main conversation and the owner's list
+        // says it is in Trash (O7): another one is shown, or the tab says so.
+        if self.conversations.main_missing()
+            && !self.chat_in_trash
+            && self.facts.as_ref().map(|facts| facts.main_chat) == Some(self.chat)
+            && !self
+                .conversations
+                .listed()
+                .iter()
+                .any(|chat| chat.id == self.chat)
+        {
+            self.move_off(self.chat);
+            changed = true;
+        }
         changed |= self.conversations.surface.set_current(Some(self.chat));
         if let Some(command) = self.conversations.read() {
             if self.send_list(command) {
@@ -207,7 +236,7 @@ impl BotView {
     }
 
     /// Hand a list read to the link. `false` when it would not take it.
-    fn send_list(&mut self, command: crate::bots::link::Command) -> bool {
+    pub(super) fn send_list(&mut self, command: crate::bots::link::Command) -> bool {
         let sent = self.link.as_ref().is_some_and(|link| link.send(command));
         if sent {
             let mut work = self.work.get();
@@ -221,9 +250,10 @@ impl BotView {
     /// conversation* made: the owned surface is bound to it, and the tab is
     /// found by it from then on. `true` when it moved.
     pub(crate) fn show_conversation(&mut self, chat: ChatId) -> bool {
-        if chat == self.chat {
+        if chat == self.chat && !self.chat_in_trash {
             return false;
         }
+        self.chat_in_trash = false;
         self.chat = chat;
         if let Some(facts) = self.facts.clone() {
             self.know(facts);
@@ -279,7 +309,13 @@ impl BotView {
             Some(ChatStatus::Unread) | None => ChatStatus::Idle,
             Some(status) => status,
         };
-        std::mem::replace(&mut self.seen_status, now) != now
+        let moved = std::mem::replace(&mut self.seen_status, now) != now;
+        if moved {
+            // A Stop the owner sent for an Archive or a Trash lands here
+            // first: the operation is read again on the next shown pass.
+            self.lifecycle_read_now();
+        }
+        moved
     }
 
     /// The list's band in the tab's coordinates, and where its rows start.

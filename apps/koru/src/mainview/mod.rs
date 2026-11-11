@@ -66,6 +66,7 @@ mod agent_cli_updates;
 mod agent_install;
 mod agent_mcp;
 mod agent_providers;
+mod bot_lifecycle;
 mod bots;
 mod canvas;
 mod canvas_chain;
@@ -533,6 +534,12 @@ fn trace_navigation_node(node: Option<NodeId>) -> String {
 pub(crate) enum ToastPayload {
     /// Undo trash / restore these document roots.
     Restore(Vec<NodeId>),
+    /// **Restore a Bot conversation a link led to** (Bots P1.8 S14): the
+    /// owner said it is in Trash, and the window's book knows that Trash.
+    RestoreBotChat {
+        bot: koru_ai_core::bots::BotId,
+        chat: koru_ai_ui::ChatId,
+    },
     /// Undo trash on **runs**: take them back out of the workspace's bin.
     ///
     /// Its own arm rather than nodes in [`Self::Restore`], because a run's
@@ -702,6 +709,13 @@ pub struct MainView {
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
     bot_labels: crate::bots::labels::ChatLabels,
+    /// **What this window's Bot lifecycle operations finished** (Bots P1.8
+    /// S14): the request each Restore must name, which no read of the Bot
+    /// owner gives back (`bots::lifecycle::Book`).
+    bot_book: crate::bots::lifecycle::Book,
+    /// **The trashed Bots and Bot conversations, for the Trash tab** (S14):
+    /// read only while a Trash tab is in front, off the window thread.
+    bot_trash: crate::bots::trash::BotTrash,
     /// **Chat opens held while Koru AI is off** until the label read says
     /// whose each chat is: a Bot's opens as its tab, any other is dropped
     /// (`bots.rs`, `MainView::chat_door_open`).
@@ -1846,6 +1860,8 @@ impl MainView {
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
             bot_labels: crate::bots::labels::ChatLabels::default(),
+            bot_book: crate::bots::lifecycle::Book::default(),
+            bot_trash: crate::bots::trash::BotTrash::default(),
             held_chat_opens: Vec::new(),
             ai_computer_ask: None,
             ai_import_asks: std::collections::HashMap::new(),
@@ -4412,6 +4428,19 @@ impl MainView {
                 }
                 _ => false,
             },
+            // A Bot's lifecycle rows (S14): the rows are only those its tab
+            // offers; one conversation's Trash dims while another operation
+            // of the Bot is on its way, saying so.
+            MenuSubject::Bot { .. } => matches!(
+                action,
+                MenuAction::ArchiveBot | MenuAction::TrashBot | MenuAction::UnarchiveBot
+            ),
+            MenuSubject::BotConversation { bot, .. } => {
+                action == MenuAction::TrashBotConversation
+                    && self
+                        .bot_view(*bot)
+                        .is_some_and(|view| !view.lifecycle_busy())
+            }
             MenuSubject::AgentSchedules { schedules } => {
                 let subjects = schedules
                     .iter()
@@ -4823,6 +4852,11 @@ impl MainView {
             },
             MenuSubject::AgentRuns { runs } => match action {
                 MenuAction::DeleteRun => self.queue_run_trash(runs),
+                _ => false,
+            },
+            MenuSubject::Bot { bot } => self.choose_bot_lifecycle(bot, action),
+            MenuSubject::BotConversation { bot, chat } => match action {
+                MenuAction::TrashBotConversation => self.ask_trash_bot_conversation(bot, chat),
                 _ => false,
             },
             MenuSubject::AiChat { chats } => match action {
@@ -5999,9 +6033,19 @@ impl MainView {
         let workspace = self
             .current_workspace()
             .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
+        let sources = self.bot_book.archive_sources();
         let roster = self.explore.bots_mut();
         let moved = roster.set_workspace(workspace);
-        let changed = roster.maintain() || moved;
+        let mut changed = roster.set_archive_sources(sources) | roster.maintain() || moved;
+        // **An Unarchive from the Archived filter** (S14): into the book,
+        // and the Bot's tab reads what it holds now.
+        for done in self.explore.bots_mut().take_finished() {
+            self.bot_book.record(&done);
+            if let Some(view) = self.bot_view_mut(done.bot) {
+                view.lifecycle_moved_elsewhere();
+            }
+            changed = true;
+        }
         // **The roster asks; this window opens** — the Bot's tab, or the one
         // already on its conversation (Bots P1.8 S4).
         let opened = match self.explore.bots_mut().take_wants_open() {
@@ -14998,6 +15042,10 @@ impl View for MainView {
             self.bot_labels
                 .awaiting()
                 .then(|| Instant::now() + std::time::Duration::from_millis(50)),
+            // And while the Trash in front waits for the Bot owner (S14).
+            self.bot_trash
+                .awaiting()
+                .then(|| Instant::now() + std::time::Duration::from_millis(50)),
             // **Not `tabs().active_tab()`, deliberately.** A feedback report is
             // sent by a worker that outlives the tab that wrote it, so the
             // window keeps ticking for it whatever is in front — otherwise a
@@ -15348,7 +15396,10 @@ impl View for MainView {
         let chats_changed = self.maintain_chats();
         let bots_changed = self.maintain_bots();
         let socials_changed = self.maintain_socials_navigation(now);
-        let ai_document_opened = self.open_pending_ai_document() | self.open_pending_bot_role();
+        let ai_document_opened = self.open_pending_ai_document()
+            | self.open_pending_bot_role()
+            | self.drain_bot_lifecycle_asks()
+            | self.maintain_bot_trash();
         let ai_attachment_opened = self.open_pending_ai_attachment();
         let file_preview_changed = self
             .file_preview

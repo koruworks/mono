@@ -6,8 +6,10 @@
 //! One list node named *Bots*, and one item per Bot in the roster's order,
 //! named by the Bot (and *paused* when it is), offering **Open** as its
 //! click. The line over the list — loading, or the service not answering —
-//! and the empty roster's sentence are labels. There is no button: the
-//! roster offers none yet.
+//! and the empty roster's sentence are labels. Its one button is the
+//! Archived filter's toggle (S14); open, the filter is a list named
+//! *Archived* whose items open their Bot and carry *Unarchive {name}* when
+//! the window knows the Archive.
 //!
 //! **A Bot's running and Needs-you conversations** (S10) are items under its
 //! item, each named by which conversation and its state's words — never a
@@ -28,7 +30,10 @@ use koru_workspace_host::accessibility::{
 
 use super::Context;
 use crate::bots::BotsRoster;
-use crate::bots::roster::{ACTIVITY_PART, EMPTY, LIST, MORE_WORK, NOTICE, activity_key, row_key};
+use crate::bots::roster::{
+    ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART, ARCHIVED_TOGGLE, EMPTY, LIST,
+    MORE_WORK, NOTICE, UNARCHIVE_PART, activity_key, archived_key, row_key, unarchive_key,
+};
 use crate::panes::Outcome;
 
 /// The list, and the lines of it that are not a Bot.
@@ -37,6 +42,12 @@ const NOTICE_PART: ControlPart = ControlPart::new("notice");
 const EMPTY_PART: ControlPart = ControlPart::new("empty");
 const MORE_WORK_PART: ControlPart = ControlPart::new("more-work");
 const ACTIVITY: ControlPart = ControlPart::new(ACTIVITY_PART);
+/// The Archived filter (S14).
+const ARCHIVED_TOGGLE_PART: ControlPart = ControlPart::new("archived-toggle");
+const ARCHIVED_NOTICE_PART: ControlPart = ControlPart::new("archived-notice");
+const ARCHIVED_LIST_PART: ControlPart = ControlPart::new("archived");
+const ARCHIVED: ControlPart = ControlPart::new(ARCHIVED_PART);
+const UNARCHIVE: ControlPart = ControlPart::new(UNARCHIVE_PART);
 
 fn bot_occurrence(cx: &Context, bot: koru_ai_core::bots::BotId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, bot.as_uuid(), ControlPart::ROOT)
@@ -135,6 +146,79 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 .with_children(children),
             );
         }
+        // **The Archived filter** (S14): its toggle, then — open — a list
+        // named *Archived* whose items open the Bot and carry *Unarchive*.
+        if let Some(rect) = rect_of(ARCHIVED_TOGGLE) {
+            let words = if roster.archived_open() {
+                Key::BotsHideArchived
+            } else {
+                Key::BotsShowArchived
+            };
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, ARCHIVED_TOGGLE_PART),
+                    Role::Button,
+                )
+                .with_label(t(cx.lang, words))
+                .with_bounds(rect)
+                .with_actions([Action::Click]),
+            );
+        }
+        if let (Some(rect), Some(words)) = (rect_of(ARCHIVED_NOTICE), roster.archived_notice()) {
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, ARCHIVED_NOTICE_PART),
+                    Role::Label,
+                )
+                .with_label(t(cx.lang, words))
+                .with_bounds(rect),
+            );
+        }
+        if let Some(heading) = rect_of(ARCHIVED_HEADING) {
+            let total = roster.archived().len();
+            let items = roster
+                .archived()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, bot)| {
+                    let rect = rect_of(archived_key(bot.id))?;
+                    let unarchive = rect_of(unarchive_key(bot.id)).map(|rect| {
+                        SemanticNode::new(
+                            Occurrence::model(cx.window, cx.view, bot.id.as_uuid(), UNARCHIVE),
+                            Role::Button,
+                        )
+                        .with_label(koru_i18n::fill(
+                            t(cx.lang, Key::BotsUnarchiveNamed),
+                            &[bot.config.name.as_str()],
+                        ))
+                        .with_bounds(rect)
+                        .with_actions([Action::Click])
+                    });
+                    Some(
+                        SemanticNode::new(
+                            Occurrence::model(cx.window, cx.view, bot.id.as_uuid(), ARCHIVED),
+                            Role::ListItem,
+                        )
+                        .with_label(bot.config.name.clone())
+                        .with_bounds(rect)
+                        .with_position(index)
+                        .with_size_of_set(total)
+                        .with_actions([Action::Click])
+                        .with_children(unarchive.into_iter().collect()),
+                    )
+                })
+                .collect();
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, ARCHIVED_LIST_PART),
+                    Role::List,
+                )
+                .with_label(t(cx.lang, Key::BotsArchived))
+                .with_bounds(heading)
+                .with_size_of_set(total)
+                .with_children(items),
+            );
+        }
         out
     })
 }
@@ -159,6 +243,15 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     for bot in roster.bots() {
         rev.uuid(bot.id.as_uuid()).str(&bot.name).bool(bot.paused);
     }
+    rev.bool(roster.archived_open())
+        .byte(roster.archived_load() as u8)
+        .u64(roster.archived().len() as u64);
+    for bot in roster.archived() {
+        rev.uuid(bot.id.as_uuid())
+            .str(&bot.config.name)
+            .bool(roster.can_unarchive(bot.id))
+            .bool(roster.unarchiving(bot.id));
+    }
     rev.bool(roster.activity_truncated())
         .u64(roster.activity().len() as u64);
     for entry in roster.activity() {
@@ -177,9 +270,35 @@ pub(super) fn action(
     if area.w <= 0.0 {
         return None;
     }
+    // The Archived filter's toggle (S14).
+    if target.part == ARCHIVED_TOGGLE_PART && matches!(target.object, ObjectKey::Surface(_)) {
+        if action != Action::Click {
+            return None;
+        }
+        roster.press_archived(ARCHIVED_TOGGLE);
+        return Some(Outcome::Consumed);
+    }
     let ObjectKey::Model(id) = target.object else {
         return None;
     };
+    // An archived row opens its Bot; its *Unarchive* unarchives it.
+    if target.part == ARCHIVED || target.part == UNARCHIVE {
+        if action != Action::Click {
+            return None;
+        }
+        let bot = roster
+            .archived()
+            .iter()
+            .map(|bot| bot.id)
+            .find(|bot| bot.as_uuid() == id)?;
+        let key = if target.part == UNARCHIVE {
+            unarchive_key(bot)
+        } else {
+            archived_key(bot)
+        };
+        roster.press_archived(key);
+        return Some(Outcome::Consumed);
+    }
     // A running or Needs-you sub-row: open that conversation.
     if target.part == ACTIVITY {
         if action != Action::Click {

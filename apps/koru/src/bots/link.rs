@@ -22,7 +22,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
     Bot, BotActivityPage, BotChatCursor, BotChatLabel, BotChatPage, BotCommand, BotId,
-    BotRequestId, BotResponse,
+    BotLifecycle, BotRequestId, BotResponse,
 };
 use koru_store_core::ids::WorkspaceId;
 
@@ -66,6 +66,14 @@ pub(crate) enum Command {
     /// **The workspace's running and Needs-you Bot conversations** (S10):
     /// `ListActivity`, at most 200, for the roster's sub-rows.
     Activity { seq: u64, workspace: WorkspaceId },
+    /// **The workspace's Bots in one lifecycle** (S14): `ListLifecycle`,
+    /// the roster's Archived filter and the Trash's Bot rows. `Active` is
+    /// never asked: the owner answers it `invalid_request`.
+    Lifecycle {
+        seq: u64,
+        workspace: WorkspaceId,
+        lifecycle: BotLifecycle,
+    },
 }
 
 #[derive(Debug)]
@@ -103,6 +111,13 @@ pub(crate) enum Answer {
         seq: u64,
         workspace: WorkspaceId,
         result: Result<BotActivityPage, Failure>,
+    },
+    /// What a [`Command::Lifecycle`] answered.
+    Lifecycle {
+        seq: u64,
+        workspace: WorkspaceId,
+        lifecycle: BotLifecycle,
+        result: Result<Vec<Bot>, Failure>,
     },
 }
 
@@ -357,6 +372,47 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     .send(Answer::Activity {
                         seq,
                         workspace,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::Lifecycle {
+                seq,
+                workspace,
+                lifecycle,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    // The same reply shape as `List`: a list of Bots.
+                    Some(connected) => listed(
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ListLifecycle {
+                                workspace,
+                                lifecycle,
+                            })
+                            .map_err(|failure| failure.code),
+                    ),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A Bot lifecycle filter could not be listed"
+                    );
+                    client = None;
+                }
+                if answers
+                    .send(Answer::Lifecycle {
+                        seq,
+                        workspace,
+                        lifecycle,
                         result,
                     })
                     .is_err()

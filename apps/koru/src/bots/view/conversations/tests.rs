@@ -220,6 +220,7 @@ fn new_conversation_asks_the_owner_and_names_what_it_made() {
         request,
         &Err(Failure::Refused("bot_conversation_trashed".into())),
     );
-    assert_eq!(list.create_refused(), Some(Words::BotsErrNotApplied));
+    // The conversation's hold, in its own words (S14).
+    assert_eq!(list.create_refused(), Some(Words::BotsErrTrashed));
     assert_eq!(list.take_made(), None);
 }

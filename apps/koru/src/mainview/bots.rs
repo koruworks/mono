@@ -190,9 +190,42 @@ impl MainView {
                         "chat link held: whose it is went unanswered; asked again on activation"
                     );
                 }
+                // In Trash (S14): said once, with Restore when the window
+                // knows that Trash — never held and asked about again.
+                Resolved::Trashed => {
+                    self.held_chat_opens.remove(index);
+                    self.say_link_in_trash(*chat);
+                    tracing::info!(
+                        target: "koru::chat_link",
+                        "chat link not opened: the Bot conversation is in Trash"
+                    );
+                }
             }
         }
         opened
+    }
+
+    /// **A link led to a Bot conversation in Trash** (S14): a receipt says
+    /// so, offering Restore when the window's book knows the Trash that
+    /// holds it. The Trash offers it too.
+    fn say_link_in_trash(&mut self, chat: koru_ai_ui::ChatId) {
+        let lang = crate::format::lang();
+        let known = self.bot_book.chat(chat).map(|entry| entry.bot);
+        let (action, payload) = match known {
+            Some(bot) => (
+                Some(koru_i18n::t(lang, koru_i18n::Key::TrashRestore)),
+                super::ToastPayload::RestoreBotChat { bot, chat },
+            ),
+            None => (None, super::ToastPayload::None),
+        };
+        self.toast = Some((
+            koru_ui::Toast::new(
+                koru_i18n::t(lang, koru_i18n::Key::BotsLinkInTrash).to_owned(),
+                action,
+                std::time::Instant::now(),
+            ),
+            payload,
+        ));
     }
 
     /// **Whether the window knows `chat` is a Bot's conversation** — the
@@ -279,10 +312,16 @@ impl MainView {
         let answered = self.bot_labels.poll();
         let held = self.open_held_chats(&answered);
         let failed: Vec<koru_ai_ui::ChatId> = answered
-            .into_iter()
+            .iter()
             .filter(|(_, resolved)| *resolved == Resolved::Unavailable)
+            .map(|(chat, _)| *chat)
+            .collect();
+        let trashed: Vec<koru_ai_ui::ChatId> = answered
+            .into_iter()
+            .filter(|(_, resolved)| *resolved == Resolved::Trashed)
             .map(|(chat, _)| chat)
             .collect();
+        let mut said_trashed = Vec::new();
         let can_ask = self.bot_labels.can_ask(root.clone());
         let roster: Vec<RosterBot> = self.explore.bots().bots().to_vec();
         let mut asks = Vec::new();
@@ -321,6 +360,13 @@ impl MainView {
                         view.opening_failed();
                         moved = true;
                     }
+                    // In Trash (S14): the tab says so and is not asked
+                    // about again on its own.
+                    None if trashed.contains(&chat) => {
+                        view.opening_in_trash();
+                        said_trashed.push(chat);
+                        moved = true;
+                    }
                     None if index == active && view.take_opening_retry() => {
                         asks.push(chat);
                         moved = true;
@@ -341,6 +387,9 @@ impl MainView {
         }
         for chat in asks {
             self.bot_labels.ask(chat, root.clone());
+        }
+        if let Some(chat) = said_trashed.pop() {
+            self.say_link_in_trash(chat);
         }
         moved || held
     }
@@ -569,6 +618,9 @@ impl MainView {
     /// strip owes a remeasure.
     pub(super) fn refresh_bot_tabs(&mut self) -> bool {
         let placed = self.place_opening_tabs();
+        // What every Bot tab's lifecycle finished, into the window's book,
+        // and the book back into every tab (S14).
+        let recorded = self.record_bot_lifecycle();
         let names: Vec<(koru_store_core::ids::WorkspaceId, Option<String>)> = self
             .panes
             .iter_groups()
@@ -630,7 +682,7 @@ impl MainView {
         if work_moved {
             self.explore.bots_mut().owe_activity();
         }
-        moved || placed
+        moved || placed || recorded
     }
 }
 

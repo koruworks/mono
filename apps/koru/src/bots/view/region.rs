@@ -122,6 +122,14 @@ pub(crate) enum Act {
     NewConversation,
     /// *Show more* under the conversation list (S8).
     MoreConversations,
+    /// The header's ⋯: the Bot's lifecycle menu, which the window opens (S14).
+    Actions,
+    /// A parked operation's *Continue* and *Cancel* (S14).
+    ContinueOperation,
+    CancelOperation,
+    /// An archived Bot's *Unarchive*, a trashed Bot's *Restore* (S14).
+    Unarchive,
+    Restore,
 }
 
 /// One control as the accessibility tree publishes it, in the tab's
@@ -645,6 +653,11 @@ impl BotView {
             k if k == PAUSE => Act::TogglePause,
             k if k == super::list::NEW_CONVERSATION => Act::NewConversation,
             k if k == super::list::MORE_CONVERSATIONS => Act::MoreConversations,
+            k if k == super::actions::ACTIONS_BUTTON => Act::Actions,
+            k if k == super::actions::CONTINUE => Act::ContinueOperation,
+            k if k == super::actions::CANCEL_OPERATION => Act::CancelOperation,
+            k if k == super::actions::UNARCHIVE => Act::Unarchive,
+            k if k == super::actions::RESTORE => Act::Restore,
             k if k.part == REMOVE_PART => Act::RemovePage(
                 settings
                     .pages_shown()
@@ -706,6 +719,22 @@ impl BotView {
             }
             Act::NewConversation => return self.new_conversation(),
             Act::MoreConversations => return self.more_conversations(),
+            Act::Actions => {
+                let Some(at) = self.actions_anchor() else {
+                    return false;
+                };
+                // The keyboard comes back here when the menu, or the
+                // dialog it leads to, closes.
+                self.return_focus = self.focus;
+                self.actions_request = Some(at);
+                return true;
+            }
+            Act::ContinueOperation => return self.continue_lifecycle(),
+            Act::CancelOperation => return self.cancel_lifecycle(),
+            Act::Unarchive => {
+                return self.begin_lifecycle(crate::bots::lifecycle::Ask::Unarchive);
+            }
+            Act::Restore => return self.begin_lifecycle(crate::bots::lifecycle::Ask::Restore),
             Act::SaveName => self.settings.save_name(),
             Act::SaveAccess => self.settings.save_access(),
             Act::TogglePause => self.settings.toggle_pause(),
@@ -1056,6 +1085,8 @@ impl BotView {
                     && key != SETTINGS_BUTTON
                     && key != super::list::NEW_CONVERSATION
                     && key != super::list::MORE_CONVERSATIONS
+                    && key != super::list::TRASH_NOTICE
+                    && !Self::is_lifecycle_control(key)
                 {
                     continue;
                 }
@@ -1162,6 +1193,9 @@ impl BotView {
 
     /// The words of a sentence in the region, by its key.
     fn line_words(&self, key: Key) -> Option<String> {
+        if key == super::list::TRASH_NOTICE {
+            return self.list_notice().map(|words| self.words(words));
+        }
         let settings = &self.settings;
         let bot = settings.bot()?;
         let agent = self.agent_name();

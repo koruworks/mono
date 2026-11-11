@@ -242,8 +242,9 @@ fn unavailable_keeps_the_last_snapshot_and_never_reads_as_empty() {
     assert!(!frame.contains(EMPTY));
 }
 
-/// The empty roster is the approved sentence, and **nothing to press**:
-/// creating a Bot is not built yet, so no control is drawn for it.
+/// The empty roster is the approved sentence, and **nothing to press but
+/// the Archived filter** (S14): creating a Bot is not built yet, so no
+/// control is drawn for it.
 #[test]
 fn an_empty_roster_says_what_bots_are_for_and_offers_no_control() {
     let mut f = fixture();
@@ -251,14 +252,8 @@ fn an_empty_roster_says_what_bots_are_for_and_offers_no_control() {
     let frame = frame_of(&f.roster);
     assert!(frame.contains(EMPTY));
     assert!(!frame.contains(NOTICE));
-    assert!(frame.hits().is_empty(), "no target at all");
-    assert!(
-        frame
-            .semantics()
-            .iter()
-            .all(|node| node.role != Role::Button),
-        "no button"
-    );
+    let targets: Vec<_> = frame.hits().into_iter().map(|hit| hit.key).collect();
+    assert_eq!(targets, [ARCHIVED_TOGGLE], "the Archived filter alone");
     let words = frame
         .named("Bots sentence")
         .next()
@@ -326,10 +321,22 @@ fn accessibility_names_the_list_and_each_bot_in_order() {
     assert_eq!(list.role, Role::List);
     assert_eq!(list.key, Some(LIST));
     assert_eq!(names(&roots), vec!["Bots"]);
-    assert_eq!(names(&list.children), vec!["Scout", "Ledger, paused"]);
+    // The Bots, then the Archived filter's toggle (S14).
+    assert_eq!(
+        names(&list.children),
+        vec!["Scout", "Ledger, paused", "Show archived bots"]
+    );
     let keys: Vec<_> = list.children.iter().map(|node| node.key).collect();
-    assert_eq!(keys, vec![Some(row_key(a.id)), Some(row_key(b.id))]);
-    for item in &list.children {
+    assert_eq!(
+        keys,
+        vec![
+            Some(row_key(a.id)),
+            Some(row_key(b.id)),
+            Some(ARCHIVED_TOGGLE)
+        ]
+    );
+    assert_eq!(list.children[2].role, Role::Button);
+    for item in &list.children[..2] {
         assert_eq!(item.role, Role::ListItem);
         assert!(item.focusable);
         assert_eq!(item.actions, vec![Action::Click, Action::Focus]);
@@ -617,4 +624,121 @@ fn another_workspaces_activity_is_ignored() {
         ))
     ));
     assert!(f.roster.activity().is_empty());
+}
+
+/// The Archived filter's request, skipping the roster's other reads.
+fn archived_asked(f: &Fixture) -> u64 {
+    loop {
+        match f.commands.try_recv().expect("the Archived filter is asked") {
+            Command::Lifecycle {
+                seq,
+                workspace,
+                lifecycle,
+            } => {
+                assert_eq!(lifecycle, BotLifecycle::Archived);
+                assert_eq!(workspace, f.home);
+                return seq;
+            }
+            _ => continue,
+        }
+    }
+}
+
+/// **The Archived filter** (S14): closed, it asks nothing; opened, it asks
+/// the owner's archived list once and lists each Bot, which opens its tab;
+/// *Unarchive* is offered only where the window knows the Archive, and it
+/// sends the Restore naming it at the listed revision. A hidden roster asks
+/// nothing for it.
+#[test]
+fn the_archived_filter_lists_opens_and_unarchives() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    f.roster.maintain();
+    assert!(
+        f.commands
+            .try_iter()
+            .all(|command| !matches!(command, Command::Lifecycle { .. })),
+        "closed: nothing asked"
+    );
+    assert!(f.roster.press_archived(ARCHIVED_TOGGLE));
+    assert_eq!(f.roster.archived_notice(), Some(Words::BotsArchivedLoading));
+    f.roster.maintain();
+    let seq = archived_asked(&f);
+    let mut known = f.bot("Scout");
+    known.lifecycle = BotLifecycle::Archived;
+    known.revision = 4;
+    let mut older = f.bot("Older");
+    older.lifecycle = BotLifecycle::Archived;
+    f.answers
+        .send(Answer::Lifecycle {
+            seq,
+            workspace: f.home,
+            lifecycle: BotLifecycle::Archived,
+            result: Ok(vec![known.clone(), older.clone()]),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    let archive = BotRequestId::mint();
+    f.roster
+        .set_archive_sources([(known.id, archive)].into_iter().collect());
+    let frame = frame_of(&f.roster);
+    assert!(frame.contains(archived_key(known.id)) && frame.contains(archived_key(older.id)));
+    assert!(frame.contains(unarchive_key(known.id)));
+    assert!(
+        !frame.contains(unarchive_key(older.id)),
+        "no Unarchive for an Archive this window did not do"
+    );
+    assert_eq!(f.roster.archived_notice(), Some(Words::BotsUndoUnavailable));
+    // A row opens its Bot's tab.
+    assert!(f.roster.press_archived(archived_key(older.id)));
+    assert_eq!(f.roster.take_wants_open().map(|row| row.id), Some(older.id));
+    // Unarchive sends the Restore naming the Archive.
+    assert!(f.roster.press_archived(unarchive_key(known.id)));
+    let (request, command) = loop {
+        match f.commands.try_recv().expect("a write") {
+            Command::Write {
+                request, command, ..
+            } => break (request, *command),
+            _ => continue,
+        }
+    };
+    assert_eq!(
+        command,
+        BotCommand::Restore {
+            request_id: request,
+            bot_id: known.id,
+            expected_revision: 4,
+            source_request_id: archive
+        }
+    );
+    assert!(f.roster.unarchiving(known.id));
+    f.answers
+        .send(Answer::Wrote {
+            bot: known.id,
+            request,
+            result: Ok(BotResponse::Lifecycle {
+                operation: koru_ai_core::bots::BotLifecycleProgress {
+                    request_id: request,
+                    bot_id: known.id,
+                    kind: BotLifecycleKind::Restore,
+                    chat_id: None,
+                    source_request_id: Some(archive),
+                    stage: BotLifecycleStage::Completed,
+                    refusal: None,
+                    members: Vec::new(),
+                    left_in_place: Vec::new(),
+                },
+            }),
+        })
+        .unwrap();
+    f.roster.maintain();
+    let finished = f.roster.take_finished();
+    assert_eq!(finished.len(), 1);
+    assert_eq!(finished[0].reverses, Some(BotLifecycleKind::Archive));
+    // Both lists are read again; hidden, nothing is.
+    f.roster.set_shown(false);
+    f.roster.maintain();
+    let _ = f.commands.try_iter().count();
+    f.roster.maintain();
+    f.nothing_asked();
 }

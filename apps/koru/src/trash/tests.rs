@@ -26,6 +26,8 @@ fn view(n: usize) -> TrashView {
             mime: None,
             deleted_by: "You".into(),
             run: None,
+            bot: None,
+            restorable: true,
         })
         .collect();
     v
@@ -354,4 +356,44 @@ fn a_mid_title_emoji_stays_in_the_name() {
     v.catch_up(&doc);
     assert_eq!(v.entries[0].icon, None);
     assert_eq!(v.entries[0].name, "Ship it \u{1F680}");
+}
+
+/// **A Bot row** (Bots P1.8 S14): Restore only when it can be asked for
+/// here, and no ⋯ at all — a Bot is never deleted for good. Its words come
+/// from the string table in every language.
+#[test]
+fn a_bot_row_offers_restore_only_when_it_can_and_never_a_menu() {
+    let bot = koru_ai_core::bots::BotId::mint();
+    let mut v = view(2);
+    v.entries[0].bot = Some(crate::bots::trash::BotSubject::Bot(bot));
+    v.entries[0].restorable = false;
+    v.entries[1].bot = Some(crate::bots::trash::BotSubject::Bot(
+        koru_ai_core::bots::BotId::mint(),
+    ));
+    let bands = v.bands();
+    for i in 0..2 {
+        let r = v.table().row_rect(&bands, i);
+        let c = v.controls(r);
+        let restore = v.hit_at(c[0].x + 1.0, c[0].y + 1.0);
+        let dots = v.hit_at(c[1].x + 1.0, c[1].y + 1.0);
+        assert_eq!(restore == Some(Hit::Restore(i)), i == 1, "row {i}");
+        assert_ne!(dots, Some(Hit::Dots(i)), "row {i}: no menu");
+    }
+    for lang in koru_i18n::Lang::ALL {
+        for key in [
+            koru_i18n::Key::TrashTitle,
+            koru_i18n::Key::TrashSubtitle,
+            koru_i18n::Key::TrashRestore,
+            koru_i18n::Key::TrashYou,
+            koru_i18n::Key::TrashSomeoneElse,
+            koru_i18n::Key::TrashBotKind,
+            koru_i18n::Key::TrashEmptyBotsNote,
+        ] {
+            assert!(
+                !koru_i18n::t(lang, key).trim().is_empty(),
+                "{lang:?} {key:?}"
+            );
+        }
+    }
+    assert_eq!(super::view::title_text(), "Trash");
 }
