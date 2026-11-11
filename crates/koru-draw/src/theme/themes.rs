@@ -46,6 +46,29 @@ impl Appearance {
             Self::Dark => "dark",
         }
     }
+
+    /// The `wght` a variable sans, serif or rounded family draws body text at
+    /// under this appearance: **a real Regular on a light ground, a real
+    /// Medium on a dark one.**
+    ///
+    /// vello does no gamma correction and no stem darkening, and what that
+    /// does to a glyph depends on which way the contrast runs. Light text on
+    /// a dark ground comes out thin, and Medium is the way back: that is what
+    /// 500 was chosen for, and it was 500 under both appearances. Dark text
+    /// on a light ground comes out *heavy* by the same arithmetic, so there
+    /// the correction stacked on the fault it was correcting, and body text
+    /// read as nearly semibold beside the same words in a browser (seen
+    /// 2026-11-11, a document beside its MCP view).
+    ///
+    /// Two numbers to tune by eye, one per appearance, and nothing else reads
+    /// them: [`FontChoice::weight`](super::FontChoice::weight) is the one
+    /// caller. Headings and bold keep their own, heavier, positions.
+    pub fn body_weight(self) -> f32 {
+        match self {
+            Self::Light => 400.0,
+            Self::Dark => 500.0,
+        }
+    }
 }
 
 /// Which of a theme's two tables applies.

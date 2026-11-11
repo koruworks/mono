@@ -2041,7 +2041,20 @@ impl FontChoice {
     /// them. `Mono` itself resolves to *system* faces with no `wght` axis, where
     /// 500 would instead set `embolden` and stroke a second pass — faux bold.
     /// See [`Self::weight_for`] for the heading case.
+    ///
+    /// **And the 500 is the dark appearance's.** The sans, serif and rounded
+    /// families take their weight from the theme on screen
+    /// ([`themes::Appearance::body_weight`]): a light ground gets a real
+    /// Regular, because the same missing correction that thins light text
+    /// thickens dark text. A theme change lays every row out again, so the
+    /// weight follows it.
     pub fn weight(self) -> f32 {
+        self.weight_in(themes::active().appearance)
+    }
+
+    /// [`weight`](Self::weight) under a named appearance, for a caller that
+    /// is not asking about the theme on screen.
+    pub fn weight_in(self, appearance: themes::Appearance) -> f32 {
         // **`System` asks for 400, not the sans 500**, for the `Mono` reason
         // in the paragraph above seen from the sans side: Segoe UI is a static
         // family, so 500 would set `embolden` and stroke a faux-bold second
@@ -2054,7 +2067,7 @@ impl FontChoice {
         }
         match self.class() {
             FontClass::Mono => 400.0,
-            _ => 500.0,
+            _ => appearance.body_weight(),
         }
     }
 
@@ -3270,6 +3283,29 @@ mod tests {
         assert_eq!(FontWeight::Medium.value(), 500.0);
         assert_eq!(FontWeight::SemiBold.value(), 600.0);
         assert_eq!(FontWeight::Bold.value(), 700.0);
+    }
+
+    /// **Body text is a real Regular on a light ground and a real Medium on a
+    /// dark one**, for the variable sans, serif and rounded families; the
+    /// faces that have no axis to move, and the mono class, are 400 under
+    /// both. A heading is heavier than body text under either.
+    #[test]
+    fn body_weight_follows_the_appearance() {
+        use themes::Appearance::{Dark, Light};
+        assert_eq!(FontChoice::Inter.weight_in(Light), 400.0);
+        assert_eq!(FontChoice::Inter.weight_in(Dark), 500.0);
+        for fixed in [FontChoice::Mono, FontChoice::System] {
+            assert_eq!(fixed.weight_in(Light), 400.0, "{fixed:?}");
+            assert_eq!(fixed.weight_in(Dark), 400.0, "{fixed:?}");
+        }
+        for choice in FontChoice::ALL {
+            for appearance in [Light, Dark] {
+                assert!(
+                    choice.weight_for(Some(6)) > choice.weight_in(appearance),
+                    "{choice:?} under {appearance:?}"
+                );
+            }
+        }
     }
 
     /// `with_weight` overrides only the weight, leaving the metrics intact.
