@@ -6,7 +6,9 @@
 //! ## What it shows
 //!
 //! The header says what the Bot service said, and nothing it did not: the
-//! Bot's **name**, **Paused** when its owner says so, and *Saves results in
+//! Bot's **name**, **Paused** when its owner says so, **Archived** when the
+//! Bot's own `lifecycle` says so (P1.7: its history reads, nothing about it
+//! changes), and *Saves results in
 //! {workspace}* with the first version's limit — a Bot saves only in its home
 //! workspace (QUESTIONS O8). Below it the Bot's main conversation, in an
 //! [`AiChatView`] whose surface the Bot owns (`koru_ai_ui::OwnedConversation`,
@@ -59,7 +61,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use koru_ai_core::bots::{Bot, BotId};
+use koru_ai_core::bots::{Bot, BotId, BotLifecycle};
 use koru_ai_core::{AiProviderId, ChatId};
 use koru_core::schema::WorkspaceDoc;
 use koru_draw::el::{El, Frame, FrameCx, Key, TextCache, boxed, col, divider, icon, row, text};
@@ -99,6 +101,8 @@ pub(crate) const HEADER: Key = Key::surface(SURFACE, "header");
 pub(crate) const NAME: Key = Key::surface(SURFACE, "name");
 /// *Paused*, when the owner says so.
 pub(crate) const PAUSED: Key = Key::surface(SURFACE, "paused");
+/// *Archived*, when the Bot's lifecycle says so.
+pub(crate) const ARCHIVED: Key = Key::surface(SURFACE, "archived");
 /// *Saves results in {workspace}*.
 pub(crate) const SAVES: Key = Key::surface(SURFACE, "saves");
 /// The first version's home-only limit.
@@ -132,6 +136,9 @@ pub(crate) struct BotFacts {
     pub id: BotId,
     pub name: String,
     pub paused: bool,
+    /// Archived (P1.7): its history reads and every change is refused with
+    /// `bot_archived`. Nothing in this build archives or unarchives a Bot.
+    pub archived: bool,
     pub home: WorkspaceId,
     pub provider: AiProviderId,
     pub main_chat: ChatId,
@@ -143,6 +150,8 @@ impl From<&RosterBot> for BotFacts {
             id: bot.id,
             name: bot.name.clone(),
             paused: bot.paused,
+            // The roster lists active Bots only (`BotCommand::List`).
+            archived: false,
             home: bot.home,
             provider: bot.provider.clone(),
             main_chat: bot.main_chat,
@@ -156,6 +165,7 @@ impl From<Bot> for BotFacts {
             id: bot.id,
             name: bot.config.name,
             paused: bot.paused,
+            archived: bot.lifecycle == BotLifecycle::Archived,
             home: bot.home_workspace,
             provider: bot.config.model.provider,
             main_chat: bot.main_chat,
@@ -664,6 +674,12 @@ impl BotView {
         for (request, result) in wrote {
             // *New conversation*'s answer is the list's, not the settings'.
             if self.conversations.wrote(request, &result) {
+                // Archived meanwhile: read the Bot again, so the header
+                // says so beside the refusal.
+                let archived = super::settings::BOT_ARCHIVED;
+                if matches!(&result, Err(Failure::Refused(code)) if code == archived) {
+                    self.asked = false;
+                }
                 changed = true;
                 continue;
             }
@@ -754,6 +770,16 @@ impl BotView {
                     text(t(self.lang, Words::BotsPaused))
                         .named("Bot paused")
                         .id(PAUSED)
+                        .role(roles::META)
+                        .ink(Ink::Hint),
+                );
+            }
+            // In words, beside the name: never color alone.
+            if facts.archived {
+                title = title.child(
+                    text(t(self.lang, Words::BotsArchived))
+                        .named("Bot archived")
+                        .id(ARCHIVED)
                         .role(roles::META)
                         .ink(Ink::Hint),
                 );
@@ -904,6 +930,13 @@ impl BotView {
                     .map(|_| t(self.lang, Words::BotsPaused).to_owned()),
             );
             line(
+                ARCHIVED,
+                self.facts
+                    .as_ref()
+                    .filter(|facts| facts.archived)
+                    .map(|_| t(self.lang, Words::BotsArchived).to_owned()),
+            );
+            line(
                 MAIN_MARK,
                 self.facts
                     .as_ref()
@@ -941,7 +974,10 @@ impl BotView {
             .byte(self.opening as u8);
         match &self.facts {
             Some(facts) => {
-                rev.byte(1).str(&facts.name).bool(facts.paused);
+                rev.byte(1)
+                    .str(&facts.name)
+                    .bool(facts.paused)
+                    .bool(facts.archived);
             }
             None => {
                 rev.byte(0);

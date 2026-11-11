@@ -531,10 +531,12 @@ impl Settings {
                     self.read_owed = true;
                 } else {
                     self.notice = Some(Notice::Refused(refusal_words(&code)));
-                    // A lock, a missing Bot or an owner that moved: what is
-                    // shown may be old.
-                    self.read_owed |=
-                        matches!(code.as_str(), "folder_locked" | "not_found" | "wrong_owner");
+                    // A lock, a missing Bot, an owner that moved or a Bot
+                    // archived meanwhile: what is shown may be old.
+                    self.read_owed |= matches!(
+                        code.as_str(),
+                        "folder_locked" | "not_found" | "wrong_owner" | BOT_ARCHIVED
+                    );
                 }
             }
         }
@@ -554,11 +556,18 @@ fn same_access(draft: &AccessDraft, bot: &Bot) -> bool {
     draft.access == bot.access && mine == theirs
 }
 
-/// **A refusal's sentence, by its stable code** (`BotError::code`). The
-/// server's message is English developer text and is never shown; a code
-/// this build does not know reads as a change that was not applied.
+/// The owner's refusal of any change to an archived Bot (P1.7):
+/// `koru_ai_wire::bot_lifecycle_codes::ARCHIVED`, which the app cannot name
+/// (it does not depend on `koru-ai-wire`). Its history still reads.
+pub(crate) const BOT_ARCHIVED: &str = "bot_archived";
+
+/// **A refusal's sentence, by its stable code** (`BotError::code`, and the
+/// lifecycle's `bot_archived`). The server's message is English developer
+/// text and is never shown; a code this build does not know reads as a
+/// change that was not applied.
 pub(crate) fn refusal_words(code: &str) -> Words {
     match code {
+        BOT_ARCHIVED => Words::BotsErrArchived,
         "invalid_request" => Words::BotsErrInvalid,
         "not_found" => Words::BotsErrNotFound,
         "wrong_owner" => Words::BotsErrWrongOwner,

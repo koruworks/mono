@@ -341,6 +341,31 @@ fn refused_codes_map_to_sentences() {
     assert_eq!(settings.name_shown(), "Other", "the edit is kept");
 }
 
+/// **A change to a Bot archived meanwhile is refused in the person's words**
+/// (P1.7's `bot_archived`): its own sentence, never *not applied*; the edit
+/// is kept, and the Bot is read again so the tab can say it is archived.
+#[test]
+fn a_change_to_an_archived_bot_says_so_and_reads_the_bot_again() {
+    assert_eq!(refusal_words(BOT_ARCHIVED), Words::BotsErrArchived);
+    for lang in koru_i18n::Lang::ALL {
+        assert!(!koru_i18n::t(lang, Words::BotsErrArchived).trim().is_empty());
+    }
+    let (mut settings, _) = known();
+    settings.edit_name("Other");
+    let (request, _) = write(settings.save_name().unwrap());
+    settings.answer(
+        request,
+        Err(Failure::Refused(BOT_ARCHIVED.into())),
+        Instant::now(),
+    );
+    assert_eq!(
+        settings.notice(),
+        Some(Notice::Refused(Words::BotsErrArchived))
+    );
+    assert_eq!(settings.name_shown(), "Other", "the edit is kept");
+    assert!(settings.take_read_owed(), "the Bot is read again");
+}
+
 /// **A change that was not answered is the same change when asked again**:
 /// the same request, so a reply lost on the way back cannot become a second
 /// change. Anything different is a new request.

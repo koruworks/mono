@@ -276,6 +276,58 @@ fn a_bot_tab_offers_path_references_and_nothing_else_the_owner_refuses() {
     );
 }
 
+/// **An archived Bot says so in words beside its name** (P1.7), from the
+/// Bot's own `lifecycle`: a line of the header, nested in it, published to
+/// a screen reader and no control — never color alone. An active Bot says
+/// nothing of it, and a read that finds it active again takes it away.
+#[test]
+fn an_archived_bot_says_so_in_words_beside_its_name() {
+    let mut f = fixture();
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    let mut archived = f.bot.clone();
+    archived.lifecycle = BotLifecycle::Archived;
+    f.answer(seq, f.bot.id, Ok(archived));
+    assert!(f.view.facts().is_some_and(|facts| facts.archived));
+    let lines = f.view.header_lines();
+    let keys: Vec<Key> = lines.iter().map(|line| line.0).collect();
+    assert_eq!(keys, [NAME, PAUSED, ARCHIVED, MAIN_MARK, SAVES, LIMIT]);
+    assert_eq!(
+        lines
+            .iter()
+            .find(|line| line.0 == ARCHIVED)
+            .map(|line| line.2.as_str()),
+        Some(t(f.view.lang, Words::BotsArchived)),
+        "said in words"
+    );
+    f.view.with_frame(|_, frame| {
+        let title = frame.named("Bot title").next().expect("a title row").rect;
+        let mark = frame.node(ARCHIVED).expect("laid out").rect;
+        assert!(
+            mark.y >= title.y - 0.5 && mark.y + mark.h <= title.y + title.h + 0.5,
+            "beside the name, in its row"
+        );
+        assert_eq!(
+            frame.hit_at(mark.x + mark.w * 0.5, mark.y + mark.h * 0.5),
+            None,
+            "a statement, not a control"
+        );
+        assert!(frame.named("Bot archived").next().is_some());
+    });
+
+    assert!(f.view.ask());
+    let again = f.asked();
+    f.answer(again, f.bot.id, Ok(f.bot.clone()));
+    assert!(f.view.facts().is_some_and(|facts| !facts.archived));
+    assert!(
+        !f.view.with_frame(|_, frame| frame.contains(ARCHIVED)),
+        "active again: not said"
+    );
+    for lang in Lang::ALL {
+        assert!(!t(lang, Words::BotsArchived).trim().is_empty(), "{lang:?}");
+    }
+}
+
 /// Every language names the header's words.
 #[test]
 fn the_header_words_exist_in_every_language() {
@@ -1055,6 +1107,29 @@ fn new_conversation_shows_what_the_owner_made() {
     f.view.shown_pass(None);
     assert_eq!(f.view.chat_id(), made);
     f.listed();
+}
+
+/// ***New conversation* on a Bot archived meanwhile is refused in the
+/// person's words** (P1.7's `bot_archived`), the tab stays on its
+/// conversation, and the Bot is read again so the header can say it is
+/// archived.
+#[test]
+fn new_conversation_on_an_archived_bot_says_so_and_reads_the_bot() {
+    let mut f = listed(&[]);
+    let shown = f.view.chat_id();
+    assert!(f.view.perform(region::Act::NewConversation));
+    let (request, _) = f.wrote();
+    f.reply(
+        request,
+        Err(Failure::Refused(crate::bots::settings::BOT_ARCHIVED.into())),
+    );
+    assert_eq!(
+        f.view.conversations.create_refused(),
+        Some(Words::BotsErrArchived)
+    );
+    f.view.shown_pass(None);
+    assert_eq!(f.view.chat_id(), shown, "still on its conversation");
+    f.asked();
 }
 
 /// **A Branch moves the tab to the branch**, and the list reads again to

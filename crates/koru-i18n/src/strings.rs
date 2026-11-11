@@ -1771,6 +1771,8 @@ pub enum Key {
     BotsPaused,
     /// A paused Bot's row, as a screen reader names it: its name, then that it is paused.
     BotsRowPaused,
+    /// An archived Bot's mark in its tab's header, from the Bot's own `lifecycle` (P1.7): said in words, never by color alone. Non-English columns machine-written, awaiting a native read.
+    BotsArchived,
     /// A Bot's conversation that cannot be shown — gone, or the service is not answering. Said in its place; it never becomes a new chat (Bots P1.8 S3).
     BotsConversationUnavailable,
     // A Bot's tab (Bots P1.8 S4): its header over its conversation.
@@ -3306,7 +3308,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2282] = [
+    pub const ALL: [Key; 2283] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4567,6 +4569,7 @@ impl Key {
         Key::BotsEmpty,
         Key::BotsPaused,
         Key::BotsRowPaused,
+        Key::BotsArchived,
         Key::BotsConversationUnavailable,
         Key::BotsTabUnnamed,
         Key::BotsBotLoading,
@@ -14791,6 +14794,17 @@ pub const ROWS: &[Row] = &[
         ar: "{}، متوقف مؤقتًا",
         zh_hans: "{}，已暂停",
         ja: "{}、一時停止中",
+    },
+    Row {
+        key: Key::BotsArchived,
+        en: "Archived",
+        es: "Archivado",
+        pt_br: "Arquivado",
+        de: "Archiviert",
+        fr: "Archivé",
+        ar: "مؤرشف",
+        zh_hans: "已归档",
+        ja: "アーカイブ済み",
     },
     Row {
         key: Key::BotsConversationUnavailable,
