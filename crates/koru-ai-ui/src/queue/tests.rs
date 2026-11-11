@@ -930,3 +930,122 @@ fn a_taken_steer_is_walked_back_to_and_a_queued_one_is_not() {
     );
     assert_eq!(queued_texts(&surface), ["queued"]);
 }
+
+/// **A client stopped mid-reply leaves nothing running** — the host's
+/// `deactivate`, as a Bot tab does when its Bot goes to the Trash. The
+/// reply's stream was the client's and will never end here, so it is no
+/// longer shown as running; the words the person had typed and not sent
+/// stay. The next boot's transcript shows the reply as the service holds it.
+#[test]
+fn a_stopped_client_leaves_no_reply_running_and_keeps_the_draft() {
+    let (mut surface, _, commands) = agent_surface("agent-codex", &[("agent-codex", false)]);
+    send_and_accept(&mut surface, &commands, "first");
+    assert!(surface.reply_streaming(), "the reply runs");
+    type_into(&mut surface, "unsent");
+    assert!(surface.deactivate(), "a client was running");
+    assert!(!surface.reply_streaming(), "nothing left running");
+    assert!(surface.attempt.is_none());
+    assert!(surface.pulse.is_none(), "no dots with nothing behind them");
+    assert!(surface.pending_user.is_none());
+    assert_eq!(surface.composer.text(), "unsent", "the draft is kept");
+}
+
+/// **A message sent and not yet accepted when the client stops** is given
+/// back to the composer, as a send that did not go is: its answer will
+/// never come here.
+#[test]
+fn a_stopped_client_gives_back_a_message_not_yet_accepted() {
+    let (mut surface, _, commands) = agent_surface("agent-codex", &[("agent-codex", false)]);
+    type_into(&mut surface, "hello");
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(sends(&drain(&commands)), ["hello"]);
+    assert!(surface.composer.text().is_empty(), "sent");
+    surface.deactivate();
+    assert_eq!(surface.composer.text(), "hello", "given back");
+    assert!(surface.pending_user.is_none());
+    assert!(!surface.waiting);
+}
+
+/// **An attachment the stopped client was copying** — a workspace file the
+/// Files host imported, whose copy (`CopyWorkspaceFile`) went to the client
+/// — is shown as not stored, so it can be tried again. One still with the
+/// host's import is not the client's, and one already stored stays stored.
+#[test]
+fn a_stopped_client_leaves_no_copy_of_an_attachment_storing() {
+    let (mut surface, transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", false)]);
+    let chat = transcript.chat.id;
+    let path = std::path::Path::new("notes.txt");
+    let import = |surface: &mut ChatSurface| {
+        let request = crate::composer_plus::WorkspaceImportRequest {
+            op: uuid::Uuid::new_v4(),
+            chat,
+            workspace: koru_ai_core::WorkspaceId::new(),
+            attachment: koru_ai_core::ChatAttachmentId::new(),
+            path: path.to_path_buf(),
+        };
+        // As `begin_workspace_import` leaves it for the Files host.
+        surface.add_draft(
+            chat,
+            attachments::Draft::workspace_pending(request.attachment, path),
+        );
+        surface
+            .workspace_imports
+            .insert(request.attachment, request.clone());
+        request
+    };
+    let copying = import(&mut surface);
+    let with_host = import(&mut surface);
+    // The host's answer (`workspace_file_imported`) asks the client to copy.
+    assert!(surface.workspace_file_imported(copying.op, Ok(koru_ai_core::DocumentId::new())));
+    assert!(
+        drain(&commands)
+            .iter()
+            .any(|command| matches!(command, Command::CopyWorkspaceFile(..))),
+        "the copy is with the client"
+    );
+    let stored = koru_ai_core::ChatAttachmentId::new();
+    let mut done = attachments::Draft::workspace_pending(stored, path);
+    done.state = attachments::DraftState::Stored;
+    surface.add_draft(chat, done);
+    surface.deactivate();
+    let state = |id| {
+        surface
+            .strips
+            .get(chat)
+            .iter()
+            .find(|draft| draft.id == id)
+            .map(|draft| draft.state.clone())
+    };
+    assert_eq!(
+        state(copying.attachment),
+        Some(attachments::DraftState::Failed { retryable: true }),
+        "the client's copy will never answer"
+    );
+    assert_eq!(
+        state(with_host.attachment),
+        Some(attachments::DraftState::Storing),
+        "still the host's"
+    );
+    assert_eq!(state(stored), Some(attachments::DraftState::Stored));
+}
+
+/// **A steer with the stopped client** goes back to the front of its queue,
+/// paused, as a steer whose delivery is uncertain does
+/// (`steer_refused`): it may have reached the reply, so nothing sends it
+/// again by itself.
+#[test]
+fn a_stopped_client_puts_a_steer_back_paused() {
+    let (mut surface, _transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", true)]);
+    send_and_accept(&mut surface, &commands, "first");
+    type_into(&mut surface, "also this");
+    press(&mut surface, NamedKey::Enter);
+    assert!(surface.queue_action(QueueHit::Steer(0)));
+    assert!(surface.steering.is_some(), "with the client");
+    surface.deactivate();
+    assert!(surface.steering.is_none());
+    assert_eq!(queued_texts(&surface), ["also this"], "kept, first in line");
+    let chat = surface.shown_chat_id().expect("a chat");
+    assert!(surface.queues.is_paused(chat), "not sent again by itself");
+}

@@ -1240,11 +1240,14 @@ impl ChatSurface {
 
     /// **Stop the background API client, keeping everything in hand** — the
     /// person's unsent draft, its staged attachments, the transcript shown.
-    /// A host whose conversation is refused for now (a Bot in Trash) calls
-    /// it so nothing is read or sent; [`Self::activate`] starts a client
-    /// again and boots the conversation the surface was on. Nothing is
-    /// cleared: dropping the client is the whole of it. `true` when one was
-    /// running.
+    /// A host whose conversation is refused for now calls it so nothing is
+    /// read or sent; [`Self::activate`] starts a client again and boots the
+    /// conversation the surface was on, whose transcript then shows what the
+    /// service holds. **What only that client would have answered is
+    /// settled now**: a reply's stream, a message not yet accepted, a steer,
+    /// a copy of an attachment it was making — so nothing is left looking
+    /// as if it were still moving with nothing behind it. The draft and
+    /// every stored attachment stay. `true` when a client was running.
     pub fn deactivate(&mut self) -> bool {
         if self.pending_link_chat.is_none() {
             self.pending_link_chat = self
@@ -1254,7 +1257,96 @@ impl ChatSurface {
                 .or_else(|| self.shown_chat_id());
         }
         self.waiting = false;
-        self.reader.take().is_some()
+        let running = self.reader.take().is_some();
+        self.settle_unanswerable();
+        running
+    }
+
+    /// **Settle what the stopped client alone could have answered.** Its
+    /// answers will never come, so each is settled as if it had been lost,
+    /// keeping the person's words and every attachment that is stored:
+    ///
+    /// - **a reply streaming** is no longer shown as running — its stream
+    ///   was the client's; the transcript read on the next boot shows the
+    ///   reply as the service holds it;
+    /// - **a message sent and not yet accepted** is given back to the
+    ///   composer, as a send that did not go is (whether it went, the next
+    ///   boot's transcript says);
+    /// - **a message handed to the running reply** (a steer) goes back to
+    ///   the front of its queue, paused, as a steer whose delivery is
+    ///   uncertain does: it may have reached the reply, so it is not sent
+    ///   again by itself;
+    /// - **an attachment the client was copying** — a recalled message's
+    ///   attachment staged again through it, a workspace file whose grant
+    ///   or copy it was asking for — is shown as not stored, so it can be
+    ///   tried again or removed. Uploads, and a recalled file staged again
+    ///   from its path, go on their own thread, which outlives the client,
+    ///   and settle by themselves; so does a workspace file still with the
+    ///   host's Files import;
+    /// - **a question only it would answer** — a grant asked before a send,
+    ///   a lookup of document titles — is no longer waited for, so the
+    ///   next send or lookup asks again.
+    fn settle_unanswerable(&mut self) {
+        // A send staged until the Store is durable has not reached the
+        // client: it is given back with the message, never sent later.
+        self.staged_embedded_send = None;
+        self.durable_observations = 0;
+        if self.sent_message.is_some() {
+            self.give_back_sent(None);
+        }
+        if let Some((chat, item)) = self.steering.take() {
+            self.queues.push_front(chat, item);
+            self.queues.pause(chat);
+        }
+        self.steer_after_cancel = None;
+        self.steered.clear();
+        self.pending_grants = None;
+        self.grants_ready = None;
+        self.titles_in_flight = false;
+        self.attempt = None;
+        self.ended_attempt = None;
+        self.pending_assistant_message_id = None;
+        self.pending_user = None;
+        self.answering = false;
+        self.pulse = None;
+        self.live_usage = None;
+        self.live_sources.clear();
+        self.open_searches.clear();
+        self.live_reasoning.clear();
+        self.reasoning_expanded = false;
+        self.draft.clear();
+        self.live_turn_started_ms = None;
+        self.stop_armed_at = None;
+        self.messages_dirty = true;
+        // A recalled attachment staged again by the client (`Restage`); one
+        // whose source is a path goes on the upload thread instead.
+        let restaging = self
+            .recall_restages
+            .iter()
+            .map(|(id, chat)| (*chat, *id, false));
+        // A workspace file whose grant (`AddGrants`) or copy
+        // (`CopyWorkspaceFile`) the client was asking for: the copy is asked
+        // once the Files host has given its document.
+        let granting = self
+            .pending_workspace_import_grant
+            .take()
+            .map(|(_, request)| request.attachment);
+        let copying = self
+            .workspace_imports
+            .iter()
+            .filter(|(id, _)| {
+                granting == Some(**id) || self.workspace_import_documents.contains_key(*id)
+            })
+            .map(|(id, request)| (request.chat, *id, true));
+        let settled = restaging.chain(copying).collect::<Vec<_>>();
+        for (chat, id, retryable) in settled {
+            if let Some(draft) = self.strips.draft_mut(chat, id)
+                && draft.state == attachments::DraftState::Storing
+                && draft.source != koru_ai_core::AttachmentSource::Path
+            {
+                draft.state = attachments::DraftState::Failed { retryable };
+            }
+        }
     }
 
     /// Start a brand-new chat, suppressing the active document context for this
