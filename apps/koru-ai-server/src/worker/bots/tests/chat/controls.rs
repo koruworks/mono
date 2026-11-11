@@ -249,8 +249,29 @@ fn start_with_return(
     CommandContext,
     ToolInvocationId,
 ) {
+    start_in(
+        native,
+        returned,
+        PathBuf::from("unused-in-memory-root"),
+        |_, _| {},
+    )
+}
+/// The same, on `root`, with `seed` writing earlier history first.
+fn start_in(
+    native: Arc<Interactive>,
+    returned: Option<SyncSender<Repository>>,
+    root: PathBuf,
+    seed: impl FnOnce(&mut Repository, &Bot),
+) -> (
+    WorkerHandle,
+    AiWorkerClient,
+    Arc<Authority>,
+    CommandContext,
+    ToolInvocationId,
+) {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
+    seed(&mut repository, &bot);
     let chat = repository
         .chat_with_access(
             bot.main_chat,
@@ -259,13 +280,9 @@ fn start_with_return(
         .unwrap()
         .unwrap();
     let context = proof(authority.clone(), &bot, chat);
-    let mut config = WorkerConfig::new(
-        PathBuf::from("unused-in-memory-root"),
-        "internal-debug",
-        ProviderRegistry::default(),
-    )
-    .with_bot_authority(authority.clone())
-    .with_bot_delegate(native);
+    let mut config = WorkerConfig::new(root, "internal-debug", ProviderRegistry::default())
+        .with_bot_authority(authority.clone())
+        .with_bot_delegate(native);
     config.test_repository = Some(repository);
     config.test_repository_return = returned;
     let worker = AiWorker::new(config).spawn().unwrap();
@@ -935,6 +952,151 @@ fn bot_branch_waits_for_delayed_steer_history_then_copies_it_in_reading_order() 
     // Branching started nothing: the native owner saw one task only.
     assert_eq!(native.native.state.lock().unwrap().begin, 1);
     assert_eq!(native.steer_inputs.lock().unwrap().len(), 1);
+    worker.shutdown();
+    let _ = worker.join();
+}
+
+#[test]
+fn a_steer_sent_while_branch_files_copy_refuses_the_commit_and_the_branch_follows_once_settled() {
+    let root = tempfile::tempdir().unwrap();
+    let native = Arc::new(Interactive::new());
+    let seeded = Mutex::new(None);
+    // A finished exchange with a stored picture comes before the running task.
+    let (worker, client, authority, context, _) = start_in(
+        native.clone(),
+        None,
+        root.path().to_owned(),
+        |repository, bot| {
+            let picture = super::super::branch_attachment(bot.main_chat);
+            let file = root
+                .path()
+                .join("attachments")
+                .join(bot.main_chat.to_storage())
+                .join(picture.attachment.id.to_storage())
+                .join("file");
+            std::fs::create_dir_all(&file).unwrap();
+            std::fs::write(file.join("fixture.png"), b"picture").unwrap();
+            repository.stage_attachment(&picture).unwrap();
+            let mut finished = turn(bot.main_chat, Uuid::new_v4(), 1);
+            finished.attachment_ids = vec![picture.attachment.id];
+            repository.begin_turn(&finished).unwrap();
+            repository
+                .apply_event(
+                    &AiEvent::Completed {
+                        attempt_id: finished.attempt.id,
+                        stop_reason: None,
+                        at: Timestamp::from_millis(2),
+                    },
+                    &[],
+                )
+                .unwrap();
+            *seeded.lock().unwrap() = Some(finished.assistant_message.id);
+        },
+    );
+    let through = seeded.lock().unwrap().unwrap();
+    let attempt = native_attempt(&native);
+    let prepared = context.prepared.as_ref().unwrap();
+    let (bot, chat, revision, policy) = prepared.chats[0];
+    let destination = ChatId::new();
+    let branch_context = CommandContext {
+        request: super::super::context(true),
+        prepared: Some(Arc::new(PreparedBotCommand {
+            authority: prepared.authority.clone(),
+            chats: vec![
+                (bot, chat, revision, policy),
+                (bot, destination, revision, policy),
+            ],
+            runtime: Ok(()),
+            pins: vec![],
+            chat_snapshot: None,
+            settings: None,
+            terminal_question: None,
+        })),
+    };
+    let branch = || {
+        let (reply, response) = sync_channel(1);
+        client
+            .send(WorkerCommand::BranchChat {
+                context: branch_context.clone(),
+                chat,
+                request: BranchChatRequest {
+                    branch_chat_id: destination,
+                    through_message_id: through,
+                    title: "Branch".into(),
+                },
+                reply,
+            })
+            .unwrap();
+        response
+    };
+    let copied = || {
+        std::fs::read_dir(
+            root.path()
+                .join("attachments")
+                .join(destination.to_storage()),
+        )
+        .map(|entries| entries.count())
+        .unwrap_or(0)
+    };
+    let (entered_tx, entered) = sync_channel(1);
+    let (release_tx, release) = sync_channel(1);
+    *authority.inspect_gate.lock().unwrap() = Some((entered_tx, release));
+    let first = branch();
+    // The steering guard passed and the files are copied; the commit waits
+    // for its fresh owner inspection.
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(copied(), 1);
+    let steer = steer_request();
+    let (reply, steered) = sync_channel(1);
+    client
+        .send(WorkerCommand::SteerAttempt {
+            context: context.clone(),
+            attempt,
+            request: steer.clone(),
+            reply,
+        })
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while native.steer_inputs.lock().unwrap().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the steer never reached the owner"
+        );
+        std::thread::yield_now();
+    }
+    release_tx.send(()).unwrap();
+    let refused = first
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused.code, "chat_busy");
+    assert!(refused.retryable);
+    steered
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while copied() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the refused copy was left behind"
+        );
+        std::thread::yield_now();
+    }
+    // Once the acknowledgement settled, the same identity branches once.
+    let branched = branch()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap()
+        .transcript;
+    assert_eq!(branched.attachments.len(), 1);
+    assert_eq!(copied(), 1);
+    assert!(
+        branched
+            .messages
+            .iter()
+            .all(|row| row.origin_message_id != Some(MessageId::from_uuid(steer.operation_id)))
+    );
     worker.shutdown();
     let _ = worker.join();
 }

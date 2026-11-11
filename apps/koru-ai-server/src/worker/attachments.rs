@@ -27,10 +27,12 @@ pub(super) enum StageAnswer {
 }
 
 /// A branch is either done (an idempotent replay, or one with nothing to
-/// copy) or one whose attachment folders must be copied first.
+/// copy) or one whose attachment folders must be copied first. A Bot copy
+/// carries the Bot snapshot its commit is fenced against.
 pub(super) enum BranchPlan {
     Done(BranchChatResponse),
     Copy(Box<BranchCopy>, Vec<BranchFolder>),
+    BotCopy(Box<super::bots::BotBranchCopy>),
 }
 
 /// Visibility-filtered reads cannot establish that a destination is unused.
@@ -410,6 +412,7 @@ impl WorkerState {
             Ok(BranchPlan::Done(response)) => {
                 let _ = reply.send(Ok(response));
             }
+            Ok(BranchPlan::BotCopy(plan)) => self.begin_bot_branch_copy(context, plan, reply),
             Ok(BranchPlan::Copy(copy, folders)) => {
                 let branch = copy.chat.id;
                 self.branching.insert(branch);

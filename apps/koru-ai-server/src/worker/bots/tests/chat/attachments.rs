@@ -643,3 +643,141 @@ fn a_retry_stages_fresh_identities_into_the_new_runs_session_never_the_old_one()
     );
     assert_eq!(state.begin, 2);
 }
+
+/// The prepared proof a task in another conversation of the same Bot carries.
+fn conversation_proof(running: &Running, chat: &Chat) -> CommandContext {
+    let prepared = running.context.prepared.as_ref().unwrap();
+    let (bot, _, revision, policy) = prepared.chats[0];
+    CommandContext {
+        request: super::super::context(true),
+        prepared: Some(Arc::new(PreparedBotCommand {
+            authority: prepared.authority.clone(),
+            chats: vec![(bot, chat.id, revision, policy)],
+            runtime: Ok(()),
+            pins: prepared.pins.clone(),
+            chat_snapshot: Some(chat.clone()),
+            settings: None,
+            terminal_question: None,
+        })),
+    }
+}
+
+#[test]
+fn a_branch_names_its_copied_picture_by_its_own_path_and_a_recalled_copy_stages_once() {
+    let (delivered_tx, delivered) = sync_channel(4);
+    let running = start_with(Pictures::with_native(
+        Script::Native,
+        Native {
+            delivery_reports: Mutex::new(Some(delivered_tx)),
+            ..Native::default()
+        },
+    ));
+    let first = send(&running);
+    assert!(matches!(terminal(&first), PublicAiEvent::Completed { .. }));
+    delivered.recv_timeout(Duration::from_secs(10)).unwrap();
+    let old_session = running
+        .port
+        .native
+        .state
+        .lock()
+        .unwrap()
+        .fence
+        .as_ref()
+        .unwrap()
+        .session;
+    let source = running.request.chat_id;
+    let destination = ChatId::new();
+    let client = running.worker.client();
+    let branched = client
+        .branch_chat(
+            super::super::context(true),
+            source,
+            BranchChatRequest {
+                branch_chat_id: destination,
+                through_message_id: first.accepted.assistant_message_id,
+                title: "Branch".into(),
+            },
+        )
+        .unwrap()
+        .transcript;
+    assert_eq!(branched.attachments.len(), 1);
+    let copy = branched.attachments[0].clone();
+    assert_ne!(copy.id, running.request.attachment_ids[0]);
+    // Branching staged nothing and started nothing.
+    assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
+    assert_eq!(running.port.native.state.lock().unwrap().begin, 1);
+    // The source's own files go, so only the branch's copy can be read.
+    std::fs::remove_dir_all(
+        running
+            .root
+            .path()
+            .join("attachments")
+            .join(source.to_storage()),
+    )
+    .unwrap();
+    let context = conversation_proof(&running, &branched.chat);
+    let send_in_branch = |attachment_ids: Vec<koru_ai_core::ChatAttachmentId>| {
+        let mut request = running.request.clone();
+        request.operation_id = Uuid::new_v4();
+        request.chat_id = destination;
+        request.attachment_ids = attachment_ids;
+        let (reply, response) = sync_channel(1);
+        client
+            .send(WorkerCommand::SendTurn {
+                context: context.clone(),
+                request,
+                reply,
+            })
+            .unwrap();
+        response
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+    };
+    // A later Send in the branch stages nothing: the copied picture is
+    // history, named by the branch's own stored path as the shared prompt
+    // names every earlier attachment.
+    let second = send_in_branch(Vec::new());
+    assert!(matches!(terminal(&second), PublicAiEvent::Completed { .. }));
+    delivered.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
+    {
+        let state = running.port.native.state.lock().unwrap();
+        let input = state.input.as_ref().unwrap();
+        assert!(input.attachment_ids.is_empty());
+        assert!(input.text.contains(&copy.id.to_storage()), "{}", input.text);
+        assert!(input.text.contains(&destination.to_storage()));
+        assert!(!input.text.contains(&source.to_storage()));
+        assert_eq!(state.begin, 2);
+    }
+    // Recalling the copied picture into the branch's composer and sending it
+    // stages that copy once, into the new Run's own session.
+    let recalled = koru_ai_core::ChatAttachmentId::new();
+    crate::worker::attachments::restage_attachment(
+        &client,
+        context.clone(),
+        destination,
+        copy.id,
+        recalled,
+    )
+    .unwrap();
+    let third = send_in_branch(vec![recalled]);
+    let (event, notice) = terminal_with_notice(&third);
+    assert!(
+        matches!(event, PublicAiEvent::Completed { .. }),
+        "{event:?}"
+    );
+    assert!(!notice, "the branch's copy went natively");
+    let ingested = running.port.ingested.lock().unwrap().clone();
+    let state = running.port.native.state.lock().unwrap();
+    let new_session = state.fence.as_ref().unwrap().session;
+    assert_ne!(old_session, new_session);
+    assert_eq!(ingested.len(), 2);
+    assert_eq!(ingested[1].0, new_session);
+    assert_ne!(ingested[0].1, ingested[1].1);
+    assert_eq!(
+        state.input.as_ref().unwrap().attachment_ids,
+        [ingested[1].1]
+    );
+    assert_eq!(state.begin, 3);
+}

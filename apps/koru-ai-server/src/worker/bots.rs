@@ -19,6 +19,7 @@ pub(in crate::worker) mod chat;
 pub(crate) mod policy;
 mod preparation;
 pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
+pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingBotBranch};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
 impl WorkerState {

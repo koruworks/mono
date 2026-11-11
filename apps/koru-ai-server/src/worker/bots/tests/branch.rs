@@ -2,6 +2,7 @@
 //! Branch a Bot conversation into another conversation with the same Bot.
 use super::*;
 use std::collections::BTreeSet;
+mod attachments;
 
 /// A Bot whose own mode/Fast differ from its main conversation's, so the O24
 /// seeding is observable, with one finished reply to branch through.
@@ -55,13 +56,17 @@ fn worker(
     repo: Repository,
     authority: Arc<Authority>,
 ) -> (WorkerHandle, AiWorkerClient, Receiver<Repository>) {
+    worker_on(PathBuf::from("unused-memory-branch"), repo, authority)
+}
+
+fn worker_on(
+    root: PathBuf,
+    repo: Repository,
+    authority: Arc<Authority>,
+) -> (WorkerHandle, AiWorkerClient, Receiver<Repository>) {
     let (returned_tx, returned) = sync_channel(1);
-    let mut config = WorkerConfig::new(
-        PathBuf::from("unused-memory-branch"),
-        "internal-debug",
-        ProviderRegistry::default(),
-    )
-    .with_bot_authority(authority);
+    let mut config = WorkerConfig::new(root, "internal-debug", ProviderRegistry::default())
+        .with_bot_authority(authority);
     config.test_repository = Some(repo);
     config.test_repository_return = Some(returned_tx);
     let worker = AiWorker::new(config).spawn().unwrap();
@@ -297,34 +302,4 @@ fn branch_destination_is_unused_or_this_bots_own_earlier_branch() {
     assert_eq!(repo.all_bot_chats().unwrap().len(), chats);
     assert_eq!(repo.bot_for_chat(plain).unwrap(), None);
     assert!(repo.chat(plain).unwrap().is_some());
-}
-
-#[test]
-fn bot_branch_with_attached_files_refuses_before_any_write() {
-    let (mut repo, authority, command) = fixture();
-    let bot = created(&mut repo, authority.clone(), command);
-    let attachment = branch_attachment(bot.main_chat);
-    repo.stage_attachment(&attachment).unwrap();
-    let pending = complete(&mut repo, bot.main_chat, 1, vec![attachment.attachment.id]);
-    let records = repo.attachment_records(bot.main_chat).unwrap();
-    assert_eq!(records.len(), 1);
-    let chats = repo.all_bot_chats().unwrap();
-    let (worker, client, returned) = worker(repo, authority);
-    let destination = ChatId::new();
-    let failure = client
-        .branch_chat(
-            context(true),
-            bot.main_chat,
-            request(destination, pending.assistant_message.id, "Branch"),
-        )
-        .unwrap_err();
-    assert_eq!(failure.code, "unsupported_capability");
-    assert!(!failure.retryable);
-    worker.shutdown();
-    assert_eq!(worker.join(), WorkerExit::Clean);
-    let repo = returned.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert_eq!(repo.all_bot_chats().unwrap(), chats);
-    assert!(repo.chat(destination).unwrap().is_none());
-    assert!(repo.messages(destination).unwrap().is_empty());
-    assert_eq!(repo.attachment_records(bot.main_chat).unwrap(), records);
 }

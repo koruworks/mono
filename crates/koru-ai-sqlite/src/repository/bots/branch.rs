@@ -20,6 +20,19 @@ pub struct HistoricalBotRun {
 }
 
 impl Repository {
+    /// Fail every Bot branch commit at its last statement, the association
+    /// insert, so the whole copy rolls back; `false` lifts it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn refuse_bot_branch_commit_for_fixture(&self, refuse: bool) -> Result<(), BotError> {
+        self.connection
+            .execute_batch(if refuse {
+                "CREATE TRIGGER refuse_bot_branch BEFORE INSERT ON bot_chats WHEN NEW.purpose='additional' BEGIN SELECT RAISE(ABORT,'fixture branch rollback'); END;"
+            } else {
+                "DROP TRIGGER refuse_bot_branch;"
+            })
+            .map_err(bad)
+    }
+
     /// The shared branch copy and its `additional` association commit together.
     /// The caller has checked current authority and built the copy from the
     /// source's terminal prefix; this rechecks the Bot snapshot, that the source

@@ -1179,6 +1179,13 @@ enum Envelope {
         copied: bool,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
+    /// The same, for a Bot branch: its commit is fenced again first.
+    BotBranchCopied {
+        pending: Box<bots::PendingBotBranch>,
+        copied: bool,
+    },
+    /// A Bot branch's owner authority was inspected again, off the writer.
+    BotBranchPrepared(bots::BotBranchPrepared),
 }
 
 enum WorkerCommand {
@@ -1916,6 +1923,10 @@ fn run_worker(
                 copied,
                 reply,
             }) => state.on_branch_copied(context, copy, copied, reply),
+            Ok(Envelope::BotBranchCopied { pending, copied }) => {
+                state.on_bot_branch_copied(pending, copied)
+            }
+            Ok(Envelope::BotBranchPrepared(prepared)) => state.complete_bot_branch(prepared),
             Ok(Envelope::PullFinished(id)) => {
                 if state
                     .ollama_pull
@@ -5497,6 +5508,7 @@ enum ProviderAdminJob {
     BotSteerRead(bots::chat::SteerReadJob),
     BotCoordinate(bots::BotCoordinationJob),
     BotPrepare(bots::BotPreparationJob),
+    BotBranch(bots::BotBranchJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -5606,6 +5618,13 @@ impl ProviderAdminPool {
                                     command: Box::new(command),
                                     proof,
                                 },
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotBranch(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotBranchPrepared(job.run()),
                                 &thread_shutdown,
                             );
                         }
