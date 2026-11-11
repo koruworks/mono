@@ -110,6 +110,11 @@ pub struct WorkerConfig {
     test_repository_return: Option<SyncSender<Repository>>,
     #[cfg(test)]
     test_bot_creation: Option<bots::CreationDriver>,
+    /// Bot preparation treats the runtime's model discovery as ready, for
+    /// tests that run a Bot command through real preparation with no
+    /// session host (the automatic picture re-send).
+    #[cfg(test)]
+    test_bot_runtime_ready: bool,
 }
 
 impl WorkerConfig {
@@ -163,6 +168,8 @@ impl WorkerConfig {
             test_repository_return: None,
             #[cfg(test)]
             test_bot_creation: None,
+            #[cfg(test)]
+            test_bot_runtime_ready: false,
         }
     }
 
@@ -190,6 +197,8 @@ impl WorkerConfig {
             test_repository_return: None,
             #[cfg(test)]
             test_bot_creation: None,
+            #[cfg(test)]
+            test_bot_runtime_ready: false,
         })
     }
 
@@ -222,6 +231,8 @@ impl WorkerConfig {
             test_repository_return: None,
             #[cfg(test)]
             test_bot_creation: None,
+            #[cfg(test)]
+            test_bot_runtime_ready: false,
         })
     }
 
@@ -1158,6 +1169,7 @@ enum Envelope {
     },
     BotCoordinated(bots::BotCoordinationResult),
     BotChatStep(bots::chat::StepResult),
+    BotResendProbed(bots::chat::ResendProbed),
     BotLifecycleStep(bots::LifecycleResult),
     BotInteraction(bots::chat::ControlResult),
     BotInteractionRead(bots::chat::ControlReadResult),
@@ -1579,6 +1591,10 @@ struct WorkerState {
     bot_lifecycle: bots::LifecycleDriver,
     /// The Bot creations the writer is driving, and their list (P1.8).
     bot_creations: bots::CreationDriver,
+    /// Refused Bot tasks owed their automatic re-send as files (O30).
+    bot_resends: bots::chat::Resends,
+    #[cfg(test)]
+    test_bot_runtime_ready: bool,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
@@ -1847,6 +1863,9 @@ fn run_worker(
         bot_recovery_after: Some(0),
         bot_lifecycle: Default::default(),
         bot_creations,
+        bot_resends: Default::default(),
+        #[cfg(test)]
+        test_bot_runtime_ready: config.test_bot_runtime_ready,
         bot_delegate: config.bot_delegate,
         bot_authority: config.bot_authority,
         repository,
@@ -1908,6 +1927,7 @@ fn run_worker(
         }
         state.drain_agent_commands();
         state.schedule_bot_chat_step();
+        state.schedule_bot_resends();
         state.schedule_bot_lifecycle();
         state.schedule_bot_creations();
         match receiver.recv_timeout(LOOP_INTERVAL) {
@@ -1941,6 +1961,7 @@ fn run_worker(
             Ok(Envelope::BotPolicyRecover { restart }) => state.recover_bot_policy(restart),
             Ok(Envelope::BotCoordinated(result)) => state.complete_bot_coordination(result),
             Ok(Envelope::BotChatStep(result)) => state.complete_bot_chat_step(result),
+            Ok(Envelope::BotResendProbed(result)) => state.complete_bot_resend_probe(result),
             Ok(Envelope::BotLifecycleStep(result)) => state.complete_bot_lifecycle(result),
             Ok(Envelope::BotInteraction(result)) => state.complete_bot_interaction(result),
             Ok(Envelope::BotInteractionRead(result)) => state.complete_bot_interaction_read(result),
@@ -4230,6 +4251,8 @@ impl WorkerState {
             self.check_bot_chat_retry(&existing, request.destination_workspace, "retry", &request)?;
             return replay_stream(&self.repository, existing);
         }
+        // An automatic picture re-send is prepared only while still owed.
+        self.require_bot_resend_owed(request.operation_id)?;
         if request.explicit_refs.len() > MAX_CONTEXT_REFS {
             return Err(failure(
                 "invalid_request",
@@ -5554,6 +5577,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 
 enum ProviderAdminJob {
     BotChatRecovery(bots::chat::StepJob),
+    BotResendProbe(bots::chat::ResendProbe),
     NativeDrain(native_recovery::NativeDrainJob),
     BotPolicy(bots::BotPolicyJob),
     #[cfg(test)]
@@ -5631,6 +5655,13 @@ impl ProviderAdminPool {
                             send_admin_envelope(
                                 &output,
                                 Envelope::BotChatStep(job.run()),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotResendProbe(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotResendProbed(job.run()),
                                 &thread_shutdown,
                             );
                         }

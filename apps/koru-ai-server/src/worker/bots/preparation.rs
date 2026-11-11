@@ -45,8 +45,19 @@ pub(in crate::worker) struct BotPreparationJob {
     /// A changed folder to check before the first task (P1.8): it must exist,
     /// be a folder and not be Koru's own data. Update binds its canonical form.
     folder: Option<(Arc<dyn BotFolderSystem>, creation::ReservedFolders, String)>,
+    /// Tests only: model discovery answers ready without a session host.
+    #[cfg(test)]
+    runtime_ready: bool,
 }
 impl BotPreparationJob {
+    #[cfg(test)]
+    fn runtime_ready(&self) -> bool {
+        self.runtime_ready
+    }
+    #[cfg(not(test))]
+    fn runtime_ready(&self) -> bool {
+        false
+    }
     pub(in crate::worker) fn run(
         mut self,
         agents: Option<&AgentSessions>,
@@ -62,7 +73,11 @@ impl BotPreparationJob {
             let validation = match &self.model {
                 Some(config) => {
                     validate_config(config, config.role.workspace).map_err(bot_failure)?;
-                    validate_model_evidence(agents, config, require_fast)
+                    if self.runtime_ready() {
+                        Ok(None)
+                    } else {
+                        validate_model_evidence(agents, config, require_fast)
+                    }
                 }
                 None => Ok(None),
             };
@@ -401,6 +416,8 @@ impl WorkerState {
             chat_snapshot,
             terminal_question,
             delegate: self.bot_delegate.clone(),
+            #[cfg(test)]
+            runtime_ready: self.test_bot_runtime_ready,
         };
         let Some(pool) = self.provider_admin.as_ref() else {
             job.command.refuse(bot_failure(BotError::Unavailable));

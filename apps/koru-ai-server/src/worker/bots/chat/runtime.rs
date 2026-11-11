@@ -445,7 +445,11 @@ impl WorkerState {
             Ok(true) => {
                 self.bot_chats.insert(step.attempt, chat);
             }
-            Ok(false) => {}
+            // The task's live state ends here; a picture refusal may be owed
+            // its automatic re-send, unless the person's Stop ended it.
+            Ok(false) => {
+                self.bot_chat_ended(step.attempt, chat.finishing == Some(Finish::Interrupt))
+            }
             Err(error) if error.class == AiErrorClass::Storage => {
                 // A failed transaction leaves mapper/live state and cursor
                 // unchanged. The next finite observation replays that frame.
@@ -771,6 +775,8 @@ impl WorkerState {
             .ok_or_else(not_found)?;
         let state = self.repository.bot_replay_state(id).map_err(ai_failure)?;
         self.request_bot_stop(id, &receipt.intent.submission, state.fence);
+        // A refused task the person stops is not sent again by itself.
+        self.decline_bot_resend(id);
         Ok(status)
     }
     /// Whether a Bot attempt already ended without the person's Stop, so a

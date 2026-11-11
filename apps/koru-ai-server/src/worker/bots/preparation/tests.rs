@@ -128,6 +128,7 @@ fn prepare(folder: Option<&str>) -> (BotCommand, ApiResult<()>) {
         chat_snapshot: None,
         terminal_question: None,
         delegate: None,
+        runtime_ready: false,
         folder: folder.map(|path| {
             (
                 Arc::new(Folders::new()) as Arc<dyn BotFolderSystem>,

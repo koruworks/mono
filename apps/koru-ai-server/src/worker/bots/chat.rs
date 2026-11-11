@@ -14,9 +14,11 @@ mod controls;
 mod preparation;
 mod questions;
 mod replay;
+mod resend;
 mod runtime;
 mod settings;
 mod steering;
+pub(in crate::worker) use resend::{ResendProbe, ResendProbed, Resends};
 // Only the attachment tests name the bound from outside its module.
 #[cfg(test)]
 pub(in crate::worker) use attachments::MAX_LISTINGS as MAX_PICTURE_LISTINGS;
