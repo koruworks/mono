@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::{ChatsSurface, Listing, Press, Row};
 
+mod actions;
 mod buttons;
 mod dependency;
 mod freshness;

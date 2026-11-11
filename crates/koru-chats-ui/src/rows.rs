@@ -109,6 +109,42 @@ pub struct RowParts {
     pub more: Rect,
 }
 
+/// **Which of a row's own actions a list offers** (Bots P1.8 S8, QUESTIONS
+/// O31.3, approved 2026-11-10): the pin, the ⋯ menu — with the right-click and
+/// the menu key that open the same menu — and Delete. Opening a chat is not
+/// among them: every list opens its rows. A host whose owner refuses an
+/// action leaves it out, and the list then has no control for it at all
+/// ([`ChatsSurface::set_row_actions`]). Renaming is the host's already
+/// (D89): a host that offers no rename simply never asks for one.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct RowActions {
+    pub pin: bool,
+    pub menu: bool,
+    pub delete: bool,
+}
+
+impl RowActions {
+    /// Everything: the Chats view's list, and any list no host has told.
+    pub const ORDINARY: Self = Self {
+        pin: true,
+        menu: true,
+        delete: true,
+    };
+    /// Rows that only open: a Bot's conversations, whose owner refuses Pin
+    /// and whose Trash is a lifecycle operation of its own.
+    pub const OPEN_ONLY: Self = Self {
+        pin: false,
+        menu: false,
+        delete: false,
+    };
+}
+
+impl Default for RowActions {
+    fn default() -> Self {
+        Self::ORDINARY
+    }
+}
+
 /// A button at a row's end (D86).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RowButton {
@@ -235,12 +271,18 @@ impl ChatsSurface {
             Rect::new(right - w * n, r.y, w, r.h)
         };
         let none = Rect::new(right, r.y, 0.0, r.h);
-        let (end, pin, more) = if buttons {
-            (none, slot(2.0), slot(1.0))
-        } else if marked {
-            (slot(1.0), none, none)
-        } else {
-            (none, none, none)
+        // Only the buttons the list offers (O31.3): an absent one leaves its
+        // slot to the next, and a row with neither keeps its mark.
+        let (show_pin, show_more) = (
+            buttons && self.row_actions.pin,
+            buttons && self.row_actions.menu,
+        );
+        let (end, pin, more) = match (show_pin, show_more) {
+            (true, true) => (none, slot(2.0), slot(1.0)),
+            (false, true) => (none, none, slot(1.0)),
+            (true, false) => (none, slot(1.0), none),
+            (false, false) if marked => (slot(1.0), none, none),
+            (false, false) => (none, none, none),
         };
         let taken = [end, pin, more]
             .iter()

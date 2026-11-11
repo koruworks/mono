@@ -106,6 +106,10 @@ impl ChatsSurface {
         x: f32,
         y: f32,
     ) -> Option<Vec<crate::ChatId>> {
+        // A list that offers no menu has none to raise (O31.3).
+        if !self.row_actions.menu {
+            return None;
+        }
         let Some((Row::Chat(index), _)) = self.row_at(area, top, x, y) else {
             return None;
         };
@@ -259,6 +263,10 @@ impl ChatsSurface {
     /// sit — under the row's end. The buttons are the pointer's alone, so
     /// this is the keyboard's way to the same actions.
     fn menu_for_focus(&mut self, area: Rect, top: f32) -> bool {
+        // No menu offered: the key falls through (O31.3).
+        if !self.row_actions.menu {
+            return false;
+        }
         let Some(row @ Row::Chat(index)) = self.focus_row() else {
             return false;
         };

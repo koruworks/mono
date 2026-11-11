@@ -90,7 +90,7 @@ pub use koru_ai_core::ChatId;
 /// Re-exported so a host names whose chats these are
 /// ([`ChatsSurface::set_profile`]) without a `koru-ai-core` dependency.
 pub use koru_ai_core::ProfileId;
-pub use rows::{Notice, Row, RowButton, RowParts};
+pub use rows::{Notice, Row, RowActions, RowButton, RowParts};
 pub use seen::{SeenBook, SeenMark};
 pub use status::ChatStatus;
 
@@ -263,6 +263,10 @@ pub struct ChatsSurface {
     /// says: the window's. Every listing asks for this profile's alone, and
     /// a listing that names another is never shown.
     pub(crate) profile: Option<ProfileId>,
+    /// **Which of a row's own actions this list offers** (Bots P1.8 S8,
+    /// QUESTIONS O31.3, approved 2026-11-10): every one, unless a host says
+    /// otherwise ([`set_row_actions`](Self::set_row_actions)).
+    pub(crate) row_actions: RowActions,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -326,6 +330,7 @@ impl ChatsSurface {
             wants_menu: None,
             renaming: None,
             profile: None,
+            row_actions: RowActions::ORDINARY,
             reader_link: None,
             seq: 0,
         }
@@ -402,6 +407,30 @@ impl ChatsSurface {
 
     pub fn renaming(&self) -> Option<ChatId> {
         self.renaming
+    }
+
+    /// **Say which of a row's own actions exist in this list** (Bots P1.8
+    /// S8, QUESTIONS O31.3, approved 2026-11-10). An action a host leaves out
+    /// is absent everywhere the list offers it — not drawn, not hit, not
+    /// answered from a key, and not asked for by `ask_*` — so a list whose
+    /// owner refuses an action never shows a control that would fail. A list
+    /// no host has told keeps [`RowActions::ORDINARY`]: everything, as
+    /// before. `true` when it changed.
+    pub fn set_row_actions(&mut self, actions: RowActions) -> bool {
+        let changed = self.row_actions != actions;
+        self.row_actions = actions;
+        if changed {
+            self.hover_button = None;
+            self.wants_pin = None;
+            self.wants_menu = None;
+            self.wants_delete.clear();
+        }
+        changed
+    }
+
+    /// Which of a row's own actions this list offers.
+    pub fn row_actions(&self) -> RowActions {
+        self.row_actions
     }
 
     /// **Every chat's status, as the host derived it** (D83) — idle chats
@@ -690,7 +719,7 @@ impl ChatsSurface {
     /// Pin or unpin `chat` — the row's pin, and an accessibility client's
     /// *Pin chat*. The row moves at once.
     pub fn ask_pin(&mut self, chat: ChatId, pinned: bool) {
-        if self.chats.iter().any(|candidate| candidate.id == chat) {
+        if self.row_actions.pin && self.chats.iter().any(|candidate| candidate.id == chat) {
             self.set_pinned(chat, pinned, self.now_ms);
             self.wants_pin = Some((chat, pinned));
         }
@@ -699,7 +728,7 @@ impl ChatsSurface {
     /// Ask for `chat`'s menu at `at` — the row's ⋯, the menu key, and an
     /// accessibility client's *More*. About the pick when the chat is in it.
     pub fn ask_menu(&mut self, chat: ChatId, at: (f32, f32)) {
-        if !self.chats.iter().any(|candidate| candidate.id == chat) {
+        if !self.row_actions.menu || !self.chats.iter().any(|candidate| candidate.id == chat) {
             return;
         }
         self.focus = Some(Focus::Chat(chat));
@@ -790,7 +819,7 @@ impl ChatsSurface {
 
     /// Ask to delete `chat` alone — an accessibility client's *Delete chat*.
     pub fn ask_delete(&mut self, chat: ChatId) {
-        if self.chats.iter().any(|candidate| candidate.id == chat) {
+        if self.row_actions.delete && self.chats.iter().any(|candidate| candidate.id == chat) {
             self.focus = Some(Focus::Chat(chat));
             self.wants_delete = vec![chat];
         }
@@ -800,6 +829,9 @@ impl ChatsSurface {
     /// the selection when the chat under the keyboard is in it, else that
     /// chat alone. `false` with nothing to delete.
     pub fn ask_delete_selected(&mut self) -> bool {
+        if !self.row_actions.delete {
+            return false;
+        }
         let Some(Focus::Chat(focused)) = self.focus else {
             return false;
         };
