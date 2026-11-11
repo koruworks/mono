@@ -125,6 +125,7 @@ mod live_markdown;
 mod microphone;
 mod model_picker;
 mod new_divider;
+mod owned;
 mod privacy;
 mod questions;
 mod queue;
@@ -148,6 +149,7 @@ pub use composer_plus::WorkspaceImportRequest;
 pub use dictation::{DictationPress, DictationShown};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
+pub use owned::{OwnedConversation, OwnedOffers, Unavailable as ConversationUnavailable};
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
@@ -758,6 +760,14 @@ pub struct ChatSurface {
     /// profile, with the block it was to open at: not shown here, for the
     /// host to open in a window of that profile.
     wants_open_elsewhere: Option<ChatElsewhere>,
+    /// **The conversation a host owns** ([`owned`], Bots P1.8 S3): `None`
+    /// for every ordinary surface, which then behaves exactly as it did.
+    owned: Option<OwnedConversation>,
+    /// Why the owned conversation is not shown, while it is not.
+    unavailable: Option<owned::Unavailable>,
+    /// How this surface's threads connect: ordinary, or first-party with
+    /// `bots.manage` for an owned surface ([`Self::new_owned_at`]).
+    scopes: reader::Scopes,
     highlight: Option<(MessageBlockId, Instant)>,
     confirm: Option<Confirm>,
     destructive_action: Option<DestructiveAction>,
@@ -1140,6 +1150,9 @@ impl ChatSurface {
             pending_link_chat: None,
             profile: None,
             wants_open_elsewhere: None,
+            owned: None,
+            unavailable: None,
+            scopes: reader::Scopes::Ordinary,
             highlight: None,
             confirm: None,
             destructive_action: None,
@@ -1199,7 +1212,7 @@ impl ChatSurface {
         if self.reader.is_some() || cfg!(any(test, feature = "no-client")) {
             return false;
         }
-        self.reader = Reader::start(self.root.clone());
+        self.reader = Reader::start(self.root.clone(), self.scopes);
         if let Some(reader) = &self.reader {
             self.waiting = reader
                 .send(Command::Boot(self.pending_link_chat, self.profile))
@@ -1214,6 +1227,10 @@ impl ChatSurface {
     /// Start a brand-new chat, suppressing the active document context for this
     /// chat so it begins empty (workspace context still applies).
     pub fn start_new_chat(&mut self) -> bool {
+        // An owned surface shows its owner's conversation and no other.
+        if self.owned.is_some() {
+            return false;
+        }
         self.suppress_next_document_context = true;
         self.fresh_chat_wanted = true;
         // Before the boot has answered there is no provider to create under:
@@ -1228,6 +1245,11 @@ impl ChatSurface {
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
+        // An owned surface shows its own conversation; another is bound,
+        // never opened over it ([`Self::bind_owned`]).
+        if self.owned.as_ref().is_some_and(|owned| owned.chat != chat) {
+            return false;
+        }
         self.fresh_chat_wanted = false;
         self.pending_link_chat = Some(chat);
         self.highlight = block.map(|block| (block, Instant::now()));
@@ -1283,7 +1305,9 @@ impl ChatSurface {
     /// The workspace is presented first and becomes the initial grant for each
     /// chat; users may still remove it afterwards.
     pub fn set_context_workspace(&mut self, workspace: Option<WorkspaceId>) -> bool {
-        if self.context_workspace == workspace {
+        // An owned surface's workspace is its owner's destination, whatever
+        // the window shows ([`Self::bind_owned`]).
+        if self.owned.is_some() || self.context_workspace == workspace {
             return false;
         }
         self.context_workspace = workspace;
@@ -1696,6 +1720,10 @@ impl ChatSurface {
     }
 
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        // An unavailable owned conversation has nothing to type into.
+        if self.unavailable.is_some() {
+            return false;
+        }
         // Any key lets a `$` row's description go at once (D121).
         let tooltip_gone = self.skill_tooltip_clear();
         self.route_key(key, text, mods) || tooltip_gone
@@ -2290,6 +2318,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
+        if self.unavailable.is_some() {
+            return false;
+        }
         self.pointer = (x, y);
         self.pressed_alt = self.pointer_mods == ModifiersState::ALT;
         if let Some(handled) = self.viewer_mouse_down(x, y) {
@@ -2939,6 +2970,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_double_click(&mut self, x: f32, y: f32) -> bool {
+        if self.unavailable.is_some() {
+            return false;
+        }
         if let Some(handled) = self.viewer_double_click(x, y) {
             return handled;
         }
@@ -3183,6 +3217,11 @@ impl ChatSurface {
                 self.viewport.h,
             ),
         );
+        if self.unavailable.is_some() {
+            // One sentence and nothing to act on ([`owned`]).
+            self.draw_unavailable(canvas, root);
+            return;
+        }
         if self.showing_setup() {
             self.draw_setup(canvas, root);
         } else {
@@ -3235,6 +3274,10 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        // The floor under an owned surface's absent controls ([`owned`]).
+        if !self.owned_admits(&command) {
+            return false;
+        }
         let Some(command) = self.apply_to_unmade_chat(command) else {
             return true;
         };
@@ -3359,7 +3402,11 @@ impl ChatSurface {
                 // the tab was saved (ADR-483-chattabrestore). The tab forgets
                 // it and becomes a new chat, made once the provider
                 // validates, rather than naming a chat nobody can open.
-                if link_missing {
+                // An owned conversation that is gone is shown as gone: it
+                // never becomes a new chat ([`owned`]).
+                if link_missing && self.owned.is_some() {
+                    self.owned_unavailable(owned::Unavailable::Missing);
+                } else if link_missing {
                     self.pending_link_chat = None;
                     self.fresh_chat_wanted = true;
                 }
@@ -3393,7 +3440,12 @@ impl ChatSurface {
                 // is made once the chosen provider validates, and with
                 // none chosen the chip asks for a model.
                 self.validated_ready = false;
-                let selected = settings.selected_provider.clone();
+                // An owned surface checks its owner's agent, the only one it
+                // offers; an ordinary one the person's chosen provider.
+                let selected = match &self.owned {
+                    Some(owned) => Some(owned.provider.clone()),
+                    None => settings.selected_provider.clone(),
+                };
                 self.settings = Some(settings);
                 self.chats = chats;
                 self.keep_profile_chats();
@@ -3449,6 +3501,12 @@ impl ChatSurface {
                     self.scroll_to_pending_question = false;
                 }
                 let chat = transcript.chat.id;
+                // An owned surface makes no chat; what arrives here is a
+                // Branch of its conversation, which stays its owner's — the
+                // surface now shows, and is bound to, that branch.
+                if let Some(owned) = &mut self.owned {
+                    owned.chat = chat;
+                }
                 self.remember_chat(&transcript.chat, true);
                 self.transcript = Some(transcript);
                 self.prime_skill_list();
@@ -4310,6 +4368,7 @@ impl ChatSurface {
                     self.give_back_sent(Some(&failure));
                 }
             }
+            Update::Unavailable { chat, reason } => self.owned_read_failed(chat, reason),
             // A command queued behind a create that failed: the create
             // has said why.
             Update::Failure(_) if self.chat_unmade() => {}
@@ -4516,6 +4575,10 @@ impl ChatSurface {
     }
 
     fn create_chat(&mut self) -> bool {
+        // An owned surface never makes a chat: its owner does ([`owned`]).
+        if self.owned.is_some() {
+            return false;
+        }
         let Some(selection) = self.current_selection() else {
             // **Nothing chosen yet: the chat view waits for a model.** No
             // setup opens; the chip asks for one, and the composer's picker
@@ -4541,6 +4604,9 @@ impl ChatSurface {
     /// ([`Self::apply_to_unmade_chat`]); its first message makes the chat
     /// ([`Self::make_unmade_chat`]). Leaving it unsent leaves nothing behind.
     fn begin_unmade_chat(&mut self, model: ModelSelection) {
+        if self.owned.is_some() {
+            return;
+        }
         let mut chat = unmade_transcript(model);
         // A new chat with an agent starts from the person's default
         // permission, mapped onto the agent's own modes (D39).
@@ -4740,6 +4806,14 @@ impl ChatSurface {
     /// one. The pick is remembered as what new chats start on — the choice
     /// the setup used to save — so the next chat opens on it.
     pub(crate) fn start_chat_on(&mut self, model: ModelSelection) -> bool {
+        // An owned conversation keeps its owner's agent.
+        if self
+            .owned
+            .as_ref()
+            .is_some_and(|owned| owned.provider != model.provider)
+        {
+            return false;
+        }
         self.web_search_armed = true;
         let sent = match &self.transcript {
             // A chat with no message yet takes it: the service's, or the
@@ -4783,6 +4857,11 @@ impl ChatSurface {
     /// a new chat starts on. After the chat's own command, so the chat is
     /// made before the settings answer asks for validation again.
     fn remember_choice(&mut self, model: &ModelSelection) {
+        // A model picked in an owned conversation is that conversation's,
+        // not where the person's next ordinary chat starts ([`owned`]).
+        if self.owned.is_some() {
+            return;
+        }
         let Some(settings) = &self.settings else {
             return;
         };
@@ -4954,9 +5033,13 @@ impl ChatSurface {
         if !self.make_unmade_chat() {
             return true;
         }
-        if self.transcript.as_ref().is_some_and(|transcript| {
-            agents::is_agent_provider(&transcript.chat.current_model.provider)
-        }) {
+        // The grants a send asks for are the chat's own workspace access:
+        // absent where an owner keeps the access ([`owned`]).
+        if self.offers().tool_access
+            && self.transcript.as_ref().is_some_and(|transcript| {
+                agents::is_agent_provider(&transcript.chat.current_model.provider)
+            })
+        {
             let key = GrantKey {
                 chat: chat_id,
                 markdown: markdown.clone(),
@@ -5045,6 +5128,7 @@ impl ChatSurface {
         let auto_title = self
             .transcript
             .as_ref()
+            .filter(|_| self.offers().rename)
             .filter(|transcript| transcript.chat.title == DEFAULT_CHAT_TITLE)
             .and_then(|_| {
                 let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
@@ -5107,7 +5191,9 @@ impl ChatSurface {
         });
         self.messages_dirty = true;
         let request = SendTurnRequest {
-            destination_workspace: None,
+            // `None` for an ordinary chat, as always; an owned one's
+            // destination ([`owned`]).
+            destination_workspace: self.owned_destination(),
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
             surface: SURFACE,
@@ -6263,7 +6349,7 @@ impl ChatSurface {
     /// control laid out after it starts at the toolbar's left instead, and
     /// nothing draws, hits or names it.
     fn privacy_button(&self) -> Option<Rect> {
-        if !koru_features::private_chat_button() {
+        if !koru_features::private_chat_button() || !self.offers().privacy {
             return None;
         }
         self.transcript.as_ref()?;
@@ -9268,7 +9354,7 @@ impl ChatSurface {
                 self.send_command(Command::Retry(
                     chat.id,
                     RetryTurnRequest {
-                        destination_workspace: None,
+                        destination_workspace: self.owned_destination(),
                         operation_id: uuid::Uuid::new_v4(),
                         message_id: message,
                         surface: SURFACE,

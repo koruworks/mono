@@ -1769,6 +1769,8 @@ pub enum Key {
     BotsPaused,
     /// A paused Bot's row, as a screen reader names it: its name, then that it is paused.
     BotsRowPaused,
+    /// A Bot's conversation that cannot be shown — gone, or the service is not answering. Said in its place; it never becomes a new chat (Bots P1.8 S3).
+    BotsConversationUnavailable,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3190,7 +3192,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2225] = [
+    pub const ALL: [Key; 2226] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4450,6 +4452,7 @@ impl Key {
         Key::BotsEmpty,
         Key::BotsPaused,
         Key::BotsRowPaused,
+        Key::BotsConversationUnavailable,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -14617,6 +14620,17 @@ pub const ROWS: &[Row] = &[
         ar: "{}، متوقف مؤقتًا",
         zh_hans: "{}，已暂停",
         ja: "{}、一時停止中",
+    },
+    Row {
+        key: Key::BotsConversationUnavailable,
+        en: "This conversation can't be opened right now.",
+        es: "Esta conversación no se puede abrir ahora.",
+        pt_br: "Esta conversa não pode ser aberta agora.",
+        de: "Diese Unterhaltung kann gerade nicht geöffnet werden.",
+        fr: "Cette conversation ne peut pas être ouverte pour le moment.",
+        ar: "لا يمكن فتح هذه المحادثة الآن.",
+        zh_hans: "目前无法打开此对话。",
+        ja: "この会話は今は開けません。",
     },
     Row {
         key: Key::SizeBytes,

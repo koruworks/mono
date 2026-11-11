@@ -688,6 +688,9 @@ enum ThumbJob {
 /// keep a person's own command out of it.
 pub(crate) struct Work {
     root: Option<PathBuf>,
+    /// How its threads connect: an owned surface's attachments belong to a
+    /// conversation only `bots.manage` can reach (Bots P1.8 S3).
+    scopes: super::reader::Scopes,
     events_tx: Sender<Event>,
     events: Receiver<Event>,
     uploads: Option<Sender<Upload>>,
@@ -713,6 +716,7 @@ impl Work {
         let (events_tx, events) = channel();
         Self {
             root,
+            scopes: super::reader::Scopes::Ordinary,
             events_tx,
             events,
             uploads: None,
@@ -727,6 +731,13 @@ impl Work {
             #[cfg(test)]
             opened: Vec::new(),
         }
+    }
+
+    /// The same work, connecting as `scopes` says. Before any thread has
+    /// started: a thread keeps the connection it was born with.
+    pub(crate) fn with_scopes(mut self, scopes: super::reader::Scopes) -> Self {
+        self.scopes = scopes;
+        self
     }
 
     pub(crate) fn busy(&self) -> bool {
@@ -795,10 +806,10 @@ impl Work {
             Upload::Put { chat, id, .. } | Upload::Reference { chat, id, .. } => Some((*chat, *id)),
             Upload::Remove { .. } => None,
         };
-        let (root, events) = (self.root.clone(), self.events_tx.clone());
+        let (root, scopes, events) = (self.root.clone(), self.scopes, self.events_tx.clone());
         let sender = self
             .uploads
-            .get_or_insert_with(|| spawn_uploader(root, events));
+            .get_or_insert_with(|| spawn_uploader(root, scopes, events));
         // Unbounded: a strip holds at most ten drafts, and a removal must
         // never be dropped for want of room.
         let sent = sender.send(job).is_ok();
@@ -913,12 +924,13 @@ impl Work {
             if cfg!(feature = "no-client") {
                 return;
             }
-            let (root, events) = (self.root.clone(), self.events_tx.clone());
+            let (root, scopes, events) = (self.root.clone(), self.scopes, self.events_tx.clone());
             let name = file_name.to_owned();
             let spawned = std::thread::Builder::new()
                 .name("koru-ai-open".into())
                 .spawn(move || {
-                    let bytes = super::reader::connect_client(root.as_deref())
+                    let bytes = scopes
+                        .connect(root.as_deref())
                         .ok()
                         .and_then(|client| client.ai().attachment_bytes(chat, id).ok());
                     let failed = match bytes {
@@ -939,10 +951,10 @@ impl Work {
     }
 
     fn thumb(&mut self, job: ThumbJob) {
-        let (root, events) = (self.root.clone(), self.events_tx.clone());
+        let (root, scopes, events) = (self.root.clone(), self.scopes, self.events_tx.clone());
         let sender = self
             .thumbs
-            .get_or_insert_with(|| spawn_thumbnailer(root, events));
+            .get_or_insert_with(|| spawn_thumbnailer(root, scopes, events));
         if sender.send(job).is_ok() {
             self.in_flight += 1;
         }
@@ -985,7 +997,11 @@ fn unavailable() -> Failure {
 
 /// `koru-ai-upload`: one job at a time on a client of its own; a store
 /// answers that the service is not available when no client connects.
-fn spawn_uploader(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Upload> {
+fn spawn_uploader(
+    root: Option<PathBuf>,
+    scopes: super::reader::Scopes,
+    events: Sender<Event>,
+) -> Sender<Upload> {
     let (sender, jobs) = channel::<Upload>();
     let spawned = std::thread::Builder::new()
         .name("koru-ai-upload".into())
@@ -993,7 +1009,7 @@ fn spawn_uploader(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Upload
             let mut client = None;
             while let Ok(job) = jobs.recv() {
                 if client.is_none() {
-                    client = super::reader::connect_client(root.as_deref()).ok();
+                    client = scopes.connect(root.as_deref()).ok();
                 }
                 match job {
                     Upload::Put {
@@ -1101,7 +1117,11 @@ fn read_payload(payload: Payload) -> Result<bytes::Bytes, Failure> {
 /// own, or take a draft's bytes, and decode either to a brush no larger
 /// than [`THUMB_EDGE`] — never on the window thread, never through the
 /// reader's queue.
-fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<ThumbJob> {
+fn spawn_thumbnailer(
+    root: Option<PathBuf>,
+    scopes: super::reader::Scopes,
+    events: Sender<Event>,
+) -> Sender<ThumbJob> {
     let (sender, jobs) = channel::<ThumbJob>();
     let spawned = std::thread::Builder::new()
         .name("koru-ai-thumbs".into())
@@ -1116,7 +1136,7 @@ fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Thu
                             (None, Some(path)) => read_payload(Payload::Path(path)).ok(),
                             (None, None) => {
                                 if client.is_none() {
-                                    client = super::reader::connect_client(root.as_deref()).ok();
+                                    client = scopes.connect(root.as_deref()).ok();
                                 }
                                 client
                                     .as_ref()
@@ -1146,7 +1166,7 @@ fn spawn_thumbnailer(root: Option<PathBuf>, events: Sender<Event>) -> Sender<Thu
                     ThumbJob::Decode(id, bytes) => (id, Some(bytes)),
                     ThumbJob::Fetch(chat, id) => {
                         if client.is_none() {
-                            client = super::reader::connect_client(root.as_deref()).ok();
+                            client = scopes.connect(root.as_deref()).ok();
                         }
                         let bytes = client
                             .as_ref()

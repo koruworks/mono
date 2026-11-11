@@ -154,17 +154,24 @@ impl ChatSurface {
             PlusItem::KoruContext(t(self.lang, TextKey::AiComposerKoruContext)),
             PlusItem::UploadFiles(t(self.lang, TextKey::AiComposerUploadFiles)),
         ];
-        items.push(PlusItem::AddFolder(t(
-            self.lang,
-            TextKey::AiComposerAddFolder,
-        )));
+        // A folder is attached by its path: absent where an owner does not
+        // admit path references, as the working folder is where it keeps
+        // the folder itself (`owned`).
+        let offers = self.offers();
+        if offers.path_references {
+            items.push(PlusItem::AddFolder(t(
+                self.lang,
+                TextKey::AiComposerAddFolder,
+            )));
+        }
         if self.transcript.as_ref().is_some_and(|transcript| {
             crate::agents::is_agent_provider(&transcript.chat.current_model.provider)
         }) {
-            if self
-                .transcript
-                .as_ref()
-                .is_some_and(|transcript| transcript.messages.is_empty())
+            if offers.working_folder
+                && self
+                    .transcript
+                    .as_ref()
+                    .is_some_and(|transcript| transcript.messages.is_empty())
             {
                 items.push(PlusItem::WorkInProject(
                     t(self.lang, TextKey::AiComposerWorkInProject),
@@ -340,6 +347,11 @@ impl ChatSurface {
         match kind {
             ComputerPickerKind::Folder => self.attach_reference_path(path, AttachmentKind::Folder),
             ComputerPickerKind::WorkspaceFile => self.begin_workspace_import(path),
+            // With no path reference to choose, there is no choice: the file
+            // is stored, the one way an owned conversation takes it (`owned`).
+            ComputerPickerKind::File if !self.offers().path_references => {
+                self.begin_workspace_import(path)
+            }
             ComputerPickerKind::File => {
                 let dialog = Choice::new(
                     t(self.lang, TextKey::AiComputerFileChoiceTitle),
@@ -424,6 +436,19 @@ impl ChatSurface {
         if let Some(draft) = self.strips.draft_mut(chat, id) {
             draft.state = attachments::DraftState::Storing;
         }
+        // No grant where an owner keeps the access: what the grant's answer
+        // would have done, done now (`owned`).
+        if !self.offers().tool_access {
+            match self
+                .workspace_import_documents
+                .get(&request.attachment)
+                .copied()
+            {
+                Some(document) => self.copy_imported_workspace_file(&request, document),
+                None => self.workspace_import_request = Some(request),
+            }
+            return true;
+        }
         if self.queue_command(Command::AddGrants(
             chat,
             Some(request.workspace),
@@ -438,6 +463,9 @@ impl ChatSurface {
     }
 
     fn attach_reference_path(&mut self, path: PathBuf, kind: AttachmentKind) -> bool {
+        if !self.offers().path_references {
+            return false;
+        }
         let Some(chat) = self.shown_chat_id() else {
             return false;
         };
@@ -499,6 +527,12 @@ impl ChatSurface {
         }
         self.workspace_imports
             .insert(request.attachment, request.clone());
+        // An owner keeps the conversation's access: no grant is asked, and
+        // the import goes straight to the Files host (`owned`).
+        if !self.offers().tool_access {
+            self.workspace_import_request = Some(request);
+            return true;
+        }
         if self.queue_command(Command::AddGrants(chat, Some(workspace), Vec::new(), op)) {
             self.pending_workspace_import_grant = Some((op, request));
         } else {

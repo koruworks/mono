@@ -26,6 +26,56 @@ const CLIENT_SCOPES: &[&str] = &[
     "store.edit_documents",
     "store.manage_workspaces",
 ];
+/// **The scopes of a surface a host owns** (Bots P1.8 S3,
+/// [`crate::owned`]): the ordinary ones and `bots.manage`, which the Bot
+/// owner needs to read or write a Bot's conversation at all. The gateway
+/// grants it only to a caller the Agent vouches for, so this is asked for
+/// only through `Client::connect_first_party`; an ordinary surface never
+/// holds it.
+const OWNED_CLIENT_SCOPES: &[&str] = &[
+    "ai.chat",
+    "ai.manage_providers",
+    "ai.read_usage",
+    "store.read_documents",
+    "store.edit_documents",
+    "store.manage_workspaces",
+    "bots.manage",
+];
+
+/// **Which connection a surface's threads make.** Ordinary for every
+/// surface but one a host has bound to its own conversation, whose threads
+/// connect first-party with [`OWNED_CLIENT_SCOPES`].
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Scopes {
+    #[default]
+    Ordinary,
+    Owned,
+}
+
+impl Scopes {
+    /// Connect as this surface connects. Ordinary is exactly what it always
+    /// was ([`connect_client`]). Owned is first-party only: it does not
+    /// start a gateway, and a vouching Agent that is not there leaves it
+    /// without `bots.manage`, which the Bot owner answers as *not found* —
+    /// the owned surface's *unavailable*, never a new chat.
+    pub(crate) fn connect(self, root: Option<&Path>) -> Result<koru_api_client::Client, String> {
+        match self {
+            Self::Ordinary => connect_client(root),
+            Self::Owned => match root {
+                Some(root) => koru_api_client::Client::connect_at_first_party(
+                    koru_channel::segment(),
+                    root,
+                    OWNED_CLIENT_SCOPES,
+                ),
+                None => koru_api_client::Client::connect_first_party(
+                    koru_channel::segment(),
+                    OWNED_CLIENT_SCOPES,
+                ),
+            }
+            .map_err(|_| "Koru AI could not connect to the local Koru service.".to_string()),
+        }
+    }
+}
 
 pub(crate) enum Command {
     /// The settings, the window's profile's chats and the chat asked for
@@ -101,7 +151,7 @@ pub(crate) enum Command {
 }
 
 impl Command {
-    fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Boot(..) => "boot",
             Self::ListChats(_) => "list_chats",
@@ -245,6 +295,15 @@ pub(crate) enum Update {
     /// failure, so the message comes back to the composer with the reason.
     CreateFailed(ChatId, koru_ai_wire::Failure),
     Failure(String),
+    /// **An owned surface's conversation cannot be shown** (Bots P1.8 S3):
+    /// the chat it boots or reads is gone, or the service did not answer.
+    /// Only an owned reader sends this; an ordinary one answers as it
+    /// always did. `chat` is the chat asked about, `None` for a boot that
+    /// named none.
+    Unavailable {
+        chat: Option<ChatId>,
+        reason: crate::owned::Unavailable,
+    },
 }
 
 impl Update {
@@ -280,7 +339,7 @@ pub(crate) enum SendError {
 }
 
 impl Reader {
-    pub(crate) fn start(root: Option<PathBuf>) -> Option<Self> {
+    pub(crate) fn start(root: Option<PathBuf>, scopes: Scopes) -> Option<Self> {
         if cfg!(any(test, feature = "no-client")) {
             return None;
         }
@@ -288,7 +347,7 @@ impl Reader {
         let (update_tx, updates) = sync_channel(UPDATE_CAPACITY);
         std::thread::Builder::new()
             .name("koru-ai-ui-client".into())
-            .spawn(move || run(root, command_rx, update_tx))
+            .spawn(move || run(root, scopes, command_rx, update_tx))
             .ok()?;
         Some(Self { commands, updates })
     }
@@ -352,9 +411,15 @@ pub(crate) fn connect_client(root: Option<&Path>) -> Result<koru_api_client::Cli
     .map_err(|_| "Koru AI could not connect to the local Koru service.".to_string())
 }
 
-fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<Update>) {
+fn run(
+    root: Option<PathBuf>,
+    scopes: Scopes,
+    commands: Receiver<Command>,
+    updates: SyncSender<Update>,
+) {
     tracing::info!(target: "koru_ai::ui", "AI UI client thread started");
-    let mut client = connect_client(root.as_deref());
+    let owned = scopes == Scopes::Owned;
+    let mut client = scopes.connect(root.as_deref());
     if let Err(ref message) = client {
         tracing::warn!(
             target: "koru_ai::ui",
@@ -379,7 +444,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
         let client = match &client {
             Ok(client) => client,
             Err(_) => {
-                client = connect_client(root.as_deref());
+                client = scopes.connect(root.as_deref());
                 match &client {
                     Ok(client) => {
                         tracing::info!(
@@ -391,6 +456,16 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                     Err(message) => {
                         let failure = unreachable_failure(message.clone());
                         let update = match &command {
+                            // An owned surface's conversation: unreachable,
+                            // which it shows as such — never a new chat.
+                            Command::Boot(chat, _) if owned => Update::Unavailable {
+                                chat: *chat,
+                                reason: crate::owned::Unavailable::Unreachable,
+                            },
+                            Command::Read(chat) if owned => Update::Unavailable {
+                                chat: Some(*chat),
+                                reason: crate::owned::Unavailable::Unreachable,
+                            },
                             Command::Create(request) => {
                                 refused = Some((request.chat_id, failure.clone()));
                                 Update::CreateFailed(request.chat_id, failure)
@@ -475,7 +550,17 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                         destination_error,
                     })
                 })();
-                send_result(&updates, result);
+                match result {
+                    // An owned surface boots only to show its conversation:
+                    // a boot that failed is that conversation unreachable.
+                    Err(_) if owned => {
+                        let _ = updates.send(Update::Unavailable {
+                            chat: requested_chat,
+                            reason: crate::owned::Unavailable::Unreachable,
+                        });
+                    }
+                    result => send_result(&updates, result),
+                }
             }
             Command::Create(request) => match client.ai().create_chat(&request) {
                 Ok(created) => {
@@ -490,14 +575,25 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                     let _ = updates.send(Update::CreateFailed(request.chat_id, failure));
                 }
             },
-            Command::Read(chat) => {
-                send_result(
-                    &updates,
-                    client.ai().read_chat(chat).map(|transcript| {
-                        Update::Transcript(decorate_transcript(&client, transcript))
-                    }),
-                );
-            }
+            Command::Read(chat) => match client.ai().read_chat(chat) {
+                Ok(transcript) => {
+                    let _ =
+                        updates.send(Update::Transcript(decorate_transcript(&client, transcript)));
+                }
+                // An owned surface's read that failed says which way, typed;
+                // the service's English message is never shown.
+                Err(failure) if owned => {
+                    let _ = updates.send(Update::Unavailable {
+                        chat: Some(chat),
+                        reason: if authoritatively_missing(&failure) {
+                            crate::owned::Unavailable::Missing
+                        } else {
+                            crate::owned::Unavailable::Unreachable
+                        },
+                    });
+                }
+                Err(failure) => send_result::<koru_ai_wire::Failure>(&updates, Err(failure)),
+            },
             Command::Rename(chat, request) => {
                 let update = match client.ai().rename_chat(chat, &request) {
                     Ok(response) => Update::Renamed(response.chat),
@@ -1440,6 +1536,37 @@ mod tests {
                 .iter()
                 .all(|scope| scope.starts_with("ai.") || scope.starts_with("store."))
         );
+    }
+
+    /// **An ordinary surface asks for exactly what it always asked for**
+    /// (Bots P1.8 S3): the owned seam added a second list, and this one is
+    /// pinned word for word, `bots.manage` nowhere in it.
+    #[test]
+    fn the_ordinary_scopes_are_unchanged_by_the_owned_seam() {
+        assert_eq!(
+            CLIENT_SCOPES,
+            &[
+                "ai.chat",
+                "ai.manage_providers",
+                "ai.read_usage",
+                "store.read_documents",
+                "store.edit_documents",
+                "store.manage_workspaces",
+            ]
+        );
+        assert!(!CLIENT_SCOPES.contains(&"bots.manage"));
+        assert_eq!(super::Scopes::default(), super::Scopes::Ordinary);
+    }
+
+    /// An owned surface holds the ordinary scopes and `bots.manage`, and
+    /// nothing else: naming scopes filters rather than adds.
+    #[test]
+    fn the_owned_scopes_are_the_ordinary_ones_and_bots_manage() {
+        let (last, ordinary) = super::OWNED_CLIENT_SCOPES
+            .split_last()
+            .expect("owned scopes");
+        assert_eq!(ordinary, CLIENT_SCOPES);
+        assert_eq!(*last, "bots.manage");
     }
 
     #[test]

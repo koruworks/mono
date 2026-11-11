@@ -740,6 +740,11 @@ impl crate::ChatSurface {
         if self.picker_rail_hidden() {
             rail.retain(|entry| entry.provider() == current);
         }
+        // An owned conversation offers its owner's agent and no other
+        // (`owned`): no favorites from another agent, no second mark.
+        if let Some(owned) = &self.owned {
+            rail.retain(|entry| entry.provider() == Some(&owned.provider));
+        }
         rail
     }
 
@@ -754,9 +759,13 @@ impl crate::ChatSurface {
     /// its search looks only there. A new chat with no message, or no chat
     /// yet, keeps the rail.
     pub(crate) fn picker_rail_hidden(&self) -> bool {
-        self.transcript
-            .as_ref()
-            .is_some_and(|transcript| !transcript.messages.is_empty())
+        // An owned conversation belongs to its owner's agent from the start,
+        // as a begun chat belongs to its own (`owned`).
+        self.owned.is_some()
+            || self
+                .transcript
+                .as_ref()
+                .is_some_and(|transcript| !transcript.messages.is_empty())
     }
 
     /// The marks the rail draws, presses and steps through: its entries,

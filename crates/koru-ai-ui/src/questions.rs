@@ -603,7 +603,7 @@ impl ChatSurface {
         self.draft.clear();
         self.messages_dirty = true;
         let request = koru_ai_wire::SendTurnRequest {
-            destination_workspace: None,
+            destination_workspace: self.owned_destination(),
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
             surface: crate::SURFACE,

@@ -102,7 +102,11 @@ impl ChatSurface {
             self.pending_link_chat = None;
         }
         self.chats.retain(|listed| listed.id != chat);
-        if self.transcript.is_none() {
+        // An owned conversation is not shown here either, and nothing takes
+        // its place (`owned`).
+        if self.owned.as_ref().is_some_and(|owned| owned.chat == chat) {
+            self.owned_unavailable(crate::owned::Unavailable::Elsewhere);
+        } else if self.transcript.is_none() && self.owned.is_none() {
             self.fresh_chat_wanted = true;
         }
         if let Some(profile) = profile {
