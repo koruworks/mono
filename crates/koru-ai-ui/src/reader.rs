@@ -259,9 +259,12 @@ pub(crate) enum Update {
         status: AttemptStatus,
         transcript: ChatTranscript,
     },
+    /// A recovery ended without its answer: why, by the service's failure.
+    /// The surface says it — in the host's words when its owner names the
+    /// code — since the reader thread holds no host's data.
     RecoveryFailed {
         attempt: InferenceAttemptId,
-        message: String,
+        failure: koru_ai_wire::Failure,
     },
     Settings(ProviderSettingsResponse),
     Validation(ProviderValidationResponse),
@@ -1157,7 +1160,6 @@ fn recover_attempt(
     updates: &SyncSender<Update>,
     alive: &std::sync::Weak<()>,
 ) {
-    let lang = koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref());
     let outcome = recover(
         || {
             client
@@ -1174,7 +1176,6 @@ fn recover_attempt(
         || alive.upgrade().is_some(),
         std::thread::sleep,
         attempt_id,
-        lang,
     );
     if let Some(update) = outcome {
         let _ = updates.send(update);
@@ -1189,19 +1190,18 @@ fn recover_attempt(
 /// - **A failure the service says will pass** (`retryable`, as a lost
 ///   connection is) is read again on the bounded clock; an ordinary chat's
 ///   recovery waits through it as before.
-/// - **Any other failure ends it**, said as what it is: an attempt the
-///   service authoritatively does not have reads as the recovery failing;
-///   a hold — a Bot conversation in Trash (`bot_conversation_trashed`), its
-///   Bot in Trash (`bot_trashed`) or archived (`bot_archived`) — reads as
-///   that hold's own sentence ([`crate::failure_text`]). Before, only the
-///   first ended it, and a hold was read every 250 ms forever.
+/// - **Any other failure ends it**, handed to the surface as what it is: an
+///   attempt the service authoritatively does not have reads as the
+///   recovery failing; any other — a host's hold, such as a Bot
+///   conversation in Trash — as the surface's sentence for its code
+///   (`ChatSurface::failure_words`, the host's words first). Before, only
+///   the first ended it, and a hold was read every 250 ms forever.
 fn recover(
     mut read_attempt: impl FnMut() -> Result<AttemptStatus, koru_ai_wire::Failure>,
     mut read_chat: impl FnMut() -> Result<ChatTranscript, koru_ai_wire::Failure>,
     alive: impl Fn() -> bool,
     mut pause: impl FnMut(Duration),
     attempt_id: InferenceAttemptId,
-    lang: koru_i18n::Lang,
 ) -> Option<Update> {
     const RECOVERY_LOG_EVERY: u64 = 120;
     let started = std::time::Instant::now();
@@ -1249,14 +1249,9 @@ fn recover(
                     error_class = %failure.code,
                     "AI UI could not recover an accepted attempt from authoritative state"
                 );
-                let message = if authoritatively_missing(failure) {
-                    koru_i18n::t(lang, koru_i18n::Key::AiResponseRecoveryFailed).into()
-                } else {
-                    crate::failure_text(failure, lang)
-                };
                 return Some(Update::RecoveryFailed {
                     attempt: attempt_id,
-                    message,
+                    failure: failure.clone(),
                 });
             }
             if polls % RECOVERY_LOG_EVERY == 1 {
@@ -1277,7 +1272,7 @@ fn recover(
 /// The service says, and will keep saying, that the item asked about does not
 /// exist: an attempt that recovery waits on, or a chat a boot was asked to
 /// open. A retryable `not_found` is not this.
-fn authoritatively_missing(failure: &koru_ai_wire::Failure) -> bool {
+pub(crate) fn authoritatively_missing(failure: &koru_ai_wire::Failure) -> bool {
     failure.code == "not_found" && !failure.retryable
 }
 
@@ -1656,15 +1651,14 @@ mod tests {
         panic!("the attempt is not terminal")
     }
 
-    /// **A hold ends a recovery, said as the hold it is.** A Bot
+    /// **A hold ends a recovery, handed on as the hold it is.** A Bot
     /// conversation in Trash, its Bot in Trash or archived answer the
     /// recovery's reads with their non-retryable lifecycle codes (the AI
-    /// server's `hold_failure`): the recovery stops at once and the surface
-    /// reads that hold's own sentence, never "recovering" every 250 ms
-    /// forever.
+    /// server's `hold_failure`): the recovery stops at once and hands the
+    /// surface the failure, which says it in its host's words — never
+    /// "recovering" every 250 ms forever.
     #[test]
     fn a_non_retryable_hold_ends_a_recovery_in_its_own_words() {
-        let lang = koru_i18n::Lang::En;
         let attempt = koru_ai_core::InferenceAttemptId::new();
         for code in [
             koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED,
@@ -1679,21 +1673,16 @@ mod tests {
                 || true,
                 |_| pauses += 1,
                 attempt,
-                lang,
             );
             let Some(Update::RecoveryFailed {
                 attempt: failed,
-                message,
+                failure,
             }) = said
             else {
-                panic!("{code}: ended in words");
+                panic!("{code}: ended");
             };
             assert_eq!(failed, attempt);
-            assert_eq!(message, crate::failure_text(&refusal(code, false), lang));
-            assert!(
-                !message.contains("English developer text"),
-                "{code}: {message}"
-            );
+            assert_eq!(failure, refusal(code, false), "{code}: the hold itself");
             assert_eq!(pauses, 0, "{code}: not read again");
             // The attempt's own read refused the same way ends it too.
             let said = recover(
@@ -1702,7 +1691,6 @@ mod tests {
                 || true,
                 |_| panic!("{code}: not read again"),
                 attempt,
-                lang,
             );
             assert!(
                 matches!(said, Some(Update::RecoveryFailed { .. })),
@@ -1718,7 +1706,6 @@ mod tests {
     /// ends it with the recovery's own sentence.
     #[test]
     fn a_retryable_failure_is_read_again_on_a_bounded_clock() {
-        let lang = koru_i18n::Lang::En;
         let mut reads = 0;
         let mut pauses = Vec::new();
         let said = recover(
@@ -1735,19 +1722,16 @@ mod tests {
             || true,
             |wait| pauses.push(wait),
             koru_ai_core::InferenceAttemptId::new(),
-            lang,
         );
         assert_eq!(reads, 6);
         let ms = |n| std::time::Duration::from_millis(n);
         assert_eq!(pauses, [ms(250), ms(500), ms(1000), ms(2000), ms(2000)]);
         assert_eq!((RECOVERY_FIRST, RECOVERY_MAX), (ms(250), ms(2000)));
-        let Some(Update::RecoveryFailed { message, .. }) = said else {
+        let Some(Update::RecoveryFailed { failure, .. }) = said else {
             panic!("ended");
         };
-        assert_eq!(
-            message,
-            koru_i18n::t(lang, koru_i18n::Key::AiResponseRecoveryFailed)
-        );
+        // The surface says it as the recovery failing.
+        assert!(authoritatively_missing(&failure));
     }
 
     /// **Nobody reading the answer ends a recovery**: once the surface's
@@ -1766,7 +1750,6 @@ mod tests {
             || reads.get() < 3,
             |_| {},
             koru_ai_core::InferenceAttemptId::new(),
-            koru_i18n::Lang::En,
         );
         assert!(said.is_none(), "nothing to say to nobody");
         assert_eq!(reads.get(), 3, "no read after the reader went");

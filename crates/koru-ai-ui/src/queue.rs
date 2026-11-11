@@ -531,6 +531,7 @@ impl ChatSurface {
         // Delivery may have happened before an acknowledgment was lost. A
         // fresh queued send would repeat it with a different identity.
         let uncertain = failure.code == "steer_failed" && !failure.retryable;
+        let detail = self.failure_words(failure);
         if let Some((chat, item)) = self.steering.take() {
             self.queues.push_front(chat, item);
             if uncertain {
@@ -539,7 +540,6 @@ impl ChatSurface {
                     self.steer_after_cancel = None;
                 }
                 if let Some(queue) = self.queues.by_chat.get_mut(&chat) {
-                    let detail = super::failure_text(failure, self.lang);
                     let reason = fill(t(self.lang, Key::AiSteerDeliveryUncertain), &[&detail]);
                     queue.pause_reason = Some(koru_ai_core::bound_live_text(&reason));
                 }

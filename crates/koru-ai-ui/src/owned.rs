@@ -52,7 +52,17 @@ pub struct OwnedConversation {
     /// The one agent that answers it. The picker offers no other.
     pub provider: AiProviderId,
     pub offers: OwnedOffers,
+    /// **The words for refusals this chat does not itself know**, by the
+    /// owner's stable code: a refusal whose code is here reads as that
+    /// sentence and nothing more — a Send, a Retry, a recovery, a steer.
+    /// Plain data, handed in at bind time: the surface knows no product's
+    /// codes and calls nothing for them. Empty for an owner with none.
+    pub refusals: Refusals,
 }
+
+/// **A host's refusal words**: each owner's stable code and the sentence it
+/// reads as, in every language the host's strings carry.
+pub type Refusals = &'static [(&'static str, koru_i18n::Key)];
 
 /// **The controls an owner admits beyond the conversation itself.** Each is
 /// absent while `false`, which is the default: the Bot owner refuses all of
@@ -153,6 +163,17 @@ impl ChatSurface {
     /// `None` for an ordinary surface.
     pub fn unavailable(&self) -> Option<Unavailable> {
         self.unavailable
+    }
+
+    /// The refusal words the host handed in: none for an ordinary surface.
+    pub(crate) fn refusals(&self) -> Refusals {
+        self.owned.as_ref().map_or(&[], |owned| owned.refusals)
+    }
+
+    /// **A refusal as this surface says it**: the host's sentence for a
+    /// code it names, else the chat's own reading ([`crate::failure_text`]).
+    pub(crate) fn failure_words(&self, failure: &koru_ai_wire::Failure) -> String {
+        crate::failure_text(failure, self.lang, self.refusals())
     }
 
     /// What this surface offers: everything, unless a host owns it.

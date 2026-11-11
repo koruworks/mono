@@ -143,6 +143,28 @@ pub(crate) const BOT_OFFERS: koru_ai_ui::OwnedOffers = koru_ai_ui::OwnedOffers {
     path_references: true,
 };
 
+/// **The Bot owner's refusals the chat says in the Bot's words**
+/// (`koru_ai_ui::OwnedConversation::refusals`): its lifecycle holds —
+/// archived, a conversation in Trash, the whole Bot in Trash, an operation
+/// moving or parked — and a change still being delivered to what runs it.
+/// The shared chat knows none of these codes; this is the Bot adapter's
+/// data, handed in when the conversation is bound.
+pub(crate) const BOT_REFUSALS: koru_ai_ui::OwnedRefusals = &[
+    (super::settings::BOT_ARCHIVED, Words::BotsErrArchived),
+    (super::settings::BOT_TRASHED, Words::BotsErrTrashed),
+    (super::settings::BOT_TRASHED_BOT, Words::BotsErrBotTrashed),
+    (super::settings::BOT_PENDING, Words::BotsErrPending),
+    (
+        super::settings::BOT_OPERATION_PENDING,
+        Words::BotsErrOperationPending,
+    ),
+];
+
+/// The bounded clock a Bot read left owed is asked again on: the lifecycle
+/// UI's own pace (`bots::lifecycle`), reused rather than invented.
+const BOT_READ_FIRST: std::time::Duration = std::time::Duration::from_millis(250);
+const BOT_READ_MAX: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// **What the tab knows about its Bot**: what the service said, by the Bot
 /// service's own ids.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -698,6 +720,7 @@ impl BotView {
             destination: facts.home,
             provider: facts.provider.clone(),
             offers: BOT_OFFERS,
+            refusals: BOT_REFUSALS,
         };
         match &mut self.conversation {
             Some(view) => {

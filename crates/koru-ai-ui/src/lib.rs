@@ -152,7 +152,10 @@ pub use composer_plus::WorkspaceImportRequest;
 pub use dictation::{DictationPress, DictationShown};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
-pub use owned::{OwnedConversation, OwnedOffers, Unavailable as ConversationUnavailable};
+pub use owned::{
+    OwnedConversation, OwnedOffers, Refusals as OwnedRefusals,
+    Unavailable as ConversationUnavailable,
+};
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
 use koru_ai_core::AGENT_DEFAULT_MODEL;
@@ -3553,7 +3556,7 @@ impl ChatSurface {
                     self.paste_after_create = None;
                 }
                 self.waiting = false;
-                self.status = Some(failure_text(&failure, self.lang));
+                self.status = Some(self.failure_words(&failure));
             }
             Update::Listed(chats) => {
                 self.chats = chats;
@@ -4105,7 +4108,14 @@ impl ChatSurface {
                 };
                 return changed;
             }
-            Update::RecoveryFailed { attempt, message } => {
+            Update::RecoveryFailed { attempt, failure } => {
+                // Said here, on the window thread, where the host's words
+                // are: the reader only says why the recovery ended.
+                let message = if crate::reader::authoritatively_missing(&failure) {
+                    koru_i18n::t(self.lang, koru_i18n::Key::AiResponseRecoveryFailed).to_owned()
+                } else {
+                    self.failure_words(&failure)
+                };
                 if self.attempt != Some(attempt) {
                     tracing::debug!(
                         target: "koru_ai::ui_stream",
@@ -4326,7 +4336,7 @@ impl ChatSurface {
                     ModelPullEvent::Failed { failure } => {
                         self.pull_active = false;
                         self.waiting = false;
-                        failure_text(&failure, self.lang)
+                        self.failure_words(&failure)
                     }
                     ModelPullEvent::Cancelled { model } => {
                         self.pull_active = false;
@@ -4929,7 +4939,7 @@ impl ChatSurface {
                 koru_i18n::t(self.lang, koru_i18n::Key::AiKoruUnreachable).into()
             }
             status => match &validation.failure {
-                Some(failure) => failure_text(failure, self.lang),
+                Some(failure) => self.failure_words(failure),
                 None => validation_status_text(status).into(),
             },
         }
@@ -10518,26 +10528,19 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
 /// more specific (*the agent refused that model*) — its own words after
 /// it. A code the surface does not know reads as the service's words alone,
 /// so nothing a service can say goes unshown.
-pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lang) -> String {
-    // **A change the owner refuses because of a Bot's lifecycle** (P1.7):
-    // archived, in Trash, or held by an operation that is moving or parked.
-    // Each stable code reads as its own sentence and nothing more — the
-    // owner's message is English developer text. A pure code-to-sentence
-    // mapping: the host owns every service call.
-    let lifecycle = match failure.code.as_str() {
-        koru_ai_wire::bot_lifecycle_codes::ARCHIVED => Some(koru_i18n::Key::BotsErrArchived),
-        koru_ai_wire::bot_lifecycle_codes::TRASHED => Some(koru_i18n::Key::BotsErrTrashed),
-        koru_ai_wire::bot_lifecycle_codes::PENDING => Some(koru_i18n::Key::BotsErrPending),
-        // The Bot-level refusal on a trashed Bot: since the engine's Trash
-        // review fix, every refusal a Bot in Trash causes.
-        koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED => Some(koru_i18n::Key::BotsErrBotTrashed),
-        // `BotError::Settling`: a pause, resume or access change of the Bot
-        // is still being delivered, and a Start waits for it. Retryable.
-        "bot_operation_pending" => Some(koru_i18n::Key::BotsErrOperationPending),
-        _ => None,
-    };
-    if let Some(key) = lifecycle {
-        return koru_i18n::t(lang, key).to_owned();
+pub(crate) fn failure_text(
+    failure: &koru_ai_wire::Failure,
+    lang: koru_i18n::Lang,
+    host: owned::Refusals,
+) -> String {
+    // **A refusal the host of an owned conversation names** (Bots P1.8):
+    // codes this chat does not itself know — for a Bot's conversation, its
+    // lifecycle holds and its settling changes — read as the host's
+    // sentence and nothing more: the owner's message is English developer
+    // text. Data handed in at bind time ([`OwnedConversation::refusals`]);
+    // an ordinary chat has none, and this crate knows no product's codes.
+    if let Some((_, key)) = host.iter().find(|(code, _)| *code == failure.code) {
+        return koru_i18n::t(lang, *key).to_owned();
     }
     let key = match failure.code.as_str() {
         "ai_configuration" => Some(koru_i18n::Key::AiFailureConfiguration),
@@ -12637,7 +12640,12 @@ mod tests {
 
         assert!(surface.apply_update(Update::RecoveryFailed {
             attempt,
-            message: "This response could not be recovered. You can retry it.".into(),
+            failure: koru_ai_wire::Failure {
+                code: "not_found".into(),
+                message: "The requested AI item was not found.".into(),
+                retryable: false,
+                details: Default::default(),
+            },
         }));
 
         assert_eq!(surface.attempt, None);
@@ -12650,7 +12658,48 @@ mod tests {
         assert!(surface.messages_dirty);
         assert_eq!(
             surface.status.as_deref(),
-            Some("This response could not be recovered. You can retry it.")
+            Some(koru_i18n::t(
+                surface.lang,
+                koru_i18n::Key::AiResponseRecoveryFailed
+            ))
+        );
+    }
+
+    /// **A refusal the host of an owned conversation names reads as the
+    /// host's sentence** — a recovery ended by it, here — and an ordinary
+    /// surface, handed no words, reads the same code as the service's own.
+    /// The chat knows no product's codes: the words are the host's data.
+    #[test]
+    fn a_hosts_refusal_words_are_what_an_owned_surface_says() {
+        const WORDS: owned::Refusals = &[("host_hold", koru_i18n::Key::BotsErrTrashed)];
+        let held = koru_ai_wire::Failure {
+            code: "host_hold".into(),
+            message: "The owner's English developer text.".into(),
+            retryable: false,
+            details: Default::default(),
+        };
+        let mut surface = ChatSurface::new_owned_at(None);
+        surface.bind_owned(OwnedConversation {
+            chat: ChatId::new(),
+            destination: koru_ai_core::WorkspaceId::new(),
+            provider: AiProviderId::parse("agent-codex").expect("an agent"),
+            offers: OwnedOffers::default(),
+            refusals: WORDS,
+        });
+        let attempt = InferenceAttemptId::new();
+        surface.attempt = Some(attempt);
+        assert!(surface.apply_update(Update::RecoveryFailed {
+            attempt,
+            failure: held.clone(),
+        }));
+        assert_eq!(
+            surface.status.as_deref(),
+            Some(koru_i18n::t(surface.lang, koru_i18n::Key::BotsErrTrashed))
+        );
+        let ordinary = ChatSurface::new();
+        assert_eq!(
+            ordinary.failure_words(&held),
+            "The owner's English developer text"
         );
     }
 
@@ -12664,7 +12713,12 @@ mod tests {
 
         assert!(surface.apply_update(Update::RecoveryFailed {
             attempt: stale,
-            message: "stale".into(),
+            failure: koru_ai_wire::Failure {
+                code: "stale".into(),
+                message: "stale".into(),
+                retryable: false,
+                details: Default::default(),
+            },
         }));
 
         assert_eq!(surface.attempt, Some(current));

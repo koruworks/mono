@@ -102,6 +102,7 @@ fn conversation(chat: ChatId, destination: WorkspaceId) -> OwnedConversation {
         destination,
         provider: codex(),
         offers: OwnedOffers::default(),
+        refusals: &[],
     }
 }
 

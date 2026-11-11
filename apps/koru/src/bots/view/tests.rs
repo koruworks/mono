@@ -130,6 +130,7 @@ fn a_stale_bot_read_is_ignored_and_a_failed_one_keeps_what_was_shown() {
     assert_eq!(owned.destination, f.bot.home_workspace);
     assert_eq!(owned.provider, f.bot.config.model.provider);
     assert_eq!(owned.offers, BOT_OFFERS);
+    assert_eq!(owned.refusals, BOT_REFUSALS, "the Bot's words, handed in");
 
     // Asked again; the answer is a failure.
     assert!(f.view.ask());
@@ -142,6 +143,32 @@ fn a_stale_bot_read_is_ignored_and_a_failed_one_keeps_what_was_shown() {
         "a failed read keeps what was shown"
     );
     assert!(f.view.conversation().is_some(), "and the conversation");
+}
+
+/// **The Bot's refusal words are the Bot adapter's data**, handed to the
+/// shared chat when its conversation is bound (the standalone-component
+/// rule: the chat crate knows no Bot code). Each lifecycle hold and the
+/// settling change reads as the sentence the settings say for it, in every
+/// language.
+#[test]
+fn the_bots_refusal_words_are_handed_to_the_chat_and_match_the_settings() {
+    let codes: Vec<&str> = BOT_REFUSALS.iter().map(|(code, _)| *code).collect();
+    assert_eq!(
+        codes,
+        [
+            "bot_archived",
+            "bot_conversation_trashed",
+            "bot_trashed",
+            "bot_lifecycle_pending",
+            "bot_operation_pending"
+        ]
+    );
+    for (code, words) in BOT_REFUSALS {
+        assert_eq!(crate::bots::settings::refusal_words(code), *words, "{code}");
+        for lang in Lang::ALL {
+            assert!(!t(lang, *words).trim().is_empty(), "{code} {lang:?}");
+        }
+    }
 }
 
 /// **The header says what the service said, and its one control is
@@ -1193,6 +1220,7 @@ fn a_branch_moves_the_tab_to_the_branch_and_reads_the_list() {
             destination: facts.home,
             provider: facts.provider.clone(),
             offers: BOT_OFFERS,
+            refusals: BOT_REFUSALS,
         });
     f.view.shown_pass(None);
     assert_eq!(f.view.chat_id(), branch);

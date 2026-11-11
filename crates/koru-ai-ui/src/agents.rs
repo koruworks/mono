@@ -708,82 +708,58 @@ mod failure_words {
         assert_eq!(
             crate::failure_text(
                 &failure("ai_provider", "the agent refused that model."),
-                Lang::En
+                Lang::En,
+                &[]
             ),
             "The provider reported an error · the agent refused that model"
         );
         assert_eq!(
             crate::failure_text(
                 &failure("ai_network", "Koru could not reach the provider."),
-                Lang::En
+                Lang::En,
+                &[]
             ),
             "Koru could not reach the provider"
         );
         assert_eq!(
-            crate::failure_text(&failure("ai_rate_limit", ""), Lang::De),
+            crate::failure_text(&failure("ai_rate_limit", ""), Lang::De, &[]),
             "Der Anbieter ist ausgelastet. Versuche es gleich noch einmal"
         );
         assert_eq!(
             crate::failure_text(
                 &failure("something_new", "Only the service knows."),
-                Lang::En
+                Lang::En,
+                &[]
             ),
             "Only the service knows"
         );
     }
 
-    /// **A refusal because the Bot is archived reads as its own sentence
-    /// alone**, in every language — never with the owner's English message
-    /// after it, which names an unarchive this build does not offer.
+    /// **The chat knows no product's refusal codes.** A Bot's lifecycle
+    /// holds and its settling change are the host's to word
+    /// (`OwnedConversation::refusals`): handed no words, the chat reads
+    /// them as any code it does not know — the service's own words — and
+    /// handed a host's table, as the host's sentence alone.
     #[test]
-    fn an_archived_bots_refusal_reads_as_its_own_sentence_alone() {
-        let refused = failure(
-            koru_ai_wire::bot_lifecycle_codes::ARCHIVED,
-            "This Bot is archived. Its history can be read; unarchive it to change it.",
-        );
-        assert_eq!(
-            crate::failure_text(&refused, Lang::En),
-            "This bot is archived. Its history can be read, but it can't be changed."
-        );
-        for lang in Lang::ALL {
+    fn a_hosts_codes_read_as_the_hosts_words_and_only_then() {
+        const HOST: crate::owned::Refusals = &[
+            ("bot_archived", koru_i18n::Key::BotsErrArchived),
+            ("bot_lifecycle_pending", koru_i18n::Key::BotsErrPending),
+        ];
+        for code in ["bot_archived", "bot_lifecycle_pending"] {
+            let refused = failure(code, "The owner's English developer text.");
             assert_eq!(
-                crate::failure_text(&refused, lang),
-                koru_i18n::t(lang, koru_i18n::Key::BotsErrArchived),
-                "{lang:?}"
+                crate::failure_text(&refused, Lang::En, &[]),
+                "The owner's English developer text",
+                "{code}: an ordinary chat"
             );
-        }
-    }
-
-    /// **A conversation in Trash, and one an operation holds, each read as
-    /// its own sentence alone** (P1.7 holds): never the owner's English
-    /// message, in any language.
-    #[test]
-    fn the_lifecycle_holds_read_as_their_own_sentences_alone() {
-        for (code, key) in [
-            (
-                koru_ai_wire::bot_lifecycle_codes::TRASHED,
-                koru_i18n::Key::BotsErrTrashed,
-            ),
-            (
-                koru_ai_wire::bot_lifecycle_codes::PENDING,
-                koru_i18n::Key::BotsErrPending,
-            ),
-            (
-                koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED,
-                koru_i18n::Key::BotsErrBotTrashed,
-            ),
-            // `BotError::Settling`: a Start waits for an earlier pause,
-            // resume or access change to be delivered.
-            (
-                "bot_operation_pending",
-                koru_i18n::Key::BotsErrOperationPending,
-            ),
-        ] {
-            let refused = failure(code, "This Bot conversation is held. Restore it first.");
+            let key = HOST.iter().find(|(c, _)| *c == code).unwrap().1;
             for lang in Lang::ALL {
-                let said = crate::failure_text(&refused, lang);
-                assert_eq!(said, koru_i18n::t(lang, key), "{code} {lang:?}");
-                assert!(!said.contains("held"), "{code} {lang:?}: {said}");
+                assert_eq!(
+                    crate::failure_text(&refused, lang, HOST),
+                    koru_i18n::t(lang, key),
+                    "{code} {lang:?}"
+                );
             }
         }
     }
