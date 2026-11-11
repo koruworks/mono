@@ -1650,3 +1650,51 @@ fn the_activity_counts_as_running_now_only_while_fresh() {
         "hidden"
     );
 }
+
+/// **An archived row's *Unarchive {name}* is published** as a button under
+/// its row, pressable — and a roster with nothing unfinished draws no empty
+/// Unfinished group (the first window run: an 8 px element under every
+/// roster). Listed as `list_lifecycle` answers, `held_by` naming the Archive.
+#[test]
+fn an_archived_rows_unarchive_is_published_and_no_empty_group_is_drawn() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    let frame = frame_of(&f.roster);
+    assert!(
+        frame.named("Bots unfinished").next().is_none(),
+        "nothing unfinished, no group"
+    );
+    assert!(f.roster.press_archived(ARCHIVED_TOGGLE));
+    f.roster.maintain();
+    let seq = archived_asked(&f);
+    let mut known = f.bot("Scout");
+    known.lifecycle = BotLifecycle::Archived;
+    known.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 7,
+    });
+    f.answers
+        .send(Answer::Lifecycle {
+            seq,
+            workspace: f.home,
+            lifecycle: BotLifecycle::Archived,
+            result: Ok(vec![known.clone()]),
+        })
+        .unwrap();
+    f.roster.maintain();
+    let tree = crate::panes::explore::accessibility::roster_tree(&f.roster);
+    fn find(
+        nodes: &[koru_workspace_host::accessibility::SemanticNode],
+        label: &str,
+    ) -> Option<koru_workspace_host::accessibility::SemanticNode> {
+        nodes.iter().find_map(|node| {
+            (node.label.as_deref() == Some(label))
+                .then(|| node.clone())
+                .or_else(|| find(&node.children, label))
+        })
+    }
+    let unarchive = find(&tree, "Unarchive Scout").expect("Unarchive is published");
+    assert_eq!(unarchive.role, accesskit::Role::Button);
+    assert!(unarchive.actions.contains(&accesskit::Action::Click));
+}

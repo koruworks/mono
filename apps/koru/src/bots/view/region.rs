@@ -98,6 +98,10 @@ pub(crate) const PAUSE_PENDING: Key = Key::surface(SURFACE, "pause-pending");
 pub(crate) const PAUSED_NOTICE: Key = Key::surface(SURFACE, "paused-notice");
 pub(crate) const RUNS_ON: Key = Key::surface(SURFACE, "runs-on");
 pub(crate) const RUNTIME_LIMITS: Key = Key::surface(SURFACE, "runtime-limits");
+/// The access card's *Selected pages* over its pages, and the folder card's
+/// *Runs on this computer*: drawn, and published as words (finding 8).
+pub(crate) const SELECTED_PAGES_TITLE: Key = Key::surface(SURFACE, "selected-pages-title");
+pub(crate) const RUNS_HERE: Key = Key::surface(SURFACE, "runs-here");
 /// The *Agent and model* card (S7) and its parts.
 pub(crate) const AGENT_CARD: Key = Key::surface(SURFACE, "agent-card");
 pub(crate) const MODEL_CHIP: Key = Key::surface(SURFACE, "model-chip");
@@ -193,6 +197,8 @@ pub(crate) struct Control {
 pub(crate) enum ControlRole {
     Group,
     Button,
+    /// A button that is on or off — Fast, the longer window, a ☆.
+    Toggle,
     TextInput,
     Radio,
     Label,
@@ -519,7 +525,7 @@ impl BotView {
                 Ink::Primary,
             ))
             .child(row("Bot access row").child(choice).child(spacer()))
-            .child(card_title(t(self.lang, Words::BotsSelectedPages)));
+            .child(card_title(t(self.lang, Words::BotsSelectedPages)).id(SELECTED_PAGES_TITLE));
         for page in self.pages_shown() {
             let title = self.page_title(page);
             card = card.child(
@@ -612,6 +618,7 @@ impl BotView {
             .child(
                 text(self.words(Words::BotsRunsOnThisComputer))
                     .named("Bot runs here")
+                    .id(RUNS_HERE)
                     .role(roles::UI)
                     .ink(Ink::Primary),
             )
@@ -1618,6 +1625,8 @@ impl BotView {
             k if k == SETTINGS_NOTICE => self.words(settings.notice_words()?),
             k if k == SETTINGS_DELIVERING => self.words(settings.delivering_line()?),
             k if k == ACCESS_SUMMARY => self.access_summary(),
+            k if k == SELECTED_PAGES_TITLE => self.words(Words::BotsSelectedPages),
+            k if k == RUNS_HERE => self.words(Words::BotsRunsOnThisComputer),
             k if k == MODEL_NOTE => self.words(Words::BotsAppliesToNewConversations),
             k if k == AGENT_READINESS => return self.agent_readiness_words(),
             k if k == NAME_PENDING
@@ -1706,7 +1715,7 @@ impl BotView {
 impl BotView {
     /// Whether `key` is drawn inert: its own node, or — for a segment of
     /// the access or role choice — the choice it belongs to.
-    fn inert_to_assistive(&self, key: Key) -> bool {
+    pub(super) fn inert_to_assistive(&self, key: Key) -> bool {
         let owner = if ACCESS_SEGMENTS.contains(&key) {
             Some(ACCESS_CHOICE)
         } else if super::create::ROLE_SEGMENTS.contains(&key) {

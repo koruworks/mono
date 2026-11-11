@@ -1555,7 +1555,7 @@ impl BotsRoster {
                         t(self.lang, Words::BotsCreate).to_owned(),
                     ),
                 ))
-                .child(self.unfinished_section())
+                .children(self.unfinished_section())
                 .child(self.archived_section());
         }
         if self.activity_truncated {
@@ -1574,7 +1574,7 @@ impl BotsRoster {
                 .semantics(Role::List)
                 .name(Words::BotsTitle)
                 .children(self.bots.iter().map(|bot| self.bot_row(bot)))
-                .child(self.unfinished_section())
+                .children(self.unfinished_section())
                 .child(self.archived_section()),
         )
     }
@@ -1605,15 +1605,19 @@ impl BotsRoster {
     /// that has not finished — its name, where it stands, *Retry* when Retry
     /// can resolve it, *Abandon* — and what an Abandon from here left. Absent
     /// while there is nothing to say.
-    fn unfinished_section(&self) -> El {
+    ///
+    /// **Absent, not empty**: an empty group still took its top padding,
+    /// an 8 px element the inspector showed under every roster (the first
+    /// window run's inspector finding).
+    fn unfinished_section(&self) -> Option<El> {
+        if self.creations.is_empty() && self.abandoned.is_none() && self.creation_refused.is_none()
+        {
+            return None;
+        }
         let mut section = col("Bots unfinished")
             .pad_x(alias::ROW_PLATE_INSET)
             .pad_top(Space::S2)
             .gap(Space::S1);
-        if self.creations.is_empty() && self.abandoned.is_none() && self.creation_refused.is_none()
-        {
-            return section;
-        }
         section = section.child(
             text(t(self.lang, Words::BotsUnfinished))
                 .named("Bots unfinished heading")
@@ -1673,7 +1677,7 @@ impl BotsRoster {
                     .wrap(),
             );
         }
-        section
+        Some(section)
     }
 
     /// Whether the owner held more unfinished creations than were listed.

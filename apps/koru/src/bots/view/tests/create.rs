@@ -1072,3 +1072,102 @@ fn a_create_tabs_header_names_the_new_bot_and_loads_nothing() {
     assert_eq!(shown.first().map(String::as_str), Some("Scout"));
     assert!(!shown.contains(&loading), "{shown:?}");
 }
+
+/// **The model picker's chosen-one-of-several controls are radio buttons
+/// to a client** — the rail's agents, a level's segments — with the chosen
+/// one checked and each pressable; no button anywhere in the tab carries a
+/// selection, which would take its press away (the first window run: the
+/// picker's agent and effort buttons had no action).
+#[test]
+fn the_pickers_choices_are_published_as_radio_buttons() {
+    use accesskit::{Action, Role, Toggled};
+    let mut c = shown_with_default("codex");
+    c.fill();
+    assert!(c.view.perform(Act::OpenModelPicker));
+    c.serve_catalog();
+    fn walk(
+        node: &koru_workspace_host::accessibility::SemanticNode,
+        out: &mut Vec<koru_workspace_host::accessibility::SemanticNode>,
+    ) {
+        out.push(node.clone());
+        for child in &node.children {
+            walk(child, out);
+        }
+    }
+    let mut nodes = Vec::new();
+    walk(&crate::bots::tests::bot_tab_tree(&c.view), &mut nodes);
+    for node in &nodes {
+        if matches!(node.role, Role::Button | Role::DefaultButton) {
+            assert_eq!(node.selected, None, "{}", node.occurrence.locator());
+        }
+    }
+    let radios: Vec<_> = nodes
+        .iter()
+        .filter(|node| node.role == Role::RadioButton)
+        .collect();
+    assert!(
+        radios
+            .iter()
+            .any(|node| node.occurrence.part.name() == "agent"),
+        "the rail's agents are radio buttons"
+    );
+    assert!(
+        radios
+            .iter()
+            .filter(|node| node.occurrence.part.name() == "agent")
+            .any(|node| node.toggled == Some(Toggled::True)),
+        "the chosen agent is checked"
+    );
+    assert!(
+        radios
+            .iter()
+            .all(|node| node.actions.contains(&Action::Click) || node.actions.is_empty()),
+        "pressable unless drawn inert"
+    );
+}
+
+/// **A client's text lands in the create form's fields as typing would**:
+/// the name, the role page's title and its text.
+#[test]
+fn a_clients_text_fills_the_create_forms_fields() {
+    let mut c = shown();
+    assert!(c.view.accessibility_set_value(NAME_FIELD, "Scout"));
+    assert_eq!(c.form().draft().name, "Scout");
+    assert_eq!(c.form().title_shown(), "Scout", "the title follows");
+    assert!(c.view.accessibility_set_value(TITLE_FIELD, "Scout's role"));
+    assert_eq!(c.form().title_shown(), "Scout's role");
+    assert!(c.view.accessibility_set_value(TEXT_FIELD, "Find things."));
+    assert_eq!(c.form().draft().text, "Find things.");
+}
+
+/// **The end of the create form can be scrolled fully into view** at the
+/// default window's size: scrolled as far as the region lets it, *Create
+/// bot* sits inside the region's viewport (the first window run's finding
+/// 9 saw it cut off at the pane's foot).
+#[test]
+fn the_create_form_scrolls_to_its_end() {
+    let mut c = shown();
+    c.fill();
+    c.view.set_viewport(700.0, 620.0);
+    c.view.scroll_region(1.0e6);
+    let (viewport, button) = c.view.with_frame(|_, frame| {
+        (
+            frame
+                .node(crate::bots::view::region::SETTINGS)
+                .and_then(|node| node.viewport)
+                .expect("the region scrolls"),
+            frame
+                .node(CREATE_BUTTON)
+                .map(|node| node.rect)
+                .expect("drawn"),
+        )
+    });
+    assert!(
+        button.y + button.h <= viewport.y + viewport.h + 0.5,
+        "Create bot {button:?} inside the region {viewport:?}"
+    );
+    assert!(
+        viewport.y + viewport.h <= 620.0 + 0.5,
+        "the region ends inside the tab: {viewport:?}"
+    );
+}

@@ -645,6 +645,7 @@ impl BotView {
             .child(
                 text(self.words(Words::BotsRunsOnThisComputer))
                     .named("Bot runs here")
+                    .id(super::region::RUNS_HERE)
                     .role(roles::UI)
                     .ink(Ink::Primary),
             )
@@ -852,6 +853,8 @@ impl BotView {
             k if k == AGENT_FIXED_NOTE => self.words(Words::BotsAgentFixed),
             k if k == super::region::AGENT_READINESS => return self.agent_readiness_words(),
             k if k == ACCESS_SUMMARY => self.access_summary(),
+            k if k == super::region::SELECTED_PAGES_TITLE => self.words(Words::BotsSelectedPages),
+            k if k == super::region::RUNS_HERE => self.words(Words::BotsRunsOnThisComputer),
             k if k == FOLDER_PATH => self.folder_words(),
             k if k == FOLDER_RESOLVED => return self.resolved_words(),
             k if k == super::region::RUNS_ON => {
@@ -1124,6 +1127,55 @@ impl BotView {
             return Some(matches!(handled, Typed::Handled));
         }
         None
+    }
+
+    /// **A client set a text field's value** — the name (the create form's
+    /// or the settings'), the role page's title or its text — as typing it
+    /// would: the field shows it and the draft holds it. The fields are
+    /// published with a value, so a client may send this whatever they
+    /// advertise; they once ignored it (the first window run's finding 8).
+    /// `false` for any other key, a field not drawn, or one held inert.
+    pub(crate) fn accessibility_set_value(&mut self, key: Key, text: &str) -> bool {
+        if (key != NAME_FIELD && !FIELDS.contains(&key))
+            || self.inert_to_assistive(key)
+            || !self.with_frame(|_, frame| frame.contains(key))
+        {
+            return false;
+        }
+        if let Some(create) = self.create.as_deref()
+            && !create.form.editable()
+        {
+            return false;
+        }
+        if key == NAME_FIELD {
+            let input = self.name_input();
+            crate::input_engine::with(|engine| input.borrow_mut().set_text(engine, text));
+            match self.create.as_deref_mut() {
+                Some(create) => {
+                    create.form.edit_name(text);
+                    // The title follows the name until one is typed.
+                    self.sync_title_field();
+                }
+                None => self.settings.edit_name(text),
+            }
+            return true;
+        }
+        if key == TITLE_FIELD {
+            if let Some(input) = crate::input_engine::with(|engine| self.title_input_with(engine)) {
+                crate::input_engine::with(|engine| input.borrow_mut().set_text(engine, text));
+            }
+            if let Some(create) = self.create.as_deref_mut() {
+                create.form.edit_title(text);
+            }
+            return true;
+        }
+        if let Some(input) = crate::input_engine::with(|engine| self.text_input_with(engine)) {
+            crate::input_engine::with(|engine| input.borrow_mut().set_text(engine, text));
+        }
+        if let Some(create) = self.create.as_deref_mut() {
+            create.form.edit_text(text);
+        }
+        true
     }
 
     /// **A press on one of the form's text fields**: the caret goes where

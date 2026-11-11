@@ -63,7 +63,18 @@ impl BotView {
     /// Whether the conversation column is part of the tab: once the tab
     /// knows its Bot, with the settings closed.
     pub(super) fn shows_column(&self) -> bool {
-        self.facts.is_some() && !self.settings_open
+        self.facts.is_some() && !self.settings_open && !self.compact()
+    }
+
+    /// **Narrower than a page's compact width**, the conversation column
+    /// leaves and the conversation takes the tab — the rule the app's other
+    /// two-column pages follow (`koru_ui::PageShell::compact`: Settings and
+    /// Manage drop their nav column below `COMPACT_BELOW`). The column kept
+    /// its 258 px at any width, and at 720 × 600 the chat was left about
+    /// 120 px: a word per line, its composer clipped (the first window run's
+    /// finding 9).
+    pub(super) fn compact(&self) -> bool {
+        self.size.0 < koru_ui::PageShell::COMPACT_BELOW
     }
 
     /// The column as elements.

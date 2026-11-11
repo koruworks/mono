@@ -652,6 +652,22 @@ pub(crate) fn control_of(
     use super::ControlRole;
     use koru_draw::el::{Name, Role};
     let role = match node.role {
+        // **One of several, the chosen one marked** — a rail mark, a
+        // level's segment: a radio button to a client, which can then hear
+        // which is chosen and choose another. As a button carrying a
+        // selection it had no action at all (the first window run's
+        // finding 8; `accesskit_consumer::Node::is_invocable`).
+        Role::Button if node.selected.is_some() => match node.key.map(|key| key.part) {
+            Some(part)
+                if part.starts_with("effort-")
+                    || matches!(part, "agent" | "provider" | "favorites") =>
+            {
+                ControlRole::Radio
+            }
+            // On or off by itself — Fast, the longer window, a ☆: a
+            // toggle button, its state its pressed one.
+            _ => ControlRole::Toggle,
+        },
         Role::Button => ControlRole::Button,
         Role::List => ControlRole::List,
         Role::ListItem | Role::MenuItem => ControlRole::ListItem,

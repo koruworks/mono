@@ -1487,6 +1487,13 @@ impl BotView {
                     })
                     .bool(control.disabled)
                     .bool(control.focused)
+                    // Where it is: a scroll of the form or a popover's list
+                    // moves every rect and nothing else, and the published
+                    // bounds went stale after a wheel (finding 8).
+                    .f32(control.rect.x)
+                    .f32(control.rect.y)
+                    .f32(control.rect.w)
+                    .f32(control.rect.h)
                     .u64(control.children.len() as u64);
                 fold(rev, &control.children);
             }

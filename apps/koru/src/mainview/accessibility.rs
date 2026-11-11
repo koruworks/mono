@@ -644,7 +644,7 @@ impl MainView {
         }
         // A Bot tab's controls (Bots P1.8 S5): its *Settings* and the
         // region's, scoped by the tab's surface and by selected pages' ids.
-        if self.bot_action(target, action) {
+        if self.bot_action(target, action, data) {
             return true;
         }
         // The Manage tab's nav, which answers `Model` targets for its Profile
@@ -830,19 +830,27 @@ impl MainView {
     }
 
     /// Do what a client asked of a Bot tab's control.
-    fn bot_action(&mut self, target: Occurrence, action: Action) -> bool {
-        let click = match action {
-            Action::Click => true,
-            Action::Focus => false,
-            _ => return false,
-        };
+    fn bot_action(
+        &mut self,
+        target: Occurrence,
+        action: Action,
+        data: Option<&ActionData>,
+    ) -> bool {
         let Some(key) = bot_key(target) else {
             return false;
         };
         let TabView::Bot(view) = self.active_view() else {
             return false;
         };
-        view.accessibility_action(key, click)
+        match (action, data) {
+            (Action::Click, _) => view.accessibility_action(key, true),
+            (Action::Focus, _) => view.accessibility_action(key, false),
+            // A field's text, set by a client as typing it would.
+            (Action::SetValue, Some(ActionData::Value(text))) => {
+                view.accessibility_set_value(key, text)
+            }
+            _ => false,
+        }
     }
 
     /// Fold the Bot tab into the chrome's fingerprint, only while it is in
@@ -1025,6 +1033,7 @@ fn bot_control_node(
         ControlRole::Button => Role::Button,
         ControlRole::TextInput => Role::TextInput,
         ControlRole::Radio => Role::RadioButton,
+        ControlRole::Toggle => Role::Button,
         ControlRole::Label => Role::Label,
         ControlRole::List => Role::List,
         ControlRole::ListItem => Role::ListItem,
@@ -1035,15 +1044,33 @@ fn bot_control_node(
     if let Some(value) = &control.value {
         node = node.with_value(value.clone());
     }
-    if let Some(selected) = control.selected {
-        node = node.with_selected(selected);
+    // **A state as the platform reads it for the role** (the first window
+    // run's finding 8): `accesskit_windows` gives a radio button its
+    // SelectionItem — the chosen one *selected* — from its checked state,
+    // never from `selected`, which left the role and access choices with no
+    // pattern and no state; and a button carrying `selected` is not
+    // invocable (`accesskit_consumer::Node::is_invocable`), which took
+    // Invoke from *Settings*. So a radio says checked, a list item says
+    // selected, and a button says nothing of a state and stays pressable.
+    match (control.role, control.selected) {
+        (ControlRole::Radio | ControlRole::Toggle, Some(on)) => node = node.with_toggled(on),
+        (ControlRole::Button, _) | (_, None) => {}
+        (_, Some(selected)) => node = node.with_selected(selected),
     }
     if matches!(
         control.role,
-        ControlRole::Button | ControlRole::TextInput | ControlRole::Radio | ControlRole::ListItem
+        ControlRole::Button
+            | ControlRole::Toggle
+            | ControlRole::TextInput
+            | ControlRole::Radio
+            | ControlRole::ListItem
     ) && !control.disabled
     {
         node = node.with_actions([Action::Click, Action::Focus]);
+    }
+    // A field takes a client's text as typing would.
+    if control.role == ControlRole::TextInput && !control.disabled {
+        node = node.with_action(Action::SetValue);
     }
     if control.role == ControlRole::List {
         node = node.with_size_of_set(control.children.len());

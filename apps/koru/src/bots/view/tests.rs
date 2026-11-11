@@ -1495,3 +1495,139 @@ fn ink_of(drawn: &std::collections::HashMap<String, String>, name: &str) -> Stri
 mod agent;
 mod create;
 mod lifecycle;
+
+// ------------------------------------------- the first window run, finding 8
+
+/// The published node of the Bot tab whose locator ends in `#part`.
+fn node_of(view: &BotView, part: &str) -> Option<koru_workspace_host::accessibility::SemanticNode> {
+    fn find(
+        node: &koru_workspace_host::accessibility::SemanticNode,
+        part: &str,
+    ) -> Option<koru_workspace_host::accessibility::SemanticNode> {
+        if node.occurrence.part.name() == part {
+            return Some(node.clone());
+        }
+        node.children.iter().find_map(|child| find(child, part))
+    }
+    find(&crate::bots::tests::bot_tab_tree(view), part)
+}
+
+/// **Every control is published with what a client can do to it, and
+/// its state as the platform reads it** (the first window run: *Settings*
+/// with no Invoke, the access choices with no pattern and no state). A
+/// button is pressable and says no selection — a selection takes its
+/// Invoke away (`accesskit_consumer::Node::is_invocable`); a radio button
+/// says checked, which is what `accesskit_windows` reads for its
+/// SelectionItem; a field takes a client's text.
+#[test]
+fn controls_are_published_with_their_actions_and_states() {
+    use accesskit::{Action, Role, Toggled};
+    let f = Fixture::opened(unpaused());
+    let settings = node_of(&f.view, region::SETTINGS_BUTTON.part).expect("Settings");
+    assert_eq!(settings.role, Role::Button);
+    assert!(settings.actions.contains(&Action::Click), "pressable");
+    assert_eq!(settings.selected, None, "no selection on a button");
+    let segments: Vec<_> = region::ACCESS_SEGMENTS
+        .iter()
+        .map(|key| node_of(&f.view, key.part).expect("a segment"))
+        .collect();
+    for segment in &segments {
+        assert_eq!(segment.role, Role::RadioButton);
+        assert!(segment.actions.contains(&Action::Click));
+        assert_eq!(segment.selected, None);
+    }
+    assert_eq!(segments[0].toggled, Some(Toggled::True), "the chosen one");
+    assert_eq!(segments[1].toggled, Some(Toggled::False));
+    let name = node_of(&f.view, region::NAME_FIELD.part).expect("the name");
+    assert!(name.actions.contains(&Action::SetValue));
+    // The two lines drawn and once not published.
+    for (part, words) in [
+        (region::SELECTED_PAGES_TITLE.part, Words::BotsSelectedPages),
+        (region::RUNS_HERE.part, Words::BotsRunsOnThisComputer),
+    ] {
+        let line = node_of(&f.view, part).unwrap_or_else(|| panic!("{part} published"));
+        assert_eq!(line.role, Role::Label);
+        assert_eq!(line.label.as_deref(), Some(t(Lang::En, words)));
+    }
+}
+
+/// **A client's text lands in the field as typing it would**: the name
+/// field shows it and the draft holds it (it was published writable and
+/// ignored a set-value). Nothing for a key that is no field.
+#[test]
+fn a_clients_text_sets_the_name_as_typing_would() {
+    let mut f = Fixture::opened(unpaused());
+    assert!(
+        f.view
+            .accessibility_set_value(region::NAME_FIELD, "Scout Two")
+    );
+    assert_eq!(f.view.settings().name_shown(), "Scout Two");
+    assert_eq!(
+        published(&f.view, region::NAME_FIELD).map(|_| ()),
+        Some(()),
+        "still published"
+    );
+    assert_eq!(
+        every_control(f.view.controls())
+            .into_iter()
+            .find(|control| control.key == region::NAME_FIELD)
+            .and_then(|control| control.value),
+        Some("Scout Two".to_owned())
+    );
+    assert!(!f.view.accessibility_set_value(region::SETTINGS_BUTTON, "x"));
+}
+
+/// **A scroll of the settings republishes their bounds**: the tree's
+/// fingerprint moves with every rect, so a client is never left holding
+/// where a control was before the wheel.
+#[test]
+fn a_scroll_of_the_settings_moves_the_published_fingerprint() {
+    let mut f = Fixture::opened(unpaused());
+    f.view.set_viewport(800.0, 420.0);
+    let fingerprint = |view: &BotView| {
+        let mut rev = koru_workspace_host::accessibility::Revision::new();
+        view.revise(&mut rev);
+        rev.finish()
+    };
+    let before = fingerprint(&f.view);
+    let name_before = node_of(&f.view, region::NAME_FIELD.part)
+        .and_then(|node| node.bounds)
+        .expect("placed");
+    f.view.scroll_region(120.0);
+    assert_ne!(fingerprint(&f.view), before, "republished after the wheel");
+    let name_after = node_of(&f.view, region::NAME_FIELD.part)
+        .and_then(|node| node.bounds)
+        .expect("placed");
+    assert!(
+        name_after.y < name_before.y,
+        "{name_before:?} → {name_after:?}"
+    );
+}
+
+/// **Narrower than a page's compact width the conversation column leaves
+/// and the conversation takes the tab** (`koru_ui::PageShell::compact`,
+/// the rule Settings and Manage follow): at 720 × 600 the column kept its
+/// 258 px and left the chat about 120 (the first window run's finding 9).
+/// Wide again, the column comes back.
+#[test]
+fn a_narrow_tab_gives_the_conversation_the_whole_width() {
+    let mut f = listed(&[]);
+    let wide = f.view.with_frame(|_, frame| {
+        (
+            frame.node(list::CONVERSATIONS).map(|node| node.rect),
+            f.view.conversation_area(frame),
+        )
+    });
+    assert!(wide.0.is_some(), "the column, wide");
+    f.view.set_viewport(420.0, 600.0);
+    let narrow = f.view.with_frame(|_, frame| {
+        (
+            frame.node(list::CONVERSATIONS).map(|node| node.rect),
+            f.view.conversation_area(frame),
+        )
+    });
+    assert!(narrow.0.is_none(), "no column, narrow");
+    assert_eq!(narrow.1.w, 420.0, "the conversation takes the tab's width");
+    f.view.set_viewport(800.0, 600.0);
+    assert!(f.keys().contains(&list::CONVERSATIONS), "back, wide");
+}
