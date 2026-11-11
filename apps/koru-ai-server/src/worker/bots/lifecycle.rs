@@ -85,12 +85,14 @@ pub(in crate::worker) struct LifecycleDriver {
     driving: HashMap<OperationKey, Drive>,
     /// Restart resume: the next journal page, `None` once every page is read.
     recovery: Option<Option<(i64, BotRequestId)>>,
-    /// Operations parked for an owner that did not answer whose owner is
-    /// being asked, once, whether it answers again (see
+    /// The one probe outstanding, while a probe pass is under way: the
+    /// operation parked for an owner that did not answer whose owner is
+    /// being asked whether it answers again, and how many more parked
+    /// operations this pass may still ask (see
     /// [`WorkerState::probe_parked_bot_lifecycle`]).
-    probing: HashSet<OperationKey>,
-    /// Where the next probe pass starts: just past the last parked operation
-    /// the previous pass reached, `None` to start (again) from the first.
+    probing: Option<(OperationKey, u16)>,
+    /// Where the probe walk carries on: just past the last parked operation
+    /// it reached, `None` to start (again) from the first.
     probe_after: Option<ParkedCursor>,
     /// The first wait of a round without progress ([`ROUND_UNIT`]; a test
     /// may shorten it so twelve rounds take a second instead of minutes).
@@ -101,7 +103,7 @@ impl Default for LifecycleDriver {
         Self {
             driving: HashMap::new(),
             recovery: Some(None),
-            probing: HashSet::new(),
+            probing: None,
             probe_after: None,
             unit: ROUND_UNIT,
         }
@@ -116,7 +118,7 @@ impl LifecycleDriver {
         }
     }
 }
-/// Parked operations one probe pass asks about at most.
+/// Parked operations one probe pass asks about at most, one at a time.
 const PROBE_PAGE: u16 = 16;
 
 /// One operation's scheduling. It holds no fact about the work itself.
@@ -888,48 +890,63 @@ impl WorkerState {
         }
     }
 
-    /// Ask, once per operation, the owner of each operation parked for its
-    /// silence whether it answers again (one bounded page). Run by the
+    /// Ask the owner of each operation parked for its silence whether it
+    /// answers again: a pass asks up to [`PROBE_PAGE`] of them, **one probe
+    /// outstanding at a time**, each answer sending the next. Run by the
     /// backed-off receipt recovery pass and once after a restart's resume
     /// pages, never on a timer of its own: an operation with nothing else owed
     /// to its owner (its pause already acknowledged) would otherwise never
-    /// learn that the owner is back. A probe its owner did not answer arms
-    /// that pass again, and so does a page that ends with more parked
+    /// learn that the owner is back. A pass already under way carries on by
+    /// itself, so asking again while it runs starts nothing.
+    ///
+    /// One at a time because a probe runs on the shared administration lane,
+    /// whose single thread also prepares every person's Bot command, and
+    /// whose queue holds [`PROVIDER_ADMIN_QUEUE_CAPACITY`]: a pass that put
+    /// its whole page on it at once filled it while the owner was silent
+    /// (each probe holding the thread until its owner call gave up), and a
+    /// person's own Bot read or command was refused `ai_worker_saturated`.
+    /// The lane runs one job at a time anyway, so asking one at a time costs
+    /// the walk nothing but a turn of the writer between probes.
+    ///
+    /// The walk keeps its place across passes ([`LifecycleDriver::probe_after`])
+    /// and starts again from the first at the end, so every parked operation
+    /// is asked in turn however many before it keep failing (the fourth
+    /// lifecycle review's F2). A probe its owner did not answer arms the
+    /// recovery pass again, and so does a pass that stops with more parked
     /// operations past it; one refused before asking (the owner's authority
     /// over the workspace lost) or a Bot that is gone arms nothing.
     pub(in crate::worker) fn probe_parked_bot_lifecycle(&mut self) {
         if self.bot_delegate.is_none() || self.provider_admin.is_none() {
             return;
         }
-        // One page per pass, resuming after the last operation the previous
-        // pass reached and wrapping round at the end, so every parked
-        // operation is asked in turn however many of the first ones keep
-        // failing (the fourth lifecycle review's F2).
-        let after = self.bot_lifecycle.probe_after.take();
-        let page = match self
-            .repository
-            .parked_for_owner_bot_lifecycle(after.as_ref(), PROBE_PAGE)
-        {
-            Ok(page) if page.is_empty() && after.is_some() => self
-                .repository
-                .parked_for_owner_bot_lifecycle(None, PROBE_PAGE),
-            read => read,
-        };
-        let Ok(parked) = page else {
-            return self.bot_recovery_retry.owner_away(Instant::now());
-        };
-        if parked.len() >= usize::from(PROBE_PAGE) {
-            // More are parked past this page: the next pass starts after it,
-            // and there must be a next pass even if none of these is asked.
-            self.bot_lifecycle.probe_after = parked.last().map(|p| p.cursor.clone());
-            self.bot_recovery_retry.owner_away(Instant::now());
+        if self.bot_lifecycle.probing.is_some() {
+            return;
         }
-        for parked in parked {
-            let (scope, operation, bot) = (parked.scope, parked.operation, parked.bot);
-            let key = (scope, operation);
-            if self.bot_lifecycle.probing.contains(&key) {
-                continue;
+        self.probe_next_parked_bot_lifecycle(PROBE_PAGE);
+    }
+
+    /// The probe walk's next step, with `left` probes this pass may still
+    /// send: ask the next parked operation's owner, or end the pass.
+    fn probe_next_parked_bot_lifecycle(&mut self, mut left: u16) {
+        loop {
+            let after = self.bot_lifecycle.probe_after.clone();
+            let Ok(next) = self
+                .repository
+                .parked_for_owner_bot_lifecycle(after.as_ref(), 1)
+            else {
+                return self.bot_recovery_retry.owner_away(Instant::now());
+            };
+            let Some(parked) = next.into_iter().next() else {
+                // The end of the list: the next pass starts from the first.
+                self.bot_lifecycle.probe_after = None;
+                return;
+            };
+            if left == 0 {
+                // More are parked past where this pass stopped: there must
+                // be a next pass, and it carries on from here.
+                return self.bot_recovery_retry.owner_away(Instant::now());
             }
+            left -= 1;
             let (Some(authority), Some(delegate), Some(pool)) = (
                 self.bot_authority.clone(),
                 self.bot_delegate.clone(),
@@ -938,9 +955,11 @@ impl WorkerState {
                 return;
             };
             // A Bot that is gone asks nothing and keeps nothing armed.
-            let Ok(Some((subject, _))) = self.repository.bot_any_lifecycle(bot) else {
+            let Ok(Some((subject, _))) = self.repository.bot_any_lifecycle(parked.bot) else {
+                self.bot_lifecycle.probe_after = Some(parked.cursor);
                 continue;
             };
+            let key = (parked.scope, parked.operation);
             let job = LifecycleJob {
                 key,
                 owner: BotOwner {
@@ -950,24 +969,32 @@ impl WorkerState {
                 workspace: subject.home_workspace,
                 authority,
                 delegate,
-                step: Step::Probe { bot },
+                step: Step::Probe { bot: parked.bot },
             };
             if pool
                 .try_submit(ProviderAdminJob::BotLifecycle(job))
                 .is_err()
             {
-                // The pool is full: the next pass asks again, from this one.
-                self.bot_lifecycle.probe_after = after;
+                // The lane is full: the next pass asks this one first.
                 return self.bot_recovery_retry.owner_away(Instant::now());
             }
-            self.bot_lifecycle.probing.insert(key);
+            self.bot_lifecycle.probe_after = Some(parked.cursor);
+            self.bot_lifecycle.probing = Some((key, left));
+            return;
         }
     }
 
     /// A probe's answer: an owner that answered takes its parked operation
     /// up again; one that did not arms the recovery pass, which asks again.
+    /// Then the pass sends its next probe.
     fn complete_bot_lifecycle_probe(&mut self, key: OperationKey, answer: Probed) {
-        self.bot_lifecycle.probing.remove(&key);
+        let left = match self.bot_lifecycle.probing {
+            Some((probing, left)) if probing == key => {
+                self.bot_lifecycle.probing = None;
+                Some(left)
+            }
+            _ => None,
+        };
         match answer {
             Probed::Answered => {
                 self.bot_recovery_retry.answered(Instant::now());
@@ -977,6 +1004,9 @@ impl WorkerState {
             }
             Probed::OwnerAway => self.bot_recovery_retry.owner_away(Instant::now()),
             Probed::NotAsked => {}
+        }
+        if let Some(left) = left {
+            self.probe_next_parked_bot_lifecycle(left);
         }
     }
 

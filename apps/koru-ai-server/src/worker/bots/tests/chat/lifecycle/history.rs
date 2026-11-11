@@ -17,6 +17,10 @@ enum Ended {
     /// Its owner admitted it, and the person stopped it: the owner is asked
     /// again at a restart whether it settled.
     StoppedAfterAdmission,
+    /// Its owner admitted it, and it ended interrupted (not by a person): a
+    /// restart asks the owner again on the automatic lane, which is the
+    /// shared administration lane, not the Stop lane.
+    InterruptedAfterAdmission,
     /// Its owner refused it for good behind its fence, and it ended
     /// interrupted: nothing of it ever ran.
     RefusedForGood,
@@ -82,16 +86,22 @@ fn ended_task(
         .unwrap();
     let attempt = turn.attempt.id;
     match ended {
-        Ended::StoppedAfterAdmission => {
+        Ended::StoppedAfterAdmission | Ended::InterruptedAfterAdmission => {
             let mut task = api_task(&current, d::BotAdmissionState::Settled, 0);
             task.view.key.request = request;
             task.view.run = intent.submission.request.run;
             repository
                 .acknowledge_bot_submission(owner, current.id, request, &task.view, 2)
                 .unwrap();
-            repository
-                .cancel_bot_chat(attempt, Timestamp::now())
-                .unwrap();
+            if ended == Ended::StoppedAfterAdmission {
+                repository
+                    .cancel_bot_chat(attempt, Timestamp::now())
+                    .unwrap();
+            } else {
+                repository
+                    .interrupt_bot_preparation(attempt, Timestamp::now())
+                    .unwrap();
+            }
             port.api.lock().unwrap().push(task);
         }
         Ended::RefusedForGood => {
@@ -168,6 +178,12 @@ struct History {
 }
 
 fn history(stopped: usize, refused: usize) -> History {
+    history_of(stopped, refused, 0)
+}
+
+/// [`history`], with `interrupted` tasks its owner admitted that ended
+/// interrupted besides.
+fn history_of(stopped: usize, refused: usize, interrupted: usize) -> History {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let port = Arc::new(Archiving::default());
@@ -189,6 +205,15 @@ fn history(stopped: usize, refused: usize) -> History {
             &bot,
             &port,
             Ended::StoppedAfterAdmission,
+        );
+    }
+    for _ in 0..interrupted {
+        ended_task(
+            &mut repository,
+            &authority,
+            &bot,
+            &port,
+            Ended::InterruptedAfterAdmission,
         );
     }
     // The refusal fences moved the Bot's revision.
@@ -264,6 +289,95 @@ fn with_its_owner_silent_after_a_restart_an_operation_beside_a_long_history_park
         0,
         "the Restore asked the owner nothing"
     );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+    drop(returned);
+}
+
+/// An owner that is slow and then silent for every call a restart's walk
+/// makes about a task (Reconcile, Interrupt, Stop): each holds its lane for
+/// `delay`, then fails as a host that does not answer does. Every other
+/// command is the lifecycle fake's.
+struct SlowWalk {
+    inner: Arc<Archiving>,
+    delay: Duration,
+    /// Walk calls that reached it.
+    calls: AtomicUsize,
+}
+impl BotDelegatePort for SlowWalk {
+    fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
+        if matches!(
+            command,
+            D::Reconcile { .. } | D::Interrupt { .. } | D::Stop { .. }
+        ) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(self.delay);
+            return Err(koru_delegate_api::Failure::new(
+                "bot_unavailable",
+                "fixture owner silent",
+                true,
+            ));
+        }
+        self.inner.execute(command)
+    }
+}
+
+/// The owner is silent after a restart, every call the walk makes holds the
+/// shared administration lane until it gives up, and the walk holds as many
+/// interrupted tasks of history as that lane queues (an interrupted task is
+/// asked about on the automatic lane, which is the shared one; a person's
+/// Stop goes on the Stop lane). People's Bot requests are prepared on the
+/// shared lane: the walk asks about one task at a time (the lane runs one
+/// job at a time anyway), so two people's Bot reads made together are both
+/// answered, never refused `ai_worker_saturated` because the walk filled the
+/// lane. (Before, each rebuilt task had its own call queued, and eight of
+/// them left one place free.)
+#[test]
+fn a_restart_walk_whose_owner_is_silent_leaves_room_for_peoples_bot_requests() {
+    let run = history_of(0, 0, 9);
+    let port = Arc::new(SlowWalk {
+        inner: run.port.clone(),
+        delay: Duration::from_millis(1500),
+        calls: AtomicUsize::new(0),
+    });
+    let (return_tx, returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-memory-lifecycle"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(run.authority)
+    .with_bot_delegate(port.clone());
+    config.test_repository = Some(run.repository);
+    config.test_repository_return = Some(return_tx);
+    let worker = AiWorker::new(config).spawn().unwrap();
+    until("the walk's first call reached the owner", || {
+        port.calls.load(Ordering::SeqCst) > 0
+    });
+    // The writer offers the rebuilt tasks one per turn of its loop; give it
+    // the time to offer all it would while the first call still holds the
+    // lane.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        port.calls.load(Ordering::SeqCst),
+        1,
+        "the first call holds the lane"
+    );
+    let reads: Vec<_> = (0..2)
+        .map(|_| {
+            let client = worker.client();
+            let bot = run.bot.id;
+            std::thread::spawn(move || {
+                client
+                    .bots(context(true), BotCommand::Read { bot_id: bot })
+                    .map(|_| ())
+                    .map_err(|error| error.code)
+            })
+        })
+        .collect();
+    for read in reads {
+        assert_eq!(read.join().unwrap(), Ok(()), "a person's Bot read");
+    }
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
     drop(returned);

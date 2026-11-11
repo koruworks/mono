@@ -210,3 +210,112 @@ fn every_parked_operation_is_probed_in_turn_and_lost_authority_keeps_nothing_arm
         assert_eq!(still.refusal, Some(BotLifecycleRefusal::OwnerUnavailable));
     }
 }
+
+/// An execution owner that is silent for the probe's read: each
+/// unsettled-work read holds its lane for `delay`, then fails as a host that
+/// does not answer does. Every other command is the lifecycle fake's.
+struct Silent {
+    inner: Archiving,
+    delay: Duration,
+    /// The Bot of every unsettled-work read, in the order they reached it.
+    asked: Mutex<Vec<BotId>>,
+}
+impl BotDelegatePort for Silent {
+    fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
+        if let D::UnsettledWork { bot, .. } = &command {
+            self.asked.lock().unwrap().push(*bot);
+            std::thread::sleep(self.delay);
+            return Err(koru_delegate_api::Failure::new(
+                "bot_unavailable",
+                "fixture owner silent",
+                true,
+            ));
+        }
+        self.inner.execute(command)
+    }
+}
+
+/// More operations parked for their owner than the shared administration
+/// lane queues, and the owner silent, so every probe holds the lane until
+/// its owner call gives up. A person's own Bot read and a person's command
+/// are prepared on that same lane: the probe pass must leave room for them,
+/// so both are answered, never refused `ai_worker_saturated` because
+/// background work filled the lane, and the pass still asks about every
+/// parked operation. (Before this, one pass put up to sixteen probes on the
+/// lane at once, and its queue holds eight.)
+#[test]
+fn a_silent_owner_of_many_parked_operations_leaves_room_for_a_persons_bot_requests() {
+    let (mut repository, template, _) = fixture();
+    let parked: Vec<BotId> = (0..12)
+        .map(|_| {
+            let bot = bot_in_own_workspace(&mut repository, &template);
+            parked_with_nothing_owed(&mut repository, &bot);
+            bot.id
+        })
+        .collect();
+    let mine = bot_in_own_workspace(&mut repository, &template);
+    let authority = Arc::new(PerWorkspace {
+        owner: template.owner,
+        profile: template.profile,
+        lost: Mutex::new(Default::default()),
+        lost_inspections: AtomicUsize::new(0),
+    });
+    let port = Arc::new(Silent {
+        inner: Archiving::default(),
+        delay: Duration::from_millis(400),
+        asked: Mutex::new(Vec::new()),
+    });
+    let (return_tx, _returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-memory-lifecycle"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(authority)
+    .with_bot_delegate(port.clone());
+    config.test_repository = Some(repository);
+    config.test_repository_return = Some(return_tx);
+    let worker = AiWorker::new(config).spawn().unwrap();
+    let client = worker.client();
+    // The restart's probe pass has begun: a probe holds the lane.
+    until("the first probe reached the owner", || {
+        !port.asked.lock().unwrap().is_empty()
+    });
+    // The person's read of their own Bot is answered.
+    let read = client.bots(context(true), BotCommand::Read { bot_id: mine.id });
+    assert!(
+        matches!(&read, Ok(BotResponse::Bot { bot }) if bot.id == mine.id),
+        "the person's Bot read: {:?}",
+        read.map(|_| ()).map_err(|error| error.code)
+    );
+    // So is the person's command.
+    let archived = archive_at(&client, &mine, BotRequestId::mint(), mine.revision);
+    assert!(
+        archived.is_ok(),
+        "the person's Archive: {:?}",
+        archived.map(|_| ()).map_err(|error| error.code)
+    );
+    // Two people's reads made together are answered too.
+    let reads: Vec<_> = (0..2)
+        .map(|_| {
+            let client = worker.client();
+            let bot = mine.id;
+            std::thread::spawn(move || {
+                client
+                    .bots(context(true), BotCommand::Read { bot_id: bot })
+                    .map(|_| ())
+                    .map_err(|error| error.code)
+            })
+        })
+        .collect();
+    for read in reads {
+        assert_eq!(read.join().unwrap(), Ok(()), "a person's Bot read");
+    }
+    // And the pass, one probe at a time, still asks about every one.
+    until("every parked operation's owner was asked", || {
+        let asked = port.asked.lock().unwrap();
+        parked.iter().all(|bot| asked.contains(bot))
+    });
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}

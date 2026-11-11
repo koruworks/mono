@@ -246,6 +246,15 @@ impl WorkerState {
             return;
         }
         let now = Instant::now();
+        // One probe outstanding at a time: it runs on the shared
+        // administration lane, which also prepares every person's Bot
+        // command and runs one job at a time anyway, so several re-sends
+        // owed at once never fill it.
+        let mut probing = self
+            .bot_resends
+            .owed
+            .values()
+            .any(|resend| matches!(resend.stage, Stage::Probing));
         let ids: Vec<_> = self.bot_resends.owed.keys().copied().collect();
         for id in ids {
             let Some(resend) = self.bot_resends.owed.get_mut(&id) else {
@@ -272,7 +281,7 @@ impl WorkerState {
                         self.close_bot_resend(id);
                     }
                 },
-                Stage::Probe if resend.due <= now => {
+                Stage::Probe if resend.due <= now && !probing => {
                     let Some(plan) = self.bot_resend_plan(id) else {
                         self.close_bot_resend(id);
                         continue;
@@ -293,6 +302,7 @@ impl WorkerState {
                         .is_ok()
                     {
                         resend.stage = Stage::Probing;
+                        probing = true;
                     } else {
                         resend.due = now + Duration::from_millis(250);
                     }

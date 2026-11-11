@@ -59,9 +59,14 @@ pub(in crate::worker) struct LiveChat {
     finishing: Option<Finish>,
     /// This worker run saw the task's first input refused (or the task
     /// otherwise end automatically) while it drove it, so its automatic
-    /// re-send may be owed once it settles (`chat/resend.rs`). Never set on a
-    /// task rebuilt by a restart's recovery or by a person's Stop: a re-send
-    /// is owed only in the run that saw the refusal.
+    /// re-send may be owed once it settles (`chat/resend.rs`). A task rebuilt
+    /// by a restart's recovery or by a person's Stop starts without it, and
+    /// is rebuilt already finishing, so the one place that sets it never
+    /// sees it; the exception is a task rebuilt only to deliver its terminal
+    /// receipt (`Phase::Delivery`, not finishing), which can be set here if
+    /// that delivery fails for good, but such a Run was admitted and ran, so
+    /// neither kind of re-send can be owed for it (`bot_resend_plan`): a
+    /// re-send is owed only in the run that saw the refusal.
     resend: bool,
     pub(super) staging: super::attachments::Staging,
 }
@@ -219,7 +224,18 @@ impl WorkerState {
         let control = self.bot_chats.values().any(|chat| {
             chat.finishing == Some(Finish::Stop) && !chat.control_busy && chat.due <= now
         });
+        // At most one automatic job is outstanding. It runs on the shared
+        // administration lane, whose single thread also prepares every
+        // person's Bot command and whose queue holds eight: a restart's walk
+        // rebuilds up to eight tasks, and one job each, with the owner
+        // silent, filled that queue and a person's own Bot read or command
+        // was refused `ai_worker_saturated`. The lane runs one job at a time
+        // anyway, so the walk loses nothing but a turn of the writer.
         let automatic = !control
+            && !self
+                .bot_chats
+                .values()
+                .any(|chat| chat.busy && chat.automatic)
             && self.bot_chats.values().any(|chat| {
                 chat.finishing == Some(Finish::Interrupt) && !chat.busy && chat.due <= now
             });
