@@ -106,6 +106,7 @@ impl Create {
             self.serve_catalog_once();
             self.view.shown_pass(None);
         }
+        crate::bots::tests::assert_bot_tab_publishable("after the catalog answered", &self.view);
     }
 
     fn serve_catalog_once(&mut self) {
@@ -179,6 +180,7 @@ impl Create {
             })
             .expect("the tab's end is open");
         self.view.poll();
+        crate::bots::tests::assert_bot_tab_publishable("after a creation answer", &self.view);
     }
 
     fn creation(&self, stage: BotCreationStage) -> BotCreation {

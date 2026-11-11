@@ -78,6 +78,23 @@ fn bot_occurrence(cx: &Context, bot: koru_ai_core::bots::BotId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, bot.as_uuid(), ControlPart::ROOT)
 }
 
+/// The roster's nodes as the column publishes them, in a 280 × 900 pane at
+/// the window's origin. For the tests that check a roster's tree is one
+/// AccessKit can take (`crate::bots::tests::assert_publishable`).
+#[cfg(test)]
+pub(crate) fn roster_tree(roster: &BotsRoster) -> Vec<SemanticNode> {
+    use koru_workspace_host::accessibility::{ViewSlot, WindowSlot};
+    let cx = Context {
+        window: WindowSlot::from_raw(1),
+        view: ViewSlot::from_raw(1),
+        area: Rect::new(48.0, 0.0, 280.0, 900.0),
+        rail: Rect::new(0.0, 0.0, 48.0, 900.0),
+        viewport: (1200.0, 900.0),
+        lang: koru_i18n::Lang::En,
+    };
+    semantics(roster, &cx, 0.0)
+}
+
 /// The roster's nodes: the line over it, when there is one, and the list or
 /// the empty sentence.
 pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<SemanticNode> {

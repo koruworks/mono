@@ -826,45 +826,7 @@ impl MainView {
             .panes
             .view_rect_for(self.content(), self.panes.focused_path())
             .unwrap_or_else(|| self.content());
-        let moved = |rect: Rect| Rect::new(area.x + rect.x, area.y + rect.y, rect.w, rect.h);
-        let mut children: Vec<SemanticNode> = view
-            .header_lines()
-            .into_iter()
-            .map(|(key, rect, words)| {
-                SemanticNode::new(
-                    Occurrence::surface(
-                        cx.window,
-                        cx.view,
-                        crate::bots::view::SURFACE,
-                        bot_part(key),
-                    ),
-                    Role::Label,
-                )
-                .with_label(words)
-                .with_bounds(moved(rect))
-            })
-            .collect();
-        // *Settings*, and while it is open the region — its cards, their
-        // lines and controls — in the keyboard's order (S5).
-        children.extend(
-            view.controls()
-                .iter()
-                .map(|control| bot_control_node(cx, control, &moved)),
-        );
-        Some(
-            SemanticNode::new(
-                Occurrence::surface(
-                    cx.window,
-                    cx.view,
-                    crate::bots::view::SURFACE,
-                    koru_workspace_host::accessibility::ControlPart::ROOT,
-                ),
-                Role::Group,
-            )
-            .with_label(view.label())
-            .with_bounds(moved(view.header_rect()))
-            .with_children(children),
-        )
+        Some(bot_tab_semantics(cx, view, area))
     }
 
     /// Do what a client asked of a Bot tab's control.
@@ -1002,6 +964,52 @@ impl MainView {
     }
 }
 
+/// **A Bot tab as its node**: a group named by the Bot, its header lines as
+/// labels, then *Settings* and, while it is open, the region — its cards,
+/// their lines and controls — in the keyboard's order (S5). `area` is where
+/// the tab draws, in the window's coordinates.
+///
+/// Every line and control is published by its element's own part, the one
+/// name it has in the frame, so two of them can never share a node id.
+/// Header lines once fell back to one shared `#line` part for any key the
+/// publisher did not list, and an Unarchive from the header — *Archived*
+/// still read while the lifecycle line said *Unarchived* — published two
+/// `#line` nodes under the group, which `accesskit_consumer` answers with a
+/// panic that took the window down (the first window run, finding 1).
+pub(crate) fn bot_tab_semantics(
+    cx: &Shell,
+    view: &crate::bots::BotView,
+    area: Rect,
+) -> SemanticNode {
+    let moved = |rect: Rect| Rect::new(area.x + rect.x, area.y + rect.y, rect.w, rect.h);
+    let mut children: Vec<SemanticNode> = view
+        .header_lines()
+        .into_iter()
+        .map(|(key, rect, words)| {
+            SemanticNode::new(bot_occurrence(cx, key), Role::Label)
+                .with_label(words)
+                .with_bounds(moved(rect))
+        })
+        .collect();
+    children.extend(
+        view.controls()
+            .iter()
+            .map(|control| bot_control_node(cx, control, &moved)),
+    );
+    SemanticNode::new(
+        Occurrence::surface(
+            cx.window,
+            cx.view,
+            crate::bots::view::SURFACE,
+            koru_workspace_host::accessibility::ControlPart::ROOT,
+        ),
+        Role::Group,
+    )
+    .with_label(view.label())
+    .with_bounds(moved(view.header_rect()))
+    .with_children(children)
+}
+
 /// A Bot tab's control as a node, its children under it. A selected
 /// page's *Remove* is the page's own model object; every other control is
 /// the tab's surface, by its element's part.
@@ -1079,22 +1087,6 @@ fn bot_key(target: Occurrence) -> Option<koru_draw::el::Key> {
             Some(koru_draw::el::Key::model(id.as_u128(), part))
         }
         _ => None,
-    }
-}
-
-/// The control part a Bot header line is published under: its element's
-/// part, the one name it has in the frame.
-fn bot_part(key: koru_draw::el::Key) -> koru_workspace_host::accessibility::ControlPart {
-    use crate::bots::view::{LIMIT, MAIN_MARK, NAME, NOTICE, PAUSED, SAVES};
-    use koru_workspace_host::accessibility::ControlPart;
-    match key {
-        k if k == NAME => ControlPart::new("name"),
-        k if k == MAIN_MARK => ControlPart::new("main-conversation"),
-        k if k == PAUSED => ControlPart::new("paused"),
-        k if k == SAVES => ControlPart::new("saves"),
-        k if k == LIMIT => ControlPart::new("limit"),
-        k if k == NOTICE => ControlPart::new("notice"),
-        _ => ControlPart::new("line"),
     }
 }
 

@@ -66,7 +66,15 @@ impl Fixture {
         self.answers
             .send(Answer::Read { seq, bot, result })
             .expect("the tab's end is open");
-        self.view.poll()
+        let changed = self.view.poll();
+        self.publishable("after the Bot's read");
+        changed
+    }
+
+    /// The tab's published tree is one AccessKit can take: no node twice
+    /// (`crate::bots::tests::assert_publishable`).
+    fn publishable(&self, stage: &str) {
+        crate::bots::tests::assert_bot_tab_publishable(stage, &self.view);
     }
 }
 
@@ -409,6 +417,7 @@ impl Fixture {
         // only a press where the region's viewport shows the control.
         f.view.set_viewport(800.0, 1600.0);
         f.view.set_settings_open(true);
+        f.publishable("settings open");
         f
     }
 
@@ -443,6 +452,8 @@ impl Fixture {
             })
             .expect("the tab's end is open");
         self.view.poll();
+        // Every answer the tests drive leaves a tree AccessKit can take.
+        self.publishable("after an owner's answer");
     }
 
     fn keys(&self) -> Vec<Key> {
@@ -457,13 +468,15 @@ impl Fixture {
             .expect("the control is shown");
         let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
             .expect("a document");
-        View::mouse_down(
+        let pressed = View::mouse_down(
             &mut self.view,
             &mut ws,
             rect.x + rect.w * 0.5,
             rect.y + rect.h * 0.5,
             false,
-        )
+        );
+        self.publishable("after a press");
+        pressed
     }
 }
 
@@ -951,7 +964,11 @@ fn selected_pages_are_added_through_the_picker_and_removed_by_their_row() {
 fn key(view: &mut BotView, key: WinitKey, text: Option<&str>) -> bool {
     let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
         .expect("a document");
-    View::key(view, &mut ws, &key, text, ModifiersState::empty())
+    let taken = View::key(view, &mut ws, &key, text, ModifiersState::empty());
+    // Settings and popovers opened and closed by the keyboard: every step
+    // leaves a tree AccessKit can take.
+    crate::bots::tests::assert_bot_tab_publishable("after a key", view);
+    taken
 }
 
 fn named(named: winit::keyboard::NamedKey) -> WinitKey {

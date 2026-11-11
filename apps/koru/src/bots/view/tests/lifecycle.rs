@@ -231,6 +231,7 @@ fn archive_then_unarchive_from_the_tab() {
     archived.revision += 2;
     f.answer(seq, archived.id, Ok(archived.clone()));
     assert!(f.view.facts().unwrap().archived);
+    f.publishable("archived");
     assert!(f.view.shows_conversation(), "its history stays readable");
     assert!(f.keys().contains(&ARCHIVED));
     assert!(f.keys().contains(&actions::UNARCHIVE));
@@ -260,6 +261,16 @@ fn archive_then_unarchive_from_the_tab() {
         f.view.lifecycle_said().map(|said| said.words),
         Some(Words::BotsUnarchivedPaused)
     );
+    // The moment the first window run crashed on (finding 1): every line
+    // the header now says publishes under its own id.
+    f.publishable("unarchived from the header, before the read");
+    // And once the read says the Bot is back.
+    let mut back = archived.clone();
+    back.lifecycle = BotLifecycle::Active;
+    back.paused = true;
+    back.revision += 2;
+    f.view.know_bot_for_test(back);
+    f.publishable("unarchived from the header, read again");
 }
 
 /// **After Trash the tab says it is in Trash with what stayed where it was,

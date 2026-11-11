@@ -1080,4 +1080,7 @@ mod bots;
 mod chats;
 
 #[cfg(test)]
+pub(crate) use bots::roster_tree;
+
+#[cfg(test)]
 mod tests;

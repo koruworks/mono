@@ -118,10 +118,8 @@ fn a_modal_declaring_none_leaves_enter_inert_until_something_is_focused() {
 /// making the visible focus ring lie.
 #[test]
 fn a_focused_button_wins_over_whatever_was_declared() {
-    // Declared Confirm, focus moved to Confirm and back to Cancel.
+    // Declared Confirm, so the ring starts there; Tab moves it to Cancel.
     let mut c = confirm().defaulting_to_confirm();
-    c.key(&key(NamedKey::Tab));
-    assert_eq!(c.default_action(), Some(Outcome::Confirm));
     c.key(&key(NamedKey::Tab));
     assert_eq!(
         c.default_action(),
@@ -129,6 +127,39 @@ fn a_focused_button_wins_over_whatever_was_declared() {
         "the focus ring is on Cancel, so Enter cancels"
     );
     assert_eq!(c.key(&key(NamedKey::Enter)), Outcome::Cancel);
+    c.key(&key(NamedKey::Tab));
+    assert_eq!(c.default_action(), Some(Outcome::Confirm), "and back");
+}
+
+/// **The ring is drawn on what Enter presses**, for every declaration and
+/// after every move: Cancel by default; the answer for a dialog declaring
+/// it; nothing for one declaring none, until a button is chosen. The first
+/// window run of Bots found a dialog Enter confirmed drawn with Cancel
+/// ringed, and a person archived a Bot pressing Enter on what they saw.
+#[test]
+fn the_ring_is_drawn_on_what_enter_presses() {
+    for (case, mut c) in [
+        ("default", confirm()),
+        ("declared", confirm().defaulting_to_confirm()),
+        ("none", confirm().declaring_no_default()),
+        ("three", three_answers()),
+        ("three declared", three_answers().defaulting_to_confirm()),
+    ] {
+        for step in 0..4 {
+            assert_eq!(
+                c.focused(),
+                c.default_action(),
+                "{case}, after {step} Tab: the ring and Enter disagree"
+            );
+            c.key(&key(NamedKey::Tab));
+        }
+    }
+    assert_eq!(confirm().focused(), Some(Outcome::Cancel));
+    assert_eq!(
+        confirm().defaulting_to_confirm().focused(),
+        Some(Outcome::Confirm)
+    );
+    assert_eq!(confirm().declaring_no_default().focused(), None);
 }
 
 /// Everything else is swallowed, for `ErrorDialog`'s reason: a modal that let

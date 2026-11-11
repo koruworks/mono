@@ -149,6 +149,11 @@ impl Confirm {
     /// destructive answer has to write this line and be read on it.
     pub fn defaulting_to_confirm(mut self) -> Self {
         self.default_action = Some(Outcome::Confirm);
+        // **The ring starts where Enter answers.** It once stayed on Cancel
+        // whatever was declared, so a dialog that Enter confirmed was drawn
+        // with Cancel ringed — and a person who pressed Enter on what they
+        // saw as Cancel archived a Bot (the first window run of Bots).
+        self.focus = Hit::Confirm;
         self
     }
 
@@ -201,6 +206,36 @@ impl Confirm {
             true => Some(answer(self.focus)),
             false => self.default_action,
         }
+    }
+
+    /// **The answer the focus ring is drawn on**, or `None` while none is.
+    ///
+    /// Always the answer [`Self::default_action`] gives — what Enter presses
+    /// is what is ringed — and a test pins that rather than trusting it:
+    /// before a key moves the focus the ring is on the declared default, and
+    /// a dialog declaring none draws no ring until a button is chosen.
+    pub fn focused(&self) -> Option<Outcome> {
+        match self.focus_moved {
+            true => Some(answer(self.focus)),
+            false => self.default_action.map(|_| answer(self.focus)),
+        }
+    }
+
+    /// Where the body is drawn, for a host that publishes it to an
+    /// assistive technology as the dialog's text.
+    pub fn body_rect(&self, engine: &mut TextEngine, viewport: (f32, f32)) -> Rect {
+        let panel = self.panel(engine, viewport);
+        let tw = self.text_w(panel.w);
+        let title = engine
+            .simple_layout_wrapped(&self.title, TITLE, tw)
+            .height();
+        let body = engine.simple_layout_wrapped(&self.body, BODY, tw).height();
+        Rect::new(
+            panel.x + self.text_inset(),
+            panel.y + PAD + title + 8.0,
+            tw,
+            body,
+        )
     }
 
     /// **The same dialog for a question that is not destructive**, with an
@@ -481,6 +516,7 @@ impl Confirm {
             );
         }
 
+        let ringed = self.focused();
         for (hit, r) in self.targets(engine, viewport) {
             let role = match hit {
                 Hit::Cancel => ButtonRole::Secondary,
@@ -498,7 +534,7 @@ impl Confirm {
                 label,
                 role,
                 self.hover == Some(hit),
-                self.focus == hit,
+                ringed == Some(answer(hit)),
             );
         }
     }

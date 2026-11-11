@@ -528,10 +528,7 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
     let children = semantics
         .children
         .iter()
-        .map(|child| {
-            append(child, &mut nodes, &mut projection, semantics.scale);
-            child.occurrence.node_id()
-        })
+        .filter_map(|child| append(child, &mut nodes, &mut projection, semantics.scale))
         .collect::<Vec<_>>();
 
     if whole {
@@ -590,13 +587,28 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
     projection
 }
 
+/// Publish `node` and everything under it; its id, for its parent to list,
+/// or `None` when it was left out.
+///
+/// **A node already in this update is left out, with everything under it**,
+/// and counted. `accesskit_consumer` panics on an update that names one
+/// child twice — under two parents or twice under one — and that panic is
+/// the whole process: a Bot tab that drew two header lines under one id
+/// took the window down (Bots' first window run). A second occurrence is
+/// always a caller's bug and [`Projection::duplicate_ids`] still says so;
+/// what a client is handed must never be able to crash the app.
 fn append(
     node: &SemanticNode,
     nodes: &mut Vec<(NodeId, Node)>,
     projection: &mut Projection,
     scale: f64,
-) {
+) -> Option<NodeId> {
     let id = node.occurrence.node_id();
+    // Recorded before the children, so a node that names itself further
+    // down is caught as well as one repeated beside it.
+    if !record(id, node.occurrence, projection) {
+        return None;
+    }
     let mut built = Node::new(node.role);
     built.set_author_id(node.occurrence.locator());
     if let Some(label) = &node.label {
@@ -691,10 +703,7 @@ fn append(
     let published: Vec<NodeId> = node
         .children
         .iter()
-        .map(|child| {
-            append(child, nodes, projection, scale);
-            child.occurrence.node_id()
-        })
+        .filter_map(|child| append(child, nodes, projection, scale))
         .collect();
     match &node.child_order {
         // A delta republishing a container: the list is what the client must
@@ -705,17 +714,23 @@ fn append(
     if !children.is_empty() {
         built.set_children(children);
     }
-    record(id, node.occurrence, projection);
     nodes.push((id, built));
+    Some(id)
 }
 
-fn record(id: NodeId, occurrence: Occurrence, projection: &mut Projection) {
+/// Note `id` as published; `false` — and counted — when this update already
+/// carries it.
+fn record(id: NodeId, occurrence: Occurrence, projection: &mut Projection) -> bool {
     // Any repeat is a bug, and the two kinds are worth telling apart in a
     // debugger but not in the count: either two locators hashed to one id, or
-    // one control was published twice and would then have two parents.
-    if projection.occurrences.insert(id, occurrence).is_some() {
+    // one control was published twice and would then have two parents. The
+    // first occurrence keeps the id.
+    if projection.occurrences.contains_key(&id) {
         projection.duplicate_ids += 1;
+        return false;
     }
+    projection.occurrences.insert(id, occurrence);
+    true
 }
 
 /// The same conversion, applied to a text run's three geometries.

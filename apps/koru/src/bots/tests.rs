@@ -100,6 +100,61 @@ pub(crate) fn trashed_chat(
     }
 }
 
+/// **Publishable as one AccessKit update**: no node id twice in `nodes`.
+///
+/// `accesskit_consumer` (`Tree::update`, `tree.rs`) panics on an update
+/// that lists one child under two parents, or twice under one — which is
+/// what one node id twice in a tree is, whichever of the two the publisher
+/// meant. The first window run took the whole app down that way from a Bot
+/// tab's header (finding 1). Every published node id is the occurrence's
+/// `node_id`, so a repeat here is exactly the update that panics. `stage`
+/// names the moment in the panic message.
+pub(crate) fn assert_publishable(
+    stage: &str,
+    nodes: &[koru_workspace_host::accessibility::SemanticNode],
+) {
+    fn walk(
+        stage: &str,
+        node: &koru_workspace_host::accessibility::SemanticNode,
+        seen: &mut std::collections::HashMap<u64, String>,
+    ) {
+        let id = node.occurrence.node_id().0;
+        let locator = node.occurrence.locator();
+        if let Some(first) = seen.insert(id, locator.clone()) {
+            panic!("{stage}: node #{id} published twice ({first} and {locator})");
+        }
+        for child in &node.children {
+            walk(stage, child, seen);
+        }
+    }
+    let mut seen = std::collections::HashMap::new();
+    for node in nodes {
+        walk(stage, node, &mut seen);
+    }
+}
+
+/// A Bot tab's published node, as the window builds it for the tab in
+/// front, at the window's origin.
+pub(crate) fn bot_tab_tree(view: &BotView) -> koru_workspace_host::accessibility::SemanticNode {
+    use koru_workspace_host::accessibility::{ViewSlot, WindowSlot};
+    let shell = crate::mainview::accessibility::Shell {
+        window: WindowSlot::from_raw(1),
+        view: ViewSlot::from_raw(1),
+        viewport: (800.0, 600.0),
+        lang: koru_i18n::Lang::En,
+    };
+    crate::mainview::accessibility::bot_tab_semantics(
+        &shell,
+        view,
+        koru_draw::geometry::Rect::new(0.0, 0.0, 800.0, 600.0),
+    )
+}
+
+/// [`assert_publishable`] for a Bot tab.
+pub(crate) fn assert_bot_tab_publishable(stage: &str, view: &BotView) {
+    assert_publishable(stage, &[bot_tab_tree(view)]);
+}
+
 /// **Bots follows agents, and nothing else** (QUESTIONS O32) — not the
 /// Koru AI switch, and not the Agent-views preference, which hides the
 /// Agents and Artifacts views.

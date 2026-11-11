@@ -50,6 +50,18 @@ fn push_bot_tab(
     (commands, answers, id)
 }
 
+/// The whole window's published tree is one AccessKit can take
+/// (`crate::bots::tests::assert_publishable`): the Bot tab, the roster,
+/// the Trash and any question, together.
+fn window_publishable(v: &mut MainView, stage: &str) {
+    v.seat_accessibility(koru_workspace_host::accessibility::WindowSlot::from_raw(1));
+    let tree = v.semantics(
+        koru_workspace_host::accessibility::ViewSlot::from_raw(1),
+        koru_workspace_host::accessibility::Scope::Whole,
+    );
+    crate::bots::tests::assert_publishable(stage, &tree);
+}
+
 /// The identity of the tab in front.
 fn front(v: &mut MainView) -> u64 {
     v.tabs_mut().active_mut().id
@@ -71,7 +83,9 @@ fn writes(commands: &Receiver<Command>) -> Vec<BotCommand> {
 fn archive_is_asked_about_and_sent_only_on_yes() {
     let (mut v, commands, bot) = with_bot_tab();
     let tab = front(&mut v);
+    window_publishable(&mut v, "a Bot tab in front");
     assert!(v.choose_bot_lifecycle(bot.id, tab, MenuAction::ArchiveBot));
+    window_publishable(&mut v, "the Archive question");
     let (dialog, subject) = v.confirm.as_ref().expect("it asks");
     assert_eq!(dialog.title(), "Archive “Scout”?");
     assert!(
@@ -213,6 +227,7 @@ fn bot_rows_in_the_trash_restore_never_delete_and_the_empty_says_so() {
     let mut tab = Tab::trash();
     tab.view = TabView::Trash(trash);
     v.tabs_mut().push(tab);
+    window_publishable(&mut v, "the Trash with a Bot row");
     // A permanent delete of a Bot row asks nothing and does nothing.
     v.pending_delete_forever = Some((vec![node], false));
     v.drain_trash_all(&mut w.ws);
@@ -625,7 +640,7 @@ fn dialog_node(v: &MainView) -> koru_workspace_host::accessibility::SemanticNode
 #[test]
 fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
     use koru_ui::confirm::Outcome;
-    use winit::keyboard::{Key, NamedKey};
+    use winit::keyboard::NamedKey;
     let lang = crate::format::lang();
     for question in [
         Question::Archive,
@@ -699,43 +714,92 @@ fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
                 dialog_verb(question, lang)
             };
             assert_eq!(defaults, [expected], "{case}");
-            assert_eq!(node.children.len(), 2, "{case}: both answers published");
-            // The keyboard: Enter presses the default and Escape cancels —
-            // through the window, so a Cancel sends nothing and a yes sends.
-            let (dialog, subject) = v.confirm.take().unwrap();
-            let mut dialog = dialog;
+            let answers = node
+                .children
+                .iter()
+                .filter(|child| {
+                    matches!(
+                        child.role,
+                        accesskit::Role::Button | accesskit::Role::DefaultButton
+                    )
+                })
+                .count();
+            assert_eq!(answers, 2, "{case}: both answers published");
+            // The question's words are text in the dialog, first, and its
+            // description — never only drawn.
+            let body = dialog_body(&v);
+            assert_eq!(node.description.as_deref(), Some(body.as_str()), "{case}");
             assert_eq!(
-                dialog.key(&Key::Named(NamedKey::Escape)),
-                Outcome::Cancel,
-                "{case}"
+                node.children
+                    .first()
+                    .map(|child| (child.role, child.label.clone())),
+                Some((accesskit::Role::Label, Some(body))),
+                "{case}: the body is published as text"
             );
-            let out = dialog.key(&Key::Named(NamedKey::Enter));
-            assert_eq!(out, default, "{case}");
-            v.confirm = Some((dialog, subject));
-            v.settle_confirm_outcome(out);
+            // What is drawn ringed is what Enter presses.
+            let (dialog, _) = v.confirm.as_ref().unwrap();
+            assert_eq!(dialog.focused(), Some(default), "{case}: the ring");
+            // The keyboard, **as a real key enters**: the window's own
+            // `View::key`, which the shell calls for every press
+            // (`koru_workspace_host::app`, `WindowEvent::KeyboardInput`).
+            // Enter presses the ringed default, so a Cancel sends nothing
+            // and a yes sends.
+            let mut ws =
+                koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+                    .expect("a document");
+            assert!(press(&mut v, &mut ws, NamedKey::Enter), "{case}");
+            assert!(v.confirm.is_none(), "{case}: answered");
             let sent = writes(&commands);
             assert_eq!(
                 sent.is_empty(),
                 default == Outcome::Cancel,
                 "{case}: {sent:?}"
             );
-            // Tab reaches both answers.
-            let (mut v, _commands, _bot, _tab) = ask_with(question, known);
-            let (dialog, _) = v.confirm.as_mut().unwrap();
-            assert_eq!(dialog.key(&Key::Named(NamedKey::Tab)), Outcome::Keep);
-            assert_eq!(
-                dialog.default_action(),
-                Some(Outcome::Confirm),
-                "{case}: Tab reaches the answer"
+            // Escape cancels, whatever the default.
+            let (mut v, commands, _bot, _tab) = ask_with(question, known);
+            assert!(press(&mut v, &mut ws, NamedKey::Escape));
+            assert!(
+                v.confirm.is_none() && writes(&commands).is_empty(),
+                "{case}"
             );
-            assert_eq!(dialog.key(&Key::Named(NamedKey::Tab)), Outcome::Keep);
+            // Tab moves the ring from the default to the other answer and
+            // back, and Enter follows the ring.
+            let (mut v, commands, _bot, _tab) = ask_with(question, known);
+            let other = if default == Outcome::Cancel {
+                Outcome::Confirm
+            } else {
+                Outcome::Cancel
+            };
+            for (step, ringed) in [(1, other), (2, default)] {
+                assert!(press(&mut v, &mut ws, NamedKey::Tab));
+                let (dialog, _) = v.confirm.as_ref().unwrap();
+                assert_eq!(dialog.focused(), Some(ringed), "{case}: Tab {step}");
+                assert_eq!(dialog.default_action(), Some(ringed), "{case}: Tab {step}");
+            }
+            assert!(press(&mut v, &mut ws, NamedKey::Tab));
+            assert!(press(&mut v, &mut ws, NamedKey::Enter));
             assert_eq!(
-                dialog.default_action(),
-                Some(Outcome::Cancel),
-                "{case}: and Cancel"
+                writes(&commands).is_empty(),
+                other == Outcome::Cancel,
+                "{case}: Enter on the ringed other answer"
             );
         }
     }
+}
+
+/// A key pressed on the window as the shell hands it over.
+fn press(
+    v: &mut MainView,
+    ws: &mut koru_core::schema::WorkspaceDoc,
+    key: winit::keyboard::NamedKey,
+) -> bool {
+    koru_workspace_host::View::key(
+        v,
+        ws,
+        &winit::keyboard::Key::Named(key),
+        None,
+        winit::keyboard::ModifiersState::empty(),
+    )
 }
 
 /// The question's title, as asked.
@@ -743,6 +807,14 @@ fn dialog_title(v: &MainView) -> String {
     v.confirm
         .as_ref()
         .map(|(dialog, _)| dialog.title().to_owned())
+        .unwrap_or_default()
+}
+
+/// The question's body, as asked.
+fn dialog_body(v: &MainView) -> String {
+    v.confirm
+        .as_ref()
+        .map(|(dialog, _)| dialog.body().to_owned())
         .unwrap_or_default()
 }
 

@@ -96,7 +96,9 @@ impl Fixture {
                 result: creations,
             })
             .expect("the roster's end is open");
-        self.roster.maintain()
+        let changed = self.roster.maintain();
+        let _ = frame_of(&self.roster);
+        changed
     }
 
     /// Show the roster and answer its first request with `bots`.
@@ -119,6 +121,12 @@ impl Fixture {
 
 /// The roster's frame, laid out as input and accessibility lay it out.
 fn frame_of(roster: &BotsRoster) -> Frame {
+    // Wherever a test looks at the roster, its published tree is one
+    // AccessKit can take (`crate::bots::tests::assert_publishable`).
+    crate::bots::tests::assert_publishable(
+        "the roster",
+        &crate::panes::explore::accessibility::roster_tree(roster),
+    );
     crate::input_engine::with(|engine| roster.layout(engine, area(), top()).1)
 }
 
@@ -774,6 +782,7 @@ fn the_archived_filter_lists_opens_and_unarchives() {
         })
         .unwrap();
     f.roster.maintain();
+    let _ = frame_of(&f.roster);
     let finished = f.roster.take_finished();
     assert_eq!(finished.len(), 1);
     assert_eq!(finished[0].reverses, Some(BotLifecycleKind::Archive));

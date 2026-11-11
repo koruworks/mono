@@ -72,6 +72,8 @@ const ITEM: ControlPart = ControlPart::new("item");
 const CONFIRM_CANCEL: ControlPart = ControlPart::new("confirm-cancel");
 const CONFIRM_ALTERNATIVE: ControlPart = ControlPart::new("confirm-alternative");
 const CONFIRM_ANSWER: ControlPart = ControlPart::new("confirm-answer");
+/// The question's body, as text a reader walks before the answers.
+const CONFIRM_BODY: ControlPart = ControlPart::new("confirm-body");
 
 fn answer_part(outcome: koru_ui::confirm::Outcome) -> Option<ControlPart> {
     use koru_ui::confirm::Outcome;
@@ -211,23 +213,36 @@ impl MainView {
     fn confirm_semantics(&self, cx: &Shell, blockers: Blockers) -> Option<SemanticNode> {
         let (dialog, _) = self.confirm.as_ref()?;
         let default = dialog.default_action();
-        let answers = crate::input_engine::with(|engine| dialog.answers(engine, cx.viewport));
-        let buttons = answers
-            .into_iter()
-            .filter_map(|(outcome, label, rect)| {
-                let role = if default == Some(outcome) {
-                    Role::DefaultButton
-                } else {
-                    Role::Button
-                };
-                Some(
-                    SemanticNode::new(cx.surface(SHELL, answer_part(outcome)?), role)
-                        .with_label(label)
-                        .with_bounds(rect)
-                        .with_action(Action::Click),
-                )
-            })
-            .collect();
+        let (answers, body_rect) = crate::input_engine::with(|engine| {
+            (
+                dialog.answers(engine, cx.viewport),
+                dialog.body_rect(engine, cx.viewport),
+            )
+        });
+        // **The body is text in the dialog**, before its answers, as well as
+        // the dialog's description: `accesskit_windows` maps a description
+        // to UIA's FullDescription, which a client asking for HelpText — and
+        // a reader walking the dialog — never reads (the first window run
+        // found the question's words missing).
+        let body = (!dialog.body().trim().is_empty()).then(|| {
+            SemanticNode::new(cx.surface(SHELL, CONFIRM_BODY), Role::Label)
+                .with_label(dialog.body())
+                .with_bounds(body_rect)
+        });
+        let buttons = answers.into_iter().filter_map(|(outcome, label, rect)| {
+            let role = if default == Some(outcome) {
+                Role::DefaultButton
+            } else {
+                Role::Button
+            };
+            Some(
+                SemanticNode::new(cx.surface(SHELL, answer_part(outcome)?), role)
+                    .with_label(label)
+                    .with_bounds(rect)
+                    .with_action(Action::Click),
+            )
+        });
+        let children: Vec<SemanticNode> = body.into_iter().chain(buttons).collect();
         Some(
             SemanticNode::new(cx.surface(SHELL, blocker_part(blockers)), Role::Dialog)
                 .with_label(dialog.title())
@@ -239,7 +254,7 @@ impl MainView {
                     cx.viewport.1,
                 ))
                 .modal()
-                .with_children(buttons),
+                .with_children(children),
         )
     }
 

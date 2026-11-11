@@ -386,6 +386,65 @@ fn a_control_published_twice_is_counted_rather_than_silently_reparented() {
     assert_eq!(projection.duplicate_ids, 1);
 }
 
+/// **A control published twice is published once**, and the update can be
+/// handed to AccessKit. `accesskit_consumer`'s `Tree::update` panics on an
+/// update that names one child twice — under two parents or under one
+/// ("TreeUpdate includes duplicate child") — and that panic took a whole
+/// window down when a Bot tab published two header lines under one id (the
+/// first window run of Bots). The second occurrence and everything under
+/// it are left out; the count still says a caller has a bug.
+#[test]
+fn a_control_published_twice_never_reaches_the_adapter_twice() {
+    let window = WindowSlot::from_raw(1);
+    let view = ViewSlot::from_raw(1);
+    let twice = Occurrence::model(window, view, doc(), ControlPart::ROOT);
+    let under = Occurrence::model(window, view, doc(), ControlPart::new("under"));
+    let group = |part: &'static str, children: Vec<SemanticNode>| {
+        SemanticNode::new(
+            Occurrence::model(window, view, doc(), ControlPart::new(part)),
+            Role::Group,
+        )
+        .with_children(children)
+    };
+    let projection = build(&semantics(
+        window,
+        "Notes",
+        vec![
+            // Twice under one parent…
+            group(
+                "first",
+                vec![
+                    SemanticNode::new(twice, Role::Label),
+                    SemanticNode::new(twice, Role::Label),
+                ],
+            ),
+            // …and again, with a child of its own, under another.
+            group(
+                "second",
+                vec![
+                    SemanticNode::new(twice, Role::Label)
+                        .with_children(vec![SemanticNode::new(under, Role::Label)]),
+                ],
+            ),
+        ],
+    ));
+    assert_eq!(projection.duplicate_ids, 2, "still counted");
+    let mut children = HashSet::new();
+    for (_, node) in &projection.update.nodes {
+        for child in node.children() {
+            assert!(children.insert(*child), "child {child:?} named twice");
+        }
+    }
+    let mut ids = HashSet::new();
+    for (id, _) in &projection.update.nodes {
+        assert!(ids.insert(*id), "node {id:?} carried twice");
+    }
+    assert!(
+        !ids.contains(&under.node_id()),
+        "what hung under the repeat is left out with it"
+    );
+}
+
 #[test]
 fn logical_bounds_are_scaled_to_physical_client_pixels_exactly_once() {
     let window = WindowSlot::from_raw(1);
