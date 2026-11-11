@@ -1139,6 +1139,7 @@ enum Envelope {
     },
     BotCoordinated(bots::BotCoordinationResult),
     BotChatStep(bots::chat::StepResult),
+    BotLifecycleStep(bots::LifecycleResult),
     BotInteraction(bots::chat::ControlResult),
     BotInteractionRead(bots::chat::ControlReadResult),
     BotSteer(bots::chat::SteerResult),
@@ -1552,6 +1553,8 @@ struct WorkerState {
     bot_chat_recovery: Option<Option<InferenceAttemptId>>,
     bot_coordination: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
     bot_recovery_after: Option<i64>,
+    /// The lifecycle operations the writer is driving (P1.7).
+    bot_lifecycle: bots::LifecycleDriver,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
@@ -1806,6 +1809,7 @@ fn run_worker(
         bot_policy_pending: HashSet::new(),
         bot_policy_recovery: bots::policy::PolicyRecovery::default(),
         bot_recovery_after: Some(0),
+        bot_lifecycle: Default::default(),
         bot_delegate: config.bot_delegate,
         bot_authority: config.bot_authority,
         repository,
@@ -1867,6 +1871,7 @@ fn run_worker(
         }
         state.drain_agent_commands();
         state.schedule_bot_chat_step();
+        state.schedule_bot_lifecycle();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
             Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
@@ -1898,6 +1903,7 @@ fn run_worker(
             Ok(Envelope::BotPolicyRecover { restart }) => state.recover_bot_policy(restart),
             Ok(Envelope::BotCoordinated(result)) => state.complete_bot_coordination(result),
             Ok(Envelope::BotChatStep(result)) => state.complete_bot_chat_step(result),
+            Ok(Envelope::BotLifecycleStep(result)) => state.complete_bot_lifecycle(result),
             Ok(Envelope::BotInteraction(result)) => state.complete_bot_interaction(result),
             Ok(Envelope::BotInteractionRead(result)) => state.complete_bot_interaction_read(result),
             Ok(Envelope::BotSteer(result)) => state.complete_bot_steer(result),
@@ -5509,6 +5515,7 @@ enum ProviderAdminJob {
     BotCoordinate(bots::BotCoordinationJob),
     BotPrepare(bots::BotPreparationJob),
     BotBranch(bots::BotBranchJob),
+    BotLifecycle(bots::LifecycleJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -5618,6 +5625,13 @@ impl ProviderAdminPool {
                                     command: Box::new(command),
                                     proof,
                                 },
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotLifecycle(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotLifecycleStep(job.run()),
                                 &thread_shutdown,
                             );
                         }

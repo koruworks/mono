@@ -3,6 +3,7 @@ use super::super::tests::fixture_bot;
 use super::*;
 use koru_delegate_core::RunId;
 use std::collections::BTreeSet;
+mod archive;
 mod migration;
 mod plans;
 mod visibility;

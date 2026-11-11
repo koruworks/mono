@@ -136,7 +136,7 @@ impl WorkerState {
             let mut pages = BTreeSet::new();
             let mut chats = Vec::new();
             for (id, chat) in targets {
-                let bot = match self.repository.bot(id) {
+                let bot = match super::lifecycle::provable_bot(&self.repository, id, &command) {
                     Ok(Some(bot)) => bot,
                     Ok(None) | Err(BotError::Forbidden | BotError::NotFound) => continue,
                     Err(error) => return Err(bot_failure(error)),
@@ -183,6 +183,7 @@ impl WorkerState {
                     BotCommand::Start {
                         bot_id,
                         request_id,
+                        chat_id,
                         destination,
                         task,
                         ..
@@ -190,10 +191,33 @@ impl WorkerState {
                     | BotCommand::Continue {
                         bot_id,
                         request_id,
+                        chat_id,
                         destination,
                         task,
                         ..
-                    } => {
+                    } => 'start: {
+                        // A trashed Bot, one under a whole-Bot operation, or a
+                        // held conversation of it, is refused at dispatch by its
+                        // hold with the stable code (P1.7). Nothing is captured
+                        // for it here, not even Role history.
+                        if self
+                            .repository
+                            .bot_hold(*bot_id)
+                            .map_err(bot_failure)?
+                            .is_some()
+                            || (self
+                                .repository
+                                .bot_for_chat(*chat_id)
+                                .map_err(bot_failure)?
+                                == Some(*bot_id)
+                                && self
+                                    .repository
+                                    .bot_chat_hold(*chat_id)
+                                    .map_err(bot_failure)?
+                                    .is_some())
+                        {
+                            break 'start;
+                        }
                         let bot = self
                             .repository
                             .bot(*bot_id)
@@ -345,7 +369,7 @@ impl WorkerState {
         let destination = branch_destination(&command);
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
-            match self.repository.bot(*id) {
+            match super::lifecycle::provable_bot(&self.repository, *id, &command) {
                 Ok(Some(bot))
                     if (owner == Some(*id) || (owner.is_none() && destination == Some(*chat)))
                         && bot.revision == *revision
@@ -421,7 +445,7 @@ pub(super) fn bot_targets(
             | BotCommand::ReadLifecycleOperation { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
         };
-        match repository.bot(id) {
+        match super::lifecycle::provable_bot(repository, id, command) {
             Ok(Some(bot)) => {
                 let chat = match request {
                     // A named conversation must already belong to this Bot; refusing here

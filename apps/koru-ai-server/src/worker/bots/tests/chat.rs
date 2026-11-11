@@ -8,6 +8,7 @@ use std::sync::Mutex;
 mod attachments;
 mod controls;
 mod interruption;
+mod lifecycle;
 mod questions;
 mod refusal;
 

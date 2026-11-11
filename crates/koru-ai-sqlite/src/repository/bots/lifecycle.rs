@@ -153,59 +153,71 @@ impl Repository {
         &mut self,
         capture: &LifecycleCapture,
     ) -> Result<LifecycleOperation, BotError> {
-        validate_capture(capture)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(bad)?;
-        if let Some(existing) = read_operation(&tx, capture.owner.user_scope, capture.operation)? {
-            return if existing.bot == capture.bot
-                && existing.fingerprint == capture.fingerprint
-                && existing.owner == capture.owner
-            {
-                Ok(existing)
-            } else {
-                Err(BotError::Conflict)
-            };
-        }
-        let (current, prior) = admission::guard_any_lifecycle(&tx, capture.owner, capture.bot)?;
-        if !allowed_prior(capture.kind, prior) {
-            return Err(BotError::Conflict);
-        }
-        if let Some(chat) = capture.chat
-            && bot_for_chat_on(&tx, chat)? != Some(capture.bot)
+        let (operation, _) = capture_on(&tx, capture)?;
+        tx.commit().map_err(bad)?;
+        Ok(operation)
+    }
+}
+
+/// Capture inside the caller's transaction. The flag says whether this call
+/// wrote the operation (`false`: an exact repeat found the stored one).
+fn capture_on(
+    tx: &Connection,
+    capture: &LifecycleCapture,
+) -> Result<(LifecycleOperation, bool), BotError> {
+    validate_capture(capture)?;
+    if let Some(existing) = read_operation(tx, capture.owner.user_scope, capture.operation)? {
+        return if existing.bot == capture.bot
+            && existing.fingerprint == capture.fingerprint
+            && existing.owner == capture.owner
         {
-            return Err(BotError::Forbidden);
-        }
-        require_no_open_operation(&tx, capture)?;
-        if let Some(source) = capture.source {
-            require_source(&tx, capture, source)?;
-        }
-        let pauses = capture.kind.pauses(prior);
-        let (pause_request, policy_request, barrier_revision) = if pauses {
-            let request = BotRequestId::mint();
-            admission::prepare_bot_pause_on(
-                &tx,
-                capture.owner,
-                capture.bot,
-                request,
-                capture.expected_revision,
-                true,
-                &capture.fingerprint,
-                capture.now,
-            )?;
-            (
-                Some(request),
-                Some(NativePolicyRequestId::from(BotRequestId::mint())),
-                Some(capture.expected_revision + 1),
-            )
+            Ok((existing, false))
         } else {
-            if current.revision != capture.expected_revision {
-                return Err(BotError::RevisionConflict);
-            }
-            (None, None, None)
+            Err(BotError::Conflict)
         };
-        tx.execute(
+    }
+    let (current, prior) = admission::guard_any_lifecycle(tx, capture.owner, capture.bot)?;
+    if !allowed_prior(capture.kind, prior) {
+        return Err(BotError::Conflict);
+    }
+    if let Some(chat) = capture.chat
+        && bot_for_chat_on(&tx, chat)? != Some(capture.bot)
+    {
+        return Err(BotError::Forbidden);
+    }
+    require_no_open_operation(&tx, capture)?;
+    if let Some(source) = capture.source {
+        require_source(&tx, capture, source)?;
+    }
+    let pauses = capture.kind.pauses(prior);
+    let (pause_request, policy_request, barrier_revision) = if pauses {
+        let request = BotRequestId::mint();
+        admission::prepare_bot_pause_on(
+            &tx,
+            capture.owner,
+            capture.bot,
+            request,
+            capture.expected_revision,
+            true,
+            &capture.fingerprint,
+            capture.now,
+        )?;
+        (
+            Some(request),
+            Some(NativePolicyRequestId::from(BotRequestId::mint())),
+            Some(capture.expected_revision + 1),
+        )
+    } else {
+        if current.revision != capture.expected_revision {
+            return Err(BotError::RevisionConflict);
+        }
+        (None, None, None)
+    };
+    tx.execute(
             "INSERT INTO bot_lifecycle_intents(user_scope_id,operation_id,bot_id,owner_device_id,kind,chat_id,fingerprint,expected_revision,barrier_revision,source_operation_id,prior_lifecycle,pause_request_id,policy_request_id,policy_barrier_state,stage,refusal,requested_at_ms,updated_at_ms,completed_at_ms)
              VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,NULL,?16,?16,NULL)",
             params![
@@ -228,15 +240,15 @@ impl Repository {
             ],
         )
         .map_err(bad)?;
-        for (ordinal, member) in capture.members.iter().enumerate() {
-            insert_member(&tx, capture, ordinal, member)?;
-        }
-        let operation = read_operation(&tx, capture.owner.user_scope, capture.operation)?
-            .ok_or(BotError::Storage)?;
-        tx.commit().map_err(bad)?;
-        Ok(operation)
+    for (ordinal, member) in capture.members.iter().enumerate() {
+        insert_member(&tx, capture, ordinal, member)?;
     }
+    let operation = read_operation(tx, capture.owner.user_scope, capture.operation)?
+        .ok_or(BotError::Storage)?;
+    Ok((operation, true))
+}
 
+impl Repository {
     pub fn bot_lifecycle_operation(
         &self,
         scope: UserScopeId,
@@ -253,7 +265,7 @@ impl Repository {
         let row: Option<(String, String)> = self
             .connection
             .query_row(
-                "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents WHERE chat_id=?1 AND stage<>'completed'",
+                &format!("SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i WHERE chat_id=?1 AND {OPEN}"),
                 [chat.to_storage()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -308,6 +320,311 @@ impl Repository {
     }
 }
 
+/// An unfinished operation, unless a completed Restore reversed it. An
+/// Archive parked incomplete and then reversed holds nothing any more; its
+/// own record still reads as it stopped. `i` is the intent row.
+const OPEN: &str = "i.stage<>'completed' AND NOT EXISTS(SELECT 1 FROM bot_lifecycle_intents r WHERE r.user_scope_id=i.user_scope_id AND r.source_operation_id=i.operation_id AND r.stage='completed')";
+
+/// The driver's writes (P1.7 S4). Each is one short transaction on the AI
+/// writer; every owner call happens before or after, never inside.
+impl Repository {
+    /// Every conversation of a Bot, with whether it is in Trash: what a
+    /// whole-Bot operation captures.
+    pub fn lifecycle_bot_chats(&self, bot: BotId) -> Result<Vec<(ChatId, bool)>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(
+                "SELECT bc.chat_id,EXISTS(SELECT 1 FROM bot_chat_trash t WHERE t.chat_id=bc.chat_id)
+                 FROM bot_chats bc WHERE bc.bot_id=?1 ORDER BY bc.purpose<>'main',bc.created_at_ms,bc.chat_id",
+            )
+            .map_err(bad)?;
+        let rows = query
+            .query_map([bot.to_storage()], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+            })
+            .map_err(bad)?;
+        rows.map(|row| {
+            let (chat, trashed) = row.map_err(bad)?;
+            Ok((ChatId::parse(&chat).ok_or(BotError::Storage)?, trashed))
+        })
+        .collect()
+    }
+
+    /// Up to `limit` of one Bot's Start/Continue receipts its owner has not
+    /// settled yet, through ai17's per-Bot `bot_command_guard` index.
+    pub fn bot_unresolved_submissions(
+        &self,
+        bot: BotId,
+        limit: u16,
+    ) -> Result<Vec<(UserScopeId, BotRequestId)>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(
+                "SELECT user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_command_guard
+                 WHERE bot_id=?1 AND command_kind IN ('start','continue') AND stage IN ('prepared','accepted')
+                 LIMIT ?2",
+            )
+            .map_err(bad)?;
+        let rows = query
+            .query_map(params![bot.to_storage(), limit.clamp(1, 64)], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(bad)?;
+        rows.map(|row| {
+            let (scope, request) = row.map_err(bad)?;
+            Ok((
+                UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
+                request.parse().map_err(bad)?,
+            ))
+        })
+        .collect()
+    }
+
+    /// The unfinished, unreversed whole-Bot operation that installed an
+    /// effects-off barrier, if any (at most one moves, and a parked one
+    /// blocks any other).
+    pub fn open_bot_lifecycle(
+        &self,
+        bot: BotId,
+    ) -> Result<Option<(UserScopeId, BotRequestId)>, BotError> {
+        let row: Option<(String, String)> = self
+            .connection
+            .query_row(
+                &format!(
+                    "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i
+                     WHERE bot_id=?1 AND chat_id IS NULL AND policy_request_id IS NOT NULL AND {OPEN}
+                     ORDER BY requested_at_ms DESC LIMIT 1"
+                ),
+                [bot.to_storage()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(bad)?;
+        row.map(|(scope, operation)| {
+            Ok((
+                UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
+                operation.parse().map_err(bad)?,
+            ))
+        })
+        .transpose()
+    }
+
+    /// Whether a completed Restore names this operation as its source.
+    pub fn bot_lifecycle_reversed(
+        &self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+    ) -> Result<bool, BotError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE user_scope_id=?1 AND source_operation_id=?2 AND stage='completed')",
+                params![scope.to_storage(), operation.to_storage()],
+                |r| r.get(0),
+            )
+            .map_err(bad)
+    }
+
+    /// Move a moving operation from `from` to `to`, and record its
+    /// effects-off barrier effective when the owner said so. `false` when
+    /// the operation was no longer at `from` (parked, or moved on already).
+    pub fn advance_bot_lifecycle(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        from: BotLifecycleStage,
+        to: BotLifecycleStage,
+        policy_effective: bool,
+        now: i64,
+    ) -> Result<bool, BotError> {
+        if matches!(
+            to,
+            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
+        ) || matches!(
+            from,
+            BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
+        ) {
+            return Err(BotError::Invalid);
+        }
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE bot_lifecycle_intents SET stage=?4,updated_at_ms=?6,
+                   policy_barrier_state=CASE WHEN ?5 AND policy_request_id IS NOT NULL THEN 'effective' ELSE policy_barrier_state END
+                 WHERE user_scope_id=?1 AND operation_id=?2 AND stage=?3",
+                params![
+                    scope.to_storage(),
+                    operation.to_storage(),
+                    from.token(),
+                    to.token(),
+                    policy_effective,
+                    now
+                ],
+            )
+            .map_err(bad)?;
+        Ok(changed == 1)
+    }
+
+    /// Park a moving operation as incomplete. Its barrier stays: the Bot stays
+    /// paused and its effects off until a retry finishes it or a Restore
+    /// reverses it.
+    pub fn park_bot_lifecycle(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        refusal: BotLifecycleRefusal,
+        now: i64,
+    ) -> Result<bool, BotError> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE bot_lifecycle_intents SET stage='incomplete',refusal=?3,updated_at_ms=?4
+                 WHERE user_scope_id=?1 AND operation_id=?2 AND stage NOT IN ('completed','incomplete')",
+                params![
+                    scope.to_storage(),
+                    operation.to_storage(),
+                    refusal.token(),
+                    now
+                ],
+            )
+            .map_err(bad)?;
+        Ok(changed == 1)
+    }
+
+    /// A repeated request resumes its parked operation from `captured`, which
+    /// re-asks every owner idempotently. A reversed operation stays parked.
+    pub fn resume_bot_lifecycle(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        now: i64,
+    ) -> Result<bool, BotError> {
+        if self.bot_lifecycle_reversed(scope, operation)? {
+            return Ok(false);
+        }
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE bot_lifecycle_intents SET stage='captured',refusal=NULL,updated_at_ms=?3
+                 WHERE user_scope_id=?1 AND operation_id=?2 AND stage='incomplete'",
+                params![scope.to_storage(), operation.to_storage(), now],
+            )
+            .map_err(|error| match error {
+                // Another operation of the Bot is moving: one winner.
+                rusqlite::Error::SqliteFailure(e, _)
+                    if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    BotError::Conflict
+                }
+                other => bad(other),
+            })?;
+        Ok(changed == 1)
+    }
+
+    /// Archive's last step, once its work is settled and its effects-off
+    /// barrier is effective: the Bot becomes archived, its revision goes up,
+    /// every captured member is acknowledged and the operation completes.
+    /// Nothing is hidden or removed.
+    pub fn complete_bot_archive(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        now: i64,
+    ) -> Result<LifecycleOperation, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let op = read_operation(&tx, scope, operation)?.ok_or(BotError::NotFound)?;
+        if op.kind != BotLifecycleKind::Archive
+            || op.stage != BotLifecycleStage::Settling
+            || op.policy_barrier != Some(BotLifecycleBarrierState::Effective)
+        {
+            return Err(BotError::Conflict);
+        }
+        let (current, prior) = admission::guard_any_lifecycle(&tx, op.owner, op.bot)?;
+        if prior != BotLifecycle::Active {
+            return Err(BotError::Conflict);
+        }
+        if Some(current.revision) != op.barrier_revision {
+            return Err(BotError::RevisionConflict);
+        }
+        let revision = current.revision.checked_add(1).ok_or(BotError::Invalid)?;
+        tx.execute(
+            "UPDATE bots SET lifecycle='archived',revision=?2,updated_at_ms=?3 WHERE bot_id=?1 AND revision=?4",
+            params![op.bot.to_storage(), revision, now, current.revision],
+        )
+        .map_err(bad)?;
+        tx.execute(
+            "UPDATE bot_lifecycle_members SET stage='acknowledged',updated_at_ms=?3
+             WHERE user_scope_id=?1 AND operation_id=?2 AND stage='pending'",
+            params![scope.to_storage(), operation.to_storage(), now],
+        )
+        .map_err(bad)?;
+        tx.execute(
+            "UPDATE bot_lifecycle_intents SET stage='completed',completed_at_ms=?3,updated_at_ms=?3
+             WHERE user_scope_id=?1 AND operation_id=?2 AND stage='settling'",
+            params![scope.to_storage(), operation.to_storage(), now],
+        )
+        .map_err(bad)?;
+        let done = read_operation(&tx, scope, operation)?.ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+
+    /// Unarchive: a Restore naming a completed or parked Archive, captured and
+    /// applied in one transaction. The Bot is active again and still paused;
+    /// its revision goes up. No owner is called and nothing is resumed. An
+    /// exact repeat returns the stored Restore.
+    pub fn unarchive_bot(
+        &mut self,
+        capture: &LifecycleCapture,
+    ) -> Result<LifecycleOperation, BotError> {
+        if capture.kind != BotLifecycleKind::Restore || !capture.members.is_empty() {
+            return Err(BotError::Invalid);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let source = capture.source.ok_or(BotError::Invalid)?;
+        let original =
+            read_operation(&tx, capture.owner.user_scope, source)?.ok_or(BotError::NotFound)?;
+        if original.kind != BotLifecycleKind::Archive {
+            return Err(BotError::Invalid);
+        }
+        let (restore, fresh) = capture_on(&tx, capture)?;
+        if !fresh {
+            return Ok(restore);
+        }
+        let (current, prior) = admission::guard_any_lifecycle(&tx, capture.owner, capture.bot)?;
+        let revision = current.revision.checked_add(1).ok_or(BotError::Invalid)?;
+        // A parked Archive left the Bot active and paused; a completed one
+        // archived it. Either way it returns active, and stays paused.
+        if !matches!(prior, BotLifecycle::Archived | BotLifecycle::Active) {
+            return Err(BotError::Conflict);
+        }
+        tx.execute(
+            "UPDATE bots SET lifecycle='active',paused=1,revision=?2,updated_at_ms=?3 WHERE bot_id=?1 AND revision=?4",
+            params![capture.bot.to_storage(), revision, capture.now, current.revision],
+        )
+        .map_err(bad)?;
+        tx.execute(
+            "UPDATE bot_lifecycle_intents SET stage='completed',completed_at_ms=?3,updated_at_ms=?3
+             WHERE user_scope_id=?1 AND operation_id=?2 AND stage='captured'",
+            params![
+                capture.owner.user_scope.to_storage(),
+                capture.operation.to_storage(),
+                capture.now
+            ],
+        )
+        .map_err(bad)?;
+        let done = read_operation(&tx, capture.owner.user_scope, capture.operation)?
+            .ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+}
+
 /// Why lifecycle holds a Bot or one of its conversations still.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotHold {
@@ -350,8 +667,10 @@ impl Repository {
         let (trashed, pending): (bool, bool) = self
             .connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='trashed'),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE bot_id=?1 AND stage<>'completed' AND chat_id IS NULL)",
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='trashed'),
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND {OPEN})"
+                ),
                 [bot.to_storage()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -367,8 +686,10 @@ impl Repository {
         let (trashed, pending): (bool, bool) = self
             .connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE chat_id=?1 AND stage<>'completed')",
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1),
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND {OPEN})"
+                ),
                 [chat.to_storage()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -547,7 +868,9 @@ fn require_no_open_operation(
     capture: &LifecycleCapture,
 ) -> Result<(), BotError> {
     let mut query = conn
-        .prepare("SELECT user_scope_id,operation_id,stage FROM bot_lifecycle_intents WHERE bot_id=?1 AND stage<>'completed'")
+        .prepare(&format!(
+            "SELECT user_scope_id,operation_id,stage FROM bot_lifecycle_intents i WHERE bot_id=?1 AND {OPEN}"
+        ))
         .map_err(bad)?;
     let rows = query
         .query_map([capture.bot.to_storage()], |row| {

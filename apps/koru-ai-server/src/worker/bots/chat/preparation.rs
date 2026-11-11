@@ -105,10 +105,13 @@ pub(in crate::worker) fn chat_capture(
     let Some(id) = repository.bot_for_chat(chat_id).map_err(bot_failure)? else {
         return Ok(None);
     };
-    let bot = repository
-        .bot(id)
-        .map_err(bot_failure)?
-        .ok_or_else(not_found)?;
+    let bot = match repository.bot(id) {
+        Ok(Some(bot)) => bot,
+        // An archived or trashed Bot is answered by the guard, which never
+        // admits a change to it; nothing is captured for it here (P1.7).
+        Ok(None) | Err(BotError::Forbidden) => return Ok(None),
+        Err(error) => return Err(bot_failure(error)),
+    };
     let destination = destination.ok_or_else(|| {
         failure(
             "invalid_request",

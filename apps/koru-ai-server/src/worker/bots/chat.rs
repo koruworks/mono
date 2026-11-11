@@ -30,6 +30,36 @@ pub(in crate::worker) use preparation::{chat_capture, retry_anchor, retry_input}
 pub(in crate::worker) use questions::TerminalQuestionProof;
 pub(in crate::worker) use settings::{SettingsProof, settings_capture};
 
+impl LiveChat {
+    /// What a lifecycle operation settling this task reads (P1.7): its Run,
+    /// the Run's workspace, whether it has a session a person could hold, and
+    /// its submission's owner key.
+    pub(in crate::worker) fn lifecycle_view(
+        &self,
+    ) -> (
+        koru_delegate_core::BotRunKey,
+        WorkspaceId,
+        bool,
+        BotSubmissionKey,
+    ) {
+        let p = &self.submission.provenance;
+        (
+            koru_delegate_core::BotRunKey {
+                owner: p.owner,
+                bot: p.bot,
+                run: self.submission.request.run,
+            },
+            self.submission.workspace,
+            self.fence.is_some(),
+            BotSubmissionKey {
+                owner: p.owner,
+                bot: p.bot,
+                request: p.submission,
+            },
+        )
+    }
+}
+
 fn bot_route_error() -> AiError {
     AiError::new(
         AiErrorClass::Provider,

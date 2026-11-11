@@ -341,10 +341,16 @@ impl WorkerState {
             PolicyWork::Lookup {
                 reply, deadline, ..
             } => {
+                // While an Archive is settling the Bot, its own effects-off
+                // barrier is the current evidence (P1.7).
+                let lifecycle = self.lifecycle_policy_barrier(&result.bot);
                 let value = if same && Instant::now() < deadline {
                     result.result.and_then(|(profile, _)| {
                         Ok(NativePolicyEvidence {
-                            barrier: barrier(&result.bot)?,
+                            barrier: match lifecycle {
+                                Some(barrier) => barrier,
+                                None => barrier(&result.bot)?,
+                            },
                             profile,
                         })
                     })

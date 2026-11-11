@@ -21,6 +21,7 @@ pub(crate) mod policy;
 mod preparation;
 pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
 pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingBotBranch};
+pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
 impl WorkerState {
@@ -33,7 +34,9 @@ impl WorkerState {
         };
         let mut allowed = Vec::new();
         for (id, chat, revision, policy) in &proof.chats {
-            if let Ok(Some(bot)) = self.repository.bot(*id)
+            // An archived Bot's conversations stay readable (P1.7); a change
+            // never carries such a proof past the guard.
+            if let Ok(Some(bot)) = lifecycle::readable_bot(&self.repository, *id)
                 && bot.revision == *revision
                 && bot.policy_revision == *policy
                 && self.repository.bot_for_chat(*chat).map_err(bot_failure)? == Some(*id)
@@ -443,8 +446,7 @@ fn guard_command(
                 return Err(not_found());
             }
             require_held_owner(repository, authority, &command)?;
-            let bot = repository
-                .bot(id)
+            let bot = lifecycle::provable_bot(repository, id, &command)
                 .map_err(bot_failure)?
                 .ok_or_else(not_found)?;
             validate_owner(
