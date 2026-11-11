@@ -808,10 +808,12 @@ impl MainView {
     /// known to list ever *replaces* a tab — the tab handed back is closed,
     /// and it must not be the page the person was reading.
     pub(crate) fn open_chat_where(&mut self, target: ChatTarget, where_: OpenWhere) -> bool {
-        if !koru_features::ai() {
+        let id = koru_ai_ui::ChatId::from_uuid(target.chat);
+        // A Bot's conversation follows agents, not the Koru AI switch
+        // (QUESTIONS O32).
+        if !koru_features::ai() && !self.known_bot_conversation(id) {
             return false;
         }
-        let id = koru_ai_ui::ChatId::from_uuid(target.chat);
         let block = target.block.map(koru_ai_ui::MessageBlockId::from_uuid);
         tracing::info!(
             target: "koru::chat_link",

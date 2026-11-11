@@ -44,10 +44,11 @@ pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot
     }
 }
 
-/// **Bots follows agents and Koru AI together, and nothing else** — not the
-/// Agent-views preference, which hides the Agents and Artifacts views.
+/// **Bots follows agents, and nothing else** (QUESTIONS O32) — not the
+/// Koru AI switch, and not the Agent-views preference, which hides the
+/// Agents and Artifacts views.
 #[test]
-fn bots_show_wherever_agents_and_koru_ai_are_on_whatever_agent_views_says() {
+fn bots_show_wherever_agents_are_on_whatever_ai_and_agent_views_say() {
     let on = Features {
         agents: true,
         ai: true,
@@ -76,7 +77,14 @@ fn bots_show_wherever_agents_and_koru_ai_are_on_whatever_agent_views_says() {
                 ai: false,
                 ..Features::ALL_ON
             },
-            false,
+            true,
+        ),
+        (
+            Features {
+                agents: true,
+                ..Features::ALL_OFF
+            },
+            true,
         ),
         (
             Features {

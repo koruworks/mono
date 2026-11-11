@@ -67,6 +67,27 @@ impl MainView {
         }
     }
 
+    /// **Whether the window knows `chat` is a Bot's conversation** — the
+    /// roster's main conversations, a learned label, or a Bot tab already on
+    /// it. What lets a Bot's conversation through the window's Koru AI gates
+    /// when that switch is off: Bots follow agents alone (QUESTIONS O32).
+    /// A chat the window cannot place is not let through then: with Koru AI
+    /// off there is no ordinary chat to fall back to, and asking whose it is
+    /// first is not built.
+    pub(super) fn known_bot_conversation(&self, chat: koru_ai_ui::ChatId) -> bool {
+        if !crate::bots::shown() {
+            return false;
+        }
+        self.bot_for_chat(chat).is_some()
+            || matches!(self.bot_labels.known(chat), Some(Known::Bot { .. }))
+            || self.panes.iter_groups().any(|(_, group)| {
+                group.iter_tabs().any(|tab| {
+                    matches!(&tab.view, TabView::Bot(view) if view.bot().is_some())
+                        && tab.view.chat_id() == Some(chat)
+                })
+            })
+    }
+
     /// What the window knows about whose `chat` is: a label it learned, or
     /// a chat one of its ordinary lists holds — those lists' reader cannot
     /// see a Bot's conversation, so a chat they hold without a label is an

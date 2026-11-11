@@ -669,20 +669,43 @@ fn the_controls_publish_names_in_the_keyboards_order() {
         .filter(|key| *key != ACCESS_CHOICE)
         .collect();
     assert_eq!(pressable, order, "the tree reads in the keyboard's order");
-    for key in [RUNS_ON, RUNTIME_LIMITS, CODEX_ONLY] {
+    for key in [RUNS_ON, RUNTIME_LIMITS] {
         let line = all
             .iter()
             .find(|c| c.key == key)
             .expect("the disclosure is published");
         assert_eq!(line.role, ControlRole::Label);
-        if key != CODEX_ONLY {
-            assert!(
-                line.label.contains("Codex"),
-                "names the agent: {}",
-                line.label
-            );
-        }
+        assert!(
+            line.label.contains("Codex"),
+            "names the agent: {}",
+            line.label
+        );
     }
+}
+
+/// **The disclosures name the Bot's own agent, whichever it is**
+/// (QUESTIONS O33, withdrawn: any runtime may run a Bot) and say nothing
+/// about one runtime being the only one.
+#[test]
+fn the_disclosures_name_the_bots_own_agent() {
+    let mut bot = unpaused();
+    bot.config.model.provider = AiProviderId::parse("agent-claude").expect("a provider id");
+    let f = Fixture::opened(bot);
+    assert_eq!(f.view.agent_name(), "Claude");
+    let runs = f
+        .view
+        .controls()
+        .into_iter()
+        .flat_map(|control| {
+            let mut all = vec![control.clone()];
+            all.extend(control.children.iter().cloned());
+            all.extend(control.children.iter().flat_map(|c| c.children.clone()));
+            all
+        })
+        .find(|control| control.key == RUNS_ON)
+        .expect("the disclosure is published");
+    assert!(runs.label.contains("Claude"), "{}", runs.label);
+    assert!(!runs.label.contains("Codex"), "{}", runs.label);
 }
 
 /// **A hidden tab sends nothing, and reads its Bot exactly once when it is

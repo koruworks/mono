@@ -24,8 +24,8 @@
 //!       row  Bot folder actions              *Change…*, or the sentence that it is fixed
 //!     col  Bot settings card  (Pause)
 //!       row  Bot pause row                   the paused notice, *Pause bot* / *Resume bot* or *…ing*
-//!     col  Bot disclosures                   runs on this computer using the agent; what Koru's
-//!                                            access covers; Codex only
+//!     col  Bot disclosures                   runs on this computer using the Bot's agent;
+//!                                            what Koru's access covers
 //! ```
 //!
 //! **Every control is a shared component** — `TextInput`, `ActionButton`,
@@ -88,7 +88,6 @@ pub(crate) const PAUSE_PENDING: Key = Key::surface(SURFACE, "pause-pending");
 pub(crate) const PAUSED_NOTICE: Key = Key::surface(SURFACE, "paused-notice");
 pub(crate) const RUNS_ON: Key = Key::surface(SURFACE, "runs-on");
 pub(crate) const RUNTIME_LIMITS: Key = Key::surface(SURFACE, "runtime-limits");
-pub(crate) const CODEX_ONLY: Key = Key::surface(SURFACE, "codex-only");
 
 /// The part a selected page's row and its *Remove* are keyed by, under the
 /// page's own document id — never its place in the list.
@@ -193,18 +192,22 @@ impl BotView {
         t(self.lang, key).to_owned()
     }
 
-    /// The agent the Bot runs on, by the name a person knows it by. In this
-    /// version that is Codex (QUESTIONS O33); another agent is named by its
-    /// id's last word rather than claimed to be Codex.
+    /// **The agent the Bot runs on**, by its id's word after `agent-`,
+    /// capitalized — *Codex* for `agent-codex`, *Claude* for `agent-claude`.
+    /// Any runtime may run a Bot (QUESTIONS O33, the owner's answer,
+    /// 2026-11-10), so the disclosures name the Bot's own agent and claim no
+    /// other. The tab holds no agent listing to read a display name from.
     pub(crate) fn agent_name(&self) -> String {
         let provider = self
             .facts
             .as_ref()
             .map(|facts| facts.provider.as_str().to_owned())
             .unwrap_or_default();
-        match provider.as_str() {
-            "agent-codex" | "" => "Codex".to_owned(),
-            other => other.trim_start_matches("agent-").to_owned(),
+        let word = provider.strip_prefix("agent-").unwrap_or(&provider);
+        let mut chars = word.chars();
+        match chars.next() {
+            Some(first) => first.to_uppercase().chain(chars).collect(),
+            None => String::new(),
         }
     }
 
@@ -581,12 +584,6 @@ impl BotView {
                     &[agent.as_str(), agent.as_str()],
                 ),
                 Ink::Secondary,
-            ))
-            .child(line(
-                "Bot codex only",
-                CODEX_ONLY,
-                self.words(Words::BotsCodexOnly),
-                Ink::Hint,
             ))
     }
 
@@ -1202,7 +1199,6 @@ impl BotView {
                 t(self.lang, Words::BotsRuntimeLimits),
                 &[agent.as_str(), agent.as_str()],
             ),
-            k if k == CODEX_ONLY => self.words(Words::BotsCodexOnly),
             _ => return None,
         })
     }

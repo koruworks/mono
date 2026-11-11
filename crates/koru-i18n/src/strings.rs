@@ -1837,8 +1837,6 @@ pub enum Key {
     BotsRunsOn,
     /// What Koru's access does not cover (Q3, Q5): both `{}` are the agent's name.
     BotsRuntimeLimits,
-    /// The first version's agent limit (QUESTIONS O33).
-    BotsCodexOnly,
     /// A settings change that met a newer revision: the Bot was read again and the person's edit kept.
     BotsChangedElsewhere,
     /// The owner's `invalid_request`. The server's English message is never shown.
@@ -3306,7 +3304,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2282] = [
+    pub const ALL: [Key; 2281] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4599,7 +4597,6 @@ impl Key {
         Key::BotsPausedNotice,
         Key::BotsRunsOn,
         Key::BotsRuntimeLimits,
-        Key::BotsCodexOnly,
         Key::BotsChangedElsewhere,
         Key::BotsErrInvalid,
         Key::BotsErrNotFound,
@@ -15143,17 +15140,6 @@ pub const ROWS: &[Row] = &[
         ar: "يشمل وصول Koru ما يفعله البوت من خلال Koru. لا يقيّد المساعدين الذين يشغّلهم {} بنفسه ولا الاتصالات المُعدّة في {}.",
         zh_hans: "Koru 的访问权限涵盖 Bot 通过 Koru 所做的事。{} 自行启动的助手以及在 {} 中设置的连接不受其限制。",
         ja: "Koru のアクセス設定は、Bot が Koru を通じて行うことに適用されます。{} が自ら起動するヘルパーや、{} で設定された接続はその対象外です。",
-    },
-    Row {
-        key: Key::BotsCodexOnly,
-        en: "In this version bots run on Codex.",
-        es: "En esta versión, los bots se ejecutan en Codex.",
-        pt_br: "Nesta versão, os bots são executados no Codex.",
-        de: "In dieser Version laufen Bots auf Codex.",
-        fr: "Dans cette version, les bots s'exécutent sur Codex.",
-        ar: "في هذا الإصدار، تعمل البوتات على Codex.",
-        zh_hans: "在此版本中，Bot 在 Codex 上运行。",
-        ja: "このバージョンでは、Bot は Codex で実行されます。",
     },
     Row {
         key: Key::BotsChangedElsewhere,

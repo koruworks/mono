@@ -510,3 +510,33 @@ fn the_roster_brings_forward_the_bots_tab_on_another_conversation() {
     assert_eq!(v.tabs().active_tab().view.chat_id(), Some(other));
     assert!(on_chat(&v, bot.main_chat).is_empty(), "no second tab");
 }
+
+/// **A Bot's conversation follows agents, not the Koru AI switch**
+/// (QUESTIONS O32): with Koru AI off, the roster's press opens the Bot's tab
+/// and a link to a conversation the window knows is a Bot's opens it there;
+/// a chat it cannot place opens nothing, as every chat did with Koru AI off.
+#[test]
+fn a_bots_conversation_opens_with_koru_ai_off() {
+    koru_features::testing::with(
+        koru_features::Features {
+            ai: false,
+            ..koru_features::Features::ALL_ON
+        },
+        || {
+            let (mut v, _w) = container();
+            let bot = scout();
+            let other = ChatId::new();
+            v.explore.bots_mut().listed_for_test(vec![bot.clone()]);
+            v.bot_labels_mut().learn_bot(other, bot.id, "Scout");
+            assert!(v.open_ai_chat_tab_for(other), "a known Bot conversation");
+            assert_eq!(on_chat(&v, other), ["bot"]);
+            assert!(v.open_bot_tab(bot.clone()), "the roster's press");
+            let unknown = ChatId::new();
+            assert!(
+                !v.open_ai_chat_tab_for(unknown),
+                "an unplaced chat: nothing"
+            );
+            assert!(on_chat(&v, unknown).is_empty());
+        },
+    );
+}
