@@ -6003,7 +6003,21 @@ impl MainView {
             Some(bot) => self.open_bot_tab(bot),
             None => false,
         };
-        changed || opened
+        // A running or Needs-you sub-row (S10): that conversation, in its
+        // Bot's tab. Every conversation the activity read names is the
+        // Bot's, which the window now knows wherever else it is opened.
+        let roster = self.explore.bots();
+        for entry in roster.activity() {
+            if let Some(bot) = roster.bots().iter().find(|b| b.id == entry.bot_id) {
+                self.bot_labels
+                    .learn_bot(entry.chat_id, entry.bot_id, &bot.name);
+            }
+        }
+        let opened_chat = match self.explore.bots_mut().take_wants_open_chat() {
+            Some((bot, chat)) => self.open_bot_conversation(bot, chat),
+            None => false,
+        };
+        changed || opened || opened_chat
     }
 
     /// **The Chats view's own pass** (AGENTUX I5).

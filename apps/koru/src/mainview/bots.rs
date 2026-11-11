@@ -279,6 +279,46 @@ impl MainView {
         true
     }
 
+    /// **A running or Needs-you conversation the roster offered** (S10):
+    /// the tab already on it, else the Bot's tab — brought forward and
+    /// moved to that conversation — else a new Bot tab on it.
+    pub(super) fn open_bot_conversation(
+        &mut self,
+        bot: RosterBot,
+        chat: koru_ai_ui::ChatId,
+    ) -> bool {
+        if !crate::bots::shown() {
+            return false;
+        }
+        let find = |of: &dyn Fn(&Tab) -> bool| {
+            self.panes.iter_groups().find_map(|(path, group)| {
+                group
+                    .tabs()
+                    .iter()
+                    .position(|tab| of(tab))
+                    .map(|index| (path, index))
+            })
+        };
+        let showing = find(&|tab: &Tab| tab.view.chat_id() == Some(chat)).or_else(|| {
+            find(&|tab: &Tab| matches!(&tab.view, TabView::Bot(view) if view.bot() == Some(bot.id)))
+        });
+        self.record_jump();
+        let Some((path, index)) = showing else {
+            let tab = self.bot_tab_on(&bot, chat, None);
+            self.tabs_mut().push(tab);
+            self.mark_tab_widths_stale();
+            return true;
+        };
+        self.panes.set_focus(path);
+        let _ = self.select(index);
+        let tab = self.tabs_mut().active_mut();
+        if let TabView::Bot(view) = &mut tab.view {
+            view.refresh_from(&bot);
+            view.show_conversation(chat);
+        }
+        true
+    }
+
     /// **A Bot tab's *Change…*** (Bots P1.8 S5): the window's existing
     /// folder dialog, the one an agent chat's working folder uses; its answer
     /// comes back through [`Self::bot_folder_chosen`] to the same tab.
@@ -392,6 +432,8 @@ impl MainView {
             .map(|home| (home, self.workspace_name(home)))
             .collect();
         let titles = self.bot_page_titles();
+        let roster = self.explore.bots();
+        let mut work_moved = false;
         let mut moved = false;
         for (_, group) in self.panes.iter_groups_mut() {
             let mut relabeled = false;
@@ -400,6 +442,16 @@ impl MainView {
                 if let TabView::Bot(view) = &mut tab.view {
                     if index != active {
                         view.hidden();
+                    }
+                    // A conversation's work moved (started, stopped, asked):
+                    // the roster's activity is read again (S10).
+                    work_moved |= view.take_status_moved();
+                    if index == active
+                        && let Some(bot) = view.bot()
+                    {
+                        // The list's marks: the owner's activity, as the
+                        // roster last read it (S8, S10).
+                        moved |= view.set_activity(&roster.activity_of(bot));
                     }
                     if let Some(home) = view.facts().map(|facts| facts.home)
                         && let Some((_, name)) = names.iter().find(|(id, _)| *id == home)
@@ -426,6 +478,9 @@ impl MainView {
                 group.mark_widths_stale();
                 moved = true;
             }
+        }
+        if work_moved {
+            self.explore.bots_mut().owe_activity();
         }
         moved || placed
     }

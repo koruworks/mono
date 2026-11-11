@@ -5,13 +5,17 @@
 //!
 //! ## What a row says
 //!
-//! The Bot's **name**, and **Paused** when its owner says it is paused. That
-//! is all the service's roster read says for certain, so it is all a row
-//! claims. Running and *Needs you* work is not shown here yet: the window can
-//! only see the conversations it has open, so a roster built from them would
-//! read *idle* for a Bot working with no tab open — an incomplete picture
-//! presented as a complete one. It joins the row when the Bot owner can be
-//! asked for it (Bots P1.8 §2, B5).
+//! The Bot's **name**, and **Paused** when its owner says it is paused.
+//!
+//! **Under it, its running and Needs-you conversations** (Bots P1.8 S10,
+//! E3), from the owner's activity read (`ListActivity`): one sub-row each,
+//! wearing the Chats list's own mark and words (`ChatStatus`), so what it
+//! means is never said by color alone. Pressing one opens that conversation
+//! in the Bot's tab. **A Bot with no sub-row is not claimed idle**: the read
+//! cannot tell queued from executing, does not count a reply being settled
+//! after an AI restart or a task started through the API without a
+//! conversation, and stops at 200 conversations — when it stopped, the
+//! roster says more work exists than it lists.
 //!
 //! ## What it says when it has no rows
 //!
@@ -39,7 +43,8 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
-use koru_ai_core::bots::{Bot, BotId};
+use koru_ai_core::bots::{Bot, BotActivity, BotActivityPage, BotActivityState, BotId};
+use koru_chats_ui::ChatStatus;
 use koru_draw::el::{
     Action, El, Frame, FrameCx, Interaction, Key, Look, Ring, Role, StateRecipe, TextCache, col,
     icon, row, scroll_y, text,
@@ -65,6 +70,25 @@ pub(crate) const LIST: Key = Key::surface(SURFACE, "list");
 pub(crate) const NOTICE: Key = Key::surface(SURFACE, "notice");
 /// The empty roster's sentence.
 pub(crate) const EMPTY: Key = Key::surface(SURFACE, "empty");
+/// The sentence saying the activity read stopped before the end.
+pub(crate) const MORE_WORK: Key = Key::surface(SURFACE, "more-work");
+/// An activity sub-row's part. The sub-row is the conversation's model key
+/// with this part.
+pub(crate) const ACTIVITY_PART: &str = "bot-activity";
+
+/// An activity sub-row's key: its conversation's own id.
+pub(crate) fn activity_key(chat: koru_ai_core::ChatId) -> Key {
+    Key::model(chat.as_uuid().as_u128(), ACTIVITY_PART)
+}
+
+/// The mark a sub-row wears and the status it says, from the owner's
+/// state: the Chats list's own vocabulary.
+pub(crate) fn activity_status(state: BotActivityState) -> ChatStatus {
+    match state {
+        BotActivityState::Running => ChatStatus::Working,
+        BotActivityState::NeedsYou => ChatStatus::NeedsYou,
+    }
+}
 
 /// A row's key: the Bot's own id, never its place in the list.
 pub(crate) fn row_key(bot: BotId) -> Key {
@@ -189,11 +213,26 @@ pub(crate) struct BotsRoster {
     /// `Some` doubles as *the roster holds the keyboard*.
     focus: Option<BotId>,
     hover: Option<BotId>,
+    /// The activity sub-row under the pointer, by its conversation.
+    hover_activity: Option<koru_ai_core::ChatId>,
     /// The list's offset, as the last layout clamped it.
     scroll: f32,
     /// The keyboard moved; the next draw brings its row into view.
     reveal_owed: bool,
     wants_open: Option<BotId>,
+    /// **The owner's running and Needs-you conversations** for the roster's
+    /// workspace (S10), by Bot then conversation; and whether the read
+    /// stopped before the end.
+    activity: Vec<BotActivity>,
+    activity_truncated: bool,
+    /// An activity read is owed: shown again, the roster listed, or the
+    /// window said a Bot conversation's work moved. Coalesced: one read on
+    /// its way at a time, and one more after it if more was owed.
+    activity_owed: bool,
+    activity_seq: u64,
+    activity_in_flight: bool,
+    /// A sub-row asked for: the Bot and the conversation, for the window.
+    wants_open_chat: Option<(BotId, koru_ai_core::ChatId)>,
     work: Cell<Work>,
     cache: RefCell<TextCache>,
     started: bool,
@@ -276,6 +315,11 @@ impl BotsRoster {
         // An answer for the old workspace is never this one's.
         self.seq = self.seq.wrapping_add(1);
         self.fresh = false;
+        self.activity.clear();
+        self.activity_truncated = false;
+        self.activity_in_flight = false;
+        self.activity_seq = self.activity_seq.wrapping_add(1);
+        self.wants_open_chat = None;
         true
     }
 
@@ -303,7 +347,94 @@ impl BotsRoster {
         }
         let asked = !self.fresh && self.refresh();
         let answered = self.poll();
-        asked || answered
+        let activity = self.ask_activity();
+        asked || answered || activity
+    }
+
+    /// **An activity read is owed** — the window saw a Bot conversation's
+    /// work start, stop or ask (S10). Sent on the next pass while the
+    /// roster is shown, never from a hidden one and never on a timer.
+    pub(crate) fn owe_activity(&mut self) {
+        self.activity_owed = true;
+    }
+
+    /// Ask for the workspace's activity when it is owed and none is on its
+    /// way. `true` when a request went.
+    fn ask_activity(&mut self) -> bool {
+        if !self.activity_owed || self.activity_in_flight {
+            return false;
+        }
+        let (Some(workspace), Some(link)) = (self.workspace, &self.link) else {
+            return false;
+        };
+        let seq = self.activity_seq.wrapping_add(1);
+        if !link.send(Command::Activity { seq, workspace }) {
+            return false;
+        }
+        self.activity_seq = seq;
+        self.activity_owed = false;
+        self.activity_in_flight = true;
+        let mut work = self.work.get();
+        work.commands += 1;
+        self.work.set(work);
+        true
+    }
+
+    /// The owner's running and Needs-you conversations, as last read.
+    pub(crate) fn activity(&self) -> &[BotActivity] {
+        &self.activity
+    }
+
+    /// Whether the activity read stopped before the end.
+    pub(crate) fn activity_truncated(&self) -> bool {
+        self.activity_truncated
+    }
+
+    /// One Bot's running and Needs-you conversations, as the rows' marks.
+    pub(crate) fn activity_of(
+        &self,
+        bot: BotId,
+    ) -> std::collections::HashMap<koru_ai_core::ChatId, ChatStatus> {
+        self.activity
+            .iter()
+            .filter(|entry| entry.bot_id == bot)
+            .map(|entry| (entry.chat_id, activity_status(entry.state)))
+            .collect()
+    }
+
+    /// A sub-row a press, a key or an accessibility action asked for, taken
+    /// once, with what the Bot's tab needs.
+    pub(crate) fn take_wants_open_chat(&mut self) -> Option<(RosterBot, koru_ai_core::ChatId)> {
+        let (bot, chat) = self.wants_open_chat.take()?;
+        let row = self.bots.iter().find(|row| row.id == bot)?.clone();
+        Some((row, chat))
+    }
+
+    /// Ask for one of a Bot's running or Needs-you conversations.
+    pub(crate) fn ask_open_chat(&mut self, chat: koru_ai_core::ChatId) -> bool {
+        let Some(entry) = self.activity.iter().find(|entry| entry.chat_id == chat) else {
+            return false;
+        };
+        if !self.has(entry.bot_id) {
+            return false;
+        }
+        self.selected = Some(entry.bot_id);
+        self.wants_open_chat = Some((entry.bot_id, chat));
+        true
+    }
+
+    /// A sub-row's accessible name: which conversation, then its state's
+    /// words — the Chats list's.
+    pub(crate) fn activity_name(&self, bot: &RosterBot, entry: &BotActivity) -> String {
+        let which = if entry.chat_id == bot.main_chat {
+            t(self.lang, Words::BotsMainConversation)
+        } else {
+            t(self.lang, Words::BotsOtherConversation)
+        };
+        match activity_status(entry.state).spoken(self.lang) {
+            Some(state) => format!("{which}, {state}"),
+            None => which.to_owned(),
+        }
     }
 
     /// Ask the service again, when there is a workspace to ask about and a
@@ -340,15 +471,25 @@ impl BotsRoster {
             return false;
         };
         let mut changed = false;
+        let mut activity = Vec::new();
         for answer in link.drain() {
-            // The roster asks only for lists; any other answer is not its.
-            let Answer::Listed {
-                seq,
-                workspace,
-                result,
-            } = answer
-            else {
-                continue;
+            // The roster asks for lists and for activity; any other answer
+            // is not its.
+            let (seq, workspace, result) = match answer {
+                Answer::Listed {
+                    seq,
+                    workspace,
+                    result,
+                } => (seq, workspace, result),
+                Answer::Activity {
+                    seq,
+                    workspace,
+                    result,
+                } => {
+                    activity.push((seq, workspace, result));
+                    continue;
+                }
+                _ => continue,
             };
             if seq != self.seq || Some(workspace) != self.workspace {
                 continue;
@@ -356,6 +497,9 @@ impl BotsRoster {
             self.in_flight = false;
             self.take(result);
             changed = true;
+        }
+        for (seq, workspace, result) in activity {
+            changed |= self.take_activity(seq, workspace, result);
         }
         changed
     }
@@ -365,6 +509,9 @@ impl BotsRoster {
             Ok(bots) => {
                 self.bots = bots.into_iter().map(RosterBot::from).collect();
                 self.load = Load::Ready;
+                // A listing is the roster's own command: its activity is read
+                // after it, once.
+                self.activity_owed = true;
                 // Kept by id; a Bot the answer no longer lists lets go.
                 let selected = self.selected.filter(|id| self.has(*id));
                 let hover = self.hover.filter(|id| self.has(*id));
@@ -383,6 +530,25 @@ impl BotsRoster {
         }
     }
 
+    /// Fold an activity answer: only the latest read's, for this workspace.
+    /// A failed read keeps what was shown. `true` when it was this roster's.
+    pub(crate) fn take_activity(
+        &mut self,
+        seq: u64,
+        workspace: WorkspaceId,
+        result: Result<BotActivityPage, Failure>,
+    ) -> bool {
+        if seq != self.activity_seq || Some(workspace) != self.workspace {
+            return false;
+        }
+        self.activity_in_flight = false;
+        if let Ok(page) = result {
+            self.activity = page.entries;
+            self.activity_truncated = page.truncated;
+        }
+        true
+    }
+
     fn has(&self, id: BotId) -> bool {
         self.bots.iter().any(|bot| bot.id == id)
     }
@@ -390,7 +556,7 @@ impl BotsRoster {
     /// Whether an answer is owed — the one reason the window keeps a wake
     /// clock for the roster.
     pub(crate) fn awaiting(&self) -> bool {
-        self.shown && self.in_flight
+        self.shown && (self.in_flight || self.activity_in_flight)
     }
 
     /// The Bot a row, a key or an accessibility action asked for, taken
@@ -483,20 +649,41 @@ impl BotsRoster {
     /// A press in the roster's band. Always the roster's: a press on its
     /// background must not fall through to the view beside the column.
     pub(crate) fn mouse_down(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        if let Some(bot) = self.bot_at(area, top, x, y) {
+        if let Some(chat) = self.activity_at(area, top, x, y) {
+            self.ask_open_chat(chat);
+        } else if let Some(bot) = self.bot_at(area, top, x, y) {
             self.ask_open(bot);
         }
         true
     }
 
+    /// The activity sub-row under a point, by its conversation.
+    fn activity_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<koru_ai_core::ChatId> {
+        if self.activity.is_empty() {
+            return None;
+        }
+        let key = self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y))?;
+        self.activity
+            .iter()
+            .map(|entry| entry.chat_id)
+            .find(|chat| activity_key(*chat) == key)
+    }
+
     /// The pointer moved. `true` when the row under it changed.
     pub(crate) fn mouse_move(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        let hover = self.bot_at(area, top, x, y);
-        std::mem::replace(&mut self.hover, hover) != hover
+        let activity = self.activity_at(area, top, x, y);
+        let hover = if activity.is_some() {
+            None
+        } else {
+            self.bot_at(area, top, x, y)
+        };
+        let moved = std::mem::replace(&mut self.hover_activity, activity) != activity;
+        std::mem::replace(&mut self.hover, hover) != hover || moved
     }
 
     pub(crate) fn clear_hover(&mut self) -> bool {
-        self.hover.take().is_some()
+        let activity = self.hover_activity.take().is_some();
+        self.hover.take().is_some() || activity
     }
 
     pub(crate) fn scroll_by(&mut self, dy: f32) {
@@ -582,7 +769,63 @@ impl BotsRoster {
             );
         }
         // The margins press the row's primary, so the whole band is the row.
-        row("Bot row")
+        let mut block = col("Bot block").child(
+            row("Bot row")
+                .pad_x(alias::ROW_PLATE_INSET)
+                .hit_as(key)
+                .child(primary),
+        );
+        for entry in self.activity.iter().filter(|entry| entry.bot_id == bot.id) {
+            block = block.child(self.activity_row(bot, entry));
+        }
+        block
+    }
+
+    /// **One running or Needs-you conversation under its Bot** (S10): the
+    /// Chats list's mark and its words, then which conversation — the main
+    /// one by name; another by what it is, the read naming no title.
+    fn activity_row(&self, bot: &RosterBot, entry: &BotActivity) -> El {
+        let key = activity_key(entry.chat_id);
+        let status = activity_status(entry.state);
+        let which = if entry.chat_id == bot.main_chat {
+            Words::BotsMainConversation
+        } else {
+            Words::BotsOtherConversation
+        };
+        let primary = row("Bot activity")
+            .id(key)
+            .fill()
+            .min_h(metrics::NAV_ROW_MIN)
+            .pad_start(Space::S6)
+            .pad_end(alias::ROW_PLATE_INSET)
+            .gap(Space::S2)
+            .items_center()
+            .radius(Radius::M)
+            .states(&BOT_ROW_STATES)
+            .hit()
+            .action(Action::Click)
+            .semantics(Role::ListItem)
+            .name_text(self.activity_name(bot, entry))
+            .child(
+                koru_draw::el::leaf("Bot activity mark", MarkLeaf(status))
+                    .decorative()
+                    .w(metrics::TRAILING_LANE_W),
+            )
+            .child(
+                text(t(self.lang, which))
+                    .named("Bot activity conversation")
+                    .role(roles::META)
+                    .ink(Ink::Secondary)
+                    .fill()
+                    .truncate(),
+            )
+            .child(
+                text(status.spoken(self.lang).unwrap_or_default())
+                    .named("Bot activity state")
+                    .role(roles::META)
+                    .ink(Ink::Hint),
+            );
+        row("Bot activity row")
             .pad_x(alias::ROW_PLATE_INSET)
             .hit_as(key)
             .child(primary)
@@ -619,6 +862,13 @@ impl BotsRoster {
                 t(self.lang, Words::BotsEmpty),
             ));
         }
+        if self.activity_truncated {
+            root = root.child(Self::sentence(
+                "Bots more work",
+                MORE_WORK,
+                t(self.lang, Words::BotsMoreWork),
+            ));
+        }
         root.child(
             scroll_y("Bots list")
                 .id(LIST)
@@ -633,7 +883,10 @@ impl BotsRoster {
 
     fn interaction(&self) -> Interaction {
         Interaction {
-            hot: self.hover.map(row_key),
+            hot: self
+                .hover_activity
+                .map(activity_key)
+                .or(self.hover.map(row_key)),
             pressed: None,
             focused: self.focus.map(row_key),
         }
@@ -685,6 +938,31 @@ impl BotsRoster {
             self.scroll = offset;
         }
         frame.paint(&tree, scene, root, engine);
+    }
+}
+
+/// **The Chats list's status mark**, as an element leaf: the ring of a
+/// running conversation, held still — the roster asks for no frames — and
+/// the question of one that needs the person. Its words are the row's.
+struct MarkLeaf(ChatStatus);
+
+impl koru_draw::el::Leaf for MarkLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (metrics::TRAILING_LANE_W.value, metrics::NAV_ROW_MIN.value)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        _state: koru_draw::el::ElState,
+    ) {
+        if let Some(mark) = self.0.mark(None) {
+            koru_shell_chrome::status_mark::draw(scene, root, engine, at, mark);
+        }
     }
 }
 

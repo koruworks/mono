@@ -9,6 +9,12 @@
 //! and the empty roster's sentence are labels. There is no button: the
 //! roster offers none yet.
 //!
+//! **A Bot's running and Needs-you conversations** (S10) are items under its
+//! item, each named by which conversation and its state's words — never a
+//! color alone — offering **Open** as its click, which opens that
+//! conversation in the Bot's tab. The sentence saying the read stopped
+//! before the end is a label.
+//!
 //! **Geometry is never re-derived.** Every rect is the roster's own element
 //! frame, the one its paint and its pointer read; a row scrolled out of the
 //! band is published where it would be.
@@ -22,13 +28,15 @@ use koru_workspace_host::accessibility::{
 
 use super::Context;
 use crate::bots::BotsRoster;
-use crate::bots::roster::{EMPTY, LIST, NOTICE, row_key};
+use crate::bots::roster::{ACTIVITY_PART, EMPTY, LIST, MORE_WORK, NOTICE, activity_key, row_key};
 use crate::panes::Outcome;
 
 /// The list, and the lines of it that are not a Bot.
 const BOTS: &str = "explore-bots";
 const NOTICE_PART: ControlPart = ControlPart::new("notice");
 const EMPTY_PART: ControlPart = ControlPart::new("empty");
+const MORE_WORK_PART: ControlPart = ControlPart::new("more-work");
+const ACTIVITY: ControlPart = ControlPart::new(ACTIVITY_PART);
 
 fn bot_occurrence(cx: &Context, bot: koru_ai_core::bots::BotId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, bot.as_uuid(), ControlPart::ROOT)
@@ -64,6 +72,16 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 .with_bounds(rect),
             );
         }
+        if let Some(rect) = rect_of(MORE_WORK) {
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, MORE_WORK_PART),
+                    Role::Label,
+                )
+                .with_label(t(cx.lang, Key::BotsMoreWork))
+                .with_bounds(rect),
+            );
+        }
         if let Some(band) = rect_of(LIST) {
             let total = roster.bots().len();
             let children = roster
@@ -72,6 +90,28 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 .enumerate()
                 .filter_map(|(index, bot)| {
                     let rect = rect_of(row_key(bot.id))?;
+                    let work: Vec<SemanticNode> = roster
+                        .activity()
+                        .iter()
+                        .filter(|entry| entry.bot_id == bot.id)
+                        .filter_map(|entry| {
+                            let rect = rect_of(activity_key(entry.chat_id))?;
+                            Some(
+                                SemanticNode::new(
+                                    Occurrence::model(
+                                        cx.window,
+                                        cx.view,
+                                        entry.chat_id.as_uuid(),
+                                        ACTIVITY,
+                                    ),
+                                    Role::ListItem,
+                                )
+                                .with_label(roster.activity_name(bot, entry))
+                                .with_bounds(rect)
+                                .with_actions([Action::Click]),
+                            )
+                        })
+                        .collect();
                     Some(
                         SemanticNode::new(bot_occurrence(cx, bot.id), Role::ListItem)
                             .with_label(roster.accessible_name(bot))
@@ -79,7 +119,8 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                             .with_selected(roster.selected() == Some(bot.id))
                             .with_position(index)
                             .with_size_of_set(total)
-                            .with_actions([Action::Focus, Action::Click, Action::ScrollIntoView]),
+                            .with_actions([Action::Focus, Action::Click, Action::ScrollIntoView])
+                            .with_children(work),
                     )
                 })
                 .collect();
@@ -118,6 +159,11 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     for bot in roster.bots() {
         rev.uuid(bot.id.as_uuid()).str(&bot.name).bool(bot.paused);
     }
+    rev.bool(roster.activity_truncated())
+        .u64(roster.activity().len() as u64);
+    for entry in roster.activity() {
+        rev.uuid(entry.chat_id.as_uuid()).byte(entry.state as u8);
+    }
 }
 
 /// **Do what a client asked, through the gesture it names.** `None` when the
@@ -134,6 +180,19 @@ pub(super) fn action(
     let ObjectKey::Model(id) = target.object else {
         return None;
     };
+    // A running or Needs-you sub-row: open that conversation.
+    if target.part == ACTIVITY {
+        if action != Action::Click {
+            return None;
+        }
+        let chat = roster
+            .activity()
+            .iter()
+            .map(|entry| entry.chat_id)
+            .find(|chat| chat.as_uuid() == id)?;
+        roster.ask_open_chat(chat);
+        return Some(Outcome::Consumed);
+    }
     let bot = roster
         .bots()
         .iter()

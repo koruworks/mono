@@ -42,13 +42,31 @@ fn fixture() -> Fixture {
 
 impl Fixture {
     /// The one request the roster just sent: its sequence number.
+    /// Its activity reads (S10) are skipped: see `activity_asked`.
     fn asked(&self) -> u64 {
-        match self.commands.try_recv().expect("a request was sent") {
-            Command::List { seq, workspace } => {
-                assert_eq!(workspace, self.home, "about the window's workspace");
-                seq
+        loop {
+            match self.commands.try_recv().expect("a request was sent") {
+                Command::List { seq, workspace } => {
+                    assert_eq!(workspace, self.home, "about the window's workspace");
+                    return seq;
+                }
+                Command::Activity { .. } => continue,
+                _ => panic!("a roster only lists"),
             }
-            _ => panic!("a roster only lists"),
+        }
+    }
+
+    /// The activity read the roster just sent (S10): its sequence number.
+    fn activity_asked(&self) -> u64 {
+        loop {
+            match self.commands.try_recv().expect("an activity read was sent") {
+                Command::Activity { seq, workspace } => {
+                    assert_eq!(workspace, self.home, "about the window's workspace");
+                    return seq;
+                }
+                Command::List { .. } => continue,
+                _ => panic!("a roster only lists and reads activity"),
+            }
         }
     }
 
@@ -176,6 +194,17 @@ fn a_stale_answer_is_ignored() {
     assert!(!f.roster.maintain(), "another workspace's reply");
     assert!(f.answer(second, Ok(vec![fresh.clone()])));
     assert_eq!(f.ids(), vec![fresh.id]);
+    // The listing is followed by its activity read (S10); answered, nothing
+    // more is owed.
+    let activity = f.activity_asked();
+    f.answers
+        .send(Answer::Activity {
+            seq: activity,
+            workspace: f.home,
+            result: Ok(activity_page(Vec::new(), false)),
+        })
+        .unwrap();
+    f.roster.maintain();
     assert!(!f.roster.awaiting());
 }
 
@@ -407,6 +436,7 @@ fn a_workspace_change_clears_the_rows_and_asks_again_when_shown() {
     let mut f = fixture();
     let a = f.bot("A");
     f.shown_with(vec![a.clone()]);
+    f.activity_asked();
     f.roster.ask_open(a.id);
     let other = WorkspaceId::new();
     f.roster.set_shown(false);
@@ -436,4 +466,155 @@ fn a_roster_with_no_link_asks_nothing() {
     assert!(!roster.maintain());
     assert_eq!(roster.load(), Load::Cold);
     assert_eq!(roster.work().commands, 0);
+}
+
+// ------------------------------------------ running and Needs-you (S10)
+
+fn activity_page(
+    entries: Vec<(BotId, koru_ai_core::ChatId, BotActivityState)>,
+    truncated: bool,
+) -> BotActivityPage {
+    BotActivityPage {
+        entries: entries
+            .into_iter()
+            .map(|(bot_id, chat_id, state)| BotActivity {
+                bot_id,
+                chat_id,
+                state,
+            })
+            .collect(),
+        truncated,
+    }
+}
+
+/// **The roster reads its activity after its own listing, once, and only
+/// while shown** — coalesced: one read on its way at a time, and the one
+/// owed meanwhile goes after it. A hidden roster asks nothing.
+#[test]
+fn activity_is_read_after_the_listing_once_and_coalesced() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    let seq = f.activity_asked();
+    f.nothing_asked();
+    // Owed twice while one is on its way: one more, after it.
+    f.roster.owe_activity();
+    f.roster.owe_activity();
+    assert!(!f.roster.maintain());
+    f.nothing_asked();
+    assert!(f.roster.awaiting(), "an answer is owed");
+    f.answers
+        .send(Answer::Activity {
+            seq,
+            workspace: f.home,
+            result: Ok(activity_page(Vec::new(), false)),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    f.activity_asked();
+    f.nothing_asked();
+    // Hidden: owed, but nothing goes.
+    f.roster.set_shown(false);
+    f.roster.owe_activity();
+    assert!(!f.roster.maintain());
+    f.nothing_asked();
+}
+
+/// **Each running or Needs-you conversation sits under its Bot**, wearing
+/// the Chats list's mark and saying its state in words — the main one by
+/// name — and a press opens that conversation. A Bot with none says
+/// nothing: never *idle*. A read that stopped at its bound says more work
+/// exists; a failed read keeps what was shown.
+#[test]
+fn running_and_needs_you_conversations_sit_under_their_bot() {
+    let mut f = fixture();
+    let (scout, quiet) = (f.bot("Scout"), f.bot("Quiet"));
+    f.shown_with(vec![scout.clone(), quiet.clone()]);
+    let seq = f.activity_asked();
+    let other = koru_ai_core::ChatId::new();
+    f.answers
+        .send(Answer::Activity {
+            seq,
+            workspace: f.home,
+            result: Ok(activity_page(
+                vec![
+                    (scout.id, scout.main_chat, BotActivityState::NeedsYou),
+                    (scout.id, other, BotActivityState::Running),
+                ],
+                true,
+            )),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    let frame = frame_of(&f.roster);
+    assert!(frame.contains(activity_key(scout.main_chat)));
+    assert!(frame.contains(activity_key(other)));
+    assert!(frame.contains(MORE_WORK), "more work than is listed: said");
+    let listed = f.roster.bots()[0].clone();
+    let names: Vec<String> = f
+        .roster
+        .activity()
+        .iter()
+        .map(|entry| f.roster.activity_name(&listed, entry))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            format!(
+                "{}, {}",
+                t(Lang::En, Words::BotsMainConversation),
+                t(Lang::En, Words::ChatsStatusNeedsYou)
+            ),
+            format!(
+                "{}, {}",
+                t(Lang::En, Words::BotsOtherConversation),
+                t(Lang::En, Words::ChatsStatusWorking)
+            ),
+        ]
+    );
+    let statuses = f.roster.activity_of(scout.id);
+    assert_eq!(statuses.get(&other), Some(&ChatStatus::Working));
+    assert!(f.roster.activity_of(quiet.id).is_empty(), "nothing claimed");
+
+    // A press on the Running sub-row asks for that conversation.
+    let rect = frame.node(activity_key(other)).expect("its row").rect;
+    assert!(
+        f.roster
+            .mouse_down(area(), top(), rect.x + rect.w * 0.5, rect.y + rect.h * 0.5)
+    );
+    let (bot, chat) = f.roster.take_wants_open_chat().expect("asked");
+    assert_eq!((bot.id, chat), (scout.id, other));
+    assert!(f.roster.take_wants_open().is_none(), "not the Bot row");
+
+    // A failed read keeps what was shown.
+    f.roster.owe_activity();
+    f.roster.maintain();
+    let again = f.activity_asked();
+    f.answers
+        .send(Answer::Activity {
+            seq: again,
+            workspace: f.home,
+            result: Err(Failure::Unreachable),
+        })
+        .unwrap();
+    f.roster.maintain();
+    assert_eq!(f.roster.activity().len(), 2);
+}
+
+/// Another workspace's activity is never this roster's.
+#[test]
+fn another_workspaces_activity_is_ignored() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    let seq = f.activity_asked();
+    assert!(!f.roster.take_activity(
+        seq,
+        WorkspaceId::new(),
+        Ok(activity_page(
+            vec![(scout.id, scout.main_chat, BotActivityState::Running)],
+            false
+        ))
+    ));
+    assert!(f.roster.activity().is_empty());
 }

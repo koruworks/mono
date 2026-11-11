@@ -274,6 +274,9 @@ pub(crate) struct BotView {
     /// Where the pointer last was, in the tab's coordinates: the wheel says
     /// nothing about where it is turned.
     pointer: Cell<(f32, f32)>,
+    /// The conversation's status when the window last asked, so it can tell
+    /// the roster that a conversation's work moved (S10).
+    seen_status: koru_chats_ui::ChatStatus,
 }
 
 impl BotView {
@@ -317,6 +320,7 @@ impl BotView {
             conversations: Box::default(),
             column_right: Cell::new(f32::NEG_INFINITY),
             pointer: Cell::new((0.0, 0.0)),
+            seen_status: koru_chats_ui::ChatStatus::Idle,
         }
     }
 

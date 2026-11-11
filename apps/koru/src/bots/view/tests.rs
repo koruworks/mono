@@ -37,7 +37,10 @@ impl Fixture {
                     return seq;
                 }
                 Command::ListChats { .. } => continue,
-                Command::List { .. } | Command::Write { .. } | Command::Label { .. } => {
+                Command::List { .. }
+                | Command::Write { .. }
+                | Command::Label { .. }
+                | Command::Activity { .. } => {
                     panic!("a Bot tab only reads its Bot here")
                 }
             }

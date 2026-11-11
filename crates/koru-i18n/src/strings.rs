@@ -1879,6 +1879,10 @@ pub enum Key {
     BotsConversationsOnlyMain,
     /// Marks a Bot's main conversation: in the tab's header while it is the one shown, after its row's name in the list, and on the roster's activity row.
     BotsMainConversation,
+    /// A roster sub-row for a running or Needs-you conversation that is not the Bot's main one: the activity read names no title (Bots P1.8 S10). Non-English columns machine-written, awaiting a native read.
+    BotsOtherConversation,
+    /// The owner's activity read stopped at its bound: more conversations are running or need the person than the roster lists. Never a claim that the rest are idle.
+    BotsMoreWork,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3300,7 +3304,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2279] = [
+    pub const ALL: [Key; 2281] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4614,6 +4618,8 @@ impl Key {
         Key::BotsConversationsUnavailable,
         Key::BotsConversationsOnlyMain,
         Key::BotsMainConversation,
+        Key::BotsOtherConversation,
+        Key::BotsMoreWork,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -15365,6 +15371,28 @@ pub const ROWS: &[Row] = &[
         ar: "المحادثة الرئيسية",
         zh_hans: "主对话",
         ja: "メインの会話",
+    },
+    Row {
+        key: Key::BotsOtherConversation,
+        en: "Another conversation",
+        es: "Otra conversación",
+        pt_br: "Outra conversa",
+        de: "Eine andere Unterhaltung",
+        fr: "Une autre conversation",
+        ar: "محادثة أخرى",
+        zh_hans: "另一个对话",
+        ja: "別の会話",
+    },
+    Row {
+        key: Key::BotsMoreWork,
+        en: "More bot work is going on than is listed here.",
+        es: "Hay más trabajo de bots en curso del que se muestra aquí.",
+        pt_br: "Há mais trabalho de bots em andamento do que o listado aqui.",
+        de: "Es läuft mehr Bot-Arbeit, als hier aufgeführt ist.",
+        fr: "Il y a plus de travail de bots en cours que ce qui est listé ici.",
+        ar: "هناك عمل للبوتات أكثر مما هو مدرج هنا.",
+        zh_hans: "正在进行的 Bot 工作比这里列出的更多。",
+        ja: "ここに表示されている以上の Bot の作業が進行中です。",
     },
     Row {
         key: Key::SizeBytes,

@@ -271,6 +271,17 @@ impl BotView {
         self.conversations.set_statuses(statuses)
     }
 
+    /// **Whether the conversation's work moved** since the window last
+    /// asked — a reply started or ended, or it stopped to ask the person —
+    /// so the roster reads its activity again (S10). Unread is not work.
+    pub(crate) fn take_status_moved(&mut self) -> bool {
+        let now = match self.conversation.as_ref().map(|view| view.status()) {
+            Some(ChatStatus::Unread) | None => ChatStatus::Idle,
+            Some(status) => status,
+        };
+        std::mem::replace(&mut self.seen_status, now) != now
+    }
+
     /// The list's band in the tab's coordinates, and where its rows start.
     fn list_band(&self) -> Option<(Rect, f32)> {
         self.with_frame(|_, frame| Self::list_area(frame))

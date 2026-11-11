@@ -21,7 +21,8 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
-    Bot, BotChatCursor, BotChatLabel, BotChatPage, BotCommand, BotId, BotRequestId, BotResponse,
+    Bot, BotActivityPage, BotChatCursor, BotChatLabel, BotChatPage, BotCommand, BotId,
+    BotRequestId, BotResponse,
 };
 use koru_store_core::ids::WorkspaceId;
 
@@ -62,6 +63,9 @@ pub(crate) enum Command {
         cursor: Option<BotChatCursor>,
         limit: u16,
     },
+    /// **The workspace's running and Needs-you Bot conversations** (S10):
+    /// `ListActivity`, at most 200, for the roster's sub-rows.
+    Activity { seq: u64, workspace: WorkspaceId },
 }
 
 #[derive(Debug)]
@@ -93,6 +97,12 @@ pub(crate) enum Answer {
         seq: u64,
         bot: BotId,
         result: Result<BotChatPage, Failure>,
+    },
+    /// What a [`Command::Activity`] answered.
+    Activity {
+        seq: u64,
+        workspace: WorkspaceId,
+        result: Result<BotActivityPage, Failure>,
     },
 }
 
@@ -322,6 +332,38 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::Activity { seq, workspace } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => activity(
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ListActivity { workspace })
+                            .map_err(|failure| failure.code),
+                    ),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "The Bots' activity could not be read"
+                    );
+                    client = None;
+                }
+                if answers
+                    .send(Answer::Activity {
+                        seq,
+                        workspace,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
         }
     }
 }
@@ -331,6 +373,16 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
 pub(crate) fn chats(reply: Result<BotResponse, String>) -> Result<BotChatPage, Failure> {
     match reply {
         Ok(BotResponse::Chats { page }) => Ok(page),
+        Ok(_) => Err(Failure::Unreachable),
+        Err(code) if code.is_empty() => Err(Failure::Unreachable),
+        Err(code) => Err(Failure::Refused(code)),
+    }
+}
+
+/// A `ListActivity` reply: the page, or why not.
+pub(crate) fn activity(reply: Result<BotResponse, String>) -> Result<BotActivityPage, Failure> {
+    match reply {
+        Ok(BotResponse::Activity { activity }) => Ok(activity),
         Ok(_) => Err(Failure::Unreachable),
         Err(code) if code.is_empty() => Err(Failure::Unreachable),
         Err(code) => Err(Failure::Refused(code)),
