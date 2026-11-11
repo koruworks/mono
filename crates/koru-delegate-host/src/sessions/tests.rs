@@ -397,3 +397,141 @@ fn owned_completion_uses_current_lease_and_never_falls_back_after_takeover() {
     assert_eq!(observed[0].controller_lease, lease);
     assert!(matches!(observed[0].action, RawCommand::Terminate));
 }
+
+/// Answers one `BeginPendingInput` and records the input it carried.
+struct BeginWriter {
+    frames: mpsc::Sender<Vec<u8>>,
+    pending: Vec<u8>,
+    seen: Arc<std::sync::Mutex<Vec<PendingInput>>>,
+}
+impl Write for BeginWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.pending.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        let (_, frame): (_, RequestFrame) =
+            koru_ipc::frame::read_frame(&mut self.pending.as_slice())?;
+        self.pending.clear();
+        let input = match frame.request {
+            Request::BeginPendingInput(request) => request.input,
+            Request::Disconnect => return Ok(()),
+            _ => panic!("a Bot's first input is only ever a BeginPendingInput"),
+        };
+        self.seen.lock().unwrap().push(input);
+        let response = FromHost::Response {
+            frame: ResponseFrame {
+                id: frame.id,
+                result: Ok(koru_session_wire::Response::PendingInputSent {
+                    result: koru_session_protocol::SendPendingInputResult {
+                        turn_id: AgentTurnId::mint(),
+                        attachments: vec![],
+                    },
+                }),
+            },
+        };
+        let mut bytes = Vec::new();
+        koru_ipc::frame::write_frame(&mut bytes, FRAME_VERSION, &response)?;
+        self.frames.send(bytes).unwrap();
+        Ok(())
+    }
+}
+
+#[test]
+fn a_bot_first_input_carries_path_references_only_where_the_host_negotiated_them() {
+    assert!(
+        bot_offer()
+            .capabilities
+            .supports(capability::PATH_REFERENCES)
+    );
+    // The ordinary delegated-run offer is unchanged.
+    assert!(!offer().capabilities.supports(capability::PATH_REFERENCES));
+    let input = PendingInput {
+        model: None,
+        idempotency_key: IdempotencyKey::mint(),
+        text: "task".into(),
+        attachment_ids: Vec::new(),
+        references: vec![
+            koru_session_protocol::PathReference {
+                kind: koru_session_protocol::PathReferenceKind::Folder,
+                path: "C:\\work folder\\文書".into(),
+            },
+            koru_session_protocol::PathReference {
+                kind: koru_session_protocol::PathReferenceKind::File,
+                path: "/home/someone/notes.md".into(),
+            },
+        ],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        skills: Vec::new(),
+    };
+    // A host offer without `path-references`, as an older host makes.
+    let older = {
+        let mut offered = bot_offer();
+        offered.capabilities = CapabilitySet::new(
+            offered
+                .capabilities
+                .iter()
+                .filter(|name| name.as_str() != capability::PATH_REFERENCES)
+                .cloned(),
+        );
+        offered
+    };
+    for (host, carried) in [(bot_offer(), true), (older, false)] {
+        let agreement = koru_session_protocol::negotiate(&bot_offer(), &host).unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = || {
+            let (frames, reader) = mpsc::channel();
+            SessionClient::from_test_transport(
+                HostHello {
+                    product: "fixture".into(),
+                    product_version: "fixture".into(),
+                    instance_id: "fixture".into(),
+                    supervisor_launch_id: "fixture".into(),
+                    agreement: agreement.clone(),
+                },
+                Reader {
+                    frames: reader,
+                    current: Cursor::new(vec![]),
+                },
+                BeginWriter {
+                    frames,
+                    pending: vec![],
+                    seen: seen.clone(),
+                },
+            )
+            .unwrap()
+        };
+        let session = SessionId::mint();
+        let mut sessions = HostSessions {
+            endpoint: koru_ipc::Endpoint::for_service("session", "internal-debug").unwrap(),
+            unary: client(),
+            controllers: HashMap::from([(
+                session,
+                Controller {
+                    client: client(),
+                    lease: ControllerLeaseToken::mint(),
+                },
+            )]),
+            provider_readiness: vec![],
+            provider_subscription: None,
+        };
+        let result = sessions.bot_submit(session, input.clone());
+        if carried {
+            result.unwrap();
+            // Sent exactly as given: Koru neither drops nor reads them.
+            assert_eq!(*seen.lock().unwrap(), vec![input.clone()]);
+        } else {
+            // Refused by the negotiated agreement before anything is sent,
+            // with the session code the owner reports as a named refusal.
+            let error = result.unwrap_err();
+            assert_eq!(error.code, "capability_not_negotiated");
+            assert_eq!(
+                koru_delegate_core::BotInputRefusal::of_session_code(&error.code),
+                Some(koru_delegate_core::BotInputRefusal::Capability)
+            );
+            assert!(seen.lock().unwrap().is_empty(), "refused before the wire");
+        }
+    }
+}

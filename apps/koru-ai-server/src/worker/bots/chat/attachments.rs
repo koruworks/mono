@@ -99,23 +99,6 @@ pub(in crate::worker) struct IngestRead {
     size: Arc<OnceLock<u64>>,
 }
 
-/// The Bot route's single attachment policy. It refuses only what this route
-/// cannot deliver: the delegate's controller connections do not negotiate
-/// `path-references`, so a local path reference would fail at Begin.
-pub(super) fn admit(records: &[AttachmentRecord]) -> ApiResult<()> {
-    if records
-        .iter()
-        .any(|record| record.attachment.source == koru_ai_core::AttachmentSource::Path)
-    {
-        return Err(failure(
-            "unsupported_capability",
-            "A Bot cannot be sent local file or folder references yet.",
-            false,
-        ));
-    }
-    Ok(())
-}
-
 /// Mint each native picture's session id once. Pure: no disk access.
 /// `as_paths` sends every picture as its path instead, with the notice.
 pub(super) fn plan(

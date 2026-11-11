@@ -50,7 +50,7 @@ fn refused_input_error(refusal: koru_delegate_core::BotInputRefusal) -> AiError 
         R::Pictures => AiError::new(AiErrorClass::Provider, "", false),
         R::Capability => AiError::new(
             AiErrorClass::Configuration,
-            "This Koru Agent is older than the app; restart Koru.",
+            koru_ai_provider_agent::AGENT_OLDER_THAN_APP,
             false,
         ),
         R::Model => AiError::new(

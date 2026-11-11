@@ -284,9 +284,6 @@ impl WorkerState {
         if self.bot_delegate.is_none() {
             return Err(bot_failure(BotError::Unavailable));
         }
-        if let BotChatPreparation::Turn(turn) = &preparation {
-            super::attachments::admit(&self.attachments_for_send(chat, &turn.attachment_ids)?)?;
-        }
         let proof = context
             .prepared
             .as_ref()

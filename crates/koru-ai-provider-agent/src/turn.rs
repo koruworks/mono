@@ -131,53 +131,19 @@ pub(crate) fn start(
 
     let client = SessionClient::connect(&provider.endpoint, PRODUCT, offer())
         .map_err(|error| session_error("connect", error))?;
-    let references: Vec<koru_session_protocol::PathReference> = if answering.is_some() {
+    let references = if answering.is_some() {
         Vec::new()
     } else {
-        request
-            .messages
-            .last()
-            .into_iter()
-            .flat_map(|message| &message.attachments)
-            .filter_map(|attachment| {
-                attachment
-                    .reference
-                    .as_ref()
-                    .map(|path| koru_session_protocol::PathReference {
-                        kind: if attachment.kind == koru_ai_core::AttachmentKind::Folder {
-                            koru_session_protocol::PathReferenceKind::Folder
-                        } else {
-                            koru_session_protocol::PathReferenceKind::File
-                        },
-                        path: path.clone(),
-                    })
-            })
-            .collect()
+        path_references(&request)
     };
     if !references.is_empty() && !client.supports_path_references() {
         return Err(AiError::new(
             AiErrorClass::Configuration,
-            "This Koru Agent is older than the app; restart Koru.",
+            AGENT_OLDER_THAN_APP,
             false,
         ));
     }
-    let copied_attachment_count = request.messages.last().map_or(0, |message| {
-        message
-            .attachments
-            .iter()
-            .filter(|attachment| attachment.reference.is_none())
-            .count()
-    });
-    if references.len() + copied_attachment_count
-        > koru_ai_core::attachments::MAX_ATTACHMENTS_PER_MESSAGE
-        || references.iter().any(|reference| !reference.valid())
-    {
-        return Err(AiError::new(
-            AiErrorClass::Configuration,
-            "A local file or folder path is invalid.",
-            false,
-        ));
-    }
+    check_path_references(&request, &references)?;
     let (lease, render) = client
         .attach_live(
             ensured.session,
@@ -503,6 +469,61 @@ fn deliver_pictures(
         }
     }
     delivered
+}
+
+/// What a person reads when the session host cannot take something the
+/// message needs: it is older than the app that sent it.
+pub const AGENT_OLDER_THAN_APP: &str = "This Koru Agent is older than the app; restart Koru.";
+
+/// The message's local file and folder references, as the session protocol
+/// carries them. Shared by the ordinary turn and the Bot route, so both send
+/// the same ones; Koru never reads what a reference names.
+pub fn path_references(request: &AiRequest) -> Vec<koru_session_protocol::PathReference> {
+    request
+        .messages
+        .last()
+        .into_iter()
+        .flat_map(|message| &message.attachments)
+        .filter_map(|attachment| {
+            attachment
+                .reference
+                .as_ref()
+                .map(|path| koru_session_protocol::PathReference {
+                    kind: if attachment.kind == koru_ai_core::AttachmentKind::Folder {
+                        koru_session_protocol::PathReferenceKind::Folder
+                    } else {
+                        koru_session_protocol::PathReferenceKind::File
+                    },
+                    path: path.clone(),
+                })
+        })
+        .collect()
+}
+
+/// The bounds both routes hold references to before a session sees them:
+/// the message's attachment count, and an absolute single-line path each.
+pub fn check_path_references(
+    request: &AiRequest,
+    references: &[koru_session_protocol::PathReference],
+) -> Result<(), AiError> {
+    let copied_attachment_count = request.messages.last().map_or(0, |message| {
+        message
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.reference.is_none())
+            .count()
+    });
+    if references.len() + copied_attachment_count
+        > koru_ai_core::attachments::MAX_ATTACHMENTS_PER_MESSAGE
+        || references.iter().any(|reference| !reference.valid())
+    {
+        return Err(AiError::new(
+            AiErrorClass::Configuration,
+            "A local file or folder path is invalid.",
+            false,
+        ));
+    }
+    Ok(())
 }
 
 /// The message's attachments that may go natively: its pictures. Shared by

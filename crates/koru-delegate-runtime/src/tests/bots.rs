@@ -416,6 +416,54 @@ fn a_definite_session_refusal_of_the_initial_input_names_its_reason_and_is_not_r
     }
 }
 #[test]
+fn path_references_are_part_of_the_frozen_initial_input_and_never_sent_twice() {
+    let mut h = bot_harness();
+    let s = submission(42);
+    let fence = prepared(&mut h, &s);
+    observe(&mut h, &fence);
+    let mut input = s.input.clone();
+    input.references = vec![koru_session_protocol::PathReference {
+        kind: koru_session_protocol::PathReferenceKind::Folder,
+        path: "C:\\work folder\\文書".into(),
+    }];
+    let turn = h
+        .orchestrator
+        .bot_begin_turn(&fence, fence.owner.device, input.clone())
+        .unwrap();
+    // An exact replay is answered from the ledger: the session is not asked.
+    assert_eq!(
+        h.orchestrator
+            .bot_begin_turn(&fence, fence.owner.device, input.clone())
+            .unwrap(),
+        turn
+    );
+    // The same key with different references is a different input.
+    let mut changed = input.clone();
+    changed.references[0].path = "C:\\work folder\\other".into();
+    assert!(
+        h.orchestrator
+            .bot_begin_turn(&fence, fence.owner.device, changed)
+            .is_err()
+    );
+    let mut dropped = input.clone();
+    dropped.references.clear();
+    assert!(
+        h.orchestrator
+            .bot_begin_turn(&fence, fence.owner.device, dropped)
+            .is_err()
+    );
+    assert_eq!(count_submits(&h), 1);
+    let sent = h
+        .sessions
+        .lock()
+        .unwrap()
+        .bot_inputs
+        .values()
+        .next()
+        .cloned();
+    assert_eq!(sent.unwrap().0.references, input.references);
+}
+#[test]
 fn no_answer_or_a_session_state_answer_to_the_initial_input_stays_uncertain_and_retryable() {
     for session in [
         "disconnected",

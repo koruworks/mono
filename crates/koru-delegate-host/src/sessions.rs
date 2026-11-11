@@ -96,6 +96,11 @@ pub fn offer() -> ProtocolOffer {
 /// Extra interactive capabilities are offered only for Bot creation.
 /// Controller connections may answer them without enabling questions in
 /// ordinary sessions, whose creation offer remains unchanged.
+///
+/// `path-references` lets a Bot's first input name local files and folders
+/// as an ordinary chat's does (O30). It is negotiation only: the input
+/// already carries the field, the host only checks the capability before
+/// accepting one, and Koru never reads what a reference names.
 fn bot_offer() -> ProtocolOffer {
     let mut offered = offer();
     let mut capabilities: Vec<_> = offered.capabilities.iter().cloned().collect();
@@ -104,6 +109,7 @@ fn bot_offer() -> ProtocolOffer {
             capability::MANAGED_QUESTIONS,
             capability::CONDITIONAL_TURN_STEERING,
             capability::BEGIN_PENDING_INPUT,
+            capability::PATH_REFERENCES,
         ]
         .into_iter()
         .map(|name| CapabilityName::from_str(name).expect("built-in capability")),

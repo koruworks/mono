@@ -119,6 +119,27 @@ struct Running {
 
 /// One Bot with one stored picture, its Send prepared but not yet sent.
 fn start(script: Script) -> Running {
+    let mut running = boot(script);
+    let id = koru_ai_core::ChatAttachmentId::new();
+    // The same prepared Bot command context a Send carries.
+    crate::worker::attachments::put_attachment(
+        &running.worker.client(),
+        running.context.clone(),
+        running.request.chat_id,
+        id,
+        koru_ai_api::AttachmentUpload {
+            file_name: "picture.png".into(),
+            source: koru_ai_core::AttachmentSource::Clipboard,
+            bytes: png().into(),
+        },
+    )
+    .unwrap();
+    running.request.attachment_ids = vec![id];
+    running
+}
+
+/// One Bot and its Send, with nothing attached yet.
+fn boot(script: Script) -> Running {
     let root = tempfile::tempdir().unwrap();
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
@@ -140,22 +161,7 @@ fn start(script: Script) -> Running {
     .with_bot_delegate(port.clone());
     config.test_repository = Some(repository);
     let worker = AiWorker::new(config).spawn().unwrap();
-    let id = koru_ai_core::ChatAttachmentId::new();
-    // The same prepared Bot command context a Send carries.
-    crate::worker::attachments::put_attachment(
-        &worker.client(),
-        context.clone(),
-        bot.main_chat,
-        id,
-        koru_ai_api::AttachmentUpload {
-            file_name: "picture.png".into(),
-            source: koru_ai_core::AttachmentSource::Clipboard,
-            bytes: png().into(),
-        },
-    )
-    .unwrap();
-    let mut request = request(&bot);
-    request.attachment_ids = vec![id];
+    let request = request(&bot);
     Running {
         _root: root,
         worker,
@@ -411,4 +417,74 @@ fn a_persons_stop_during_an_ingest_takes_the_stop_lane_and_never_begins() {
     );
     assert!(state.stop_calls > 0);
     assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
+}
+
+/// An absolute path on this platform, in a folder whose name has a space and
+/// another script, as a person's folders do.
+fn local_path(name: &str) -> String {
+    if cfg!(windows) {
+        format!("C:\\work folder\\文書\\{name}")
+    } else {
+        format!("/work folder/文書/{name}")
+    }
+}
+
+#[test]
+fn local_path_references_go_as_the_ordinary_route_sends_them_and_are_never_staged() {
+    let mut running = boot(Script::Native);
+    let mut expected = Vec::new();
+    for (kind, name, reference) in [
+        (
+            koru_ai_core::AttachmentKind::Folder,
+            "project",
+            s::PathReferenceKind::Folder,
+        ),
+        (
+            koru_ai_core::AttachmentKind::File,
+            "notes.md",
+            s::PathReferenceKind::File,
+        ),
+    ] {
+        let id = koru_ai_core::ChatAttachmentId::new();
+        crate::worker::attachments::reference_attachment(
+            &running.worker.client(),
+            running.context.clone(),
+            running.request.chat_id,
+            koru_ai_wire::ReferenceAttachmentRequest {
+                id,
+                kind,
+                path: local_path(name),
+            },
+        )
+        .unwrap();
+        running.request.attachment_ids.push(id);
+        expected.push(s::PathReference {
+            kind: reference,
+            path: local_path(name),
+        });
+    }
+    let stream = send(&running);
+    let (event, notice) = terminal_with_notice(&stream);
+    assert!(
+        matches!(event, PublicAiEvent::Completed { .. }),
+        "{event:?}"
+    );
+    assert!(!notice, "no picture went anywhere");
+    let port = &running.port;
+    // Nothing named by a reference is read, uploaded or listed.
+    assert_eq!(port.ingests.load(Ordering::SeqCst), 0);
+    assert_eq!(port.lists.load(Ordering::SeqCst), 0);
+    let input = port.native.state.lock().unwrap().input.clone().unwrap();
+    let mut references = input.references.clone();
+    references.sort_by(|a, b| a.path.cmp(&b.path));
+    expected.sort_by(|a, b| a.path.cmp(&b.path));
+    // In the input's own field, as the ordinary route sends them, and not
+    // repeated in the composed text as copied files are.
+    assert_eq!(references, expected);
+    assert!(input.attachment_ids.is_empty());
+    assert!(!input.text.contains("notes.md"), "{}", input.text);
+    // An exact replay of the Send resolves the same attempt and begins nothing.
+    let replay = send(&running);
+    assert!(replay.accepted.replayed);
+    assert_eq!(port.native.state.lock().unwrap().begin, 1);
 }

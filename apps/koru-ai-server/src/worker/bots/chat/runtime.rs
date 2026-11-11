@@ -163,6 +163,11 @@ impl WorkerState {
             .ok_or_else(bot_route_error)?;
         let mut input = receipt.intent.submission.input.clone();
         input.text = koru_ai_provider_agent::compose_delegated_prompt(&request);
+        // Local file and folder references go as the ordinary route sends
+        // them, frozen with the rest of the first input (O30). They are never
+        // staged or read: only pictures with a stored copy are.
+        input.references = koru_ai_provider_agent::path_references(&request);
+        koru_ai_provider_agent::check_path_references(&request, &input.references)?;
         if input.text.len() > MAX_REPLAY_BYTES || self.bot_chats.len() >= PROVIDER_QUEUE_CAPACITY {
             return Err(context_too_large());
         }
