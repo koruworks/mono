@@ -351,7 +351,25 @@ pub enum BotCommand {
     AbandonBotCreation {
         request_id: BotRequestId,
     },
+    /// One Run of a Bot conversation, read through the execution owner: the
+    /// Run that wrote reply `message_id` of `chat_id` (or the reply a branch
+    /// copied there), with a window of its history from entry `from`, `len`
+    /// entries (1 to 500). Answered `run` with the Run view
+    /// `GET /v1/runs/{run}` answers, without `execution.session`: no
+    /// stream, control or takeover handle.
+    ReadRun {
+        bot_id: BotId,
+        chat_id: ChatId,
+        message_id: crate::MessageId,
+        run_id: koru_delegate_core::RunId,
+        from: u64,
+        len: u32,
+    },
 }
+
+/// The most history entries one [`BotCommand::ReadRun`] window carries: the
+/// Run view's own bound.
+pub const BOT_RUN_WINDOW_LIMIT: u32 = 500;
 
 impl BotCommand {
     /// The lifecycle operation a command asks for, if it is one.
@@ -383,6 +401,7 @@ pub enum BotResponse {
     Activity { activity: BotActivityPage },
     Creation { creation: BotCreation },
     Creations { page: BotCreationPage },
+    Run { view: koru_delegate_core::RunView },
 }
 
 /// The most conversations one [`BotCommand::ListActivity`] reply names.

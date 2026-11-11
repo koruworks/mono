@@ -320,7 +320,8 @@ impl WorkerState {
                     | BotCommand::PurgeBot { .. }
                     | BotCommand::PurgeChat { .. }
                     | BotCommand::ReadLifecycleOperation { .. }
-                    | BotCommand::ListBotChats { .. } => {}
+                    | BotCommand::ListBotChats { .. }
+                    | BotCommand::ReadRun { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -471,7 +472,8 @@ impl WorkerState {
         // operation moving the revision (Archive's pause, its completion)
         // must not refuse a client polling its progress.
         let read = matches!(&command, WorkerCommand::Bots { request, .. }
-            if super::lifecycle::bot_read_command(request));
+            if super::lifecycle::bot_read_command(request)
+                || matches!(request, BotCommand::ReadRun { .. }));
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match super::lifecycle::provable_bot(&self.repository, *id, &command) {
@@ -548,7 +550,8 @@ pub(super) fn bot_targets(
             | BotCommand::PurgeBot { bot_id, .. }
             | BotCommand::PurgeChat { bot_id, .. }
             | BotCommand::ReadLifecycleOperation { bot_id, .. }
-            | BotCommand::ListBotChats { bot_id, .. } => *bot_id,
+            | BotCommand::ListBotChats { bot_id, .. }
+            | BotCommand::ReadRun { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
             // The workspace alone is proved; the read names no Bot or chat.
             BotCommand::ListActivity { .. } | BotCommand::ListTrashedBotChats { .. } => {
@@ -570,6 +573,14 @@ pub(super) fn bot_targets(
                         if repository.bot_for_chat(*chat_id).map_err(bot_failure)? != Some(id) {
                             return Err(bot_failure(BotError::Forbidden));
                         }
+                        *chat_id
+                    }
+                    // A Run read proves the conversation it names when it is
+                    // this Bot's; any other reads as not found at dispatch,
+                    // never as someone else's.
+                    BotCommand::ReadRun { chat_id, .. }
+                        if repository.bot_for_chat(*chat_id).map_err(bot_failure)? == Some(id) =>
+                    {
                         *chat_id
                     }
                     _ => bot.main_chat,

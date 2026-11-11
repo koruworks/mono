@@ -2106,6 +2106,11 @@ impl WorkerState {
         match command {
             WorkerCommand::Bots {
                 context,
+                request: request @ koru_ai_wire::BotCommand::ReadRun { .. },
+                reply,
+            } => self.read_bot_run(context, request, reply),
+            WorkerCommand::Bots {
+                context,
                 request,
                 reply,
             } => {
@@ -5603,6 +5608,8 @@ enum ProviderAdminJob {
     BotCreationPrepare(bots::CreationPreparationJob),
     BotCreationStep(bots::CreationJob),
     BotCreationRead(bots::CreationReadJob),
+    /// A public Run read (P1.8 B1); it answers its caller itself.
+    BotRunRead(bots::BotRunReadJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -5761,6 +5768,7 @@ impl ProviderAdminPool {
                                 &thread_shutdown,
                             );
                         }
+                        ProviderAdminJob::BotRunRead(job) => job.run(),
                         ProviderAdminJob::Validate { provider, reply } => {
                             let started = Instant::now();
                             let diagnostic_provider = provider.clone();

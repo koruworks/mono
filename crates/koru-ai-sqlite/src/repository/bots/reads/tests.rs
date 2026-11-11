@@ -4,6 +4,7 @@ use super::*;
 mod activity;
 mod holders;
 mod label;
+mod runs;
 mod trashed;
 
 const HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";

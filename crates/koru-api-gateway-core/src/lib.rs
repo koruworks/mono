@@ -3234,6 +3234,65 @@ mod tests {
         }
     }
 
+    /// `read_run` rides the same route: vouched `bots.manage` only, its body
+    /// closed (no session or workspace field reaches the owner), and a
+    /// well-formed one is answered by the AI owner itself.
+    #[tokio::test]
+    async fn bot_run_read_rides_the_bot_route_strictly() {
+        let (_root, state, _) = state_with_ai();
+        let (ordinary, _) =
+            state
+                .sessions
+                .mint("claimed-owner", &["bots.manage".into()], now_millis());
+        let (owner, _) = state.sessions.mint_admitted(
+            "owner",
+            &["bots.manage".into()],
+            Admission::Vouched,
+            now_millis(),
+        );
+        let command = koru_ai_wire::BotCommand::ReadRun {
+            bot_id: koru_ai_core::bots::BotId::mint(),
+            chat_id: koru_ai_core::ChatId::new(),
+            message_id: koru_ai_core::MessageId::new(),
+            run_id: koru_delegate_core::RunId::mint(),
+            from: 0,
+            len: 100,
+        };
+        let valid = serde_json::to_value(&command).unwrap();
+        let mut extra = valid.clone();
+        extra["session"] = serde_json::json!("caller-controlled");
+        for (token, body, expected) in [
+            (&ordinary, &valid, Some(StatusCode::FORBIDDEN)),
+            (&owner, &extra, Some(StatusCode::BAD_REQUEST)),
+            (&owner, &valid, None),
+        ] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/bots")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            match expected {
+                Some(status) => assert_eq!(response.status(), status),
+                None => {
+                    // This mock host has no Bot authority: the owner refuses
+                    // with its own code, past the route's checks.
+                    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                        .await
+                        .unwrap();
+                    let failure: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(failure["code"], "workspace_unavailable", "{failure}");
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn ai_requests_are_strict_and_scope_checked_before_dispatch() {
         let (_root, state, _) = state_with_ai();

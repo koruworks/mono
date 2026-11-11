@@ -84,8 +84,8 @@ pub const ROUTES: &[AiRoute] = &[
         method: "POST",
         path: "/v1/ai/bots",
         scope: AiScope::ManageBots,
-        summary: "Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity or request admission",
-        returns: "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately.",
+        summary: "Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or request admission",
+        returns: "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, or the Run view of a reply's Run (a bounded window of its history, without its session). Conversation history uses the Chat reads; execution is coordinated separately.",
         handler: || post(bot_command),
         request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotCommand>()),
         response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotResponse>()),
@@ -2123,6 +2123,8 @@ fn status_for(failure: &Failure) -> StatusCode {
         "deadline_exceeded" | "ai_worker_timeout" => StatusCode::GATEWAY_TIMEOUT,
         "workspace_unavailable"
         | "runtime_unavailable"
+        // A Bot's execution owner did not answer (`read_run`).
+        | "bot_unavailable"
         | "ai_worker_saturated"
         | "ai_unavailable"
         | "ai_context_unavailable"

@@ -321,3 +321,53 @@ fn a_trash_page_request_is_closed_and_names_the_restore_each_entry_needs() {
         BotResponse::TrashedChats { .. }
     ));
 }
+
+#[test]
+fn a_run_read_names_the_reply_and_its_run_and_nothing_else() {
+    let request = BotCommand::ReadRun {
+        bot_id: BotId::mint(),
+        chat_id: ChatId::new(),
+        message_id: crate::MessageId::new(),
+        run_id: koru_delegate_core::RunId::mint(),
+        from: 0,
+        len: BOT_RUN_WINDOW_LIMIT,
+    };
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["command"], "read_run");
+    assert_eq!(
+        json.as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "bot_id",
+            "chat_id",
+            "command",
+            "from",
+            "len",
+            "message_id",
+            "run_id"
+        ])
+    );
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+        request
+    );
+    // Closed: no workspace, owner, session or stream rides along, and the
+    // window is stated.
+    for (field, value) in [
+        ("workspace", serde_json::json!(WorkspaceId::new())),
+        ("session", serde_json::json!("caller-controlled")),
+    ] {
+        let mut extra = json.clone();
+        extra[field] = value;
+        assert!(
+            serde_json::from_value::<BotCommand>(extra).is_err(),
+            "{field}"
+        );
+    }
+    let mut missing = json;
+    missing.as_object_mut().unwrap().remove("len");
+    assert!(serde_json::from_value::<BotCommand>(missing).is_err());
+}

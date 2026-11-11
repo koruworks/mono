@@ -128,7 +128,172 @@ pub(crate) const BOT_LIFECYCLE_HOLDERS_SQL: &str =
                     WHERE r.user_scope_id = i.user_scope_id AND r.source_operation_id = i.operation_id
                       AND r.stage = 'completed')";
 
+/// The workspace a Bot Run's record lives in, when that Run wrote this reply
+/// (or the reply a branch copied here, through `historical_bot_run`). Keyed
+/// by `bot_chat_runs`' unique `run_id`, checked against the Bot and the reply.
+const BOT_RUN_RECORD_SQL: &str = "SELECT record_workspace_id FROM bot_chat_runs
+  WHERE run_id = ?1 AND bot_id = ?2 AND assistant_message_id = ?3";
+
+/// The same for a copy whose source was purged: the inert reference the
+/// copy keeps, by its primary key `(chat_id, message_id, run_id)`.
+const BOT_HISTORICAL_RUN_SQL: &str = "SELECT record_workspace_id FROM bot_historical_run_refs
+  WHERE chat_id = ?1 AND message_id = ?2 AND run_id = ?3 AND bot_id = ?4";
+
 impl Repository {
+    /// Whether `run` is the Run of reply `message` in `chat`, a conversation
+    /// of `bot`, and if so the workspace its Run record is in. The reply is
+    /// the Run's own (`bot_chat_runs`), a copy a branch made of it
+    /// (resolved through [`Self::historical_bot_run`], up to its hop bound),
+    /// or a copy whose source was purged (`bot_historical_run_refs`). Any
+    /// mismatch — another Bot, another conversation, a message not in
+    /// `chat`, another Run — is `None`, never "it exists elsewhere". Every
+    /// step is a primary-key or unique-index seek. History only: the answer
+    /// grants no control, approval or result authority, and the caller has
+    /// checked the owner first.
+    pub fn bound_bot_run(
+        &self,
+        bot: BotId,
+        chat: ChatId,
+        message: MessageId,
+        run: koru_delegate_core::RunId,
+    ) -> Result<Option<WorkspaceId>, BotError> {
+        if bot_for_chat_on(&self.connection, chat)? != Some(bot) {
+            return Ok(None);
+        }
+        let in_chat: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT chat_id FROM messages WHERE id = ?1",
+                [message.to_storage()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(bad)?;
+        if in_chat.as_deref() != Some(chat.to_storage().as_str()) {
+            return Ok(None);
+        }
+        let workspace: Option<String> = match self.historical_bot_run(message)? {
+            Some(found) if found.bot == bot && found.run == run => self
+                .connection
+                .query_row(
+                    BOT_RUN_RECORD_SQL,
+                    params![
+                        run.to_storage(),
+                        bot.to_storage(),
+                        found.assistant_message.to_storage()
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(bad)?,
+            _ => None,
+        };
+        let workspace = match workspace {
+            Some(workspace) => Some(workspace),
+            None => self
+                .connection
+                .query_row(
+                    BOT_HISTORICAL_RUN_SQL,
+                    params![
+                        chat.to_storage(),
+                        message.to_storage(),
+                        run.to_storage(),
+                        bot.to_storage()
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(bad)?,
+        };
+        workspace
+            .map(|w| WorkspaceId::parse(&w).ok_or(BotError::Storage))
+            .transpose()
+    }
+
+    /// Record that `run` wrote reply `message`, as a Bot conversation's
+    /// replay preparation does, with the least the read-only resolvers need
+    /// (a completed `start` receipt, so no recovery picks it up). The
+    /// message's attempt must exist.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn record_bot_chat_run_for_fixture(
+        &self,
+        bot: &Bot,
+        attempt: InferenceAttemptId,
+        chat: ChatId,
+        message: MessageId,
+        run: koru_delegate_core::RunId,
+        record_workspace: WorkspaceId,
+    ) -> Result<(), BotError> {
+        let request = BotRequestId::mint();
+        self.connection
+            .execute(
+                "INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,planned_run_id,captured_config_revision,captured_policy_revision,submission_version,submission_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'fixture','start','completed',?4,1,1,1,'{}',1,1)",
+                params![
+                    bot.user_scope.to_storage(),
+                    request.to_storage(),
+                    bot.id.to_storage(),
+                    run.to_storage()
+                ],
+            )
+            .map_err(bad)?;
+        self.connection
+            .execute(
+                "INSERT INTO bot_chat_runs(ai_attempt_id,user_scope_id,owner_device_id,submission_id,bot_id,chat_id,assistant_message_id,run_id,record_workspace_id,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1)",
+                params![
+                    attempt.to_storage(),
+                    bot.user_scope.to_storage(),
+                    bot.owner_device.to_storage(),
+                    request.to_storage(),
+                    bot.id.to_storage(),
+                    chat.to_storage(),
+                    message.to_storage(),
+                    run.to_storage(),
+                    record_workspace.to_storage()
+                ],
+            )
+            .map_err(bad)?;
+        Ok(())
+    }
+
+    /// What a purge of a copied reply's source leaves (no purge writes it
+    /// yet): the source's Run binding is gone, and the copy keeps an inert
+    /// reference to the Run in `bot_historical_run_refs`.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn purge_bot_chat_run_source_for_fixture(
+        &self,
+        run: koru_delegate_core::RunId,
+        copy_chat: ChatId,
+        copy_message: MessageId,
+    ) -> Result<(), BotError> {
+        let tx = self.connection.unchecked_transaction().map_err(bad)?;
+        let changed = tx
+            .execute(
+                "INSERT INTO bot_historical_run_refs(chat_id,message_id,source_chat_id,source_message_id,bot_id,run_id,record_workspace_id,recorded_at_ms)
+                 SELECT ?1, ?2, chat_id, assistant_message_id, bot_id, run_id, record_workspace_id, 1
+                   FROM bot_chat_runs WHERE run_id = ?3",
+                params![
+                    copy_chat.to_storage(),
+                    copy_message.to_storage(),
+                    run.to_storage()
+                ],
+            )
+            .map_err(bad)?;
+        if changed != 1 {
+            return Err(BotError::NotFound);
+        }
+        tx.execute(
+            "UPDATE messages SET origin_message_id = NULL WHERE id = ?1",
+            [copy_message.to_storage()],
+        )
+        .map_err(bad)?;
+        tx.execute(
+            "DELETE FROM bot_chat_runs WHERE run_id = ?1",
+            [run.to_storage()],
+        )
+        .map_err(bad)?;
+        tx.commit().map_err(bad)
+    }
+
     /// What holds each archived or trashed Bot of `bots` where it is: the
     /// completed, unreversed Trash of a trashed Bot, the completed,
     /// unreversed Archive of an archived one. An active Bot, or one with no

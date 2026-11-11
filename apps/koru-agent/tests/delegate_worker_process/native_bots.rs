@@ -183,6 +183,17 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         "the agent was given exactly one native image"
     );
     assert!(trace.lines().any(|line| line == "native:images-on-disk:1"));
+    // The Run through the public Bots API (P1.8 B1), named only by what the
+    // conversation names, while its session is live: no session handle.
+    let running = read_run(
+        &stack.client,
+        &bot,
+        accepted.assistant_message_id,
+        fence.run,
+    );
+    assert_eq!(running.header.run, fence.run);
+    assert_eq!(running.execution.device, stack.device);
+    assert_eq!(running.execution.session, None);
     std::fs::write(&finish, []).unwrap();
     let mut terminal = false;
     for frame in &mut stream.events {
@@ -255,6 +266,29 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     );
     assert_eq!(receipt.attempt, fence.attempt);
     assert_eq!(receipt.generation, fence.generation);
+    // Read again once finished: the same canonical Run, its whole history.
+    let finished = read_run(
+        &stack.client,
+        &bot,
+        accepted.assistant_message_id,
+        fence.run,
+    );
+    assert_eq!(finished.header.run, fence.run);
+    assert!(matches!(
+        finished.header.status,
+        RunStatus::Completed { .. }
+    ));
+    assert_eq!(
+        finished.header.chat_delivery.as_ref().map(|r| r.run),
+        Some(fence.run)
+    );
+    assert_eq!(finished.header.native_results, header.native_results);
+    assert_eq!(finished.execution.session, None);
+    assert!(!finished.timeline.items.is_empty());
+    assert_eq!(
+        finished.timeline.items.len() as u64,
+        finished.timeline.total
+    );
     let history = stack
         .client
         .store()
@@ -458,6 +492,34 @@ fn ordinary_supervised_client_cannot_manage_bots_when_opted_in() {
     assert_eq!(failure.code, "forbidden");
     assert!(!failure.retryable);
     eprintln!("ordinary supervised client verified: bots.manage forbidden and nonretryable");
+}
+
+/// `read_run` for the Run that wrote `reply` in the Bot's main conversation,
+/// its whole history in one window; the raw answer carries no session.
+fn read_run(
+    client: &koru_api_client::Client,
+    bot: &koru_ai_core::bots::Bot,
+    reply: koru_ai_core::MessageId,
+    run: koru_delegate_core::RunId,
+) -> koru_delegate_core::RunView {
+    let response = client
+        .ai()
+        .bots(&BotCommand::ReadRun {
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
+            message_id: reply,
+            run_id: run,
+            from: 0,
+            len: koru_ai_core::bots::BOT_RUN_WINDOW_LIMIT,
+        })
+        .unwrap();
+    let wire = serde_json::to_value(&response).unwrap();
+    assert_eq!(wire["result"], "run");
+    assert!(wire["view"]["execution"].get("session").is_none());
+    let BotResponse::Run { view } = response else {
+        panic!("a Run view")
+    };
+    view
 }
 
 /// A valid 1x1 RGBA PNG: the smallest picture both the AI's attachment check

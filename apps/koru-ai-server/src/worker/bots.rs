@@ -28,6 +28,7 @@ pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingB
 pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
+pub(super) use reads::BotRunReadJob;
 mod creation;
 pub(super) use creation::{
     BotFolderSystem, CreationDriver, CreationJob, CreationPreparationJob, CreationPrepared,
@@ -278,7 +279,8 @@ fn execute_bot_command(
         | BotCommand::ReadBotCreation { .. }
         | BotCommand::ListBotCreations { .. }
         | BotCommand::RetryBotCreation { .. }
-        | BotCommand::AbandonBotCreation { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::AbandonBotCreation { .. }
+        | BotCommand::ReadRun { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,
