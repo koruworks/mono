@@ -1,22 +1,20 @@
-# The dependency update routine. Security updates arrive as soon as an
-# advisory is published, whatever the schedule; the weekly runs keep versions
-# current.
-# cargo-deny in ci.yml fails on any advisory these have not fixed yet.
+# The dependency update routine: weekly pull requests for the GitHub Actions
+# pins and the Android build. Every pull request Dependabot opens goes through
+# the same required checks.
 #
-# Every pull request Dependabot opens goes through the same required checks.
+# **Rust is not here, on purpose.** Dependabot's cargo run needs every path
+# dependency's manifest in the repository, and the crates Koru builds from
+# patched source are fetched, not committed (third-party/README.md). It failed
+# every week from 2026-10-14 for that reason and never opened a Rust pull
+# request, security updates included. Committing the manifests would undo that
+# decision, and an automatic `cargo update` also re-resolves entries Cargo.lock
+# holds deliberately.
+#
+# What covers Rust instead: `cargo-deny` in ci.yml on every push and pull
+# request, and .github/workflows/advisories.yml once a day, so an advisory is
+# heard about the day it is published. The fix is then made by hand.
 version: 2
 updates:
-  - package-ecosystem: cargo
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 10
-    groups:
-      # Patch releases of everything in one pull request a week; minor and
-      # major updates one at a time, because they are the ones that break.
-      cargo-patch:
-        update-types: ["patch"]
-
   - package-ecosystem: github-actions
     directory: /
     schedule:

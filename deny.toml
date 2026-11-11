@@ -59,7 +59,12 @@ version = 2
 # directly, which is the one we can act on by choosing another. Nine
 # transitive ones (atomic-polyfill, bincode, bitmaps, im, paste,
 # proc-macro-error, sized-chunks, ttf-parser, yaml-rust) reach us through
-# loro, parley, gtk and the like; Dependabot and their upstreams move those.
+# loro, parley, gtk and the like; their upstreams move those.
+#
+# Checked on every push and pull request (ci.yml) and once a day against
+# `main` (.github/workflows/advisories.yml). Dependabot does not update Rust
+# here (.github/dependabot.yml says why), so a fix is a hand edit of the one
+# entry in Cargo.lock.
 yanked = "deny"
 unmaintained = "workspace"
 ignore = []
