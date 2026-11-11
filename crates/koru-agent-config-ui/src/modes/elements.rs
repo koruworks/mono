@@ -17,8 +17,9 @@
 //!
 //! A row lights on the hover plate under the pointer, and stays lit while
 //! the keyboard is on it (`MODE_ROW_LIT_STATES`); each row's icon wears the
-//! mode's color ([`super::tone_of`], as a send button does); *Full access*
-//! is in the notice ink (`Ink::Notice`, the warning color) in its title too;
+//! mode's color ([`super::tone_of`], as a send button does, through
+//! [`mode_inks`]); *Full access* is in the notice ink (`Ink::Notice`, the
+//! warning color) in its title too;
 //! the current mode has the accent ✓. Nothing here is a leaf: every part is a box, text or an icon.
 //! Every value is a token or a tagged metric ([`super::tokens`]); this file
 //! is on the source scan's migrated list (`koru_draw::theme::ui_scan`).
@@ -91,23 +92,43 @@ pub static MODE_ROW_LIT_STATES: StateRecipe = StateRecipe {
     ..MODE_ROW_STATES
 };
 
-/// **A row of the list**: the mode's icon, its title and the line under it,
-/// elided to the room left before the ✓'s lane, which is kept whether or
-/// not the ✓ shows.
-fn mode_row(spec: &ModeSpec) -> El {
-    let ink = if spec.full_access {
+/// **The inks a mode is drawn in** wherever it is named: its icon's and
+/// its title's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModeInks {
+    pub icon: Ink,
+    pub title: Ink,
+}
+
+/// **A mode's color as inks** — the one place the tone [`super::tone_of`]
+/// decides becomes ink: the icon in the mode's color (warning, success or
+/// accent; the reading ink for a neutral mode), the title in the reading
+/// ink, except *Full access*, which warns in both. The list's rows and a
+/// host's chip naming the chosen mode (a Bot's *Agent and model* card) are
+/// drawn in these, so a mode looks the same wherever it is named.
+pub fn mode_inks(tone: SplitTone, full_access: bool) -> ModeInks {
+    let title = if full_access {
         Ink::Notice
     } else {
         Ink::Primary
     };
-    // The icon in the mode's color; the title stays the reading color,
-    // except *Full access*, which warns in both.
-    let icon_ink = match spec.tone {
+    let icon = match tone {
         SplitTone::Warning => Ink::Notice,
         SplitTone::Success => Ink::Success,
         SplitTone::Accent => Ink::Accent,
-        SplitTone::Neutral => ink,
+        SplitTone::Neutral => title,
     };
+    ModeInks { icon, title }
+}
+
+/// **A row of the list**: the mode's icon, its title and the line under it,
+/// elided to the room left before the ✓'s lane, which is kept whether or
+/// not the ✓ shows.
+fn mode_row(spec: &ModeSpec) -> El {
+    let ModeInks {
+        icon: icon_ink,
+        title: ink,
+    } = mode_inks(spec.tone, spec.full_access);
     let mut words = col(MODE_WORDS)
         .fill()
         .pad_start(WORDS_INSET)

@@ -664,6 +664,29 @@ fn every_row_carries_its_modes_color_into_the_list() {
     assert_eq!(spec_tones, tones);
 }
 
+/// **A mode's color as inks** (Bots P1.8 §20): what the list's row and a
+/// host's chip naming the chosen mode are drawn in — the icon in the mode's
+/// color, the reading ink for a neutral mode; the title in the reading ink
+/// but for *Full access*, which warns in both.
+#[test]
+fn a_modes_color_becomes_one_pair_of_inks() {
+    use koru_draw::theme::Ink;
+    use modes::elements::{ModeInks, mode_inks};
+    let claude = |id: &str| {
+        mode_inks(
+            modes::tone_of("agent-claude", id),
+            modes::is_full_access("agent-claude", id),
+        )
+    };
+    let pair = |icon, title| ModeInks { icon, title };
+    assert_eq!(claude("default"), pair(Ink::Accent, Ink::Primary));
+    assert_eq!(claude("acceptEdits"), pair(Ink::Success, Ink::Primary));
+    assert_eq!(claude("plan"), pair(Ink::Accent, Ink::Primary));
+    assert_eq!(claude("auto"), pair(Ink::Primary, Ink::Primary));
+    assert_eq!(claude("bypassPermissions"), pair(Ink::Notice, Ink::Notice));
+    assert_eq!(claude("something-new"), pair(Ink::Accent, Ink::Primary));
+}
+
 /// Every node of a semantics tree, depth first.
 fn every(nodes: &[koru_draw::el::SemNode]) -> Vec<&koru_draw::el::SemNode> {
     let mut all = Vec::new();
