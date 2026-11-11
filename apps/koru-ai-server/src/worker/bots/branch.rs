@@ -84,6 +84,7 @@ impl WorkerState {
             agent_fast: None,
             pinned_at: None,
             profile_id: source.profile_id,
+            bot: None,
             created_at: now,
             updated_at: now,
         };

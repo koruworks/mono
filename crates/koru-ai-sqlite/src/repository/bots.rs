@@ -130,6 +130,7 @@ impl Repository {
             agent_fast: bot.config.fast,
             pinned_at: None,
             profile_id: Some(profile),
+            bot: None,
             created_at: now,
             updated_at: now,
         };

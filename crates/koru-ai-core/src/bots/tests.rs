@@ -127,3 +127,39 @@ fn the_activity_read_names_only_a_workspace_and_two_states() {
         serde_json::json!(["running", "needs_you"])
     );
 }
+
+/// `Chat` rejects no unknown field, so a build before the label reads an
+/// answer that carries it, and a newer reader of an older answer gets none.
+#[test]
+fn the_chat_label_is_optional_both_ways() {
+    #[derive(Deserialize)]
+    struct OlderChat {
+        id: ChatId,
+        title: String,
+    }
+    let label = BotChatLabel {
+        bot_id: BotId::mint(),
+        bot_name: "Scout".into(),
+        purpose: BotChatPurpose::Main,
+    };
+    let mut json = serde_json::json!({
+        "id": ChatId::new(),
+        "title": "Scout",
+        "current_model": {
+            "provider": "agent-codex",
+            "requested_model": "fixture",
+            "default_reasoning": "default"
+        },
+        "branched_from": null,
+        "created_at": 1,
+        "updated_at": 1,
+    });
+    let older_answer: Chat = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(older_answer.bot, None);
+    json["bot"] = serde_json::to_value(&label).unwrap();
+    let labelled: Chat = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(labelled.bot, Some(label));
+    let older: OlderChat = serde_json::from_value(json).unwrap();
+    assert_eq!(older.title, "Scout");
+    let _ = older.id;
+}

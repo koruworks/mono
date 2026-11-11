@@ -4,6 +4,7 @@ mod branch;
 mod chat;
 mod conversations;
 mod holds;
+mod label;
 mod lifecycle;
 mod qualified;
 mod reads;
@@ -731,6 +732,9 @@ fn branch_fixture(repo: &mut Repository, bot: &Bot, destination: ChatId) -> Bran
         .unwrap()
         .unwrap();
     chat.id = ChatId::new();
+    // The copy is an ordinary chat: the Bot label read with the main one
+    // is display data of that conversation, not of this fixture's.
+    chat.bot = None;
     repo.create_chat(&chat).unwrap();
     let pending = turn(chat.id, Uuid::new_v4(), 1);
     repo.begin_turn(&pending).unwrap();

@@ -65,6 +65,7 @@ fn surface_with(markdown: &str) -> ChatSurface {
             agent_fast: None,
             pinned_at: None,
             profile_id: None,
+            bot: None,
             created_at: now,
             updated_at: now,
         },

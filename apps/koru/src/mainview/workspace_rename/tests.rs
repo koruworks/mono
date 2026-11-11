@@ -278,6 +278,7 @@ fn a_chat_is_renamed_in_its_chats_row() {
                 agent_fast: None,
                 pinned_at: None,
                 profile_id: None,
+                bot: None,
                 created_at: now,
                 updated_at: now,
             }],

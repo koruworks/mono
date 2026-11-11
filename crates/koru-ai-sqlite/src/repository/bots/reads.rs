@@ -157,15 +157,16 @@ impl Repository {
             .map_err(bad)?;
         let mut chats = Vec::new();
         for row in rows {
-            let (chat, purpose, bot_name) = row.map_err(bad)?;
-            chats.push(BotConversation {
-                chat,
-                label: BotChatLabel {
-                    bot_id: bot,
-                    bot_name,
-                    purpose: BotChatPurpose::parse(&purpose).ok_or(BotError::Storage)?,
-                },
-            });
+            let (mut chat, purpose, bot_name) = row.map_err(bad)?;
+            let label = BotChatLabel {
+                bot_id: bot,
+                bot_name,
+                purpose: BotChatPurpose::parse(&purpose).ok_or(BotError::Storage)?,
+            };
+            // The page is the owner's: its Chats carry the same label every
+            // other authorized Chat read gives them.
+            chat.bot = Some(label.clone());
+            chats.push(BotConversation { chat, label });
         }
         let next_cursor = if chats.len() > usize::from(limit) {
             chats.truncate(usize::from(limit));

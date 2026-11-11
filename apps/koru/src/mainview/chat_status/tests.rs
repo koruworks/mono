@@ -95,6 +95,7 @@ fn a_step_in_a_chat_tab_opens_the_chat_below_in_the_list() {
         agent_fast: None,
         pinned_at: None,
         profile_id: None,
+        bot: None,
         created_at: koru_ai_core::Timestamp::from_millis(1),
         updated_at: koru_ai_core::Timestamp::from_millis(updated),
     };

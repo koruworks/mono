@@ -2687,6 +2687,7 @@ impl WorkerState {
             agent_fast: None,
             pinned_at: None,
             profile_id: request.profile_id,
+            bot: None,
             created_at: now,
             updated_at: now,
         };
@@ -3574,6 +3575,7 @@ impl WorkerState {
             pinned_at: None,
             // Its source's profile, whichever window asked (AI schema 13).
             profile_id: source.profile_id,
+            bot: None,
             created_at: now,
             updated_at: now,
         };

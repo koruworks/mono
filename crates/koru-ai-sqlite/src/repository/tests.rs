@@ -40,6 +40,7 @@ pub(super) fn chat(id: ChatId, offset: i64) -> Chat {
         agent_fast: None,
         pinned_at: None,
         profile_id: None,
+        bot: None,
         created_at: at(offset),
         updated_at: at(offset),
     }
@@ -996,6 +997,7 @@ fn branch_retry_and_export_preserve_history_and_retry_identity() {
         agent_fast: None,
         pinned_at: None,
         profile_id: None,
+        bot: None,
         created_at: at(4),
         updated_at: at(4),
     };

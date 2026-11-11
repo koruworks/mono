@@ -1074,6 +1074,7 @@ mod tests {
                 agent_fast: None,
                 pinned_at: None,
                 profile_id: None,
+                bot: None,
                 created_at: Timestamp::from_millis(1),
                 updated_at: Timestamp::from_millis(1),
             },

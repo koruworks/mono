@@ -457,17 +457,23 @@ impl AiPersistence for Repository {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, title, current_provider, current_model, current_reasoning,
-                        branched_from_chat_id, branched_from_message_id,
-                        created_at_ms, updated_at_ms, private, agent_working_folder, agent_mode,
-                        agent_fast, pinned_at_ms, profile_id
+                "SELECT chats.id, chats.title, chats.current_provider, chats.current_model,
+                        chats.current_reasoning, chats.branched_from_chat_id,
+                        chats.branched_from_message_id, chats.created_at_ms, chats.updated_at_ms,
+                        chats.private, chats.agent_working_folder, chats.agent_mode,
+                        chats.agent_fast, chats.pinned_at_ms, chats.profile_id,
+                        label_chat.bot_id, label_bot.name, label_chat.purpose
                    FROM chats
+                   LEFT JOIN bot_chats AS label_chat
+                     ON label_chat.chat_id = chats.id
+                    AND chats.id IN (SELECT value FROM json_each(?1))
+                   LEFT JOIN bots AS label_bot ON label_bot.bot_id = label_chat.bot_id
                   WHERE NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chats.id) OR chats.id IN (SELECT value FROM json_each(?1))
-                  ORDER BY updated_at_ms DESC, id",
+                  ORDER BY chats.updated_at_ms DESC, chats.id",
             )
             .map_err(storage_failed)?;
         let rows = statement
-            .query_map([access.json()], chat_from_row)
+            .query_map([access.json()], labelled_chat_from_row)
             .map_err(storage_failed)?;
         collect_rows(rows)
     }
@@ -1746,13 +1752,20 @@ fn query_chat_with_access(
 ) -> Result<Option<Chat>, AiError> {
     connection
         .query_row(
-            "SELECT id, title, current_provider, current_model, current_reasoning,
-                    branched_from_chat_id, branched_from_message_id, created_at_ms, updated_at_ms,
-                    private, agent_working_folder, agent_mode, agent_fast, pinned_at_ms,
-                    profile_id
-               FROM chats WHERE id = ?1 AND (NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chats.id) OR chats.id IN (SELECT value FROM json_each(?2)))",
+            "SELECT chats.id, chats.title, chats.current_provider, chats.current_model,
+                    chats.current_reasoning, chats.branched_from_chat_id,
+                    chats.branched_from_message_id, chats.created_at_ms, chats.updated_at_ms,
+                    chats.private, chats.agent_working_folder, chats.agent_mode, chats.agent_fast,
+                    chats.pinned_at_ms, chats.profile_id,
+                    label_chat.bot_id, label_bot.name, label_chat.purpose
+               FROM chats
+               LEFT JOIN bot_chats AS label_chat
+                 ON label_chat.chat_id = chats.id
+                AND chats.id IN (SELECT value FROM json_each(?2))
+               LEFT JOIN bots AS label_bot ON label_bot.bot_id = label_chat.bot_id
+              WHERE chats.id = ?1 AND (NOT EXISTS(SELECT 1 FROM bot_chats b WHERE b.chat_id=chats.id) OR chats.id IN (SELECT value FROM json_each(?2)))",
             params![id.to_storage(),access.json()],
-            chat_from_row,
+            labelled_chat_from_row,
         )
         .optional()
         .map_err(storage_failed)
@@ -2220,9 +2233,29 @@ fn chat_from_row(row: &Row<'_>) -> rusqlite::Result<Chat> {
         agent_fast: row.get(12)?,
         pinned_at: row.get::<_, Option<i64>>(13)?.map(Timestamp::from_millis),
         profile_id: optional_id(row, 14, ProfileId::parse, "ProfileId")?,
+        bot: None,
         created_at: Timestamp::from_millis(row.get(7)?),
         updated_at: Timestamp::from_millis(row.get(8)?),
     })
+}
+
+/// [`chat_from_row`] plus columns 15–17 (`bot_id`, Bot name, purpose), which
+/// the query fills only for a Bot conversation on the caller's authorized
+/// list: an ordinary chat and every other caller's answer carry no label.
+fn labelled_chat_from_row(row: &Row<'_>) -> rusqlite::Result<Chat> {
+    let mut chat = chat_from_row(row)?;
+    let bot: Option<String> = row.get(15)?;
+    if let Some(bot) = bot {
+        let name: String = row.get(16)?;
+        let purpose: String = row.get(17)?;
+        chat.bot = Some(koru_ai_core::bots::BotChatLabel {
+            bot_id: bot.parse().map_err(|_| decode_failed(15, "BotId"))?,
+            bot_name: name,
+            purpose: koru_ai_core::bots::BotChatPurpose::parse(&purpose)
+                .ok_or_else(|| decode_failed(17, "Bot conversation purpose"))?,
+        });
+    }
+    Ok(chat)
 }
 
 fn message_from_row(row: &Row<'_>) -> rusqlite::Result<Message> {

@@ -49,6 +49,14 @@ pub struct Chat {
     /// answers: [`crate::place_chat`]), and on an older server's answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<ProfileId>,
+    /// **The Bot this conversation belongs to** (P1.8), present only in an
+    /// answer to a caller whose current proof admits this Bot conversation;
+    /// absent on every ordinary chat and to every other caller, who cannot
+    /// see a Bot conversation at all. Display data, never authority, and
+    /// never stored: the association lives in `bot_chats`. Older readers
+    /// ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot: Option<crate::bots::BotChatLabel>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

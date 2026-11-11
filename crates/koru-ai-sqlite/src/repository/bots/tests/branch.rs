@@ -172,7 +172,18 @@ fn bot_branch_commits_copy_with_its_association_and_launches_nothing() {
         )
         .unwrap()
         .unwrap();
-    assert_eq!(saved, branch.chat);
+    // The authorized read labels the branch as the Bot's additional one.
+    assert_eq!(
+        saved,
+        Chat {
+            bot: Some(BotChatLabel {
+                bot_id: bot.id,
+                bot_name: bot.config.name.clone(),
+                purpose: BotChatPurpose::Additional,
+            }),
+            ..branch.chat.clone()
+        }
+    );
     assert_eq!(repo.messages(branch.chat.id).unwrap(), branch.messages);
     assert_eq!(repo.blocks(branch.chat.id).unwrap(), branch.blocks);
     assert!(repo.tool_activities(branch.chat.id).unwrap().is_empty());

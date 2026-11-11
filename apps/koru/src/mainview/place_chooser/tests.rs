@@ -304,6 +304,7 @@ fn a_click_on_a_listed_chat_replaces_this_tab() {
                 agent_fast: None,
                 pinned_at: None,
                 profile_id: None,
+                bot: None,
                 created_at: koru_ai_core::Timestamp::from_millis(1),
                 updated_at: koru_ai_core::Timestamp::from_millis(2),
             }],

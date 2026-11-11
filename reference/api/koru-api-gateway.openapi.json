@@ -4644,6 +4644,20 @@
             "nullable": true,
             "type": "string"
           },
+          "bot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotChatLabel"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**The Bot this conversation belongs to** (P1.8), present only in an\nanswer to a caller whose current proof admits this Bot conversation;\nabsent on every ordinary chat and to every other caller, who cannot\nsee a Bot conversation at all. Display data, never authority, and\nnever stored: the association lives in `bot_chats`. Older readers\nignore it."
+          },
           "branched_from": {
             "anyOf": [
               {
