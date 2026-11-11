@@ -342,7 +342,8 @@ impl WorkerState {
                     | BotCommand::PurgeChat { .. }
                     | BotCommand::ReadLifecycleOperation { .. }
                     | BotCommand::ListBotChats { .. }
-                    | BotCommand::ReadRun { .. } => {}
+                    | BotCommand::ReadRun { .. }
+                    | BotCommand::StopTask { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -492,8 +493,11 @@ impl WorkerState {
         // so its proof is not fenced to the revision it was prepared at: an
         // operation moving the revision (Archive's pause, its completion)
         // must not refuse a client polling its progress.
+        // A task's Stop is the same: it proves the owner and the workspace
+        // against the row at dispatch, and only reduces work.
         let read = matches!(&command, WorkerCommand::Bots { request, .. }
-            if super::lifecycle::bot_read_command(request));
+            if super::lifecycle::bot_read_command(request)
+                || matches!(request, BotCommand::StopTask { .. }));
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match super::lifecycle::provable_bot(&self.repository, *id, &command) {
@@ -571,7 +575,8 @@ pub(super) fn bot_targets(
             | BotCommand::PurgeChat { bot_id, .. }
             | BotCommand::ReadLifecycleOperation { bot_id, .. }
             | BotCommand::ListBotChats { bot_id, .. }
-            | BotCommand::ReadRun { bot_id, .. } => *bot_id,
+            | BotCommand::ReadRun { bot_id, .. }
+            | BotCommand::StopTask { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
             // The workspace alone is proved; the read names no Bot or chat.
             BotCommand::ListActivity { .. } | BotCommand::ListTrashedBotChats { .. } => {

@@ -2169,6 +2169,11 @@ impl WorkerState {
             } => self.read_bot_run(context, request, reply),
             WorkerCommand::Bots {
                 context,
+                request: request @ koru_ai_wire::BotCommand::StopTask { .. },
+                reply,
+            } => self.stop_bot_task(context, request, reply),
+            WorkerCommand::Bots {
+                context,
                 request,
                 reply,
             } => {
@@ -5710,6 +5715,9 @@ enum ProviderAdminJob {
     /// A public Run read (P1.8 B1), on its own lane; it answers its caller
     /// itself.
     BotRunRead(bots::BotRunReadJob),
+    /// A task's Stop (P1.8), on the Stop lane's interactive queue; it
+    /// answers its caller itself.
+    BotTaskStop(bots::BotTaskStopJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -5854,7 +5862,8 @@ impl ProviderAdminPool {
                         }
                         ProviderAdminJob::BotChatControl(_)
                         | ProviderAdminJob::BotInteraction(_)
-                        | ProviderAdminJob::BotSteer(_) => {
+                        | ProviderAdminJob::BotSteer(_)
+                        | ProviderAdminJob::BotTaskStop(_) => {
                             unreachable!("control lane dispatch")
                         }
                         ProviderAdminJob::BotLifecycle(job) => {
@@ -6081,6 +6090,10 @@ impl ProviderAdminPool {
                                 Envelope::BotInteraction(job.run())
                             }
                             ProviderAdminJob::BotSteer(job) => Envelope::BotSteer(job.run()),
+                            ProviderAdminJob::BotTaskStop(job) => {
+                                job.run();
+                                continue;
+                            }
                             _ => unreachable!("interactive queue dispatch"),
                         };
                         send_admin_envelope(&control_output, event, &control_shutdown);
@@ -6155,7 +6168,9 @@ impl ProviderAdminPool {
         }
         if matches!(
             &job,
-            ProviderAdminJob::BotInteraction(_) | ProviderAdminJob::BotSteer(_)
+            ProviderAdminJob::BotInteraction(_)
+                | ProviderAdminJob::BotSteer(_)
+                | ProviderAdminJob::BotTaskStop(_)
         ) {
             let Some(sender) = &self.interactive_sender else {
                 return Err(AdminSubmitError {

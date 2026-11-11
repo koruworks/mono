@@ -580,6 +580,34 @@ impl Repository {
             .transpose()
             .map(Option::flatten)
     }
+    /// One of `bot`'s tasks started through the API (`start`/`continue`,
+    /// with no conversation attempt), whatever the Bot's lifecycle, by its
+    /// operation's request: its submission receipt, for `stop_task`. A Bot
+    /// that does not exist is `NotFound` and another owner's `Forbidden`; an
+    /// unknown request, another Bot's, a pause or access change, or a task a
+    /// conversation started is `None`.
+    pub fn bot_api_task(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+    ) -> Result<Option<BotSubmissionReceipt>, BotError> {
+        guard_any_lifecycle(&self.connection, owner, bot)?;
+        let Some(row) = raw(&self.connection, owner.user_scope, request)? else {
+            return Ok(None);
+        };
+        if row.bot != bot.to_storage() || !matches!(row.kind.as_str(), "start" | "continue") {
+            return Ok(None);
+        }
+        let receipt = decode_submission(row, owner.user_scope, request)?;
+        Ok(receipt
+            .intent
+            .submission
+            .provenance
+            .ai_attempt_id
+            .is_none()
+            .then_some(receipt))
+    }
     pub fn prepare_bot_submission(
         &mut self,
         intent: &BotSubmissionIntent,

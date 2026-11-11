@@ -376,6 +376,18 @@ pub enum BotCommand {
         #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 500)))]
         len: u32,
     },
+    /// The person's own Stop for a task started through the API (`start` or
+    /// `continue`), named by that operation's `request_id`, as
+    /// `read_operation` names it. Its Run is stopped as a conversation's
+    /// Stop and Archive stop theirs: a queued Run never starts, a running one
+    /// ends even while a person holds its session; never the automatic
+    /// interruption. Answered `task_stop`. A Stop only reduces work, so no
+    /// hold refuses it. A task a conversation message started is not this
+    /// command's: `not_found`.
+    StopTask {
+        request_id: BotRequestId,
+        bot_id: BotId,
+    },
 }
 
 /// The most history entries one [`BotCommand::ReadRun`] window carries: the
@@ -413,6 +425,33 @@ pub enum BotResponse {
     Creation { creation: BotCreation },
     Creations { page: BotCreationPage },
     Run { view: koru_delegate_core::RunView },
+    TaskStop { stop: BotTaskStop },
+}
+
+/// What a [`BotCommand::StopTask`] found and did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BotTaskStopOutcome {
+    /// The task was queued or running, and this Stop ended it.
+    Stopped,
+    /// It had already ended (finished, failed, or stopped before): nothing
+    /// was sent.
+    AlreadySettled,
+    /// Its execution owner refused it before admitting it: it never ran.
+    NeverAdmitted,
+}
+
+/// The answer to a [`BotCommand::StopTask`]: the task's operation, its Run
+/// and what the Stop found.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotTaskStop {
+    pub request_id: BotRequestId,
+    pub bot_id: BotId,
+    pub run_id: RunId,
+    pub outcome: BotTaskStopOutcome,
 }
 
 /// The most conversations one [`BotCommand::ListActivity`] reply names.

@@ -2160,7 +2160,12 @@ pub(super) fn provable_bot(
 ) -> Result<Option<Bot>, BotError> {
     if let WorkerCommand::Bots { request, .. } = command
         && (request.lifecycle_kind().is_some()
-            || matches!(request, BotCommand::ReadLifecycleOperation { .. }))
+            || matches!(
+                request,
+                // A task's Stop only reduces work: a trashed Bot's is
+                // answered too.
+                BotCommand::ReadLifecycleOperation { .. } | BotCommand::StopTask { .. }
+            ))
         && let Some((bot, BotLifecycle::Trashed)) = repository.bot_any_lifecycle(id)?
     {
         return Ok(Some(bot));

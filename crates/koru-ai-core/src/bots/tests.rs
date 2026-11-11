@@ -426,3 +426,52 @@ fn a_run_read_names_the_reply_and_its_run_and_nothing_else() {
     missing.as_object_mut().unwrap().remove("len");
     assert!(serde_json::from_value::<BotCommand>(missing).is_err());
 }
+
+#[test]
+fn a_task_stop_names_only_the_operation_and_its_bot_and_answers_what_it_did() {
+    let request = BotCommand::StopTask {
+        request_id: BotRequestId::mint(),
+        bot_id: BotId::mint(),
+    };
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["command"], "stop_task");
+    assert_eq!(
+        json.as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["bot_id", "command", "request_id"])
+    );
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+        request
+    );
+    // Closed: no Run, fence or session rides along.
+    for field in ["run_id", "fence", "session"] {
+        let mut extra = json.clone();
+        extra[field] = serde_json::json!("caller-controlled");
+        assert!(
+            serde_json::from_value::<BotCommand>(extra).is_err(),
+            "{field}"
+        );
+    }
+    let answer = BotResponse::TaskStop {
+        stop: BotTaskStop {
+            request_id: BotRequestId::mint(),
+            bot_id: BotId::mint(),
+            run_id: koru_delegate_core::RunId::mint(),
+            outcome: BotTaskStopOutcome::AlreadySettled,
+        },
+    };
+    let wire = serde_json::to_value(&answer).unwrap();
+    assert_eq!(wire["result"], "task_stop");
+    assert_eq!(wire["stop"]["outcome"], "already_settled");
+    for (outcome, token) in [
+        (BotTaskStopOutcome::Stopped, "stopped"),
+        (BotTaskStopOutcome::NeverAdmitted, "never_admitted"),
+    ] {
+        assert_eq!(serde_json::to_value(outcome).unwrap(), token);
+    }
+    assert_eq!(serde_json::from_value::<BotResponse>(wire).unwrap(), answer);
+}

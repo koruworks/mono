@@ -316,8 +316,10 @@ pub trait BotDelegatePort: Send + Sync {
     fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure>;
     /// The same, waiting at most `within` for the answer; past it the call
     /// fails `delegate_unavailable` (retryable) and whatever the owner does
-    /// with it is not reported, so only reads use it. The default ignores
-    /// the bound: a port that can block must bound it itself.
+    /// with it is not reported, so only reads use it, and the AI owner's
+    /// `stop_task`, whose Stop is idempotent and whose retry reads the
+    /// owner's state afresh. The default ignores the bound: a port that can
+    /// block must bound it itself.
     fn execute_within(
         &self,
         command: BotCommand,
