@@ -2943,7 +2943,9 @@ fn a_workspace_of_a_profile_that_is_not_here_is_not_asked_for() {
     );
 }
 
-/// A selection the service refuses is not asked again on every pass.
+/// A Profile the service refuses to select — a sign-in that is not linked to
+/// it — is asked about once. Its Workspaces are left out of later passes, so
+/// nothing is refused again every few seconds and the pass settles clean.
 #[test]
 fn a_refused_selection_is_asked_once() {
     let world = hosted([1, 2]);
@@ -2956,8 +2958,28 @@ fn a_refused_selection_is_asked_once() {
     let harness = Harness::start(world);
     harness.control.update_authorization(authority("1"));
     harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(SELECTION_DENIED));
-    harness.tick_until(2_000, |world| world.tokens("workspace:1") >= 2);
-    assert_eq!(selections(&harness.log()), 1);
+    harness.tick(2_000);
+    harness.wait_snapshot(|snapshot| snapshot.failure_code.is_none());
+    {
+        let state = lock(&harness.world);
+        assert_eq!(selections(&state.log), 1);
+        assert_eq!(state.tokens("workspace:1"), 1, "{:?}", state.log);
+    }
+    // Linked again meanwhile: once the wait is over the Profile is asked
+    // about again, with nothing restarted, and its Workspace is admitted.
+    {
+        let mut state = lock(&harness.world);
+        state.denied.clear();
+        state.select_lifts.insert("workspace:1".into());
+    }
+    harness.tick(300_000);
+    harness.control.wake();
+    harness.tick_until(1_000, |world| {
+        world
+            .permits()
+            .iter()
+            .any(|permit| is_workspace(permit) && placement_of(permit) == Some(profile(1)))
+    });
 }
 
 #[test]

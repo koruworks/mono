@@ -92,6 +92,8 @@ const LEAD: &str = "One subscription covers every profile on this computer. Each
 const ACCOUNT_TITLE: &str = "Account";
 const ACCOUNTS: &str = "Accounts\u{2026}";
 const SIGNED_IN_HINT: &str = "Signed in on this computer";
+/// Before the time Koru Cloud last accepted the sign-in.
+const CHECKED: &str = "checked";
 const SIGNING_IN: &str = "Signing in\u{2026}";
 const NOT_SIGNED_IN: &str = "Not signed in";
 const SIGNED_OUT_HINT: &str = "Sign in to sync your profiles through Koru Cloud.";
@@ -100,6 +102,9 @@ const NOT_SYNCING: &str = "Not syncing";
 const NOT_HERE: &str = "Not on this computer";
 const SIGNED_IN: &str = "Signed in";
 const SIGN_IN: &str = "Sign in\u{2026}";
+/// On a Profile this sign-in is not linked to: its page, where it is
+/// connected again.
+pub(super) const CONNECT: &str = "Connect\u{2026}";
 pub(super) const SHOW_PROGRESS: &str = "Show sync progress";
 pub(super) const HIDE_PROGRESS: &str = "Hide sync progress";
 const DIFFERENT_TITLE: &str = "This device has Profiles from another account";
@@ -510,11 +515,21 @@ impl ManageView {
             AccountStage::SignedIn => {
                 // The email, or plain *Signed in* — never the tail of an
                 // account id (2026-11-10), which tells a person nothing.
+                // …and when Koru Cloud last accepted the sign-in: every
+                // start refreshes it, and nothing on screen said so.
+                let hint = match account
+                    .session_checked_at_millis
+                    .map(|at| crate::format::absolute_local(crate::format::lang(), at))
+                    .filter(|when| !when.is_empty())
+                {
+                    Some(when) => format!("{SIGNED_IN_HINT} \u{b7} {CHECKED} {when}"),
+                    None => SIGNED_IN_HINT.to_owned(),
+                };
                 (
                     self.c
                         .signed_in_email()
                         .map_or_else(|| SIGNED_IN.to_owned(), str::to_owned),
-                    SIGNED_IN_HINT.to_owned(),
+                    hint,
                 )
             }
             AccountStage::Restoring
@@ -672,7 +687,11 @@ impl ManageView {
         // The trailing control: the switch for a signed-in Profile, *Sign
         // in…* for any other — and nothing at all in a build with no Koru
         // Cloud, whose sub-line says why.
-        let toggle = signed_in.then(|| {
+        // A Profile this sign-in is not linked to has no switch to offer:
+        // *Connect…* opens its page, where it is linked again.
+        let unlinked = self.c.profile_unlinked_from_sign_in(profile);
+        let action = if unlinked { CONNECT } else { SIGN_IN };
+        let toggle = (signed_in && !unlinked).then(|| {
             Toggle::new(on)
                 .enabled(availability == SyncAvailability::Enabled)
                 .pending(pending)
@@ -682,7 +701,7 @@ impl ManageView {
             Some(toggle) => (toggle.width(), Toggle::H),
             None if !sign_in => (0.0, 0.0),
             None => (
-                ActionButton::new(SIGN_IN, ActionStyle::Secondary, None).width(&mut self.engine),
+                ActionButton::new(action, ActionStyle::Secondary, None).width(&mut self.engine),
                 ActionButton::H,
             ),
         };
@@ -717,7 +736,7 @@ impl ManageView {
             None => controls.push(Placed {
                 control: Control::ProfileSignIn(profile.id),
                 rect: slot,
-                label: SIGN_IN.into(),
+                label: action.into(),
                 look: Look::Action(ActionStyle::Secondary),
             }),
         }
@@ -836,6 +855,12 @@ impl ManageView {
         }
         if !signed_in {
             return NOT_SIGNED_IN.to_owned();
+        }
+        // Not linked to the sign-in in use: the email in front of the line
+        // would say the opposite, so the line is the reason alone.
+        if self.c.profile_unlinked_from_sign_in(profile) {
+            return koru_i18n::t(crate::format::lang(), TextKey::CloudSyncNotLinkedReason)
+                .to_owned();
         }
         let who = self
             .c

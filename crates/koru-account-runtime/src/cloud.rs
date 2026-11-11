@@ -73,6 +73,12 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// TECHNICAL §8: the shared trailing debounce. A local commit or a remote
 /// hint schedules the next pass 500 ms after the last such event.
 pub const CHANGE_DEBOUNCE: Duration = Duration::from_millis(500);
+/// How long a held Profile the service refused to select is left alone
+/// before its Workspaces are asked for again. Long enough that a sign-in
+/// that is not linked to it costs a handful of refused requests an hour
+/// instead of one per Workspace per pass; short enough that linking it
+/// again is picked up without restarting anything.
+const REFUSED_PROFILE_RETRY: Duration = Duration::from_secs(300);
 
 /// Active admission threads, not the number of standing subscriptions.
 pub const COHORT_WORKSPACES: usize = 16;

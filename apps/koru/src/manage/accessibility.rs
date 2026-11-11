@@ -482,6 +482,9 @@ impl ManageView {
                 .map_or_else(|| "Profile".to_owned(), |row| row.name.clone())
         };
         match placed.control {
+            Control::ProfileSignIn(id) if placed.label == super::cloud::CONNECT => {
+                format!("Connect {}\u{2026}", profile_name(id))
+            }
             Control::ProfileSignIn(id) => format!("Sign in to {}\u{2026}", profile_name(id)),
             // *Restore* names the deleted Profile it brings back, since a
             // reader may reach the button without the row.

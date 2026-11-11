@@ -41,6 +41,9 @@ const LOCAL_LABEL: &str = "On this computer only";
 const LOCAL_HINT: &str = "This profile lives on this computer and the devices linked to it.";
 const SIGNED_OUT_LABEL: &str = "Signed out";
 const SIGNED_OUT_HINT: &str = "Sign in to sync this profile with your Koru account.";
+const UNLINKED_LABEL: &str = "Not linked to this sign-in";
+const UNLINKED_HINT: &str =
+    "This profile is on this computer only. Connect it to sync it with your Koru account.";
 const CONNECTED_LABEL: &str = "Connected to a Koru account";
 const CONNECTED_HINT: &str = "Sign-in details will appear when this account is available.";
 const CLOUD_LABEL: &str = "Cloud sync";
@@ -172,7 +175,14 @@ impl ManageView {
                 Some(hint.into()),
                 session,
             );
-        } else if local_only {
+        } else if local_only || self.c.profile_unlinked_from_sign_in(profile) {
+            // Local-only, or the account's but not linked to the sign-in in
+            // use: either way it is connected with the same button.
+            let (label, resting) = if local_only {
+                (LOCAL_LABEL, LOCAL_HINT)
+            } else {
+                (UNLINKED_LABEL, UNLINKED_HINT)
+            };
             let attach = match self.c.account_link_control() {
                 Some((LinkControl::Attach(_), label)) => {
                     let w = button::button_width(&mut self.engine, &label);
@@ -183,8 +193,8 @@ impl ManageView {
             };
             // While the attach is in flight its status takes the sentence's
             // place, where the button was.
-            let hint = self.c.attach_status().unwrap_or_else(|| LOCAL_HINT.into());
-            self.lay_row(column, cy, rows, controls, LOCAL_LABEL, Some(hint), attach);
+            let hint = self.c.attach_status().unwrap_or_else(|| resting.into());
+            self.lay_row(column, cy, rows, controls, label, Some(hint), attach);
         } else {
             let identities = self.c.identities_of(profile.id);
             if identities.is_empty() {

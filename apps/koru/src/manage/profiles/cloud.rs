@@ -335,6 +335,9 @@ impl ProfilesController {
                         if binding.identity_id() == active
                 )
             })
+            // One this sign-in is not linked to cannot sync from here, so
+            // it is neither the `n` nor the `m`.
+            .filter(|row| !self.profile_unlinked_from_sign_in(row))
             .map(|row| row.id.to_storage())
             .collect()
     }
@@ -473,6 +476,11 @@ impl ProfilesController {
         if self.account.stage != AccountStage::SignedIn {
             return SyncAvailability::Disabled(TextKey::CloudSyncSignInReason);
         }
+        // Before the subscription: with or without one, this sign-in cannot
+        // sync a Profile it is not linked to.
+        if self.profile_unlinked_from_sign_in(profile) {
+            return SyncAvailability::Disabled(TextKey::CloudSyncNotLinkedReason);
+        }
         if self.cloud.status != Status::Manage {
             return SyncAvailability::Disabled(TextKey::CloudSyncSubscribeReason);
         }
@@ -508,6 +516,17 @@ impl ProfilesController {
     /// What the switch shows. A pending change shows its *target*, so the switch
     /// moves under the finger and the dimming is what says it is not settled.
     pub fn cloud_sync_on(&self, profile: ProfileId) -> bool {
+        // A Profile this sign-in is not linked to does not sync from here,
+        // whatever this device remembers from before it was unlinked: its
+        // switch reads off, and its line says why instead of *Koru Cloud
+        // unavailable*.
+        if self
+            .profiles
+            .iter()
+            .any(|row| row.id == profile && self.profile_unlinked_from_sign_in(row))
+        {
+            return false;
+        }
         self.cloud_sync_pending_for(profile).unwrap_or_else(|| {
             self.cloud_sync_row(profile).map_or_else(
                 || {

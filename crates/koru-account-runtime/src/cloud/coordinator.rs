@@ -200,6 +200,16 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     /// this authorization: once each, whatever the answer. See
     /// [`Self::select_held_profile`].
     selected: BTreeSet<ProfileId>,
+    /// Held Profiles the service refused to select this device for, and
+    /// when. Their Workspaces are left out of the pass for
+    /// [`REFUSED_PROFILE_RETRY`], or until the authorization is replaced: a
+    /// sign-in that is not linked to the Profile is refused the same way
+    /// every time, and asking sixteen Workspaces on every pass told nobody
+    /// anything (2026-11-11). It is asked again after that, so a Profile
+    /// linked again is picked up with nothing restarted.
+    refused_profiles: BTreeMap<ProfileId, Instant>,
+    /// When the pass in hand started, for the rule above.
+    pass_at: Option<Instant>,
     /// A selection was written during this pass, so the receipt the pass
     /// read is from before it: the next pass comes at once.
     selected_this_pass: bool,
@@ -252,6 +262,8 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             local_units: BTreeMap::new(),
             refused_units: BTreeMap::new(),
             selected: BTreeSet::new(),
+            refused_profiles: BTreeMap::new(),
+            pass_at: None,
             selected_this_pass: false,
             binding_retried: false,
             records: BTreeMap::new(),
@@ -395,6 +407,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         // answered under: a new generation asks once more, and only once.
         self.refused_units.clear();
         self.selected.clear();
+        self.refused_profiles.clear();
         self.selected_this_pass = false;
         self.records.clear();
         self.deferred.clear();
@@ -546,6 +559,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         // behind the backoff, which is the outer retry a service that keeps
         // losing the binding row is answered with.
         self.binding_retried = false;
+        let now = clock.monotonic();
+        self.pass_at = Some(now);
+        self.refused_profiles
+            .retain(|_, refused| now.saturating_duration_since(*refused) < REFUSED_PROFILE_RETRY);
         self.selected_this_pass = false;
         self.discovery_counts.clear();
         self.discovery_exhausted = false;
@@ -822,20 +839,35 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             .host
             .held_profiles(account)
             .is_some_and(|held| held.contains(&profile));
-        if !held || !self.selected.insert(profile) {
+        if !held || self.selected.contains(&profile) || self.refused_profiles.contains_key(&profile)
+        {
             return false;
         }
         let workspace = candidate.workspace_id;
-        let selected = self
-            .authorized(|api, authority| api.select(authority, profile, workspace))
-            .is_ok();
+        let answer = self.authorized(|api, authority| api.select(authority, profile, workspace));
+        let selected = answer.is_ok();
         tracing::info!(
             target: "koru_cloud",
             profile = ?profile,
             selected,
+            code = answer.as_ref().err().map(Failure::code),
             "cloud pass: asked the service to select a Profile this device holds"
         );
-        self.selected_this_pass |= selected;
+        match answer {
+            Ok(()) => {
+                self.selected.insert(profile);
+                self.selected_this_pass = true;
+            }
+            // Refused outright: this sign-in may not reach the Profile, and
+            // will not until the authorization changes. Anything else — the
+            // network, a busy service — is asked again on the next pass.
+            Err(Failure::Denied) => {
+                if let Some(now) = self.pass_at {
+                    self.refused_profiles.insert(profile, now);
+                }
+            }
+            Err(_) => {}
+        }
         selected
     }
 
@@ -858,9 +890,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             .and_then(|authority| self.host.held_profiles(authority.owner.account))
         {
             candidates.retain(|candidate| {
-                candidate
-                    .placement
-                    .is_none_or(|profile| held.contains(&profile))
+                candidate.placement.is_none_or(|profile| {
+                    held.contains(&profile) && !self.refused_profiles.contains_key(&profile)
+                })
             });
         }
         // Round robin by current placement before taking a bounded cohort:

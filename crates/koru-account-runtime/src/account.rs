@@ -927,6 +927,9 @@ pub struct ProductionAccountService {
     /// read by one thing: a Profile waiting to start syncing
     /// (`cloud_sync::cloud_subscription_known`).
     cloud_subscribed: Option<(KoruIdentityId, bool)>,
+    /// When the service last accepted this sign-in: set with every token
+    /// pair it answers, published as `AccountState::session_checked_at_millis`.
+    session_checked_at_millis: Option<i64>,
     /// The Profiles whose Store this process has already opened to Cloud, so
     /// the reconcile opens each once rather than on every heartbeat. Memory
     /// only: opening is safe to repeat, and a new process asks again.
@@ -1016,6 +1019,7 @@ impl ProductionAccountService {
             local_profiles: ports.local_profiles,
             cloud_sync: ports.cloud_sync,
             cloud_subscribed: None,
+            session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: Arc::new(Mutex::new(ports.lifecycle_repository)),
             lifecycle_ownership: Arc::new(Mutex::new(lifecycle_ownership::Ownership::default())),
@@ -1106,6 +1110,8 @@ impl ProductionAccountService {
                 .durable_owner
                 .map(|owner| self.cloud_profiles(owner.account))
                 .unwrap_or_default(),
+            // Only while there is a session to speak of.
+            session_checked_at_millis: self.access.as_ref().and(self.session_checked_at_millis),
             ..Default::default()
         }
     }
@@ -1131,6 +1137,8 @@ impl ProductionAccountService {
                 .map_err(|_| ServiceError::terminal("credential_invalid"))?;
         self.access = Some(tokens.access_token);
         self.access_expires_at_millis = Some(access_expires_at_millis);
+        // The service has just accepted this sign-in.
+        self.session_checked_at_millis = self.clock.now_millis();
         self.unacknowledged_session_id = Some(credential.session_id.clone());
         // Access remains private to this operation until the exact credential
         // and its authenticated directory owner have both acknowledged.
@@ -2350,6 +2358,7 @@ impl AccountService for ProductionAccountService {
             local_profiles: self.local_profiles.clone(),
             cloud_sync: self.cloud_sync.clone(),
             cloud_subscribed: None,
+            session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: self.lifecycle_repository.clone(),
             lifecycle_ownership: self.lifecycle_ownership.clone(),

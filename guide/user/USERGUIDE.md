@@ -152,7 +152,11 @@ subscription for your signed-in Koru account, from top to bottom:
 - **When Koru can't connect**, a card at the top says so, with **Try again**
   and **Continue offline**; your local Profiles stay available. A Profile's own
   page points here with *Can't reach Koru — see Koru Cloud*.
-- **Account** names the account this computer is signed in to, with
+- **Account** names the account this computer is signed in to and, after
+  *Signed in on this computer*, when Koru Cloud last **checked** that sign-in.
+  Koru renews it every time it starts and again as it runs, so the time is
+  normally recent; an old one means Koru has not reached Koru Cloud since.
+  Beside it is
   **Accounts…** — the account chooser, which also opens from *{n} Profiles
   hidden* under the nav's Profiles. Up and Down move in it, Enter chooses,
   Escape closes it, and the wheel scrolls a long list. **Add Account** starts
@@ -195,7 +199,15 @@ says what is happening underneath — turning on, connecting, or syncing via Kor
 Cloud — in the same words as the Profile's own page, which has the same switch
 under *Sign-in and sync*. The switch is only live for a Profile of the account
 you are signed in to and only while the subscription is current; otherwise it
-is shown dimmed with the reason. A Profile that is not signed in says *Not
+is shown dimmed with the reason. A Profile that belongs to your account but
+is not linked to the Google Account you are signed in with reads *Not linked
+to this sign-in*: after you unlink a Google Account from a Profile, that is
+how the Profile looks on a computer signed in with it. The Profile and its
+workspaces stay on this computer and do not sync from it. **Connect…** on
+its row opens the Profile's page, where **Connect to your account** links it
+to the Google Account you are signed in with again; Koru may ask you to sign
+in with Google once more first. A Profile that
+is not signed in says *Not
 signed in* and offers **Sign in…**, which opens that Profile's page at its
 *Sign-in and sync*.
 

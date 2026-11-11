@@ -2730,6 +2730,13 @@ fn expired_access_refreshes_and_persists_before_follow_up() {
     service.access = Some(AccessToken("expired".into()));
     service.access_expires_at_millis = Some(1);
     service.arm_refresh_retry_key(Some([51; 32]));
+    assert_eq!(
+        service
+            .state(8, AccountStage::SignedIn)
+            .session_checked_at_millis,
+        None,
+        "nothing has been accepted by the service yet"
+    );
     let restored = SessionCredential::new(
         "20000000-0000-4000-8000-000000000002".into(),
         "presented-refresh".into(),
@@ -2746,6 +2753,9 @@ fn expired_access_refreshes_and_persists_before_follow_up() {
         )
         .unwrap();
     assert!(matches!(outcome.credential, CredentialChange::Replace(_)));
+    // The refresh is the service accepting the sign-in: the state says when,
+    // which is what the Koru Cloud page shows as *checked …*.
+    assert!(outcome.state.session_checked_at_millis.is_some());
     assert!(matches!(
         outcome.follow_up,
         Some(AccountCommand::ListProfiles)

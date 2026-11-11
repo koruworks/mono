@@ -2024,6 +2024,7 @@ pub enum Key {
     CloudSyncToggle,
     CloudSyncSignInReason,
     CloudSyncSubscribeReason,
+    CloudSyncNotLinkedReason,
     CloudSyncTurningOn,
     CloudSyncTurningOff,
     CloudSyncProgress,
@@ -3212,7 +3213,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2241] = [
+    pub const ALL: [Key; 2242] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4628,6 +4629,7 @@ impl Key {
         Key::CloudSyncToggle,
         Key::CloudSyncSignInReason,
         Key::CloudSyncSubscribeReason,
+        Key::CloudSyncNotLinkedReason,
         Key::CloudSyncTurningOn,
         Key::CloudSyncTurningOff,
         Key::CloudSyncProgress,
@@ -15602,6 +15604,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudSyncToggle, en: "Cloud sync", es: "Sincronización en la nube", pt_br: "Sincronização na nuvem", de: "Cloud-Sync", fr: "Synchronisation cloud", ar: "مزامنة السحابة", zh_hans: "云同步", ja: "クラウド同期" },
     Row { key: Key::CloudSyncSignInReason, en: "Sign in to enable", es: "Inicia sesión para activarlo", pt_br: "Entre para ativar", de: "Zum Aktivieren anmelden", fr: "Connectez-vous pour l’activer", ar: "سجّل الدخول للتفعيل", zh_hans: "登录后可启用", ja: "ログインすると有効にできます" },
     Row { key: Key::CloudSyncSubscribeReason, en: "Subscribe to enable", es: "Suscríbete para activarlo", pt_br: "Assine para ativar", de: "Zum Aktivieren abonnieren", fr: "Abonnez-vous pour l’activer", ar: "اشترك للتفعيل", zh_hans: "订阅后可启用", ja: "登録すると有効にできます" },
+    Row { key: Key::CloudSyncNotLinkedReason, en: "Not linked to this sign-in", es: "No vinculado a este inicio de sesión", pt_br: "Não vinculado a este login", de: "Nicht mit dieser Anmeldung verknüpft", fr: "Non lié à cette connexion", ar: "غير مرتبط بتسجيل الدخول هذا", zh_hans: "未关联到此登录", ja: "このサインインにリンクされていません" },
     Row { key: Key::CloudSyncTurningOn, en: "Turning on…", es: "Activando…", pt_br: "Ativando…", de: "Wird aktiviert…", fr: "Activation…", ar: "جارٍ التفعيل…", zh_hans: "正在开启…", ja: "有効にしています…" },
     Row { key: Key::CloudSyncTurningOff, en: "Turning off — transfers stop on this device now", es: "Desactivando: las transferencias se detienen ahora en este dispositivo", pt_br: "Desativando — as transferências param agora neste dispositivo", de: "Wird deaktiviert — Übertragungen stoppen jetzt auf diesem Gerät", fr: "Désactivation — les transferts s’arrêtent maintenant sur cet appareil", ar: "جارٍ الإيقاف — تتوقف عمليات النقل الآن على هذا الجهاز", zh_hans: "正在关闭 — 本设备上的传输立即停止", ja: "無効にしています — このデバイスでの転送は今すぐ止まります" },
     Row { key: Key::CloudSyncProgress, en: "Syncing {} of {} workspaces", es: "Sincronizando {} de {} espacios de trabajo", pt_br: "Sincronizando {} de {} espaços de trabalho", de: "{} von {} Arbeitsbereichen werden synchronisiert", fr: "Synchronisation de {} espaces de travail sur {}", ar: "تتمّ مزامنة {} من {} مساحات عمل", zh_hans: "正在同步 {} / {} 个工作区", ja: "{} / {} ワークスペースを同期中" },

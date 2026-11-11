@@ -176,6 +176,35 @@ impl ProfilesController {
             .any(|authorized| authorized.profile_id == profile_id)
     }
 
+    /// **A Profile of the signed-in account that this sign-in is not linked
+    /// to**: it is bound to the account on this device, the account's list
+    /// of Profiles has been read, and the Profile is not in it — the list
+    /// holds only what the sign-in in use may reach. That is what unlinking
+    /// a Google Account from a Profile leaves on the device it was done
+    /// from (2026-11-11): the Profile is still here and still the account's,
+    /// and Koru Cloud refuses every credential for it. It is on this
+    /// computer only until a sign-in that is linked to it is used, so its
+    /// row says so rather than offering a switch that cannot work.
+    pub fn profile_unlinked_from_sign_in(&self, profile: &ProfileSummary) -> bool {
+        use koru_store_core::profile_account::LocalProfileAttribution;
+        if self.account.stage != AccountStage::SignedIn || !self.account_profiles_loaded {
+            return false;
+        }
+        let LocalProfileAttribution::Account(binding) =
+            LocalProfileAttribution::from_binding(profile.account.as_deref().unwrap_or(""))
+        else {
+            return false;
+        };
+        if self.account.active_account_id.as_deref() != Some(binding.identity_id().as_str()) {
+            return false;
+        }
+        let profile_id = profile.id.to_storage();
+        !self
+            .account_profiles
+            .iter()
+            .any(|authorized| authorized.profile_id == profile_id)
+    }
+
     /// The signed-in email, while this device's Profiles all belong to
     /// another account and the person has not put that aside.
     pub fn different_account_email(&self) -> Option<&str> {
@@ -209,6 +238,14 @@ impl ProfilesController {
         profile
             .and_then(|id| self.profiles.iter().find(|row| row.id == id))
             .is_some_and(|row| row.account.is_none())
+    }
+
+    /// Whether the selected Profile is one this sign-in is not linked to
+    /// ([`Self::profile_unlinked_from_sign_in`]).
+    pub fn selected_profile_is_unlinked(&self) -> bool {
+        self.selected
+            .and_then(|id| self.profiles.iter().find(|row| row.id == id))
+            .is_some_and(|row| self.profile_unlinked_from_sign_in(row))
     }
 
     pub fn selected_profile_is_local_only(&self) -> bool {

@@ -200,6 +200,20 @@ fn unknown_loading_unavailable_and_signed_out_use_todays_words() {
     ));
 }
 
+/// The Account card says when Koru Cloud last accepted the sign-in, once the
+/// Agent has said so; until then it says only that this computer is signed in.
+#[test]
+fn the_account_card_says_when_the_sign_in_was_last_checked() {
+    let mut view = subscribed();
+    assert_eq!(cloud(&view).account.hint, "Signed in on this computer");
+    view.c.account_mut().session_checked_at_millis = Some(1_794_411_832_787);
+    view.relayout();
+    let hint = &cloud(&view).account.hint;
+    let lead = "Signed in on this computer \u{b7} checked ";
+    assert!(hint.starts_with(lead), "{hint}");
+    assert!(hint.len() > lead.len(), "a time follows: {hint}");
+}
+
 // ------------------------------------------------------------- which profiles sync
 
 #[test]
@@ -296,17 +310,82 @@ fn with_family_elsewhere() -> (ManageView, ProfileId) {
     view.c.take_request();
     view.c
         .complete(koru_agent_wire::AccountOperationResult::Profiles {
-            profiles: vec![koru_agent_wire::AccountProfileRow {
-                profile_id: family.to_storage(),
+            profiles: [
+                (family, "Family"),
+                (id(&view, "Work"), "Work"),
+                (id(&view, "Home"), "Home"),
+            ]
+            .into_iter()
+            .map(|(profile, name)| koru_agent_wire::AccountProfileRow {
+                profile_id: profile.to_storage(),
                 koru_identity_id: ACCOUNT.into(),
-                name: Some("Family".into()),
+                name: Some(name.into()),
+                locale: None,
+                auth_identities: vec![],
+            })
+            .collect(),
+        });
+    view.c.take_request();
+    // Draining the queue asked for the subscription again; put its answer
+    // back, as the Agent's would be.
+    answered(&mut view, CloudStatus::Manage);
+    (view, family)
+}
+
+/// **A Profile this sign-in is not linked to says so** (2026-11-11). After a
+/// Google Account is unlinked from a Profile, the Profile is still on this
+/// computer and still the account's, and Koru Cloud refuses it. Its row used
+/// to keep the signed-in email, a live switch left on and *Koru Cloud
+/// unavailable*; it reads *Not linked to this sign-in*, has *Connect…* where
+/// the switch was, and is not counted among the Profiles that sync.
+/// *Connect…* opens its page, whose *Sign-in and sync* connects it again.
+#[test]
+fn a_profile_this_sign_in_is_not_linked_to_says_so_and_offers_connect() {
+    let mut view = subscribed();
+    let (work, home) = (id(&view, "Work"), id(&view, "Home"));
+    // The account's list of what this sign-in may reach: Home, and not Work.
+    view.c.take_request();
+    view.c
+        .complete(koru_agent_wire::AccountOperationResult::Profiles {
+            profiles: vec![koru_agent_wire::AccountProfileRow {
+                profile_id: home.to_storage(),
+                koru_identity_id: ACCOUNT.into(),
+                name: Some("Home".into()),
                 locale: None,
                 auth_identities: vec![],
             }],
         });
     view.c.take_request();
-    view.relayout();
-    (view, family)
+    // Draining the queue asked for the subscription again; put its answer
+    // back, as the Agent's would be.
+    answered(&mut view, CloudStatus::Manage);
+
+    let laid = cloud(&view);
+    let row = laid.rows.iter().find(|row| row.profile == work).unwrap();
+    assert_eq!(row.sub_text, "Not linked to this sign-in");
+    assert!(row.toggle.is_none(), "no switch that cannot work");
+    assert_eq!(
+        view.laid
+            .placed(Control::ProfileSignIn(work))
+            .unwrap()
+            .label,
+        "Connect\u{2026}"
+    );
+    assert!(row.progress.is_none());
+    assert!(view.laid.placed(Control::ProfileSync(work)).is_none());
+    assert!(view.laid.placed(Control::Progress(work)).is_none());
+    assert!(!view.c.cloud_sync_on(work), "whatever was remembered");
+    assert_eq!(view.c.cloud_profile_counts(), Some((0, 1)), "Home alone");
+    // Home, which the sign-in is linked to, is untouched.
+    assert!(view.laid.placed(Control::ProfileSync(home)).is_some());
+
+    // *Connect…* lands on the Profile's page, which offers the connection
+    // the account's attach makes — and asks before sending anything.
+    assert!(press(&mut view, Control::ProfileSignIn(work)));
+    assert_eq!(view.page(), Some(Page::Profile(work)));
+    assert!(view.controller().selected_profile_is_unlinked());
+    assert!(press(&mut view, Control::Attach));
+    assert_eq!(view.c.prompts().count(), 1);
 }
 
 /// **The account's Profiles that are not on this computer are rows of *Which
