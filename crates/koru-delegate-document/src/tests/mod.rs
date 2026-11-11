@@ -11,6 +11,10 @@ use koru_delegate_core::*;
 use uuid::Uuid;
 
 use crate::*;
+// Both globs name a `TimelineItem` since the Run view moved into the run
+// vocabulary (`koru_delegate_core::TimelineItem`, the wire's); the window
+// this crate reads is its own codec's.
+use crate::TimelineItem;
 
 mod bots;
 mod dependency;
