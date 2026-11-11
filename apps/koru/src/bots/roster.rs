@@ -280,8 +280,9 @@ pub(crate) struct BotsRoster {
     /// The Bot last asked for: it wears the card. By id, so a refresh that
     /// reorders or adds rows keeps it.
     selected: Option<BotId>,
-    /// `Some` doubles as *the roster holds the keyboard*.
-    focus: Option<BotId>,
+    /// The control the keyboard is on, by its element key — never a place
+    /// in the list. `Some` doubles as *the roster holds the keyboard*.
+    focus: Option<Key>,
     hover: Option<BotId>,
     /// The activity sub-row under the pointer, by its conversation.
     hover_activity: Option<koru_ai_core::ChatId>,
@@ -410,7 +411,10 @@ impl BotsRoster {
         self.selected
     }
 
-    pub(crate) fn focus(&self) -> Option<BotId> {
+    /// The control the keyboard is on, by its element key: a Bot row, an
+    /// Unfinished row's Retry or Abandon, the Archived toggle, an archived
+    /// row or its Unarchive.
+    pub(crate) fn focus(&self) -> Option<Key> {
         self.focus
     }
 
@@ -900,7 +904,22 @@ impl BotsRoster {
                 self.take_creation(request, result)
             };
         }
+        if changed {
+            self.keep_focus();
+        }
         changed
+    }
+
+    /// **The keyboard stays in the roster** when what it was on leaves — a
+    /// Bot no longer listed, a Retry that is acting, an Unarchive done: on
+    /// the first control there is, or nowhere when there is none.
+    fn keep_focus(&mut self) {
+        if let Some(focus) = self.focus {
+            let stops = self.keyboard_stops();
+            if !stops.contains(&focus) {
+                self.focus = stops.first().copied();
+            }
+        }
     }
 
     fn take(&mut self, result: Result<Vec<Bot>, Failure>) {
@@ -914,15 +933,8 @@ impl BotsRoster {
                 // Kept by id; a Bot the answer no longer lists lets go.
                 let selected = self.selected.filter(|id| self.has(*id));
                 let hover = self.hover.filter(|id| self.has(*id));
-                // The keyboard stays in the list: on its Bot, else the first.
-                let focus = self.focus.map(|id| {
-                    Some(id)
-                        .filter(|id| self.has(*id))
-                        .or_else(|| self.bots.first().map(|bot| bot.id))
-                });
                 self.selected = selected;
                 self.hover = hover;
-                self.focus = focus.flatten();
             }
             // What was shown stays; the line over it says why it may be old.
             Err(_) => self.load = Load::Unavailable,
@@ -1010,23 +1022,65 @@ impl BotsRoster {
         self.focus.is_some()
     }
 
+    /// **What the arrow keys walk, in the order the roster draws it**: the
+    /// Bot rows; the empty roster's *Create a bot*; the Unfinished group's
+    /// *Open role page* and each row's Retry and Abandon; the Archived
+    /// toggle; and while it is open each archived row and its Unarchive.
+    /// Exactly the controls drawn now, so the keyboard never lands on one
+    /// that is not there.
+    pub(crate) fn keyboard_stops(&self) -> Vec<Key> {
+        let mut stops: Vec<Key> = self.bots.iter().map(|bot| row_key(bot.id)).collect();
+        if self.load == Load::Ready && self.bots.is_empty() {
+            stops.push(CREATE);
+        }
+        if self
+            .abandoned
+            .as_ref()
+            .and_then(|abandoned| abandoned.left_behind.as_ref())
+            .is_some_and(|left| left.role_page.is_some())
+        {
+            stops.push(OPEN_LEFT_PAGE);
+        }
+        for creation in &self.creations {
+            if self.creations_acting.contains(&creation.request_id) {
+                continue;
+            }
+            if creation.retryable {
+                stops.push(creation_retry_key(creation.request_id));
+            }
+            stops.push(creation_abandon_key(creation.request_id));
+        }
+        stops.push(ARCHIVED_TOGGLE);
+        if self.archived_open {
+            for bot in &self.archived {
+                stops.push(archived_key(bot.id));
+                if !self.unarchiving(bot.id) && self.can_unarchive(bot.id) {
+                    stops.push(unarchive_key(bot.id));
+                }
+            }
+        }
+        stops
+    }
+
     /// **Focus enters on open**: on the Bot last asked for when the list
-    /// holds it, else the first. `false` with no rows to land on.
+    /// holds it, else the first control there is. `false` with none.
     pub(crate) fn focus_first(&mut self) -> bool {
         let landing = self
             .selected
             .filter(|id| self.has(*id))
-            .or_else(|| self.bots.first().map(|bot| bot.id));
+            .map(row_key)
+            .or_else(|| self.keyboard_stops().first().copied());
         self.focus = landing;
         self.reveal_owed = landing.is_some();
         landing.is_some()
     }
 
+    /// Put the keyboard on `bot`'s row.
     pub(crate) fn set_focus(&mut self, bot: BotId) -> bool {
         if !self.has(bot) {
             return false;
         }
-        self.focus = Some(bot);
+        self.focus = Some(row_key(bot));
         self.reveal_owed = true;
         true
     }
@@ -1037,32 +1091,61 @@ impl BotsRoster {
     }
 
     /// A key while the roster holds the keyboard. `false` for a key it does
-    /// not claim, which falls through.
+    /// not claim, which falls through. **Up and Down walk every control the
+    /// roster draws** ([`Self::keyboard_stops`]); Enter does what a press of
+    /// the focused control does, through the same functions the pointer and
+    /// an assistive technology use.
     pub(crate) fn key(&mut self, press: Press) -> bool {
-        let Some(index) = self
-            .focus
-            .and_then(|id| self.bots.iter().position(|bot| bot.id == id))
-        else {
+        let Some(focus) = self.focus else {
             return false;
         };
-        let last = self.bots.len().saturating_sub(1);
+        let stops = self.keyboard_stops();
+        let Some(index) = stops.iter().position(|stop| *stop == focus) else {
+            // What it was on left: land on the first control there is.
+            self.focus = stops.first().copied();
+            self.reveal_owed = self.focus.is_some();
+            return true;
+        };
+        let last = stops.len().saturating_sub(1);
         let to = match press {
             Press::Up => index.saturating_sub(1),
             Press::Down => (index + 1).min(last),
             Press::Home => 0,
             Press::End => last,
-            Press::Open => {
-                let bot = self.bots[index].id;
-                return self.ask_open(bot);
-            }
+            Press::Open => return self.press_key(focus),
             Press::Escape => {
                 self.focus = None;
                 return true;
             }
         };
-        self.focus = Some(self.bots[to].id);
+        self.focus = Some(stops[to]);
         self.reveal_owed = true;
         true
+    }
+
+    /// **Enter on a control**: a Bot row opens its tab; the Unfinished and
+    /// Archived controls go to their own press functions.
+    fn press_key(&mut self, key: Key) -> bool {
+        if key.part == ROW_PART
+            && let koru_draw::el::Object::Model(id) = key.object
+            && let Some(bot) = self
+                .bots
+                .iter()
+                .map(|bot| bot.id)
+                .find(|bot| bot.as_uuid().as_u128() == id)
+        {
+            return self.ask_open(bot);
+        }
+        let pressed =
+            if key == ARCHIVED_TOGGLE || key.part == ARCHIVED_PART || key.part == UNARCHIVE_PART {
+                self.press_archived(key)
+            } else {
+                self.press_unfinished(key)
+            };
+        if pressed {
+            self.keep_focus();
+        }
+        pressed
     }
 
     // ----------------------------------------------------------- pointer
@@ -1916,7 +1999,7 @@ impl BotsRoster {
                 .or(self.hover_activity.map(activity_key))
                 .or(self.hover.map(row_key)),
             pressed: None,
-            focused: self.focus.map(row_key),
+            focused: self.focus,
         }
     }
 
@@ -1957,7 +2040,7 @@ impl BotsRoster {
     ) {
         let (mut tree, mut frame) = self.layout(engine, area, top);
         if std::mem::take(&mut self.reveal_owed)
-            && let Some((_, offset)) = self.focus.and_then(|bot| frame.reveal(row_key(bot)))
+            && let Some((_, offset)) = self.focus.and_then(|key| frame.reveal(key))
         {
             self.scroll = offset;
             (tree, frame) = self.layout(engine, area, top);

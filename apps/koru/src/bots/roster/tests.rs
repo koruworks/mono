@@ -311,7 +311,7 @@ fn selection_and_focus_survive_a_reordering_refresh() {
     f.answer(seq, Ok(vec![c.clone(), b.clone(), a.clone()]));
     assert_eq!(f.ids(), vec![c.id, b.id, a.id]);
     assert_eq!(f.roster.selected(), Some(b.id));
-    assert_eq!(f.roster.focus(), Some(a.id));
+    assert_eq!(f.roster.focus(), Some(row_key(a.id)));
 
     f.roster.set_shown(false);
     f.roster.set_shown(true);
@@ -322,7 +322,7 @@ fn selection_and_focus_survive_a_reordering_refresh() {
     assert_eq!(f.roster.selected(), None, "B is gone");
     assert_eq!(
         f.roster.focus(),
-        Some(a.id),
+        Some(row_key(a.id)),
         "the keyboard stays in the list"
     );
 }
@@ -411,16 +411,29 @@ fn the_keyboard_walks_the_rows_and_asks_for_a_bot() {
     f.roster.ask_open(b.id);
     f.roster.take_wants_open();
     assert!(f.roster.focus_first());
-    assert_eq!(f.roster.focus(), Some(b.id), "on the Bot last asked for");
+    assert_eq!(
+        f.roster.focus(),
+        Some(row_key(b.id)),
+        "on the Bot last asked for"
+    );
     assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(c.id));
+    assert_eq!(f.roster.focus(), Some(row_key(c.id)));
+    // Past the last Bot: the Archived filter's toggle, the last control.
     assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(c.id), "the last row stays the last");
+    assert_eq!(f.roster.focus(), Some(ARCHIVED_TOGGLE));
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(
+        f.roster.focus(),
+        Some(ARCHIVED_TOGGLE),
+        "the last control stays the last"
+    );
     assert!(f.roster.key(Press::Home));
-    assert_eq!(f.roster.focus(), Some(a.id));
+    assert_eq!(f.roster.focus(), Some(row_key(a.id)));
     assert!(f.roster.key(Press::End));
-    assert_eq!(f.roster.focus(), Some(c.id));
+    assert_eq!(f.roster.focus(), Some(ARCHIVED_TOGGLE));
     assert!(f.roster.key(Press::Up));
+    assert!(f.roster.key(Press::Up));
+    assert_eq!(f.roster.focus(), Some(row_key(b.id)));
     assert!(f.roster.key(Press::Open));
     assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), Some(b.id));
     assert_eq!(f.roster.selected(), Some(b.id));
@@ -1133,4 +1146,145 @@ fn no_unarchive_while_another_operation_is_open() {
     assert!(!f.roster.can_unarchive(archived.id));
     assert!(!f.roster.unarchive(archived.id), "nothing sent");
     assert!(!frame_of(&f.roster).contains(unarchive_key(archived.id)));
+}
+
+/// **The roster's keyboard reaches every control it draws**, in the order
+/// it draws them: the Bot rows, the Unfinished rows' Retry and Abandon, the
+/// Archived toggle, then — open — each archived row and its Unarchive.
+/// Enter does what the pointer's press does, through the same functions;
+/// the published focus is the control the ring is on.
+#[test]
+fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.roster.set_shown(true);
+    assert!(f.roster.maintain());
+    let seq = f.asked();
+    let (stuck, ended) = (
+        unfinished(f.home, "Writer", true),
+        unfinished(f.home, "CFO", false),
+    );
+    f.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: f.home,
+            result: Ok(vec![scout.clone()]),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(Listing::all(vec![stuck.clone(), ended.clone()])),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    let _ = f.commands.try_iter().count();
+    assert!(f.roster.focus_first());
+    let walk = [
+        row_key(scout.id),
+        creation_retry_key(stuck.request_id),
+        creation_abandon_key(stuck.request_id),
+        creation_abandon_key(ended.request_id),
+        ARCHIVED_TOGGLE,
+    ];
+    assert_eq!(f.roster.keyboard_stops(), walk);
+    for (at, key) in walk.iter().enumerate() {
+        assert_eq!(f.roster.focus(), Some(*key), "stop {at}");
+        f.roster.key(Press::Down);
+    }
+    // Every stop is drawn: the keyboard never lands on what is not there.
+    let frame = frame_of(&f.roster);
+    assert!(walk.iter().all(|key| frame.contains(*key)));
+    // Enter on the toggle opens the Archived filter, through its press.
+    assert!(f.roster.key(Press::Open));
+    assert!(f.roster.archived_open());
+    f.roster.maintain();
+    let seq = archived_asked(&f);
+    let mut archived = f.bot("Older");
+    archived.lifecycle = BotLifecycle::Archived;
+    let archive = BotRequestId::mint();
+    archived.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: archive,
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 7,
+    });
+    f.answers
+        .send(Answer::Lifecycle {
+            seq,
+            workspace: f.home,
+            lifecycle: BotLifecycle::Archived,
+            result: Ok(vec![archived.clone()]),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert_eq!(
+        f.roster.focus(),
+        Some(ARCHIVED_TOGGLE),
+        "kept on the toggle"
+    );
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(archived_key(archived.id)));
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(unarchive_key(archived.id)));
+    // Enter on Unarchive sends the Restore naming the Archive.
+    assert!(f.roster.key(Press::Open));
+    let sent = f.commands.try_iter().find_map(|command| match command {
+        Command::Write { command, .. } => Some(*command),
+        _ => None,
+    });
+    assert!(
+        matches!(sent, Some(BotCommand::Restore { source_request_id, .. }) if source_request_id == archive),
+        "{sent:?}"
+    );
+    // Its Unarchive is not drawn while it is on its way: the keyboard
+    // lands on a control that is.
+    assert_ne!(f.roster.focus(), Some(unarchive_key(archived.id)));
+    // Up from the archived row, back through the Unfinished controls; Enter
+    // on Retry retries it by its request.
+    f.roster.set_focus(scout.id);
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(creation_retry_key(stuck.request_id)));
+    assert!(f.roster.key(Press::Open));
+    assert!(
+        f.commands.try_iter().any(|command| matches!(
+            command,
+            Command::Write { command, .. }
+                if matches!(*command, BotCommand::RetryBotCreation { request_id } if request_id == stuck.request_id)
+        )),
+        "Retry went"
+    );
+}
+
+/// **The Unfinished group never cuts silently**: a listing that stopped at
+/// its page limit with the owner holding more says so under the rows.
+#[test]
+fn unfinished_creations_past_one_listing_say_there_are_more() {
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    assert!(f.roster.maintain());
+    let seq = f.asked();
+    f.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: f.home,
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(Listing {
+                items: vec![unfinished(f.home, "Scout", true)],
+                more: true,
+            }),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert!(f.roster.creations_more());
+    assert!(frame_of(&f.roster).contains(UNFINISHED_MORE));
+    for lang in Lang::ALL {
+        assert!(!t(lang, Words::BotsUnfinishedMore).trim().is_empty());
+    }
 }

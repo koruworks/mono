@@ -383,16 +383,49 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
     })
 }
 
-/// Where the keyboard is, read off the same focus the ring is drawn from.
+/// Where the keyboard is, read off the same focus the ring is drawn from:
+/// a Bot row, *Create a bot*, *Open role page*, an Unfinished row's Retry or
+/// Abandon, the Archived toggle, an archived row or its Unarchive — each the
+/// occurrence [`semantics`] publishes for it.
 pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occurrence> {
-    roster.focus().map(|bot| bot_occurrence(cx, bot))
+    let key = roster.focus()?;
+    let model = |part| match key.object {
+        koru_draw::el::Object::Model(id) => Some(Occurrence::model(
+            cx.window,
+            cx.view,
+            uuid::Uuid::from_u128(id),
+            part,
+        )),
+        _ => None,
+    };
+    match key.part {
+        _ if key == CREATE => Some(Occurrence::surface(cx.window, cx.view, BOTS, CREATE_PART)),
+        _ if key == OPEN_LEFT_PAGE => Some(Occurrence::surface(
+            cx.window,
+            cx.view,
+            BOTS,
+            OPEN_LEFT_PART,
+        )),
+        _ if key == ARCHIVED_TOGGLE => Some(Occurrence::surface(
+            cx.window,
+            cx.view,
+            BOTS,
+            ARCHIVED_TOGGLE_PART,
+        )),
+        crate::bots::roster::ROW_PART => model(ControlPart::ROOT),
+        CREATION_RETRY_PART => model(CREATION_RETRY),
+        CREATION_ABANDON_PART => model(CREATION_ABANDON),
+        ARCHIVED_PART => model(ARCHIVED),
+        UNARCHIVE_PART => model(UNARCHIVE),
+        _ => None,
+    }
 }
 
 /// Everything the published tree is built from.
 pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     rev.byte(roster.load() as u8);
     match roster.focus() {
-        Some(bot) => rev.byte(2).uuid(bot.as_uuid()),
+        Some(key) => rev.byte(2).str(&format!("{key:?}")),
         None => rev.byte(0),
     };
     match roster.selected() {
