@@ -27,12 +27,24 @@
 //!   Saving the same thing reuses its request, so a reply that was lost on
 //!   the way back cannot become a second change: the owner replays its
 //!   receipt.
+//! - **What the Bot's read says wins over a settled operation.** A pause or
+//!   resume the execution owner refuses as conflicting is settled `rejected`
+//!   and renewed by the owner under a request of its own, with the Bot
+//!   still as the person asked (`settle_refused_bot_pause`). So `rejected`
+//!   is never said by itself: the Bot is read, and only a read that does not
+//!   show the change says it was not applied.
+//! - **A change still being delivered is said, and waited for.** While the
+//!   Bot's read carries `pending_change`, the settings say which change is
+//!   on its way to what runs the Bot ([`Settings::delivering_words`]), and
+//!   the commands the owner would refuse with `bot_operation_pending` are
+//!   inert ([`Settings::delivering`]).
 
 use std::time::{Duration, Instant};
 
 use koru_ai_core::ModelSelection;
 use koru_ai_core::bots::{
-    Bot, BotAccess, BotCommand, BotOperationStatus, BotPage, BotRequestId, BotResponse,
+    Bot, BotAccess, BotCommand, BotOperationKind, BotOperationStatus, BotPage, BotRequestId,
+    BotResponse,
 };
 use koru_i18n::Key as Words;
 
@@ -144,6 +156,11 @@ pub(crate) struct Settings {
     read_owed: bool,
     /// The last write the owner did not answer, by its request.
     unanswered: Option<(BotRequestId, BotCommand)>,
+    /// **An operation the owner settled `rejected`, waiting for the Bot's
+    /// read**: the change and what was sent. The owner may have renewed it
+    /// under a request of its own, so only the read says whether it was
+    /// applied; until then the change is shown as on its way.
+    rejected: Option<(Change, BotCommand)>,
 }
 
 impl Settings {
@@ -176,6 +193,15 @@ impl Settings {
                 self.notice = None;
             }
         }
+        // **An operation settled `rejected`, now read**: the Bot as read is
+        // the answer. One showing the state the person asked for — with or
+        // without the owner's renewal still being delivered — was not
+        // refused; only one that does not show it says *not applied*.
+        if let Some((_, command)) = self.rejected.take()
+            && !read_as_made(&command, &bot)
+        {
+            self.notice = Some(Notice::Refused(Words::BotsErrNotApplied));
+        }
         self.bot = Some(bot);
     }
 
@@ -183,19 +209,97 @@ impl Settings {
         self.bot.as_ref()
     }
 
+    /// The notice as held. Test only: the region says
+    /// [`Self::notice_words`], which words a `bot_operation_pending` refusal
+    /// by the change the Bot's read names.
+    #[cfg(test)]
     pub(crate) fn notice(&self) -> Option<Notice> {
         self.notice
     }
 
     /// Whether `change` is on its way: shown as pending, its control inert.
+    /// One the owner settled `rejected` is on its way until the Bot's read
+    /// says whether it was made.
     pub(crate) fn is_pending(&self, change: Change) -> bool {
         self.pending.iter().any(|pending| pending.change == change)
+            || self
+                .rejected
+                .as_ref()
+                .is_some_and(|(rejected, _)| *rejected == change)
+    }
+
+    /// **A change of the Bot is still being delivered to what runs it**:
+    /// the Bot's read carries `pending_change`. Until it is acknowledged the
+    /// owner refuses a pause, resume, settings save or access change with
+    /// `bot_operation_pending` (`require_pause_settled`,
+    /// `require_policy_settled`), so their controls are inert, and the Bot is
+    /// read on the bounded clock until it clears.
+    pub(crate) fn delivering(&self) -> bool {
+        self.bot
+            .as_ref()
+            .is_some_and(|bot| bot.pending_change.is_some())
+    }
+
+    /// **Which change is still being delivered**, as the Bot's read names
+    /// it: one sentence per kind. `None` when the read names none.
+    pub(crate) fn delivering_words(&self) -> Option<Words> {
+        let change = self.bot.as_ref()?.pending_change.as_ref()?;
+        Some(match change.kind {
+            BotOperationKind::Pause => Words::BotsDeliveringPause,
+            BotOperationKind::Resume => Words::BotsDeliveringResume,
+            BotOperationKind::UpdateAccess => Words::BotsDeliveringAccess,
+            // Not a kind the owner names here (`pause`, `resume`,
+            // `update_access`): the general sentence.
+            BotOperationKind::Start | BotOperationKind::Continue => Words::BotsErrOperationPending,
+        })
+    }
+
+    /// **The settings' sentence above their cards**: the notice, where a
+    /// `bot_operation_pending` refusal says which change it waited on when
+    /// the Bot's read names one (the general sentence otherwise).
+    pub(crate) fn notice_words(&self) -> Option<Words> {
+        match self.notice? {
+            Notice::ChangedElsewhere => Some(Words::BotsChangedElsewhere),
+            Notice::Refused(Words::BotsErrOperationPending) => Some(
+                self.delivering_words()
+                    .unwrap_or(Words::BotsErrOperationPending),
+            ),
+            Notice::Refused(words) => Some(words),
+        }
+    }
+
+    /// **The line saying which change is still being delivered**, when no
+    /// notice already says it and the change is not one this model shows as
+    /// on its way itself (*Pausing…*, *Saving…*).
+    pub(crate) fn delivering_line(&self) -> Option<Words> {
+        let words = self.delivering_words()?;
+        let own = self.bot.as_ref()?.pending_change.as_ref()?.request_id;
+        if self.pending.iter().any(|pending| pending.request == own)
+            || self.notice_words() == Some(words)
+        {
+            return None;
+        }
+        Some(words)
     }
 
     /// A read of the Bot is owed — after a conflict, an accepted operation
     /// or a refusal that may mean the Bot moved. Taken once.
     pub(crate) fn take_read_owed(&mut self) -> bool {
         std::mem::take(&mut self.read_owed)
+    }
+
+    /// A settled `rejected` waits on the Bot's read: asked again on the
+    /// clock if that read does not answer.
+    pub(crate) fn awaits_read(&self) -> bool {
+        self.rejected.is_some()
+    }
+
+    /// **The Bot's read was refused for good**: a settled `rejected` waiting
+    /// on it is no longer shown as on its way. Nothing is said of it — the
+    /// owner may have renewed it — and the tab says the Bot could not be
+    /// read.
+    pub(crate) fn read_refused(&mut self) {
+        self.rejected = None;
     }
 
     /// Ask for a read of the Bot: the settings were opened before the tab
@@ -231,6 +335,7 @@ impl Settings {
     pub(crate) fn can_save_name(&self) -> bool {
         self.bot.is_some()
             && !self.is_pending(Change::Name)
+            && !self.delivering()
             && self.name_draft.as_deref().is_some_and(|draft| {
                 let name = draft.trim();
                 !name.is_empty()
@@ -287,7 +392,10 @@ impl Settings {
     }
 
     pub(crate) fn can_save_model(&self) -> bool {
-        self.bot.is_some() && self.model_draft.is_some() && !self.is_pending(Change::Model)
+        self.bot.is_some()
+            && self.model_draft.is_some()
+            && !self.is_pending(Change::Model)
+            && !self.delivering()
     }
 
     /// *Save* on the card: an `Update` of the configuration the tab read,
@@ -322,11 +430,17 @@ impl Settings {
         }) && !self.is_pending(Change::Folder)
     }
 
+    /// Whether the folder may be changed *now*: changeable, and no change of
+    /// the Bot still being delivered (which the owner would refuse).
+    pub(crate) fn can_change_folder(&self) -> bool {
+        self.folder_changeable() && !self.delivering()
+    }
+
     /// The folder the person chose in the folder dialog: an `Update` of the
     /// configuration the tab read — the owner's name, not an unsaved edit —
     /// with the new folder.
     pub(crate) fn folder_chosen(&mut self, folder: &std::path::Path) -> Option<Command> {
-        if !self.folder_changeable() || !folder.is_absolute() {
+        if !self.can_change_folder() || !folder.is_absolute() {
             return None;
         }
         let bot = self.bot.as_ref()?;
@@ -416,7 +530,10 @@ impl Settings {
     }
 
     pub(crate) fn can_save_access(&self) -> bool {
-        self.bot.is_some() && self.access_draft.is_some() && !self.is_pending(Change::Access)
+        self.bot.is_some()
+            && self.access_draft.is_some()
+            && !self.is_pending(Change::Access)
+            && !self.delivering()
     }
 
     /// *Save* on access: `UpdateAccess` at the revisions the tab read.
@@ -441,9 +558,18 @@ impl Settings {
 
     // ------------------------------------------------------------ pause
 
+    /// Whether *Pause bot* / *Resume bot* can send: the Bot known, neither
+    /// on its way, and no change of the Bot still being delivered.
+    pub(crate) fn can_toggle_pause(&self) -> bool {
+        self.bot.is_some()
+            && !self.is_pending(Change::Pause)
+            && !self.is_pending(Change::Resume)
+            && !self.delivering()
+    }
+
     /// *Pause bot* or *Resume bot*, whichever the owner's state calls for.
     pub(crate) fn toggle_pause(&mut self) -> Option<Command> {
-        if self.is_pending(Change::Pause) || self.is_pending(Change::Resume) {
+        if !self.can_toggle_pause() {
             return None;
         }
         let bot = self.bot.as_ref()?;
@@ -479,6 +605,7 @@ impl Settings {
             .map(|bot| bot.id)
             .expect("a Bot to change");
         self.notice = None;
+        self.rejected = None;
         self.pending.retain(|pending| pending.change != change);
         self.pending.push(Pending {
             request,
@@ -604,10 +731,17 @@ impl Settings {
                         self.notice = None;
                         self.read_owed = true;
                     }
+                    // **Settled `rejected`: the read decides.** The owner
+                    // renews a pause or resume its execution owner refused
+                    // as conflicting under a request of its own, with the
+                    // Bot still as asked (`settle_refused_bot_pause`), so
+                    // this request's `rejected` does not say the change was
+                    // not made. Held as on its way until the Bot is read.
                     BotOperationStatus::Rejected => {
-                        self.pending.remove(index);
+                        let pending = self.pending.remove(index);
                         self.unanswered = None;
-                        self.notice = Some(Notice::Refused(Words::BotsErrNotApplied));
+                        self.notice = None;
+                        self.rejected = Some((pending.change, pending.command));
                         self.read_owed = true;
                     }
                 }
@@ -665,6 +799,8 @@ impl Settings {
                             | BOT_TRASHED
                             | BOT_TRASHED_BOT
                             | BOT_PENDING
+                            // The read names the change it waits on.
+                            | BOT_OPERATION_PENDING
                     );
                 }
             }

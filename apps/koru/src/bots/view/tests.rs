@@ -1291,6 +1291,143 @@ fn a_hidden_tabs_list_reads_once_when_shown_again() {
     );
 }
 
+// ------------------------------- a change still being delivered (P1.8)
+
+/// Every published control, depth first.
+fn every_control(controls: Vec<Control>) -> Vec<Control> {
+    let mut out = Vec::new();
+    for mut control in controls {
+        let children = std::mem::take(&mut control.children);
+        out.push(control);
+        out.extend(every_control(children));
+    }
+    out
+}
+
+/// The published words of the region's control `key`, if it is published.
+fn published(view: &BotView, key: Key) -> Option<String> {
+    every_control(view.controls())
+        .into_iter()
+        .find(|control| control.key == key)
+        .map(|control| control.label)
+}
+
+/// **A Pause the owner renewed is said as still being delivered — never as
+/// not applied — holds the commands the owner would refuse inert, and goes
+/// by itself.** The fakes answer as the engine does after a Pause its
+/// execution owner refused as conflicting: `read_operation` of the person's
+/// own request answers `rejected` (`settle_refused_bot_pause`,
+/// `crates/koru-ai-sqlite/src/repository/bots/admission.rs`), and the Bot's
+/// `read` says paused with `pending_change` naming the AI owner's renewal
+/// (`bot_pending_change`, `apps/koru-ai-server/src/worker/bots/admission.rs`).
+/// While the read names it, the Bot is read again on the bounded clock
+/// while shown; once it names nothing, the sentence and the inert state go.
+#[test]
+fn a_renewed_pause_is_said_as_still_being_delivered_and_goes_by_itself() {
+    let mut f = Fixture::opened(unpaused());
+    assert!(f.press(PAUSE));
+    let (pause, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        pause,
+        Ok(pending(
+            pause,
+            &bot,
+            BotOperationKind::Pause,
+            BotOperationStatus::Pending,
+        )),
+    );
+    f.reply(
+        pause,
+        Ok(pending(
+            pause,
+            &bot,
+            BotOperationKind::Pause,
+            BotOperationStatus::Rejected,
+        )),
+    );
+    assert!(
+        f.keys().contains(&PAUSE_PENDING),
+        "on its way until the read says"
+    );
+    assert!(
+        !f.keys().contains(&SETTINGS_NOTICE),
+        "never *not applied* on its own"
+    );
+    // The read the rejection left owed.
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    let mut renewed = bot.clone();
+    renewed.paused = true;
+    renewed.revision += 2;
+    renewed.pending_change = Some(koru_ai_core::bots::BotPendingChange {
+        request_id: BotRequestId::mint(),
+        kind: BotOperationKind::Pause,
+        since_ms: 1,
+        last_answer: Some("bot_conflict".into()),
+    });
+    f.answer(seq, bot.id, Ok(renewed.clone()));
+    assert!(!f.keys().contains(&SETTINGS_NOTICE), "nothing refused");
+    assert_eq!(
+        published(&f.view, SETTINGS_DELIVERING).as_deref(),
+        Some(t(f.view.lang, Words::BotsDeliveringPause)),
+        "which change is still on its way"
+    );
+    let inert = |f: &Fixture, key| {
+        f.view
+            .with_frame(|_, frame| frame.node(key).is_some_and(|node| node.disabled))
+    };
+    assert!(inert(&f, PAUSE), "*Resume bot* inert, not hidden");
+    assert!(!f.view.settings().can_toggle_pause());
+    f.press(PAUSE);
+    assert!(
+        !f.commands
+            .try_iter()
+            .any(|command| matches!(command, Command::Write { .. })),
+        "a press sends nothing"
+    );
+    // Read again on the bounded clock while shown.
+    let due = f
+        .view
+        .bot_read_next
+        .expect("read again while it is delivered");
+    f.view.bot_read_next = Some(due.min(std::time::Instant::now()));
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    renewed.pending_change = None;
+    f.answer(seq, bot.id, Ok(renewed));
+    assert_eq!(published(&f.view, SETTINGS_DELIVERING), None, "delivered");
+    assert!(!inert(&f, PAUSE), "offered again");
+    assert_eq!(f.view.bot_read_next, None, "and no more reads of its own");
+}
+
+/// **An Archive refused because a change is still being delivered says
+/// which change**, once the Bot's read names it (`bot_operation_pending`,
+/// `BotError::Settling`): the specific sentence in the tab's lifecycle
+/// block, never only *an earlier change*.
+#[test]
+fn an_archive_refused_while_a_resume_is_delivered_says_so() {
+    let mut bot = unpaused();
+    bot.pending_change = Some(koru_ai_core::bots::BotPendingChange {
+        request_id: BotRequestId::mint(),
+        kind: BotOperationKind::Resume,
+        since_ms: 1,
+        last_answer: None,
+    });
+    let mut f = Fixture::opened(bot);
+    assert!(f.view.begin_lifecycle(crate::bots::lifecycle::Ask::Archive));
+    let (archive, _) = f.wrote();
+    f.reply(
+        archive,
+        Err(Failure::Refused(
+            crate::bots::settings::BOT_OPERATION_PENDING.into(),
+        )),
+    );
+    let said = f.view.lifecycle_said().expect("the refusal is said");
+    assert_eq!(said.words, Words::BotsDeliveringResume);
+    assert!(said.refused);
+}
+
 /// The lifecycle half of the tab (S14).
 mod agent;
 mod create;

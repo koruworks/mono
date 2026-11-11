@@ -3588,13 +3588,19 @@ pub enum Key {
     BotsCreateStartOver,
     /// The owner's `invalid_request`, said where no Bot settings are shown (the create form, a tab's lifecycle, the roster, the Trash): what was sent was not accepted, and nothing changed. `BotsErrInvalid` stays for the settings, which are on screen. Non-English columns machine-written, awaiting a native read.
     BotsErrInvalidGeneral,
+    /// The Bot's read names a pause still being delivered to what runs it (`pending_change`, kind `pause`): said in its settings, and for a change refused `bot_operation_pending` while it is. Non-English columns machine-written, awaiting a native read.
+    BotsDeliveringPause,
+    /// The Bot's read names a resume still being delivered to what runs it (`pending_change`, kind `resume`). Non-English columns machine-written, awaiting a native read.
+    BotsDeliveringResume,
+    /// The Bot's read names an access change still being delivered to what runs it (`pending_change`, kind `update_access`). Non-English columns machine-written, awaiting a native read.
+    BotsDeliveringAccess,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2426] = [
+    pub const ALL: [Key; 2429] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6021,6 +6027,9 @@ impl Key {
         Key::BotsCreateUnconfirmed,
         Key::BotsCreateStartOver,
         Key::BotsErrInvalidGeneral,
+        Key::BotsDeliveringPause,
+        Key::BotsDeliveringResume,
+        Key::BotsDeliveringAccess,
     ];
 }
 
@@ -19365,4 +19374,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsCreateUnconfirmed, en: "Koru couldn't confirm whether this bot was created. Look for it in Bots before you create it again.", es: "Koru no pudo confirmar si este bot se creó. Búscalo en Bots antes de volver a crearlo.", pt_br: "O Koru não conseguiu confirmar se este bot foi criado. Procure-o em Bots antes de criá-lo novamente.", de: "Koru konnte nicht bestätigen, ob dieser Bot erstellt wurde. Sehen Sie in Bots nach, bevor Sie ihn erneut erstellen.", fr: "Koru n'a pas pu confirmer si ce bot a été créé. Cherchez-le dans Bots avant de le créer à nouveau.", ar: "تعذّر على Koru التأكد مما إذا كان هذا البوت قد أُنشئ. ابحث عنه في البوتات قبل أن تنشئه مرة أخرى.", zh_hans: "Koru 无法确认此 Bot 是否已创建。请先在 Bot 列表中查找，再重新创建。", ja: "Koru はこの Bot が作成されたかどうかを確認できませんでした。もう一度作成する前に、Bot の一覧で確認してください。" },
     Row { key: Key::BotsCreateStartOver, en: "Start over", es: "Empezar de nuevo", pt_br: "Recomeçar", de: "Neu beginnen", fr: "Recommencer", ar: "البدء من جديد", zh_hans: "重新开始", ja: "最初からやり直す" },
     Row { key: Key::BotsErrInvalidGeneral, en: "Koru AI didn't accept what was sent, so nothing changed.", es: "Koru AI no aceptó lo que se envió, así que nada cambió.", pt_br: "O Koru AI não aceitou o que foi enviado, então nada mudou.", de: "Koru AI hat das Gesendete nicht angenommen, daher wurde nichts geändert.", fr: "Koru AI n'a pas accepté ce qui a été envoyé, donc rien n'a changé.", ar: "لم يقبل Koru AI ما أُرسل، لذا لم يتغيّر شيء.", zh_hans: "Koru AI 未接受所发送的内容，因此没有任何更改。", ja: "Koru AI が送信内容を受け付けなかったため、何も変更されていません。" },
+    // ------------------------------------------- Bots P1.8: a change still being delivered
+    Row { key: Key::BotsDeliveringPause, en: "Koru is still telling what runs this bot to pause it. Other changes wait until that's done.", es: "Koru todavía está indicando a lo que ejecuta este bot que lo pause. Los demás cambios esperan hasta que termine.", pt_br: "O Koru ainda está avisando o que executa este bot para pausá-lo. As outras alterações esperam até que isso termine.", de: "Koru teilt dem, was diesen Bot ausführt, noch mit, ihn zu pausieren. Andere Änderungen warten, bis das erledigt ist.", fr: "Koru indique encore à ce qui exécute ce bot de le mettre en pause. Les autres modifications attendent que ce soit fait.", ar: "لا يزال Koru يُبلغ ما يشغّل هذا البوت بإيقافه مؤقتًا. تنتظر التغييرات الأخرى حتى يكتمل ذلك.", zh_hans: "Koru 仍在通知运行此 Bot 的程序暂停它。其他更改会等到这一步完成。", ja: "Koru はこの Bot を実行しているものに、一時停止するようまだ伝えています。ほかの変更はそれが終わるまで待機します。" },
+    Row { key: Key::BotsDeliveringResume, en: "Koru is still telling what runs this bot to resume it. Other changes wait until that's done.", es: "Koru todavía está indicando a lo que ejecuta este bot que lo reanude. Los demás cambios esperan hasta que termine.", pt_br: "O Koru ainda está avisando o que executa este bot para retomá-lo. As outras alterações esperam até que isso termine.", de: "Koru teilt dem, was diesen Bot ausführt, noch mit, ihn fortzusetzen. Andere Änderungen warten, bis das erledigt ist.", fr: "Koru indique encore à ce qui exécute ce bot de le reprendre. Les autres modifications attendent que ce soit fait.", ar: "لا يزال Koru يُبلغ ما يشغّل هذا البوت باستئنافه. تنتظر التغييرات الأخرى حتى يكتمل ذلك.", zh_hans: "Koru 仍在通知运行此 Bot 的程序恢复它。其他更改会等到这一步完成。", ja: "Koru はこの Bot を実行しているものに、再開するようまだ伝えています。ほかの変更はそれが終わるまで待機します。" },
+    Row { key: Key::BotsDeliveringAccess, en: "Koru is still giving what runs this bot its new access. Other changes wait until that's done.", es: "Koru todavía está dando a lo que ejecuta este bot su nuevo acceso. Los demás cambios esperan hasta que termine.", pt_br: "O Koru ainda está passando o novo acesso para o que executa este bot. As outras alterações esperam até que isso termine.", de: "Koru gibt dem, was diesen Bot ausführt, noch seinen neuen Zugriff. Andere Änderungen warten, bis das erledigt ist.", fr: "Koru transmet encore son nouvel accès à ce qui exécute ce bot. Les autres modifications attendent que ce soit fait.", ar: "لا يزال Koru يمنح ما يشغّل هذا البوت صلاحية الوصول الجديدة. تنتظر التغييرات الأخرى حتى يكتمل ذلك.", zh_hans: "Koru 仍在把新的访问权限交给运行此 Bot 的程序。其他更改会等到这一步完成。", ja: "Koru はこの Bot を実行しているものに、新しいアクセス権をまだ渡しています。ほかの変更はそれが終わるまで待機します。" },
 ];

@@ -7,6 +7,7 @@
 //! scroll_y  Bot settings                     the region, the shared scrollbar
 //!   col  Bot settings content                NAV_PAD at the sides, S3 above and below, S4 between
 //!     Bot settings notice                    changed elsewhere, or a refusal's sentence
+//!     Bot settings delivering                which change is still being delivered
 //!     col  Bot settings card  (Bot)          on the raised plate, S3 inside, S3 between rows
 //!       row  Bot name row                    *Name*, the field, *Save* or *Saving…*
 //!       row  Bot role row                    *Standing role*, *Open role page*
@@ -59,13 +60,16 @@ use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use super::controls::{ButtonLeaf, ChoiceLeaf, FieldLeaf};
 use super::{BotView, SURFACE};
-use crate::bots::settings::{Change, Notice};
+use crate::bots::settings::Change;
 
 /// The region, a scroll viewport.
 pub(crate) const SETTINGS: Key = Key::surface(SURFACE, "settings");
 /// The header's *Settings*, which opens and closes the region.
 pub(crate) const SETTINGS_BUTTON: Key = Key::surface(SURFACE, "settings-button");
 pub(crate) const SETTINGS_NOTICE: Key = Key::surface(SURFACE, "settings-notice");
+/// The sentence saying which change of the Bot is still being delivered to
+/// what runs it, while the Bot's read carries `pending_change`.
+pub(crate) const SETTINGS_DELIVERING: Key = Key::surface(SURFACE, "settings-delivering");
 pub(crate) const ABOUT_CARD: Key = Key::surface(SURFACE, "about-card");
 pub(crate) const ACCESS_CARD: Key = Key::surface(SURFACE, "access-card");
 pub(crate) const FOLDER_CARD: Key = Key::surface(SURFACE, "folder-card");
@@ -316,16 +320,22 @@ impl BotView {
             .pad_y(Space::S3)
             .gap(Space::S4);
         let settings = &self.settings;
-        if let Some(notice) = settings.notice() {
-            let words = match notice {
-                Notice::ChangedElsewhere => self.words(Words::BotsChangedElsewhere),
-                Notice::Refused(key) => self.words(key),
-            };
+        if let Some(words) = settings.notice_words() {
             content = content.child(line(
                 "Bot settings notice",
                 SETTINGS_NOTICE,
-                words,
+                self.words(words),
                 Ink::Accent,
+            ));
+        }
+        // A change still being delivered to what runs the Bot: which one,
+        // and why the controls that would be refused are inert.
+        if let Some(words) = settings.delivering_line() {
+            content = content.child(line(
+                "Bot settings delivering",
+                SETTINGS_DELIVERING,
+                self.words(words),
+                Ink::Secondary,
             ));
         }
         if let Some(bot) = settings.bot() {
@@ -559,13 +569,15 @@ impl BotView {
                 Ink::Hint,
             ))
         } else if settings.folder_changeable() {
+            // Inert, not hidden, while a change of the Bot is still being
+            // delivered: the owner would refuse it.
             actions.child(self.button(
                 engine,
                 "Bot change folder",
                 CHANGE_FOLDER,
                 self.words(Words::BotsChangeFolder),
                 ActionStyle::Secondary,
-                false,
+                !settings.can_change_folder(),
             ))
         } else {
             actions.child(
@@ -634,7 +646,8 @@ impl BotView {
                     Words::BotsPause
                 }),
                 ActionStyle::Secondary,
-                false,
+                // Inert while a change of the Bot is still being delivered.
+                !settings.can_toggle_pause(),
             )),
         };
         card(PAUSE_CARD, Words::BotsPause).child(pause)
@@ -1563,10 +1576,8 @@ impl BotView {
         let bot = settings.bot()?;
         let agent = self.agent_name();
         Some(match key {
-            k if k == SETTINGS_NOTICE => match settings.notice()? {
-                Notice::ChangedElsewhere => self.words(Words::BotsChangedElsewhere),
-                Notice::Refused(words) => self.words(words),
-            },
+            k if k == SETTINGS_NOTICE => self.words(settings.notice_words()?),
+            k if k == SETTINGS_DELIVERING => self.words(settings.delivering_line()?),
             k if k == ACCESS_SUMMARY => self.access_summary(),
             k if k == MODEL_NOTE => self.words(Words::BotsAppliesToNewConversations),
             k if k == AGENT_READINESS => return self.agent_readiness_words(),

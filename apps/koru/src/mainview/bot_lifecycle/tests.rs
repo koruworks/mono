@@ -132,6 +132,52 @@ fn the_menus_rows_are_the_tabs() {
     assert_eq!(v.enabled_items(&menu), [false], "waits, saying why");
 }
 
+/// **Archive and Move to Trash dim, not hide, while a change of the Bot is
+/// still being delivered** — the owner refuses both with
+/// `bot_operation_pending` until what runs the Bot takes it — and are
+/// offered again once the Bot's read names nothing. The read is as `read`
+/// fills it in (`bot_pending_change`,
+/// `apps/koru-ai-server/src/worker/bots/admission.rs`).
+#[test]
+fn archive_and_trash_dim_while_a_change_is_delivered() {
+    let (mut v, _commands, mut bot) = with_bot_tab();
+    let tab = front(&mut v);
+    let id = bot.id;
+    let menu = |v: &mut MainView| {
+        crate::mainview::context_menu::ContextMenu::new(
+            &mut v.engine,
+            MenuSubject::Bot { bot: id, tab },
+            (10.0, 10.0),
+            vec![MenuAction::ArchiveBot, MenuAction::TrashBot],
+        )
+    };
+    let offered = menu(&mut v);
+    assert_eq!(v.enabled_items(&offered), [true, true]);
+    bot.pending_change = Some(koru_ai_core::bots::BotPendingChange {
+        request_id: BotRequestId::mint(),
+        kind: koru_ai_core::bots::BotOperationKind::Pause,
+        since_ms: 1,
+        last_answer: None,
+    });
+    let TabView::Bot(view) = &mut v.tabs_mut().active_mut().view else {
+        panic!("a Bot tab");
+    };
+    view.know_bot_for_test(bot.clone());
+    let held = menu(&mut v);
+    assert_eq!(
+        v.enabled_items(&held),
+        [false, false],
+        "dimmed, still listed"
+    );
+    bot.pending_change = None;
+    let TabView::Bot(view) = &mut v.tabs_mut().active_mut().view else {
+        panic!("a Bot tab");
+    };
+    view.know_bot_for_test(bot);
+    let again = menu(&mut v);
+    assert_eq!(v.enabled_items(&again), [true, true]);
+}
+
 /// **The Trash's Bot rows**: a Bot conversation the owner lists in Trash
 /// is a row, restorable as the owner says; no
 /// row of them is deleted for good, and Empty Trash says it leaves them.

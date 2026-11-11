@@ -622,6 +622,13 @@ impl BotView {
         self.work.get()
     }
 
+    /// **A change of the Bot is still being delivered to what runs it**, as
+    /// its last read said: the window dims the ⋯'s Archive and Move to
+    /// Trash, which the owner would refuse (`bot_operation_pending`).
+    pub(crate) fn delivering(&self) -> bool {
+        self.settings.delivering()
+    }
+
     /// The settings as they stand: what the owner holds, the person's
     /// edits and the changes on their way. Test only.
     #[cfg(test)]
@@ -974,7 +981,16 @@ impl BotView {
         match result {
             // A Bot that says it is another is not this tab's.
             Ok(bot) if Some(bot.id) == self.bot => {
-                self.bot_read_answered();
+                // **A change still being delivered is read again** on the
+                // bounded clock while the tab is shown (never while hidden),
+                // so its sentence and the controls it holds inert go by
+                // themselves once what runs the Bot takes it. The owner
+                // emits nothing when it does.
+                if bot.pending_change.is_some() {
+                    self.bot_read_again(std::time::Instant::now());
+                } else {
+                    self.bot_read_answered();
+                }
                 self.settings.know(bot.clone());
                 if bot.lifecycle != BotLifecycle::Trashed {
                     self.trashed_bot = None;
@@ -1001,9 +1017,16 @@ impl BotView {
                 self.load = Load::Unavailable;
                 // **A read a Restore left owed is asked again** on the
                 // bounded clock while the tab is shown — until it answers,
-                // nothing else is offered — when asking again may help.
-                if self.lifecycle_awaits_read && failure.again() {
+                // nothing else is offered — when asking again may help. So
+                // is one a settled `rejected` waits on, or one that last
+                // said a change was still being delivered.
+                let owed = self.lifecycle_awaits_read
+                    || self.settings.awaits_read()
+                    || self.settings.delivering();
+                if owed && failure.again() {
                     self.bot_read_again(std::time::Instant::now());
+                } else if !failure.again() {
+                    self.settings.read_refused();
                 }
             }
         }

@@ -583,8 +583,17 @@ impl BotView {
             };
         }
         if let Some(Outcome::Refused(words)) = self.lifecycle.outcome() {
+            // A change still being delivered held it (`bot_operation_pending`):
+            // which change, when the Bot's read names it.
+            let words = match *words {
+                Words::BotsErrOperationPending => self
+                    .settings
+                    .delivering_words()
+                    .unwrap_or(Words::BotsErrOperationPending),
+                words => words,
+            };
             return Some(Said {
-                words: *words,
+                words,
                 refused: true,
             });
         }

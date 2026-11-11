@@ -3,7 +3,7 @@
 use super::*;
 use crate::bots::tests::bot;
 use koru_ai_core::DocumentId;
-use koru_ai_core::bots::{BotId, BotOperation, BotOperationKind, BotPage};
+use koru_ai_core::bots::{BotId, BotOperation, BotOperationKind, BotPage, BotPendingChange};
 use koru_store_core::ids::WorkspaceId;
 
 fn known() -> (Settings, Bot) {
@@ -201,8 +201,9 @@ fn access_stays_pending_until_the_operation_is_accepted() {
     assert!(!settings.access_edited(), "the owner now holds it");
 }
 
-/// **Pause is pending until accepted**, and a rejected one says so and
-/// reads the Bot again; the button's word follows the owner's state.
+/// **Pause is pending until accepted**, and a rejected one reads the Bot
+/// again and, when the read does not show it, says so; the button's word
+/// follows the owner's state.
 #[test]
 fn pause_is_pending_until_accepted_and_a_rejection_is_said() {
     let (mut settings, bot) = known();
@@ -225,12 +226,14 @@ fn pause_is_pending_until_accepted_and_a_rejection_is_said() {
         Ok(operation(request, &bot, BotOperationStatus::Rejected)),
         now,
     );
+    assert!(settings.take_read_owed());
+    // The read shows the Bot as it was: the Pause was not applied.
+    settings.know(bot.clone());
     assert!(!settings.is_pending(Change::Pause));
     assert_eq!(
         settings.notice(),
         Some(Notice::Refused(Words::BotsErrNotApplied))
     );
-    assert!(settings.take_read_owed());
 
     let mut paused = bot.clone();
     paused.paused = true;
@@ -568,4 +571,153 @@ fn an_unanswered_pause_resume_or_access_read_as_made_is_no_longer_unconfirmed() 
     bot.access = other;
     settings.know(bot);
     assert_eq!(settings.notice(), None, "access read as made");
+}
+
+/// The Bot's read while `change` is still being delivered to what runs it,
+/// as `read` fills it in (`bot_pending_change`,
+/// `apps/koru-ai-server/src/worker/bots/admission.rs`): under `request`, the
+/// one the AI owner made itself when it renewed a refused pause.
+fn delivering(bot: &Bot, kind: BotOperationKind, request: BotRequestId) -> Bot {
+    let mut bot = bot.clone();
+    bot.pending_change = Some(BotPendingChange {
+        request_id: request,
+        kind,
+        since_ms: 1,
+        last_answer: Some("bot_conflict".into()),
+    });
+    bot
+}
+
+/// **A Pause its execution owner refused as conflicting, which the AI owner
+/// renewed, is never said as not applied** — the last agent's finding. The
+/// owner settles the person's own request `rejected` and offers the same
+/// change again under a request of its own, with the Bot still paused
+/// (`settle_refused_bot_pause`), so `read_operation` of the person's request
+/// answers `rejected` while the Bot's read says paused and names the
+/// renewal in `pending_change`. What the read says wins: no *not applied*,
+/// the change shown as still being delivered, and once it is delivered
+/// nothing is left to say. The same holds for a Resume.
+#[test]
+fn a_rejected_pause_the_read_shows_made_is_never_said_as_not_applied() {
+    for pausing in [true, false] {
+        let (mut settings, mut bot) = known();
+        bot.paused = !pausing;
+        settings.know(bot.clone());
+        let (request, _) = write(settings.toggle_pause().unwrap());
+        let now = Instant::now();
+        let change = if pausing {
+            Change::Pause
+        } else {
+            Change::Resume
+        };
+        settings.answer(
+            request,
+            Ok(operation(request, &bot, BotOperationStatus::Pending)),
+            now,
+        );
+        settings.answer(
+            request,
+            Ok(operation(request, &bot, BotOperationStatus::Rejected)),
+            now,
+        );
+        assert_eq!(settings.notice(), None, "{pausing}: the read decides");
+        assert!(
+            settings.is_pending(change),
+            "{pausing}: on its way until read"
+        );
+        assert!(settings.take_read_owed(), "{pausing}: the Bot is read");
+
+        let kind = if pausing {
+            BotOperationKind::Pause
+        } else {
+            BotOperationKind::Resume
+        };
+        let mut read = delivering(&bot, kind, BotRequestId::mint());
+        read.paused = pausing;
+        read.revision += 2;
+        settings.know(read.clone());
+        assert_eq!(settings.notice(), None, "{pausing}: never *not applied*");
+        assert!(!settings.is_pending(change));
+        let words = if pausing {
+            Words::BotsDeliveringPause
+        } else {
+            Words::BotsDeliveringResume
+        };
+        assert_eq!(settings.delivering_line(), Some(words), "{pausing}");
+        assert!(settings.toggle_pause().is_none(), "{pausing}: inert");
+
+        // Delivered: the read names nothing, and nothing is left to say.
+        read.pending_change = None;
+        settings.know(read);
+        assert_eq!(settings.delivering_line(), None, "{pausing}");
+        assert_eq!(settings.notice_words(), None, "{pausing}");
+        assert!(
+            settings.toggle_pause().is_some(),
+            "{pausing}: offered again"
+        );
+    }
+}
+
+/// **A change refused `bot_operation_pending` says which change it waited
+/// on** once the Bot's read names it (`require_pause_settled`'s
+/// `BotError::Settling`, read as the real link reads it): the general
+/// sentence until then, the specific one after, and never both the refusal
+/// and the line saying the same thing. The refusal owes the read.
+#[test]
+fn a_change_refused_while_another_is_delivered_says_which_one_once_the_read_names_it() {
+    let (mut settings, bot) = known();
+    settings.edit_name("Other");
+    let (request, _) = write(settings.save_name().unwrap());
+    settings.answer(
+        request,
+        Err(Failure::Refused(BOT_OPERATION_PENDING.into())),
+        Instant::now(),
+    );
+    assert_eq!(
+        settings.notice_words(),
+        Some(Words::BotsErrOperationPending),
+        "general until the read names it"
+    );
+    assert!(settings.take_read_owed(), "the read names the change");
+    settings.know(delivering(
+        &bot,
+        BotOperationKind::UpdateAccess,
+        BotRequestId::mint(),
+    ));
+    assert_eq!(settings.notice_words(), Some(Words::BotsDeliveringAccess));
+    assert_eq!(settings.delivering_line(), None, "said once");
+    assert_eq!(settings.name_shown(), "Other", "the edit is kept");
+}
+
+/// **While a change is still being delivered, what the owner would refuse
+/// is not offered as if it would work** (`bot_operation_pending` answers a
+/// pause, resume, settings save and access change): each command's model
+/// sends nothing, and the drafts stay the person's. Offered again once the
+/// read names nothing.
+#[test]
+fn while_a_change_is_delivered_its_commands_send_nothing() {
+    let (mut settings, bot) = known();
+    let folder = if cfg!(windows) {
+        std::path::PathBuf::from("D:\\bots\\scout")
+    } else {
+        std::path::PathBuf::from("/bots/scout")
+    };
+    settings.know(delivering(
+        &bot,
+        BotOperationKind::Pause,
+        BotRequestId::mint(),
+    ));
+    assert!(settings.delivering());
+    settings.edit_name("Other");
+    settings.choose_access(BotAccess::Workspace);
+    assert!(!settings.can_save_name() && settings.save_name().is_none());
+    assert!(!settings.can_save_access() && settings.save_access().is_none());
+    assert!(!settings.can_toggle_pause() && settings.toggle_pause().is_none());
+    assert!(settings.folder_changeable(), "the folder is not fixed");
+    assert!(!settings.can_change_folder() && settings.folder_chosen(&folder).is_none());
+    assert_eq!(settings.name_shown(), "Other", "the draft stays");
+
+    settings.know(bot);
+    assert!(!settings.delivering());
+    assert!(settings.save_name().is_some());
 }

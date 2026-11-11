@@ -4436,10 +4436,16 @@ impl MainView {
             // A Bot's lifecycle rows (S14): the rows are only those its tab
             // offers; one conversation's Trash dims while another operation
             // of the Bot is on its way, saying so.
-            MenuSubject::Bot { .. } => matches!(
-                action,
-                MenuAction::ArchiveBot | MenuAction::TrashBot | MenuAction::UnarchiveBot
-            ),
+            // Archive and Move to Trash dim, not hide, while a change of
+            // the Bot is still being delivered: the owner would refuse them
+            // (`bot_operation_pending`), and the tab says which change.
+            MenuSubject::Bot { bot, tab } => match action {
+                MenuAction::ArchiveBot | MenuAction::TrashBot => !self
+                    .asking_bot_tab(*tab, *bot)
+                    .is_some_and(|view| view.delivering()),
+                MenuAction::UnarchiveBot => true,
+                _ => false,
+            },
             MenuSubject::BotConversation { bot, tab, .. } => {
                 action == MenuAction::TrashBotConversation
                     && self
