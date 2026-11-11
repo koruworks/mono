@@ -257,6 +257,7 @@ fn execute_bot_command(
         | BotCommand::ListLifecycle { .. }
         | BotCommand::ListBotChats { .. }
         | BotCommand::ListActivity { .. }
+        | BotCommand::ListTrashedBotChats { .. }
         | BotCommand::CreateBotWithRole { .. }
         | BotCommand::ReadBotCreation { .. }
         | BotCommand::ListBotCreations { .. }

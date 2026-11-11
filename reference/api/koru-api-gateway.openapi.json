@@ -2884,6 +2884,25 @@
         ],
         "type": "object"
       },
+      "BotChatRestore": {
+        "description": "Which Restore brings a trashed conversation back now.",
+        "oneOf": [
+          {
+            "description": "`restore_chat` naming `trashed_by`: it was trashed on its own and its\nBot is active.",
+            "enum": [
+              "conversation"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Bot first: the conversation went with the Bot's `trash`\n(`restore` naming `trashed_by` brings it back), or its Bot is\ntrashed or archived now, which `restore_chat` refuses until the Bot\nis restored or unarchived.",
+            "enum": [
+              "bot"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "BotCommand": {
         "oneOf": [
           {
@@ -3578,6 +3597,46 @@
             "required": [
               "command",
               "bot_id",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One bounded page of the owner's Bot conversations in Trash whose Bot\nlives in `workspace`, whatever the Bot's lifecycle: each names the\noperation that put it there and which Restore brings it back.\n`cursor` is the previous page's `next_cursor`; `limit` is 1 to 100.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "list_trashed_bot_chats"
+                ],
+                "type": "string"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotTrashedChatCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "limit": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "command",
+              "workspace",
               "limit"
             ],
             "type": "object"
@@ -4922,6 +4981,24 @@
           },
           {
             "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotTrashedChatPage"
+              },
+              "result": {
+                "enum": [
+                  "trashed_chats"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "activity": {
                 "$ref": "#/components/schemas/BotActivityPage"
               },
@@ -5041,6 +5118,93 @@
         "required": [
           "text",
           "documents"
+        ],
+        "type": "object"
+      },
+      "BotTrashedBy": {
+        "description": "The lifecycle operation that put a conversation into Trash.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/BotLifecycleKind"
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          }
+        },
+        "required": [
+          "request_id",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "BotTrashedChat": {
+        "description": "A Bot conversation in Trash, with what put it there and how it comes back.",
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/BotConversation"
+          },
+          "restore": {
+            "$ref": "#/components/schemas/BotChatRestore"
+          },
+          "trashed_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "trashed_by": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotTrashedBy"
+              }
+            ],
+            "description": "The operation whose Trash row hides it: its own `trash_chat`, or the\nwhole Bot's `trash`. Name it as `source_request_id` in the Restore."
+          }
+        },
+        "required": [
+          "conversation",
+          "trashed_by",
+          "trashed_at_ms",
+          "restore"
+        ],
+        "type": "object"
+      },
+      "BotTrashedChatCursor": {
+        "additionalProperties": false,
+        "description": "The position after the last conversation of a Trash page. It names only\nwhat that page already returned and grants nothing.",
+        "properties": {
+          "chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          }
+        },
+        "required": [
+          "chat_id"
+        ],
+        "type": "object"
+      },
+      "BotTrashedChatPage": {
+        "description": "One page of a workspace's Bot conversations in Trash, in conversation ID\norder; `next_cursor` is absent on the last page.",
+        "properties": {
+          "chats": {
+            "items": {
+              "$ref": "#/components/schemas/BotTrashedChat"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotTrashedChatCursor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "chats"
         ],
         "type": "object"
       },

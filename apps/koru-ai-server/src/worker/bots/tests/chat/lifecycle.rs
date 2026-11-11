@@ -20,6 +20,7 @@ use super::*;
 use koru_ai_core::bots::replay::BotReplayStop;
 use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, BOT_TRASHED, PENDING, TRASHED};
 use std::sync::atomic::AtomicUsize;
+mod listing;
 mod trash;
 mod unadmitted;
 

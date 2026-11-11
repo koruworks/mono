@@ -433,6 +433,8 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
             // activity is read for active Bots only by its own query.
             | BotCommand::ListBotChats { .. }
             | BotCommand::ListActivity { .. }
+            // An owner's Trash, whatever each Bot's lifecycle.
+            | BotCommand::ListTrashedBotChats { .. }
             // P1.8 creation reads: a completed creation stays readable
             // whatever the Bot's lifecycle is now.
             | BotCommand::ReadBotCreation { .. }

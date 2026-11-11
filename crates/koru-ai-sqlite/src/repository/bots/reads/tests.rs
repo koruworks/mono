@@ -3,6 +3,7 @@ use super::super::tests::fixture_bot;
 use super::*;
 mod activity;
 mod label;
+mod trashed;
 
 const HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 

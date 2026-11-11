@@ -70,7 +70,111 @@ pub(crate) const BOT_ACTIVITY_SQL: &str = "SELECT bc.bot_id, bc.chat_id,
      AND NOT EXISTS(SELECT 1 FROM bot_chat_trash AS tr WHERE tr.chat_id = bc.chat_id)
    ORDER BY bc.bot_id, bc.chat_id";
 
+/// One page of an owner's Bot conversations in Trash, for one workspace,
+/// whatever the Bot's lifecycle. It is driven by `bot_chat_trash` in its
+/// primary-key order (`sqlite_autoindex_bot_chat_trash_1`), a range seek past
+/// the cursor: that table holds only what is in Trash now (a Restore deletes
+/// its rows), never lifecycle history. Each row reaches its association,
+/// Bot, Chat and operation by primary key. `?4` is the cursor's Chat ID or
+/// NULL for the first page.
+pub(crate) const TRASHED_BOT_CHAT_PAGE_SQL: &str =
+    "SELECT c.id, c.title, c.current_provider, c.current_model, c.current_reasoning,
+        c.branched_from_chat_id, c.branched_from_message_id, c.created_at_ms, c.updated_at_ms,
+        c.private, c.agent_working_folder, c.agent_mode, c.agent_fast, c.pinned_at_ms, c.profile_id,
+        bc.purpose, b.name, b.bot_id, b.lifecycle, t.operation_id, i.kind, t.trashed_at_ms
+   FROM bot_chat_trash AS t INDEXED BY sqlite_autoindex_bot_chat_trash_1
+  CROSS JOIN bot_chats AS bc ON bc.chat_id = t.chat_id
+  CROSS JOIN bots AS b ON b.bot_id = bc.bot_id
+  CROSS JOIN chats AS c ON c.id = t.chat_id
+  CROSS JOIN bot_lifecycle_intents AS i ON i.user_scope_id = t.user_scope_id AND i.operation_id = t.operation_id
+  WHERE (?4 IS NULL OR t.chat_id > ?4)
+    AND b.user_scope_id = ?1 AND b.owner_device_id = ?2 AND b.home_workspace_id = ?3
+  ORDER BY t.chat_id
+  LIMIT ?5";
+
 impl Repository {
+    /// One page of the owner's Bot conversations in Trash whose Bot lives in
+    /// `workspace`, active, archived or trashed. The caller has checked the
+    /// owner's current authority over the workspace.
+    pub fn trashed_bot_chat_page(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        cursor: Option<&BotTrashedChatCursor>,
+        limit: u16,
+    ) -> Result<BotTrashedChatPage, BotError> {
+        if limit == 0 || limit > BOT_CHAT_PAGE_LIMIT {
+            return Err(BotError::Invalid);
+        }
+        let mut statement = self
+            .connection
+            .prepare(TRASHED_BOT_CHAT_PAGE_SQL)
+            .map_err(bad)?;
+        let rows = statement
+            .query_map(
+                params![
+                    owner.user_scope.to_storage(),
+                    owner.device.to_storage(),
+                    workspace.to_storage(),
+                    cursor.map(|c| c.chat_id.to_storage()),
+                    i64::from(limit) + 1,
+                ],
+                |row| {
+                    Ok((
+                        chat_from_row(row)?,
+                        row.get::<_, String>(15)?,
+                        row.get::<_, String>(16)?,
+                        row.get::<_, String>(17)?,
+                        row.get::<_, String>(18)?,
+                        row.get::<_, String>(19)?,
+                        row.get::<_, String>(20)?,
+                        row.get::<_, i64>(21)?,
+                    ))
+                },
+            )
+            .map_err(bad)?;
+        let mut chats = Vec::new();
+        for row in rows {
+            let (mut chat, purpose, bot_name, bot, lifecycle, operation, kind, at) =
+                row.map_err(bad)?;
+            let label = BotChatLabel {
+                bot_id: bot.parse().map_err(bad)?,
+                bot_name,
+                purpose: BotChatPurpose::parse(&purpose).ok_or(BotError::Storage)?,
+            };
+            chat.bot = Some(label.clone());
+            let kind = BotLifecycleKind::parse(&kind).ok_or(BotError::Storage)?;
+            let lifecycle = BotLifecycle::parse(&lifecycle).ok_or(BotError::Storage)?;
+            // Only a conversation trashed on its own, of an active Bot, is
+            // restored on its own now (`restore_chat` refuses on an archived
+            // or trashed Bot).
+            let restore =
+                if kind == BotLifecycleKind::TrashChat && lifecycle == BotLifecycle::Active {
+                    BotChatRestore::Conversation
+                } else {
+                    BotChatRestore::Bot
+                };
+            chats.push(BotTrashedChat {
+                conversation: BotConversation { chat, label },
+                trashed_by: BotTrashedBy {
+                    request_id: operation.parse().map_err(bad)?,
+                    kind,
+                },
+                trashed_at_ms: at,
+                restore,
+            });
+        }
+        let next_cursor = if chats.len() > usize::from(limit) {
+            chats.truncate(usize::from(limit));
+            chats.last().map(|last| BotTrashedChatCursor {
+                chat_id: last.conversation.chat.id,
+            })
+        } else {
+            None
+        };
+        Ok(BotTrashedChatPage { chats, next_cursor })
+    }
+
     /// The owner's active Bots of `workspace`: each conversation outside Trash
     /// that is running or needs the person, at most `limit`. The caller has
     /// checked the owner's current authority over the workspace.

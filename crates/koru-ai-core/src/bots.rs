@@ -293,6 +293,15 @@ pub enum BotCommand {
         cursor: Option<BotChatCursor>,
         limit: u16,
     },
+    /// One bounded page of the owner's Bot conversations in Trash whose Bot
+    /// lives in `workspace`, whatever the Bot's lifecycle: each names the
+    /// operation that put it there and which Restore brings it back.
+    /// `cursor` is the previous page's `next_cursor`; `limit` is 1 to 100.
+    ListTrashedBotChats {
+        workspace: WorkspaceId,
+        cursor: Option<BotTrashedChatCursor>,
+        limit: u16,
+    },
     /// The conversations of a workspace's active Bots that are running or
     /// need the person, at most 200, read from durable AI state.
     ListActivity {
@@ -364,6 +373,7 @@ pub enum BotResponse {
     Bot { bot: Bot },
     List { bots: Vec<Bot> },
     Chats { page: BotChatPage },
+    TrashedChats { page: BotTrashedChatPage },
     Activity { activity: BotActivityPage },
     Creation { creation: BotCreation },
     Creations { page: BotCreationPage },
@@ -442,6 +452,59 @@ pub struct BotConversation {
 pub struct BotChatCursor {
     pub main: bool,
     pub updated_at_ms: i64,
+    pub chat_id: ChatId,
+}
+
+/// One page of a workspace's Bot conversations in Trash, in conversation ID
+/// order; `next_cursor` is absent on the last page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotTrashedChatPage {
+    pub chats: Vec<BotTrashedChat>,
+    pub next_cursor: Option<BotTrashedChatCursor>,
+}
+
+/// A Bot conversation in Trash, with what put it there and how it comes back.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotTrashedChat {
+    pub conversation: BotConversation,
+    /// The operation whose Trash row hides it: its own `trash_chat`, or the
+    /// whole Bot's `trash`. Name it as `source_request_id` in the Restore.
+    pub trashed_by: BotTrashedBy,
+    pub trashed_at_ms: i64,
+    pub restore: BotChatRestore,
+}
+
+/// The lifecycle operation that put a conversation into Trash.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotTrashedBy {
+    pub request_id: BotRequestId,
+    pub kind: BotLifecycleKind,
+}
+
+/// Which Restore brings a trashed conversation back now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BotChatRestore {
+    /// `restore_chat` naming `trashed_by`: it was trashed on its own and its
+    /// Bot is active.
+    Conversation,
+    /// The Bot first: the conversation went with the Bot's `trash`
+    /// (`restore` naming `trashed_by` brings it back), or its Bot is
+    /// trashed or archived now, which `restore_chat` refuses until the Bot
+    /// is restored or unarchived.
+    Bot,
+}
+
+/// The position after the last conversation of a Trash page. It names only
+/// what that page already returned and grants nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotTrashedChatCursor {
     pub chat_id: ChatId,
 }
 

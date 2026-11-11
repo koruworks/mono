@@ -19,6 +19,11 @@ impl WorkerState {
             BotCommand::ListActivity { workspace } => {
                 Some(self.list_bot_activity(context, *workspace))
             }
+            BotCommand::ListTrashedBotChats {
+                workspace,
+                cursor,
+                limit,
+            } => Some(self.list_trashed_bot_chats(context, *workspace, cursor.as_ref(), *limit)),
             _ => None,
         }
     }
@@ -44,6 +49,31 @@ impl WorkerState {
             .bot_activity(owner, workspace, BOT_ACTIVITY_LIMIT)
             .map_err(bot_failure)?;
         Ok(BotResponse::Activity { activity })
+    }
+
+    /// The owner's Bot conversations in Trash whose Bot lives in `workspace`,
+    /// which the owner must currently reach, whatever each Bot's lifecycle,
+    /// so a client that knows only the workspace can find each one and the
+    /// operation to name in its Restore. ai.db only, like every read here.
+    fn list_trashed_bot_chats(
+        &self,
+        context: &CommandContext,
+        workspace: WorkspaceId,
+        cursor: Option<&BotTrashedChatCursor>,
+        limit: u16,
+    ) -> ApiResult<BotResponse> {
+        authorize(context, AiScope::ManageBots)?;
+        let proof = context
+            .prepared
+            .as_ref()
+            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+        let owner = proof.authority.owner().map_err(bot_failure)?;
+        proof.authority.workspace(workspace).map_err(bot_failure)?;
+        let page = self
+            .repository
+            .trashed_bot_chat_page(owner, workspace, cursor, limit)
+            .map_err(bot_failure)?;
+        Ok(BotResponse::TrashedChats { page })
     }
 
     /// The owner's view of one Bot's conversations. An archived Bot's stay

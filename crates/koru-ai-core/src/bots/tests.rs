@@ -253,3 +253,35 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
     unknown["open_operation"]["fingerprint"] = serde_json::json!("guessed");
     assert!(serde_json::from_value::<Bot>(unknown).is_err());
 }
+
+#[test]
+fn a_trash_page_request_is_closed_and_names_the_restore_each_entry_needs() {
+    let request = BotCommand::ListTrashedBotChats {
+        workspace: WorkspaceId::new(),
+        cursor: Some(BotTrashedChatCursor {
+            chat_id: ChatId::new(),
+        }),
+        limit: 20,
+    };
+    let mut json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["command"], "list_trashed_bot_chats");
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+        request
+    );
+    json["cursor"]["offset"] = serde_json::json!(3);
+    assert!(serde_json::from_value::<BotCommand>(json).is_err());
+    assert_eq!(
+        serde_json::to_value(BotChatRestore::Conversation).unwrap(),
+        "conversation"
+    );
+    assert_eq!(serde_json::to_value(BotChatRestore::Bot).unwrap(), "bot");
+    let reply = serde_json::json!({
+        "result": "trashed_chats",
+        "page": { "chats": [], "next_cursor": null },
+    });
+    assert!(matches!(
+        serde_json::from_value::<BotResponse>(reply).unwrap(),
+        BotResponse::TrashedChats { .. }
+    ));
+}
