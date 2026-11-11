@@ -638,8 +638,9 @@ impl MainView {
         self.ask_abandon_creation(name, super::trash::AbandonFrom::Tab(draft))
     }
 
-    /// **Ask before a creation is abandoned** — a create tab's Abandon:
-    /// nothing is deleted, and what it leaves stays where it is.
+    /// **Ask before a creation is abandoned** — a create tab's or the
+    /// roster's Unfinished row's Abandon: nothing is deleted, and what it
+    /// leaves stays where it is.
     pub(super) fn ask_abandon_creation(
         &mut self,
         name: String,
@@ -688,6 +689,11 @@ impl MainView {
                             return;
                         }
                     }
+                }
+            }
+            super::trash::AbandonFrom::Roster(request) => {
+                if confirmed {
+                    self.explore.bots_mut().abandon(request);
                 }
             }
         }

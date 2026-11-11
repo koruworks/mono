@@ -120,7 +120,8 @@ pub(super) enum ConfirmSubject {
         chat: koru_ai_ui::ChatId,
     },
     /// **Abandon an unfinished creation** (Bots P1.8 S8). A yes is sent by
-    /// whoever asked — the create tab, by its draft — and deletes nothing; a
+    /// whoever asked — the create tab, by its draft, or the roster's
+    /// Unfinished row, by the creation's request — and deletes nothing; a
     /// no sends nothing. The keyboard goes back to the tab's *Abandon*.
     AbandonBotCreation(AbandonFrom),
 }
@@ -130,6 +131,8 @@ pub(super) enum ConfirmSubject {
 pub(super) enum AbandonFrom {
     /// A create tab, by the BotId its draft reserves.
     Tab(koru_ai_core::bots::BotId),
+    /// The roster's Unfinished row, by the creation's request.
+    Roster(koru_ai_core::bots::BotRequestId),
 }
 
 /// More nested documents than this and the deletion is confirmed first.

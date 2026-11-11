@@ -17,6 +17,13 @@
 //! conversation in the Bot's tab. The sentence saying the read stopped
 //! before the end is a label.
 //!
+//! **Creating one** (S8): the empty roster's *Create a bot* is a button.
+//! The Unfinished group is a list named *Unfinished* whose items are named
+//! *{name}, not finished*, each with its state as a label and *Retry
+//! {name}* (when Retry can resolve it) and *Abandon {name}* as buttons; an
+//! Abandon's answer is labels, with *Open role page* as a button when it
+//! left one.
+//!
 //! **Geometry is never re-derived.** Every rect is the roster's own element
 //! frame, the one its paint and its pointer read; a row scrolled out of the
 //! band is published where it would be.
@@ -31,8 +38,11 @@ use koru_workspace_host::accessibility::{
 use super::Context;
 use crate::bots::BotsRoster;
 use crate::bots::roster::{
-    ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART, ARCHIVED_TOGGLE, EMPTY, LIST,
-    MORE_WORK, NOTICE, UNARCHIVE_PART, activity_key, archived_key, row_key, unarchive_key,
+    ABANDONED_LINES, ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART,
+    ARCHIVED_TOGGLE, CREATE, CREATION_ABANDON_PART, CREATION_PART, CREATION_RETRY_PART, EMPTY,
+    LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, UNARCHIVE_PART, UNFINISHED_HEADING, UNFINISHED_NOTICE,
+    activity_key, archived_key, creation_abandon_key, creation_key, creation_retry_key, row_key,
+    unarchive_key,
 };
 use crate::panes::Outcome;
 
@@ -48,6 +58,20 @@ const ARCHIVED_NOTICE_PART: ControlPart = ControlPart::new("archived-notice");
 const ARCHIVED_LIST_PART: ControlPart = ControlPart::new("archived");
 const ARCHIVED: ControlPart = ControlPart::new(ARCHIVED_PART);
 const UNARCHIVE: ControlPart = ControlPart::new(UNARCHIVE_PART);
+/// Creating one (S8).
+const CREATE_PART: ControlPart = ControlPart::new("create");
+const UNFINISHED_PART: ControlPart = ControlPart::new("unfinished");
+const UNFINISHED_NOTICE_PART: ControlPart = ControlPart::new("unfinished-notice");
+const ABANDONED_PARTS: [ControlPart; 3] = [
+    ControlPart::new("abandoned"),
+    ControlPart::new("abandoned-more"),
+    ControlPart::new("abandoned-last"),
+];
+const OPEN_LEFT_PART: ControlPart = ControlPart::new("open-left-page");
+const CREATION: ControlPart = ControlPart::new(CREATION_PART);
+const CREATION_STATE: ControlPart = ControlPart::new("bot-creation-state");
+const CREATION_RETRY: ControlPart = ControlPart::new(CREATION_RETRY_PART);
+const CREATION_ABANDON: ControlPart = ControlPart::new(CREATION_ABANDON_PART);
 
 fn bot_occurrence(cx: &Context, bot: koru_ai_core::bots::BotId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, bot.as_uuid(), ControlPart::ROOT)
@@ -81,6 +105,17 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 )
                 .with_label(t(cx.lang, Key::BotsEmpty))
                 .with_bounds(rect),
+            );
+        }
+        if let Some(rect) = rect_of(CREATE) {
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, CREATE_PART),
+                    Role::Button,
+                )
+                .with_label(t(cx.lang, Key::BotsCreate))
+                .with_bounds(rect)
+                .with_actions([Action::Click]),
             );
         }
         if let Some(rect) = rect_of(MORE_WORK) {
@@ -144,6 +179,120 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 .with_bounds(band)
                 .with_size_of_set(total)
                 .with_children(children),
+            );
+        }
+        // **The Unfinished group** (S8): a list of the creations that have
+        // not finished, each with its state, Retry and Abandon; before it,
+        // why the last of those did not happen, and what an Abandon left.
+        if let Some(heading) = rect_of(UNFINISHED_HEADING) {
+            if let (Some(rect), Some(words)) =
+                (rect_of(UNFINISHED_NOTICE), roster.creation_refused())
+            {
+                out.push(
+                    SemanticNode::new(
+                        Occurrence::surface(cx.window, cx.view, BOTS, UNFINISHED_NOTICE_PART),
+                        Role::Label,
+                    )
+                    .with_label(t(cx.lang, words))
+                    .with_bounds(rect),
+                );
+            }
+            if let Some(abandoned) = roster.abandoned() {
+                let lines = crate::bots::view::create::abandoned_lines(cx.lang, abandoned);
+                for ((words, key), part) in
+                    lines.into_iter().zip(ABANDONED_LINES).zip(ABANDONED_PARTS)
+                {
+                    if let Some(rect) = rect_of(key) {
+                        out.push(
+                            SemanticNode::new(
+                                Occurrence::surface(cx.window, cx.view, BOTS, part),
+                                Role::Label,
+                            )
+                            .with_label(words)
+                            .with_bounds(rect),
+                        );
+                    }
+                }
+            }
+            if let Some(rect) = rect_of(OPEN_LEFT_PAGE) {
+                out.push(
+                    SemanticNode::new(
+                        Occurrence::surface(cx.window, cx.view, BOTS, OPEN_LEFT_PART),
+                        Role::Button,
+                    )
+                    .with_label(t(cx.lang, Key::BotsOpenRole))
+                    .with_bounds(rect)
+                    .with_actions([Action::Click]),
+                );
+            }
+            let total = roster.creations().len();
+            let items = roster
+                .creations()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, creation)| {
+                    let request = creation.request_id;
+                    let rect = rect_of(creation_key(request))?;
+                    let name = roster.creation_name(creation);
+                    let mut children = vec![
+                        SemanticNode::new(
+                            Occurrence::model(
+                                cx.window,
+                                cx.view,
+                                request.as_uuid(),
+                                CREATION_STATE,
+                            ),
+                            Role::Label,
+                        )
+                        .with_label(roster.creation_state(creation))
+                        .with_bounds(rect),
+                    ];
+                    for (key, part, words) in [
+                        (
+                            creation_retry_key(request),
+                            CREATION_RETRY,
+                            Key::BotsRetryNamed,
+                        ),
+                        (
+                            creation_abandon_key(request),
+                            CREATION_ABANDON,
+                            Key::BotsAbandonNamed,
+                        ),
+                    ] {
+                        if let Some(rect) = rect_of(key) {
+                            children.push(
+                                SemanticNode::new(
+                                    Occurrence::model(cx.window, cx.view, request.as_uuid(), part),
+                                    Role::Button,
+                                )
+                                .with_label(koru_i18n::fill(t(cx.lang, words), &[name.as_str()]))
+                                .with_bounds(rect)
+                                .with_actions([Action::Click]),
+                            );
+                        }
+                    }
+                    Some(
+                        SemanticNode::new(
+                            Occurrence::model(cx.window, cx.view, request.as_uuid(), CREATION),
+                            Role::ListItem,
+                        )
+                        .with_label(roster.creation_accessible_name(creation))
+                        .with_bounds(rect)
+                        .with_position(index)
+                        .with_size_of_set(total)
+                        .with_children(children),
+                    )
+                })
+                .collect();
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, UNFINISHED_PART),
+                    Role::List,
+                )
+                .with_label(t(cx.lang, Key::BotsUnfinished))
+                .with_bounds(heading)
+                .with_size_of_set(total)
+                .with_children(items),
             );
         }
         // **The Archived filter** (S14): its toggle, then — open — a list
@@ -257,6 +406,17 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     for entry in roster.activity() {
         rev.uuid(entry.chat_id.as_uuid()).byte(entry.state as u8);
     }
+    // Creating one (S8).
+    rev.u64(roster.creations().len() as u64);
+    for creation in roster.creations() {
+        rev.uuid(creation.request_id.as_uuid())
+            .str(&creation.name)
+            .byte(creation.stage as u8)
+            .bool(creation.retryable)
+            .bool(roster.creation_acting(creation.request_id));
+    }
+    rev.bool(roster.abandoned().is_some())
+        .bool(roster.creation_refused().is_some());
 }
 
 /// **Do what a client asked, through the gesture it names.** `None` when the
@@ -269,6 +429,39 @@ pub(super) fn action(
 ) -> Option<Outcome> {
     if area.w <= 0.0 {
         return None;
+    }
+    // Creating one (S8): *Create a bot*, *Open role page*, and an
+    // Unfinished row's Retry and Abandon.
+    if matches!(target.object, ObjectKey::Surface(_))
+        && (target.part == CREATE_PART || target.part == OPEN_LEFT_PART)
+    {
+        if action != Action::Click {
+            return None;
+        }
+        roster.press_unfinished(if target.part == CREATE_PART {
+            CREATE
+        } else {
+            OPEN_LEFT_PAGE
+        });
+        return Some(Outcome::Consumed);
+    }
+    if let ObjectKey::Model(id) = target.object
+        && (target.part == CREATION_RETRY || target.part == CREATION_ABANDON)
+    {
+        if action != Action::Click {
+            return None;
+        }
+        let request = roster
+            .creations()
+            .iter()
+            .map(|creation| creation.request_id)
+            .find(|request| request.as_uuid() == id)?;
+        roster.press_unfinished(if target.part == CREATION_RETRY {
+            creation_retry_key(request)
+        } else {
+            creation_abandon_key(request)
+        });
+        return Some(Outcome::Consumed);
     }
     // The Archived filter's toggle (S14).
     if target.part == ARCHIVED_TOGGLE_PART && matches!(target.object, ObjectKey::Surface(_)) {

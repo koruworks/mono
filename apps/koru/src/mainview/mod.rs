@@ -6071,7 +6071,27 @@ impl MainView {
             Some((bot, chat)) => self.open_bot_conversation(bot, chat),
             None => false,
         };
-        changed || opened || opened_chat
+        // **Creating one** (S8): the empty state's *Create a bot*; an
+        // Unfinished row's Abandon, asked first; a page an abandoned
+        // creation left, opened as an ordinary page.
+        let created = self.explore.bots_mut().take_wants_create() && self.open_bot_create_tab();
+        let asked = match self.explore.bots_mut().take_abandon_ask() {
+            Some((request, name)) => {
+                self.ask_abandon_creation(name, trash::AbandonFrom::Roster(request))
+            }
+            None => false,
+        };
+        let page = match self.explore.bots_mut().take_open_page() {
+            Some(page) => self.open_document_target(
+                koru_editor::trigger::DocumentTarget {
+                    document: koru_core::DocumentId::from_uuid(page.document.as_uuid()),
+                    node: None,
+                },
+                koru_editor::OpenWhere::NewTab,
+            ),
+            None => false,
+        };
+        changed || opened || opened_chat || created || asked || page
     }
 
     /// **The Chats view's own pass** (AGENTUX I5).

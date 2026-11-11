@@ -21,8 +21,8 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
-    Bot, BotActivityPage, BotChatCursor, BotChatLabel, BotChatPage, BotCommand, BotId,
-    BotLifecycle, BotRequestId, BotResponse,
+    BOT_CREATION_PAGE_LIMIT, Bot, BotActivityPage, BotChatCursor, BotChatLabel, BotChatPage,
+    BotCommand, BotCreation, BotCreationCursor, BotId, BotLifecycle, BotRequestId, BotResponse,
 };
 use koru_store_core::ids::WorkspaceId;
 
@@ -37,7 +37,8 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
-    /// The Bots whose home is `workspace`, as the service lists them.
+    /// The Bots whose home is `workspace`, as the service lists them — and,
+    /// as a second answer, its unfinished creations (S8).
     List { seq: u64, workspace: WorkspaceId },
     /// One Bot, as the service holds it now: what a Bot tab's header says.
     Read { seq: u64, bot: BotId },
@@ -45,7 +46,10 @@ pub(crate) enum Command {
     /// an `Update`, `UpdateAccess`, `Pause` or `Resume` carrying the
     /// revision it read, or the `ReadOperation` that follows one until the
     /// owner says it is effective. Answered by its request's id, so a reply
-    /// can only settle the change it is about.
+    /// can only settle the change it is about. A creation rides it too (S8):
+    /// `CreateBotWithRole`, `ReadBotCreation`, `RetryBotCreation` and
+    /// `AbandonBotCreation`, each by the creation's request id and its
+    /// reserved BotId, each answered with the creation's progress.
     Write {
         bot: BotId,
         request: BotRequestId,
@@ -118,6 +122,13 @@ pub(crate) enum Answer {
         workspace: WorkspaceId,
         lifecycle: BotLifecycle,
         result: Result<Vec<Bot>, Failure>,
+    },
+    /// **A [`Command::List`]'s second answer** (S8): the workspace's
+    /// unfinished creations (`ListBotCreations`, every page), oldest first.
+    Creations {
+        seq: u64,
+        workspace: WorkspaceId,
+        result: Result<Vec<BotCreation>, Failure>,
     },
 }
 
@@ -211,6 +222,43 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 }
                 if answers
                     .send(Answer::Listed {
+                        seq,
+                        workspace,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                // **Beside every list, its unfinished creations** (S8), so a
+                // creation a restart interrupted is never invisible: the
+                // same request's second answer.
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => unfinished(|cursor| {
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ListBotCreations {
+                                workspace,
+                                cursor,
+                                limit: BOT_CREATION_PAGE_LIMIT,
+                            })
+                            .map_err(|failure| failure.code)
+                    }),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A workspace's unfinished Bot creations could not be listed"
+                    );
+                    client = None;
+                }
+                if answers
+                    .send(Answer::Creations {
                         seq,
                         workspace,
                         result,
@@ -433,6 +481,35 @@ pub(crate) fn chats(reply: Result<BotResponse, String>) -> Result<BotChatPage, F
         Err(code) if code.is_empty() => Err(Failure::Unreachable),
         Err(code) => Err(Failure::Refused(code)),
     }
+}
+
+/// The most pages of unfinished creations one listing reads: a person's
+/// unfinished creations are a handful, and a page holds a hundred.
+const CREATION_PAGES: usize = 4;
+
+/// **Every unfinished creation of a workspace**, oldest first, page after
+/// page through `ask`, at most [`CREATION_PAGES`] of them: the list, or why
+/// not — never a list made up from an answer to some other question.
+pub(crate) fn unfinished(
+    mut ask: impl FnMut(Option<BotCreationCursor>) -> Result<BotResponse, String>,
+) -> Result<Vec<BotCreation>, Failure> {
+    let mut creations = Vec::new();
+    let mut cursor = None;
+    for _ in 0..CREATION_PAGES {
+        match ask(cursor.take()) {
+            Ok(BotResponse::Creations { page }) => {
+                creations.extend(page.creations);
+                match page.next_cursor {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
+            }
+            Ok(_) => return Err(Failure::Unreachable),
+            Err(code) if code.is_empty() => return Err(Failure::Unreachable),
+            Err(code) => return Err(Failure::Refused(code)),
+        }
+    }
+    Ok(creations)
 }
 
 /// A `ListActivity` reply: the page, or why not.

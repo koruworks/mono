@@ -10,7 +10,8 @@
 //! Trash, the roster's Archived filter unarchives, and the window's Trash
 //! restores ([`lifecycle`], [`trash`], S14). Its settings choose its agent's
 //! model, effort, mode and Fast ([`catalog`], S6–S7). *Create a bot* opens a
-//! Bot tab in create mode ([`creation`], S8). Nothing offers a
+//! Bot tab in create mode, and the roster lists creations that have not
+//! finished, with Retry and Abandon ([`creation`], S8). Nothing offers a
 //! control that would lead nowhere: there is no permanent delete of a Bot,
 //! which is not built.
 //!

@@ -22,9 +22,20 @@
 //! - **Asked, nothing back yet**: *Loading bots…* — never a zero claimed early.
 //! - **The service did not answer**: it says so, **over what it showed
 //!   before** — a failed read is never *you have no Bots*.
-//! - **The service answered with none**: the approved empty sentence. It names
-//!   no button, because creating a Bot is not in this build yet, and a button
-//!   that leads nowhere is a promise the roster cannot keep.
+//! - **The service answered with none**: the approved empty sentence, and
+//!   *Create a bot* under it (S8), which opens a Bot tab in create mode — the
+//!   same as the navigator heading's button.
+//!
+//! ## Unfinished creations (S8)
+//!
+//! Beside every listing the link reads the workspace's **unfinished
+//! creations** (`ListBotCreations`, the same request's second answer), so a
+//! creation a restart interrupted is never invisible: a small *Unfinished*
+//! group under the Bots, one row each — its name, where it stands in words,
+//! **Retry** when Retry can resolve it, and **Abandon**, which the window
+//! asks about first. Both work from the creation's request id alone. An
+//! abandoned one's answer names what it left: its role page, with *Open role
+//! page*, and its folder.
 //!
 //! ## How it is built
 //!
@@ -44,8 +55,8 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 use koru_ai_core::bots::{
-    Bot, BotActivity, BotActivityPage, BotActivityState, BotCommand, BotId, BotLifecycle,
-    BotLifecycleKind, BotLifecycleStage, BotRequestId, BotResponse,
+    Bot, BotActivity, BotActivityPage, BotActivityState, BotCommand, BotCreation, BotCreationStage,
+    BotId, BotLifecycle, BotLifecycleKind, BotLifecycleStage, BotPage, BotRequestId, BotResponse,
 };
 use koru_chats_ui::ChatStatus;
 use koru_draw::el::{
@@ -89,6 +100,39 @@ pub(crate) const ARCHIVED_NOTICE: Key = Key::surface(SURFACE, "archived-notice")
 pub(crate) const ARCHIVED_PART: &str = "bot-archived";
 /// An archived row's *Unarchive*, under the Bot's own id.
 pub(crate) const UNARCHIVE_PART: &str = "bot-unarchive";
+
+/// The empty roster's *Create a bot* (S8).
+pub(crate) const CREATE: Key = Key::surface(SURFACE, "create");
+/// The Unfinished group's heading (S8).
+pub(crate) const UNFINISHED_HEADING: Key = Key::surface(SURFACE, "unfinished-heading");
+/// Why the last Retry or Abandon from here did not happen.
+pub(crate) const UNFINISHED_NOTICE: Key = Key::surface(SURFACE, "unfinished-notice");
+/// An abandoned creation's sentences — what happened, what it left — and
+/// its role page's *Open role page*.
+pub(crate) const ABANDONED_LINES: [Key; 3] = [
+    Key::surface(SURFACE, "abandoned"),
+    Key::surface(SURFACE, "abandoned-more"),
+    Key::surface(SURFACE, "abandoned-last"),
+];
+pub(crate) const OPEN_LEFT_PAGE: Key = Key::surface(SURFACE, "open-left-page");
+/// An unfinished creation's row, its Retry and its Abandon, under the
+/// creation's request id.
+pub(crate) const CREATION_PART: &str = "bot-creation";
+pub(crate) const CREATION_RETRY_PART: &str = "bot-creation-retry";
+pub(crate) const CREATION_ABANDON_PART: &str = "bot-creation-abandon";
+
+/// An unfinished creation's row key: its request's own id.
+pub(crate) fn creation_key(request: BotRequestId) -> Key {
+    Key::model(request.as_uuid().as_u128(), CREATION_PART)
+}
+
+pub(crate) fn creation_retry_key(request: BotRequestId) -> Key {
+    Key::model(request.as_uuid().as_u128(), CREATION_RETRY_PART)
+}
+
+pub(crate) fn creation_abandon_key(request: BotRequestId) -> Key {
+    Key::model(request.as_uuid().as_u128(), CREATION_ABANDON_PART)
+}
 
 /// An archived row's key.
 pub(crate) fn archived_key(bot: BotId) -> Key {
@@ -281,6 +325,25 @@ pub(crate) struct BotsRoster {
     /// Why the last Unarchive did not happen.
     unarchive_refused: Option<Words>,
     hover_archived: Option<Key>,
+    // ---------------------------------------- unfinished creations (S8)
+    /// The workspace's unfinished creations, oldest first, as the link last
+    /// read them beside the list.
+    creations: Vec<BotCreation>,
+    /// The listing's second answer is still owed.
+    creations_in_flight: bool,
+    /// A Retry or an Abandon on its way, by the creation's request.
+    creations_acting: std::collections::HashSet<BotRequestId>,
+    /// Why the last Retry or Abandon from here did not happen.
+    creation_refused: Option<Words>,
+    /// The creation abandoned from here last: what it left, said once.
+    abandoned: Option<BotCreation>,
+    /// *Create a bot* was pressed: the window opens the form. Taken once.
+    wants_create: bool,
+    /// An Abandon pressed: the request and the name, for the window to ask
+    /// about first. Taken once.
+    abandon_ask: Option<(BotRequestId, String)>,
+    /// A page an abandoned creation left, to open. Taken once.
+    open_page: Option<BotPage>,
 }
 
 impl BotsRoster {
@@ -373,6 +436,10 @@ impl BotsRoster {
         self.archived_fresh = false;
         self.archived_in_flight = false;
         self.archived_seq = self.archived_seq.wrapping_add(1);
+        self.creations.clear();
+        self.creations_in_flight = false;
+        self.creation_refused = None;
+        self.abandoned = None;
         true
     }
 
@@ -678,6 +745,7 @@ impl BotsRoster {
         self.seq = seq;
         self.fresh = true;
         self.in_flight = true;
+        self.creations_in_flight = true;
         let mut work = self.work.get();
         work.commands += 1;
         self.work.set(work);
@@ -701,6 +769,7 @@ impl BotsRoster {
         let mut activity = Vec::new();
         let mut archived = Vec::new();
         let mut wrote = Vec::new();
+        let mut creations = Vec::new();
         for answer in link.drain() {
             // The roster asks for lists, for activity, for its Archived
             // filter and its Unarchives; any other answer is not its.
@@ -733,6 +802,14 @@ impl BotsRoster {
                     wrote.push((request, result));
                     continue;
                 }
+                Answer::Creations {
+                    seq,
+                    workspace,
+                    result,
+                } => {
+                    creations.push((seq, workspace, result));
+                    continue;
+                }
                 _ => continue,
             };
             if seq != self.seq || Some(workspace) != self.workspace {
@@ -760,8 +837,31 @@ impl BotsRoster {
             }
             changed = true;
         }
+        for (seq, workspace, result) in creations {
+            if seq != self.seq || Some(workspace) != self.workspace {
+                continue;
+            }
+            self.creations_in_flight = false;
+            // A failed read keeps what was listed.
+            if let Ok(listed) = result {
+                self.creations = listed
+                    .into_iter()
+                    .filter(|creation| {
+                        matches!(
+                            creation.stage,
+                            BotCreationStage::Pending | BotCreationStage::Incomplete
+                        )
+                    })
+                    .collect();
+            }
+            changed = true;
+        }
         for (request, result) in wrote {
-            changed |= self.take_unarchived(request, result);
+            changed |= if self.unarchiving.contains_key(&request) {
+                self.take_unarchived(request, result)
+            } else {
+                self.take_creation(request, result)
+            };
         }
         changed
     }
@@ -822,7 +922,9 @@ impl BotsRoster {
             && (self.in_flight
                 || self.activity_in_flight
                 || self.archived_in_flight
-                || !self.unarchiving.is_empty())
+                || self.creations_in_flight
+                || !self.unarchiving.is_empty()
+                || !self.creations_acting.is_empty())
     }
 
     /// The Bot a row, a key or an accessibility action asked for, taken
@@ -930,6 +1032,10 @@ impl BotsRoster {
     /// A press in the roster's band. Always the roster's: a press on its
     /// background must not fall through to the view beside the column.
     pub(crate) fn mouse_down(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
+        if let Some(key) = self.unfinished_at(area, top, x, y) {
+            self.press_unfinished(key);
+            return true;
+        }
         if let Some(key) = self.archived_at(area, top, x, y) {
             self.press_archived(key);
             return true;
@@ -987,7 +1093,9 @@ impl BotsRoster {
 
     /// The pointer moved. `true` when the row under it changed.
     pub(crate) fn mouse_move(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        let archived = self.archived_at(area, top, x, y);
+        let archived = self
+            .unfinished_at(area, top, x, y)
+            .or_else(|| self.archived_at(area, top, x, y));
         let activity = if archived.is_some() {
             None
         } else {
@@ -1179,13 +1287,23 @@ impl BotsRoster {
             root = root.child(Self::sentence("Bots notice", NOTICE, t(self.lang, notice)));
         }
         if self.load == Load::Ready && self.bots.is_empty() {
-            // No active Bot: the Archived filter is still there (S14).
+            // No active Bot: *Create a bot* (S8), what has not finished,
+            // and the Archived filter (S14).
             return root
                 .child(Self::sentence(
                     "Bots empty",
                     EMPTY,
                     t(self.lang, Words::BotsEmpty),
                 ))
+                .child(row("Bots create row").pad_x(alias::ROW_PLATE_INSET).child(
+                    self.text_button(
+                        "Bots create",
+                        CREATE,
+                        Words::BotsCreate,
+                        t(self.lang, Words::BotsCreate).to_owned(),
+                    ),
+                ))
+                .child(self.unfinished_section())
                 .child(self.archived_section());
         }
         if self.activity_truncated {
@@ -1204,8 +1322,366 @@ impl BotsRoster {
                 .semantics(Role::List)
                 .name(Words::BotsTitle)
                 .children(self.bots.iter().map(|bot| self.bot_row(bot)))
+                .child(self.unfinished_section())
                 .child(self.archived_section()),
         )
+    }
+
+    /// A quiet text action in the roster's own row treatment: the empty
+    /// state's *Create a bot*, an Unfinished row's *Retry* and *Abandon*.
+    fn text_button(&self, name: &'static str, key: Key, words: Words, label: String) -> El {
+        row(name)
+            .id(key)
+            .pad_x(Space::S2)
+            .min_h(metrics::NAV_ROW_MIN)
+            .items_center()
+            .radius(Radius::M)
+            .states(&BOT_ROW_STATES)
+            .hit()
+            .action(Action::Click)
+            .semantics(Role::Button)
+            .name_text(label)
+            .child(
+                text(t(self.lang, words))
+                    .named("Bots action label")
+                    .role(roles::META)
+                    .ink(Ink::Accent),
+            )
+    }
+
+    /// **The Unfinished group** (S8): its heading and one row per creation
+    /// that has not finished — its name, where it stands, *Retry* when Retry
+    /// can resolve it, *Abandon* — and what an Abandon from here left. Absent
+    /// while there is nothing to say.
+    fn unfinished_section(&self) -> El {
+        let mut section = col("Bots unfinished")
+            .pad_x(alias::ROW_PLATE_INSET)
+            .pad_top(Space::S2)
+            .gap(Space::S1);
+        if self.creations.is_empty() && self.abandoned.is_none() && self.creation_refused.is_none()
+        {
+            return section;
+        }
+        section = section.child(
+            text(t(self.lang, Words::BotsUnfinished))
+                .named("Bots unfinished heading")
+                .id(UNFINISHED_HEADING)
+                .role(roles::META)
+                .ink(Ink::Secondary)
+                .truncate(),
+        );
+        if let Some(words) = self.creation_refused {
+            section = section.child(
+                text(t(self.lang, words))
+                    .named("Bots unfinished notice")
+                    .id(UNFINISHED_NOTICE)
+                    .role(roles::META)
+                    .ink(Ink::Hint)
+                    .wrap(),
+            );
+        }
+        if let Some(abandoned) = &self.abandoned {
+            for (words, key) in crate::bots::view::create::abandoned_lines(self.lang, abandoned)
+                .into_iter()
+                .zip(ABANDONED_LINES)
+            {
+                section = section.child(
+                    text(words)
+                        .named("Bots abandoned")
+                        .id(key)
+                        .role(roles::META)
+                        .ink(Ink::Hint)
+                        .wrap(),
+                );
+            }
+            if abandoned
+                .left_behind
+                .as_ref()
+                .is_some_and(|left| left.role_page.is_some())
+            {
+                section = section.child(self.text_button(
+                    "Bots open left page",
+                    OPEN_LEFT_PAGE,
+                    Words::BotsOpenRole,
+                    t(self.lang, Words::BotsOpenRole).to_owned(),
+                ));
+            }
+        }
+        for creation in &self.creations {
+            section = section.child(self.creation_row(creation));
+        }
+        section
+    }
+
+    /// One unfinished creation: its name and where it stands, *Retry* and
+    /// *Abandon*.
+    fn creation_row(&self, creation: &BotCreation) -> El {
+        let name = self.creation_name(creation);
+        let mut row_el = row("Bot creation row")
+            .id(creation_key(creation.request_id))
+            .fill()
+            .min_h(metrics::NAV_ROW_MIN)
+            .pad_x(alias::ROW_PLATE_INSET)
+            .gap(Space::S2)
+            .items_center()
+            .child(icon(icons::ROBOT, IconSize::S).decorative())
+            .child(
+                col("Bot creation words")
+                    .fill()
+                    .child(
+                        text(name.clone())
+                            .named("Bot creation name")
+                            .role(roles::ROW)
+                            .ink(Ink::Secondary)
+                            .truncate(),
+                    )
+                    .child(
+                        text(self.creation_state(creation))
+                            .named("Bot creation state")
+                            .role(roles::META)
+                            .ink(Ink::Hint)
+                            .wrap(),
+                    ),
+            );
+        let acting = self.creations_acting.contains(&creation.request_id);
+        if acting {
+            return row_el.child(
+                text(t(self.lang, Words::BotsSaving))
+                    .named("Bot creation acting")
+                    .role(roles::META)
+                    .ink(Ink::Hint),
+            );
+        }
+        if creation.retryable {
+            row_el = row_el.child(self.text_button(
+                "Bot creation retry",
+                creation_retry_key(creation.request_id),
+                Words::BotsRetry,
+                koru_i18n::fill(t(self.lang, Words::BotsRetryNamed), &[name.as_str()]),
+            ));
+        }
+        row_el.child(self.text_button(
+            "Bot creation abandon",
+            creation_abandon_key(creation.request_id),
+            Words::BotsAbandon,
+            koru_i18n::fill(t(self.lang, Words::BotsAbandonNamed), &[name.as_str()]),
+        ))
+    }
+
+    /// An unfinished creation's name, or *New bot* when it has none.
+    pub(crate) fn creation_name(&self, creation: &BotCreation) -> String {
+        if creation.name.trim().is_empty() {
+            t(self.lang, Words::BotsNewBot).to_owned()
+        } else {
+            creation.name.clone()
+        }
+    }
+
+    /// Where an unfinished creation stands, in its first sentence: why it
+    /// stopped, or that it is still being made.
+    pub(crate) fn creation_state(&self, creation: &BotCreation) -> String {
+        crate::bots::creation::stage_words(creation)
+            .first()
+            .map(|words| t(self.lang, *words).to_owned())
+            .unwrap_or_default()
+    }
+
+    /// An unfinished creation's accessible name: its name, not finished.
+    pub(crate) fn creation_accessible_name(&self, creation: &BotCreation) -> String {
+        koru_i18n::fill(
+            t(self.lang, Words::BotsUnfinishedRow),
+            &[self.creation_name(creation).as_str()],
+        )
+    }
+
+    // ---------------------------------------- unfinished creations (S8)
+
+    /// The workspace's unfinished creations, as last listed.
+    pub(crate) fn creations(&self) -> &[BotCreation] {
+        &self.creations
+    }
+
+    /// The creation abandoned from here last, while the roster says so.
+    pub(crate) fn abandoned(&self) -> Option<&BotCreation> {
+        self.abandoned.as_ref()
+    }
+
+    /// Why the last Retry or Abandon from here did not happen.
+    pub(crate) fn creation_refused(&self) -> Option<Words> {
+        self.creation_refused
+    }
+
+    /// Whether `request`'s Retry or Abandon is on its way.
+    pub(crate) fn creation_acting(&self, request: BotRequestId) -> bool {
+        self.creations_acting.contains(&request)
+    }
+
+    /// **Create a bot** was asked for: the empty state's button, or an
+    /// assistive technology's click on it.
+    pub(crate) fn ask_create(&mut self) -> bool {
+        self.wants_create = true;
+        true
+    }
+
+    /// *Create a bot*, for the window to open. Taken once.
+    pub(crate) fn take_wants_create(&mut self) -> bool {
+        std::mem::take(&mut self.wants_create)
+    }
+
+    /// An Abandon pressed, for the window to ask about. Taken once.
+    pub(crate) fn take_abandon_ask(&mut self) -> Option<(BotRequestId, String)> {
+        self.abandon_ask.take()
+    }
+
+    /// A page an abandoned creation left, to open. Taken once.
+    pub(crate) fn take_open_page(&mut self) -> Option<BotPage> {
+        self.open_page.take()
+    }
+
+    /// **Send a creation command by its request alone**: Retry, or an
+    /// Abandon the person confirmed. `false` when nothing was sent.
+    fn act_on_creation(&mut self, request: BotRequestId, command: BotCommand) -> bool {
+        let (Some(creation), Some(link)) = (
+            self.creations.iter().find(|c| c.request_id == request),
+            &self.link,
+        ) else {
+            return false;
+        };
+        if self.creations_acting.contains(&request) {
+            return false;
+        }
+        if !link.send(Command::Write {
+            bot: creation.bot_id,
+            request,
+            command: Box::new(command),
+        }) {
+            self.creation_refused = Some(Words::BotsErrUnreachable);
+            return true;
+        }
+        let mut work = self.work.get();
+        work.commands += 1;
+        self.work.set(work);
+        self.creation_refused = None;
+        self.creations_acting.insert(request);
+        true
+    }
+
+    /// **Retry** an unfinished creation, when Retry can resolve it.
+    pub(crate) fn retry(&mut self, request: BotRequestId) -> bool {
+        if !self
+            .creations
+            .iter()
+            .any(|creation| creation.request_id == request && creation.retryable)
+        {
+            return false;
+        }
+        self.act_on_creation(
+            request,
+            BotCommand::RetryBotCreation {
+                request_id: request,
+            },
+        )
+    }
+
+    /// **Abandon** an unfinished creation, once the person confirmed it.
+    pub(crate) fn abandon(&mut self, request: BotRequestId) -> bool {
+        self.act_on_creation(
+            request,
+            BotCommand::AbandonBotCreation {
+                request_id: request,
+            },
+        )
+    }
+
+    /// Fold a Retry's or an Abandon's answer. `true` when it was one of
+    /// this roster's.
+    fn take_creation(
+        &mut self,
+        request: BotRequestId,
+        result: Result<BotResponse, Failure>,
+    ) -> bool {
+        if !self.creations_acting.remove(&request) {
+            return false;
+        }
+        match result {
+            Ok(BotResponse::Creation { creation }) if creation.request_id == request => {
+                match creation.stage {
+                    BotCreationStage::Pending | BotCreationStage::Incomplete => {
+                        if let Some(row) = self
+                            .creations
+                            .iter_mut()
+                            .find(|row| row.request_id == request)
+                        {
+                            *row = creation;
+                        }
+                    }
+                    BotCreationStage::Abandoned => {
+                        self.creations.retain(|row| row.request_id != request);
+                        self.abandoned = Some(creation);
+                    }
+                    BotCreationStage::Completed | BotCreationStage::Rejected => {
+                        self.creations.retain(|row| row.request_id != request);
+                    }
+                }
+            }
+            Ok(_) => self.creation_refused = Some(Words::BotsErrNotApplied),
+            Err(Failure::Unreachable) => self.creation_refused = Some(Words::BotsErrUnreachable),
+            Err(Failure::Refused(code)) => {
+                self.creation_refused = Some(super::settings::refusal_words(&code));
+            }
+        }
+        // Either way the lists are the owner's to say again: a finished
+        // creation's Bot is listed now.
+        self.fresh = false;
+        true
+    }
+
+    /// **Do what an Unfinished control asks** — the pointer's press and an
+    /// assistive technology's click alike. `true` when it was one.
+    pub(crate) fn press_unfinished(&mut self, key: Key) -> bool {
+        if key == CREATE {
+            return self.ask_create();
+        }
+        if key == OPEN_LEFT_PAGE {
+            self.open_page = self
+                .abandoned
+                .as_ref()
+                .and_then(|abandoned| abandoned.left_behind.as_ref())
+                .and_then(|left| left.role_page.clone());
+            return self.open_page.is_some();
+        }
+        let koru_draw::el::Object::Model(id) = key.object else {
+            return false;
+        };
+        let Some(creation) = self
+            .creations
+            .iter()
+            .find(|creation| creation.request_id.as_uuid().as_u128() == id)
+        else {
+            return false;
+        };
+        let request = creation.request_id;
+        match key.part {
+            CREATION_RETRY_PART => self.retry(request),
+            CREATION_ABANDON_PART => {
+                if self.creations_acting.contains(&request) {
+                    return false;
+                }
+                self.abandon_ask = Some((request, self.creation_name(creation)));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The Unfinished control under a point.
+    fn unfinished_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<Key> {
+        let key = self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y))?;
+        (key == CREATE
+            || key == OPEN_LEFT_PAGE
+            || key.part == CREATION_RETRY_PART
+            || key.part == CREATION_ABANDON_PART)
+            .then_some(key)
     }
 
     /// **The Archived filter** (S14; EXPERIENCE: archived Bots stay "in an

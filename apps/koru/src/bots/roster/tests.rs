@@ -74,12 +74,25 @@ impl Fixture {
         assert!(self.commands.try_recv().is_err(), "no request was sent");
     }
 
+    /// Answer a listing as the link's thread does: the Bots, then — the
+    /// same request's second answer (S8) — its unfinished creations, none.
     fn answer(&mut self, seq: u64, result: Result<Vec<Bot>, Failure>) -> bool {
+        let creations = match &result {
+            Ok(_) => Ok(Vec::new()),
+            Err(failure) => Err(failure.clone()),
+        };
         self.answers
             .send(Answer::Listed {
                 seq,
                 workspace: self.home,
                 result,
+            })
+            .expect("the roster's end is open");
+        self.answers
+            .send(Answer::Creations {
+                seq,
+                workspace: self.home,
+                result: creations,
             })
             .expect("the roster's end is open");
         self.roster.maintain()
@@ -242,18 +255,27 @@ fn unavailable_keeps_the_last_snapshot_and_never_reads_as_empty() {
     assert!(!frame.contains(EMPTY));
 }
 
-/// The empty roster is the approved sentence, and **nothing to press but
-/// the Archived filter** (S14): creating a Bot is not built yet, so no
-/// control is drawn for it.
+/// The empty roster is the approved sentence, and **two things to press**:
+/// *Create a bot* (S8), which the window opens as a create tab, and the
+/// Archived filter (S14).
 #[test]
-fn an_empty_roster_says_what_bots_are_for_and_offers_no_control() {
+fn an_empty_roster_says_what_bots_are_for_and_offers_create() {
     let mut f = fixture();
     f.shown_with(Vec::new());
     let frame = frame_of(&f.roster);
     assert!(frame.contains(EMPTY));
     assert!(!frame.contains(NOTICE));
     let targets: Vec<_> = frame.hits().into_iter().map(|hit| hit.key).collect();
-    assert_eq!(targets, [ARCHIVED_TOGGLE], "the Archived filter alone");
+    assert_eq!(
+        targets,
+        [CREATE, ARCHIVED_TOGGLE],
+        "Create, then the filter"
+    );
+    let _ = f.commands.try_iter().count();
+    assert!(f.roster.press_unfinished(CREATE));
+    assert!(f.roster.take_wants_create(), "the window opens the form");
+    assert!(!f.roster.take_wants_create(), "once");
+    f.nothing_asked();
     let words = frame
         .named("Bots sentence")
         .next()
@@ -741,4 +763,197 @@ fn the_archived_filter_lists_opens_and_unarchives() {
     let _ = f.commands.try_iter().count();
     f.roster.maintain();
     f.nothing_asked();
+}
+
+// ------------------------------------------------- unfinished creations (S8)
+
+/// An unfinished creation of `home`, as the owner lists it.
+fn unfinished(home: WorkspaceId, name: &str, retryable: bool) -> BotCreation {
+    BotCreation {
+        request_id: BotRequestId::mint(),
+        bot_id: BotId::mint(),
+        home_workspace: home,
+        name: name.to_owned(),
+        stage: BotCreationStage::Incomplete,
+        phase: koru_ai_core::bots::BotCreationPhase::RolePending,
+        reason: Some(if retryable {
+            koru_ai_core::bots::BotCreationReason::StoreUnavailable
+        } else {
+            koru_ai_core::bots::BotCreationReason::RoleMissing
+        }),
+        retryable,
+        role_page: None,
+        role_page_unconfirmed: false,
+        folder_binding: None,
+        left_behind: None,
+        bot: None,
+    }
+}
+
+/// **A creation a restart interrupted is never invisible**: a roster made
+/// fresh — as after a restart, knowing nothing of any draft — lists the
+/// workspace's unfinished creations beside its Bots, from the listing's
+/// second answer, in an *Unfinished* group with Retry where Retry can
+/// finish it and Abandon, each by the creation's request alone.
+#[test]
+fn unfinished_creations_are_listed_after_a_restart_and_acted_on_by_id() {
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    assert!(f.roster.maintain());
+    let seq = f.asked();
+    f.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: f.home,
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert!(f.roster.awaiting(), "the creations are still owed");
+    let (stuck, ended) = (
+        unfinished(f.home, "Scout", true),
+        unfinished(f.home, "CFO", false),
+    );
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(vec![stuck.clone(), ended.clone()]),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert_eq!(f.roster.creations().len(), 2);
+    let frame = frame_of(&f.roster);
+    assert!(frame.contains(UNFINISHED_HEADING));
+    assert!(frame.contains(creation_retry_key(stuck.request_id)));
+    assert!(frame.contains(creation_abandon_key(stuck.request_id)));
+    assert!(
+        !frame.contains(creation_retry_key(ended.request_id)),
+        "no Retry where Retry cannot finish it"
+    );
+    assert!(frame.contains(creation_abandon_key(ended.request_id)));
+    assert_eq!(
+        f.roster.creation_accessible_name(&stuck),
+        koru_i18n::fill(t(Lang::En, Words::BotsUnfinishedRow), &["Scout"])
+    );
+    assert_eq!(
+        f.roster.creation_state(&ended),
+        t(Lang::En, Words::BotsCreateRoleMissing)
+    );
+    let _ = f.commands.try_iter().count();
+
+    // Retry, by the request alone.
+    assert!(
+        f.roster
+            .press_unfinished(creation_retry_key(stuck.request_id))
+    );
+    match f.commands.try_recv().expect("a retry") {
+        Command::Write {
+            bot,
+            request,
+            command,
+        } => {
+            assert_eq!((bot, request), (stuck.bot_id, stuck.request_id));
+            assert_eq!(
+                *command,
+                BotCommand::RetryBotCreation {
+                    request_id: stuck.request_id
+                }
+            );
+        }
+        _ => panic!("a write"),
+    }
+    assert!(
+        !f.roster.retry(stuck.request_id),
+        "a second press sends nothing"
+    );
+
+    // Abandon is asked about first; confirmed, it is sent by the request.
+    assert!(
+        f.roster
+            .press_unfinished(creation_abandon_key(ended.request_id))
+    );
+    f.nothing_asked();
+    assert_eq!(
+        f.roster.take_abandon_ask(),
+        Some((ended.request_id, "CFO".to_owned()))
+    );
+    assert!(f.roster.abandon(ended.request_id));
+    let Ok(Command::Write { command, .. }) = f.commands.try_recv() else {
+        panic!("an abandon");
+    };
+    assert_eq!(
+        *command,
+        BotCommand::AbandonBotCreation {
+            request_id: ended.request_id
+        }
+    );
+    let page = koru_ai_core::bots::BotPage {
+        workspace: f.home,
+        document: koru_ai_core::DocumentId::new(),
+    };
+    let mut abandoned = ended.clone();
+    abandoned.stage = BotCreationStage::Abandoned;
+    abandoned.left_behind = Some(koru_ai_core::bots::BotCreationLeftovers {
+        role_page: Some(page.clone()),
+        folder: None,
+    });
+    f.answers
+        .send(Answer::Wrote {
+            bot: ended.bot_id,
+            request: ended.request_id,
+            result: Ok(BotResponse::Creation {
+                creation: abandoned,
+            }),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert_eq!(f.roster.creations().len(), 1, "no longer unfinished");
+    assert!(f.roster.abandoned().is_some(), "what it left is said");
+    let frame = frame_of(&f.roster);
+    assert!(frame.contains(OPEN_LEFT_PAGE));
+    assert!(f.roster.press_unfinished(OPEN_LEFT_PAGE));
+    assert_eq!(f.roster.take_open_page(), Some(page));
+}
+
+/// **A failed read of the unfinished creations keeps what was listed**, and
+/// an answer for an older listing or another workspace is not taken.
+#[test]
+fn a_stale_or_failed_creations_answer_keeps_what_was_listed() {
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    f.roster.maintain();
+    let seq = f.asked();
+    f.answer(seq, Ok(Vec::new()));
+    let stuck = unfinished(f.home, "Scout", true);
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(vec![stuck.clone()]),
+        })
+        .unwrap();
+    f.roster.maintain();
+    for (seq, workspace, result) in [
+        (seq, f.home, Err(Failure::Unreachable)),
+        (seq.wrapping_add(7), f.home, Ok(Vec::new())),
+        (seq, WorkspaceId::new(), Ok(Vec::new())),
+    ] {
+        f.answers
+            .send(Answer::Creations {
+                seq,
+                workspace,
+                result,
+            })
+            .unwrap();
+        f.roster.maintain();
+        assert_eq!(
+            f.roster
+                .creations()
+                .iter()
+                .map(|creation| creation.request_id)
+                .collect::<Vec<_>>(),
+            [stuck.request_id]
+        );
+    }
 }
