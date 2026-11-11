@@ -529,3 +529,43 @@ fn a_poll_turned_away_for_now_keeps_a_pending_pause_followed() {
     assert_eq!(settings.notice(), None, "never the change's refusal");
     assert!(settings.take_read_owed(), "the Bot says whether it paused");
 }
+
+/// **A pause, a resume or an access change Koru AI did not answer, read as
+/// made, is no longer unconfirmed** — as a save already was: the read says
+/// which, so *Koru AI didn't answer* is not said beside a change it shows.
+#[test]
+fn an_unanswered_pause_resume_or_access_read_as_made_is_no_longer_unconfirmed() {
+    // Pause, then Resume.
+    for pausing in [true, false] {
+        let (mut settings, mut bot) = known();
+        bot.paused = !pausing;
+        settings.know(bot.clone());
+        let (request, _) = write(settings.toggle_pause().unwrap());
+        settings.answer(request, Err(Failure::lost()), Instant::now());
+        assert_eq!(
+            settings.notice(),
+            Some(Notice::Refused(Words::BotsErrUnreachable)),
+            "{pausing}"
+        );
+        // A read that does not show it yet keeps the sentence.
+        settings.know(bot.clone());
+        assert!(settings.notice().is_some(), "{pausing}: not shown yet");
+        bot.paused = pausing;
+        settings.know(bot.clone());
+        assert_eq!(settings.notice(), None, "{pausing}: read as made");
+    }
+    // An access change.
+    let (mut settings, mut bot) = known();
+    let other = if bot.access == BotAccess::Default {
+        BotAccess::Workspace
+    } else {
+        BotAccess::Default
+    };
+    settings.choose_access(other);
+    let (request, _) = write(settings.save_access().unwrap());
+    settings.answer(request, Err(Failure::lost()), Instant::now());
+    assert!(settings.notice().is_some());
+    bot.access = other;
+    settings.know(bot);
+    assert_eq!(settings.notice(), None, "access read as made");
+}

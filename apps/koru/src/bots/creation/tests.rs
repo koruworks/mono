@@ -223,7 +223,8 @@ fn a_refused_create_says_why_in_words_and_keeps_the_draft() {
         Err(Failure::Refused("invalid_request".to_owned())),
         Instant::now(),
     );
-    assert_eq!(managed.notice(), Some(Words::BotsErrInvalid));
+    // The general table's own sentence: no settings to point at.
+    assert_eq!(managed.notice(), Some(Words::BotsErrInvalidGeneral));
     managed.create(None).expect("sent again");
     managed.answer(
         managed.request(),

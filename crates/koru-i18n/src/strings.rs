@@ -3586,13 +3586,15 @@ pub enum Key {
     BotsCreateUnconfirmed,
     /// The create form's button after `BotsCreateUnconfirmed`: the draft is the person's again, under new identities.
     BotsCreateStartOver,
+    /// The owner's `invalid_request`, said where no Bot settings are shown (the create form, a tab's lifecycle, the roster, the Trash): what was sent was not accepted, and nothing changed. `BotsErrInvalid` stays for the settings, which are on screen. Non-English columns machine-written, awaiting a native read.
+    BotsErrInvalidGeneral,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2425] = [
+    pub const ALL: [Key; 2426] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6018,6 +6020,7 @@ impl Key {
         Key::BotsAskingTabGone,
         Key::BotsCreateUnconfirmed,
         Key::BotsCreateStartOver,
+        Key::BotsErrInvalidGeneral,
     ];
 }
 
@@ -19357,8 +19360,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TrashBotRestoreBusy, en: "“{}” wasn't restored: another change to its bot is still finishing or waiting for you.", es: "«{}» no se restauró: otro cambio en su bot aún está terminando o esperándote.", pt_br: "“{}” não foi restaurado: outra alteração no bot dele ainda está terminando ou esperando por você.", de: "„{}“ wurde nicht wiederhergestellt: Eine andere Änderung an seinem Bot wird noch abgeschlossen oder wartet auf Sie.", fr: "« {} » n'a pas été restauré : une autre modification de son bot est encore en cours ou vous attend.", ar: "لم تتم استعادة «{}»: لا يزال تغيير آخر على البوت الخاص به قيد الإنهاء أو في انتظارك.", zh_hans: "“{}”未恢复：其 Bot 的另一项更改仍在完成中或正在等待你处理。", ja: "「{}」は復元されませんでした。その Bot への別の変更がまだ完了していないか、操作を待っています。" },
     Row { key: Key::TrashBotRestoreNotSent, en: "“{}” wasn't restored: Koru AI isn't answering. Try again.", es: "«{}» no se restauró: Koru AI no responde. Inténtalo de nuevo.", pt_br: "“{}” não foi restaurado: o Koru AI não está respondendo. Tente de novo.", de: "„{}“ wurde nicht wiederhergestellt: Koru AI antwortet nicht. Versuchen Sie es noch einmal.", fr: "« {} » n'a pas été restauré : Koru AI ne répond pas. Réessayez.", ar: "لم تتم استعادة «{}»: لا يستجيب Koru AI. حاول مجددًا.", zh_hans: "“{}”未恢复：Koru AI 没有响应。请再试一次。", ja: "「{}」は復元されませんでした。Koru AI が応答していません。もう一度お試しください。" },
     Row { key: Key::BotsUnfinishedRejected, en: "Nothing was made for that bot. Create it again to try once more.", es: "No se creó nada para ese bot. Créalo de nuevo para volver a intentarlo.", pt_br: "Nada foi criado para esse bot. Crie-o de novo para tentar outra vez.", de: "Für diesen Bot wurde nichts erstellt. Erstellen Sie ihn erneut, um es noch einmal zu versuchen.", fr: "Rien n'a été créé pour ce bot. Créez-le à nouveau pour réessayer.", ar: "لم يُنشأ شيء لهذا البوت. أنشئه مجددًا للمحاولة مرة أخرى.", zh_hans: "该 Bot 没有创建任何内容。请重新创建以再试一次。", ja: "その Bot には何も作成されませんでした。もう一度作成して再試行してください。" },
-    Row { key: Key::BotsAskingTabGone, en: "That bot's tab was closed before you answered, so nothing was sent.", es: "La pestaña de ese bot se cerró antes de que respondieras, así que no se envió nada.", pt_br: "A aba desse bot foi fechada antes de você responder, então nada foi enviado.", de: "Der Tab dieses Bots wurde geschlossen, bevor Sie geantwortet haben, daher wurde nichts gesendet.", fr: "L'onglet de ce bot a été fermé avant votre réponse, donc rien n'a été envoyé.", ar: "أُغلق تبويب هذا البوت قبل أن تجيب، لذا لم يُرسل شيء.", zh_hans: "在你回答之前，该 Bot 的标签页已关闭，因此没有发送任何内容。", ja: "回答する前にその Bot のタブが閉じられたため、何も送信されていません。" },
+    Row { key: Key::BotsAskingTabGone, en: "That bot's tab was closed or moved to another bot before you answered, so nothing was sent.", es: "La pestaña de ese bot se cerró o pasó a otro bot antes de que respondieras, así que no se envió nada.", pt_br: "A aba desse bot foi fechada ou passou para outro bot antes de você responder, então nada foi enviado.", de: "Der Tab dieses Bots wurde geschlossen oder zu einem anderen Bot gewechselt, bevor Sie geantwortet haben, daher wurde nichts gesendet.", fr: "L'onglet de ce bot a été fermé ou est passé à un autre bot avant votre réponse, donc rien n'a été envoyé.", ar: "أُغلق تبويب هذا البوت أو انتقل إلى بوت آخر قبل أن تجيب، لذا لم يُرسل شيء.", zh_hans: "在你回答之前，该 Bot 的标签页已关闭或已切换到另一个 Bot，因此没有发送任何内容。", ja: "回答する前にその Bot のタブが閉じられたか、別の Bot に切り替わったため、何も送信されていません。" },
     // ------------------------------------------- Bots P1.8: the third review's fix round
     Row { key: Key::BotsCreateUnconfirmed, en: "Koru couldn't confirm whether this bot was created. Look for it in Bots before you create it again.", es: "Koru no pudo confirmar si este bot se creó. Búscalo en Bots antes de volver a crearlo.", pt_br: "O Koru não conseguiu confirmar se este bot foi criado. Procure-o em Bots antes de criá-lo novamente.", de: "Koru konnte nicht bestätigen, ob dieser Bot erstellt wurde. Sehen Sie in Bots nach, bevor Sie ihn erneut erstellen.", fr: "Koru n'a pas pu confirmer si ce bot a été créé. Cherchez-le dans Bots avant de le créer à nouveau.", ar: "تعذّر على Koru التأكد مما إذا كان هذا البوت قد أُنشئ. ابحث عنه في البوتات قبل أن تنشئه مرة أخرى.", zh_hans: "Koru 无法确认此 Bot 是否已创建。请先在 Bot 列表中查找，再重新创建。", ja: "Koru はこの Bot が作成されたかどうかを確認できませんでした。もう一度作成する前に、Bot の一覧で確認してください。" },
     Row { key: Key::BotsCreateStartOver, en: "Start over", es: "Empezar de nuevo", pt_br: "Recomeçar", de: "Neu beginnen", fr: "Recommencer", ar: "البدء من جديد", zh_hans: "重新开始", ja: "最初からやり直す" },
+    Row { key: Key::BotsErrInvalidGeneral, en: "Koru AI didn't accept what was sent, so nothing changed.", es: "Koru AI no aceptó lo que se envió, así que nada cambió.", pt_br: "O Koru AI não aceitou o que foi enviado, então nada mudou.", de: "Koru AI hat das Gesendete nicht angenommen, daher wurde nichts geändert.", fr: "Koru AI n'a pas accepté ce qui a été envoyé, donc rien n'a changé.", ar: "لم يقبل Koru AI ما أُرسل، لذا لم يتغيّر شيء.", zh_hans: "Koru AI 未接受所发送的内容，因此没有任何更改。", ja: "Koru AI が送信内容を受け付けなかったため、何も変更されていません。" },
 ];

@@ -163,11 +163,14 @@ impl Settings {
         if self.model_draft.as_ref() == Some(&ModelDraft::held(&bot)) {
             self.model_draft = None;
         }
-        // **A save Koru AI did not answer, now read as made**: the read
-        // says which, so it is no longer unconfirmed.
-        if let Some((_, BotCommand::Update { config, .. })) = &self.unanswered
-            && *config == bot.config
-        {
+        // **A change Koru AI did not answer, now read as made** — a save,
+        // a pause or a resume, an access change: the read says which, so
+        // it is no longer unconfirmed.
+        let made = self
+            .unanswered
+            .as_ref()
+            .is_some_and(|(_, command)| read_as_made(command, &bot));
+        if made {
             self.unanswered = None;
             if self.notice == Some(Notice::Refused(Words::BotsErrUnreachable)) {
                 self.notice = None;
@@ -670,6 +673,27 @@ impl Settings {
     }
 }
 
+/// Whether the read `bot` shows the change `command` asked for.
+fn read_as_made(command: &BotCommand, bot: &Bot) -> bool {
+    match command {
+        BotCommand::Update { config, .. } => *config == bot.config,
+        BotCommand::Pause { .. } => bot.paused,
+        BotCommand::Resume { .. } => !bot.paused,
+        BotCommand::UpdateAccess {
+            access,
+            selected_pages,
+            ..
+        } => same_access(
+            &AccessDraft {
+                access: *access,
+                pages: selected_pages.clone(),
+            },
+            bot,
+        ),
+        _ => false,
+    }
+}
+
 /// Whether `draft` is what the owner holds already. The owner keeps
 /// selected pages sorted and without repeats, so they compare as sets.
 fn same_access(draft: &AccessDraft, bot: &Bot) -> bool {
@@ -730,6 +754,8 @@ pub(crate) const FOLDER_RESERVED: &str = "folder_reserved";
 pub(crate) fn refusal_words(code: &str) -> Words {
     match code {
         "revision_conflict" => Words::BotsChangedElsewhere,
+        // The settings are on screen: the person can check them.
+        "invalid_request" => Words::BotsErrInvalid,
         _ => known_refusal(code).unwrap_or(Words::BotsErrNotApplied),
     }
 }
@@ -742,6 +768,8 @@ pub(crate) fn refusal_words(code: &str) -> Words {
 pub(crate) fn general_refusal_words(code: &str) -> Words {
     match code {
         "revision_conflict" => Words::BotsErrRevisionConflict,
+        // No settings to check here: only that it was not accepted.
+        "invalid_request" => Words::BotsErrInvalidGeneral,
         _ => known_refusal(code).unwrap_or(Words::BotsErrNotDone),
     }
 }
@@ -755,7 +783,6 @@ fn known_refusal(code: &str) -> Option<Words> {
         BOT_PENDING => Words::BotsErrPending,
         BOT_OPERATION_PENDING => Words::BotsErrOperationPending,
         FOLDER_RESERVED => Words::BotsErrFolderReserved,
-        "invalid_request" => Words::BotsErrInvalid,
         "not_found" => Words::BotsErrNotFound,
         "wrong_owner" => Words::BotsErrWrongOwner,
         "workspace_unavailable" => Words::BotsErrNotReady,

@@ -405,6 +405,8 @@ fn refusals_read_as_sentences_and_a_competing_operation_is_shown() {
         // A tab shows no settings to point at: the general sentences.
         ("revision_conflict", Words::BotsErrRevisionConflict),
         ("something_new", Words::BotsErrNotDone),
+        // Never *check the bot's settings*: none are on screen here.
+        ("invalid_request", Words::BotsErrInvalidGeneral),
         // `ai_worker_saturated`: never queued, so a refusal.
         ("ai_worker_saturated", Words::BotsErrBusy),
     ] {
@@ -1128,4 +1130,39 @@ fn a_read_refused_for_good_reads_the_bot_rather_than_saying_the_commands_words()
     // Shown again: asked once more.
     model.read_now(now);
     assert!(model.read(now).is_some());
+}
+
+/// **A completed operation the tab has no sentence for says nothing
+/// false** — never *That wasn't done*: a conversation's Trash adopted from
+/// a read that names no conversation finishes, is recorded for the window,
+/// and the Bot's read that follows says what it is.
+#[test]
+fn a_completed_operation_with_no_sentence_says_nothing_false() {
+    let (mut model, mut bot) = fixture();
+    let request = BotRequestId::mint();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: request,
+        kind: BotLifecycleKind::TrashChat,
+        chat_id: None,
+        stage: BotLifecycleStage::Settling,
+        refusal: None,
+    });
+    model.know(&bot);
+    let later = Instant::now() + Duration::from_millis(1);
+    sent(model.read(later).expect("read"));
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::TrashChat,
+            BotLifecycleStage::Completed,
+        ),
+        later,
+    );
+    assert!(!model.busy());
+    assert_eq!(model.outcome(), None, "nothing false");
+    assert_eq!(model.take_just(), None);
+    assert_eq!(model.take_finished().len(), 1, "still the window's to know");
+    assert!(model.take_read_bot_owed());
 }

@@ -780,23 +780,27 @@ impl Lifecycle {
         let outcome = match (op.kind, op.reverses, op.chat) {
             (BotLifecycleKind::Archive, _, _) => {
                 self.archive = Some(op.request);
-                Outcome::Archived
+                Some(Outcome::Archived)
             }
             (BotLifecycleKind::Trash, _, _) => {
                 self.trash = Some(op.request);
-                Outcome::Trashed
+                Some(Outcome::Trashed)
             }
             (BotLifecycleKind::Restore, Some(BotLifecycleKind::Archive), _) => {
                 self.archive = None;
-                Outcome::Unarchived
+                Some(Outcome::Unarchived)
             }
             (BotLifecycleKind::Restore, _, _) => {
                 self.trash = None;
-                Outcome::Restored
+                Some(Outcome::Restored)
             }
-            (BotLifecycleKind::TrashChat, _, Some(chat)) => Outcome::ChatTrashed { chat },
-            (BotLifecycleKind::RestoreChat, _, Some(chat)) => Outcome::ChatKept { chat },
-            _ => Outcome::Refused(Words::BotsErrNotDone),
+            (BotLifecycleKind::TrashChat, _, Some(chat)) => Some(Outcome::ChatTrashed { chat }),
+            (BotLifecycleKind::RestoreChat, _, Some(chat)) => Some(Outcome::ChatKept { chat }),
+            // **Completed, but nothing this tab has a sentence for** — a
+            // conversation's operation it does not know the conversation of,
+            // or a kind it never sends. Nothing false is said (never *that
+            // wasn't done*): the Bot's read that follows shows what it is.
+            _ => None,
         };
         if let Some(bot) = self.bot {
             self.finished.push(Finished {
@@ -810,8 +814,8 @@ impl Lifecycle {
                 at_ms: now_ms(),
             });
         }
-        self.just = Some(outcome.clone());
-        self.outcome = Some(outcome);
+        self.just = outcome.clone();
+        self.outcome = outcome;
         self.read_bot_owed = true;
     }
 
