@@ -22,13 +22,15 @@
 //!   owner resumes; *Cancel* is the Restore naming it.
 //! - **Every write carries the revision it read**, and a refusal is a
 //!   sentence by its code ([`refusal_words`]), never the server's English.
+//! - **What holds a Bot is the owner's to say.** A read of an archived Bot
+//!   and the Archived and Trash filters name the completed Archive or Trash
+//!   that holds it (`Bot.held_by`), which is what an Unarchive or a Restore
+//!   names — after a restart too. The one thing the model remembers itself
+//!   is an operation it just finished, until the read that follows reports
+//!   its holder: an Unarchive offered the moment an Archive completes.
 //! - **A finished operation is reported to the window** ([`Finished`]), which
-//!   keeps the book ([`Book`]) the Trash and the roster restore from: the
-//!   owner's reads name an unfinished operation (`Bot.open_operation`) but
-//!   no finished one, so the request a Restore must name is known only to
-//!   the window that did it.
+//!   tells the Bot's other tabs, the roster and the Trash to read again.
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use koru_ai_core::ChatId;
@@ -134,7 +136,9 @@ pub(crate) struct Lifecycle {
     bot: Option<BotId>,
     op: Option<Op>,
     outcome: Option<Outcome>,
-    /// The finished Archive and Trash that hold the Bot now, when known.
+    /// The finished Archive and Trash that hold the Bot now: the owner's
+    /// `held_by`, or the operation this model just finished, before a read
+    /// has reported it.
     archive: Option<BotRequestId>,
     trash: Option<BotRequestId>,
     finished: Vec<Finished>,
@@ -170,12 +174,12 @@ impl Lifecycle {
         self.op.is_some()
     }
 
-    /// The finished Archive the window knows holds the Bot.
+    /// The finished Archive that holds the Bot, as last known.
     pub(crate) fn archive_source(&self) -> Option<BotRequestId> {
         self.archive
     }
 
-    /// The finished Trash the window knows holds the Bot.
+    /// The finished Trash that holds the Bot, as last known.
     pub(crate) fn trash_source(&self) -> Option<BotRequestId> {
         self.trash
     }
@@ -191,17 +195,6 @@ impl Lifecycle {
         }
     }
 
-    /// What the window's book knows holds the Bot: an operation this window
-    /// finished, perhaps in another tab, the Trash or the roster.
-    pub(crate) fn know_sources(
-        &mut self,
-        archive: Option<BotRequestId>,
-        trash: Option<BotRequestId>,
-    ) {
-        self.archive = archive.or(self.archive);
-        self.trash = trash.or(self.trash);
-    }
-
     /// **The Bot as the owner holds it now.** Its lifecycle says which
     /// finished operation can still hold it, and its open operation — moving
     /// or parked, perhaps begun before Koru last started — is shown and
@@ -210,13 +203,26 @@ impl Lifecycle {
         if Some(bot.id) != self.bot {
             return;
         }
+        // The holder the owner names wins; an operation this model finished
+        // stands until a read names one (`held_by` came with the read).
+        let held = |kind: BotLifecycleKind| {
+            bot.held_by
+                .as_ref()
+                .filter(|holder| holder.kind == kind)
+                .map(|holder| holder.request_id)
+        };
         match bot.lifecycle {
             BotLifecycle::Active => {
                 self.archive = None;
                 self.trash = None;
             }
-            BotLifecycle::Archived => self.trash = None,
-            BotLifecycle::Trashed => {}
+            BotLifecycle::Archived => {
+                self.archive = held(BotLifecycleKind::Archive).or(self.archive);
+                self.trash = None;
+            }
+            BotLifecycle::Trashed => {
+                self.trash = held(BotLifecycleKind::Trash).or(self.trash);
+            }
         }
         if self.op.is_none()
             && let Some(open) = &bot.open_operation
@@ -673,130 +679,6 @@ pub(crate) fn parked_words(kind: BotLifecycleKind) -> Words {
     match kind {
         BotLifecycleKind::TrashChat => Words::BotsChatTrashIncomplete,
         _ => Words::BotsLifecycleIncomplete,
-    }
-}
-
-/// **What the window remembers about the lifecycle operations it finished**
-/// — the one place the request a Restore must name can be found, because the
-/// owner's reads name no finished operation. Kept in memory for the window's
-/// life: after Koru restarts, a Bot or a conversation trashed before has no
-/// Restore here (the Trash says so), until the owner can be asked for it.
-#[derive(Default, Debug)]
-pub(crate) struct Book {
-    bots: HashMap<BotId, BookBot>,
-    chats: HashMap<ChatId, BookChat>,
-}
-
-/// One Bot the window archived or trashed.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct BookBot {
-    pub name: String,
-    pub home: Option<WorkspaceId>,
-    pub archive: Option<BotRequestId>,
-    pub trash: Option<(BotRequestId, i64)>,
-}
-
-/// One Bot conversation the window moved to Trash.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BookChat {
-    pub chat: ChatId,
-    pub bot: BotId,
-    pub bot_name: String,
-    pub title: String,
-    pub home: Option<WorkspaceId>,
-    pub request: BotRequestId,
-    pub at_ms: i64,
-}
-
-impl Book {
-    /// Fold a finished operation in. `true` when the book changed.
-    pub(crate) fn record(&mut self, finished: &Finished) -> bool {
-        match (finished.kind, finished.reverses, &finished.chat) {
-            (BotLifecycleKind::Archive, _, _) => {
-                let entry = self.bots.entry(finished.bot).or_default();
-                entry.name = finished.name.clone();
-                entry.home = finished.home;
-                entry.archive = Some(finished.request);
-            }
-            (BotLifecycleKind::Trash, _, _) => {
-                let entry = self.bots.entry(finished.bot).or_default();
-                entry.name = finished.name.clone();
-                entry.home = finished.home;
-                entry.trash = Some((finished.request, finished.at_ms));
-            }
-            (BotLifecycleKind::Restore, Some(BotLifecycleKind::Archive), _) => {
-                if let Some(entry) = self.bots.get_mut(&finished.bot) {
-                    entry.archive = None;
-                }
-            }
-            (BotLifecycleKind::Restore, _, _) => {
-                if let Some(entry) = self.bots.get_mut(&finished.bot) {
-                    entry.trash = None;
-                }
-            }
-            (BotLifecycleKind::TrashChat, _, Some((chat, title))) => {
-                self.chats.insert(
-                    *chat,
-                    BookChat {
-                        chat: *chat,
-                        bot: finished.bot,
-                        bot_name: finished.name.clone(),
-                        title: title.clone(),
-                        home: finished.home,
-                        request: finished.request,
-                        at_ms: finished.at_ms,
-                    },
-                );
-            }
-            (BotLifecycleKind::RestoreChat, _, Some((chat, _))) => {
-                return self.chats.remove(chat).is_some();
-            }
-            _ => return false,
-        }
-        true
-    }
-
-    /// The finished Archive and Trash the window knows hold `bot`.
-    pub(crate) fn sources(&self, bot: BotId) -> (Option<BotRequestId>, Option<BotRequestId>) {
-        self.bots.get(&bot).map_or((None, None), |entry| {
-            (entry.archive, entry.trash.map(|(request, _)| request))
-        })
-    }
-
-    /// Every Bot whose finished Archive the window knows, and that Archive:
-    /// what the roster's Unarchive names.
-    pub(crate) fn archive_sources(&self) -> HashMap<BotId, BotRequestId> {
-        self.bots
-            .iter()
-            .filter_map(|(bot, entry)| entry.archive.map(|request| (*bot, request)))
-            .collect()
-    }
-
-    /// The Bot's own record, when the window holds one.
-    pub(crate) fn bot(&self, bot: BotId) -> Option<&BookBot> {
-        self.bots.get(&bot)
-    }
-
-    /// The conversations the window moved to Trash whose Bot's home is
-    /// `workspace`, newest first.
-    pub(crate) fn trashed_chats(&self, workspace: Option<WorkspaceId>) -> Vec<BookChat> {
-        let mut chats: Vec<BookChat> = self
-            .chats
-            .values()
-            .filter(|chat| workspace.is_some() && chat.home == workspace)
-            .cloned()
-            .collect();
-        chats.sort_by(|a, b| {
-            b.at_ms
-                .cmp(&a.at_ms)
-                .then(a.chat.as_uuid().cmp(&b.chat.as_uuid()))
-        });
-        chats
-    }
-
-    /// A conversation the window moved to Trash, by its id.
-    pub(crate) fn chat(&self, chat: ChatId) -> Option<&BookChat> {
-        self.chats.get(&chat)
     }
 }
 

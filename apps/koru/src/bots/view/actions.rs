@@ -20,8 +20,9 @@
 //! a Trash as moving, the parked sentence with its two answers once it is
 //! parked, and what is true once it is done — archived, in Trash with what
 //! stayed where it was, restored and paused. A Restore or an Unarchive is
-//! offered only when the window knows the operation it names; otherwise the
-//! tab says it cannot be undone from here yet.
+//! offered when the owner's read names the operation that holds the Bot
+//! (`Bot.held_by`) — after a restart too — or the tab just finished it;
+//! otherwise the tab says it cannot be undone from here yet.
 //!
 //! **The menus and the dialogs are the window's** (the shared `koru_ui`
 //! menu and confirmation): the tab hands its asks up
@@ -31,7 +32,7 @@
 //! ([`BotView::dialog_closed`]).
 
 use koru_ai_core::ChatId;
-use koru_ai_core::bots::{Bot, BotLifecycle, BotRequestId};
+use koru_ai_core::bots::{Bot, BotLifecycle};
 use koru_draw::el::{El, Key, Look, Ring, Role, StateRecipe, col, leaf, row, text};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
@@ -91,7 +92,7 @@ impl BotView {
     }
 
     /// **The rows the header's ⋯ offers**, by the Bot's state: Archive and
-    /// Move to Trash for an active Bot; Unarchive — when the window knows the
+    /// Move to Trash for an active Bot; Unarchive — when the owner names the
     /// Archive — and Move to Trash for an archived one; nothing while an
     /// operation is on its way, or for a trashed Bot.
     pub(crate) fn lifecycle_rows(&self) -> Vec<Ask> {
@@ -332,18 +333,10 @@ impl BotView {
         }
     }
 
-    /// The operations finished since the window last asked, for its book.
+    /// The operations finished since the window last asked: the Bot's
+    /// other tabs, the roster and the Trash read again.
     pub(crate) fn take_lifecycle_finished(&mut self) -> Vec<Finished> {
         self.lifecycle.take_finished()
-    }
-
-    /// What the window's book knows holds this Bot.
-    pub(crate) fn know_lifecycle_sources(
-        &mut self,
-        archive: Option<BotRequestId>,
-        trash: Option<BotRequestId>,
-    ) {
-        self.lifecycle.know_sources(archive, trash);
     }
 
     /// **Another surface of the window restored or unarchived this Bot, or

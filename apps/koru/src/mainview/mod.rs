@@ -713,10 +713,6 @@ pub struct MainView {
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
     bot_labels: crate::bots::labels::ChatLabels,
-    /// **What this window's Bot lifecycle operations finished** (Bots P1.8
-    /// S14): the request each Restore must name, which no read of the Bot
-    /// owner gives back (`bots::lifecycle::Book`).
-    bot_book: crate::bots::lifecycle::Book,
     /// **The trashed Bots and Bot conversations, for the Trash tab** (S14):
     /// read only while a Trash tab is in front, off the window thread.
     bot_trash: crate::bots::trash::BotTrash,
@@ -1865,7 +1861,6 @@ impl MainView {
             ai_chat_folder_ask: None,
             bot_create_folder_ask: None,
             bot_labels: crate::bots::labels::ChatLabels::default(),
-            bot_book: crate::bots::lifecycle::Book::default(),
             bot_trash: crate::bots::trash::BotTrash::default(),
             held_chat_opens: Vec::new(),
             ai_computer_ask: None,
@@ -6038,14 +6033,13 @@ impl MainView {
         let workspace = self
             .current_workspace()
             .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
-        let sources = self.bot_book.archive_sources();
         let roster = self.explore.bots_mut();
         let moved = roster.set_workspace(workspace);
-        let mut changed = roster.set_archive_sources(sources) | roster.maintain() || moved;
-        // **An Unarchive from the Archived filter** (S14): into the book,
-        // and the Bot's tab reads what it holds now.
+        let mut changed = roster.maintain() || moved;
+        // **An Unarchive from the Archived filter** (S14): the Bot's tab
+        // and the Trash read what holds it now.
         for done in self.explore.bots_mut().take_finished() {
-            self.bot_book.record(&done);
+            self.bot_trash.owe_refresh();
             if let Some(view) = self.bot_view_mut(done.bot) {
                 view.lifecycle_moved_elsewhere();
             }

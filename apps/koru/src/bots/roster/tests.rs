@@ -689,6 +689,15 @@ fn the_archived_filter_lists_opens_and_unarchives() {
     let mut known = f.bot("Scout");
     known.lifecycle = BotLifecycle::Archived;
     known.revision = 4;
+    // The owner names the Archive that holds it (`held_by`, filled in by
+    // `with_lifecycle_holders` for `list_lifecycle`); this roster is fresh,
+    // as after a restart, and remembers nothing of its own.
+    let archive = BotRequestId::mint();
+    known.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: archive,
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 7,
+    });
     let mut older = f.bot("Older");
     older.lifecycle = BotLifecycle::Archived;
     f.answers
@@ -700,15 +709,12 @@ fn the_archived_filter_lists_opens_and_unarchives() {
         })
         .unwrap();
     assert!(f.roster.maintain());
-    let archive = BotRequestId::mint();
-    f.roster
-        .set_archive_sources([(known.id, archive)].into_iter().collect());
     let frame = frame_of(&f.roster);
     assert!(frame.contains(archived_key(known.id)) && frame.contains(archived_key(older.id)));
     assert!(frame.contains(unarchive_key(known.id)));
     assert!(
         !frame.contains(unarchive_key(older.id)),
-        "no Unarchive for an Archive this window did not do"
+        "no Unarchive where the owner names no Archive"
     );
     assert_eq!(f.roster.archived_notice(), Some(Words::BotsUndoUnavailable));
     // A row opens its Bot's tab.

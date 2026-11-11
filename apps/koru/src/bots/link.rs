@@ -21,8 +21,9 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
-    BOT_CREATION_PAGE_LIMIT, Bot, BotActivityPage, BotChatCursor, BotChatLabel, BotChatPage,
-    BotCommand, BotCreation, BotCreationCursor, BotId, BotLifecycle, BotRequestId, BotResponse,
+    BOT_CHAT_PAGE_LIMIT, BOT_CREATION_PAGE_LIMIT, Bot, BotActivityPage, BotChatCursor,
+    BotChatLabel, BotChatPage, BotCommand, BotCreation, BotCreationCursor, BotId, BotLifecycle,
+    BotRequestId, BotResponse, BotTrashedChat, BotTrashedChatCursor,
 };
 use koru_store_core::ids::WorkspaceId;
 
@@ -78,6 +79,11 @@ pub(crate) enum Command {
         workspace: WorkspaceId,
         lifecycle: BotLifecycle,
     },
+    /// **The workspace's Bot conversations in Trash** (`ListTrashedBotChats`,
+    /// every page up to four): each with the operation that hid it and which
+    /// Restore brings it back — what a conversation's Restore names, after a
+    /// restart too.
+    TrashedChats { seq: u64, workspace: WorkspaceId },
 }
 
 #[derive(Debug)]
@@ -122,6 +128,12 @@ pub(crate) enum Answer {
         workspace: WorkspaceId,
         lifecycle: BotLifecycle,
         result: Result<Vec<Bot>, Failure>,
+    },
+    /// What a [`Command::TrashedChats`] answered.
+    TrashedChats {
+        seq: u64,
+        workspace: WorkspaceId,
+        result: Result<Vec<BotTrashedChat>, Failure>,
     },
     /// **A [`Command::List`]'s second answer** (S8): the workspace's
     /// unfinished creations (`ListBotCreations`, every page), oldest first.
@@ -468,6 +480,42 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::TrashedChats { seq, workspace } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => trashed_chats(|cursor| {
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ListTrashedBotChats {
+                                workspace,
+                                cursor,
+                                limit: BOT_CHAT_PAGE_LIMIT,
+                            })
+                            .map_err(|failure| failure.code)
+                    }),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A workspace's Bot conversations in Trash could not be listed"
+                    );
+                    client = None;
+                }
+                if answers
+                    .send(Answer::TrashedChats {
+                        seq,
+                        workspace,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
         }
     }
 }
@@ -510,6 +558,30 @@ pub(crate) fn unfinished(
         }
     }
     Ok(creations)
+}
+
+/// **Every Bot conversation of a workspace in Trash**, page after page
+/// through `ask`, at most [`CREATION_PAGES`] of them: the list, or why not.
+pub(crate) fn trashed_chats(
+    mut ask: impl FnMut(Option<BotTrashedChatCursor>) -> Result<BotResponse, String>,
+) -> Result<Vec<BotTrashedChat>, Failure> {
+    let mut chats = Vec::new();
+    let mut cursor = None;
+    for _ in 0..CREATION_PAGES {
+        match ask(cursor.take()) {
+            Ok(BotResponse::TrashedChats { page }) => {
+                chats.extend(page.chats);
+                match page.next_cursor {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
+            }
+            Ok(_) => return Err(Failure::Unreachable),
+            Err(code) if code.is_empty() => return Err(Failure::Unreachable),
+            Err(code) => return Err(Failure::Refused(code)),
+        }
+    }
+    Ok(chats)
 }
 
 /// A `ListActivity` reply: the page, or why not.

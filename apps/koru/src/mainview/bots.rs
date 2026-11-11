@@ -210,7 +210,16 @@ impl MainView {
     /// holds it. The Trash offers it too.
     fn say_link_in_trash(&mut self, chat: koru_ai_ui::ChatId) {
         let lang = crate::format::lang();
-        let known = self.bot_book.chat(chat).map(|entry| entry.bot);
+        // The Restore names what the owner's Trash listing says hid it, read
+        // when the person asks (`BotTrash::restore`); the Bot is the label's.
+        let known = self
+            .bot_trash
+            .trashed_chat(chat)
+            .map(|entry| entry.conversation.label.bot_id)
+            .or_else(|| match self.bot_labels.known(chat) {
+                Some(crate::bots::labels::Known::Bot { bot, .. }) => Some(*bot),
+                _ => None,
+            });
         let (action, payload) = match known {
             Some(bot) => (
                 Some(koru_i18n::t(lang, koru_i18n::Key::TrashRestore)),

@@ -94,7 +94,7 @@ pub(crate) const ARCHIVED_TOGGLE: Key = Key::surface(SURFACE, "archived-toggle")
 /// The Archived filter's heading.
 pub(crate) const ARCHIVED_HEADING: Key = Key::surface(SURFACE, "archived-heading");
 /// The Archived filter's sentence: loading, none, not answering, or that a
-/// Bot archived before Koru last started cannot be unarchived from here.
+/// Bot whose Archive the owner does not name cannot be unarchived from here.
 pub(crate) const ARCHIVED_NOTICE: Key = Key::surface(SURFACE, "archived-notice");
 /// An archived row's part, under the Bot's own id.
 pub(crate) const ARCHIVED_PART: &str = "bot-archived";
@@ -316,9 +316,6 @@ pub(crate) struct BotsRoster {
     /// The archived list was read since it was opened or the roster was
     /// last shown; `false` means the next shown pass asks.
     archived_fresh: bool,
-    /// The finished Archive holding each Bot, as the window's book says:
-    /// what an Unarchive names.
-    archive_sources: std::collections::HashMap<BotId, BotRequestId>,
     /// Unarchives on their way, by their request.
     unarchiving: std::collections::HashMap<BotRequestId, (BotId, String)>,
     finished: Vec<super::lifecycle::Finished>,
@@ -500,22 +497,22 @@ impl BotsRoster {
         true
     }
 
-    /// The window's book: the finished Archive holding each Bot, which an
-    /// Unarchive names. `true` when it changed what a row offers.
-    pub(crate) fn set_archive_sources(
-        &mut self,
-        sources: std::collections::HashMap<BotId, BotRequestId>,
-    ) -> bool {
-        if self.archive_sources == sources {
-            return false;
-        }
-        self.archive_sources = sources;
-        true
+    /// **The Archive that holds `bot`**, as the Archived filter's entry
+    /// names it (`held_by`, `list_lifecycle`): what its Unarchive names,
+    /// after a restart too.
+    fn archive_source(&self, bot: BotId) -> Option<BotRequestId> {
+        self.archived
+            .iter()
+            .find(|row| row.id == bot)?
+            .held_by
+            .as_ref()
+            .filter(|holder| holder.kind == BotLifecycleKind::Archive)
+            .map(|holder| holder.request_id)
     }
 
-    /// Whether `bot`'s row offers *Unarchive*: the window knows its Archive.
+    /// Whether `bot`'s row offers *Unarchive*: the owner names its Archive.
     pub(crate) fn can_unarchive(&self, bot: BotId) -> bool {
-        self.archive_sources.contains_key(&bot)
+        self.archive_source(bot).is_some()
     }
 
     /// **Another surface of the window changed a Bot's lifecycle**: both
@@ -555,7 +552,7 @@ impl BotsRoster {
     pub(crate) fn unarchive(&mut self, bot: BotId) -> bool {
         let (Some(listed), Some(source), Some(link)) = (
             self.archived.iter().find(|row| row.id == bot),
-            self.archive_sources.get(&bot).copied(),
+            self.archive_source(bot),
             &self.link,
         ) else {
             return false;
@@ -592,7 +589,8 @@ impl BotsRoster {
         self.unarchiving.values().any(|(id, _)| *id == bot)
     }
 
-    /// The Unarchives that finished, for the window's book. Taken once.
+    /// The Unarchives that finished, for the window to tell the Bot's tabs
+    /// and the Trash. Taken once.
     pub(crate) fn take_finished(&mut self) -> Vec<super::lifecycle::Finished> {
         std::mem::take(&mut self.finished)
     }
@@ -621,7 +619,6 @@ impl BotsRoster {
                     chat: None,
                     at_ms: 0,
                 });
-                self.archive_sources.remove(&bot);
             }
             Ok(_) => self.unarchive_refused = Some(Words::BotsErrNotApplied),
             Err(Failure::Unreachable) => self.unarchive_refused = Some(Words::BotsErrUnreachable),
@@ -1688,7 +1685,7 @@ impl BotsRoster {
     /// Archived filter outside the active roster"), under the active rows:
     /// its toggle, and while open its heading, its sentence and one row per
     /// archived Bot, each opening the Bot's tab — its conversations stay
-    /// readable — with *Unarchive* when the window knows the Archive.
+    /// readable — with *Unarchive* when the owner names the Archive.
     fn archived_section(&self) -> El {
         let toggle_words = if self.archived_open {
             Words::BotsHideArchived
@@ -1747,9 +1744,9 @@ impl BotsRoster {
     }
 
     /// **The Archived filter's sentence**, while it is open: loading, none,
-    /// not answering, why an Unarchive did not happen — or that a Bot
-    /// archived before this window started cannot be unarchived from here,
-    /// said once rather than as a dead button.
+    /// not answering, why an Unarchive did not happen — or that a Bot whose
+    /// Archive the owner does not name (`held_by`) cannot be unarchived from
+    /// here, said once rather than as a dead button.
     pub(crate) fn archived_notice(&self) -> Option<Words> {
         if !self.archived_open {
             return None;

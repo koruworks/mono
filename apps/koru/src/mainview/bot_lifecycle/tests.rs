@@ -11,7 +11,7 @@ use koru_ai_core::bots::{Bot, BotCommand, BotId, BotLifecycleKind, BotRequestId}
 use koru_store_core::ids::WorkspaceId;
 
 use crate::bots::BotView;
-use crate::bots::lifecycle::{Ask, Finished};
+use crate::bots::lifecycle::Ask;
 use crate::bots::link::{BotsLink, Command};
 use crate::mainview::MainView;
 use crate::mainview::context_menu::{MenuAction, MenuSubject};
@@ -103,8 +103,8 @@ fn the_menus_rows_are_the_tabs() {
     assert_eq!(v.enabled_items(&menu), [false], "waits, saying why");
 }
 
-/// **The Trash's Bot rows**: a Bot and a Bot conversation are listed;
-/// Restore is offered only where the window knows the Trash it names; no
+/// **The Trash's Bot rows**: a Bot conversation the owner lists in Trash
+/// is a row, restorable as the owner says; no
 /// row of them is deleted for good, and Empty Trash says it leaves them.
 #[test]
 fn bot_rows_in_the_trash_restore_never_delete_and_the_empty_says_so() {
@@ -113,17 +113,18 @@ fn bot_rows_in_the_trash_restore_never_delete_and_the_empty_says_so() {
     v.bot_trash.set_workspace(Some(home));
     let bot = BotId::mint();
     let chat = koru_ai_ui::ChatId::new();
-    v.bot_book.record(&Finished {
-        bot,
-        name: "Writer".into(),
-        home: Some(home),
-        kind: BotLifecycleKind::TrashChat,
-        request: BotRequestId::mint(),
-        reverses: None,
-        chat: Some((chat, "Notes".into())),
-        at_ms: 10,
-    });
-    let rows = v.bot_trash.rows(&v.bot_book);
+    v.bot_trash.listed_for_test(
+        Vec::new(),
+        vec![crate::bots::tests::trashed_chat(
+            bot,
+            "Writer",
+            chat,
+            "Notes",
+            (BotRequestId::mint(), BotLifecycleKind::TrashChat),
+            koru_ai_core::bots::BotChatRestore::Conversation,
+        )],
+    );
+    let rows = v.bot_trash.rows();
     assert_eq!(rows.len(), 1);
     assert!(rows[0].restorable);
     // A Trash tab is given them, as it is given the bin's runs.

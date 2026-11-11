@@ -41,7 +41,8 @@ impl Fixture {
                 | Command::Write { .. }
                 | Command::Label { .. }
                 | Command::Activity { .. }
-                | Command::Lifecycle { .. } => {
+                | Command::Lifecycle { .. }
+                | Command::TrashedChats { .. } => {
                     panic!("a Bot tab only reads its Bot here")
                 }
             }

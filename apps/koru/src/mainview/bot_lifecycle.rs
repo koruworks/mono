@@ -9,10 +9,13 @@
 //! sends the command; on a no nothing is sent; either way the keyboard goes
 //! back to the control that asked.
 //!
-//! **The window keeps the book** ([`crate::bots::lifecycle::Book`]): every
-//! operation a tab finishes is recorded here, and handed back to every tab
-//! of that Bot, so a Bot archived in one tab can be unarchived in another,
-//! and the Trash and the roster can restore what this window put away.
+//! **What a Restore names is the owner's to say**: a Bot's reads and the
+//! Archived and Trash filters name the operation that holds it
+//! (`Bot.held_by`), and the Trash's conversation listing names what hid each
+//! one (`trashed_by`), so an Unarchive or a Restore works from any surface
+//! and after a restart. The window keeps no record of its own: an operation
+//! a tab finishes only tells the Bot's other tabs, the roster and the Trash
+//! to read again.
 
 use koru_ai_core::bots::BotId;
 use koru_i18n::{Key as Words, t};
@@ -192,7 +195,7 @@ impl MainView {
 
     /// **The Trash's Bot rows** (S14): the feed reads the Bot owner's Trash
     /// filter while a Trash tab is in front of its group, and only then;
-    /// its Restores are recorded in the book and said in a receipt; every
+    /// its Restores tell the Bot's tabs and are said in a receipt; every
     /// Trash tab is given the rows, as it is given the bin's runs.
     pub(super) fn maintain_bot_trash(&mut self) -> bool {
         let shown = crate::bots::shown()
@@ -209,7 +212,6 @@ impl MainView {
             .set_shown(shown, crate::search::gateway_root());
         changed |= self.bot_trash.maintain();
         for done in self.bot_trash.take_finished() {
-            self.bot_book.record(&done);
             // The Bot's tab, wherever it is, shows what it holds now.
             if let Some(view) = self.bot_view_mut(done.bot) {
                 view.lifecycle_moved_elsewhere();
@@ -226,7 +228,7 @@ impl MainView {
         }
         if self.has_trash_tabs() {
             let rows = if crate::bots::shown() {
-                self.bot_trash.rows(&self.bot_book)
+                self.bot_trash.rows()
             } else {
                 Vec::new()
             };
@@ -242,14 +244,14 @@ impl MainView {
     }
 
     /// **Restore Bot rows from the Trash**: each through the feed, which
-    /// names the Trash the book knows. A row with no Restore sends nothing.
+    /// names what the owner says hid it. A row with no Restore sends nothing.
     pub(super) fn restore_trashed_bots(
         &mut self,
         subjects: Vec<crate::bots::trash::BotSubject>,
     ) -> bool {
         let mut sent = false;
         for subject in subjects {
-            sent |= self.bot_trash.restore(subject, &self.bot_book);
+            sent |= self.bot_trash.restore(subject);
         }
         sent
     }
@@ -271,46 +273,44 @@ impl MainView {
         if !crate::bots::shown() {
             return 0;
         }
-        self.bot_trash.rows(&self.bot_book).len()
+        self.bot_trash.rows().len()
     }
 
-    /// **Keep the book, and hand it back**: every operation a Bot tab
-    /// finished since the last pass is recorded, and each Bot tab learns
-    /// what the book knows holds its Bot. Every tab, hidden ones too — it
-    /// is a fold of what they already hold, and nothing is sent. `true`
-    /// when anything finished.
+    /// **What the Bot tabs finished, told around**: every operation a Bot
+    /// tab finished since the last pass makes the same Bot's other tabs, the
+    /// roster's lists and the Trash's rows read again — each learns what
+    /// holds the Bot from the owner, not from the tab. Nothing is sent from
+    /// a hidden tab: it reads when next shown. `true` when anything finished.
     pub(super) fn record_bot_lifecycle(&mut self) -> bool {
         let mut finished = Vec::new();
-        for (_, group) in self.panes.iter_groups_mut() {
-            for tab in group.tabs_mut().iter_mut() {
+        for (ordinal, (_, group)) in self.panes.iter_groups_mut().enumerate() {
+            for (index, tab) in group.tabs_mut().iter_mut().enumerate() {
                 if let TabView::Bot(view) = &mut tab.view {
-                    finished.extend(view.take_lifecycle_finished());
+                    for done in view.take_lifecycle_finished() {
+                        finished.push((done.bot, (ordinal, index)));
+                    }
                 }
             }
         }
-        let any = !finished.is_empty();
-        let mut moved = Vec::new();
-        for done in &finished {
-            if self.bot_book.record(done) {
-                moved.push(done.bot);
-            }
+        if finished.is_empty() {
+            return false;
         }
-        for (_, group) in self.panes.iter_groups_mut() {
-            for tab in group.tabs_mut().iter_mut() {
+        for (ordinal, (_, group)) in self.panes.iter_groups_mut().enumerate() {
+            for (index, tab) in group.tabs_mut().iter_mut().enumerate() {
                 if let TabView::Bot(view) = &mut tab.view
                     && let Some(bot) = view.bot()
+                    && finished
+                        .iter()
+                        .any(|(done, from)| *done == bot && *from != (ordinal, index))
                 {
-                    let (archive, trash) = self.bot_book.sources(bot);
-                    view.know_lifecycle_sources(archive, trash);
+                    view.lifecycle_moved_elsewhere();
                 }
             }
         }
-        if any {
-            // The roster's lists and the Trash's Bot rows are old now.
-            self.explore.bots_mut().owe_lifecycle_refresh();
-            self.bot_trash.owe_refresh();
-        }
-        any
+        // The roster's lists and the Trash's Bot rows are old now.
+        self.explore.bots_mut().owe_lifecycle_refresh();
+        self.bot_trash.owe_refresh();
+        true
     }
 }
 

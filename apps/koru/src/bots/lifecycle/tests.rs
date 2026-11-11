@@ -251,24 +251,40 @@ fn a_finished_conversation_trash_reports_its_title() {
     assert_eq!(model.outcome(), Some(&Outcome::ChatTrashed { chat }));
     let finished = model.take_finished();
     assert_eq!(finished[0].chat, Some((chat, "Notes".to_owned())));
-    let mut book = Book::default();
-    assert!(book.record(&finished[0]));
-    let listed = book.trashed_chats(Some(bot.home_workspace));
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].request, request);
-    assert!(book.trashed_chats(Some(WorkspaceId::new())).is_empty());
+    assert_eq!(finished[0].request, request);
+}
+
+/// The holder the owner's reads name (`held_by`, filled in by
+/// `with_lifecycle_holders` for `read` of an archived Bot and for
+/// `list_lifecycle`, `apps/koru-ai-server/src/worker/bots/reads.rs`).
+fn held(bot: &mut Bot, kind: BotLifecycleKind) -> BotRequestId {
+    let request = BotRequestId::mint();
+    bot.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: request,
+        kind,
+        completed_at_ms: 5,
+    });
+    request
 }
 
 /// **Unarchive and Restore need the operation they reverse**: without it
-/// nothing is sent, and the control is absent.
+/// nothing is sent, and the control is absent. **A fresh model — the tab
+/// after a restart — learns it from the owner's read alone** (`held_by`),
+/// with nothing this window remembered.
 #[test]
-fn unarchive_and_restore_need_the_finished_operation() {
+fn unarchive_and_restore_name_the_holder_the_owners_read_names() {
     let (mut model, mut bot) = fixture();
     bot.lifecycle = BotLifecycle::Archived;
     model.know(&bot);
-    assert!(model.begin(Ask::Unarchive, &bot).is_none());
-    let archive = BotRequestId::mint();
-    model.know_sources(Some(archive), None);
+    assert!(
+        model.begin(Ask::Unarchive, &bot).is_none(),
+        "no holder named"
+    );
+    let archive = held(&mut bot, BotLifecycleKind::Archive);
+    let mut model = Lifecycle::default();
+    model.set_bot(bot.id);
+    model.know(&bot);
+    assert_eq!(model.archive_source(), Some(archive));
     let (request, command) = sent(model.begin(Ask::Unarchive, &bot).unwrap());
     assert_eq!(
         command,
@@ -291,6 +307,24 @@ fn unarchive_and_restore_need_the_finished_operation() {
     );
     assert_eq!(model.outcome(), Some(&Outcome::Unarchived));
     assert_eq!(model.archive_source(), None);
+
+    // Trashed: the Trash filter's entry names its Trash; Restore names it.
+    let (_, mut trashed) = fixture();
+    trashed.lifecycle = BotLifecycle::Trashed;
+    let trash = held(&mut trashed, BotLifecycleKind::Trash);
+    let mut model = Lifecycle::default();
+    model.set_bot(trashed.id);
+    model.know(&trashed);
+    let (request, command) = sent(model.begin(Ask::Restore, &trashed).unwrap());
+    assert_eq!(
+        command,
+        BotCommand::Restore {
+            request_id: request,
+            bot_id: trashed.id,
+            expected_revision: trashed.revision,
+            source_request_id: trash
+        }
+    );
 }
 
 /// **An operation begun before Koru last started** is shown from the Bot's
@@ -384,30 +418,28 @@ fn an_unanswered_command_is_asked_about_not_claimed() {
     assert!(!model.busy());
 }
 
-/// **The book keeps what this window finished**, and forgets an operation
-/// once it is undone.
+/// **An Archive this model just finished offers Unarchive at once**, before
+/// the read that follows names its holder; that read's holder then wins.
 #[test]
-fn the_book_remembers_and_forgets() {
-    let bot = BotId::mint();
-    let home = Some(WorkspaceId::new());
-    let trash = BotRequestId::mint();
-    let mut book = Book::default();
-    let finished = |kind, request, reverses| Finished {
-        bot,
-        name: "Scout".into(),
-        home,
-        kind,
+fn an_archive_just_finished_is_undone_before_the_read_names_it() {
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
+    model.answer(
         request,
-        reverses,
-        chat: None,
-        at_ms: 5,
-    };
-    book.record(&finished(BotLifecycleKind::Trash, trash, None));
-    assert_eq!(book.sources(bot), (None, Some(trash)));
-    book.record(&finished(
-        BotLifecycleKind::Restore,
-        BotRequestId::mint(),
-        Some(BotLifecycleKind::Trash),
-    ));
-    assert_eq!(book.sources(bot), (None, None));
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+        Instant::now(),
+    );
+    assert_eq!(model.archive_source(), Some(request));
+    let mut read = bot.clone();
+    read.lifecycle = BotLifecycle::Archived;
+    model.know(&read);
+    assert_eq!(model.archive_source(), Some(request), "no holder named yet");
+    let named = held(&mut read, BotLifecycleKind::Archive);
+    model.know(&read);
+    assert_eq!(model.archive_source(), Some(named), "the owner's word");
 }

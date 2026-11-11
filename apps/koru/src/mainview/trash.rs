@@ -526,10 +526,8 @@ impl MainView {
                     // Trash's own feed, whose receipt says what happened.
                     super::ToastPayload::RestoreBotChat { bot, chat } => {
                         self.bot_trash.start(crate::search::gateway_root());
-                        self.bot_trash.restore(
-                            crate::bots::trash::BotSubject::Chat { bot, chat },
-                            &self.bot_book,
-                        );
+                        self.bot_trash
+                            .restore(crate::bots::trash::BotSubject::Chat { bot, chat });
                     }
                     super::ToastPayload::Restore(nodes) => {
                         // **`restore`, not general history undo.** The toast
