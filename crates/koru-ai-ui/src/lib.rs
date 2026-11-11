@@ -126,6 +126,8 @@ mod microphone;
 mod model_picker;
 mod new_divider;
 mod owned;
+#[cfg(test)]
+mod pins;
 mod privacy;
 mod questions;
 mod queue;

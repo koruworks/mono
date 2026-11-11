@@ -2146,4 +2146,6 @@ pub(crate) fn draw_provider_mark(
 }
 
 #[cfg(test)]
+mod pins;
+#[cfg(test)]
 mod tests;

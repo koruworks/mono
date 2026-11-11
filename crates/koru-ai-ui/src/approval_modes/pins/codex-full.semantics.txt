@@ -1,0 +1,5 @@
+diagnostics []
+row Key { object: Model(16670533724037894034), part: "approval-mode" } icon 0xe3e8 title "Ask for approval" help Some("Codex reads; it asks before editing files or running commands.") full=false current=false lit=false
+row Key { object: Model(3403940223859569117), part: "approval-mode" } icon 0xe762 title "Approve for me" help Some("Codex edits in this folder; its reviewer decides anything that needs more.") full=false current=false lit=false
+row Key { object: Model(18024449775046465593), part: "approval-mode" } icon 0xe4e0 title "Full access" help Some("No sandbox: Codex runs everything without asking, with full access to your computer.") full=true current=true lit=false
+(none)

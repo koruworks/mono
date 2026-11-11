@@ -1,0 +1,85 @@
+grid over [438.00 67.50 360.00 315.00] margin 12.00 step 6.00
+0: outside | hit None | cursor None | tooltip None
+1: panel | hit None | cursor Some(Default) | tooltip None
+2: rail | hit Some(Key { object: Surface("model-picker"), part: "favorites" }) | cursor Some(Default) | tooltip Some("0x50490000 \"Favorites\" [444.00 75.50 32.00 32.00]")
+3: search | hit Some(Key { object: Surface("model-picker"), part: "search" }) | cursor Some(Text) | tooltip None
+4: refresh | hit Some(Key { object: Surface("model-picker"), part: "refresh" }) | cursor Some(Default) | tooltip Some("0x50491000 \"Refresh models\" [766.00 77.50 26.00 28.00]")
+5: refresh | hit Some(Key { object: Surface("model-picker"), part: "search" }) | cursor Some(Default) | tooltip Some("0x50491000 \"Refresh models\" [766.00 77.50 26.00 28.00]")
+6: list | hit Some(Key { object: Model(18258063737002285624), part: "row" }) | cursor Some(Default) | tooltip None
+7: rail | hit Some(Key { object: Model(3871966037711592067), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [444.00 122.50 32.00 32.00]")
+8: list | hit Some(Key { object: Model(16078951908229023662), part: "row" }) | cursor Some(Default) | tooltip None
+9: list | hit Some(Key { object: Model(16078951908229023662), part: "star" }) | cursor Some(Default) | tooltip None
+10: rail | hit Some(Key { object: Model(2382934383275710204), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490002 \"OpenCode\" [444.00 160.50 32.00 32.00]")
+11: list | hit Some(Key { object: Model(9637789238725182330), part: "row" }) | cursor Some(Default) | tooltip None
+12: list | hit Some(Key { object: Model(9637789238725182330), part: "star" }) | cursor Some(Default) | tooltip None
+13: rail | hit Some(Key { object: Surface("model-picker"), part: "manage-agents" }) | cursor Some(Default) | tooltip None
+14: list | hit Some(Key { object: Model(5228821451785091208), part: "row" }) | cursor Some(Default) | tooltip None
+15: list | hit Some(Key { object: Model(9780544547815985344), part: "row" }) | cursor Some(Default) | tooltip None
+16: list | hit Some(Key { object: Model(9780544547815985344), part: "star" }) | cursor Some(Default) | tooltip None
+17: list | hit Some(Key { object: Model(9780547846350869977), part: "row" }) | cursor Some(Default) | tooltip None
+18: list | hit Some(Key { object: Model(9780547846350869977), part: "star" }) | cursor Some(Default) | tooltip None
+19: strip | hit None | cursor Some(Default) | tooltip None
+20: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-off" }) | cursor Some(Default) | tooltip None
+21: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-low" }) | cursor Some(Default) | tooltip None
+22: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-medium" }) | cursor Some(Default) | tooltip None
+23: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-high" }) | cursor Some(Default) | tooltip None
+24: fast | hit Some(Key { object: Surface("model-picker"), part: "fast" }) | cursor Some(Default) | tooltip None
+25: context | hit Some(Key { object: Surface("model-picker"), part: "context" }) | cursor Some(Default) | tooltip None
+26: chip | hit None | cursor None | tooltip None
+y55.50 0x65
+y61.50 0x65
+y67.50 0x2 1x61 0x2
+y73.50 0x2 1x61 0x2
+y79.50 0x2 1x1 2x6 1x2 3x46 4x4 5x1 1x1 0x2
+y85.50 0x2 1x1 2x6 1x2 3x46 4x4 5x1 1x1 0x2
+y91.50 0x2 1x1 2x6 1x2 3x46 4x4 5x1 1x1 0x2
+y97.50 0x2 1x1 2x6 1x2 3x46 4x4 5x1 1x1 0x2
+y103.50 0x2 1x1 2x6 1x2 3x46 4x4 5x1 1x1 0x2
+y109.50 0x2 1x61 0x2
+y115.50 0x2 1x9 6x51 1x1 0x2
+y121.50 0x2 1x9 6x51 1x1 0x2
+y127.50 0x2 1x1 7x6 1x2 6x51 1x1 0x2
+y133.50 0x2 1x1 7x6 1x2 6x51 1x1 0x2
+y139.50 0x2 1x1 7x6 1x2 6x51 1x1 0x2
+y145.50 0x2 1x1 7x6 1x2 8x45 9x4 8x2 1x1 0x2
+y151.50 0x2 1x1 7x6 1x2 8x45 9x4 8x2 1x1 0x2
+y157.50 0x2 1x9 8x45 9x4 8x2 1x1 0x2
+y163.50 0x2 1x1 10x6 1x2 8x45 9x4 8x2 1x1 0x2
+y169.50 0x2 1x1 10x6 1x2 8x51 1x1 0x2
+y175.50 0x2 1x1 10x6 1x2 11x45 12x4 11x2 1x1 0x2
+y181.50 0x2 1x1 10x6 1x2 11x45 12x4 11x2 1x1 0x2
+y187.50 0x2 1x1 10x6 1x2 11x45 12x4 11x2 1x1 0x2
+y193.50 0x2 1x9 11x45 12x4 11x2 1x1 0x2
+y199.50 0x2 1x1 13x6 1x2 11x51 1x1 0x2
+y205.50 0x2 1x1 13x6 1x2 14x51 1x1 0x2
+y211.50 0x2 1x1 13x6 1x2 14x51 1x1 0x2
+y217.50 0x2 1x1 13x6 1x2 14x51 1x1 0x2
+y223.50 0x2 1x1 13x6 1x2 14x51 1x1 0x2
+y229.50 0x2 1x1 13x6 1x2 14x51 1x1 0x2
+y235.50 0x2 1x9 15x45 16x4 15x2 1x1 0x2
+y241.50 0x2 1x9 15x45 16x4 15x2 1x1 0x2
+y247.50 0x2 1x9 15x45 16x4 15x2 1x1 0x2
+y253.50 0x2 1x9 15x45 16x4 15x2 1x1 0x2
+y259.50 0x2 1x9 15x51 1x1 0x2
+y265.50 0x2 1x9 17x45 18x4 17x2 1x1 0x2
+y271.50 0x2 1x9 17x45 18x4 17x2 1x1 0x2
+y277.50 0x2 1x9 17x45 18x4 17x2 1x1 0x2
+y283.50 0x2 1x9 17x45 18x4 17x2 1x1 0x2
+y289.50 0x2 1x9 17x51 1x1 0x2
+y295.50 0x2 1x61 0x2
+y301.50 0x2 1x61 0x2
+y307.50 0x2 1x10 19x1 20x11 19x1 21x11 19x1 22x11 19x1 23x11 19x1 1x2 0x2
+y313.50 0x2 1x10 19x1 20x11 19x1 21x11 19x1 22x11 19x1 23x11 19x1 1x2 0x2
+y319.50 0x2 1x10 19x1 20x11 19x1 21x11 19x1 22x11 19x1 23x11 19x1 1x2 0x2
+y325.50 0x2 1x10 19x1 20x11 19x1 21x11 19x1 22x11 19x1 23x11 19x1 1x2 0x2
+y331.50 0x2 1x10 19x1 20x11 19x1 21x11 19x1 22x11 19x1 23x11 19x1 1x2 0x2
+y337.50 0x2 1x61 0x2
+y343.50 0x2 1x10 24x11 1x1 25x13 1x26 0x2
+y349.50 0x2 1x10 24x11 1x1 25x13 1x26 0x2
+y355.50 0x2 1x10 24x11 1x1 25x13 1x26 0x2
+y361.50 0x2 1x10 24x11 1x1 25x13 1x26 0x2
+y367.50 0x2 1x10 24x11 1x1 25x13 1x26 0x2
+y373.50 0x2 1x61 0x2
+y379.50 0x2 1x61 0x2
+y385.50 0x65
+y391.50 0x49 26x14 0x2

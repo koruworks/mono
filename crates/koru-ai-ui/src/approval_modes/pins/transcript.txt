@@ -1,0 +1,101 @@
+# keys, a chat not made yet
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(1) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(2) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(3) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowUp -> true [] | open=true row=Some(2) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Tab -> true [] | open=true row=Some(6) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(0) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(1) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Enter -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Space -> false [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+ArrowUp -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("dontAsk"), "agent-claude")) current=Some("dontAsk") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Shift+Tab -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Space -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+ArrowUp -> true [] | open=true row=Some(2) focus=ModeChevron model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Enter -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Escape -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Tab -> true [] | open=true row=Some(6) focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Enter -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=true
+# keys, a made chat
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(1) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(2) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(3) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowUp -> true [] | open=true row=Some(2) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Tab -> true [] | open=true row=Some(6) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(0) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+ArrowDown -> true [] | open=true row=Some(1) focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+Enter -> true [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Space -> false [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+ArrowUp -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("plan") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("auto") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("dontAsk") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("dontAsk"), "agent-claude")) current=Some("dontAsk") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("default") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("plan") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("auto") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Space -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+ArrowUp -> true [] | open=true row=Some(2) focus=ModeChevron model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=None settings=false
+Enter -> true [update_agent_settings mode=Some("plan") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Tab -> true [] | open=false row=None focus=SendArrow model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Tab -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Escape -> true [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Tab -> true [] | open=true row=Some(6) focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
+Enter -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=true
+# presses, a chat not made yet
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+row 1 @[514.00 120.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+row 4 @[514.00 258.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+row 0 @[514.00 74.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip again @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+outside @[450.00 70.50 0.00 0.00] -> None [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+change default @[745.00 363.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=true
+# presses, a made chat
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+row 1 @[514.00 120.50 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+row 4 @[514.00 258.50 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("bypassPermissions") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+row 0 @[514.00 74.50 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("default") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip again @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+outside @[450.00 70.50 0.00 0.00] -> None [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+change default @[745.00 363.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=true
+# Shift+Tab, a made chat with a reply running
+chip None
+Shift+Tab -> true [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=Some("Accept edits · applies to your next message") settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("plan") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=Some("Plan · applies to your next message") settings=false
+Shift+Tab -> true [update_agent_settings mode=Some("auto") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("auto"), "agent-claude")) current=Some("auto") note=Some("Auto · applies to your next message") settings=false

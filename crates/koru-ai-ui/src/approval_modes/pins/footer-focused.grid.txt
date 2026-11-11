@@ -1,0 +1,69 @@
+grid over [490.00 60.50 340.00 322.00] margin 12.00 step 6.00
+0: outside | hit None | hover None
+1: panel | hit None | hover None
+2: row 0 | hit Some(Key { object: Model(16982411286042166782), part: "approval-mode" }) | hover Some((17, 0))
+3: row 1 | hit Some(Key { object: Model(16890590346210960122), part: "approval-mode" }) | hover Some((17, 1))
+4: row 2 | hit Some(Key { object: Model(11954888832644785330), part: "approval-mode" }) | hover Some((17, 2))
+5: row 3 | hit Some(Key { object: Model(6757501175350325814), part: "approval-mode" }) | hover Some((17, 3))
+6: row 4 | hit Some(Key { object: Model(16767174850261089227), part: "approval-mode" }) | hover Some((17, 4))
+7: row 5 | hit Some(Key { object: Model(15478865525090752595), part: "approval-mode" }) | hover Some((17, 5))
+8: change-default | hit None | hover None
+9: chip | hit None | hover Some((5, 13))
+y48.50 0x61
+y54.50 0x61
+y60.50 0x2 1x57 0x2
+y66.50 0x2 1x1 2x55 1x1 0x2
+y72.50 0x2 1x1 2x55 1x1 0x2
+y78.50 0x2 1x1 2x55 1x1 0x2
+y84.50 0x2 1x1 2x55 1x1 0x2
+y90.50 0x2 1x1 2x55 1x1 0x2
+y96.50 0x2 1x1 2x55 1x1 0x2
+y102.50 0x2 1x1 2x55 1x1 0x2
+y108.50 0x2 1x1 2x55 1x1 0x2
+y114.50 0x2 1x1 3x55 1x1 0x2
+y120.50 0x2 1x1 3x55 1x1 0x2
+y126.50 0x2 1x1 3x55 1x1 0x2
+y132.50 0x2 1x1 3x55 1x1 0x2
+y138.50 0x2 1x1 3x55 1x1 0x2
+y144.50 0x2 1x1 3x55 1x1 0x2
+y150.50 0x2 1x1 3x55 1x1 0x2
+y156.50 0x2 1x1 4x55 1x1 0x2
+y162.50 0x2 1x1 4x55 1x1 0x2
+y168.50 0x2 1x1 4x55 1x1 0x2
+y174.50 0x2 1x1 4x55 1x1 0x2
+y180.50 0x2 1x1 4x55 1x1 0x2
+y186.50 0x2 1x1 4x55 1x1 0x2
+y192.50 0x2 1x1 4x55 1x1 0x2
+y198.50 0x2 1x1 4x55 1x1 0x2
+y204.50 0x2 1x1 5x55 1x1 0x2
+y210.50 0x2 1x1 5x55 1x1 0x2
+y216.50 0x2 1x1 5x55 1x1 0x2
+y222.50 0x2 1x1 5x55 1x1 0x2
+y228.50 0x2 1x1 5x55 1x1 0x2
+y234.50 0x2 1x1 5x55 1x1 0x2
+y240.50 0x2 1x1 5x55 1x1 0x2
+y246.50 0x2 1x1 5x55 1x1 0x2
+y252.50 0x2 1x1 6x55 1x1 0x2
+y258.50 0x2 1x1 6x55 1x1 0x2
+y264.50 0x2 1x1 6x55 1x1 0x2
+y270.50 0x2 1x1 6x55 1x1 0x2
+y276.50 0x2 1x1 6x55 1x1 0x2
+y282.50 0x2 1x1 6x55 1x1 0x2
+y288.50 0x2 1x1 6x55 1x1 0x2
+y294.50 0x2 1x1 7x55 1x1 0x2
+y300.50 0x2 1x1 7x55 1x1 0x2
+y306.50 0x2 1x1 7x55 1x1 0x2
+y312.50 0x2 1x1 7x55 1x1 0x2
+y318.50 0x2 1x1 7x55 1x1 0x2
+y324.50 0x2 1x1 7x55 1x1 0x2
+y330.50 0x2 1x1 7x55 1x1 0x2
+y336.50 0x2 1x1 7x55 1x1 0x2
+y342.50 0x2 1x57 0x2
+y348.50 0x2 1x29 8x28 0x2
+y354.50 0x2 1x29 8x28 0x2
+y360.50 0x2 1x29 8x28 0x2
+y366.50 0x2 1x29 8x28 0x2
+y372.50 0x2 1x29 8x28 0x2
+y378.50 0x2 1x29 8x28 0x2
+y384.50 0x61
+y390.50 0x51 9x8 0x2

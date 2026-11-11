@@ -1,0 +1,43 @@
+grid over [490.00 420.50 340.00 184.00] margin 12.00 step 6.00
+0: outside | hit None | hover None
+1: chip | hit None | hover Some((5, 13))
+2: panel | hit None | hover None
+3: row 0 | hit Some(Key { object: Model(16670533724037894034), part: "approval-mode" }) | hover Some((17, 0))
+4: row 1 | hit Some(Key { object: Model(3403940223859569117), part: "approval-mode" }) | hover Some((17, 1))
+5: row 2 | hit Some(Key { object: Model(18024449775046465593), part: "approval-mode" }) | hover Some((17, 2))
+6: change-default | hit None | hover None
+y408.50 0x51 1x8 0x2
+y414.50 0x51 1x8 0x2
+y420.50 0x2 2x57 0x2
+y426.50 0x2 2x1 3x55 2x1 0x2
+y432.50 0x2 2x1 3x55 2x1 0x2
+y438.50 0x2 2x1 3x55 2x1 0x2
+y444.50 0x2 2x1 3x55 2x1 0x2
+y450.50 0x2 2x1 3x55 2x1 0x2
+y456.50 0x2 2x1 3x55 2x1 0x2
+y462.50 0x2 2x1 3x55 2x1 0x2
+y468.50 0x2 2x1 3x55 2x1 0x2
+y474.50 0x2 2x1 4x55 2x1 0x2
+y480.50 0x2 2x1 4x55 2x1 0x2
+y486.50 0x2 2x1 4x55 2x1 0x2
+y492.50 0x2 2x1 4x55 2x1 0x2
+y498.50 0x2 2x1 4x55 2x1 0x2
+y504.50 0x2 2x1 4x55 2x1 0x2
+y510.50 0x2 2x1 4x55 2x1 0x2
+y516.50 0x2 2x1 5x55 2x1 0x2
+y522.50 0x2 2x1 5x55 2x1 0x2
+y528.50 0x2 2x1 5x55 2x1 0x2
+y534.50 0x2 2x1 5x55 2x1 0x2
+y540.50 0x2 2x1 5x55 2x1 0x2
+y546.50 0x2 2x1 5x55 2x1 0x2
+y552.50 0x2 2x1 5x55 2x1 0x2
+y558.50 0x2 2x1 5x55 2x1 0x2
+y564.50 0x2 2x57 0x2
+y570.50 0x2 2x29 6x28 0x2
+y576.50 0x2 2x29 6x28 0x2
+y582.50 0x2 2x29 6x28 0x2
+y588.50 0x2 2x29 6x28 0x2
+y594.50 0x2 2x29 6x28 0x2
+y600.50 0x2 2x29 6x28 0x2
+y606.50 0x61
+y612.50 0x61

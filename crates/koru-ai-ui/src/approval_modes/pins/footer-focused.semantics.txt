@@ -1,0 +1,8 @@
+diagnostics []
+row Key { object: Model(16982411286042166782), part: "approval-mode" } icon 0xe3e8 title "Ask first" help Some("Asks before every change.") full=false current=true lit=false
+row Key { object: Model(16890590346210960122), part: "approval-mode" } icon 0xe3b4 title "Accept edits" help Some("Edits files without asking; still asks before commands.") full=false current=false lit=false
+row Key { object: Model(11954888832644785330), part: "approval-mode" } icon 0xeadc title "Plan" help Some("Reads and plans; changes nothing until you approve the plan.") full=false current=false lit=false
+row Key { object: Model(6757501175350325814), part: "approval-mode" } icon 0xe6a2 title "Auto" help Some("Claude decides which actions need you.") full=false current=false lit=false
+row Key { object: Model(16767174850261089227), part: "approval-mode" } icon 0xe4e0 title "Full access" help Some("Runs everything without asking.") full=true current=false lit=false
+row Key { object: Model(15478865525090752595), part: "approval-mode" } icon 0xe228 title "Don't ask" help Some("Never asks; refuses instead") full=false current=false lit=false
+(none)

@@ -924,5 +924,7 @@ impl crate::ChatSurface {
 
 mod elements;
 #[cfg(test)]
+mod pins;
+#[cfg(test)]
 mod tests;
 mod tokens;
