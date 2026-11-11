@@ -3,6 +3,7 @@
 use std::sync::mpsc::{Receiver, SyncSender};
 
 use super::*;
+use crate::bots::link::Listing;
 use crate::bots::tests::bot;
 use koru_draw::el::{Name, SemNode};
 
@@ -78,7 +79,7 @@ impl Fixture {
     /// same request's second answer (S8) — its unfinished creations, none.
     fn answer(&mut self, seq: u64, result: Result<Vec<Bot>, Failure>) -> bool {
         let creations = match &result {
-            Ok(_) => Ok(Vec::new()),
+            Ok(_) => Ok(Listing::all(Vec::new())),
             Err(failure) => Err(failure.clone()),
         };
         self.answers
@@ -824,7 +825,7 @@ fn unfinished_creations_are_listed_after_a_restart_and_acted_on_by_id() {
         .send(Answer::Creations {
             seq,
             workspace: f.home,
-            result: Ok(vec![stuck.clone(), ended.clone()]),
+            result: Ok(Listing::all(vec![stuck.clone(), ended.clone()])),
         })
         .unwrap();
     assert!(f.roster.maintain());
@@ -936,14 +937,14 @@ fn a_stale_or_failed_creations_answer_keeps_what_was_listed() {
         .send(Answer::Creations {
             seq,
             workspace: f.home,
-            result: Ok(vec![stuck.clone()]),
+            result: Ok(Listing::all(vec![stuck.clone()])),
         })
         .unwrap();
     f.roster.maintain();
     for (seq, workspace, result) in [
         (seq, f.home, Err(Failure::Unreachable)),
-        (seq.wrapping_add(7), f.home, Ok(Vec::new())),
-        (seq, WorkspaceId::new(), Ok(Vec::new())),
+        (seq.wrapping_add(7), f.home, Ok(Listing::all(Vec::new()))),
+        (seq, WorkspaceId::new(), Ok(Listing::all(Vec::new()))),
     ] {
         f.answers
             .send(Answer::Creations {
@@ -993,7 +994,7 @@ fn a_retried_creation_is_followed_until_it_finishes() {
             .send(Answer::Creations {
                 seq,
                 workspace: f.home,
-                result: Ok(vec![listed]),
+                result: Ok(Listing::all(vec![listed])),
             })
             .unwrap();
     }
@@ -1024,7 +1025,7 @@ fn a_retried_creation_is_followed_until_it_finishes() {
         .send(Answer::Creations {
             seq,
             workspace: f.home,
-            result: Ok(vec![moving.clone()]),
+            result: Ok(Listing::all(vec![moving.clone()])),
         })
         .unwrap();
     f.roster.maintain();
@@ -1045,7 +1046,7 @@ fn a_retried_creation_is_followed_until_it_finishes() {
         .send(Answer::Creations {
             seq,
             workspace: f.home,
-            result: Ok(Vec::new()),
+            result: Ok(Listing::all(Vec::new())),
         })
         .unwrap();
     f.roster.maintain();
@@ -1072,7 +1073,7 @@ fn a_retried_creation_is_followed_until_it_finishes() {
         .send(Answer::Creations {
             seq,
             workspace: g.home,
-            result: Ok(vec![other.clone()]),
+            result: Ok(Listing::all(vec![other.clone()])),
         })
         .unwrap();
     g.roster.maintain();

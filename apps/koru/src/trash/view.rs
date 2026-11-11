@@ -118,9 +118,17 @@ pub(super) fn title_text() -> &'static str {
     koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashTitle)
 }
 
-/// The page's subtitle.
-pub(super) fn subtitle_text() -> &'static str {
-    koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashSubtitle)
+/// The page's subtitle: one sentence more, in the same string, when the Bot
+/// owner held more Bot conversations in Trash than one listing reads.
+pub(super) fn subtitle_text(bots_more: bool) -> &'static str {
+    koru_i18n::t(
+        crate::format::lang(),
+        if bots_more {
+            koru_i18n::Key::TrashSubtitleMore
+        } else {
+            koru_i18n::Key::TrashSubtitle
+        },
+    )
 }
 
 /// *You*, for a row this window binned.
@@ -182,6 +190,9 @@ pub struct TrashView {
     /// the container from the Bot owner's Trash filter and the window's
     /// book. Not documents: they arrive by their own road, as runs do.
     bots: Vec<crate::bots::trash::TrashedBotRow>,
+    /// The Bot owner held more Bot conversations in Trash than were listed:
+    /// the subtitle says so, never a silent cut.
+    pub(super) bots_more: bool,
 }
 
 impl Default for TrashView {
@@ -209,6 +220,7 @@ impl TrashView {
             documents: None,
             runs: Vec::new(),
             bots: Vec::new(),
+            bots_more: false,
         }
     }
 
@@ -250,6 +262,17 @@ impl TrashView {
         }
         self.bots = bots;
         self.stale = true;
+        true
+    }
+
+    /// Whether the Bot rows are not all the owner holds. `true` when it
+    /// changed.
+    pub(crate) fn set_bots_more(&mut self, more: bool) -> bool {
+        if self.bots_more == more {
+            return false;
+        }
+        self.bots_more = more;
+        self.measure_header();
         true
     }
 
@@ -552,9 +575,10 @@ impl TrashView {
     /// the density could have. Cheap — two `simple_layout`s of fixed strings.
     fn measure_header(&mut self) {
         let title = self.engine.simple_layout(title_text(), super::draw::TITLE);
-        let sub = self
-            .engine
-            .simple_layout(subtitle_text(), koru_draw::theme::role::meta());
+        let sub = self.engine.simple_layout(
+            subtitle_text(self.bots_more),
+            koru_draw::theme::role::meta(),
+        );
         self.header_h = self.title_top() + title.height() + TITLE_GAP + sub.height() + SUBTITLE_GAP;
     }
 

@@ -51,3 +51,47 @@ fn the_link_holds_exactly_the_two_scopes_it_needs() {
 fn the_link_never_starts_under_test() {
     assert!(BotsLink::start(None).is_none());
 }
+
+/// **A bounded listing never cuts silently**: the owner's Trash listing
+/// (`list_trashed_bot_chats`, a `next_cursor` on every page but the last)
+/// read to its page limit with a page still owed says so; one that ends
+/// within it says nothing is left.
+#[test]
+fn a_listing_that_stops_at_its_page_limit_says_more_are_left() {
+    use koru_ai_core::bots::{
+        BotChatRestore, BotLifecycleKind, BotRequestId, BotTrashedChatCursor, BotTrashedChatPage,
+    };
+    let page = |last: bool| {
+        let chat = ChatId::new();
+        Ok(BotResponse::TrashedChats {
+            page: BotTrashedChatPage {
+                chats: vec![crate::bots::tests::trashed_chat(
+                    BotId::mint(),
+                    "Writer",
+                    chat,
+                    "Notes",
+                    (BotRequestId::mint(), BotLifecycleKind::TrashChat),
+                    BotChatRestore::Conversation,
+                )],
+                next_cursor: (!last).then_some(BotTrashedChatCursor { chat_id: chat }),
+            },
+        })
+    };
+    let mut asked = 0;
+    let endless = trashed_chats(|_| {
+        asked += 1;
+        page(false)
+    })
+    .expect("listed");
+    assert_eq!(asked, CREATION_PAGES, "never past the limit");
+    assert_eq!(endless.items.len(), CREATION_PAGES);
+    assert!(endless.more, "pages were left unread");
+    let mut asked = 0;
+    let short = trashed_chats(|_| {
+        asked += 1;
+        page(asked == 2)
+    })
+    .expect("listed");
+    assert_eq!(short.items.len(), 2);
+    assert!(!short.more, "the owner's last page was read");
+}

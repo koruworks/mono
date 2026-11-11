@@ -133,14 +133,14 @@ pub(crate) enum Answer {
     TrashedChats {
         seq: u64,
         workspace: WorkspaceId,
-        result: Result<Vec<BotTrashedChat>, Failure>,
+        result: Result<Listing<BotTrashedChat>, Failure>,
     },
     /// **A [`Command::List`]'s second answer** (S8): the workspace's
     /// unfinished creations (`ListBotCreations`, every page), oldest first.
     Creations {
         seq: u64,
         workspace: WorkspaceId,
-        result: Result<Vec<BotCreation>, Failure>,
+        result: Result<Listing<BotCreation>, Failure>,
     },
 }
 
@@ -535,20 +535,38 @@ pub(crate) fn chats(reply: Result<BotResponse, String>) -> Result<BotChatPage, F
 /// unfinished creations are a handful, and a page holds a hundred.
 const CREATION_PAGES: usize = 4;
 
+/// **What one bounded listing read**: the entries, and whether the owner
+/// still had pages after the last one read — never a silent cut. A surface
+/// that shows `items` says so when `more` is set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Listing<T> {
+    pub items: Vec<T>,
+    pub more: bool,
+}
+
+impl<T> Listing<T> {
+    /// Everything the owner holds: nothing left unread.
+    pub(crate) fn all(items: Vec<T>) -> Self {
+        Self { items, more: false }
+    }
+}
+
 /// **Every unfinished creation of a workspace**, oldest first, page after
-/// page through `ask`, at most [`CREATION_PAGES`] of them: the list, or why
-/// not — never a list made up from an answer to some other question.
+/// page through `ask`, at most [`CREATION_PAGES`] of them: the list and
+/// whether pages were left unread, or why not — never a list made up from
+/// an answer to some other question.
 pub(crate) fn unfinished(
     mut ask: impl FnMut(Option<BotCreationCursor>) -> Result<BotResponse, String>,
-) -> Result<Vec<BotCreation>, Failure> {
-    let mut creations = Vec::new();
+) -> Result<Listing<BotCreation>, Failure> {
+    let mut listing = Listing::all(Vec::new());
     let mut cursor = None;
-    for _ in 0..CREATION_PAGES {
+    for page_read in 1..=CREATION_PAGES {
         match ask(cursor.take()) {
             Ok(BotResponse::Creations { page }) => {
-                creations.extend(page.creations);
+                listing.items.extend(page.creations);
                 match page.next_cursor {
-                    Some(next) => cursor = Some(next),
+                    Some(next) if page_read < CREATION_PAGES => cursor = Some(next),
+                    Some(_) => listing.more = true,
                     None => break,
                 }
             }
@@ -557,22 +575,24 @@ pub(crate) fn unfinished(
             Err(code) => return Err(Failure::Refused(code)),
         }
     }
-    Ok(creations)
+    Ok(listing)
 }
 
 /// **Every Bot conversation of a workspace in Trash**, page after page
-/// through `ask`, at most [`CREATION_PAGES`] of them: the list, or why not.
+/// through `ask`, at most [`CREATION_PAGES`] of them: the list and whether
+/// pages were left unread, or why not.
 pub(crate) fn trashed_chats(
     mut ask: impl FnMut(Option<BotTrashedChatCursor>) -> Result<BotResponse, String>,
-) -> Result<Vec<BotTrashedChat>, Failure> {
-    let mut chats = Vec::new();
+) -> Result<Listing<BotTrashedChat>, Failure> {
+    let mut listing = Listing::all(Vec::new());
     let mut cursor = None;
-    for _ in 0..CREATION_PAGES {
+    for page_read in 1..=CREATION_PAGES {
         match ask(cursor.take()) {
             Ok(BotResponse::TrashedChats { page }) => {
-                chats.extend(page.chats);
+                listing.items.extend(page.chats);
                 match page.next_cursor {
-                    Some(next) => cursor = Some(next),
+                    Some(next) if page_read < CREATION_PAGES => cursor = Some(next),
+                    Some(_) => listing.more = true,
                     None => break,
                 }
             }
@@ -581,7 +601,7 @@ pub(crate) fn trashed_chats(
             Err(code) => return Err(Failure::Refused(code)),
         }
     }
-    Ok(chats)
+    Ok(listing)
 }
 
 /// A `ListActivity` reply: the page, or why not.

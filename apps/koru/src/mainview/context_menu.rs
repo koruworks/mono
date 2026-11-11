@@ -112,16 +112,20 @@ pub enum MenuSubject {
         chats: Vec<koru_ai_ui::ChatId>,
     },
     /// **A Bot tab header's ⋯** (Bots P1.8 S14): the Bot's lifecycle rows.
-    /// By the Bot's id, never a tab index: the window finds the Bot's tab
-    /// when a row is chosen.
+    /// By the Bot's id and the asking tab's own identity (`Tab::id`), never
+    /// a tab index: a row chosen is answered to the tab that asked, while it
+    /// is still that Bot's, not to whichever of its tabs is in front.
     Bot {
         bot: koru_ai_core::bots::BotId,
+        tab: u64,
     },
     /// **A conversation row's menu in a Bot's tab** (S14): one
-    /// conversation's Trash. The Bot and the conversation by id.
+    /// conversation's Trash. The Bot and the conversation by id, the tab
+    /// that asked by its identity.
     BotConversation {
         bot: koru_ai_core::bots::BotId,
         chat: koru_ai_ui::ChatId,
+        tab: u64,
     },
     /// A schedule row or one of its metadata rows, captured by stable id.
     AgentSchedules {

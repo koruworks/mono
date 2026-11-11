@@ -28,46 +28,48 @@ use crate::bots::BotView;
 use crate::bots::lifecycle::Ask;
 
 impl MainView {
-    /// The Bot's tab, the one in front of its group first.
-    pub(super) fn bot_view(&self, bot: BotId) -> Option<&BotView> {
-        let mut found = None;
-        for (_, group) in self.panes.iter_groups() {
-            for (index, tab) in group.tabs().iter().enumerate() {
-                if let TabView::Bot(view) = &tab.view
-                    && view.bot() == Some(bot)
-                {
-                    if index == group.active() {
-                        return Some(view);
-                    }
-                    found = found.or(Some(view));
-                }
-            }
-        }
-        found
+    /// **The tab that asked**, by its own identity (`Tab::id`), while it is
+    /// still `bot`'s: a menu or a question is answered to the tab it came
+    /// from, never to whichever of the Bot's tabs is in front. `None` when
+    /// that tab closed or moved to another Bot meanwhile.
+    pub(super) fn asking_bot_tab(&self, tab: u64, bot: BotId) -> Option<&BotView> {
+        self.panes.iter_groups().find_map(|(_, group)| {
+            group.tabs().iter().find_map(|open| match &open.view {
+                TabView::Bot(view) if open.id == tab && view.bot() == Some(bot) => Some(view),
+                _ => None,
+            })
+        })
     }
 
-    /// The Bot's tab, mutably, the one in front of its group first.
-    pub(super) fn bot_view_mut(&mut self, bot: BotId) -> Option<&mut BotView> {
-        let mut at = None;
-        'groups: for (ordinal, (_, group)) in self.panes.iter_groups().enumerate() {
-            for (index, tab) in group.tabs().iter().enumerate() {
-                if let TabView::Bot(view) = &tab.view
+    /// The tab that asked, mutably ([`Self::asking_bot_tab`]).
+    pub(super) fn asking_bot_tab_mut(&mut self, tab: u64, bot: BotId) -> Option<&mut BotView> {
+        self.panes.iter_groups_mut().find_map(|(_, group)| {
+            group
+                .tabs_mut()
+                .iter_mut()
+                .find_map(|open| match &mut open.view {
+                    TabView::Bot(view) if open.id == tab && view.bot() == Some(bot) => Some(view),
+                    _ => None,
+                })
+        })
+    }
+
+    /// **Every tab of `bot`** is told it changed elsewhere — the Trash
+    /// restored it, the roster unarchived it — so none keeps showing what
+    /// it held before. `true` when any tab was told.
+    pub(super) fn bot_moved_elsewhere(&mut self, bot: BotId) -> bool {
+        let mut told = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::Bot(view) = &mut tab.view
                     && view.bot() == Some(bot)
                 {
-                    if index == group.active() {
-                        at = Some((ordinal, index));
-                        break 'groups;
-                    }
-                    at = at.or(Some((ordinal, index)));
+                    view.lifecycle_moved_elsewhere();
+                    told = true;
                 }
             }
         }
-        let (ordinal, index) = at?;
-        let (_, group) = self.panes.iter_groups_mut().nth(ordinal)?;
-        match &mut group.tabs_mut().get_mut(index)?.view {
-            TabView::Bot(view) => Some(view),
-            _ => None,
-        }
+        told
     }
 
     /// **The Bot tab in front asked for its menu or a question** — its ⋯,
@@ -76,7 +78,9 @@ impl MainView {
     pub(super) fn drain_bot_lifecycle_asks(&mut self) -> bool {
         let view_rect = self.focused_view_rect();
         let to_window = |at: (f32, f32)| (at.0 + view_rect.x, at.1 + view_rect.y);
-        let TabView::Bot(view) = &mut self.tabs_mut().active_mut().view else {
+        let asking = self.tabs_mut().active_mut();
+        let tab = asking.id;
+        let TabView::Bot(view) = &mut asking.view else {
             return false;
         };
         let Some(bot) = view.bot() else {
@@ -98,12 +102,12 @@ impl MainView {
                     Ask::Unarchive | Ask::Restore => MenuAction::UnarchiveBot,
                 })
                 .collect();
-            opened |= self.open_subject_menu(MenuSubject::Bot { bot }, items, to_window(at));
+            opened |= self.open_subject_menu(MenuSubject::Bot { bot, tab }, items, to_window(at));
         }
         if let Some((chat, at)) = row_menu {
             let mut menu = ContextMenu::new(
                 &mut self.engine,
-                MenuSubject::BotConversation { bot, chat },
+                MenuSubject::BotConversation { bot, chat, tab },
                 to_window(at),
                 vec![MenuAction::TrashBotConversation],
             );
@@ -113,21 +117,26 @@ impl MainView {
             opened = true;
         }
         if let Some(chat) = trash {
-            opened |= self.ask_trash_bot_conversation(bot, chat);
+            opened |= self.ask_trash_bot_conversation(bot, tab, chat);
         }
         opened
     }
 
     /// **A row of the Bot's ⋯ was chosen**: Archive and Move to Trash are
     /// asked about first; Unarchive puts the Bot back and is sent at once.
-    pub(super) fn choose_bot_lifecycle(&mut self, bot: BotId, action: MenuAction) -> bool {
+    pub(super) fn choose_bot_lifecycle(
+        &mut self,
+        bot: BotId,
+        tab: u64,
+        action: MenuAction,
+    ) -> bool {
         let ask = match action {
             MenuAction::ArchiveBot => Ask::Archive,
             MenuAction::TrashBot => Ask::Trash,
             MenuAction::UnarchiveBot => Ask::Unarchive,
             _ => return false,
         };
-        let Some(view) = self.bot_view_mut(bot) else {
+        let Some(view) = self.asking_bot_tab_mut(tab, bot) else {
             return false;
         };
         let Some((title, body, verb)) = view.confirm_words(ask) else {
@@ -141,7 +150,7 @@ impl MainView {
                 // Reversible, and explicitly invoked: ADR-265's second row.
                 // Archive and Trash both come back, paused.
                 .defaulting_to_confirm(),
-            ConfirmSubject::BotLifecycle { bot, ask },
+            ConfirmSubject::BotLifecycle { bot, tab, ask },
         ));
         true
     }
@@ -152,9 +161,10 @@ impl MainView {
     pub(super) fn ask_trash_bot_conversation(
         &mut self,
         bot: BotId,
+        tab: u64,
         chat: koru_ai_ui::ChatId,
     ) -> bool {
-        let Some(view) = self.bot_view(bot) else {
+        let Some(view) = self.asking_bot_tab(tab, bot) else {
             return false;
         };
         if view.lifecycle_busy() {
@@ -167,7 +177,7 @@ impl MainView {
         self.confirm = Some((
             koru_ui::Confirm::localized(title, body, verb, t(lang, Words::BotsDialogCancel))
                 .defaulting_to_confirm(),
-            ConfirmSubject::TrashBotConversation { bot, chat },
+            ConfirmSubject::TrashBotConversation { bot, tab, chat },
         ));
         true
     }
@@ -179,13 +189,13 @@ impl MainView {
             return;
         }
         match subject {
-            ConfirmSubject::BotLifecycle { bot, ask } => {
-                if let Some(view) = self.bot_view_mut(*bot) {
+            ConfirmSubject::BotLifecycle { bot, tab, ask } => {
+                if let Some(view) = self.asking_bot_tab_mut(*tab, *bot) {
                     view.begin_lifecycle(*ask);
                 }
             }
-            ConfirmSubject::TrashBotConversation { bot, chat } => {
-                if let Some(view) = self.bot_view_mut(*bot) {
+            ConfirmSubject::TrashBotConversation { bot, tab, chat } => {
+                if let Some(view) = self.asking_bot_tab_mut(*tab, *bot) {
                     view.trash_conversation(*chat);
                 }
             }
@@ -212,10 +222,8 @@ impl MainView {
             .set_shown(shown, crate::search::gateway_root());
         changed |= self.bot_trash.maintain();
         for done in self.bot_trash.take_finished() {
-            // The Bot's tab, wherever it is, shows what it holds now.
-            if let Some(view) = self.bot_view_mut(done.bot) {
-                view.lifecycle_moved_elsewhere();
-            }
+            // Every tab of the Bot, wherever it is, shows what it holds now.
+            self.bot_moved_elsewhere(done.bot);
             self.explore.bots_mut().owe_lifecycle_refresh();
             changed = true;
         }
@@ -226,16 +234,24 @@ impl MainView {
             ));
             changed = true;
         }
+        // A link's receipt said only *in the Trash* while the owner's
+        // listing was read: said again, knowing what a Restore can do.
+        if let Some((chat, plan)) = self.bot_trash.take_looked_up() {
+            changed |= self.say_link_looked_up(chat, plan);
+        }
         if self.has_trash_tabs() {
-            let rows = if crate::bots::shown() {
+            let shown = crate::bots::shown();
+            let rows = if shown {
                 self.bot_trash.rows()
             } else {
                 Vec::new()
             };
+            let more = shown && self.bot_trash.more_than_listed();
             for (_, group) in self.panes.iter_groups_mut() {
                 for tab in group.tabs_mut().iter_mut() {
                     if let TabView::Trash(view) = &mut tab.view {
                         changed |= view.set_bots(rows.clone());
+                        changed |= view.set_bots_more(more);
                     }
                 }
             }

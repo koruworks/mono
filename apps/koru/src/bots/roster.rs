@@ -107,6 +107,8 @@ pub(crate) const CREATE: Key = Key::surface(SURFACE, "create");
 pub(crate) const UNFINISHED_HEADING: Key = Key::surface(SURFACE, "unfinished-heading");
 /// Why the last Retry or Abandon from here did not happen.
 pub(crate) const UNFINISHED_NOTICE: Key = Key::surface(SURFACE, "unfinished-notice");
+/// Under the Unfinished rows when the owner held more than were listed.
+pub(crate) const UNFINISHED_MORE: Key = Key::surface(SURFACE, "unfinished-more");
 /// An abandoned creation's sentences — what happened, what it left — and
 /// its role page's *Open role page*.
 pub(crate) const ABANDONED_LINES: [Key; 3] = [
@@ -328,6 +330,9 @@ pub(crate) struct BotsRoster {
     creations: Vec<BotCreation>,
     /// The listing's second answer is still owed.
     creations_in_flight: bool,
+    /// The owner held more unfinished creations than one listing reads:
+    /// the group says so under its rows.
+    creations_more: bool,
     /// A Retry or an Abandon on its way, by the creation's request.
     creations_acting: std::collections::HashSet<BotRequestId>,
     /// **When a moving creation is listed again**: the create form's
@@ -443,6 +448,7 @@ impl BotsRoster {
         self.creations_in_flight = false;
         self.creation_refused = None;
         self.abandoned = None;
+        self.creations_more = false;
         // An answer still on its way is the old workspace's, never this one's.
         self.unarchiving.clear();
         self.creations_acting.clear();
@@ -872,7 +878,9 @@ impl BotsRoster {
             self.creations_in_flight = false;
             // A failed read keeps what was listed.
             if let Ok(listed) = result {
+                self.creations_more = listed.more;
                 self.creations = listed
+                    .items
                     .into_iter()
                     .filter(|creation| {
                         matches!(
@@ -1440,7 +1448,23 @@ impl BotsRoster {
         for creation in &self.creations {
             section = section.child(self.creation_row(creation));
         }
+        // **Never a silent cut**: the owner held more than one listing reads.
+        if self.creations_more {
+            section = section.child(
+                text(t(self.lang, Words::BotsUnfinishedMore))
+                    .named("Bots unfinished more")
+                    .id(UNFINISHED_MORE)
+                    .role(roles::META)
+                    .ink(Ink::Hint)
+                    .wrap(),
+            );
+        }
         section
+    }
+
+    /// Whether the owner held more unfinished creations than were listed.
+    pub(crate) fn creations_more(&self) -> bool {
+        self.creations_more
     }
 
     /// One unfinished creation: its name and where it stands, *Retry* and

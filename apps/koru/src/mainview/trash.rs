@@ -110,6 +110,8 @@ pub(super) enum ConfirmSubject {
     /// nothing. Either way the keyboard goes back to the tab's ⋯.
     BotLifecycle {
         bot: koru_ai_core::bots::BotId,
+        /// The tab that asked, by its identity (`Tab::id`).
+        tab: u64,
         ask: crate::bots::lifecycle::Ask,
     },
     /// **One Bot conversation to Trash** (S14), the same way: only that
@@ -117,6 +119,8 @@ pub(super) enum ConfirmSubject {
     /// says so.
     TrashBotConversation {
         bot: koru_ai_core::bots::BotId,
+        /// The tab that asked, by its identity (`Tab::id`).
+        tab: u64,
         chat: koru_ai_ui::ChatId,
     },
     /// **Abandon an unfinished creation** (Bots P1.8 S8). A yes is sent by
@@ -403,6 +407,21 @@ impl MainView {
             ws.trash_len()
         } + runs.len();
         if n == 0 {
+            // **Only Bot rows in the Trash** (S14): there is nothing this
+            // version can delete for good, and it says so rather than
+            // doing nothing in silence.
+            if !asked && self.trashed_bot_rows() > 0 {
+                self.toast = Some((
+                    koru_ui::Toast::new(
+                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::TrashEmptyOnlyBots)
+                            .to_owned(),
+                        None,
+                        std::time::Instant::now(),
+                    ),
+                    super::ToastPayload::None,
+                ));
+                return true;
+            }
             return false;
         }
         if !asked {
@@ -426,8 +445,13 @@ impl MainView {
             // **What the empty leaves** (S14): Bots and Bot conversations are
             // not counted and not deleted — permanent deletion of a Bot is
             // not built — and the question says so rather than claiming them.
+            // Its own paragraph: the body above is still English-only (it
+            // predates the string table), and a sentence of another
+            // language joined onto it mid-paragraph would read as one
+            // garbled sentence; a paragraph break is the same in every
+            // language.
             if self.trashed_bot_rows() > 0 {
-                body.push(' ');
+                body.push_str("\n\n");
                 body.push_str(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::TrashEmptyBotsNote,
@@ -579,7 +603,7 @@ impl MainView {
                     } => {
                         self.view_added_task(document, node, target);
                     }
-                    super::ToastPayload::None => {}
+                    super::ToastPayload::None | super::ToastPayload::BotChatInTrash { .. } => {}
                 }
                 self.toast = None;
                 let _ = ws;
@@ -760,12 +784,12 @@ impl MainView {
             self.settle_abandon_creation(*from, confirmed);
             return true;
         }
-        if let ConfirmSubject::BotLifecycle { bot, .. }
-        | ConfirmSubject::TrashBotConversation { bot, .. } = &subject
+        if let ConfirmSubject::BotLifecycle { bot, tab, .. }
+        | ConfirmSubject::TrashBotConversation { bot, tab, .. } = &subject
         {
-            let bot = *bot;
+            let (bot, tab) = (*bot, *tab);
             self.settle_bot_confirm(&subject, confirmed);
-            if let Some(view) = self.bot_view_mut(bot) {
+            if let Some(view) = self.asking_bot_tab_mut(tab, bot) {
                 view.dialog_closed();
             }
             return true;

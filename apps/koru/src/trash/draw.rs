@@ -55,7 +55,7 @@ impl TrashView {
         scene::draw_layout_first_line(scene, root, &title, PAD, top, Some(p.text));
         let sub = self
             .engine
-            .simple_layout(subtitle_text(), theme::role::meta());
+            .simple_layout(subtitle_text(self.bots_more), theme::role::meta());
         scene::draw_layout_first_line(
             scene,
             root,

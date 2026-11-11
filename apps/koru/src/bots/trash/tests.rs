@@ -9,6 +9,7 @@
 //! window's own is remembered.
 
 use super::*;
+use crate::bots::link::Listing;
 use crate::bots::tests::trashed_chat;
 use koru_ai_core::bots::{BotLifecycleHolder, BotLifecycleProgress, BotLifecycleStage};
 use std::sync::mpsc::{Receiver, SyncSender};
@@ -68,7 +69,7 @@ fn listed(
                 .send(Answer::TrashedChats {
                     seq,
                     workspace,
-                    result: Ok(chats.take().expect("once")),
+                    result: Ok(Listing::all(chats.take().expect("once"))),
                 })
                 .unwrap(),
             _ => panic!("the Trash's two reads"),
@@ -278,7 +279,7 @@ fn a_conversations_restore_names_what_hid_it_after_a_restart() {
         .send(Answer::TrashedChats {
             seq,
             workspace,
-            result: Ok(vec![entry]),
+            result: Ok(Listing::all(vec![entry])),
         })
         .unwrap();
     trash.maintain();
@@ -421,7 +422,7 @@ fn a_link_restore_of_a_conversation_hidden_by_its_bots_trash_says_why() {
         .send(Answer::TrashedChats {
             seq,
             workspace,
-            result: Ok(vec![entry]),
+            result: Ok(Listing::all(vec![entry])),
         })
         .unwrap();
     trash.maintain();

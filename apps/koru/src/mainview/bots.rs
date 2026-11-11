@@ -206,35 +206,63 @@ impl MainView {
     }
 
     /// **A link led to a Bot conversation in Trash** (S14): a receipt says
-    /// so, offering Restore when the window's book knows the Trash that
-    /// holds it. The Trash offers it too.
-    fn say_link_in_trash(&mut self, chat: koru_ai_ui::ChatId) {
+    /// so. **Restore is offered only where one press restores** — the
+    /// conversation's own Restore, or its Bot's when it went to the Trash
+    /// with its Bot — as the owner's Trash listing says (`restore`,
+    /// `trashed_by`, `bot_held_by`); otherwise the receipt says what must
+    /// happen first. While the listing is read the receipt says only that
+    /// it is in the Trash, and is said again once the owner answers
+    /// ([`Self::say_link_looked_up`]).
+    pub(super) fn say_link_in_trash(&mut self, chat: koru_ai_ui::ChatId) {
+        self.bot_trash.start(crate::search::gateway_root());
+        let plan = self.bot_trash.link_restore(chat);
+        if plan.is_none() {
+            self.bot_trash.look_up(chat);
+        }
+        self.say_link_plan(chat, plan);
+    }
+
+    /// The receipt for `chat` in Trash, by what its Restore can do.
+    fn say_link_plan(
+        &mut self,
+        chat: koru_ai_ui::ChatId,
+        plan: Option<crate::bots::trash::LinkRestore>,
+    ) {
         let lang = crate::format::lang();
-        // The Restore names what the owner's Trash listing says hid it, read
-        // when the person asks (`BotTrash::restore`); the Bot is the label's.
-        let known = self
-            .bot_trash
-            .trashed_chat(chat)
-            .map(|entry| entry.conversation.label.bot_id)
-            .or_else(|| match self.bot_labels.known(chat) {
-                Some(crate::bots::labels::Known::Bot { bot, .. }) => Some(*bot),
-                _ => None,
-            });
-        let (action, payload) = match known {
+        let words = plan.map_or(koru_i18n::Key::BotsLinkInTrash, |plan| plan.words());
+        let (action, payload) = match plan.and_then(|plan| plan.press()) {
             Some(bot) => (
                 Some(koru_i18n::t(lang, koru_i18n::Key::TrashRestore)),
                 super::ToastPayload::RestoreBotChat { bot, chat },
             ),
-            None => (None, super::ToastPayload::None),
+            None => (None, super::ToastPayload::BotChatInTrash { chat }),
         };
         self.toast = Some((
             koru_ui::Toast::new(
-                koru_i18n::t(lang, koru_i18n::Key::BotsLinkInTrash).to_owned(),
+                koru_i18n::t(lang, words).to_owned(),
                 action,
                 std::time::Instant::now(),
             ),
             payload,
         ));
+    }
+
+    /// **The owner's listing answered a link's lookup**: the receipt still up
+    /// for that conversation is said again, now knowing what a Restore can
+    /// do. A receipt already replaced or dismissed is left alone.
+    pub(super) fn say_link_looked_up(
+        &mut self,
+        chat: koru_ai_ui::ChatId,
+        plan: Option<crate::bots::trash::LinkRestore>,
+    ) -> bool {
+        let still_up = matches!(
+            &self.toast,
+            Some((_, super::ToastPayload::BotChatInTrash { chat: up })) if *up == chat
+        );
+        if still_up && plan.is_some() {
+            self.say_link_plan(chat, plan);
+        }
+        still_up
     }
 
     /// **Whether the window knows `chat` is a Bot's conversation** — the

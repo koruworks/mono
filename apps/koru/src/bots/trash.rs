@@ -70,6 +70,51 @@ pub(crate) struct TrashedBotRow {
     pub restorable: bool,
 }
 
+/// **What a link's receipt can offer for a Bot conversation in Trash**,
+/// from the owner's listing (`list_trashed_bot_chats`, with each entry's
+/// `restore` and `bot_held_by`). Restore is offered only where one press
+/// brings it back; otherwise the receipt says what must happen first.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LinkRestore {
+    /// Trashed on its own, its Bot active: its own Restore brings it back.
+    Conversation { bot: BotId },
+    /// It went with its Bot's own Trash: the Bot's Restore brings both
+    /// back. One press when the Trash filter lists the Bot, whose revision
+    /// that Restore carries.
+    WithItsBot { bot: BotId, restorable: bool },
+    /// Trashed on its own before its Bot went to the Trash: the Bot's
+    /// Restore first, then its own.
+    BotFirst,
+    /// Its Bot is archived: Unarchive the Bot first, then its own Restore.
+    UnarchiveFirst,
+    /// The listing does not say what holds its Bot.
+    Unknown,
+}
+
+impl LinkRestore {
+    /// The Bot a press restores, when one press restores it.
+    pub(crate) fn press(self) -> Option<BotId> {
+        match self {
+            Self::Conversation { bot }
+            | Self::WithItsBot {
+                bot,
+                restorable: true,
+            } => Some(bot),
+            _ => None,
+        }
+    }
+
+    /// What the receipt says.
+    pub(crate) fn words(self) -> Words {
+        match self {
+            Self::Conversation { .. } | Self::Unknown => Words::BotsLinkInTrash,
+            Self::WithItsBot { .. } => Words::BotsLinkInTrashWithBot,
+            Self::BotFirst => Words::BotsLinkRestoreBotFirst,
+            Self::UnarchiveFirst => Words::BotsLinkUnarchiveFirst,
+        }
+    }
+}
+
 /// What a Restore said, for the window's receipt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Receipt {
@@ -110,6 +155,14 @@ pub(crate) struct BotTrash {
     /// A conversation's Restore asked for before the feed had listed it — a
     /// link's receipt — sent once the listing names it.
     wanted: Option<ChatId>,
+    /// **A link led to this conversation in Trash** and the feed had not
+    /// listed it: both listings are read, shown or not, and what a Restore
+    /// could do is said once they answer ([`Self::take_looked_up`]).
+    looking: Option<ChatId>,
+    looked_up: Option<(ChatId, Option<LinkRestore>)>,
+    /// The last listing stopped at its last page with more to read: not
+    /// every Bot conversation in Trash is listed, and the Trash says so.
+    chats_more: bool,
     /// Restores by their request, and the Bot reads a conversation's
     /// Restore waits on, by their sequence.
     restoring: HashMap<BotRequestId, Restoring>,
@@ -160,6 +213,9 @@ impl BotTrash {
         self.listed.clear();
         self.chats.clear();
         self.wanted = None;
+        self.looking = None;
+        self.looked_up = None;
+        self.chats_more = false;
         self.fresh = false;
         self.in_flight = false;
         self.chats_in_flight = false;
@@ -197,7 +253,9 @@ impl BotTrash {
 
     /// Whether an answer is owed: the one reason the window keeps a wake.
     pub(crate) fn awaiting(&self) -> bool {
-        (self.shown && (self.in_flight || self.chats_in_flight)) || self.restoring_any()
+        (self.shown && (self.in_flight || self.chats_in_flight))
+            || self.restoring_any()
+            || self.looking.is_some()
     }
 
     /// A Restore the person asked for is on its way — from the Trash, or a
@@ -214,7 +272,7 @@ impl BotTrash {
             // A Restore asked for from a link's receipt reads the listing
             // it needs once, shown or not; nothing else is asked.
             let asked = self.wanted.is_some() && !self.chats_in_flight && self.ask_chats();
-            return asked || (self.restoring_any() && self.poll());
+            return asked || ((self.restoring_any() || self.looking.is_some()) && self.poll());
         }
         let asked = !self.fresh && self.refresh();
         let answered = self.poll();
@@ -276,6 +334,7 @@ impl BotTrash {
                     if let Ok(bots) = result {
                         self.listed = bots;
                     }
+                    self.settle_lookup();
                     changed = true;
                 }
                 Answer::TrashedChats {
@@ -285,12 +344,14 @@ impl BotTrash {
                 } if seq == self.chats_seq && Some(workspace) == self.workspace => {
                     self.chats_in_flight = false;
                     // A read that did not answer keeps what was listed.
-                    if let Ok(chats) = result {
-                        self.chats = chats;
+                    if let Ok(listing) = result {
+                        self.chats = listing.items;
+                        self.chats_more = listing.more;
                     }
                     if let Some(chat) = self.wanted.take() {
                         self.restore_listed_chat(chat);
                     }
+                    self.settle_lookup();
                     changed = true;
                 }
                 Answer::Read { seq, bot, result } => {
@@ -329,12 +390,73 @@ impl BotTrash {
             .filter(|entry| entry.trashed_by.kind == BotLifecycleKind::TrashChat)
     }
 
-    /// A listed conversation in Trash that its own Restore brings back, by
-    /// its id: what a link's receipt offers Restore for.
-    pub(crate) fn trashed_chat(&self, chat: ChatId) -> Option<&BotTrashedChat> {
-        self.own_chats().find(|entry| {
-            entry.conversation.chat.id == chat && entry.restore == BotChatRestore::Conversation
+    /// **What a Restore of `chat` can do now**, from the owner's listing:
+    /// `None` while the feed has not listed it.
+    pub(crate) fn link_restore(&self, chat: ChatId) -> Option<LinkRestore> {
+        let entry = self
+            .chats
+            .iter()
+            .find(|entry| entry.conversation.chat.id == chat)?;
+        let bot = entry.conversation.label.bot_id;
+        if entry.restore == BotChatRestore::Conversation {
+            return Some(LinkRestore::Conversation { bot });
+        }
+        // The Bot first. What holds it is the entry's `bot_held_by`, or the
+        // Trash filter's entry for it.
+        let listed = self.listed.iter().find(|listed| listed.id == bot);
+        if entry.trashed_by.kind == BotLifecycleKind::Trash {
+            return Some(LinkRestore::WithItsBot {
+                bot,
+                restorable: listed.and_then(Self::trash_of).is_some(),
+            });
+        }
+        Some(match entry.bot_held_by.as_ref().map(|holder| holder.kind) {
+            Some(BotLifecycleKind::Archive) => LinkRestore::UnarchiveFirst,
+            Some(BotLifecycleKind::Trash) => LinkRestore::BotFirst,
+            _ if listed.is_some() => LinkRestore::BotFirst,
+            _ => LinkRestore::Unknown,
         })
+    }
+
+    /// **A link led to `chat`, in Trash**: what its Restore can do is read
+    /// from the owner — both listings, shown or not — unless the feed has
+    /// listed it already. `true` when an answer is owed
+    /// ([`Self::take_looked_up`]).
+    pub(crate) fn look_up(&mut self, chat: ChatId) -> bool {
+        if self.link_restore(chat).is_some() {
+            return false;
+        }
+        if self.looking == Some(chat) {
+            return true;
+        }
+        let asked = self.in_flight || self.chats_in_flight || self.refresh();
+        if asked {
+            self.looking = Some(chat);
+        }
+        asked
+    }
+
+    /// Both listings answered: what the looked-up conversation's Restore
+    /// can do, said once.
+    fn settle_lookup(&mut self) {
+        if self.in_flight || self.chats_in_flight {
+            return;
+        }
+        if let Some(chat) = self.looking.take() {
+            self.looked_up = Some((chat, self.link_restore(chat)));
+        }
+    }
+
+    /// What a link's lookup found, taken once: `None` inside when the
+    /// owner's listing does not name the conversation.
+    pub(crate) fn take_looked_up(&mut self) -> Option<(ChatId, Option<LinkRestore>)> {
+        self.looked_up.take()
+    }
+
+    /// Whether the last listing stopped with more pages to read: not every
+    /// Bot conversation in Trash is listed.
+    pub(crate) fn more_than_listed(&self) -> bool {
+        self.chats_more
     }
 
     /// Whether a Restore of `subject` is on its way already: a second press
@@ -425,7 +547,7 @@ impl BotTrash {
                 )
             }
             BotSubject::Chat { chat, .. } => {
-                if self.trashed_chat(chat).is_none() {
+                if self.link_restore(chat).is_none() {
                     self.wanted = Some(chat);
                     return self.chats_in_flight || self.ask_chats();
                 }
@@ -449,24 +571,19 @@ impl BotTrash {
         // **Its Bot comes back first.** One that went with its Bot's own
         // Trash, whose Trash the owner names, comes back with the Bot: that
         // Restore is the one press. Otherwise it is said, never silent.
-        if entry.restore != BotChatRestore::Conversation {
-            let bot = entry.conversation.label.bot_id;
-            let with_its_bot = entry.trashed_by.kind == BotLifecycleKind::Trash;
-            if with_its_bot
-                && self
-                    .listed
-                    .iter()
-                    .any(|listed| listed.id == bot && Self::trash_of(listed).is_some())
-            {
-                return self.restore(BotSubject::Bot(bot));
+        match self.link_restore(chat) {
+            Some(LinkRestore::Conversation { .. }) | None => {}
+            Some(plan) => {
+                if let Some(bot) = plan.press() {
+                    return self.restore(BotSubject::Bot(bot));
+                }
+                let why = match plan {
+                    LinkRestore::UnarchiveFirst => Words::BotsErrArchived,
+                    _ => Words::BotsErrBotTrashed,
+                };
+                self.fail(&entry.conversation.chat.title, why);
+                return true;
             }
-            let why = if with_its_bot || self.listed.iter().any(|listed| listed.id == bot) {
-                Words::BotsErrBotTrashed
-            } else {
-                Words::BotsErrArchived
-            };
-            self.fail(&entry.conversation.chat.title, why);
-            return true;
         }
         let entry = &entry;
         let bot = entry.conversation.label.bot_id;

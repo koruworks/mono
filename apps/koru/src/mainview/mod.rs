@@ -540,6 +540,11 @@ pub(crate) enum ToastPayload {
         bot: koru_ai_core::bots::BotId,
         chat: koru_ai_ui::ChatId,
     },
+    /// **A link's Bot conversation in Trash with no Restore to offer**: one
+    /// press would not bring it back, or the owner's listing is still being
+    /// read. No action; the payload names the conversation so the receipt
+    /// can be said again when the listing answers.
+    BotChatInTrash { chat: koru_ai_ui::ChatId },
     /// Undo trash on **runs**: take them back out of the workspace's bin.
     ///
     /// Its own arm rather than nodes in [`Self::Restore`], because a run's
@@ -4435,10 +4440,10 @@ impl MainView {
                 action,
                 MenuAction::ArchiveBot | MenuAction::TrashBot | MenuAction::UnarchiveBot
             ),
-            MenuSubject::BotConversation { bot, .. } => {
+            MenuSubject::BotConversation { bot, tab, .. } => {
                 action == MenuAction::TrashBotConversation
                     && self
-                        .bot_view(*bot)
+                        .asking_bot_tab(*tab, *bot)
                         .is_some_and(|view| !view.lifecycle_busy())
             }
             MenuSubject::AgentSchedules { schedules } => {
@@ -4628,8 +4633,11 @@ impl MainView {
                     | MenuAction::OpenDocumentInNewWindow
             ),
             // Emptying nothing is not an action, it is a no-op wearing a label.
+            // Bot rows count here too: emptying a Trash that holds only
+            // them says they cannot be deleted for good yet (S14).
             MenuSubject::Trash => {
-                matches!(action, MenuAction::EmptyTrash) && self.explore.trash_count() > 0
+                matches!(action, MenuAction::EmptyTrash)
+                    && (self.explore.trash_count() > 0 || self.trashed_bot_rows() > 0)
             }
             // *Invite people* waits for an invite flow (E60); the rest act.
             // The help popover's rows are always there. The card's Download
@@ -4854,9 +4862,9 @@ impl MainView {
                 MenuAction::DeleteRun => self.queue_run_trash(runs),
                 _ => false,
             },
-            MenuSubject::Bot { bot } => self.choose_bot_lifecycle(bot, action),
-            MenuSubject::BotConversation { bot, chat } => match action {
-                MenuAction::TrashBotConversation => self.ask_trash_bot_conversation(bot, chat),
+            MenuSubject::Bot { bot, tab } => self.choose_bot_lifecycle(bot, tab, action),
+            MenuSubject::BotConversation { bot, chat, tab } => match action {
+                MenuAction::TrashBotConversation => self.ask_trash_bot_conversation(bot, tab, chat),
                 _ => false,
             },
             MenuSubject::AiChat { chats } => match action {
@@ -6040,9 +6048,8 @@ impl MainView {
         // and the Trash read what holds it now.
         for done in self.explore.bots_mut().take_finished() {
             self.bot_trash.owe_refresh();
-            if let Some(view) = self.bot_view_mut(done.bot) {
-                view.lifecycle_moved_elsewhere();
-            }
+            // Every tab of the Bot, not only the one in front.
+            self.bot_moved_elsewhere(done.bot);
             changed = true;
         }
         // **The roster asks; this window opens** — the Bot's tab, or the one

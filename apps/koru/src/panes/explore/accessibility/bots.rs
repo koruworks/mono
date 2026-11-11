@@ -40,9 +40,9 @@ use crate::bots::BotsRoster;
 use crate::bots::roster::{
     ABANDONED_LINES, ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART,
     ARCHIVED_TOGGLE, CREATE, CREATION_ABANDON_PART, CREATION_PART, CREATION_RETRY_PART, EMPTY,
-    LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, UNARCHIVE_PART, UNFINISHED_HEADING, UNFINISHED_NOTICE,
-    activity_key, archived_key, creation_abandon_key, creation_key, creation_retry_key, row_key,
-    unarchive_key,
+    LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, UNARCHIVE_PART, UNFINISHED_HEADING, UNFINISHED_MORE,
+    UNFINISHED_NOTICE, activity_key, archived_key, creation_abandon_key, creation_key,
+    creation_retry_key, row_key, unarchive_key,
 };
 use crate::panes::Outcome;
 
@@ -62,6 +62,7 @@ const UNARCHIVE: ControlPart = ControlPart::new(UNARCHIVE_PART);
 const CREATE_PART: ControlPart = ControlPart::new("create");
 const UNFINISHED_PART: ControlPart = ControlPart::new("unfinished");
 const UNFINISHED_NOTICE_PART: ControlPart = ControlPart::new("unfinished-notice");
+const UNFINISHED_MORE_PART: ControlPart = ControlPart::new("unfinished-more");
 const ABANDONED_PARTS: [ControlPart; 3] = [
     ControlPart::new("abandoned"),
     ControlPart::new("abandoned-more"),
@@ -294,6 +295,16 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 .with_size_of_set(total)
                 .with_children(items),
             );
+            if let Some(rect) = rect_of(UNFINISHED_MORE) {
+                out.push(
+                    SemanticNode::new(
+                        Occurrence::surface(cx.window, cx.view, BOTS, UNFINISHED_MORE_PART),
+                        Role::Label,
+                    )
+                    .with_label(t(cx.lang, Key::BotsUnfinishedMore))
+                    .with_bounds(rect),
+                );
+            }
         }
         // **The Archived filter** (S14): its toggle, then — open — a list
         // named *Archived* whose items open the Bot and carry *Unarchive*.
@@ -416,7 +427,8 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
             .bool(roster.creation_acting(creation.request_id));
     }
     rev.bool(roster.abandoned().is_some())
-        .bool(roster.creation_refused().is_some());
+        .bool(roster.creation_refused().is_some())
+        .bool(roster.creations_more());
 }
 
 /// **Do what a client asked, through the gesture it names.** `None` when the
