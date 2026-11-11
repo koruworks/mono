@@ -224,10 +224,17 @@ impl Lifecycle {
                 self.trash = held(BotLifecycleKind::Trash).or(self.trash);
             }
         }
-        if self.op.is_none()
-            && let Some(open) = &bot.open_operation
+        // **The owner's open operation is the one shown.** One this tab
+        // has on its way stands until it is answered; otherwise an
+        // operation the owner no longer names — finished, cancelled or
+        // continued from another tab — is dropped, and the one it names is
+        // followed in its place.
+        let named = bot.open_operation.as_ref();
+        let ours_in_flight = self.op.as_ref().is_some_and(|op| op.in_flight);
+        if !ours_in_flight
+            && named.map(|open| open.request_id) != self.op.as_ref().map(|op| op.request)
         {
-            self.op = Some(adopted(open, bot));
+            self.op = named.map(|open| adopted(open, bot, Instant::now()));
         }
     }
 
@@ -606,21 +613,22 @@ impl Lifecycle {
 }
 
 /// The operation a Bot's read names, as the tab follows it.
-fn adopted(open: &BotOpenLifecycle, bot: &Bot) -> Op {
+///
+/// **A moving one is read on the bounded clock from now**, as one this tab
+/// sent is, so a tab that learned it after a restart or from another tab
+/// sees it finish; a parked one waits for the person.
+fn adopted(open: &BotOpenLifecycle, bot: &Bot, now: Instant) -> Op {
+    let parked = open.stage == BotLifecycleStage::Incomplete;
     Op {
         request: open.request_id,
         kind: open.kind,
         chat: open.chat_id,
         reverses: None,
-        stage: if open.stage == BotLifecycleStage::Incomplete {
-            Stage::Parked
-        } else {
-            Stage::Moving
-        },
+        stage: if parked { Stage::Parked } else { Stage::Moving },
         command: None,
         in_flight: false,
         answered: true,
-        next_read: None,
+        next_read: (!parked).then_some(now),
         backoff: READ_FIRST,
         name: bot.config.name.clone(),
         home: Some(bot.home_workspace),

@@ -443,3 +443,68 @@ fn an_archive_just_finished_is_undone_before_the_read_names_it() {
     model.know(&read);
     assert_eq!(model.archive_source(), Some(named), "the owner's word");
 }
+
+/// **An operation learned from the Bot's read while it moves is read on the
+/// bounded clock** — after a restart, or one another tab started — so the
+/// tab sees it finish instead of saying *Finishing…* for ever.
+#[test]
+fn an_adopted_moving_operation_is_read_on_the_bounded_clock() {
+    let (mut model, mut bot) = fixture();
+    let request = BotRequestId::mint();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: request,
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage: BotLifecycleStage::Settling,
+        refusal: None,
+    });
+    model.know(&bot);
+    assert!(model.busy());
+    let now = Instant::now() + Duration::from_millis(1);
+    assert!(model.deadline(now).is_some(), "a wake is owed");
+    let (asked, command) = sent(model.read(now).expect("read now"));
+    assert_eq!(asked, request);
+    assert_eq!(
+        command,
+        BotCommand::ReadLifecycleOperation {
+            request_id: request,
+            bot_id: bot.id
+        }
+    );
+}
+
+/// **An operation the owner no longer names is dropped**: another tab
+/// cancelled or continued it, so this tab neither shows it parked nor keeps
+/// the ⋯ hidden; the one the owner names instead is followed.
+#[test]
+fn an_operation_the_owner_no_longer_names_is_dropped() {
+    let (mut model, mut bot) = fixture();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Trash,
+        chat_id: None,
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::WorkRunning),
+    });
+    model.know(&bot);
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    bot.open_operation = None;
+    model.moved_elsewhere();
+    model.know(&bot);
+    assert!(model.op().is_none(), "dropped");
+    assert!(!model.busy(), "the ⋯ comes back");
+    let other = BotRequestId::mint();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: other,
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage: BotLifecycleStage::Settling,
+        refusal: None,
+    });
+    model.know(&bot);
+    assert_eq!(
+        model.op().map(|op| op.request),
+        Some(other),
+        "the one named"
+    );
+}
