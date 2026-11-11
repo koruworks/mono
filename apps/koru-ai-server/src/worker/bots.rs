@@ -256,7 +256,9 @@ fn execute_bot_command(
         | BotCommand::ListActivity { .. }
         | BotCommand::CreateBotWithRole { .. }
         | BotCommand::ReadBotCreation { .. }
-        | BotCommand::ListBotCreations { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ListBotCreations { .. }
+        | BotCommand::RetryBotCreation { .. }
+        | BotCommand::AbandonBotCreation { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

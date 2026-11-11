@@ -220,19 +220,26 @@ fn a_lost_store_reply_replays_the_same_candidate_key_and_bytes() {
     assert_eq!(parked.stage, BotCreationStage::Incomplete);
     assert_eq!(parked.reason, Some(BotCreationReason::StoreUnavailable));
     assert_eq!(parked.phase, BotCreationPhase::RolePending);
-    // The page exists, the Bot does not; its existence is not yet proven.
+    // The page exists, the Bot does not: the person can find the page,
+    // marked as not yet confirmed.
     assert_eq!(owner.stored().len(), 1);
-    assert_eq!(parked.role_page, None);
+    let candidate = *owner.stored().keys().next().unwrap();
+    assert_eq!(parked.role_page.map(|page| page.document), Some(candidate));
+    assert!(parked.role_page_unconfirmed);
+    assert!(parked.retryable);
     assert_eq!(parked.bot, None);
-    // Retry replays exactly the recorded request.
+    // Retry asks the same recorded request again, and the Store answers
+    // from the origin it recorded: nothing is created a second time.
     let resumed = h.creation(command).unwrap();
     assert_eq!(resumed.stage, BotCreationStage::Pending);
     let done = h.settle(request);
     assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
+    assert!(!done.role_page_unconfirmed);
     let seeds = owner.store.lock().unwrap().seeds.clone();
     assert_eq!(seeds.len(), 2);
     assert_eq!(seeds[0], seeds[1], "one candidate, byte-identical seed");
     assert_eq!(owner.stored().len(), 1);
+    assert_eq!(owner.created(), 1);
     assert_eq!(done.bot.unwrap().config.role.document, seeds[0].0);
     h.stop();
 }
@@ -446,6 +453,7 @@ fn a_retry_is_checked_for_authority_before_its_input_is_compared() {
         },
         workspace: owner.workspace,
         profile: owner.profile,
+        moved: Mutex::new(None),
         allowed: AtomicBool::new(true),
         pages: Mutex::new(BTreeSet::new()),
         store: Mutex::new(StoreState::default()),
@@ -535,7 +543,9 @@ fn a_restart_after_a_lost_mkdir_and_a_lost_store_reply_resumes_without_a_second_
     repo.advance_bot_creation(scope, request, &ready, &role, BotReceiptStage::Prepared, 3)
         .unwrap();
     fs.mkdirs(&work(bot_id));
-    owner.create_role_page(&role_seed(&role).unwrap()).unwrap();
+    owner
+        .create_role_page(&role_seed(&role, owner.profile).unwrap())
+        .unwrap();
     assert_eq!(owner.stored().len(), 1);
     let h = start(repo, &owner, &fs);
     let done = h.settle(request);
@@ -843,23 +853,276 @@ fn a_candidate_with_another_origin_is_a_conflict_and_never_a_second_candidate() 
             hash: "f".repeat(64),
             initial: vec![1],
             current: vec![1],
-            live: true,
+            placement: BotRolePlacement::Live,
         },
     );
     let h = start(repo, &owner, &fs);
     let parked = h.settle(request);
     assert_eq!(parked.stage, BotCreationStage::Incomplete);
     assert_eq!(parked.reason, Some(BotCreationReason::RoleConflict));
+    // The identity holds another origin's page: none of ours can exist.
     assert_eq!(parked.role_page, None);
-    // Retry asks for the same candidate again; it never mints another.
-    h.creation(command).unwrap();
-    assert_eq!(
-        h.settle(request).reason,
-        Some(BotCreationReason::RoleConflict)
-    );
+    assert!(!parked.retryable, "terminal: only Abandon ends it");
+    // Retry only reports it; it never mints another candidate.
+    let again = h.creation(command).unwrap();
+    assert_eq!(again.reason, Some(BotCreationReason::RoleConflict));
     let seeds = owner.store.lock().unwrap().seeds.clone();
-    assert_eq!(seeds.len(), 2);
+    assert_eq!(seeds.len(), 1);
     assert!(seeds.iter().all(|(asked, _)| *asked == candidate));
     assert_eq!(owner.stored().len(), 1);
+    h.stop();
+}
+
+impl Harness {
+    fn retry(&self, request_id: BotRequestId) -> ApiResult<BotCreation> {
+        self.creation(BotCommand::RetryBotCreation { request_id })
+    }
+    fn abandon(&self, request_id: BotRequestId) -> ApiResult<BotCreation> {
+        self.creation(BotCommand::AbandonBotCreation { request_id })
+    }
+}
+
+/// A creation whose Store reply was lost: the page exists, unconfirmed.
+fn lost_reply(h: &Harness, owner: &Arc<FakeOwner>) -> (BotCommand, BotRequestId, DocumentId) {
+    owner.fail_store(Fail::After);
+    let command = create(owner, authored(), BotFolderChoice::Managed {});
+    let (request, _) = request_of(&command);
+    h.creation(command.clone()).unwrap();
+    let parked = h.settle(request);
+    assert_eq!(parked.reason, Some(BotCreationReason::StoreUnavailable));
+    let page = parked.role_page.expect("the page that may exist is shown");
+    assert!(parked.role_page_unconfirmed);
+    (command, request, page.document)
+}
+
+#[test]
+fn a_page_deleted_forever_is_never_brought_back_and_the_bot_never_attaches_to_it() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let (command, request, page) = lost_reply(&h, &owner);
+    // The person sees an unexplained page and deletes it forever: the
+    // manifest entry goes, the Store keeps its row and origin.
+    owner.place(page, BotRolePlacement::Missing);
+    let replayed = h.creation(command.clone()).unwrap();
+    assert_eq!(replayed.stage, BotCreationStage::Pending);
+    let parked = h.settle(request);
+    assert_eq!(parked.stage, BotCreationStage::Incomplete, "{parked:?}");
+    assert_eq!(parked.reason, Some(BotCreationReason::RoleMissing));
+    assert!(!parked.retryable, "only Abandon ends it");
+    assert!(parked.role_page_unconfirmed);
+    assert_eq!(parked.bot, None);
+    // Nothing was created again, and Retry does not try.
+    assert_eq!(owner.created(), 1);
+    let calls = owner.store_calls();
+    assert_eq!(
+        h.retry(request).unwrap().reason,
+        Some(BotCreationReason::RoleMissing)
+    );
+    assert_eq!(owner.store_calls(), calls);
+    assert_eq!(
+        owner.stored()[&page].placement,
+        BotRolePlacement::Missing,
+        "never registered again"
+    );
+    // A restart does not resume it either.
+    let repo = h.stop();
+    let h = start(repo, &owner, &fs);
+    assert_eq!(
+        h.read(request).unwrap().reason,
+        Some(BotCreationReason::RoleMissing)
+    );
+    assert_eq!(owner.store_calls(), calls);
+    h.stop();
+}
+
+#[test]
+fn a_page_left_in_trash_parks_until_it_is_restored_and_then_retry_finishes() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let (_, request, page) = lost_reply(&h, &owner);
+    owner.place(page, BotRolePlacement::Trashed);
+    // Retry by request alone: the client no longer has the draft.
+    assert_eq!(h.retry(request).unwrap().stage, BotCreationStage::Pending);
+    let parked = h.settle(request);
+    assert_eq!(parked.reason, Some(BotCreationReason::RoleUnavailable));
+    assert!(parked.retryable);
+    // Restored from Trash, the same Retry finishes it, on the same page.
+    owner.place(page, BotRolePlacement::Live);
+    h.retry(request).unwrap();
+    let done = h.settle(request);
+    assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
+    assert_eq!(done.bot.unwrap().config.role.document, page);
+    assert_eq!(owner.created(), 1);
+    h.stop();
+}
+
+#[test]
+fn retry_by_request_resumes_from_the_recorded_intent_under_fresh_authority() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    owner.fail_store(Fail::Before);
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, bot_id) = request_of(&command);
+    h.creation(command).unwrap();
+    assert_eq!(h.settle(request).stage, BotCreationStage::Incomplete);
+    // Without current authority Retry discloses nothing and does nothing.
+    owner.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(h.retry(request).unwrap_err().code, "wrong_owner");
+    owner.allowed.store(true, Ordering::SeqCst);
+    assert_eq!(h.retry(BotRequestId::mint()).unwrap_err().code, "not_found");
+    assert!(owner.stored().is_empty());
+    h.retry(request).unwrap();
+    let done = h.settle(request);
+    assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
+    assert_eq!(done.bot_id, bot_id);
+    assert_eq!(
+        done.folder_binding.as_deref(),
+        Some(work(bot_id).to_str().unwrap())
+    );
+    // Retry of a completed creation only reports it.
+    assert_eq!(h.retry(request).unwrap().stage, BotCreationStage::Completed);
+    assert_eq!(owner.created(), 1);
+    h.stop();
+}
+
+#[test]
+fn abandon_ends_a_creation_names_what_it_leaves_and_keeps_the_bot_id() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let (_, request, page) = lost_reply(&h, &owner);
+    let bot_id = h.read(request).unwrap().bot_id;
+    let before = fs.present();
+    let ended = h.abandon(request).unwrap();
+    assert_eq!(ended.stage, BotCreationStage::Abandoned);
+    assert!(!ended.retryable);
+    assert_eq!(ended.bot, None);
+    // It names the page and folder it may have made; it removes neither.
+    let left = ended.left_behind.clone().expect("what it leaves behind");
+    assert_eq!(left.role_page.map(|p| p.document), Some(page));
+    assert_eq!(left.folder.as_deref(), Some(work(bot_id).to_str().unwrap()));
+    assert_eq!(fs.present(), before);
+    assert_eq!(owner.stored()[&page].placement, BotRolePlacement::Live);
+    // Abandoning again answers the same; Retry only reports it.
+    assert_eq!(h.abandon(request).unwrap(), ended);
+    assert_eq!(h.retry(request).unwrap().stage, BotCreationStage::Abandoned);
+    // It is no longer listed as unfinished, and its BotId stays reserved.
+    assert_eq!(h.list(owner.workspace, None, 10).unwrap().creations, vec![]);
+    let reuse = BotCommand::CreateBotWithRole {
+        request_id: BotRequestId::mint(),
+        bot_id,
+        home_workspace: owner.workspace,
+        role: authored(),
+        folder: BotFolderChoice::Managed {},
+        config: config(),
+        access: BotAccess::Default,
+        selected_pages: vec![],
+    };
+    assert_eq!(h.creation(reuse).unwrap_err().code, "request_conflict");
+    // Its retained Role text is gone; across a restart it stays ended.
+    let repo = h.stop();
+    let receipt = repo
+        .bot_creation(owner.owner.user_scope, request)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        receipt.record.role,
+        BotCreationRole::Authored { seed: None, .. }
+    ));
+    let h = start(repo, &owner, &fs);
+    assert_eq!(h.read(request).unwrap().stage, BotCreationStage::Abandoned);
+    assert_eq!(owner.created(), 1);
+    h.stop();
+}
+
+#[test]
+fn a_completed_creation_cannot_be_abandoned_and_a_shared_role_is_never_left_behind() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, _) = request_of(&command);
+    h.creation(command).unwrap();
+    assert_eq!(h.settle(request).stage, BotCreationStage::Completed);
+    assert_eq!(h.abandon(request).unwrap_err().code, "request_conflict");
+    assert_eq!(h.read(request).unwrap().stage, BotCreationStage::Completed);
+    // An existing Role page that stops being readable before the Bot is
+    // made: abandoning names the managed folder, never the shared page.
+    let role = owner.existing_page();
+    let (entered, release) = fs.hold_create("work");
+    let shared = create(
+        &owner,
+        BotRoleInput::Existing { page: role.clone() },
+        BotFolderChoice::Managed {},
+    );
+    let (shared_request, bot_id) = request_of(&shared);
+    h.creation(shared).unwrap();
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    owner.pages.lock().unwrap().remove(&role.document);
+    release.send(()).unwrap();
+    let parked = h.settle(shared_request);
+    assert_eq!(parked.reason, Some(BotCreationReason::RoleUnavailable));
+    assert_eq!(parked.role_page, Some(role));
+    let ended = h.abandon(shared_request).unwrap();
+    assert_eq!(
+        ended.left_behind,
+        Some(BotCreationLeftovers {
+            role_page: None,
+            folder: Some(work(bot_id).to_str().unwrap().to_owned()),
+        })
+    );
+    h.stop();
+}
+
+#[test]
+fn a_workspace_moved_to_another_profile_midway_is_followed_not_parked_for_good() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let (entered, release) = fs.hold_create("work");
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, _) = request_of(&command);
+    h.creation(command).unwrap();
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    // The person moves the workspace to another Profile meanwhile.
+    let moved = ProfileId::new();
+    *owner.moved.lock().unwrap() = Some(moved);
+    release.send(()).unwrap();
+    let done = h.settle(request);
+    assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
+    let repo = h.stop();
+    let bot = done.bot.unwrap();
+    assert_eq!(
+        repo.chat_with_access(
+            bot.main_chat,
+            &ChatReadAccess::authorized(vec![bot.main_chat])
+        )
+        .unwrap()
+        .unwrap()
+        .profile_id,
+        Some(moved)
+    );
+}
+
+#[test]
+fn a_definite_store_refusal_is_terminal_not_store_unavailable() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    owner.store.lock().unwrap().refuse = true;
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, _) = request_of(&command);
+    h.creation(command).unwrap();
+    let parked = h.settle(request);
+    assert_eq!(parked.reason, Some(BotCreationReason::StoreRefused));
+    assert!(!parked.retryable);
+    assert!(owner.stored().is_empty());
+    assert_eq!(
+        h.abandon(request).unwrap().stage,
+        BotCreationStage::Abandoned
+    );
     h.stop();
 }

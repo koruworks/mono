@@ -241,7 +241,9 @@ struct StoredPage {
     initial: Vec<u8>,
     /// The page's current body: a human may change it.
     current: Vec<u8>,
-    live: bool,
+    /// Where it stands in its workspace: live, in Trash, or removed from the
+    /// manifest ("delete forever") while the Store keeps its row and origin.
+    placement: BotRolePlacement,
 }
 
 #[derive(Default)]
@@ -250,11 +252,15 @@ struct StoreState {
     /// The Store's own seven-day receipts, by (scope, key).
     receipts: BTreeMap<(String, String), DocumentId>,
     calls: usize,
+    /// Pages the Store actually created (a known candidate never is again).
+    created: usize,
     /// The exact bytes of every request, in order.
     seeds: Vec<(DocumentId, Vec<u8>)>,
     /// Answers that came from the retained origin after receipt expiry.
     replayed_from_origin: usize,
     fail: Option<Fail>,
+    /// The next call is refused definitely, before anything is written.
+    refuse: bool,
     gate: Option<(SyncSender<()>, Receiver<()>)>,
 }
 
@@ -263,6 +269,8 @@ struct FakeOwner {
     owner: BotOwner,
     workspace: WorkspaceId,
     profile: ProfileId,
+    /// The Profile the workspace was moved to, if it was.
+    moved: Mutex<Option<ProfileId>>,
     allowed: AtomicBool,
     /// Existing ordinary pages of the home workspace.
     pages: Mutex<BTreeSet<DocumentId>>,
@@ -281,6 +289,7 @@ impl FakeOwner {
             },
             workspace: WorkspaceId::new(),
             profile: ProfileId::new(),
+            moved: Mutex::new(None),
             allowed: AtomicBool::new(true),
             pages: Mutex::new(BTreeSet::new()),
             store: Mutex::new(StoreState::default()),
@@ -315,6 +324,19 @@ impl FakeOwner {
     fn store_calls(&self) -> usize {
         self.store.lock().unwrap().calls
     }
+    fn created(&self) -> usize {
+        self.store.lock().unwrap().created
+    }
+    /// What the person did to the page: Trash, restore, or delete forever.
+    fn place(&self, page: DocumentId, placement: BotRolePlacement) {
+        self.store
+            .lock()
+            .unwrap()
+            .pages
+            .get_mut(&page)
+            .expect("a stored page")
+            .placement = placement;
+    }
 }
 
 impl BotAuthority for FakeOwner {
@@ -323,7 +345,7 @@ impl BotAuthority for FakeOwner {
     }
     fn workspace(&self, id: WorkspaceId) -> Result<ProfileId, BotError> {
         if self.allowed.load(Ordering::SeqCst) && id == self.workspace {
-            Ok(self.profile)
+            Ok(self.moved.lock().unwrap().unwrap_or(self.profile))
         } else {
             Err(BotError::Forbidden)
         }
@@ -336,7 +358,9 @@ impl BotAuthority for FakeOwner {
             .unwrap()
             .pages
             .get(&page.document)
-            .is_some_and(|p| p.live && p.workspace == page.workspace);
+            .is_some_and(|p| {
+                p.placement == BotRolePlacement::Live && p.workspace == page.workspace
+            });
         if live || self.pages.lock().unwrap().contains(&page.document) {
             Ok(())
         } else {
@@ -364,9 +388,10 @@ impl BotAuthority for FakeOwner {
                 .collect(),
         })
     }
-    /// The strict origin as the Store implements it: an existing candidate
-    /// replays only its own origin; after the seven-day receipt expires the
-    /// retained origin still lets the original first update win.
+    /// The adapter's contract over the Store's strict origin: a candidate
+    /// with a recorded origin is never created again, and answers with that
+    /// origin and where the page stands, whatever the seven-day receipt
+    /// says; a candidate with none is created once.
     fn create_role_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         let gate = self.store.lock().unwrap().gate.take();
         if let Some((entered, release)) = gate {
@@ -382,6 +407,9 @@ impl BotAuthority for FakeOwner {
         let fail = store.fail.take();
         if fail == Some(Fail::Before) {
             return Err(BotError::Unavailable);
+        }
+        if std::mem::take(&mut store.refuse) {
+            return Err(BotError::Invalid);
         }
         let receipt = (BOT_ROLE_SCOPE.to_owned(), seed.request_key.clone());
         match store.pages.get(&seed.candidate).cloned() {
@@ -411,9 +439,10 @@ impl BotAuthority for FakeOwner {
                         hash: seed.request_hash.clone(),
                         initial: seed.seed.clone(),
                         current: seed.seed.clone(),
-                        live: true,
+                        placement: BotRolePlacement::Live,
                     },
                 );
+                store.created += 1;
                 store.receipts.insert(receipt, seed.candidate);
             }
         }
@@ -426,7 +455,7 @@ impl BotAuthority for FakeOwner {
             request_key: page.key.clone(),
             request_hash: page.hash.clone(),
             initial_update: page.initial.clone(),
-            page_live: page.live,
+            placement: page.placement,
         })
     }
 }

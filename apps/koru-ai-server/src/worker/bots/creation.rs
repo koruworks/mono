@@ -272,8 +272,9 @@ fn fingerprint(request: &BotCommand) -> ApiResult<String> {
     ))
 }
 
-/// The Store request of a recorded authored Role, exactly as T1 kept it.
-fn role_seed(record: &BotCreationRecord) -> Option<BotRoleSeed> {
+/// The Store request of a recorded authored Role, exactly as T1 kept it,
+/// placed under the workspace's current Profile.
+fn role_seed(record: &BotCreationRecord, profile: ProfileId) -> Option<BotRoleSeed> {
     let BotCreationRole::Authored {
         store_request,
         candidate,
@@ -291,7 +292,7 @@ fn role_seed(record: &BotCreationRecord) -> Option<BotRoleSeed> {
             device: record.owner_device,
         },
         workspace: record.home_workspace,
-        profile: record.profile,
+        profile,
         title: title.clone(),
         candidate: *candidate,
         request_key: store_request.to_string(),
@@ -597,6 +598,7 @@ impl CreationPreparationJob {
                 folder_binding: None,
                 role_page: None,
                 created_at_ms: Timestamp::now().millis(),
+                abandoned: false,
             };
             // Oversize input refuses here, before any effect, with the most
             // evidence any later step can record already counted.
@@ -664,16 +666,20 @@ impl CreationJob {
             pages.push(record.role_target());
             pages.extend(record.selected_pages.iter().cloned());
         }
-        // The owner's authority is read again before every effect.
+        // The owner's authority is read again before every effect. The
+        // workspace may have moved to another Profile since the intent was
+        // accepted: the creation follows it, as an existing Bot does, rather
+        // than parking for good on the Profile `record.profile` names.
         let Ok(checked) = self.authority.inspect(&[record.home_workspace], &pages) else {
             return CreationOutcome::Owner;
         };
-        if checked.owner.user_scope != record.user_scope
-            || checked.owner.device != record.owner_device
-            || checked.workspace(record.home_workspace) != Ok(record.profile)
-        {
+        let (true, Ok(profile)) = (
+            checked.owner.user_scope == record.user_scope
+                && checked.owner.device == record.owner_device,
+            checked.workspace(record.home_workspace),
+        ) else {
             return CreationOutcome::Owner;
-        }
+        };
         match self.step {
             CreationStep::Folder { first } => CreationOutcome::Folder(match &record.folder {
                 BotCreationFolder::Managed { root, .. } => {
@@ -683,7 +689,7 @@ impl CreationJob {
                     check_selected(self.folders.as_ref(), &self.reserved, path)
                 }
             }),
-            CreationStep::Role => CreationOutcome::Role(match role_seed(record) {
+            CreationStep::Role => CreationOutcome::Role(match role_seed(record, profile) {
                 Some(seed) if blake3_hex(&seed.seed) == seed.request_hash => {
                     self.authority.create_role_page(&seed)
                 }
@@ -699,18 +705,30 @@ impl CreationJob {
                 {
                     Err(BotCreationReason::PageUnavailable)
                 } else {
-                    Ok(record.profile)
+                    Ok(profile)
                 })
             }
         }
     }
 }
 
-/// A creation read, in two owner checks off the writer: first who asks
-/// (before any receipt is read), then the creation's home workspace.
+/// What a request-only creation command does once its owner is proved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::worker) enum CreationAction {
+    Read,
+    /// Resume from the recorded intent ([`BotCommand::RetryBotCreation`]).
+    Retry,
+    /// End it ([`BotCommand::AbandonBotCreation`]).
+    Abandon,
+}
+
+/// A creation read, Retry or Abandon by request, in two owner checks off
+/// the writer: first who asks (before any receipt is read), then the
+/// creation's home workspace. Only then does the writer act.
 pub(in crate::worker) struct CreationReadJob {
     context: CommandContext,
     request_id: BotRequestId,
+    action: CreationAction,
     reply: SyncSender<ApiResult<BotResponse>>,
     authority: Arc<dyn BotAuthority>,
     found: Option<(BotOwner, BotCreation)>,
@@ -765,10 +783,17 @@ impl WorkerState {
                     discover_models: self.bot_creations.discover_models,
                 })
             }
-            BotCommand::ReadBotCreation { request_id } => {
+            BotCommand::ReadBotCreation { request_id }
+            | BotCommand::RetryBotCreation { request_id }
+            | BotCommand::AbandonBotCreation { request_id } => {
                 ProviderAdminJob::BotCreationRead(CreationReadJob {
                     context,
                     request_id: *request_id,
+                    action: match &request {
+                        BotCommand::RetryBotCreation { .. } => CreationAction::Retry,
+                        BotCommand::AbandonBotCreation { .. } => CreationAction::Abandon,
+                        _ => CreationAction::Read,
+                    },
                     reply,
                     authority,
                     found: None,
@@ -891,7 +916,11 @@ impl WorkerState {
     fn retry_creation(&mut self, receipt: BotCreationReceipt) -> ApiResult<BotCreationReceipt> {
         let key = (receipt.record.user_scope, receipt.request);
         let busy = self.bot_creations.open.get(&key).is_some_and(|t| t.busy);
-        if !receipt.open() || receipt.record.reason.is_none() || busy {
+        let terminal = receipt
+            .record
+            .reason
+            .is_some_and(|reason| !reason.retryable());
+        if !receipt.open() || receipt.record.reason.is_none() || busy || terminal {
             if receipt.open() {
                 self.bot_creations.track(&receipt, true);
                 // A stalled one is tried again now, not after its backoff.
@@ -916,6 +945,33 @@ impl WorkerState {
             .map_err(bot_failure)?;
         self.bot_creations.track(&receipt, true);
         Ok(receipt)
+    }
+
+    /// Abandon: end an unfinished creation as it stands. Its seed is
+    /// dropped, its BotId stays reserved, nothing is removed, and its view
+    /// names what it may have left. A step in flight finds the receipt moved
+    /// and its answer is dropped; the effect it may still make was marked
+    /// durable before it ran, so it is among what is named.
+    fn abandon_creation(&mut self, receipt: BotCreationReceipt) -> ApiResult<BotCreationReceipt> {
+        if !receipt.open() {
+            return if receipt.record.abandoned() {
+                Ok(receipt)
+            } else {
+                Err(failure(
+                    "request_conflict",
+                    "A finished Bot creation cannot be abandoned.",
+                    false,
+                ))
+            };
+        }
+        let key = (receipt.record.user_scope, receipt.request);
+        let ended = self
+            .repository
+            .abandon_bot_creation(key.0, key.1, &receipt.record, Timestamp::now().millis())
+            .map_err(bot_failure)?;
+        tracing::info!(target: "koru_ai::bots", request = %key.1, phase = ?receipt.record.phase, "Bot creation abandoned");
+        self.bot_creations.track(&ended, false);
+        Ok(ended)
     }
 
     fn creation_view(&self, receipt: &BotCreationReceipt) -> BotCreation {
@@ -1236,16 +1292,28 @@ impl WorkerState {
                 }
             }
             CreationOutcome::Role(Ok(proof)) => {
-                let seed = role_seed(&record);
+                // The profile does not take part in the match.
+                let seed = role_seed(&record, record.profile);
                 if !seed.as_ref().is_some_and(|seed| proof.matches(seed)) {
                     self.park_creation(&receipt, BotCreationReason::RoleConflict);
-                } else if !proof.page_live {
-                    self.park_creation(&receipt, BotCreationReason::RoleUnavailable);
                 } else {
-                    let mut next = record.clone();
-                    next.phase = BotCreationPhase::RoleVerified;
-                    next.role_page = Some(record.role_target());
-                    self.advance_creation(&receipt, &next, BotReceiptStage::Accepted);
+                    match proof.placement {
+                        BotRolePlacement::Live => {
+                            let mut next = record.clone();
+                            next.phase = BotCreationPhase::RoleVerified;
+                            next.role_page = Some(record.role_target());
+                            self.advance_creation(&receipt, &next, BotReceiptStage::Accepted);
+                        }
+                        // Restored from Trash, Retry finishes it.
+                        BotRolePlacement::Trashed => {
+                            self.park_creation(&receipt, BotCreationReason::RoleUnavailable)
+                        }
+                        // Deleted for good (or never registered): it is not
+                        // brought back, so only Abandon ends this.
+                        BotRolePlacement::Missing => {
+                            self.park_creation(&receipt, BotCreationReason::RoleMissing)
+                        }
+                    }
                 }
             }
             CreationOutcome::Role(Err(error)) => self.park_creation(
@@ -1253,6 +1321,7 @@ impl WorkerState {
                 match error {
                     BotError::Conflict => BotCreationReason::RoleConflict,
                     BotError::Forbidden | BotError::NotFound => BotCreationReason::OwnerUnavailable,
+                    BotError::Invalid => BotCreationReason::StoreRefused,
                     _ => BotCreationReason::StoreUnavailable,
                 },
             ),
@@ -1292,7 +1361,25 @@ impl WorkerState {
                 checked
                     .workspace(creation.home_workspace)
                     .map_err(bot_failure)?;
-                return Ok(Some(BotResponse::Creation { creation }));
+                if job.action == CreationAction::Read {
+                    return Ok(Some(BotResponse::Creation { creation }));
+                }
+                // Authority is proved; act on the receipt as it is now.
+                let receipt = match self
+                    .repository
+                    .bot_creation(owner.user_scope, job.request_id)
+                {
+                    Ok(Some(receipt)) if receipt.record.owner_device == owner.device => receipt,
+                    Ok(_) | Err(BotError::Conflict) => return Err(not_found()),
+                    Err(error) => return Err(bot_failure(error)),
+                };
+                let receipt = match job.action {
+                    CreationAction::Retry => self.retry_creation(receipt)?,
+                    _ => self.abandon_creation(receipt)?,
+                };
+                return Ok(Some(BotResponse::Creation {
+                    creation: self.creation_view(&receipt),
+                }));
             }
             let owner = checked.owner;
             let receipt = match self
@@ -1330,7 +1417,10 @@ impl WorkerState {
                 cursor,
                 limit,
             } => Some(self.list_bot_creations(context, *workspace, cursor.as_ref(), *limit)),
-            BotCommand::CreateBotWithRole { .. } | BotCommand::ReadBotCreation { .. } => Some(
+            BotCommand::CreateBotWithRole { .. }
+            | BotCommand::ReadBotCreation { .. }
+            | BotCommand::RetryBotCreation { .. }
+            | BotCommand::AbandonBotCreation { .. } => Some(
                 authorize(context, AiScope::ManageBots)
                     .and(Err(bot_failure(BotError::Unavailable))),
             ),

@@ -403,6 +403,7 @@ fn role_pending(repository: &mut Repository, authority: &Authority, bot: &Bot) -
         folder_binding: None,
         role_page: None,
         created_at_ms: 1,
+        abandoned: false,
     };
     let request = BotRequestId::mint();
     let scope = record.user_scope;

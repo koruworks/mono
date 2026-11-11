@@ -323,6 +323,19 @@ pub enum BotCommand {
         cursor: Option<BotCreationCursor>,
         limit: u16,
     },
+    /// Resume an incomplete creation from its recorded intent, under fresh
+    /// authority, without the original request. One that is moving,
+    /// finished, or parked for a terminal reason only reports itself.
+    RetryBotCreation {
+        request_id: BotRequestId,
+    },
+    /// End an unfinished creation: no Bot is made, the retained Role text is
+    /// dropped, the BotId stays reserved, and nothing is deleted; the answer
+    /// names what it leaves behind. A completed creation is
+    /// `request_conflict`.
+    AbandonBotCreation {
+        request_id: BotRequestId,
+    },
 }
 
 impl BotCommand {

@@ -60,6 +60,7 @@ pub(crate) fn authored(phase: BotCreationPhase) -> BotCreationRecord {
             document: candidate,
         }),
         created_at_ms: 7,
+        abandoned: false,
     }
 }
 
@@ -129,6 +130,27 @@ fn the_wire_commands_are_closed_and_strict() {
         serde_json::to_value(&list).unwrap()["command"],
         "list_bot_creations"
     );
+    // Retry and Abandon name the request alone, and nothing else.
+    let request_id = BotRequestId::mint();
+    for (command, tag) in [
+        (
+            BotCommand::RetryBotCreation { request_id },
+            "retry_bot_creation",
+        ),
+        (
+            BotCommand::AbandonBotCreation { request_id },
+            "abandon_bot_creation",
+        ),
+    ] {
+        let mut json = serde_json::to_value(&command).unwrap();
+        assert_eq!(json["command"], tag);
+        assert_eq!(
+            serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+            command
+        );
+        json["bot_id"] = serde_json::json!(BotId::mint());
+        assert!(serde_json::from_value::<BotCommand>(json).is_err(), "{tag}");
+    }
     // Debug never carries the authored text or a path.
     let shown = format!(
         "{:?}{:?}",
@@ -396,7 +418,7 @@ fn a_role_proof_matches_only_the_exact_origin() {
         request_key: seed.request_key.clone(),
         request_hash: seed.request_hash.clone(),
         initial_update: seed.seed.clone(),
-        page_live: true,
+        placement: BotRolePlacement::Live,
     };
     assert!(proof.matches(&seed));
     for changed in [
@@ -419,4 +441,99 @@ fn a_role_proof_matches_only_the_exact_origin() {
     ] {
         assert!(!changed.matches(&seed));
     }
+}
+
+fn receipt(record: BotCreationRecord, stage: BotReceiptStage) -> BotCreationReceipt {
+    BotCreationReceipt {
+        request: BotRequestId::mint(),
+        record,
+        fingerprint: "f".repeat(64),
+        stage,
+    }
+}
+
+#[test]
+fn a_page_that_may_exist_is_shown_unconfirmed_until_its_origin_is_verified() {
+    let intent = authored(BotCreationPhase::FolderReady);
+    let candidate = intent.role_target();
+    // Before the Store is asked nothing of the page is shown.
+    let view = receipt(intent.clone(), BotReceiptStage::Prepared).view(None);
+    assert_eq!(view.role_page, None);
+    assert!(!view.role_page_unconfirmed);
+    assert_eq!(view.folder_binding, intent.folder_binding);
+    // From `role_pending` it may exist: shown, unconfirmed, also parked.
+    let mut pending = authored(BotCreationPhase::RolePending);
+    pending.reason = Some(BotCreationReason::StoreUnavailable);
+    let candidate_pending = pending.role_target();
+    let view = receipt(pending.clone(), BotReceiptStage::Prepared).view(None);
+    assert_eq!(view.role_page, Some(candidate_pending));
+    assert!(view.role_page_unconfirmed);
+    assert!(view.retryable);
+    // A conflict means the identity holds another origin's page: not ours.
+    pending.reason = Some(BotCreationReason::RoleConflict);
+    let view = receipt(pending.clone(), BotReceiptStage::Prepared).view(None);
+    assert_eq!(view.role_page, None);
+    assert!(!view.retryable);
+    // Verified: confirmed.
+    let verified = authored(BotCreationPhase::RoleVerified);
+    let view = receipt(verified.clone(), BotReceiptStage::Accepted).view(None);
+    assert_eq!(view.role_page, Some(verified.role_target()));
+    assert!(!view.role_page_unconfirmed);
+    assert_ne!(candidate, verified.role_target());
+}
+
+#[test]
+fn only_terminal_reasons_refuse_retry_and_an_abandoned_view_names_what_may_exist() {
+    for reason in BotCreationReason::ALL {
+        let terminal = matches!(
+            reason,
+            BotCreationReason::RoleConflict
+                | BotCreationReason::RoleMissing
+                | BotCreationReason::StoreRefused
+                | BotCreationReason::FolderOccupied
+                | BotCreationReason::FolderInvalid
+        );
+        assert_eq!(reason.retryable(), !terminal, "{reason:?}");
+    }
+    let mut ended = authored(BotCreationPhase::RolePending).without_seed();
+    ended.reason = Some(BotCreationReason::RoleMissing);
+    ended.abandoned = true;
+    let view = receipt(ended.clone(), BotReceiptStage::Completed).view(None);
+    assert_eq!(view.stage, BotCreationStage::Abandoned);
+    assert!(!view.retryable);
+    assert_eq!(view.bot, None);
+    let BotCreationFolder::Managed { path, .. } = &ended.folder else {
+        unreachable!()
+    };
+    assert_eq!(
+        view.left_behind,
+        Some(BotCreationLeftovers {
+            role_page: Some(ended.role_target()),
+            folder: Some(path.clone()),
+        })
+    );
+    // Stopped before its folder was marked: nothing is named.
+    let mut early = authored(BotCreationPhase::Intent).without_seed();
+    early.abandoned = true;
+    assert_eq!(
+        receipt(early, BotReceiptStage::Completed)
+            .view(None)
+            .left_behind,
+        Some(BotCreationLeftovers {
+            role_page: None,
+            folder: None,
+        })
+    );
+    // Abandonment may only be added, never taken back.
+    let open = authored(BotCreationPhase::RolePending);
+    let mut marked = open.without_seed();
+    marked.abandoned = true;
+    assert!(open.same_intent(&marked));
+    assert!(!marked.same_intent(&open.without_seed()));
+    // An abandoned record round-trips; an open one does not carry the field.
+    assert_eq!(
+        BotCreationRecord::decode(&marked.encode().unwrap()),
+        Ok(Some(marked))
+    );
+    assert!(!open.encode().unwrap().contains("abandoned"));
 }

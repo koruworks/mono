@@ -183,9 +183,21 @@ impl BotAuthority for BotAuthorityAdapter {
     /// The Store's strict creation origin, under the same owner, placement
     /// and Profile checks as every other Bot effect, in one Store hop. The
     /// candidate, key, hash and seed are the creation receipt's, durable
-    /// before this call: a lost reply replays exactly them, and after the
-    /// Store's own receipt expires its retained origin still lets the
-    /// original first update win. Human edits made since stay current.
+    /// before this call.
+    ///
+    /// The Store is asked to create only a candidate it has no origin for.
+    /// One whose origin is already recorded (a lost reply, a restart, a
+    /// Retry) is never sent again: its stored origin answers, with where the
+    /// page stands now. This matters because the Store's strict path
+    /// re-registers a known candidate that is missing from the manifest, and
+    /// "delete forever" removes only the manifest entry: a replay would bring
+    /// back a page the person deleted. Here a known page that is not in the
+    /// manifest is answered `Missing` and nothing is written. Trash is told
+    /// apart from absence by the derived listing entry, which keeps trashed
+    /// entries; if that listing lags the manifest the answer is still one
+    /// of the two non-live placements, so no outcome ever registers a page.
+    /// Human edits made since creation stay current; the origin keeps the
+    /// original first update.
     fn create_role_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         if seed.owner.device != self.device {
             return Err(BotError::Forbidden);
@@ -210,47 +222,93 @@ impl BotAuthority for BotAuthorityAdapter {
                 store
                     .profile(seed.profile)
                     .map_err(|_| BotError::Forbidden)?;
-                store
-                    .create_seeded_document_with_origin(
-                        seed.workspace,
-                        &seed.title,
-                        koru_core::explore::KIND_DOCUMENT,
-                        None,
-                        None,
-                        BOT_ROLE_SCOPE,
-                        &seed.request_key,
-                        &seed.request_hash,
-                        seed.candidate,
-                        seed.seed.clone(),
-                        None,
-                        koru_store_core::model::Timestamp::now(),
-                    )
-                    .map_err(|error| match error.code() {
-                        koru_store_core::errors::Code::IdempotencyConflict => BotError::Conflict,
-                        // Once the seed transaction begins, any error may
-                        // follow durable bytes: the same candidate replays.
-                        _ => BotError::Unavailable,
-                    })?;
-                let origin = match store
-                    .creation_origin(seed.workspace, seed.candidate)
-                    .map_err(|_| BotError::Unavailable)?
-                {
-                    koru_store_core::CreationOriginLookup::Known(origin) => origin,
-                    _ => return Err(BotError::Conflict),
+                let lookup = |store: &mut koru_store_server::WorkerStore| {
+                    store
+                        .creation_origin(seed.workspace, seed.candidate)
+                        .map_err(|_| BotError::Unavailable)
                 };
-                let page_live = store
+                let origin = match lookup(store)? {
+                    koru_store_core::CreationOriginLookup::Known(origin) => origin,
+                    koru_store_core::CreationOriginLookup::Unknown => {
+                        return Err(BotError::Conflict);
+                    }
+                    koru_store_core::CreationOriginLookup::Missing => {
+                        let created = store.create_seeded_document_with_origin(
+                            seed.workspace,
+                            &seed.title,
+                            koru_core::explore::KIND_DOCUMENT,
+                            None,
+                            None,
+                            BOT_ROLE_SCOPE,
+                            &seed.request_key,
+                            &seed.request_hash,
+                            seed.candidate,
+                            seed.seed.clone(),
+                            None,
+                            koru_store_core::model::Timestamp::now(),
+                        );
+                        match created {
+                            Ok(proven) => proven.origin,
+                            Err(error) => {
+                                // Still no origin: nothing was written, so a
+                                // refusal of the input itself is definite.
+                                // Otherwise bytes may be durable, and the
+                                // recorded origin answers as for a replay.
+                                match lookup(store)? {
+                                    koru_store_core::CreationOriginLookup::Known(origin) => origin,
+                                    koru_store_core::CreationOriginLookup::Unknown => {
+                                        return Err(BotError::Conflict);
+                                    }
+                                    koru_store_core::CreationOriginLookup::Missing => {
+                                        return Err(role_refusal(error.code()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+                let placement = match store
                     .document_entry_live(seed.workspace, seed.candidate)
                     .map_err(|_| BotError::Unavailable)?
-                    .is_some_and(|entry| entry.kind == koru_core::explore::KIND_DOCUMENT);
+                {
+                    Some(entry) if entry.kind == koru_core::explore::KIND_DOCUMENT => {
+                        BotRolePlacement::Live
+                    }
+                    Some(_) => return Err(BotError::Conflict),
+                    None => match store
+                        .document_entry(seed.workspace, seed.candidate)
+                        .map_err(|_| BotError::Unavailable)?
+                    {
+                        Some(_) => BotRolePlacement::Trashed,
+                        None => BotRolePlacement::Missing,
+                    },
+                };
                 Ok(BotRoleProof {
                     scope: origin.scope,
                     request_key: origin.request_key,
                     request_hash: origin.request_hash,
                     initial_update: origin.initial_update,
-                    page_live,
+                    placement,
                 })
             })
             .map_err(|_| BotError::Unavailable)?
+    }
+}
+
+/// A Store refusal of the Role page with no origin recorded after it, so
+/// nothing was written. Refusals of the input are definite and not worth
+/// retrying; the candidate held by another workspace or kind is a conflict;
+/// anything else may pass.
+fn role_refusal(code: koru_store_core::errors::Code) -> BotError {
+    use koru_store_core::errors::Code;
+    match code {
+        Code::IdempotencyConflict | Code::DocumentExists => BotError::Conflict,
+        Code::InvalidRequest
+        | Code::InvalidId
+        | Code::PayloadTooLarge
+        | Code::UnsupportedMediaType => BotError::Invalid,
+        Code::WorkspaceNotFound | Code::Forbidden => BotError::Forbidden,
+        _ => BotError::Unavailable,
     }
 }
 

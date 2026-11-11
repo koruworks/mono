@@ -171,6 +171,10 @@ pub enum BotCreationStage {
     Completed,
     /// Refused before it made anything; the BotId is free again.
     Rejected,
+    /// The person ended it ([`BotCommand::AbandonBotCreation`]). No Bot is
+    /// made, the BotId stays reserved forever, and whatever it may already
+    /// have made is named in `left_behind`, never removed.
+    Abandoned,
 }
 
 /// The step a creation reached. Each is durable before the effect it guards.
@@ -214,8 +218,16 @@ pub enum BotCreationReason {
     RoleUnavailable,
     /// A selected page is not readable now.
     PageUnavailable,
-    /// The final transaction failed and rolled back; Retry repeats it alone.
+    /// The final transaction failed and rolled back, or a step could not be
+    /// recorded; Retry repeats it, and a stalled step is retried by itself.
     StorageFailed,
+    /// The Role page was created and is no longer in the home workspace:
+    /// deleted permanently, or its registration never completed. Koru never
+    /// registers it again, so Retry cannot finish this; Abandon ends it.
+    RoleMissing,
+    /// The Store refused the Role page definitely (its input was invalid).
+    /// Retry would be refused the same way; Abandon ends it.
+    StoreRefused,
 }
 
 impl BotCreationReason {
@@ -231,7 +243,37 @@ impl BotCreationReason {
         Self::RoleUnavailable,
         Self::PageUnavailable,
         Self::StorageFailed,
+        Self::RoleMissing,
+        Self::StoreRefused,
     ];
+
+    /// Whether Retry can resolve an incomplete creation parked for this
+    /// reason, perhaps once the person has fixed what it names (restored the
+    /// Role page from Trash, emptied the folder). The others are terminal
+    /// for this creation: only Abandon ends it.
+    pub const fn retryable(self) -> bool {
+        !matches!(
+            self,
+            Self::RoleConflict
+                | Self::RoleMissing
+                | Self::StoreRefused
+                | Self::FolderOccupied
+                | Self::FolderInvalid
+        )
+    }
+}
+
+/// What an abandoned creation leaves in place for the person: a Role page
+/// it may have created, and the managed folder it may have made. Nothing is
+/// removed; ordinary page and file actions deal with them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotCreationLeftovers {
+    /// The authored Role page, when the Store may have been asked for it.
+    pub role_page: Option<BotPage>,
+    /// The managed folder, when it may have been made. A selected folder
+    /// was the person's own and is never named here.
+    pub folder: Option<String>,
 }
 
 /// One creation, as its authorized owner reads it.
@@ -245,11 +287,26 @@ pub struct BotCreation {
     pub stage: BotCreationStage,
     pub phase: BotCreationPhase,
     pub reason: Option<BotCreationReason>,
+    /// Whether Retry can resolve this `incomplete` creation; false for every
+    /// other stage and for a terminal reason (only Abandon ends it).
+    #[serde(default)]
+    pub retryable: bool,
     /// The Role page: an existing one from the start; an authored one from
-    /// `role_verified`, also while the Bot is not created yet. While an
-    /// authored page is `role_pending` its candidate is recorded but not
-    /// shown, because its existence is not yet proven.
+    /// the moment the Store may have been asked for it (`role_pending`), so
+    /// the person can always find it, also while the Bot is not created yet.
     pub role_page: Option<BotPage>,
+    /// True while an authored `role_page` is not proven to exist: the Store
+    /// was asked and its answer was not seen, or the page is gone.
+    #[serde(default)]
+    pub role_page_unconfirmed: bool,
+    /// The canonical folder the Bot is or will be bound to, from
+    /// `folder_ready`: where a selected path or link resolves, so a client
+    /// can show it when it differs from what was typed.
+    #[serde(default)]
+    pub folder_binding: Option<String>,
+    /// For an `abandoned` creation, what it may have made and left in place.
+    #[serde(default)]
+    pub left_behind: Option<BotCreationLeftovers>,
     /// The Bot, once `completed` and while it is readable.
     pub bot: Option<Bot>,
 }
@@ -369,6 +426,10 @@ pub struct BotCreationRecord {
     /// The verified Role page, from `role_verified` (authored only).
     pub role_page: Option<BotPage>,
     pub created_at_ms: i64,
+    /// The person ended the creation (outer stage `completed`, no Bot).
+    /// `reason` keeps why it had stopped, if it had.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub abandoned: bool,
 }
 
 fn hex64(value: &str) -> bool {
@@ -460,6 +521,37 @@ impl BotCreationRecord {
         matches!(self.role, BotCreationRole::Authored { .. })
     }
 
+    /// Whether a Role page of this creation may exist: the Store may have
+    /// been asked, and it did not answer that the identity holds a page of
+    /// another origin (which the Store refuses before any effect).
+    pub fn may_hold_role_page(&self) -> bool {
+        self.authored()
+            && self.phase >= BotCreationPhase::RolePending
+            && self.reason != Some(BotCreationReason::RoleConflict)
+    }
+
+    /// The person ended this creation.
+    pub fn abandoned(&self) -> bool {
+        self.abandoned
+    }
+
+    /// What this creation may have made, from its durable phase: each mark
+    /// is written before the effect it guards, so the phase never claims
+    /// less than may exist.
+    pub fn left_behind(&self) -> BotCreationLeftovers {
+        BotCreationLeftovers {
+            role_page: self.may_hold_role_page().then(|| self.role_target()),
+            folder: match &self.folder {
+                BotCreationFolder::Managed { path, .. }
+                    if self.phase >= BotCreationPhase::FolderPending =>
+                {
+                    Some(self.folder_binding.clone().unwrap_or_else(|| path.clone()))
+                }
+                _ => None,
+            },
+        }
+    }
+
     /// Every effect is verified: the final transaction may run.
     pub fn ready(&self) -> bool {
         self.reason.is_none()
@@ -534,6 +626,7 @@ impl BotCreationRecord {
         }
         binding.truncate(BOT_FOLDER_PATH_LIMIT);
         most.folder_binding = Some(binding);
+        most.abandoned = true;
         most
     }
 
@@ -569,8 +662,9 @@ impl BotCreationRecord {
     }
 
     /// Whether `next` keeps every immutable field of `self`: only the
-    /// phase, reason and verified evidence may move, the phase only on, and
-    /// the prepared seed may only be dropped, never changed.
+    /// phase, reason and verified evidence may move, the phase only on,
+    /// `abandoned` may only be set, and the prepared seed may only be
+    /// dropped, never changed.
     pub fn same_intent(&self, next: &Self) -> bool {
         let seed = |record: &Self| match &record.role {
             BotCreationRole::Authored { seed, .. } => seed.clone(),
@@ -583,8 +677,12 @@ impl BotCreationRecord {
             record.reason = None;
             record.folder_binding = None;
             record.role_page = None;
+            record.abandoned = false;
         }
-        a == b && next.phase >= self.phase && seed(next).is_none_or(|kept| seed(self) == Some(kept))
+        a == b
+            && next.phase >= self.phase
+            && (next.abandoned || !self.abandoned)
+            && seed(next).is_none_or(|kept| seed(self) == Some(kept))
     }
 }
 
@@ -601,24 +699,39 @@ impl BotCreationReceipt {
     /// The owner's view of this creation; `bot` is the caller's current read.
     pub fn view(&self, bot: Option<Bot>) -> BotCreation {
         let record = &self.record;
+        let stage = match self.stage {
+            BotReceiptStage::Completed if record.abandoned() => BotCreationStage::Abandoned,
+            BotReceiptStage::Completed => BotCreationStage::Completed,
+            BotReceiptStage::Rejected => BotCreationStage::Rejected,
+            _ if record.reason.is_some() => BotCreationStage::Incomplete,
+            _ => BotCreationStage::Pending,
+        };
+        // An authored page is shown from the moment the Store may have been
+        // asked for it; it is confirmed only once its origin is verified.
+        let (role_page, role_page_unconfirmed) = match &record.role {
+            BotCreationRole::Existing { page } => (Some(page.clone()), false),
+            BotCreationRole::Authored { .. } if record.may_hold_role_page() => (
+                Some(record.role_target()),
+                record.phase != BotCreationPhase::RoleVerified
+                    || record.reason == Some(BotCreationReason::RoleMissing),
+            ),
+            BotCreationRole::Authored { .. } => (None, false),
+        };
         BotCreation {
             request_id: self.request,
             bot_id: record.bot,
             home_workspace: record.home_workspace,
             name: record.config.name.clone(),
-            stage: match self.stage {
-                BotReceiptStage::Completed => BotCreationStage::Completed,
-                BotReceiptStage::Rejected => BotCreationStage::Rejected,
-                _ if record.reason.is_some() => BotCreationStage::Incomplete,
-                _ => BotCreationStage::Pending,
-            },
+            stage,
             phase: record.phase,
             reason: record.reason,
-            role_page: record.role_page.clone().or_else(|| match &record.role {
-                BotCreationRole::Existing { page } => Some(page.clone()),
-                BotCreationRole::Authored { .. } => None,
-            }),
-            bot: (self.stage == BotReceiptStage::Completed)
+            retryable: stage == BotCreationStage::Incomplete
+                && record.reason.is_some_and(BotCreationReason::retryable),
+            role_page,
+            role_page_unconfirmed,
+            folder_binding: record.folder_binding.clone(),
+            left_behind: (stage == BotCreationStage::Abandoned).then(|| record.left_behind()),
+            bot: (stage == BotCreationStage::Completed)
                 .then_some(bot)
                 .flatten(),
         }
@@ -633,20 +746,32 @@ impl BotCreationReceipt {
     }
 }
 
+/// Where a Role page whose origin is known stands in its workspace now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotRolePlacement {
+    /// A live ordinary page of the workspace.
+    Live,
+    /// In the workspace's Trash (itself or an ancestor).
+    Trashed,
+    /// Not in the workspace at all: deleted permanently, or never
+    /// registered. It is never registered again.
+    Missing,
+}
+
 /// What the strict Store creation of a Role page answers: the stored
-/// original origin, and whether the page is live in its workspace now.
+/// original origin, and where the page stands in its workspace now.
 #[derive(Clone, PartialEq, Eq)]
 pub struct BotRoleProof {
     pub scope: String,
     pub request_key: String,
     pub request_hash: String,
     pub initial_update: Vec<u8>,
-    pub page_live: bool,
+    pub placement: BotRolePlacement,
 }
 impl std::fmt::Debug for BotRoleProof {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BotRoleProof")
-            .field("page_live", &self.page_live)
+            .field("placement", &self.placement)
             .finish_non_exhaustive()
     }
 }

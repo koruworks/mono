@@ -316,7 +316,10 @@ impl WorkerState {
                         workspaces.insert(*workspace);
                     }
                     // Routed to their own preparation before this.
-                    BotCommand::CreateBotWithRole { .. } | BotCommand::ReadBotCreation { .. } => {}
+                    BotCommand::CreateBotWithRole { .. }
+                    | BotCommand::ReadBotCreation { .. }
+                    | BotCommand::RetryBotCreation { .. }
+                    | BotCommand::AbandonBotCreation { .. } => {}
                 }
             }
             // A held conversation is refused by the guard once its owner is
@@ -534,7 +537,9 @@ pub(super) fn bot_targets(
             // A creation names no Bot that exists yet; its owner is proved.
             BotCommand::CreateBotWithRole { .. }
             | BotCommand::ReadBotCreation { .. }
-            | BotCommand::ListBotCreations { .. } => return Ok(Some(Vec::new())),
+            | BotCommand::ListBotCreations { .. }
+            | BotCommand::RetryBotCreation { .. }
+            | BotCommand::AbandonBotCreation { .. } => return Ok(Some(Vec::new())),
         };
         match super::lifecycle::provable_bot(repository, id, command) {
             Ok(Some(bot)) => {

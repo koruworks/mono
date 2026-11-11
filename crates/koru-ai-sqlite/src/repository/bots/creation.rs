@@ -97,13 +97,17 @@ fn check_stage(record: &BotCreationRecord, stage: BotReceiptStage) -> Result<(),
             record.phase <= BotCreationPhase::RolePending
                 && (record.authored() || record.phase <= BotCreationPhase::FolderReady)
                 && seed != Some(false)
+                && !record.abandoned()
         }
         BotReceiptStage::Accepted => {
             record.authored()
                 && record.phase == BotCreationPhase::RoleVerified
                 && seed == Some(true)
+                && !record.abandoned()
         }
-        BotReceiptStage::Completed => record.ready() && seed != Some(true),
+        // Finished: the Bot made, or the person abandoned it. Either way the
+        // seed is gone and the BotId is reserved for good.
+        BotReceiptStage::Completed => (record.ready() || record.abandoned()) && seed != Some(true),
         BotReceiptStage::Rejected => {
             record.phase <= BotCreationPhase::FolderPending
                 && matches!(
@@ -111,6 +115,7 @@ fn check_stage(record: &BotCreationRecord, stage: BotReceiptStage) -> Result<(),
                     Some(BotCreationReason::FolderOccupied | BotCreationReason::FolderInvalid)
                 )
                 && seed != Some(true)
+                && !record.abandoned()
         }
     };
     if ok { Ok(()) } else { Err(BotError::Invalid) }
@@ -249,6 +254,50 @@ impl Repository {
         tx.execute(
             "UPDATE bot_command_receipts SET stage=?3,outcome_json=?4,updated_at_ms=?5 WHERE user_scope_id=?1 AND request_id=?2",
             params![scope.to_storage(), request.to_storage(), stage_token(stage), json, now],
+        )
+        .map_err(bad)?;
+        let stored = load(&tx, scope, request)?.ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(stored)
+    }
+
+    /// Abandon: end an unfinished creation exactly at `expected`, as the
+    /// person asked. The receipt becomes `completed`, marked `abandoned`
+    /// with the reason it had stopped for kept, and its seed dropped, so the BotId stays reserved for good; its phase
+    /// stays where it stopped, naming what may exist. Nothing else is
+    /// written or removed. An already abandoned creation answers as it is;
+    /// any other finished one, or a stale `expected`, is `Conflict`.
+    pub fn abandon_bot_creation(
+        &mut self,
+        scope: UserScopeId,
+        request: BotRequestId,
+        expected: &BotCreationRecord,
+        now: i64,
+    ) -> Result<BotCreationReceipt, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let current = load(&tx, scope, request)?.ok_or(BotError::NotFound)?;
+        if !current.open() {
+            return if current.stage == BotReceiptStage::Completed && current.record.abandoned() {
+                Ok(current)
+            } else {
+                Err(BotError::Conflict)
+            };
+        }
+        if current.record != *expected {
+            return Err(BotError::Conflict);
+        }
+        let mut ended = expected.without_seed();
+        ended.abandoned = true;
+        if !expected.same_intent(&ended) {
+            return Err(BotError::Invalid);
+        }
+        check_stage(&ended, BotReceiptStage::Completed)?;
+        tx.execute(
+            "UPDATE bot_command_receipts SET stage='completed',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",
+            params![scope.to_storage(), request.to_storage(), ended.encode()?, now],
         )
         .map_err(bad)?;
         let stored = load(&tx, scope, request)?.ok_or(BotError::Storage)?;

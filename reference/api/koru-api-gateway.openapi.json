@@ -3712,6 +3712,46 @@
               "limit"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Resume an incomplete creation from its recorded intent, under fresh\nauthority, without the original request. One that is moving,\nfinished, or parked for a terminal reason only reports itself.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "retry_bot_creation"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "End an unfinished creation: no Bot is made, the retained Role text is\ndropped, the BotId stays reserved, and nothing is deleted; the answer\nnames what it leaves behind. A completed creation is\n`request_conflict`.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "abandon_bot_creation"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -3783,8 +3823,29 @@
           "bot_id": {
             "$ref": "#/components/schemas/BotId"
           },
+          "folder_binding": {
+            "default": null,
+            "description": "The canonical folder the Bot is or will be bound to, from\n`folder_ready`: where a selected path or link resolves, so a client\ncan show it when it differs from what was typed.",
+            "nullable": true,
+            "type": "string"
+          },
           "home_workspace": {
             "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "left_behind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotCreationLeftovers"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "For an `abandoned` creation, what it may have made and left in place."
           },
           "name": {
             "type": "string"
@@ -3808,6 +3869,11 @@
           "request_id": {
             "$ref": "#/components/schemas/BotRequestId"
           },
+          "retryable": {
+            "default": false,
+            "description": "Whether Retry can resolve this `incomplete` creation; false for every\nother stage and for a terminal reason (only Abandon ends it).",
+            "type": "boolean"
+          },
           "role_page": {
             "anyOf": [
               {
@@ -3820,7 +3886,12 @@
                 "nullable": true
               }
             ],
-            "description": "The Role page: an existing one from the start; an authored one from\n`role_verified`, also while the Bot is not created yet. While an\nauthored page is `role_pending` its candidate is recorded but not\nshown, because its existence is not yet proven."
+            "description": "The Role page: an existing one from the start; an authored one from\nthe moment the Store may have been asked for it (`role_pending`), so\nthe person can always find it, also while the Bot is not created yet."
+          },
+          "role_page_unconfirmed": {
+            "default": false,
+            "description": "True while an authored `role_page` is not proven to exist: the Store\nwas asked and its answer was not seen, or the page is gone.",
+            "type": "boolean"
           },
           "stage": {
             "$ref": "#/components/schemas/BotCreationStage"
@@ -3877,6 +3948,31 @@
           "created_at_ms",
           "request_id"
         ],
+        "type": "object"
+      },
+      "BotCreationLeftovers": {
+        "description": "What an abandoned creation leaves in place for the person: a Role page\nit may have created, and the managed folder it may have made. Nothing is\nremoved; ordinary page and file actions deal with them.",
+        "properties": {
+          "folder": {
+            "description": "The managed folder, when it may have been made. A selected folder\nwas the person's own and is never named here.",
+            "nullable": true,
+            "type": "string"
+          },
+          "role_page": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotPage"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The authored Role page, when the Store may have been asked for it."
+          }
+        },
         "type": "object"
       },
       "BotCreationPage": {
@@ -4014,9 +4110,23 @@
             "type": "string"
           },
           {
-            "description": "The final transaction failed and rolled back; Retry repeats it alone.",
+            "description": "The final transaction failed and rolled back, or a step could not be\nrecorded; Retry repeats it, and a stalled step is retried by itself.",
             "enum": [
               "storage_failed"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Role page was created and is no longer in the home workspace:\ndeleted permanently, or its registration never completed. Koru never\nregisters it again, so Retry cannot finish this; Abandon ends it.",
+            "enum": [
+              "role_missing"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Store refused the Role page definitely (its input was invalid).\nRetry would be refused the same way; Abandon ends it.",
+            "enum": [
+              "store_refused"
             ],
             "type": "string"
           }
@@ -4050,6 +4160,13 @@
             "description": "Refused before it made anything; the BotId is free again.",
             "enum": [
               "rejected"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The person ended it ([`BotCommand::AbandonBotCreation`]). No Bot is\nmade, the BotId stays reserved forever, and whatever it may already\nhave made is named in `left_behind`, never removed.",
+            "enum": [
+              "abandoned"
             ],
             "type": "string"
           }

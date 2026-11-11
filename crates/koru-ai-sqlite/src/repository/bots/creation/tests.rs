@@ -67,6 +67,7 @@ fn record(authored: bool) -> BotCreationRecord {
         folder_binding: None,
         role_page: None,
         created_at_ms: 5,
+        abandoned: false,
     }
 }
 
@@ -648,5 +649,92 @@ fn a_row_the_scan_cannot_parse_is_skipped_and_named_and_the_scan_goes_on() {
     assert_eq!(
         step.skipped,
         vec!["00000000-0000-4000-8000-000000000000".to_owned()]
+    );
+}
+
+#[test]
+fn abandon_ends_a_creation_keeps_its_bot_id_and_cannot_end_a_finished_one() {
+    let mut repo = Repository::in_memory().unwrap();
+    let intent = record(true);
+    let request = BotRequestId::mint();
+    let scope = intent.user_scope;
+    repo.begin_bot_creation(request, &intent, HASH, 1).unwrap();
+    let mut parked = intent.clone();
+    parked.phase = BotCreationPhase::FolderPending;
+    parked.reason = Some(BotCreationReason::FolderUnavailable);
+    repo.advance_bot_creation(
+        scope,
+        request,
+        &intent,
+        &parked,
+        BotReceiptStage::Prepared,
+        2,
+    )
+    .unwrap();
+    // A stale expectation writes nothing.
+    assert_eq!(
+        repo.abandon_bot_creation(scope, request, &intent, 3),
+        Err(BotError::Conflict)
+    );
+    let ended = repo
+        .abandon_bot_creation(scope, request, &parked, 3)
+        .unwrap();
+    assert_eq!(ended.stage, BotReceiptStage::Completed);
+    assert!(ended.record.abandoned);
+    // The reason it had stopped for, and its phase, are kept; the seed is not.
+    assert_eq!(
+        ended.record.reason,
+        Some(BotCreationReason::FolderUnavailable)
+    );
+    assert_eq!(ended.record.phase, BotCreationPhase::FolderPending);
+    assert!(matches!(
+        ended.record.role,
+        BotCreationRole::Authored { seed: None, .. }
+    ));
+    assert!(!ended.open());
+    // Again: it answers as it is.
+    assert_eq!(
+        repo.abandon_bot_creation(scope, request, &parked, 4)
+            .unwrap(),
+        ended
+    );
+    // The BotId stays reserved, for this owner's legacy Create too.
+    let rival = record(false);
+    let rival = BotCreationRecord {
+        bot: intent.bot,
+        user_scope: scope,
+        folder: BotCreationFolder::Managed {
+            root: root().into(),
+            path: managed_folder(std::path::Path::new(root()), intent.bot)
+                .to_str()
+                .unwrap()
+                .to_owned(),
+        },
+        ..rival
+    };
+    assert_eq!(
+        repo.begin_bot_creation(BotRequestId::mint(), &rival, HASH, 5),
+        Err(BotError::Conflict)
+    );
+    // A completed creation cannot be abandoned.
+    let done = record(false);
+    let done_request = BotRequestId::mint();
+    repo.begin_bot_creation(done_request, &done, HASH, 6)
+        .unwrap();
+    let ready = folder_ready(&done);
+    repo.advance_bot_creation(
+        done.user_scope,
+        done_request,
+        &done,
+        &ready,
+        BotReceiptStage::Prepared,
+        7,
+    )
+    .unwrap();
+    repo.complete_bot_creation(done.user_scope, done_request, &ready, ProfileId::new(), 8)
+        .unwrap();
+    assert_eq!(
+        repo.abandon_bot_creation(done.user_scope, done_request, &ready, 9),
+        Err(BotError::Conflict)
     );
 }
