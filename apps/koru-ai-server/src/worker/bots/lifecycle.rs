@@ -12,8 +12,12 @@
 //!    coordination, then the effects-off policy barrier is installed. Trash
 //!    of an archived Bot has neither (it is already paused and settled) and
 //!    goes straight to `settling`, which still asks the delegate.
-//! 2. `settling`: submissions the owner has not acknowledged are resolved
-//!    first (the pause makes it refuse new admissions, so the set closes).
+//! 2. `settling`: work the owner had not admitted when the operation was
+//!    captured is refused, never admitted: each attempt not yet ended is
+//!    stopped as the person's Stop and its receipt resolved through the
+//!    refusal fence, which may move the Bot's revision (the completion
+//!    allows that, and nothing else, see `revision_held`). Nothing of a
+//!    captured subject is submitted.
 //!    Then the delegate is asked, every round, which of the Bot's admissions
 //!    it has not settled, and each is stopped as the person's own Stop
 //!    (O27, O37): Archive is the person's explicit action, so it ends a
@@ -36,7 +40,8 @@
 //!
 //! Trash of one conversation captures only it and settles only its work,
 //! with no pause and no Bot-wide barrier, so the Bot's other conversations
-//! keep running: no submission of it is waiting, the delegate reports none
+//! keep running: no submission of it is waiting (each is refused as above),
+//! the delegate reports none
 //! of its Runs unsettled (each it reports is stopped as the person's Stop),
 //! no live task of it remains, and the delegate holds no native effect for
 //! any of its Runs. Then one transaction puts it into Trash.
@@ -63,8 +68,6 @@ type OperationKey = (UserScopeId, BotRequestId);
 /// Consecutive rounds that made no progress before an operation is parked.
 /// The waits double from 250 ms to 32 s, so this is a few minutes.
 const PARK_AFTER: u32 = 12;
-/// The most unacknowledged submissions one settling round resolves.
-const QUEUED_PAGE: u16 = 16;
 /// The most queued admissions one delegate read returns. A Bot holds at
 /// most 50 queued (`BOT_PENDING_LIMIT`), so one page is normally all of them.
 const UNSETTLED_PAGE: u16 = 64;
@@ -1351,32 +1354,59 @@ impl WorkerState {
         }
     }
 
-    /// Submissions of the Bot its owner has not acknowledged yet. Each is
-    /// handed to the existing coordination (which submits or reconciles it;
-    /// the paused owner refuses a new admission). `None` when there are none.
-    fn unresolved_bot_submissions(&mut self, op: &LifecycleOperation, bot: &Bot) -> Option<bool> {
+    /// Work of the operation's subject (the whole Bot, or one conversation)
+    /// that its owner had not admitted when the operation was captured:
+    /// the Bot's Start/Continue receipts still waiting to reach the
+    /// delegate. Lifecycle refuses it and never admits it. Each attempt not
+    /// yet ended is stopped through its own Stop path ([`Self::stop_attempt`],
+    /// the person's Stop, which also cancels a context job still in flight, so
+    /// nothing can start a live task for it afterwards). Then its receipt,
+    /// like one with no attempt (an API `start`), goes to the existing
+    /// coordination, which never submits a held subject's receipt
+    /// (`apply_result`) and so resolves it through the refusal fence: Missing
+    /// after the fence is proof it was never admitted. `None` when there is
+    /// none; `Some(false)` when the journal could not be read. A full page
+    /// might hide one, so it counts as unresolved.
+    fn refuse_unadmitted(
+        &mut self,
+        op: &LifecycleOperation,
+        bot: &Bot,
+        chat: Option<ChatId>,
+    ) -> Option<bool> {
         let queued = match self
             .repository
-            .bot_unresolved_submissions(op.bot, QUEUED_PAGE)
+            .bot_unresolved_submissions(op.bot, UNSETTLED_PAGE)
         {
             Ok(queued) => queued,
             Err(_) => return Some(false),
         };
-        if queued.is_empty() {
-            return None;
-        }
+        let mut unresolved = queued.len() >= usize::from(UNSETTLED_PAGE);
         for (scope, request) in queued {
             if scope != op.owner.user_scope {
                 continue;
             }
-            if let Ok(Some(receipt)) = self
+            let receipt = match self
                 .repository
                 .bot_admission_receipt(op.owner, op.bot, request)
             {
-                self.queue_bot_receipt(bot, receipt, None);
+                Ok(Some(BotAdmissionReceipt::Submission(receipt))) => receipt,
+                Ok(_) => continue,
+                Err(_) => return Some(false),
+            };
+            if chat
+                .is_some_and(|chat| receipt.intent.submission.provenance.chat_id != chat.as_uuid())
+            {
+                continue;
             }
+            if let Some(attempt) = super::admission::unended_attempt(&self.repository, &receipt) {
+                // Whatever it answers, the receipt below is resolved the
+                // same way, and the next round reads the attempt again.
+                let _ = self.stop_attempt(attempt);
+            }
+            self.queue_bot_receipt(bot, BotAdmissionReceipt::Submission(receipt), None);
+            unresolved = true;
         }
-        Some(true)
+        unresolved.then_some(true)
     }
 
     /// The Runs of this Bot that this writer is driving as live conversation
@@ -1391,7 +1421,7 @@ impl WorkerState {
             .collect()
     }
 
-    /// `settling`: resolve unacknowledged submissions, then ask the delegate
+    /// `settling`: refuse the work not admitted at capture, then ask the delegate
     /// what of the Bot is unsettled; the answer is applied in
     /// [`Self::complete_bot_lifecycle`].
     fn step_archive_settle(&mut self, key: OperationKey, op: &LifecycleOperation, bot: &Bot) {
@@ -1400,7 +1430,7 @@ impl WorkerState {
         if self.bot_chat_recovery.is_some() {
             return self.defer_bot_lifecycle(key);
         }
-        match self.unresolved_bot_submissions(op, bot) {
+        match self.refuse_unadmitted(op, bot, None) {
             Some(true) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning),
             Some(false) => {
                 return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable);
@@ -1566,12 +1596,12 @@ impl WorkerState {
         }
     }
 
-    /// `settling` of one conversation's Trash: that conversation's
-    /// submissions the owner has not acknowledged are handed on first (the
-    /// conversation's hold refuses new ones, so the set closes; the Bot is
-    /// not paused, so each is admitted and then stopped). Then the delegate
-    /// is asked what of the Bot is unsettled and which native effects it
-    /// holds, and [`Self::settle_bot_chat_trash`] keeps the conversation's.
+    /// `settling` of one conversation's Trash: that conversation's work its
+    /// owner had not admitted is refused first ([`Self::refuse_unadmitted`];
+    /// the conversation's hold refuses new work, so the set closes). Then the
+    /// delegate is asked what of the Bot is unsettled and which native
+    /// effects it holds, and [`Self::settle_bot_chat_trash`] keeps the
+    /// conversation's.
     fn step_chat_settle(&mut self, key: OperationKey, op: &LifecycleOperation, bot: &Bot) {
         if self.bot_chat_recovery.is_some() {
             return self.defer_bot_lifecycle(key);
@@ -1579,7 +1609,7 @@ impl WorkerState {
         let Some(chat) = op.chat else {
             return self.wait_bot_lifecycle(key, BotLifecycleRefusal::MemberConflict);
         };
-        match self.unresolved_chat_submissions(op, bot, chat) {
+        match self.refuse_unadmitted(op, bot, Some(chat)) {
             Some(true) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning),
             Some(false) => {
                 return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable);
@@ -1587,43 +1617,6 @@ impl WorkerState {
             None => {}
         }
         self.submit_bot_lifecycle(key, op, bot, Step::ChatRead { bot: op.bot });
-    }
-
-    /// One conversation's Start/Continue submissions its owner has not
-    /// acknowledged, each handed to the existing coordination. `None` when
-    /// there are none; `Some(false)` when the journal could not be read. A
-    /// full page might hide one of them, so it counts as unresolved.
-    fn unresolved_chat_submissions(
-        &mut self,
-        op: &LifecycleOperation,
-        bot: &Bot,
-        chat: ChatId,
-    ) -> Option<bool> {
-        let queued = match self
-            .repository
-            .bot_unresolved_submissions(op.bot, UNSETTLED_PAGE)
-        {
-            Ok(queued) => queued,
-            Err(_) => return Some(false),
-        };
-        let mut unresolved = queued.len() >= usize::from(UNSETTLED_PAGE);
-        for (scope, request) in queued {
-            if scope != op.owner.user_scope {
-                continue;
-            }
-            match self
-                .repository
-                .bot_admission_receipt(op.owner, op.bot, request)
-            {
-                Ok(Some(receipt)) if submission_chat(&receipt) == Some(chat.as_uuid()) => {
-                    self.queue_bot_receipt(bot, receipt, None);
-                    unresolved = true;
-                }
-                Ok(_) => {}
-                Err(_) => return Some(false),
-            }
-        }
-        unresolved.then_some(true)
     }
 
     /// The Runs of one conversation that this writer drives as live tasks,
@@ -1749,7 +1742,7 @@ impl WorkerState {
         // of it may be waiting to reach the owner either.
         match self.lifecycle_bot(op) {
             Some(bot) => {
-                if self.unresolved_chat_submissions(op, &bot, chat).is_some() {
+                if self.refuse_unadmitted(op, &bot, Some(chat)).is_some() {
                     return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
                 }
             }

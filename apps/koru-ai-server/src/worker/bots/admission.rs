@@ -401,6 +401,17 @@ impl WorkerState {
         if receipt.operation().status != BotOperationStatus::Pending {
             return;
         }
+        // Lifecycle holds this task's conversation or Bot: its attempt, if
+        // it has not ended, is stopped as the person's Stop before the
+        // receipt is resolved, whichever path reconciled it (the operation's
+        // own round, startup recovery, the task's own admission). A context
+        // job still in flight then finds it ended and starts nothing (P1.7).
+        if let BotAdmissionReceipt::Submission(r) = &receipt
+            && held_by_lifecycle(&self.repository, r)
+            && let Some(attempt) = unended_attempt(&self.repository, r)
+        {
+            let _ = self.stop_attempt(attempt);
+        }
         let now = Timestamp::now().millis();
         let next = apply_result(&mut self.repository, result, &receipt, now);
         if let Ok(Some((receipt, action))) = next {
@@ -516,10 +527,15 @@ fn apply_result(
             )?;
             Ok(None)
         }
+        // Lifecycle refuses work its owner had not admitted when the
+        // operation was captured, and never admits it: a submission of a
+        // conversation (or a Bot) that an Archive or Trash holds is not
+        // submitted, and falls to the refusal fence below (P1.7).
         (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(r))
             if (r.intent.submission.provenance.ai_attempt_id.is_none()
                 || ai_submission_live(repository, r))
-                && r.outcome.is_none() =>
+                && r.outcome.is_none()
+                && !held_by_lifecycle(repository, r) =>
         {
             Ok(Some((receipt.clone(), Some(Action::Submit))))
         }
@@ -552,6 +568,26 @@ fn apply_result(
         }
         _ => Ok(None), // Uncertain/unknown replies keep the durable intent and folder guard.
     }
+}
+/// Whether lifecycle holds the conversation a submission names, or its whole
+/// Bot: an operation moving or parked, or either in Trash. A hold that
+/// cannot be read counts as held: refusing is the safe answer.
+fn held_by_lifecycle(repository: &Repository, receipt: &BotSubmissionReceipt) -> bool {
+    let Some(chat) = ChatId::parse(&receipt.intent.submission.provenance.chat_id.to_string())
+    else {
+        return true;
+    };
+    !matches!(repository.bot_chat_hold(chat), Ok(None))
+}
+/// The AI attempt a submission belongs to, while it has not ended.
+pub(super) fn unended_attempt(
+    repository: &Repository,
+    receipt: &BotSubmissionReceipt,
+) -> Option<InferenceAttemptId> {
+    let id = receipt.intent.submission.provenance.ai_attempt_id?;
+    let id = InferenceAttemptId::parse(&id.to_string())?;
+    matches!(repository.attempt(id), Ok(Some(attempt)) if !attempt.status.is_terminal())
+        .then_some(id)
 }
 fn ai_submission_live(repository: &Repository, receipt: &BotSubmissionReceipt) -> bool {
     let Some(id) = receipt.intent.submission.provenance.ai_attempt_id else {

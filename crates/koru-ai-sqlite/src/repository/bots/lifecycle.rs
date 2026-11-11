@@ -326,6 +326,34 @@ impl Repository {
 /// own record still reads as it stopped. `i` is the intent row.
 const OPEN: &str = "i.stage<>'completed' AND NOT EXISTS(SELECT 1 FROM bot_lifecycle_intents r WHERE r.user_scope_id=i.user_scope_id AND r.source_operation_id=i.operation_id AND r.stage='completed')";
 
+/// Whether a whole-Bot operation (Archive, Trash) of this Bot is unfinished
+/// and unreversed, moving or parked. While one is, the only writes that may
+/// move the Bot's revision are the refusal fences of its own settlement
+/// (`prepare_bot_refusal_fence`) and its own transactions: a configuration,
+/// access, pause or resume change is refused here as well as by the hold.
+pub(super) fn whole_bot_operation_open(conn: &Connection, bot: BotId) -> Result<bool, BotError> {
+    conn.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND {OPEN})"
+        ),
+        [bot.to_storage()],
+        |r| r.get(0),
+    )
+    .map_err(bad)
+}
+
+/// The revision rule of a whole-Bot operation's completion: the Bot's
+/// revision may have moved past the operation's barrier only through the
+/// refusal fences of the operation's own settlement, which refuse the work it
+/// found not yet admitted. Every other writer of the revision is refused
+/// while the operation is open ([`whole_bot_operation_open`]), so a revision
+/// at or past the barrier proves nobody else changed the Bot; one below it
+/// cannot happen and is a conflict. A parked `revision_changed` therefore
+/// resumes to completion when nothing but the operation moved it.
+fn revision_held(current: u64, barrier: Option<u64>) -> bool {
+    barrier.is_some_and(|barrier| current >= barrier)
+}
+
 /// The driver's writes (P1.7 S4). Each is one short transaction on the AI
 /// writer; every owner call happens before or after, never inside.
 impl Repository {
@@ -546,7 +574,7 @@ impl Repository {
         if prior != BotLifecycle::Active {
             return Err(BotError::Conflict);
         }
-        if Some(current.revision) != op.barrier_revision {
+        if !revision_held(current.revision, op.barrier_revision) {
             return Err(BotError::RevisionConflict);
         }
         let revision = current.revision.checked_add(1).ok_or(BotError::Invalid)?;
@@ -661,8 +689,12 @@ impl Repository {
             return Err(BotError::Conflict);
         }
         // An active Bot's capture paused it (one revision); an archived one
-        // was captured as it stood.
-        if current.revision != op.barrier_revision.unwrap_or(op.expected_revision) {
+        // was captured as it stood, and nothing can move an archived Bot's
+        // revision (a refusal fence needs an active one).
+        if !revision_held(
+            current.revision,
+            Some(op.barrier_revision.unwrap_or(op.expected_revision)),
+        ) {
             return Err(BotError::RevisionConflict);
         }
         let revision = current.revision.checked_add(1).ok_or(BotError::Invalid)?;

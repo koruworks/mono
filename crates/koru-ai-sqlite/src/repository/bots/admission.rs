@@ -199,6 +199,12 @@ pub(super) fn prepare_bot_pause_on(
         return Err(BotError::RevisionConflict);
     }
     require_pause_settled(tx, owner.user_scope, bot)?;
+    // An unfinished Archive or Trash holds the Bot paused; its completion
+    // relies on nobody else moving the revision. Its own capture pauses
+    // before its intent exists, so this never refuses that pause (P1.7).
+    if super::lifecycle::whole_bot_operation_open(tx, bot)? {
+        return Err(BotError::Conflict);
+    }
     let intent = BotPauseIntent {
         version: 1,
         expected_revision: expected,

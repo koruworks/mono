@@ -300,12 +300,7 @@ fn a_send_in_its_context_window_at_capture_is_stopped_never_admitted_and_writes_
             BotLifecycleStage::Completed,
             "{operation:?} {done:?}"
         );
-        // Stopped as the person's Stop, before anything reached the owner.
-        assert_eq!(
-            attempt_status(&client, accepted.attempt_id),
-            AttemptStatus::Cancelled,
-            "{operation:?}"
-        );
+        // Nothing reached the owner.
         assert!(port.submits.lock().unwrap().is_empty(), "{operation:?}");
         // The context job finishes after completion: it writes nothing and
         // starts nothing.
@@ -313,13 +308,14 @@ fn a_send_in_its_context_window_at_capture_is_stopped_never_admitted_and_writes_
         std::thread::sleep(Duration::from_millis(600));
         assert!(port.submits.lock().unwrap().is_empty(), "{operation:?}");
         assert_eq!(port.native.state.lock().unwrap().begin, 0, "{operation:?}");
+        // After the restore the reply reads stopped by the person (a trashed
+        // conversation's attempt is not readable until then).
+        reverse(&client, &bot, bot.main_chat, operation, request);
         assert_eq!(
             attempt_status(&client, accepted.attempt_id),
             AttemptStatus::Cancelled,
             "{operation:?}"
         );
-        // After the restore the reply reads stopped by the person.
-        reverse(&client, &bot, bot.main_chat, operation, request);
         let reply = client
             .read_chat(context(true), bot.main_chat)
             .unwrap()
@@ -410,20 +406,12 @@ fn a_retry_in_its_context_window_when_its_conversation_is_trashed_writes_nothing
     .unwrap();
     let done = settled(&client, bot.id, request);
     assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
-    assert_eq!(
-        attempt_status(&client, retry.attempt_id),
-        AttemptStatus::Cancelled
-    );
     release.send(()).unwrap();
     std::thread::sleep(Duration::from_millis(600));
     assert_eq!(
         port.submits.lock().unwrap().len(),
         submitted,
         "the Retry never reached the owner"
-    );
-    assert_eq!(
-        attempt_status(&client, retry.attempt_id),
-        AttemptStatus::Cancelled
     );
     restore_chat_at(
         &client,
@@ -433,6 +421,11 @@ fn a_retry_in_its_context_window_when_its_conversation_is_trashed_writes_nothing
         read_bot(&client, bot.id).revision,
     )
     .unwrap();
+    // Readable again: the Retry reads stopped, nothing was written after.
+    assert_eq!(
+        attempt_status(&client, retry.attempt_id),
+        AttemptStatus::Cancelled
+    );
     no_owner_effects(&port);
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);

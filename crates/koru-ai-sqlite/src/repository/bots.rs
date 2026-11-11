@@ -451,6 +451,11 @@ impl Repository {
             if actual != revision {
                 return Err(BotError::RevisionConflict);
             }
+            // An unfinished Archive or Trash holds the Bot still: its
+            // completion relies on nobody else moving the revision (P1.7).
+            if lifecycle::whole_bot_operation_open(&tx, bot.id)? {
+                return Err(BotError::Conflict);
+            }
             if folder != bot.config.working_folder && (lock.is_some() || frozen.is_some()) {
                 return Err(BotError::FolderLocked);
             }
