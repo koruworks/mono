@@ -125,6 +125,11 @@ fn prepared_owner(context: &CommandContext) -> ApiResult<BotOwner> {
 /// Whether a held conversation refuses this command. A trashed one refuses
 /// everything but Stop; a pending one refuses what would add to or change
 /// it, while reads, denial and Stop stay available to settle it.
+///
+/// Attachment staging changes the conversation's own rows, so both holds
+/// refuse every staging command (admission, a workspace copy, the row, its
+/// removal) before any bytes are prepared. Reading a staged or sent
+/// attachment (`ResolveAttachments`) is a read: a pending hold keeps it.
 pub(super) fn hold_refuses(command: &WorkerCommand, hold: BotHold) -> bool {
     match hold {
         BotHold::Trashed => !matches!(command, WorkerCommand::CancelAttempt { .. }),
@@ -137,6 +142,10 @@ pub(super) fn hold_refuses(command: &WorkerCommand, hold: BotHold) -> bool {
                 | WorkerCommand::UpdateChatModel { .. }
                 | WorkerCommand::UpdateChatAgentSettings { .. }
                 | WorkerCommand::ApproveToolCall { .. }
+                | WorkerCommand::AttachmentAdmission { .. }
+                | WorkerCommand::WorkspaceCopyAdmission { .. }
+                | WorkerCommand::StageAttachment { .. }
+                | WorkerCommand::RemoveStagedAttachment { .. }
         ),
     }
 }

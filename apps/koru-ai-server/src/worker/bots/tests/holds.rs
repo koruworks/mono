@@ -524,6 +524,215 @@ fn o7_a_trashed_main_is_not_replaced_and_new_conversations_are_additional() {
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+/// A local path reference staged as a row, as the reference route stages one.
+fn staged_reference(chat: ChatId) -> koru_ai_core::AttachmentRecord {
+    let path = if cfg!(windows) {
+        "C:\\work folder\\notes.md"
+    } else {
+        "/work folder/notes.md"
+    };
+    koru_ai_core::AttachmentRecord {
+        chat_id: chat,
+        attachment: koru_ai_core::ChatAttachment {
+            id: koru_ai_core::ChatAttachmentId::new(),
+            message_id: None,
+            ordinal: None,
+            kind: koru_ai_core::AttachmentKind::File,
+            source: koru_ai_core::AttachmentSource::Path,
+            file_name: "notes.md".into(),
+            media_type: "text/markdown".into(),
+            byte_count: 0,
+            dimensions: None,
+            origin: None,
+            reference_path: Some(path.into()),
+            // Recent: worker start removes staged rows older than their TTL.
+            created_at: Timestamp::now(),
+        },
+        has_sent_copy: false,
+        content_blake3: blake3::hash(path.as_bytes()).to_hex().to_string(),
+    }
+}
+
+/// Every attachment staging route a person reaches, against one conversation.
+/// Each is refused by its first worker command, so no route reaches the byte
+/// store or the Store's workspace files here.
+fn staging_codes(
+    client: &AiWorkerClient,
+    chat: ChatId,
+    workspace: WorkspaceId,
+    staged: koru_ai_core::ChatAttachmentId,
+) -> Vec<(&'static str, String)> {
+    use koru_ai_core::ChatAttachmentId as Id;
+    let code = |result: ApiResult<koru_ai_wire::ChatAttachmentResponse>| {
+        result.map(|_| ()).unwrap_err().code
+    };
+    vec![
+        (
+            "upload",
+            code(client.put_attachment(
+                context(true),
+                chat,
+                Id::new(),
+                koru_ai_api::AttachmentUpload {
+                    file_name: "picture.png".into(),
+                    source: koru_ai_core::AttachmentSource::Clipboard,
+                    bytes: b"not reached".to_vec().into(),
+                },
+            )),
+        ),
+        (
+            "workspace copy",
+            code(client.from_workspace_attachment(
+                context(true),
+                chat,
+                koru_ai_wire::FromWorkspaceAttachmentRequest {
+                    id: Id::new(),
+                    workspace,
+                    document: DocumentId::new(),
+                },
+            )),
+        ),
+        (
+            "path reference",
+            code(client.reference_attachment(
+                context(true),
+                chat,
+                reference_request(&staged_reference(chat)),
+            )),
+        ),
+        (
+            "recall",
+            code(client.restage_attachment(
+                context(true),
+                chat,
+                staged,
+                koru_ai_wire::RestageAttachmentRequest { new_id: Id::new() },
+            )),
+        ),
+        (
+            "remove",
+            client
+                .remove_attachment(context(true), chat, staged)
+                .map(|_| ())
+                .unwrap_err()
+                .code,
+        ),
+    ]
+}
+
+/// A request to stage the same path again, under a new identity.
+fn reference_request(
+    record: &koru_ai_core::AttachmentRecord,
+) -> koru_ai_wire::ReferenceAttachmentRequest {
+    koru_ai_wire::ReferenceAttachmentRequest {
+        id: koru_ai_core::ChatAttachmentId::new(),
+        kind: record.attachment.kind,
+        path: record.attachment.reference_path.clone().unwrap(),
+    }
+}
+
+fn returning_worker(
+    repo: Repository,
+    authority: Arc<Authority>,
+) -> (WorkerHandle, AiWorkerClient, Receiver<Repository>) {
+    let (return_tx, returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-memory-holds"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(authority);
+    config.test_repository = Some(repo);
+    config.test_repository_return = Some(return_tx);
+    let worker = AiWorker::new(config).spawn().unwrap();
+    let client = worker.client();
+    (worker, client, returned)
+}
+
+#[test]
+fn attachment_staging_refuses_in_trash_and_while_an_operation_holds_the_conversation() {
+    // In Trash: every staging route refuses as Send does, and so does a read.
+    let (mut repo, authority, bot, additional, _, _) = trashed();
+    let in_trash = staged_reference(additional);
+    repo.stage_attachment(&in_trash).unwrap();
+    let kept = staged_reference(bot.main_chat);
+    let (worker, client, returned) = returning_worker(repo, authority);
+    for (route, code) in staging_codes(
+        &client,
+        additional,
+        bot.home_workspace,
+        in_trash.attachment.id,
+    ) {
+        assert_eq!(code, TRASHED, "{route}");
+    }
+    assert_eq!(
+        client
+            .read_attachment(context(true), additional, in_trash.attachment.id)
+            .map(|_| ())
+            .unwrap_err()
+            .code,
+        TRASHED
+    );
+    // The kept conversation of the same Bot stages as before.
+    let staged = client
+        .reference_attachment(context(true), bot.main_chat, reference_request(&kept))
+        .unwrap()
+        .attachment;
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+    let repo = returned.recv().unwrap();
+    // Nothing was added to or taken from the conversation in Trash.
+    let rows: Vec<_> = repo
+        .attachments_for_chat(additional)
+        .unwrap()
+        .into_iter()
+        .map(|attachment| attachment.id)
+        .collect();
+    assert_eq!(rows, vec![in_trash.attachment.id]);
+    assert!(repo.attachment(staged.id).unwrap().is_some());
+
+    // Captured by an unfinished operation: staging refuses, a read does not.
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let draft = staged_reference(bot.main_chat);
+    repo.stage_attachment(&draft).unwrap();
+    repo.capture_bot_lifecycle(&capture(
+        &bot,
+        BotLifecycleKind::TrashChat,
+        Some(bot.main_chat),
+    ))
+    .unwrap();
+    let (worker, client, returned) = returning_worker(repo, authority);
+    for (route, code) in staging_codes(
+        &client,
+        bot.main_chat,
+        bot.home_workspace,
+        draft.attachment.id,
+    ) {
+        assert_eq!(code, PENDING, "{route}");
+    }
+    // Reading passes the hold and reaches the attachment itself: a path
+    // reference has no stored bytes to show.
+    assert_eq!(
+        client
+            .read_attachment(context(true), bot.main_chat, draft.attachment.id)
+            .map(|_| ())
+            .unwrap_err()
+            .code,
+        koru_ai_wire::attachment_codes::NO_PREVIEW
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+    let repo = returned.recv().unwrap();
+    let rows: Vec<_> = repo
+        .attachments_for_chat(bot.main_chat)
+        .unwrap()
+        .into_iter()
+        .map(|attachment| attachment.id)
+        .collect();
+    assert_eq!(rows, vec![draft.attachment.id]);
+}
+
 #[test]
 fn the_archived_and_trash_filters_list_only_the_owners_bots_in_that_lifecycle() {
     let (mut repo, authority, command) = fixture();
