@@ -197,9 +197,9 @@ fn every_stop_reason_has_a_sentence_and_retry_only_where_it_can_finish() {
 }
 
 /// **A refusal is a sentence by its code**, never the server's English: a
-/// chosen folder the owner refuses (missing, or one of Koru's own data
-/// folders — the same code) reads as the folder sentence; the rest by the
-/// settings' own table.
+/// chosen folder the owner refuses as `invalid_request` (one that does not
+/// exist) reads as the folder sentence; Koru's own data folders have their
+/// own code and sentence (below); the rest by the settings' own table.
 #[test]
 fn a_refused_create_says_why_in_words_and_keeps_the_draft() {
     let mut form = ready();
@@ -510,4 +510,46 @@ fn a_create_under_a_request_held_with_other_input_shows_what_the_owner_holds() {
     answer(&mut form, held, Instant::now());
     assert!(!form.editable(), "the owner's creation, not the draft");
     assert_eq!(form.live().map(|live| live.name.as_str()), Some("Other"));
+}
+
+/// **A folder that is Koru's own data has its own sentence**: the owner
+/// answers `folder_reserved` (`koru_ai_wire::bot_creation_codes`, from the
+/// AI server's creation folder check) for a chosen folder that is, or is
+/// inside, the AI or Store data root, and `invalid_request` for one that
+/// does not exist. The two read differently, and the draft stays editable.
+#[test]
+fn a_reserved_folder_and_a_missing_one_read_as_different_sentences() {
+    let said = |code: &str| {
+        let mut form = ready();
+        form.choose_folder(std::path::Path::new(if cfg!(windows) {
+            "C:\\Users\\me\\AppData\\Local\\koru"
+        } else {
+            "/home/me/.local/share/koru"
+        }));
+        form.create(None).expect("sent");
+        form.answer(
+            form.request(),
+            Err(Failure::Refused(code.to_owned())),
+            Instant::now(),
+        );
+        assert!(form.editable(), "{code}: the person chooses another");
+        form.notice()
+    };
+    let reserved = said("folder_reserved");
+    let missing = said("invalid_request");
+    assert_eq!(reserved, Some(Words::BotsErrFolderReserved));
+    assert_eq!(missing, Some(Words::BotsFolderRefused));
+    assert_ne!(reserved, missing);
+    // The settings' change of folder says it the same way.
+    assert_eq!(
+        crate::bots::settings::refusal_words(crate::bots::settings::FOLDER_RESERVED),
+        Words::BotsErrFolderReserved
+    );
+    for lang in Lang::ALL {
+        assert_ne!(
+            t(lang, Words::BotsErrFolderReserved),
+            t(lang, Words::BotsFolderRefused),
+            "{lang:?}"
+        );
+    }
 }

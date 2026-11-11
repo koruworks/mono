@@ -672,6 +672,11 @@ pub(crate) const BOT_TRASHED_BOT: &str = "bot_trashed";
 /// until it is acknowledged, and offers it again at once, so a retry soon
 /// succeeds. Retryable; never a reused request id.
 pub(crate) const BOT_OPERATION_PENDING: &str = "bot_operation_pending";
+/// **The folder chosen is Koru's own data**, or inside it
+/// (`koru_ai_wire::bot_creation_codes::FOLDER_RESERVED`), on creation and on
+/// a change of folder. Not retryable: another folder is. A folder that does
+/// not exist stays `invalid_request`.
+pub(crate) const FOLDER_RESERVED: &str = "folder_reserved";
 
 /// **A refusal's sentence, by its stable code** (`BotError::code`, and the
 /// lifecycle's `bot_archived`, `bot_conversation_trashed` and
@@ -689,6 +694,7 @@ pub(crate) fn refusal_words(code: &str) -> Words {
         BOT_TRASHED_BOT => Words::BotsErrBotTrashed,
         BOT_PENDING => Words::BotsErrPending,
         BOT_OPERATION_PENDING => Words::BotsErrOperationPending,
+        FOLDER_RESERVED => Words::BotsErrFolderReserved,
         "invalid_request" => Words::BotsErrInvalid,
         "not_found" => Words::BotsErrNotFound,
         "wrong_owner" => Words::BotsErrWrongOwner,

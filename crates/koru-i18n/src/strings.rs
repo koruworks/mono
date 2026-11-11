@@ -3556,13 +3556,15 @@ pub enum Key {
     BotsUnfinishedMore,
     /// The Trash's subtitle when the owner holds more Bot conversations in the Trash than one listing reads: the subtitle's own sentence, then that not all are listed.
     TrashSubtitleMore,
+    /// The owner's `folder_reserved`: the folder chosen for a Bot, on creation or a change of folder, is Koru's own data or inside it. A folder that does not exist stays `BotsFolderRefused`.
+    BotsErrFolderReserved,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2410] = [
+    pub const ALL: [Key; 2411] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5973,6 +5975,7 @@ impl Key {
         Key::TrashEmptyOnlyBots,
         Key::BotsUnfinishedMore,
         Key::TrashSubtitleMore,
+        Key::BotsErrFolderReserved,
     ];
 }
 
@@ -19309,4 +19312,5 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TrashEmptyOnlyBots, en: "Bots can't be permanently deleted yet. They stay in the Trash until you restore them.", es: "Los bots aún no se pueden eliminar de forma permanente. Se quedan en la papelera hasta que los restaures.", pt_br: "Bots ainda não podem ser excluídos permanentemente. Eles ficam na lixeira até você restaurá-los.", de: "Bots können noch nicht endgültig gelöscht werden. Sie bleiben im Papierkorb, bis Sie sie wiederherstellen.", fr: "Les bots ne peuvent pas encore être supprimés définitivement. Ils restent dans la corbeille jusqu'à ce que vous les restauriez.", ar: "لا يمكن حذف البوتات نهائيًا بعد. تبقى في سلة المهملات حتى تستعيدها.", zh_hans: "暂时还不能永久删除 Bot。它们会留在回收站中，直到你恢复它们。", ja: "Bot はまだ完全に削除できません。復元するまでごみ箱に残ります。" },
     Row { key: Key::BotsUnfinishedMore, en: "There are more unfinished bots than can be listed here. Retry or abandon some to see the rest.", es: "Hay más bots sin terminar de los que se pueden mostrar aquí. Reintenta o abandona algunos para ver el resto.", pt_br: "Há mais bots inacabados do que é possível listar aqui. Tente de novo ou abandone alguns para ver o restante.", de: "Es gibt mehr unfertige Bots, als hier aufgeführt werden können. Wiederholen oder verwerfen Sie einige, um den Rest zu sehen.", fr: "Il y a plus de bots inachevés qu'il n'est possible d'en afficher ici. Réessayez ou abandonnez-en quelques-uns pour voir les autres.", ar: "هناك بوتات غير مكتملة أكثر مما يمكن عرضه هنا. أعد محاولة بعضها أو تخلَّ عنه لرؤية البقية.", zh_hans: "未完成的 Bot 多于这里能列出的数量。重试或放弃其中一些即可看到其余的。", ja: "ここに表示できる数より多くの未完成の Bot があります。いくつかを再試行するか破棄すると、残りが表示されます。" },
     Row { key: Key::TrashSubtitleMore, en: "Items remain here until they are permanently deleted. Not every bot conversation in the Trash is listed.", es: "Los elementos permanecen aquí hasta que se eliminan de forma permanente. No se muestran todas las conversaciones de bots de la papelera.", pt_br: "Os itens ficam aqui até serem excluídos permanentemente. Nem todas as conversas de bots na lixeira estão listadas.", de: "Elemente bleiben hier, bis sie endgültig gelöscht werden. Nicht alle Bot-Unterhaltungen im Papierkorb sind aufgeführt.", fr: "Les éléments restent ici jusqu'à leur suppression définitive. Toutes les conversations de bots de la corbeille ne sont pas affichées.", ar: "تبقى العناصر هنا إلى أن تُحذف نهائيًا. لا تظهر كل محادثات البوتات الموجودة في سلة المهملات.", zh_hans: "项目会保留在这里，直到被永久删除。并未列出回收站中的所有 Bot 对话。", ja: "完全に削除されるまで、項目はここに残ります。ごみ箱内の Bot の会話がすべて表示されているわけではありません。" },
+    Row { key: Key::BotsErrFolderReserved, en: "That folder is part of Koru's own data. Choose another folder.", es: "Esa carpeta forma parte de los datos propios de Koru. Elige otra carpeta.", pt_br: "Essa pasta faz parte dos dados do próprio Koru. Escolha outra pasta.", de: "Dieser Ordner gehört zu Korus eigenen Daten. Wählen Sie einen anderen Ordner.", fr: "Ce dossier fait partie des données propres à Koru. Choisissez un autre dossier.", ar: "هذا المجلد جزء من بيانات Koru الخاصة. اختر مجلدًا آخر.", zh_hans: "该文件夹属于 Koru 自身的数据。请选择其他文件夹。", ja: "このフォルダーは Koru 自身のデータの一部です。別のフォルダーを選んでください。" },
 ];
