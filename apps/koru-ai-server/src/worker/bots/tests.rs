@@ -5,6 +5,7 @@ mod chat;
 mod conversations;
 mod holds;
 mod lifecycle;
+mod qualified;
 mod reads;
 
 #[test]

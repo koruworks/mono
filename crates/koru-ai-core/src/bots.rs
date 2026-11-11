@@ -573,3 +573,15 @@ impl BotAuthority for BotAuthoritySnapshot {
             .unwrap_or(Err(BotError::Forbidden))
     }
 }
+
+/// The agent runtimes a Bot may be created on or changed to in this version.
+/// M1 ships qualified on Codex only (Steven's review, 2026-11-10): the AI owner
+/// refuses any other provider in Create and Update, and the Bots UI offers
+/// only these, from this same value. A Bot already stored with another
+/// provider stays readable; only a change to it is refused.
+pub const QUALIFIED_BOT_RUNTIMES: &[&str] = &["agent-codex"];
+
+/// Whether `provider` is one of [`QUALIFIED_BOT_RUNTIMES`].
+pub fn qualified_bot_runtime(provider: &crate::AiProviderId) -> bool {
+    QUALIFIED_BOT_RUNTIMES.contains(&provider.as_str())
+}
