@@ -105,6 +105,8 @@ pub struct WorkerConfig {
     test_repository: Option<Repository>,
     #[cfg(test)]
     test_repository_return: Option<SyncSender<Repository>>,
+    #[cfg(test)]
+    test_bot_creation: Option<bots::CreationDriver>,
 }
 
 impl WorkerConfig {
@@ -150,6 +152,8 @@ impl WorkerConfig {
             test_repository: None,
             #[cfg(test)]
             test_repository_return: None,
+            #[cfg(test)]
+            test_bot_creation: None,
         }
     }
 
@@ -174,6 +178,8 @@ impl WorkerConfig {
             test_repository: None,
             #[cfg(test)]
             test_repository_return: None,
+            #[cfg(test)]
+            test_bot_creation: None,
         })
     }
 
@@ -203,6 +209,8 @@ impl WorkerConfig {
             test_repository: None,
             #[cfg(test)]
             test_repository_return: None,
+            #[cfg(test)]
+            test_bot_creation: None,
         })
     }
 
@@ -1150,6 +1158,9 @@ enum Envelope {
         command: Box<WorkerCommand>,
         proof: ApiResult<bots::PreparedBotCommand>,
     },
+    BotCreationPrepared(Box<bots::CreationPrepared>),
+    BotCreationStep(Box<bots::CreationStepResult>),
+    BotCreationRead(Box<bots::CreationReadResult>),
     Command(WorkerCommand),
     Context(ContextResolution),
     Provider(AiEvent),
@@ -1555,6 +1566,8 @@ struct WorkerState {
     bot_recovery_after: Option<i64>,
     /// The lifecycle operations the writer is driving (P1.7).
     bot_lifecycle: bots::LifecycleDriver,
+    /// The Bot creations the writer is driving, and their list (P1.8).
+    bot_creations: bots::CreationDriver,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
@@ -1735,7 +1748,17 @@ fn run_worker(
     };
     if config.bot_authority.is_some() {
         capabilities.push("bots.config.v1".into());
+        // Creating a Bot with its Role page and folder (P1.8).
+        capabilities.push("bots.creation.v1".into());
     }
+    // The managed folder derives only from the BotId under this AI root.
+    #[cfg(test)]
+    let bot_creations = config.test_bot_creation.take().unwrap_or_else(|| {
+        bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders))
+    });
+    #[cfg(not(test))]
+    let bot_creations =
+        bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders));
     let provider_pool = ProviderPool::spawn(
         Arc::new(registry),
         provider_output.clone(),
@@ -1810,6 +1833,7 @@ fn run_worker(
         bot_policy_recovery: bots::policy::PolicyRecovery::default(),
         bot_recovery_after: Some(0),
         bot_lifecycle: Default::default(),
+        bot_creations,
         bot_delegate: config.bot_delegate,
         bot_authority: config.bot_authority,
         repository,
@@ -1872,6 +1896,7 @@ fn run_worker(
         state.drain_agent_commands();
         state.schedule_bot_chat_step();
         state.schedule_bot_lifecycle();
+        state.schedule_bot_creations();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
             Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
@@ -1913,6 +1938,11 @@ fn run_worker(
             Ok(Envelope::BotPrepared { command, proof }) => {
                 state.complete_bot_preparation(*command, proof)
             }
+            Ok(Envelope::BotCreationPrepared(prepared)) => {
+                state.complete_bot_creation_preparation(*prepared)
+            }
+            Ok(Envelope::BotCreationStep(result)) => state.complete_bot_creation_step(*result),
+            Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
             Ok(Envelope::Tools(resolution)) => state.handle_tool_resolution(resolution),
@@ -5518,6 +5548,9 @@ enum ProviderAdminJob {
     BotPrepare(bots::BotPreparationJob),
     BotBranch(bots::BotBranchJob),
     BotLifecycle(bots::LifecycleJob),
+    BotCreationPrepare(bots::CreationPreparationJob),
+    BotCreationStep(bots::CreationJob),
+    BotCreationRead(bots::CreationReadJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -5641,6 +5674,27 @@ impl ProviderAdminPool {
                             send_admin_envelope(
                                 &output,
                                 Envelope::BotBranchPrepared(job.run()),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotCreationPrepare(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotCreationPrepared(Box::new(job.run(agents.as_ref()))),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotCreationStep(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotCreationStep(Box::new(job.run())),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotCreationRead(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotCreationRead(Box::new(job.run())),
                                 &thread_shutdown,
                             );
                         }

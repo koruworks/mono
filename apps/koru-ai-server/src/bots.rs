@@ -180,6 +180,78 @@ impl BotAuthority for BotAuthorityAdapter {
             Err(BotError::NotFound)
         }
     }
+    /// The Store's strict creation origin, under the same owner, placement
+    /// and Profile checks as every other Bot effect, in one Store hop. The
+    /// candidate, key, hash and seed are the creation receipt's, durable
+    /// before this call: a lost reply replays exactly them, and after the
+    /// Store's own receipt expires its retained origin still lets the
+    /// original first update win. Human edits made since stay current.
+    fn create_role_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        if seed.owner.device != self.device {
+            return Err(BotError::Forbidden);
+        }
+        let seed = seed.clone();
+        self.client
+            .with_store(move |store| {
+                if store
+                    .local_user_scope()
+                    .map_err(|_| BotError::Unavailable)?
+                    != seed.owner.user_scope
+                    || store
+                        .current_placement_profile(seed.workspace)
+                        .map_err(|_| BotError::Unavailable)?
+                        != Some(seed.profile)
+                {
+                    return Err(BotError::Forbidden);
+                }
+                store
+                    .workspace(seed.workspace)
+                    .map_err(|_| BotError::Forbidden)?;
+                store
+                    .profile(seed.profile)
+                    .map_err(|_| BotError::Forbidden)?;
+                store
+                    .create_seeded_document_with_origin(
+                        seed.workspace,
+                        &seed.title,
+                        koru_core::explore::KIND_DOCUMENT,
+                        None,
+                        None,
+                        BOT_ROLE_SCOPE,
+                        &seed.request_key,
+                        &seed.request_hash,
+                        seed.candidate,
+                        seed.seed.clone(),
+                        None,
+                        koru_store_core::model::Timestamp::now(),
+                    )
+                    .map_err(|error| match error.code() {
+                        koru_store_core::errors::Code::IdempotencyConflict => BotError::Conflict,
+                        // Once the seed transaction begins, any error may
+                        // follow durable bytes: the same candidate replays.
+                        _ => BotError::Unavailable,
+                    })?;
+                let origin = match store
+                    .creation_origin(seed.workspace, seed.candidate)
+                    .map_err(|_| BotError::Unavailable)?
+                {
+                    koru_store_core::CreationOriginLookup::Known(origin) => origin,
+                    _ => return Err(BotError::Conflict),
+                };
+                let page_live = store
+                    .document_entry_live(seed.workspace, seed.candidate)
+                    .map_err(|_| BotError::Unavailable)?
+                    .is_some_and(|entry| entry.kind == koru_core::explore::KIND_DOCUMENT);
+                Ok(BotRoleProof {
+                    scope: origin.scope,
+                    request_key: origin.request_key,
+                    request_hash: origin.request_hash,
+                    initial_update: origin.initial_update,
+                    page_live,
+                })
+            })
+            .map_err(|_| BotError::Unavailable)?
+    }
 }
 
 fn trusted_device(value: &str) -> Option<DeviceId> {

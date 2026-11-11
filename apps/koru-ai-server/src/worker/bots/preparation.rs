@@ -42,6 +42,9 @@ pub(in crate::worker) struct BotPreparationJob {
     chat_snapshot: Option<Chat>,
     terminal_question: Option<chat::TerminalQuestionProof>,
     delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
+    /// A changed folder to check before the first task (P1.8): it must exist
+    /// and be a folder.
+    folder: Option<(Arc<dyn BotFolderSystem>, String)>,
 }
 impl BotPreparationJob {
     pub(in crate::worker) fn run(
@@ -70,7 +73,10 @@ impl BotPreparationJob {
                     })
                 })
                 .flatten();
-            let runtime = validation.map(|_| ());
+            let runtime = validation.map(|_| ()).and_then(|()| match &self.folder {
+                Some((folders, path)) => creation::require_existing_folder(folders.as_ref(), path),
+                None => Ok(()),
+            });
             let authority: Arc<dyn BotAuthority> = Arc::new(
                 self.authority
                     .inspect(&self.workspaces, &self.pages)
@@ -123,6 +129,8 @@ impl WorkerState {
             command.refuse(error);
             return None;
         }
+        // Creation and its read run their own owner checks (P1.8 B2).
+        let command = self.route_bot_creation(command)?;
         let targets = match bot_targets(&self.repository, &command) {
             Ok(Some(targets)) => targets,
             Ok(None) => return Some(command),
@@ -288,7 +296,7 @@ impl WorkerState {
                     BotCommand::ListBotCreations { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
-                    // Not served yet: the owner answers them unavailable.
+                    // Routed to their own preparation before this.
                     BotCommand::CreateBotWithRole { .. } | BotCommand::ReadBotCreation { .. } => {}
                 }
             }
@@ -332,7 +340,21 @@ impl WorkerState {
                     return None;
                 }
             };
+        let folder = match &command {
+            WorkerCommand::Bots {
+                request: BotCommand::Update { bot_id, config, .. },
+                ..
+            } => self
+                .repository
+                .bot(*bot_id)
+                .ok()
+                .flatten()
+                .filter(|bot| bot.config.working_folder != config.working_folder)
+                .map(|_| (self.bot_creations.folders(), config.working_folder.clone())),
+            _ => None,
+        };
         let job = BotPreparationJob {
+            folder,
             command,
             authority: self.bot_authority.as_ref().unwrap().clone(),
             workspaces,
@@ -545,3 +567,6 @@ fn branch_destination(command: &WorkerCommand) -> Option<ChatId> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests;

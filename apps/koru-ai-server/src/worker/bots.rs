@@ -25,6 +25,11 @@ pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingB
 pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
+mod creation;
+pub(super) use creation::{
+    BotFolderSystem, CreationDriver, CreationJob, CreationPreparationJob, CreationPrepared,
+    CreationReadJob, CreationReadResult, CreationStepResult, NativeFolders,
+};
 impl WorkerState {
     pub(super) fn bot_read_access(&self, context: &CommandContext) -> ApiResult<ChatReadAccess> {
         if !context.principal.scopes.contains(&AiScope::ManageBots) {
@@ -60,6 +65,9 @@ impl WorkerState {
             return result;
         }
         if let Some(result) = self.bot_read_command(&context, &request) {
+            return result;
+        }
+        if let Some(result) = self.bot_creation_command(&context, &request) {
             return result;
         }
         if let BotCommand::CreateChat { request_id, bot_id } = &request {
