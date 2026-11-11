@@ -10230,6 +10230,11 @@
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
           },
+          "stop_code": {
+            "description": "Why the engine refused this reply, as the same stable code the live\n`failed` event carried (O36): one of the closed `bot_input_*` codes,\nnever provider text. Absent on every other reply. A refused reply\nreports no usage, so an entry may carry only this.",
+            "nullable": true,
+            "type": "string"
+          },
           "usage": {
             "$ref": "#/components/schemas/AiUsage"
           }

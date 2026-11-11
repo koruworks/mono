@@ -170,3 +170,42 @@ fn a_failed_reply_carries_only_an_engine_stop_code_to_a_client() {
     assert_eq!(failed(Some("the provider said: no pictures")), None);
     assert_eq!(failed(None), None);
 }
+
+/// A reloaded transcript says why a reply was refused, from the column the
+/// refusal stored it in, and carries nothing else from that column (O36).
+#[test]
+fn a_reloaded_transcript_keeps_the_refused_replys_engine_code_only() {
+    let code = "bot_input_pictures_refused";
+    let native = Arc::new(Native {
+        begin_failures: Mutex::new(
+            [koru_delegate_api::Failure::new(
+                code,
+                "The Bot operation was refused.",
+                false,
+            )]
+            .into(),
+        ),
+        ..Native::default()
+    });
+    let (worker, returned, context, bot) = spawn(native);
+    let stream = send(&worker, context, &bot);
+    assert!(matches!(terminal(&stream), PublicAiEvent::Failed { .. }));
+    worker.shutdown();
+    let _ = worker.join();
+    let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    let messages = repository.messages(bot.main_chat).unwrap();
+    let attempts = repository.attempts_for_chat(bot.main_chat).unwrap();
+    let usage = transcript_usage(&messages, attempts.clone());
+    // A refused reply reports no usage; its entry carries the code alone.
+    assert_eq!(usage.len(), 1);
+    assert_eq!(usage[0].message_id, stream.accepted.assistant_message_id);
+    assert_eq!(usage[0].stop_code.as_deref(), Some(code));
+    assert_eq!(usage[0].usage, AiUsage::default());
+    assert_eq!(usage[0].context, None);
+    // Any other stop reason in the column stays inside the service.
+    let mut other = attempts;
+    for attempt in &mut other {
+        attempt.stop_reason = Some("replay_gap".into());
+    }
+    assert!(transcript_usage(&messages, other).is_empty());
+}

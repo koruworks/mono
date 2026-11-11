@@ -196,6 +196,12 @@ pub struct MessageUsage {
     /// The latest active-context report from the attempt for this reply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ReportedContextUsage>,
+    /// Why the engine refused this reply, as the same stable code the live
+    /// `failed` event carried (O36): one of the closed `bot_input_*` codes,
+    /// never provider text. Absent on every other reply. A refused reply
+    /// reports no usage, so an entry may carry only this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_code: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1206,20 +1212,29 @@ mod tests {
             message_id: MessageId::new(),
             usage: AiUsage::default(),
             context: None,
+            stop_code: None,
         };
         let mut value = serde_json::to_value(&entry).unwrap();
         assert!(value.get("context").is_none());
+        assert!(value.get("stop_code").is_none());
         let decoded = serde_json::from_value::<MessageUsage>(value.clone()).unwrap();
         assert_eq!(decoded, entry);
 
         value["context"] = serde_json::json!({"used": 48_000, "size": 258_400});
-        let decoded = serde_json::from_value::<MessageUsage>(value).unwrap();
+        let decoded = serde_json::from_value::<MessageUsage>(value.clone()).unwrap();
         assert_eq!(
             decoded.context,
             Some(ReportedContextUsage {
                 used: 48_000,
                 size: 258_400,
             })
+        );
+        // A refused reply's stable code reads back; an older reader ignores it.
+        value["stop_code"] = serde_json::json!("bot_input_pictures_refused");
+        let decoded = serde_json::from_value::<MessageUsage>(value).unwrap();
+        assert_eq!(
+            decoded.stop_code.as_deref(),
+            Some("bot_input_pictures_refused")
         );
     }
 

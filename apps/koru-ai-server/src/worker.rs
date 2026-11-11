@@ -2009,12 +2009,21 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
                 || usage.completion_tokens.is_some()
                 || usage.reasoning_tokens.is_some()
                 || usage.total_tokens.is_some();
+            // A refused reply keeps the engine's own stable code (O36), read
+            // from the column `refuse_bot_input` stored it in. Only the closed
+            // engine codes cross; anything else in the column stays private.
+            let stop_code = attempt
+                .stop_reason
+                .filter(|code| koru_ai_core::inference::is_engine_stop_code(code));
             attempt.assistant_message_id.map(|message_id| {
-                let entry = (reported || context.is_some()).then_some(MessageUsage {
-                    message_id,
-                    usage,
-                    context,
-                });
+                let entry = (reported || context.is_some() || stop_code.is_some()).then_some(
+                    MessageUsage {
+                        message_id,
+                        usage,
+                        context,
+                        stop_code,
+                    },
+                );
                 (message_id, entry)
             })
         })
