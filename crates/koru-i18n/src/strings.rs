@@ -1883,6 +1883,8 @@ pub enum Key {
     BotsOtherConversation,
     /// The owner's activity read stopped at its bound: more conversations are running or need the person than the roster lists. Never a claim that the rest are idle.
     BotsMoreWork,
+    /// A Bot task the agent stopped because it refused the task's pictures, from the owner's stable code (QUESTIONS O36), in place of the provider's message. Information only: what the surface receives cannot tell whether the pictures were then sent as files. Non-English columns machine-written, awaiting a native read.
+    BotsPicturesRefused,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3304,7 +3306,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2281] = [
+    pub const ALL: [Key; 2282] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4620,6 +4622,7 @@ impl Key {
         Key::BotsMainConversation,
         Key::BotsOtherConversation,
         Key::BotsMoreWork,
+        Key::BotsPicturesRefused,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -15393,6 +15396,17 @@ pub const ROWS: &[Row] = &[
         ar: "هناك عمل للبوتات أكثر مما هو مدرج هنا.",
         zh_hans: "正在进行的 Bot 工作比这里列出的更多。",
         ja: "ここに表示されている以上の Bot の作業が進行中です。",
+    },
+    Row {
+        key: Key::BotsPicturesRefused,
+        en: "The agent refused the pictures.",
+        es: "El agente rechazó las imágenes.",
+        pt_br: "O agente recusou as imagens.",
+        de: "Der Agent hat die Bilder abgelehnt.",
+        fr: "L'agent a refusé les images.",
+        ar: "رفض الوكيل الصور.",
+        zh_hans: "代理拒绝了这些图片。",
+        ja: "エージェントが画像を拒否しました。",
     },
     Row {
         key: Key::SizeBytes,

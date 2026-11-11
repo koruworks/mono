@@ -504,6 +504,12 @@ pub struct ChatSurface {
     /// `attempt` until the transcript read that follows replaces it.
     ended_attempt: Option<InferenceAttemptId>,
     pending_assistant_message_id: Option<MessageId>,
+    /// **Replies the agent failed because it refused their pictures**
+    /// (Bots P1.8, QUESTIONS O36): the live `failed` event's engine stop
+    /// code said so, and the reply says it in words of its own instead of
+    /// the generic failure. Kept while this surface lives; a reloaded
+    /// transcript does not carry the code yet (`refused_pictures()`).
+    refused_pictures: HashSet<MessageId>,
     pending_user: Option<String>,
     /// The running reply carries an agent's answers sent as the next
     /// message (koru-ai D108): it follows with no card of the person's —
@@ -1006,6 +1012,7 @@ impl ChatSurface {
             attempt: None,
             ended_attempt: None,
             pending_assistant_message_id: None,
+            refused_pictures: HashSet::new(),
             pending_user: None,
             answering: false,
             pulse: None,
@@ -4002,6 +4009,15 @@ impl ChatSurface {
                             } else if error.public_message == koru_ai_core::AGENT_QUESTIONS_CLOSED {
                                 // Questions whose agent's session ended (D108).
                                 koru_i18n::t(self.lang, koru_i18n::Key::AiQuestionsPassedOver)
+                                    .to_owned()
+                            } else if refused_pictures(error.stop_code.as_deref()) {
+                                // The owner's stable code, never the
+                                // provider's English (O36): the reply says
+                                // it too, until a reload.
+                                if let Some(reply) = self.pending_assistant_message_id {
+                                    self.refused_pictures.insert(reply);
+                                }
+                                koru_i18n::t(self.lang, koru_i18n::Key::BotsPicturesRefused)
                                     .to_owned()
                             } else {
                                 error.public_message.clone()
@@ -7486,7 +7502,10 @@ impl ChatSurface {
                         .and_then(|usage| usage_line(usage, self.lang));
                     let display = if message.markdown.is_empty()
                         && message.state == MessageState::Failed
+                        && self.refused_pictures.contains(&message.id)
                     {
+                        koru_i18n::t(self.lang, koru_i18n::Key::BotsPicturesRefused).to_owned()
+                    } else if message.markdown.is_empty() && message.state == MessageState::Failed {
                         failure_label(message.error_class, self.lang)
                     } else if message.markdown.is_empty()
                         && message.state == MessageState::Interrupted
@@ -10415,6 +10434,23 @@ fn destination_row(panel: Rect, index: usize) -> Rect {
 
 /// The sentence for a failed response, by its class, in the person's
 /// language. A class the surface does not name reads as the generic one.
+/// **Whether an engine stop code says the agent refused a task's pictures**
+/// (Bots P1.8, QUESTIONS O36): the owner's `bot_input_pictures_refused`, or
+/// `bot_input_too_large` for pictures over the agent's limit. The sentence
+/// is information only: what the surface receives cannot tell whether the
+/// pictures were then sent as files. Read from the live `failed` event's
+/// `AiError.stop_code`; the reloaded transcript does not carry the code yet.
+/// When it does (an optional `MessageUsage.stop_code` is the planned
+/// carrier), the transcript's failed reply should be read through this same
+/// function so the sentence survives a reload; until then a reload shows
+/// [`failure_label`]'s words.
+pub(crate) fn refused_pictures(code: Option<&str>) -> bool {
+    matches!(
+        code,
+        Some("bot_input_pictures_refused" | "bot_input_too_large")
+    )
+}
+
 fn failure_label(class: Option<AiErrorClass>, lang: koru_i18n::Lang) -> String {
     let key = match class {
         Some(AiErrorClass::Configuration) => koru_i18n::Key::AiFailureConfiguration,
@@ -14704,6 +14740,54 @@ mod tests {
             surface.status.as_deref(),
             Some("Der Agent hat diese Denkstufe nicht übernommen")
         );
+    }
+
+    /// **O36: refused pictures are said in the person's words**, from the
+    /// owner's stable code on the live `failed` event — never the provider's
+    /// message — and the failed reply says so too while the surface lives.
+    /// Any other failure keeps the words it had.
+    #[test]
+    fn refused_pictures_read_as_their_own_sentence() {
+        for code in ["bot_input_pictures_refused", "bot_input_too_large"] {
+            let mut surface = ChatSurface::new();
+            surface.lang = koru_i18n::Lang::En;
+            let reply = MessageId::new();
+            surface.pending_assistant_message_id = Some(reply);
+            surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+                version: 1,
+                sequence: 1,
+                event: PublicAiEvent::Failed {
+                    attempt_id: InferenceAttemptId::new(),
+                    error: koru_ai_core::AiError::new(
+                        AiErrorClass::Provider,
+                        "The provider refused the images.",
+                        false,
+                    )
+                    .with_stop_code(code),
+                    at: koru_ai_core::Timestamp::from_millis(1),
+                },
+            }));
+            assert_eq!(
+                surface.status.as_deref(),
+                Some("The agent refused the pictures."),
+                "{code}"
+            );
+            assert!(surface.refused_pictures.contains(&reply), "{code}");
+        }
+        let mut surface = ChatSurface::new();
+        surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+            version: 1,
+            sequence: 1,
+            event: PublicAiEvent::Failed {
+                attempt_id: InferenceAttemptId::new(),
+                error: koru_ai_core::AiError::new(AiErrorClass::Provider, "Boom.", false),
+                at: koru_ai_core::Timestamp::from_millis(1),
+            },
+        }));
+        assert_eq!(surface.status.as_deref(), Some("Boom."), "unchanged");
+        assert!(surface.refused_pictures.is_empty());
+        assert!(!refused_pictures(None));
+        assert!(!refused_pictures(Some("bot_input_unknown")));
     }
 
     #[test]
