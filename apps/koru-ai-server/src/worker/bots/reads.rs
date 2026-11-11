@@ -16,8 +16,34 @@ impl WorkerState {
                 cursor,
                 limit,
             } => Some(self.list_bot_chats(context, *bot_id, cursor.as_ref(), *limit)),
+            BotCommand::ListActivity { workspace } => {
+                Some(self.list_bot_activity(context, *workspace))
+            }
             _ => None,
         }
+    }
+
+    /// Running and Needs-you conversations of the owner's active Bots whose
+    /// home is `workspace`, which the owner must currently reach. Durable AI
+    /// state only: nothing here asks the delegate, so a slow or absent
+    /// delegate cannot hold the writer.
+    fn list_bot_activity(
+        &self,
+        context: &CommandContext,
+        workspace: WorkspaceId,
+    ) -> ApiResult<BotResponse> {
+        authorize(context, AiScope::ManageBots)?;
+        let proof = context
+            .prepared
+            .as_ref()
+            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+        let owner = proof.authority.owner().map_err(bot_failure)?;
+        proof.authority.workspace(workspace).map_err(bot_failure)?;
+        let activity = self
+            .repository
+            .bot_activity(owner, workspace, BOT_ACTIVITY_LIMIT)
+            .map_err(bot_failure)?;
+        Ok(BotResponse::Activity { activity })
     }
 
     /// The owner's view of one active Bot's conversations. A Bot of another

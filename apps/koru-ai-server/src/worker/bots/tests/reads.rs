@@ -98,3 +98,59 @@ fn the_owner_pages_a_bots_conversations_and_nobody_else_reads_them() {
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+#[test]
+fn workspace_activity_is_the_owners_alone_and_a_restart_leaves_nothing_running() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    // A reply left pending by the previous process: the worker's startup
+    // recovery interrupts it, and the durable answer follows the transcript.
+    let pending = turn(bot.main_chat, Uuid::new_v4(), 3);
+    repo.begin_turn(&pending).unwrap();
+    let workspace = authority.workspace;
+    let (worker, client) = worker(repo, authority.clone());
+
+    let BotResponse::Activity { activity } = client
+        .bots(context(true), BotCommand::ListActivity { workspace })
+        .unwrap()
+    else {
+        panic!("activity")
+    };
+    assert_eq!(
+        activity,
+        BotActivityPage {
+            entries: vec![],
+            truncated: false,
+        }
+    );
+    assert_eq!(
+        client
+            .bots(context(false), BotCommand::ListActivity { workspace })
+            .unwrap_err()
+            .code,
+        "forbidden"
+    );
+    // A workspace the owner cannot currently reach is refused, not empty.
+    assert_eq!(
+        client
+            .bots(
+                context(true),
+                BotCommand::ListActivity {
+                    workspace: WorkspaceId::new()
+                }
+            )
+            .unwrap_err()
+            .code,
+        "wrong_owner"
+    );
+    authority.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        client
+            .bots(context(true), BotCommand::ListActivity { workspace })
+            .unwrap_err()
+            .code,
+        "wrong_owner"
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}

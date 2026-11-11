@@ -273,6 +273,11 @@ pub enum BotCommand {
         cursor: Option<BotChatCursor>,
         limit: u16,
     },
+    /// The conversations of a workspace's active Bots that are running or
+    /// need the person, at most 200, read from durable AI state.
+    ListActivity {
+        workspace: WorkspaceId,
+    },
 }
 
 impl BotCommand {
@@ -301,6 +306,40 @@ pub enum BotResponse {
     Bot { bot: Bot },
     List { bots: Vec<Bot> },
     Chats { page: BotChatPage },
+    Activity { activity: BotActivityPage },
+}
+
+/// The most conversations one [`BotCommand::ListActivity`] reply names.
+pub const BOT_ACTIVITY_LIMIT: usize = 200;
+
+/// What a Bot conversation is waiting on, from the AI owner's durable state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BotActivityState {
+    /// A reply is in progress: queued for the Bot or executing.
+    Running,
+    /// An approval or a question card is open for the person. Takes
+    /// precedence over `running` when both hold.
+    NeedsYou,
+}
+
+/// One conversation with work in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotActivity {
+    pub bot_id: BotId,
+    pub chat_id: ChatId,
+    pub state: BotActivityState,
+}
+
+/// A workspace's Bot activity, ordered by Bot and then conversation.
+/// `truncated` says more conversations had activity than were returned.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotActivityPage {
+    pub entries: Vec<BotActivity>,
+    pub truncated: bool,
 }
 
 /// The most conversations one [`BotCommand::ListBotChats`] page returns.

@@ -238,7 +238,8 @@ fn execute_bot_command(
         | BotCommand::PurgeChat { .. }
         | BotCommand::ReadLifecycleOperation { .. }
         | BotCommand::ListLifecycle { .. }
-        | BotCommand::ListBotChats { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ListBotChats { .. }
+        | BotCommand::ListActivity { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

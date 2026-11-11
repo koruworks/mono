@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Bounded owner reads for the Bots view (P1.8): a Bot's conversations, page
-//! by page. Both read only ai.db 18's committed tables and indexes.
+//! by page, and a workspace's running and Needs-you conversations. Both read
+//! only ai.db 18's committed tables and indexes.
 //!
 //! `bot_chats` has no index on `bot_id` (only the partial `bot_main_chat`), so
 //! a page scans the association table — one narrow row per Bot conversation
@@ -31,7 +32,98 @@ pub(crate) const BOT_CHAT_PAGE_SQL: &str =
   ORDER BY (bc.purpose = 'main') DESC, c.updated_at_ms DESC, c.id
   LIMIT ?5";
 
+/// A workspace's running and Needs-you Bot conversations. Per conversation it
+/// reads at most three bounded index probes, never its history:
+/// - **running**: the chat's pending assistant message, through the partial
+///   unique `one_pending_assistant_per_chat` (at most one row per chat);
+/// - **needs you**: an `approval_required` tool row (an approval, or a
+///   question card the person must answer) on the chat's latest attempt —
+///   one seek of `inference_attempts_by_chat`, then that attempt's own rows in
+///   `tool_invocations_by_attempt` — or on the attempt of its pending reply,
+///   reached through `bot_chat_runs`' unique assistant message.
+///
+/// Only the latest attempt can hold an open row: a chat has at most one
+/// pending reply, sending another message closes the cards it leaves open,
+/// and an AI restart cancels every open row. The latest attempt is taken by
+/// `queued_at_ms`; the pending-reply probe keeps a live approval visible even
+/// if the clock stepped back between two attempts of one chat.
+///
+/// Idle conversations are skipped while reading rather than in SQL: an outer
+/// `WHERE running OR needs_you` makes SQLite evaluate each probe twice.
+pub(crate) const BOT_ACTIVITY_SQL: &str = "SELECT bc.bot_id, bc.chat_id,
+    EXISTS(SELECT 1 FROM messages AS m INDEXED BY one_pending_assistant_per_chat
+            WHERE m.chat_id = bc.chat_id AND m.state = 'pending' AND m.role = 'assistant') AS running,
+    (EXISTS(SELECT 1 FROM tool_invocations AS t INDEXED BY tool_invocations_by_attempt
+             WHERE t.attempt_id = (SELECT a.id FROM inference_attempts AS a INDEXED BY inference_attempts_by_chat
+                                    WHERE a.chat_id = bc.chat_id ORDER BY a.queued_at_ms DESC LIMIT 1)
+               AND t.status = 'approval_required')
+     OR EXISTS(SELECT 1 FROM messages AS p INDEXED BY one_pending_assistant_per_chat
+                CROSS JOIN bot_chat_runs AS r ON r.assistant_message_id = p.id
+                CROSS JOIN tool_invocations AS pt INDEXED BY tool_invocations_by_attempt
+                        ON pt.attempt_id = r.ai_attempt_id
+               WHERE p.chat_id = bc.chat_id AND p.state = 'pending' AND p.role = 'assistant'
+                 AND pt.status = 'approval_required')) AS needs_you
+    FROM bot_chats AS bc
+   CROSS JOIN bots AS b ON b.bot_id = bc.bot_id
+   WHERE b.user_scope_id = ?1 AND b.owner_device_id = ?2 AND b.home_workspace_id = ?3
+     AND b.lifecycle = 'active'
+     AND NOT EXISTS(SELECT 1 FROM bot_chat_trash AS tr WHERE tr.chat_id = bc.chat_id)
+   ORDER BY bc.bot_id, bc.chat_id";
+
 impl Repository {
+    /// The owner's active Bots of `workspace`: each conversation outside Trash
+    /// that is running or needs the person, at most `limit`. The caller has
+    /// checked the owner's current authority over the workspace.
+    pub fn bot_activity(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        limit: usize,
+    ) -> Result<BotActivityPage, BotError> {
+        let mut statement = self.connection.prepare(BOT_ACTIVITY_SQL).map_err(bad)?;
+        let rows = statement
+            .query_map(
+                params![
+                    owner.user_scope.to_storage(),
+                    owner.device.to_storage(),
+                    workspace.to_storage(),
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                        row.get::<_, bool>(3)?,
+                    ))
+                },
+            )
+            .map_err(bad)?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let (bot, chat, running, needs_you) = row.map_err(bad)?;
+            let state = match (needs_you, running) {
+                (true, _) => BotActivityState::NeedsYou,
+                (false, true) => BotActivityState::Running,
+                (false, false) => continue,
+            };
+            if entries.len() == limit {
+                return Ok(BotActivityPage {
+                    entries,
+                    truncated: true,
+                });
+            }
+            entries.push(BotActivity {
+                bot_id: bot.parse().map_err(bad)?,
+                chat_id: ChatId::parse(&chat).ok_or(BotError::Storage)?,
+                state,
+            });
+        }
+        Ok(BotActivityPage {
+            entries,
+            truncated: false,
+        })
+    }
+
     /// One page of a Bot's conversations outside Trash, main first, then
     /// newest first. The caller has checked the owner's current authority
     /// over this Bot; this reads nothing of another Bot.

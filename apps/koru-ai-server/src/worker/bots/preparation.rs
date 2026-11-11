@@ -268,6 +268,9 @@ impl WorkerState {
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
+                    BotCommand::ListActivity { workspace } => {
+                        workspaces.insert(*workspace);
+                    }
                 }
             }
             // A held conversation is refused by the guard once its owner is
@@ -446,6 +449,8 @@ pub(super) fn bot_targets(
             | BotCommand::ReadLifecycleOperation { bot_id, .. }
             | BotCommand::ListBotChats { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
+            // The workspace alone is proved; the read names no Bot or chat.
+            BotCommand::ListActivity { .. } => return Ok(Some(Vec::new())),
         };
         match super::lifecycle::provable_bot(repository, id, command) {
             Ok(Some(bot)) => {

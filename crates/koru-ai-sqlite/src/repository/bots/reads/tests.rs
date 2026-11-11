@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::super::tests::fixture_bot;
 use super::*;
+mod activity;
 
 const HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 

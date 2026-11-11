@@ -109,3 +109,21 @@ fn a_conversation_page_request_is_closed_and_its_reply_is_additive() {
         "a reply field a later build adds is ignored"
     );
 }
+
+#[test]
+fn the_activity_read_names_only_a_workspace_and_two_states() {
+    let workspace = WorkspaceId::new();
+    let request = BotCommand::ListActivity { workspace };
+    let mut json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["command"], "list_activity");
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+        request
+    );
+    json["bot_id"] = serde_json::json!(BotId::mint());
+    assert!(serde_json::from_value::<BotCommand>(json).is_err());
+    assert_eq!(
+        serde_json::to_value([BotActivityState::Running, BotActivityState::NeedsYou]).unwrap(),
+        serde_json::json!(["running", "needs_you"])
+    );
+}
