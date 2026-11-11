@@ -5299,7 +5299,7 @@
         "type": "object"
       },
       "BotTrashedChatPage": {
-        "description": "One page of a workspace's Bot conversations in Trash, in conversation ID\norder; `next_cursor` is absent on the last page.",
+        "description": "One page of a workspace's Bot conversations in Trash, in conversation ID\norder; `next_cursor` is absent on the last page. A page examines a\nbounded window of the device's Trash, so it may hold fewer than asked,\nor none at all, and still not be the last: follow `next_cursor` until it\nis absent.",
         "properties": {
           "chats": {
             "items": {
