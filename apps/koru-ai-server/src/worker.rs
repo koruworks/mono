@@ -1587,6 +1587,8 @@ struct WorkerState {
     bot_chat_recovery: Option<Option<InferenceAttemptId>>,
     bot_coordination: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
     bot_recovery_after: Option<i64>,
+    /// When the receipt recovery pass runs again after a receipt stayed owed.
+    bot_recovery_retry: bots::AdmissionRetry,
     /// The lifecycle operations the writer is driving (P1.7).
     bot_lifecycle: bots::LifecycleDriver,
     /// The Bot creations the writer is driving, and their list (P1.8).
@@ -1861,6 +1863,7 @@ fn run_worker(
         bot_policy_pending: HashSet::new(),
         bot_policy_recovery: bots::policy::PolicyRecovery::default(),
         bot_recovery_after: Some(0),
+        bot_recovery_retry: Default::default(),
         bot_lifecycle: Default::default(),
         bot_creations,
         bot_resends: Default::default(),
@@ -1924,6 +1927,9 @@ fn run_worker(
         state.schedule_native_recovery();
         if state.bot_policy_recovery.due(Instant::now()) {
             state.recover_bot_policy(false);
+        }
+        if state.bot_recovery_retry.due(Instant::now()) {
+            state.retry_bot_operations();
         }
         state.drain_agent_commands();
         state.schedule_bot_chat_step();

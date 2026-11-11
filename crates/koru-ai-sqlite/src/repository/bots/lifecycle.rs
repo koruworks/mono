@@ -197,7 +197,7 @@ fn capture_on(
     let pauses = capture.kind.pauses(prior);
     let (pause_request, policy_request, barrier_revision) = if pauses {
         let request = BotRequestId::mint();
-        admission::prepare_bot_pause_on(
+        let pause = admission::prepare_bot_pause_on(
             &tx,
             capture.owner,
             capture.bot,
@@ -205,6 +205,16 @@ fn capture_on(
             capture.expected_revision,
             true,
             &capture.fingerprint,
+            capture.now,
+        )?;
+        // Work not admitted when it is captured stays refused for good,
+        // behind this pause, whatever later reverses the operation.
+        admission::refuse_captured_on(
+            tx,
+            capture.owner,
+            capture.bot,
+            None,
+            Some(&pause.intent.barrier),
             capture.now,
         )?;
         (
@@ -215,6 +225,18 @@ fn capture_on(
     } else {
         if current.revision != capture.expected_revision {
             return Err(BotError::RevisionConflict);
+        }
+        // A conversation's Trash refuses that conversation's work not yet
+        // admitted, behind one fence of its own.
+        if capture.kind == BotLifecycleKind::TrashChat {
+            admission::refuse_captured_on(
+                tx,
+                capture.owner,
+                capture.bot,
+                capture.chat,
+                None,
+                capture.now,
+            )?;
         }
         (None, None, None)
     };

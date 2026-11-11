@@ -568,3 +568,258 @@ fn unresolved_intents_are_bounded_without_preventing_exact_retry_or_finalization
     repo.prepare_bot_submission(&overflow, HASH, 1, 7).unwrap();
     assert_eq!(repo.pending_bot_operations(0, 64).unwrap().len(), 50);
 }
+
+/// What a lifecycle capture refused, and the Bot it was refused on.
+struct Waiting {
+    repo: Repository,
+    bot: Bot,
+    owner: BotOwner,
+    /// A second conversation of the Bot.
+    other: ChatId,
+    /// Start receipts the owner never admitted: two in the main
+    /// conversation, then one in `other`.
+    requests: Vec<BotRequestId>,
+}
+/// A Bot whose first task was admitted (so its folder is frozen and more
+/// may wait beside each other), with three Start receipts its owner never
+/// admitted.
+fn waiting() -> Waiting {
+    let (mut repo, bot, owner, first) = fixture();
+    let other = repo
+        .create_bot_chat(
+            &bot,
+            ProfileId::new(),
+            BotRequestId::mint(),
+            "other",
+            Timestamp::from_millis(2),
+        )
+        .unwrap()
+        .chat_id;
+    repo.prepare_bot_submission(&first, HASH, 1, 2).unwrap();
+    repo.acknowledge_bot_submission(
+        owner,
+        bot.id,
+        first.submission.provenance.submission,
+        &view(&first, d::BotAdmissionState::Settled),
+        3,
+    )
+    .unwrap();
+    let requests = [bot.main_chat, bot.main_chat, other]
+        .iter()
+        .map(|chat| {
+            let mut waiting = intent(&bot);
+            waiting.submission.provenance.chat_id = chat.as_uuid();
+            repo.prepare_bot_submission(&waiting, HASH, 1, 4).unwrap();
+            waiting.submission.provenance.submission
+        })
+        .collect();
+    Waiting {
+        repo,
+        bot,
+        owner,
+        other,
+        requests,
+    }
+}
+fn lifecycle(
+    bot: &Bot,
+    owner: BotOwner,
+    kind: BotLifecycleKind,
+    chat: Option<ChatId>,
+    revision: u64,
+) -> crate::LifecycleCapture {
+    crate::LifecycleCapture {
+        operation: BotRequestId::mint(),
+        owner,
+        bot: bot.id,
+        kind,
+        chat,
+        fingerprint: HASH.into(),
+        expected_revision: revision,
+        source: None,
+        members: vec![],
+        now: 20,
+    }
+}
+fn outcome(
+    repo: &Repository,
+    owner: BotOwner,
+    request: BotRequestId,
+) -> Option<BotExecutionOutcome> {
+    read_bot_submission_on(&repo.connection, owner.user_scope, request)
+        .unwrap()
+        .unwrap()
+        .outcome
+}
+#[test]
+fn a_whole_bot_capture_refuses_unadmitted_work_for_good_behind_its_own_pause() {
+    let Waiting {
+        mut repo,
+        bot,
+        owner,
+        requests,
+        ..
+    } = waiting();
+    let revision = repo.bot(bot.id).unwrap().unwrap().revision;
+    let archive = repo
+        .capture_bot_lifecycle(&lifecycle(
+            &bot,
+            owner,
+            BotLifecycleKind::Archive,
+            None,
+            revision,
+        ))
+        .unwrap();
+    let Some(BotAdmissionReceipt::Pause(pause)) = repo
+        .bot_admission_receipt(owner, bot.id, archive.pause_request.unwrap())
+        .unwrap()
+    else {
+        panic!("pause receipt")
+    };
+    // The operation's pause is the fence of each, in every conversation:
+    // newer than its revision, and paused.
+    for request in &requests {
+        assert_eq!(
+            outcome(&repo, owner, *request),
+            Some(BotExecutionOutcome::RefusalFence {
+                version: 1,
+                round: 1,
+                barrier: pause.intent.barrier.clone(),
+                acknowledged: false,
+                reason: BotAdmissionRefusal::Rejected,
+            })
+        );
+    }
+    // Only the pause moved the revision, and nothing is admitted meanwhile.
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap().revision, revision + 1);
+    assert!(!repo.bot_admitting(bot.id).unwrap());
+    // Reversing the parked operation leaves every one of them refused.
+    repo.park_bot_lifecycle(
+        owner.user_scope,
+        archive.operation,
+        BotLifecycleRefusal::OwnerUnavailable,
+        21,
+    )
+    .unwrap();
+    let mut restore = lifecycle(&bot, owner, BotLifecycleKind::Restore, None, revision + 1);
+    restore.source = Some(archive.operation);
+    repo.unarchive_bot(&restore).unwrap();
+    for request in &requests {
+        assert!(matches!(
+            outcome(&repo, owner, *request),
+            Some(BotExecutionOutcome::RefusalFence { .. })
+        ));
+    }
+    // Asked to refuse one again, the stored fence stands, even while the
+    // pause still waits for its owner.
+    let kept = repo
+        .prepare_bot_refusal_fence(
+            owner,
+            bot.id,
+            requests[0],
+            BotAdmissionRefusal::Rejected,
+            false,
+            22,
+        )
+        .unwrap();
+    assert_eq!(kept.outcome, outcome(&repo, owner, requests[0]));
+    // Paused, and its pause still unacknowledged: nothing is admitted; once
+    // acknowledged it is still paused until a Resume.
+    assert!(!repo.bot_admitting(bot.id).unwrap());
+    repo.acknowledge_bot_pause(
+        owner,
+        bot.id,
+        pause.intent.barrier.request,
+        &pause.intent.barrier,
+        23,
+    )
+    .unwrap();
+    assert!(!repo.bot_admitting(bot.id).unwrap());
+}
+#[test]
+fn a_conversation_capture_refuses_only_its_own_work_behind_one_fence() {
+    let Waiting {
+        mut repo,
+        bot,
+        owner,
+        other,
+        requests,
+    } = waiting();
+    let revision = repo.bot(bot.id).unwrap().unwrap().revision;
+    assert!(repo.bot_admitting(bot.id).unwrap());
+    // A pause still waiting for its owner: the fence would have to wait for
+    // it, so the capture answers that another change is settling.
+    let pause = repo
+        .prepare_bot_pause(owner, bot.id, BotRequestId::mint(), revision, true, HASH, 5)
+        .unwrap();
+    assert_eq!(
+        repo.capture_bot_lifecycle(&lifecycle(
+            &bot,
+            owner,
+            BotLifecycleKind::TrashChat,
+            Some(bot.main_chat),
+            revision + 1,
+        )),
+        Err(BotError::Settling)
+    );
+    repo.acknowledge_bot_pause(
+        owner,
+        bot.id,
+        pause.intent.barrier.request,
+        &pause.intent.barrier,
+        6,
+    )
+    .unwrap();
+    let revision = revision + 1;
+    repo.capture_bot_lifecycle(&lifecycle(
+        &bot,
+        owner,
+        BotLifecycleKind::TrashChat,
+        Some(bot.main_chat),
+        revision,
+    ))
+    .unwrap();
+    // One fence for both of the conversation's, at one new revision.
+    let fenced = outcome(&repo, owner, requests[0]);
+    assert_eq!(fenced, outcome(&repo, owner, requests[1]));
+    let Some(BotExecutionOutcome::RefusalFence { barrier, round, .. }) = &fenced else {
+        panic!("fenced: {fenced:?}")
+    };
+    assert_eq!(
+        (*round, barrier.epoch, barrier.paused),
+        (1, revision + 1, true)
+    );
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap().revision, revision + 1);
+    // The sibling conversation's waiting task is not touched.
+    assert_eq!(outcome(&repo, owner, requests[2]), None);
+    let _ = other;
+}
+#[test]
+fn a_conversation_capture_with_nothing_to_refuse_moves_nothing() {
+    let (mut repo, bot, owner, _) = fixture();
+    let revision = repo.bot(bot.id).unwrap().unwrap().revision;
+    repo.capture_bot_lifecycle(&lifecycle(
+        &bot,
+        owner,
+        BotLifecycleKind::TrashChat,
+        Some(bot.main_chat),
+        revision,
+    ))
+    .unwrap();
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap().revision, revision);
+}
+#[test]
+fn a_change_waiting_for_its_owner_answers_settling_never_a_reused_request() {
+    let (mut repo, bot, owner, _) = fixture();
+    repo.prepare_bot_pause(owner, bot.id, BotRequestId::mint(), 1, true, HASH, 2)
+        .unwrap();
+    assert_eq!(
+        repo.prepare_bot_pause(owner, bot.id, BotRequestId::mint(), 2, false, HASH, 3),
+        Err(BotError::Settling)
+    );
+    assert_eq!(
+        repo.capture_bot_lifecycle(&lifecycle(&bot, owner, BotLifecycleKind::Archive, None, 2)),
+        Err(BotError::Settling)
+    );
+    assert_eq!(BotError::Settling.code(), "bot_operation_pending");
+}

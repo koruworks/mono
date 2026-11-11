@@ -240,10 +240,127 @@ pub(super) fn require_pause_settled(
 ) -> Result<(), BotError> {
     let pending:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND command_kind IN ('pause','resume') AND stage='prepared')",params![scope.to_storage(),bot.to_storage()],|r|r.get(0)).map_err(bad)?;
     if pending {
-        Err(BotError::Conflict)
+        // Still being acknowledged: not a reused request id.
+        Err(BotError::Settling)
     } else {
         Ok(())
     }
+}
+/// Refuse, inside a lifecycle capture's transaction, every Start/Continue
+/// receipt of the captured subject (the whole Bot, or one conversation) that
+/// its owner has not admitted: each still `prepared` with no outcome gets a
+/// refusal fence as its outcome (P1.3's `RefusalFence`), so from this commit
+/// on nothing (the operation's own round, a client's reconcile, startup
+/// recovery, a reversal of the operation, a restart) can submit it: a
+/// receipt with an outcome is never submitted, it is only fenced, then
+/// rejected when its owner answers Missing behind the fence, or recorded
+/// accepted when the owner had admitted it before the capture after all.
+///
+/// A whole-Bot operation names its own pause barrier (`barrier`): it is at
+/// a newer epoch than every such receipt's revision and paused, which is
+/// what a refusal fence must be, so the Bot's revision moves no further. A
+/// conversation's operation has no barrier of its own, so one fence is
+/// minted for all of that conversation's receipts at once, at the next
+/// revision, which this moves (once per capture, and only when there is
+/// something to refuse); it needs the Bot's pause and access changes
+/// settled first, as every refusal fence does. A receipt that already
+/// carries a fence keeps it.
+pub(super) fn refuse_captured_on(
+    tx: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    chat: Option<ChatId>,
+    barrier: Option<&BotAdmissionBarrier>,
+    now: i64,
+) -> Result<(), BotError> {
+    let mut query = tx
+        .prepare(
+            "SELECT request_id FROM bot_command_receipts INDEXED BY bot_command_guard
+             WHERE bot_id=?1 AND command_kind IN ('start','continue') AND stage='prepared'
+               AND user_scope_id=?2 AND outcome_json IS NULL",
+        )
+        .map_err(bad)?;
+    let requests = query
+        .query_map(
+            params![bot.to_storage(), owner.user_scope.to_storage()],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(bad)?
+        .map(|r| r.map_err(bad)?.parse::<BotRequestId>().map_err(bad))
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(query);
+    let mut refused = Vec::new();
+    for request in requests {
+        let receipt =
+            read_bot_submission_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)?;
+        if chat.is_some_and(|chat| receipt.intent.submission.provenance.chat_id != chat.as_uuid()) {
+            continue;
+        }
+        refused.push(receipt);
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    let barrier = match barrier {
+        Some(barrier) => barrier.clone(),
+        None => {
+            require_pause_settled(tx, owner.user_scope, bot)?;
+            super::policy::require_policy_settled(tx, bot)?;
+            let g = guard(tx, owner, bot)?;
+            if g.revision >= i64::MAX as u64 {
+                return Err(BotError::RevisionConflict);
+            }
+            tx.execute(
+                "UPDATE bots SET revision=?2,updated_at_ms=?3 WHERE bot_id=?1",
+                params![bot.to_storage(), g.revision + 1, now],
+            )
+            .map_err(bad)?;
+            BotAdmissionBarrier {
+                owner: koru_delegate_core::BotOwner {
+                    user_scope: owner.user_scope,
+                    device: owner.device,
+                },
+                bot,
+                request: BotRequestId::mint(),
+                epoch: g.revision + 1,
+                paused: g.paused,
+            }
+        }
+    };
+    for receipt in refused {
+        let outcome = BotExecutionOutcome::RefusalFence {
+            version: 1,
+            round: 1,
+            barrier: barrier.clone(),
+            acknowledged: false,
+            reason: BotAdmissionRefusal::Rejected,
+        };
+        outcome.validate(&receipt.intent)?;
+        tx.execute(
+            "UPDATE bot_command_receipts SET outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2 AND stage='prepared' AND outcome_json IS NULL",
+            params![
+                owner.user_scope.to_storage(),
+                receipt.intent.submission.provenance.submission.to_storage(),
+                serde_json::to_string(&outcome).map_err(bad)?,
+                now
+            ],
+        )
+        .map_err(bad)?;
+    }
+    Ok(())
+}
+/// Whether the AI side would let work of this Bot reach its owner now: the
+/// Bot is active and not paused, and no pause or resume of it is still
+/// waiting for its owner. Nothing is ever submitted for a Bot otherwise.
+pub(super) fn bot_admitting_on(conn: &Connection, bot: BotId) -> Result<bool, BotError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='active' AND paused=0)
+            AND NOT EXISTS(SELECT 1 FROM bot_command_receipts INDEXED BY bot_command_guard
+                            WHERE bot_id=?1 AND command_kind IN ('pause','resume') AND stage='prepared')",
+        [bot.to_storage()],
+        |r| r.get(0),
+    )
+    .map_err(bad)
 }
 /// Current owner, lifecycle and revisions of a Bot, read inside the caller's transaction.
 pub(super) struct Guard {
@@ -411,6 +528,11 @@ pub(crate) fn prepare_bot_submission_tx(
 }
 
 impl Repository {
+    /// See [`bot_admitting_on`]: whether a submission of this Bot may be
+    /// offered to its owner now.
+    pub fn bot_admitting(&self, bot: BotId) -> Result<bool, BotError> {
+        bot_admitting_on(&self.connection, bot)
+    }
     pub fn bot_submission_for_run(
         &self,
         owner: BotOwner,
@@ -572,7 +694,6 @@ impl Repository {
         if r.stage != BotReceiptStage::Prepared {
             return Ok(r);
         }
-        require_pause_settled(&tx, owner.user_scope, bot)?;
         let round = match &r.outcome {
             Some(BotExecutionOutcome::RefusalFence { round, barrier, .. }) if renew => {
                 if g.revision <= barrier.epoch {
@@ -580,9 +701,12 @@ impl Repository {
                 }
                 round.checked_add(1).ok_or(BotError::Conflict)?
             }
+            // Already refused: the stored fence stands, whatever else of the
+            // Bot is still settling.
             Some(BotExecutionOutcome::RefusalFence { .. }) => return Ok(r),
             _ => 1,
         };
+        require_pause_settled(&tx, owner.user_scope, bot)?;
         super::policy::require_policy_settled(&tx, bot)?;
         if g.revision >= i64::MAX as u64 {
             return Err(BotError::RevisionConflict);

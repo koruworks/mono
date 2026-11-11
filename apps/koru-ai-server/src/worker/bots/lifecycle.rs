@@ -851,6 +851,7 @@ impl WorkerState {
         }
         let key = (owner.user_scope, *request_id);
         let now = Timestamp::now().millis();
+        let fresh = existing.is_none();
         let operation = match existing {
             Some(op) => {
                 self.repeat_bot_lifecycle(op, (owner, *bot_id), kind, None, &fingerprint)?
@@ -905,6 +906,11 @@ impl WorkerState {
                     .map_err(bot_failure)?
             }
         };
+        // What capture refused is stopped now, whether or not the owner
+        // ever answers: each attempt not yet ended as the person's Stop.
+        if fresh {
+            let _ = self.refuse_unadmitted(&operation, &bot, None);
+        }
         if !matches!(
             operation.stage,
             BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
@@ -992,6 +998,18 @@ impl WorkerState {
         self.bot_lifecycle
             .driving
             .remove(&(owner.user_scope, *source_request_id));
+        // A parked operation's pause may never have reached the owner, or
+        // its answer was lost. The Bot comes back paused, so that pause is
+        // still owed: offered now, and by the backed-off recovery pass until
+        // the owner acknowledges it. Until then a pause, resume or change of
+        // the Bot answers `bot_operation_pending`; after it, each is accepted.
+        if let Some(pause) = source.pause_request
+            && let Ok(Some(active)) = self.repository.bot(*bot_id)
+            && let Ok(Some(receipt)) = self.repository.bot_admission_receipt(owner, *bot_id, pause)
+            && receipt.operation().status == BotOperationStatus::Pending
+        {
+            self.queue_bot_receipt(&active, receipt, None);
+        }
         Ok(BotResponse::Lifecycle {
             operation: operation.progress(),
         })
@@ -1050,6 +1068,7 @@ impl WorkerState {
         if existing.is_none() {
             self.refuse_competing(*bot_id, None)?;
         }
+        let fresh = existing.is_none();
         let operation = match existing {
             Some(op) => self.repeat_bot_lifecycle(
                 op,
@@ -1080,6 +1099,9 @@ impl WorkerState {
                 })
                 .map_err(bot_failure)?,
         };
+        if fresh {
+            let _ = self.refuse_unadmitted(&operation, &bot, Some(*chat_id));
+        }
         if !matches!(
             operation.stage,
             BotLifecycleStage::Completed | BotLifecycleStage::Incomplete

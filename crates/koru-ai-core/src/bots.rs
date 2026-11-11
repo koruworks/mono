@@ -605,6 +605,10 @@ pub enum BotError {
     RevisionConflict,
     FolderLocked,
     Storage,
+    /// Another change to this Bot (a pause, a resume or an access change) is
+    /// still `pending`, waiting for its owner to acknowledge it; retry once
+    /// that operation reads accepted. Not a reused request id.
+    Settling,
 }
 impl BotError {
     pub const fn code(self) -> &'static str {
@@ -617,6 +621,7 @@ impl BotError {
             Self::RevisionConflict => "revision_conflict",
             Self::FolderLocked => "folder_locked",
             Self::Storage => "storage_error",
+            Self::Settling => "bot_operation_pending",
         }
     }
 }

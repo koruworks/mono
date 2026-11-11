@@ -382,7 +382,35 @@ impl WorkerState {
         {
             self.bot_recovery_after = Some(0);
         }
+        let (owner, bot, request) = (result.owner, result.bot, result.request);
         self.apply_bot_coordination(result);
+        self.note_bot_coordination(owner, bot, request);
+        self.recover_bot_operations();
+    }
+    /// A receipt its owner did not settle this time (unreachable, refusing,
+    /// or an answer that decides nothing yet) and that nothing queued again
+    /// stays owed: the recovery pass runs again after a backoff, so a pause
+    /// left by a reversed operation, a refusal waiting for its fence, or a
+    /// receipt a restart found is offered again once the owner can answer.
+    /// A settled one lets the backoff start over.
+    fn note_bot_coordination(&mut self, owner: BotOwner, bot: BotId, request: BotRequestId) {
+        if self.bot_coordination.contains(&(bot, request)) {
+            return;
+        }
+        let owed = matches!(
+            self.repository.bot_admission_receipt(owner, bot, request),
+            Ok(Some(receipt)) if receipt.operation().status == BotOperationStatus::Pending
+        );
+        if owed {
+            self.bot_recovery_retry.failed(Instant::now());
+        } else {
+            self.bot_recovery_retry.settled();
+        }
+    }
+    /// The backed-off recovery pass is due: walk the pending receipts again.
+    pub(in crate::worker) fn retry_bot_operations(&mut self) {
+        self.bot_recovery_retry.at = None;
+        self.bot_recovery_after.get_or_insert(0);
         self.recover_bot_operations();
     }
     fn apply_bot_coordination(&mut self, result: BotCoordinationResult) {
@@ -407,7 +435,7 @@ impl WorkerState {
         // own round, startup recovery, the task's own admission). A context
         // job still in flight then finds it ended and starts nothing (P1.7).
         if let BotAdmissionReceipt::Submission(r) = &receipt
-            && held_by_lifecycle(&self.repository, r)
+            && held_by_lifecycle(&self.repository, r) == Some(true)
             && let Some(attempt) = unended_attempt(&self.repository, r)
         {
             let _ = self.stop_attempt(attempt);
@@ -465,6 +493,14 @@ fn apply_result(
     receipt: &BotAdmissionReceipt,
     now: i64,
 ) -> Result<Option<(BotAdmissionReceipt, Option<Action>)>, BotError> {
+    // What a submission its owner does not hold may do: the one decision
+    // that can submit, taken on the writer from the durable state.
+    let missing = match (&result.action, &result.result, receipt) {
+        (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(r)) => {
+            Some(missing_submission(repository, result.bot, r))
+        }
+        _ => None,
+    };
     match (&result.action, result.result, receipt) {
         (
             Action::Pause(expected),
@@ -530,14 +566,19 @@ fn apply_result(
         // Lifecycle refuses work its owner had not admitted when the
         // operation was captured, and never admits it: a submission of a
         // conversation (or a Bot) that an Archive or Trash holds is not
-        // submitted, and falls to the refusal fence below (P1.7).
-        (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(r))
-            if (r.intent.submission.provenance.ai_attempt_id.is_none()
-                || ai_submission_live(repository, r))
-                && r.outcome.is_none()
-                && !held_by_lifecycle(repository, r) =>
+        // submitted, and falls to the refusal fence below (P1.7). Neither is
+        // one of a Bot the AI side holds paused or whose pause is pending.
+        (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(_))
+            if missing == Some(Missing::Submit) =>
         {
             Ok(Some((receipt.clone(), Some(Action::Submit))))
+        }
+        // A hold or a Bot state that could not be read decides nothing: the
+        // receipt is neither submitted nor fenced, and stays owed.
+        (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(_))
+            if missing == Some(Missing::Defer) =>
+        {
+            Ok(None)
         }
         (Action::Reconcile, Ok(BotReply::Missing), BotAdmissionReceipt::Submission(_))
         | (Action::Submit, Err(_), BotAdmissionReceipt::Submission(_)) => {
@@ -569,15 +610,74 @@ fn apply_result(
         _ => Ok(None), // Uncertain/unknown replies keep the durable intent and folder guard.
     }
 }
+/// What a Reconcile answering Missing lets a submission do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Missing {
+    /// Offer it to its owner.
+    Submit,
+    /// Refuse it through the refusal fence.
+    Refuse,
+    /// Decide later: its hold or its Bot could not be read.
+    Defer,
+}
+/// A submission is offered only while nothing holds it back: no outcome yet
+/// (a refusal fence, once written, is final), its AI attempt still live, no
+/// lifecycle hold on its conversation or Bot, and the AI side admitting work
+/// of the Bot (active, not paused, no pause or resume still pending).
+fn missing_submission(repository: &Repository, bot: BotId, r: &BotSubmissionReceipt) -> Missing {
+    let live =
+        r.intent.submission.provenance.ai_attempt_id.is_none() || ai_submission_live(repository, r);
+    match (
+        held_by_lifecycle(repository, r),
+        repository.bot_admitting(bot),
+    ) {
+        (None, _) | (_, Err(_)) => Missing::Defer,
+        (Some(false), Ok(true)) if live && r.outcome.is_none() => Missing::Submit,
+        _ => Missing::Refuse,
+    }
+}
 /// Whether lifecycle holds the conversation a submission names, or its whole
-/// Bot: an operation moving or parked, or either in Trash. A hold that
-/// cannot be read counts as held: refusing is the safe answer.
-fn held_by_lifecycle(repository: &Repository, receipt: &BotSubmissionReceipt) -> bool {
+/// Bot: an operation moving or parked, or either in Trash. `None` when the
+/// hold cannot be read, which decides neither way.
+fn held_by_lifecycle(repository: &Repository, receipt: &BotSubmissionReceipt) -> Option<bool> {
     let Some(chat) = ChatId::parse(&receipt.intent.submission.provenance.chat_id.to_string())
     else {
-        return true;
+        // A receipt naming no conversation AI knows is never offered.
+        return Some(true);
     };
-    !matches!(repository.bot_chat_hold(chat), Ok(None))
+    repository
+        .bot_chat_hold(chat)
+        .ok()
+        .map(|hold| hold.is_some())
+}
+/// When the recovery pass runs again after a receipt stayed owed: 250 ms,
+/// doubling to 32 s, until one settles. Nothing here is durable: a restart
+/// runs the pass anyway.
+#[derive(Default)]
+pub(in crate::worker) struct AdmissionRetry {
+    at: Option<Instant>,
+    round: u32,
+}
+impl AdmissionRetry {
+    fn failed(&mut self, now: Instant) {
+        if self.at.is_none() {
+            self.at = Some(now + Duration::from_millis(250) * (1u32 << self.round.min(7)));
+            self.round = (self.round + 1).min(7);
+        }
+    }
+    fn settled(&mut self) {
+        if self.at.is_none() {
+            self.round = 0;
+        }
+    }
+    /// A person's command was refused because a change of the Bot is still
+    /// settling: offer what is owed now rather than after the backoff.
+    pub(in crate::worker) fn now(&mut self) {
+        self.at = Some(Instant::now());
+    }
+    pub(in crate::worker) fn due(&self, now: Instant) -> bool {
+        self.at.is_some_and(|at| at <= now)
+    }
 }
 /// The AI attempt a submission belongs to, while it has not ended.
 pub(super) fn unended_attempt(

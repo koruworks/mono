@@ -426,3 +426,64 @@ fn an_admission_answered_context_unavailable_is_found_admitted_and_archive_stops
     );
     let _ = worker.stop();
 }
+
+/// A conversation's Trash refuses its own waiting task behind one fence;
+/// its siblings' waiting tasks then reach an owner whose barrier is newer
+/// than their revision, are refused as stale and fenced in turn, each once,
+/// or are admitted if they got there first. However they interleave, every
+/// receipt ends, the trashed conversation's is never submitted, and the
+/// revision moves a bounded number of times: each renewal of a fence needs
+/// another receipt's barrier to have landed first, and a barrier lands at
+/// most once per receipt.
+#[test]
+fn a_conversation_trash_refusal_cascade_through_its_siblings_ends() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let sibling = super::trash::another_chat(&mut repository, &authority, &bot);
+    let earlier = admitted_api_task_in(&mut repository, &bot, bot.main_chat);
+    let mut tasks = vec![earlier];
+    let mut waiting = Vec::new();
+    for chat in [bot.main_chat, sibling, sibling] {
+        let mut task = api_task_in(
+            &mut repository,
+            &bot,
+            chat,
+            d::BotAdmissionState::Settled,
+            0,
+        );
+        task.admitted = false;
+        waiting.push((chat, task.view.run, task.view.key.request));
+        tasks.push(task);
+    }
+    let revision = repository
+        .bot_any_lifecycle(bot.id)
+        .unwrap()
+        .unwrap()
+        .0
+        .revision;
+    let operation = super::trash::captured_chat_trash(&mut repository, &bot, bot.main_chat);
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().extend(tasks);
+    let worker = Worker::start(repository, authority, port.clone());
+    let client = &worker.client;
+    let done = settled(client, bot.id, operation);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    for (_, _, request) in &waiting {
+        until("every waiting task ended", || {
+            submission_status(client, bot.id, *request) != BotOperationStatus::Pending
+        });
+    }
+    let (_, own_run, own) = waiting[0];
+    assert_eq!(
+        submission_status(client, bot.id, own),
+        BotOperationStatus::Rejected
+    );
+    assert_eq!(port.submits_of(own_run), 0);
+    // One fence for the Trash, at most one more per sibling, and at most
+    // one renewal per barrier that landed before another.
+    let moved = read_bot(client, bot.id).revision - revision;
+    assert!(moved <= 1 + 2 + 2, "the revision moved {moved} times");
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(read_bot(client, bot.id).revision - revision, moved);
+    let _ = worker.stop();
+}

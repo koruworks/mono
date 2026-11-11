@@ -16,7 +16,8 @@ pub(crate) fn require_policy_settled(conn: &Connection, bot: BotId) -> Result<()
         [bot.to_storage()], |r| r.get(0),
     ).map_err(bad)?;
     if pending {
-        Err(BotError::Conflict)
+        // Still being acknowledged: not a reused request id.
+        Err(BotError::Settling)
     } else {
         Ok(())
     }

@@ -2111,6 +2111,7 @@ fn status_for(failure: &Failure) -> StatusCode {
         | "request_conflict"
         | "revision_conflict"
         | "folder_locked"
+        | "bot_operation_pending"
         | "unsupported_capability"
         | "idempotency_conflict"
         | "model_pull_active"

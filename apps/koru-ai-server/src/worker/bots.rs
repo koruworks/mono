@@ -9,7 +9,10 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
     failure(
         error.code(),
         "The Bot operation could not be completed.",
-        matches!(error, BotError::Unavailable | BotError::Storage),
+        matches!(
+            error,
+            BotError::Unavailable | BotError::Storage | BotError::Settling
+        ),
     )
 }
 
@@ -20,7 +23,7 @@ mod lifecycle;
 pub(crate) mod policy;
 mod preparation;
 mod reads;
-pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
+pub(super) use admission::{AdmissionRetry, BotCoordinationJob, BotCoordinationResult};
 pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingBotBranch};
 pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
@@ -60,6 +63,19 @@ impl WorkerState {
         Ok(ChatReadAccess::authorized(allowed))
     }
     pub(super) fn bots(
+        &mut self,
+        context: CommandContext,
+        request: BotCommand,
+    ) -> ApiResult<BotResponse> {
+        let response = self.bot_command(context, request);
+        // Refused because another change of the Bot is still waiting for its
+        // owner: offer what is owed now, so the person's retry can succeed.
+        if matches!(&response, Err(error) if error.code == BotError::Settling.code()) {
+            self.bot_recovery_retry.now();
+        }
+        response
+    }
+    fn bot_command(
         &mut self,
         context: CommandContext,
         request: BotCommand,
