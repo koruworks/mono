@@ -152,6 +152,19 @@ pub enum TabRef {
     /// words, prefixes or a bare node id (`chat:<uuid>` is not a uuid), so it
     /// drops this one entry and keeps every other tab.
     Chat(uuid::Uuid),
+    /// **A Bot's tab**, by the Bot and the conversation it shows (Bots P1.8
+    /// S4). Both are the AI service's ids, held as uuids for the reason
+    /// [`Chat`](Self::Chat) gives. The conversation is part of the tab's
+    /// identity: it is what one chat, one container is keyed by, before the
+    /// Bot service has answered anything.
+    ///
+    /// Written as `bot:<bot uuid>@<chat uuid>`. An **older reader** — every
+    /// build before this one, `chat:` included — matches none of its words or
+    /// prefixes, and `bot:…` is not a node id, so it drops this one entry and
+    /// keeps every other tab; it never reopens the conversation as an
+    /// ordinary chat. A pin splits its workspace off the *last* `@`, so the
+    /// one inside survives a pin as a session's does.
+    Bot { bot: uuid::Uuid, chat: uuid::Uuid },
 }
 
 /// One agent's terminal look: each half is `None` when that half follows the
@@ -398,6 +411,8 @@ impl TabRef {
             }
             // Hyphenated, so its last segment can never read as the scroll.
             Self::Chat(chat) => format!("chat:{}", chat.hyphenated()),
+            // Hyphenated, for the same reason.
+            Self::Bot { bot, chat } => format!("bot:{}@{}", bot.hyphenated(), chat.hyphenated()),
         }
     }
 
@@ -417,6 +432,15 @@ impl TabRef {
             other if other.starts_with("chat:") => uuid::Uuid::try_parse(&other["chat:".len()..])
                 .ok()
                 .map(Self::Chat),
+            // Strict on both halves: a Bot tab that cannot name its Bot and
+            // its conversation drops itself, never half a tab.
+            other if other.starts_with("bot:") => {
+                let (bot, chat) = other["bot:".len()..].split_once('@')?;
+                Some(Self::Bot {
+                    bot: uuid::Uuid::try_parse(bot).ok()?,
+                    chat: uuid::Uuid::try_parse(chat).ok()?,
+                })
+            }
             other => match other.strip_prefix("session:") {
                 Some(rest) => Self::parse_session(rest),
                 None => match other.strip_prefix("doc:") {
@@ -3313,6 +3337,130 @@ mod tests {
             ["pin"],
             "the pinned chat dropped, the document kept"
         );
+    }
+
+    /// **A Bot tab round-trips** (Bots P1.8 S4): in `tabs`, as a pin — whose
+    /// workspace is split off the last `@`, past the one inside the token —
+    /// and in a column of the tree, spelled `bot:<bot>@<chat>`.
+    #[test]
+    fn a_bot_tab_round_trips_in_every_place_a_tab_is_written() {
+        let ws = WorkspaceId::new();
+        let bot = TabRef::Bot {
+            bot: uuid::Uuid::new_v4(),
+            chat: uuid::Uuid::new_v4(),
+        };
+        let pin = PinnedTabRef {
+            target: TabRef::Bot {
+                bot: uuid::Uuid::new_v4(),
+                chat: uuid::Uuid::new_v4(),
+            },
+            workspace: ws,
+            scroll: 0.0,
+            show_title: true,
+        };
+        let before = Settings {
+            workspace: Some(ws),
+            tabs: vec![(TabRef::Welcome, 0.0), (bot.clone(), 0.0)],
+            tab: 1,
+            pinned_tabs: vec![pin.clone()],
+            pane_tree: Some(PaneTreeState {
+                root: PaneNodeState::Group {
+                    main: vec![(bot.clone(), 0.0)],
+                    pinned: vec![pin],
+                    active: GroupActiveState::Main(0),
+                },
+                focused: vec![],
+            }),
+            ..Settings::default()
+        };
+        let body = before.profile_body();
+        let TabRef::Bot { bot: id, chat } = &bot else {
+            unreachable!()
+        };
+        assert!(body.contains(&format!("bot:{id}@{chat}")), "{body}");
+        let after = Settings::from_text(&body);
+        assert_eq!(after.tabs, before.tabs);
+        assert_eq!(after.pinned_tabs, before.pinned_tabs);
+        assert_eq!(after.pane_tree, before.pane_tree);
+        assert!(
+            after.remembered_documents().is_empty(),
+            "a Bot is no document"
+        );
+    }
+
+    /// A Bot entry that cannot name both its Bot and its conversation drops
+    /// itself and nothing else.
+    #[test]
+    fn a_bot_entry_missing_a_half_is_dropped_alone() {
+        let chat = uuid::Uuid::new_v4();
+        let line = format!("welcome:0,bot:{chat}:0,bot:nope@{chat}:0,bot:{chat}@nope:0,trash:0");
+        assert_eq!(
+            parse_tabs(&line),
+            vec![(TabRef::Welcome, 0.0), (TabRef::Trash, 0.0)]
+        );
+    }
+
+    /// **What a Bot entry means to a build that has never heard of one** —
+    /// every build before it, whose grammar (this build's, `chat:` included,
+    /// less `bot:`) is replicated below reduced to *what kind of tab came
+    /// back*. A `bot:` entry falls through all of it — it is not a node id —
+    /// so that build drops the one entry, keeps every neighbour, and never
+    /// opens the conversation as an ordinary chat in its place. Its pin is
+    /// dropped the same way.
+    #[test]
+    fn an_older_reader_skips_a_bot_entry_and_keeps_the_other_tabs() {
+        fn old_parse(s: &str) -> Option<&'static str> {
+            match s {
+                "welcome" | "workspaces" | "profiles" | "manage" | "trash" | "whatsnew"
+                | "sync-settings" | "draft" => Some("keyword"),
+                other if other.starts_with("tasks:") => Some("tasks"),
+                other if other.starts_with("chat:") => {
+                    uuid::Uuid::try_parse(&other[5..]).ok().map(|_| "chat")
+                }
+                other if other.starts_with("session:") => Some("session"),
+                other => match other.strip_prefix("doc:") {
+                    Some(rest) => {
+                        let id = rest.split_once('@').map_or(rest, |(id, _)| id);
+                        koru_core::DocumentId::parse(id).map(|_| "document")
+                    }
+                    None => NodeId::parse(other).map(|_| "node"),
+                },
+            }
+        }
+        let ws = WorkspaceId::new();
+        let bot = TabRef::Bot {
+            bot: uuid::Uuid::new_v4(),
+            chat: uuid::Uuid::new_v4(),
+        };
+        let line = write_tabs(&[
+            (TabRef::Welcome, 0.0),
+            (bot.clone(), 0.0),
+            (TabRef::Chat(uuid::Uuid::new_v4()), 0.0),
+            (TabRef::document(DocumentId::new(), Some(ws)), 40.0),
+        ]);
+        let survivors: Vec<&str> = line
+            .split(',')
+            .filter_map(|entry| {
+                let which = match entry.rsplit_once(':') {
+                    Some((w, sc)) if sc.parse::<f32>().is_ok() => w,
+                    _ => entry,
+                };
+                old_parse(which)
+            })
+            .collect();
+        assert_eq!(survivors, ["keyword", "chat", "document"]);
+
+        let pins = write_pinned_tabs(&[PinnedTabRef {
+            target: bot,
+            workspace: ws,
+            scroll: 0.0,
+            show_title: false,
+        }]);
+        let target = pins
+            .rsplit_once('@')
+            .map(|(target, _)| target)
+            .expect("a pin names its workspace");
+        assert_eq!(old_parse(target), None, "the pinned Bot is dropped too");
     }
 
     /// **Any tab may be pinned, so any tab's token may be a pin's target.**

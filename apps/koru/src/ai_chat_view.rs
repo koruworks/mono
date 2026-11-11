@@ -280,6 +280,44 @@ impl AiChatView {
         Self::over(surface)
     }
 
+    /// **The chat a Bot tab embeds** (Bots P1.8 S4): an owned surface
+    /// (`ChatSurface::new_owned_at`) bound to the Bot's conversation, so its
+    /// turns carry the Bot's destination and a conversation that cannot be
+    /// read never becomes an ordinary chat. **Not activated**: the Bot tab
+    /// starts it the first time it is shown, so a Bot tab restored behind
+    /// another dials nothing.
+    pub fn owned(conversation: koru_ai_ui::OwnedConversation) -> Self {
+        let mut surface = Box::new(ChatSurface::new_owned_at(
+            koru_workspace_host::cli::root_from_args(),
+        ));
+        surface.set_profile(window_profile());
+        surface.bind_owned(conversation);
+        Self::over(surface)
+    }
+
+    /// Start the surface's reader, once. `true` the first time.
+    pub fn activate(&mut self) -> bool {
+        self.surface.activate()
+    }
+
+    /// Bind the owned surface to `conversation` again — the Bot's newer
+    /// answer, or a retry after it was unavailable.
+    pub fn bind_owned(&mut self, conversation: koru_ai_ui::OwnedConversation) -> bool {
+        self.surface.bind_owned(conversation)
+    }
+
+    /// The conversation the owned surface is bound to.
+    pub fn owned_conversation(&self) -> Option<&koru_ai_ui::OwnedConversation> {
+        self.surface.owned()
+    }
+
+    /// Lay the chat out in `area` of its host's view — a Bot tab puts it
+    /// below its header. Input and drawing keep the host's coordinates: the
+    /// surface hit-tests and paints inside its viewport wherever it sits.
+    pub fn set_area(&mut self, area: Rect) -> bool {
+        self.surface.set_viewport(area)
+    }
+
     /// **The window's profile** (AI schema 13): the chats this tab lists, the
     /// profile a chat it starts is made in, and the only profile whose chat
     /// it shows.

@@ -877,7 +877,7 @@ impl MainView {
         }
         self.record_jump();
         let left = self.tabs().active_tab().document;
-        let mut tab = Tab::ai_chat_existing_at(id, block);
+        let mut tab = self.chat_tab(id, block);
         let active = self.tabs_mut().active_mut();
         // The same tab, so Back returns to the page in it.
         tab.id = active.id;
@@ -911,9 +911,8 @@ impl MainView {
             }
             return true;
         }
-        let i = self
-            .tabs_mut()
-            .insert_inactive(Tab::ai_chat_existing_at(id, block));
+        let tab = self.chat_tab(id, block);
+        let i = self.tabs_mut().insert_inactive(tab);
         self.mark_tab_widths_stale();
         self.ensure_tab_visible(i);
         true
@@ -934,7 +933,8 @@ impl MainView {
             self.take_tab_from_group(&path, tab_id)
         });
         let Some(tab) = existing else {
-            self.split_with(Tab::ai_chat_existing_at(id, block), side);
+            let tab = self.chat_tab(id, block);
+            self.split_with(tab, side);
             return true;
         };
         let moved = tab.id;

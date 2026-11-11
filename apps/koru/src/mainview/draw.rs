@@ -261,6 +261,12 @@ impl MainView {
                         a.set_recent_documents(recent_chat_documents.clone());
                         View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
                     }
+                    TabView::Bot(b) => {
+                        if let Some(a) = b.conversation_mut() {
+                            a.set_recent_documents(recent_chat_documents.clone());
+                        }
+                        View::draw(b, scene, workspace, images, leaf_root, caret_on, local)
+                    }
                     TabView::Socials(a) => {
                         View::draw(a, scene, workspace, images, leaf_root, caret_on, local)
                     }

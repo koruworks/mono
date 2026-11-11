@@ -66,6 +66,7 @@ mod agent_cli_updates;
 mod agent_install;
 mod agent_mcp;
 mod agent_providers;
+mod bots;
 mod canvas;
 mod canvas_chain;
 mod canvas_runs;
@@ -5987,7 +5988,14 @@ impl MainView {
             .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
         let roster = self.explore.bots_mut();
         let moved = roster.set_workspace(workspace);
-        roster.maintain() || moved
+        let changed = roster.maintain() || moved;
+        // **The roster asks; this window opens** — the Bot's tab, or the one
+        // already on its conversation (Bots P1.8 S4).
+        let opened = match self.explore.bots_mut().take_wants_open() {
+            Some(bot) => self.open_bot_tab(bot),
+            None => false,
+        };
+        changed || opened
     }
 
     /// **The Chats view's own pass** (AGENTUX I5).
@@ -6024,6 +6032,8 @@ impl MainView {
                 relabeled = true;
             }
         }
+        // A Bot tab wears its Bot's name, and says its home by name.
+        relabeled |= self.refresh_bot_tabs();
         let mut changed = relabeled || status_changed || step_changed || elsewhere;
         if !self.explore.showing_chats() {
             return changed;
@@ -10393,6 +10403,10 @@ impl MainView {
                 View::set_mods(a, mods);
                 View::mouse_down(a, doc, lx, ly, ctrl)
             }
+            TabView::Bot(b) => {
+                View::set_mods(b, mods);
+                View::mouse_down(b, doc, lx, ly, ctrl)
+            }
             TabView::Socials(a) => View::mouse_down(a, doc, lx, ly, ctrl),
             TabView::Session(s) => View::mouse_down(s, doc, lx, ly, ctrl),
             TabView::Run(r) => View::mouse_down(r, doc, lx, ly, ctrl),
@@ -10626,6 +10640,7 @@ impl MainView {
             TabView::Feedback(f) => View::mouse_up(f, doc),
             TabView::Diff(d) => View::mouse_up(d, doc),
             TabView::AiChat(a) => View::mouse_up(a, doc),
+            TabView::Bot(b) => View::mouse_up(b, doc),
             TabView::Socials(a) => View::mouse_up(a, doc),
             TabView::Session(s) => View::mouse_up(s, doc),
             TabView::Run(r) => View::mouse_up(r, doc),
@@ -11143,7 +11158,7 @@ impl View for MainView {
                     TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => false,
                     TabView::Diff(_) => false,
                     // The AI surface draws and handles its own popovers.
-                    TabView::AiChat(_) => false,
+                    TabView::AiChat(_) | TabView::Bot(_) => false,
                     TabView::Socials(_) => false,
                     // A session grid opens no context menu in W4.1.
                     TabView::Session(_) => false,
@@ -11410,6 +11425,7 @@ impl View for MainView {
             TabView::Feedback(f) => View::mouse_double_click(f, doc, lx, ly),
             TabView::Diff(d) => View::mouse_double_click(d, doc, lx, ly),
             TabView::AiChat(a) => View::mouse_double_click(a, doc, lx, ly),
+            TabView::Bot(b) => View::mouse_double_click(b, doc, lx, ly),
             TabView::Socials(a) => View::mouse_double_click(a, doc, lx, ly),
             TabView::Session(s) => View::mouse_double_click(s, doc, lx, ly),
             TabView::Run(r) => View::mouse_double_click(r, doc, lx, ly),
@@ -11611,6 +11627,7 @@ impl View for MainView {
             TabView::Feedback(f) => View::scroll_by(f, delta),
             TabView::Diff(d) => View::scroll_by(d, delta),
             TabView::AiChat(a) => View::scroll_by(a, delta),
+            TabView::Bot(b) => View::scroll_by(b, delta),
             TabView::Socials(a) => View::scroll_by(a, delta),
             TabView::Session(s) => View::scroll_by(s, delta),
             TabView::Run(r) => View::scroll_by(r, delta),
@@ -11674,6 +11691,7 @@ impl View for MainView {
             TabView::Leaf(l) => View::set_mods(l, mods),
             TabView::Canvas(c) => View::set_mods(c, mods),
             TabView::AiChat(a) => View::set_mods(a, mods),
+            TabView::Bot(b) => View::set_mods(b, mods),
             _ => {}
         }
     }
@@ -11884,6 +11902,7 @@ impl View for MainView {
                 TabView::Feedback(f) => View::cursor_icon(f),
                 TabView::Diff(d) => View::cursor_icon(d),
                 TabView::AiChat(a) => View::cursor_icon(a),
+                TabView::Bot(b) => View::cursor_icon(b),
                 TabView::Socials(a) => View::cursor_icon(a),
                 TabView::Session(s) => View::cursor_icon(s),
                 TabView::Run(r) => View::cursor_icon(r),
@@ -12135,6 +12154,7 @@ impl View for MainView {
                     TabView::Feedback(f) => View::invalidate(f),
                     TabView::Diff(d) => View::invalidate(d),
                     TabView::AiChat(a) => View::invalidate(a),
+                    TabView::Bot(b) => View::invalidate(b),
                     TabView::Socials(a) => View::invalidate(a),
                     TabView::Session(s) => View::invalidate(s),
                     TabView::Run(r) => View::invalidate(r),
@@ -15860,6 +15880,7 @@ impl MainView {
             TabView::Feedback(f) => View::key(f, doc, key, text, mods),
             TabView::Diff(d) => View::key(d, doc, key, text, mods),
             TabView::AiChat(a) => View::key(a, doc, key, text, mods),
+            TabView::Bot(b) => View::key(b, doc, key, text, mods),
             TabView::Socials(a) => View::key(a, doc, key, text, mods),
             TabView::Session(s) => View::key(s, doc, key, text, mods),
             TabView::Run(r) => View::key(r, doc, key, text, mods),
@@ -18279,6 +18300,7 @@ impl MainView {
             TabView::Feedback(f) => View::mouse_move(f, lx, ly),
             TabView::Diff(d) => View::mouse_move(d, lx, ly),
             TabView::AiChat(a) => View::mouse_move(a, lx, ly),
+            TabView::Bot(b) => View::mouse_move(b, lx, ly),
             TabView::Socials(a) => View::mouse_move(a, lx, ly),
             TabView::Session(s) => View::mouse_move(s, lx, ly),
             TabView::Run(r) => View::mouse_move(r, lx, ly),

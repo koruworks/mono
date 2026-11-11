@@ -99,12 +99,18 @@ pub(crate) enum Load {
     Unavailable,
 }
 
-/// One row: what the service said about one Bot that the roster draws.
+/// One row: what the service said about one Bot that the roster draws, and
+/// what opening it needs — its main conversation, its home and its agent.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct RosterBot {
     pub id: BotId,
     pub name: String,
     pub paused: bool,
+    /// The conversation its tab opens on, and the one id a Bot tab is
+    /// found by wherever else that conversation is opened from.
+    pub main_chat: koru_ai_core::ChatId,
+    pub home: WorkspaceId,
+    pub provider: koru_ai_core::AiProviderId,
 }
 
 impl From<Bot> for RosterBot {
@@ -113,6 +119,9 @@ impl From<Bot> for RosterBot {
             id: bot.id,
             name: bot.config.name,
             paused: bot.paused,
+            main_chat: bot.main_chat,
+            home: bot.home_workspace,
+            provider: bot.config.model.provider,
         }
     }
 }
@@ -204,6 +213,13 @@ impl BotsRoster {
         }
         self.started = true;
         self.link = BotsLink::start(root);
+    }
+
+    /// A roster that already listed `bots`, as a window test needs it.
+    #[cfg(test)]
+    pub(crate) fn listed_for_test(&mut self, bots: Vec<RosterBot>) {
+        self.bots = bots;
+        self.load = Load::Ready;
     }
 
     /// A roster over a link a test holds the other end of.
@@ -325,11 +341,15 @@ impl BotsRoster {
         };
         let mut changed = false;
         for answer in link.drain() {
+            // The roster asks only for lists; any other answer is not its.
             let Answer::Listed {
                 seq,
                 workspace,
                 result,
-            } = answer;
+            } = answer
+            else {
+                continue;
+            };
             if seq != self.seq || Some(workspace) != self.workspace {
                 continue;
             }
@@ -374,9 +394,17 @@ impl BotsRoster {
     }
 
     /// The Bot a row, a key or an accessibility action asked for, taken
-    /// once. Nothing opens it yet; the Bot view takes it when it exists.
-    pub(crate) fn take_wants_open(&mut self) -> Option<BotId> {
-        self.wants_open.take()
+    /// once, with what its tab needs: the window opens or focuses it.
+    pub(crate) fn take_wants_open(&mut self) -> Option<RosterBot> {
+        let bot = self.wants_open.take()?;
+        self.bots.iter().find(|row| row.id == bot).cloned()
+    }
+
+    /// **The Bot whose main conversation is `chat`**, as far as this roster
+    /// knows — the one association the window has before the engine labels
+    /// a chat with its Bot. `None` is *not known*, never *not a Bot's*.
+    pub(crate) fn bot_for_chat(&self, chat: koru_ai_core::ChatId) -> Option<&RosterBot> {
+        self.bots.iter().find(|bot| bot.main_chat == chat)
     }
 
     /// Ask for `bot`: it takes the card and is recorded for the host.

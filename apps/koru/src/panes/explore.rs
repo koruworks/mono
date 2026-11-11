@@ -1215,6 +1215,11 @@ impl ExploreView {
         &mut self.bots
     }
 
+    /// The roster, to read: which Bot a conversation is (Bots P1.8 S4).
+    pub fn bots(&self) -> &crate::bots::BotsRoster {
+        &self.bots
+    }
+
     /// Whether the roster owes an answer — the one reason the container
     /// keeps a wake clock for it.
     pub fn bots_awaiting(&self) -> bool {

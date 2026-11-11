@@ -121,7 +121,7 @@ impl MainView {
                     TabView::Diff(d) => View::restore(d, workspace, settings),
                     // A chat is a live conversation rather than a place in the
                     // library: there is nothing in `Settings` to apply to it.
-                    TabView::AiChat(_) => {}
+                    TabView::AiChat(_) | TabView::Bot(_) => {}
                     TabView::Socials(_) => {}
                     // A session shows a process, not a document: it has no
                     // `DocViewPrefs` to read, and its real restore — reattach or
@@ -215,7 +215,7 @@ impl MainView {
                     TabView::Reminders(r) => View::capture(r, settings),
                     TabView::Settings(s) => View::capture(s, settings),
                     TabView::Home(_) => {}
-                    TabView::AiChat(_) => {}
+                    TabView::AiChat(_) | TabView::Bot(_) => {}
                     TabView::Socials(_) => {}
                     TabView::Session(_) => {}
                     TabView::Run(_) | TabView::Result(_) => {}
@@ -330,6 +330,10 @@ impl MainView {
                     self.restored_session_tab(*session, profile.clone(), recovery.clone())
                 }
                 TabRef::Chat(chat) => match restored_chat_tab(*chat) {
+                    Some(tab) => tab,
+                    None => continue,
+                },
+                TabRef::Bot { bot, chat } => match restored_bot_tab(*bot, *chat) {
                     Some(tab) => tab,
                     None => continue,
                 },
@@ -583,6 +587,7 @@ impl MainView {
                 self.restored_session_tab(*session, profile.clone(), recovery.clone())
             }
             TabRef::Chat(chat) => restored_chat_tab(*chat)?,
+            TabRef::Bot { bot, chat } => restored_bot_tab(*bot, *chat)?,
             TabRef::Document {
                 id,
                 workspace: home,
@@ -660,6 +665,12 @@ impl MainView {
             // new chat not sent yet has no id the service knows — the
             // `?` — and skips itself: there is nothing to reopen.
             TabView::AiChat(a) => chat_tab_ref(a)?,
+            // **A Bot tab by its Bot and its conversation** (Bots P1.8 S4),
+            // known from the moment it was opened or restored.
+            TabView::Bot(b) => TabRef::Bot {
+                bot: b.bot().as_uuid(),
+                chat: b.chat_id().as_uuid(),
+            },
             // **The saved record is `{session_id, profile_key}`**
             // (TERMINATAB), in tab order with the rest of the strip.
             // A tab whose launch has not come back named yet has no
@@ -861,6 +872,20 @@ fn chat_tab_ref(view: &crate::ai_chat_view::AiChatView) -> Option<TabRef> {
 /// drops the tab as a hidden surface's tab is dropped.
 fn restored_chat_tab(chat: uuid::Uuid) -> Option<Tab> {
     koru_features::ai().then(|| Tab::ai_chat_existing(koru_ai_ui::ChatId::from_uuid(chat)))
+}
+
+/// **A saved Bot tab, put back as a Bot tab** (Bots P1.8 S4): its Bot and
+/// its conversation, and nothing read or started until it is shown — then
+/// it asks the Bot service, and binds its conversation to the Bot's answer.
+/// **Never an ordinary chat in its place**: a build that hides Bots drops
+/// the tab, as a hidden surface's tab is dropped.
+fn restored_bot_tab(bot: uuid::Uuid, chat: uuid::Uuid) -> Option<Tab> {
+    crate::bots::shown().then(|| {
+        Tab::bot(crate::bots::BotView::restored(
+            koru_ai_core::bots::BotId::from_uuid(bot),
+            koru_ai_ui::ChatId::from_uuid(chat),
+        ))
+    })
 }
 
 /// Which token a tab over a private workspace writes: the release notes or

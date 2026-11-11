@@ -467,6 +467,7 @@ fn tab_kind(v: &MainView) -> &'static str {
         TabView::Feedback(_) => "feedback",
         TabView::Diff(_) => "diff",
         TabView::AiChat(_) => "ai_chat",
+        TabView::Bot(_) => "bot",
         TabView::Socials(_) => "socials",
         TabView::Session(_) => "session",
         TabView::Run(_) => "run",

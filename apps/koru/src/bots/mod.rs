@@ -3,12 +3,11 @@
 //! **Bots** in the workspace window (Bots P1.8): the navigator's view of the
 //! person's own Bots in the window's workspace.
 //!
-//! This is the roster and nothing else yet. A Bot's own view, its
-//! conversations and creating one land in later increments
-//! (`docs/features/bots/P1.8.PLAN.final.md`); until they do, the roster
-//! offers no control that would lead nowhere — no *Create a bot*, no menu —
-//! and pressing a Bot only records which one was asked for
-//! ([`BotsRoster::take_wants_open`]), for the Bot view to take.
+//! The roster, and a Bot's tab ([`BotView`]): pressing a Bot opens or
+//! focuses its tab, its header over its main conversation. Its settings, its
+//! other conversations and creating one land in later increments
+//! (`docs/features/bots/P1.8.PLAN.final.md`); until they do, neither offers
+//! a control that would lead nowhere — no *Create a bot*, no menu.
 //!
 //! Two rules it is built under, the Chats view's:
 //!
@@ -20,8 +19,10 @@
 
 pub(crate) mod link;
 pub(crate) mod roster;
+pub(crate) mod view;
 
 pub(crate) use roster::BotsRoster;
+pub(crate) use view::BotView;
 
 /// **Whether this build shows Bots** — the one place the rule is written,
 /// so a change of mind is one line. Bots run through Koru AI's shared chat
@@ -33,4 +34,4 @@ pub(crate) fn shown() -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

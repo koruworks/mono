@@ -48,6 +48,7 @@ impl Fixture {
                 assert_eq!(workspace, self.home, "about the window's workspace");
                 seq
             }
+            Command::Read { .. } => panic!("a roster only lists"),
         }
     }
 
@@ -250,7 +251,7 @@ fn selection_and_focus_survive_a_reordering_refresh() {
     let (a, b, c) = (f.bot("A"), f.bot("B"), f.bot("C"));
     f.shown_with(vec![a.clone(), b.clone()]);
     assert!(f.roster.ask_open(b.id));
-    assert_eq!(f.roster.take_wants_open(), Some(b.id));
+    assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), Some(b.id));
     assert!(f.roster.set_focus(a.id));
 
     f.roster.set_shown(false);
@@ -326,9 +327,9 @@ fn every_word_the_roster_draws_is_in_all_eight_languages() {
         let mut roster = BotsRoster::new();
         roster.set_lang(lang);
         let paused = RosterBot {
-            id: BotId::mint(),
             name: "Scout".into(),
             paused: true,
+            ..RosterBot::from(bot(BotId::mint(), WorkspaceId::new(), "fixture", true))
         };
         let name = roster.accessible_name(&paused);
         assert!(
@@ -362,7 +363,7 @@ fn the_keyboard_walks_the_rows_and_asks_for_a_bot() {
     assert_eq!(f.roster.focus(), Some(c.id));
     assert!(f.roster.key(Press::Up));
     assert!(f.roster.key(Press::Open));
-    assert_eq!(f.roster.take_wants_open(), Some(b.id));
+    assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), Some(b.id));
     assert_eq!(f.roster.selected(), Some(b.id));
     assert!(f.roster.key(Press::Escape));
     assert!(!f.roster.has_keyboard());
@@ -389,14 +390,14 @@ fn a_press_on_a_row_asks_for_its_bot() {
     let (x, y) = row.centre();
     assert!(f.roster.mouse_move(area(), top(), x, y));
     assert!(f.roster.mouse_down(area(), top(), x, y));
-    assert_eq!(f.roster.take_wants_open(), Some(b.id));
+    assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), Some(b.id));
     assert_eq!(f.roster.selected(), Some(b.id));
     let below = area().y + area().h - 1.0;
     assert!(
         f.roster.mouse_down(area(), top(), x, below),
         "still the roster's"
     );
-    assert_eq!(f.roster.take_wants_open(), None);
+    assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), None);
 }
 
 /// **Another workspace is another roster**: its rows and card go at once,
@@ -420,6 +421,7 @@ fn a_workspace_change_clears_the_rows_and_asks_again_when_shown() {
     f.roster.maintain();
     match f.commands.try_recv().expect("asked once shown") {
         Command::List { workspace, .. } => assert_eq!(workspace, other),
+        Command::Read { .. } => panic!("a roster only lists"),
     }
 }
 

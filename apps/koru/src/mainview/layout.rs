@@ -1037,7 +1037,9 @@ impl MainView {
             return true;
         }
         self.record_jump();
-        self.tabs_mut().push(Tab::ai_chat_existing_at(id, block));
+        // A Bot's conversation opens as its Bot's tab (`bots.rs`).
+        let tab = self.chat_tab(id, block);
+        self.tabs_mut().push(tab);
         true
     }
 

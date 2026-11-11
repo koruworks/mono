@@ -1771,6 +1771,19 @@ pub enum Key {
     BotsRowPaused,
     /// A Bot's conversation that cannot be shown — gone, or the service is not answering. Said in its place; it never becomes a new chat (Bots P1.8 S3).
     BotsConversationUnavailable,
+    // A Bot's tab (Bots P1.8 S4): its header over its conversation.
+    /// A Bot tab's name before the Bot service has said the Bot's: a restored tab, for a moment.
+    BotsTabUnnamed,
+    /// A Bot tab's header while the Bot is read for the first time. Never a Bot claimed early.
+    BotsBotLoading,
+    /// The Bot service did not answer a Bot tab. Shown **over what the header showed before**, never as an empty tab.
+    BotsBotUnavailable,
+    /// Where a Bot's work goes: `{}` is its home workspace's name.
+    BotsSavesTo,
+    /// The first version's limit (QUESTIONS O8), said beside where a Bot's work goes.
+    BotsHomeOnly,
+    /// What `BotsSavesTo` names when the window does not know the home workspace's name.
+    BotsHomeWorkspace,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3192,7 +3205,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2226] = [
+    pub const ALL: [Key; 2232] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4453,6 +4466,12 @@ impl Key {
         Key::BotsPaused,
         Key::BotsRowPaused,
         Key::BotsConversationUnavailable,
+        Key::BotsTabUnnamed,
+        Key::BotsBotLoading,
+        Key::BotsBotUnavailable,
+        Key::BotsSavesTo,
+        Key::BotsHomeOnly,
+        Key::BotsHomeWorkspace,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -14631,6 +14650,72 @@ pub const ROWS: &[Row] = &[
         ar: "لا يمكن فتح هذه المحادثة الآن.",
         zh_hans: "目前无法打开此对话。",
         ja: "この会話は今は開けません。",
+    },
+    Row {
+        key: Key::BotsTabUnnamed,
+        en: "Bot",
+        es: "Bot",
+        pt_br: "Bot",
+        de: "Bot",
+        fr: "Bot",
+        ar: "بوت",
+        zh_hans: "Bot",
+        ja: "Bot",
+    },
+    Row {
+        key: Key::BotsBotLoading,
+        en: "Loading this bot…",
+        es: "Cargando este bot…",
+        pt_br: "Carregando este bot…",
+        de: "Dieser Bot wird geladen…",
+        fr: "Chargement de ce bot…",
+        ar: "جارٍ تحميل هذا البوت…",
+        zh_hans: "正在加载此 Bot…",
+        ja: "この Bot を読み込んでいます…",
+    },
+    Row {
+        key: Key::BotsBotUnavailable,
+        en: "Koru AI isn't answering, so this bot can't be shown right now.",
+        es: "Koru AI no responde, así que este bot no se puede mostrar ahora.",
+        pt_br: "O Koru AI não está respondendo, então este bot não pode ser mostrado agora.",
+        de: "Koru AI antwortet nicht, daher kann dieser Bot gerade nicht angezeigt werden.",
+        fr: "Koru AI ne répond pas : ce bot ne peut pas être affiché pour le moment.",
+        ar: "لا يستجيب Koru AI، لذلك لا يمكن عرض هذا البوت الآن.",
+        zh_hans: "Koru AI 没有响应，因此目前无法显示此 Bot。",
+        ja: "Koru AI が応答していないため、この Bot は今は表示できません。",
+    },
+    Row {
+        key: Key::BotsSavesTo,
+        en: "Saves results in {}",
+        es: "Guarda los resultados en {}",
+        pt_br: "Salva os resultados em {}",
+        de: "Speichert Ergebnisse in {}",
+        fr: "Enregistre les résultats dans {}",
+        ar: "يحفظ النتائج في {}",
+        zh_hans: "结果保存到 {}",
+        ja: "結果の保存先: {}",
+    },
+    Row {
+        key: Key::BotsHomeOnly,
+        en: "In this version a bot saves only in its home workspace.",
+        es: "En esta versión, un bot solo guarda en su espacio de trabajo principal.",
+        pt_br: "Nesta versão, um bot salva apenas no seu espaço de trabalho principal.",
+        de: "In dieser Version speichert ein Bot nur in seinem Heimat-Arbeitsbereich.",
+        fr: "Dans cette version, un bot n'enregistre que dans son espace de travail d'origine.",
+        ar: "في هذا الإصدار، يحفظ البوت فقط في مساحة العمل الرئيسية الخاصة به.",
+        zh_hans: "在此版本中，Bot 只能保存到其主工作区。",
+        ja: "このバージョンでは、Bot はホームのワークスペースにのみ保存します。",
+    },
+    Row {
+        key: Key::BotsHomeWorkspace,
+        en: "its home workspace",
+        es: "su espacio de trabajo principal",
+        pt_br: "seu espaço de trabalho principal",
+        de: "seinem Heimat-Arbeitsbereich",
+        fr: "son espace de travail d'origine",
+        ar: "مساحة العمل الرئيسية الخاصة به",
+        zh_hans: "其主工作区",
+        ja: "ホームのワークスペース",
     },
     Row {
         key: Key::SizeBytes,

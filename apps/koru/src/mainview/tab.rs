@@ -69,6 +69,11 @@ pub enum TabView {
     Diff(crate::diff::DiffView),
     /// Koru AI, hosted as a tab rather than in the right-hand pane.
     AiChat(AiChatView),
+    /// **A Bot's tab** (Bots P1.8 S4): a header over the Bot's own
+    /// conversation, the shared chat bound to the Bot. Its own arm because a
+    /// Bot tab is named by its Bot and draws a header the chat does not;
+    /// every pass about *a chat* reaches it through [`Self::chat_view`].
+    Bot(crate::bots::BotView),
     /// Workspace social posts and scheduled publications.
     Socials(crate::socials_view::SocialsView),
     /// One delegated run: Overview, Activity and Result, and the session
@@ -119,6 +124,8 @@ impl TabView {
     pub fn chat_view(&self) -> Option<&AiChatView> {
         match self {
             Self::AiChat(view) => Some(view),
+            // A Bot tab's conversation, once it is bound.
+            Self::Bot(view) => view.conversation(),
             _ => None,
         }
     }
@@ -127,6 +134,7 @@ impl TabView {
     pub fn chat_view_mut(&mut self) -> Option<&mut AiChatView> {
         match self {
             Self::AiChat(view) => Some(view),
+            Self::Bot(view) => view.conversation_mut(),
             _ => None,
         }
     }
@@ -134,7 +142,13 @@ impl TabView {
     /// The chat [`Self::chat_view`] is on; `None` for a tab with no chat
     /// and for a new chat not made yet.
     pub fn chat_id(&self) -> Option<koru_ai_ui::ChatId> {
-        self.chat_view().and_then(AiChatView::chat_id)
+        match self {
+            // **A Bot tab is its conversation**, before the Bot service has
+            // answered and while the conversation is unavailable: one chat,
+            // one container, whatever the chat itself can show.
+            Self::Bot(view) => Some(view.chat_id()),
+            _ => self.chat_view().and_then(AiChatView::chat_id),
+        }
     }
 
     /// Whether a drag this view owns is in flight.
@@ -154,6 +168,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Trash(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Session(_)
             | Self::Run(_)
             | Self::Feedback(_) => false,
@@ -235,7 +250,7 @@ impl TabView {
             Self::Diff(_) => {}
             // The AI chat surface reads its own state through the background
             // reader; live document changes do not alter what it shows.
-            Self::AiChat(_) => {}
+            Self::AiChat(_) | Self::Bot(_) => {}
             Self::Socials(_) => {}
             // A session shows a process, not the document; nothing under it
             // can have changed.
@@ -290,6 +305,7 @@ impl TabView {
             | Self::Home(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -336,6 +352,7 @@ impl TabView {
             Self::Feedback(f) => koru_workspace_host::View::reseat(f, ws),
             Self::Diff(d) => koru_workspace_host::View::reseat(d, ws),
             Self::AiChat(a) => koru_workspace_host::View::reseat(a, ws),
+            Self::Bot(b) => koru_workspace_host::View::reseat(b, ws),
             Self::Socials(a) => koru_workspace_host::View::reseat(a, ws),
             Self::Session(s) => koru_workspace_host::View::reseat(s, ws),
             Self::Run(r) => koru_workspace_host::View::reseat(r, ws),
@@ -366,6 +383,8 @@ impl TabView {
                 Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => glyph,
                 _ => koru_draw::icons::CHATS_CIRCLE,
             }),
+            // A Bot tab wears the Bots view's robot, the roster's mark.
+            Self::Bot(_) => Some(koru_draw::icons::ROBOT),
             Self::Socials(_) => Some(koru_draw::icons::MEGAPHONE),
             // **A canvas wears its kind**, the way a note tab wears the file
             // glyph: the label names it, and the glyph says it is not a page.
@@ -412,6 +431,8 @@ impl TabView {
     pub fn status_mark(&self) -> Option<koru_shell_chrome::status_mark::StatusMark> {
         match self {
             Self::AiChat(a) => a.status_mark(),
+            // A Bot tab's mark is its conversation's: working, needs you.
+            Self::Bot(b) => b.conversation().and_then(AiChatView::status_mark),
             _ => None,
         }
     }
@@ -427,6 +448,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -455,6 +477,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -478,6 +501,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -500,6 +524,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -523,6 +548,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -546,6 +572,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -577,6 +604,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -609,6 +637,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -637,6 +666,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -661,6 +691,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -696,6 +727,7 @@ impl TabView {
             | Self::Tasks(_)
             | Self::Reminders(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -718,6 +750,7 @@ impl TabView {
             | Self::Reminders(_)
             | Self::Diff(_)
             | Self::AiChat(_)
+            | Self::Bot(_)
             | Self::Socials(_)
             | Self::Session(_)
             | Self::Run(_)
@@ -767,6 +800,7 @@ impl TabView {
             | Self::Result(_)
             | Self::Diff(_) => false,
             Self::AiChat(a) => View::animating(a),
+            Self::Bot(b) => View::animating(b),
             Self::Socials(a) => View::animating(a),
             Self::Session(s) => View::animating(s),
             Self::Canvas(c) => View::animating(c),
@@ -801,6 +835,7 @@ impl TabView {
             // from the authority into the read-only state.
             Self::Settings(s) => View::maintenance_deadline(s),
             Self::AiChat(a) => View::maintenance_deadline(a),
+            Self::Bot(b) => View::maintenance_deadline(b),
             Self::Socials(a) => View::maintenance_deadline(a),
             // The caret's quiet interval — and `None` for every inactive
             // session tab, which is what keeps a hidden one costing no wake.
@@ -828,6 +863,7 @@ impl TabView {
             Self::Reminders(r) => View::maintain(r, ws, now),
             Self::Settings(s) => View::maintain(s, ws, now),
             Self::AiChat(a) => View::maintain(a, ws, now),
+            Self::Bot(b) => View::maintain(b, ws, now),
             Self::Socials(a) => View::maintain(a, ws, now),
             Self::Session(s) => View::maintain(s, ws, now),
             Self::Feedback(f) => View::maintain(f, ws, now),
@@ -1244,6 +1280,40 @@ impl Tab {
         }
     }
 
+    /// **A Bot's tab** (Bots P1.8 S4), named by its Bot — *Bot* until the
+    /// Bot service has said which.
+    pub fn bot(view: crate::bots::BotView) -> Self {
+        let label = view.label();
+        Self {
+            id: mint_tab_id(),
+            view: TabView::Bot(view),
+            document: None,
+            label,
+            icon: None,
+            sized: None,
+            draft: None,
+            whats_new: None,
+            home: None,
+            pinned: None,
+            show_title: false,
+        }
+    }
+
+    /// **A Bot tab's label follows its Bot's name**, which the Bot service
+    /// may say after the tab was made. `true` when it moved; a comparison
+    /// and nothing more otherwise.
+    pub fn refresh_bot_label(&mut self) -> bool {
+        let TabView::Bot(view) = &self.view else {
+            return false;
+        };
+        let label = view.label();
+        if label == self.label {
+            return false;
+        }
+        self.label = label;
+        true
+    }
+
     /// **An AI chat tab's label follows its chat** (D22): it starts, takes
     /// its automatic title, is renamed, or the tab is reseated onto another
     /// chat. `true` when the label or the mark moved and the strip is owed a
@@ -1610,6 +1680,7 @@ impl Tab {
                     | TabView::Socials(_)
                     | TabView::Session(_)
                     | TabView::AiChat(_)
+                    | TabView::Bot(_)
             )
     }
 
@@ -1715,6 +1786,7 @@ impl Tab {
             TabView::Settings(v) => View::set_viewport(v, w, h),
             TabView::Home(v) => View::set_viewport(v, w, h),
             TabView::AiChat(a) => View::set_viewport(a, w, h),
+            TabView::Bot(b) => View::set_viewport(b, w, h),
             TabView::Socials(a) => View::set_viewport(a, w, h),
             TabView::Session(s) => View::set_viewport(s, w, h),
             TabView::Run(r) => View::set_viewport(r, w, h),
@@ -1790,6 +1862,7 @@ mod tests {
     #[test]
     fn a_tab_stays_small_enough_to_move_on_the_window_thread() {
         assert!(std::mem::size_of::<AiChatView>() <= 256);
+        assert!(std::mem::size_of::<crate::bots::BotView>() <= 2048);
         assert!(
             std::mem::size_of::<Tab>() <= 32 * 1024,
             "a Tab is {} bytes: box the arm that grew",

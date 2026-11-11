@@ -190,6 +190,7 @@ impl MainView {
                 TabView::Feedback(_) => "feedback",
                 TabView::Diff(_) => "diff",
                 TabView::AiChat(_) => "ai-chat",
+                TabView::Bot(_) => "bot",
                 TabView::Socials(_) => "socials",
                 TabView::Session(_) => "session",
                 TabView::Run(_) => "run",
@@ -304,6 +305,7 @@ impl MainView {
             | TabView::Diff(_)
             | TabView::Feedback(_)
             | TabView::AiChat(_)
+            | TabView::Bot(_)
             | TabView::Socials(_)
             | TabView::Session(_)
             // The rating's note is the one field on a run view, and it is a

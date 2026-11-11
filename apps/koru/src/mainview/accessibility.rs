@@ -533,6 +533,7 @@ impl MainView {
         // with the chrome.
         self.revise_canvas(rev);
         self.revise_manage(rev);
+        self.revise_bot(rev);
         // What the Store has confirmed about the document in front of the
         // person, and whether anything about saving has become news.
         self.persistence_revision(rev);
@@ -773,6 +774,71 @@ impl MainView {
         }
     }
 
+    // ------------------------------------------------------- a Bot's tab
+    //
+    // Bots P1.8 S4. The header is read straight from the tab's own element
+    // frame — the one its paint and its pointer read — and moved into the
+    // window's coordinates. It is words, not controls: a group named by the
+    // Bot, its lines as labels. The conversation under it publishes what the
+    // shared chat publishes, which today is nothing of its own.
+
+    /// The Bot's header under the content region, when a Bot tab is in front.
+    fn bot_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
+        let TabView::Bot(view) = &self.tabs().active_tab().view else {
+            return None;
+        };
+        let area = self
+            .panes
+            .view_rect_for(self.content(), self.panes.focused_path())
+            .unwrap_or_else(|| self.content());
+        let moved = |rect: Rect| Rect::new(area.x + rect.x, area.y + rect.y, rect.w, rect.h);
+        let children = view
+            .header_lines()
+            .into_iter()
+            .map(|(key, rect, words)| {
+                SemanticNode::new(
+                    Occurrence::surface(
+                        cx.window,
+                        cx.view,
+                        crate::bots::view::SURFACE,
+                        bot_part(key),
+                    ),
+                    Role::Label,
+                )
+                .with_label(words)
+                .with_bounds(moved(rect))
+            })
+            .collect();
+        Some(
+            SemanticNode::new(
+                Occurrence::surface(
+                    cx.window,
+                    cx.view,
+                    crate::bots::view::SURFACE,
+                    koru_workspace_host::accessibility::ControlPart::ROOT,
+                ),
+                Role::Group,
+            )
+            .with_label(view.label())
+            .with_bounds(moved(view.header_rect()))
+            .with_children(children),
+        )
+    }
+
+    /// Fold the Bot tab into the chrome's fingerprint, only while it is in
+    /// front.
+    fn revise_bot(&self, rev: &mut Revision) {
+        match &self.tabs().active_tab().view {
+            TabView::Bot(view) => {
+                rev.byte(1);
+                view.revise(rev);
+            }
+            _ => {
+                rev.byte(0);
+            }
+        }
+    }
+
     /// Do what a client asked of the canvas in front.
     fn canvas_action(&mut self, target: Occurrence, action: Action) -> bool {
         let TabView::Canvas(canvas) = self.active_view() else {
@@ -869,10 +935,27 @@ impl MainView {
                     node = node.with_children(vec![page]);
                 } else if let Some(canvas) = self.canvas_semantics(cx) {
                     node = node.with_children(vec![canvas]);
+                } else if let Some(bot) = self.bot_semantics(cx) {
+                    node = node.with_children(vec![bot]);
                 }
             }
         }
         node
+    }
+}
+
+/// The control part a Bot header line is published under: its element's
+/// part, the one name it has in the frame.
+fn bot_part(key: koru_draw::el::Key) -> koru_workspace_host::accessibility::ControlPart {
+    use crate::bots::view::{LIMIT, NAME, NOTICE, PAUSED, SAVES};
+    use koru_workspace_host::accessibility::ControlPart;
+    match key {
+        k if k == NAME => ControlPart::new("name"),
+        k if k == PAUSED => ControlPart::new("paused"),
+        k if k == SAVES => ControlPart::new("saves"),
+        k if k == LIMIT => ControlPart::new("limit"),
+        k if k == NOTICE => ControlPart::new("notice"),
+        _ => ControlPart::new("line"),
     }
 }
 
