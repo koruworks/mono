@@ -2,6 +2,7 @@
 use super::super::tests::fixture_bot;
 use super::*;
 mod activity;
+mod holders;
 mod label;
 mod trashed;
 

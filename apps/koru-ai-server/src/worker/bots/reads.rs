@@ -76,6 +76,34 @@ impl WorkerState {
         Ok(BotResponse::TrashedChats { page })
     }
 
+    /// Fill in, for each archived or trashed Bot of a read the owner has
+    /// already been authorized for, the completed operation that holds it
+    /// there (`held_by`), so a client that knows only the workspace can name
+    /// it in the Restore after a restart. One journal read serves the whole
+    /// list; an active Bot is left without one.
+    pub(super) fn with_lifecycle_holders(
+        &self,
+        owner: BotOwner,
+        bots: &mut [Bot],
+    ) -> ApiResult<()> {
+        let inactive: Vec<_> = bots
+            .iter()
+            .filter(|bot| !bot.lifecycle.is_active())
+            .map(|bot| (bot.id, bot.lifecycle))
+            .collect();
+        if inactive.is_empty() {
+            return Ok(());
+        }
+        let mut holders = self
+            .repository
+            .bot_lifecycle_holders(owner, &inactive)
+            .map_err(bot_failure)?;
+        for bot in bots {
+            bot.held_by = holders.remove(&bot.id);
+        }
+        Ok(())
+    }
+
     /// The owner's view of one Bot's conversations. An archived Bot's stay
     /// listable by name (its history is kept in the Archived filter, as
     /// `bot_read_command` admits); a trashed Bot is `not_found`, as `read`

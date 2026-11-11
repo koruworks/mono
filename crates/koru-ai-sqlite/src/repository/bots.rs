@@ -347,6 +347,7 @@ impl Repository {
                 updated_at_ms: r.19,
                 lifecycle,
                 open_operation: None,
+                held_by: None,
                 main_chat: main,
                 selected_pages,
             },

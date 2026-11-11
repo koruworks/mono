@@ -72,6 +72,21 @@ pub struct BotOpenLifecycle {
     pub refusal: Option<BotLifecycleRefusal>,
 }
 
+/// The completed, unreversed whole-Bot Archive or Trash that holds an
+/// archived or trashed Bot where it is: what a client names as
+/// `source_request_id` to unarchive or restore it, found again after a
+/// restart. For a Bot archived and then trashed it is the Trash; once that
+/// Trash is restored, the Archive again.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotLifecycleHolder {
+    pub request_id: BotRequestId,
+    /// `archive` or `trash`.
+    pub kind: BotLifecycleKind,
+    pub completed_at_ms: i64,
+}
+
 closed_vocabulary! {
     /// Why a conversation belongs to its Bot (`bot_chats.purpose`, ai16).
     BotChatPurpose { Main => "main", Additional => "additional" }

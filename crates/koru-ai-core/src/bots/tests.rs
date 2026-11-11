@@ -225,12 +225,14 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
         updated_at_ms: 1,
         lifecycle: BotLifecycle::Active,
         open_operation: None,
+        held_by: None,
     };
-    // Active with nothing open: neither field is written, so receipts that
-    // store a Bot and older readers see the same bytes as before P1.7.
+    // Active with nothing open: no lifecycle field is written, so receipts
+    // that store a Bot and older readers see the same bytes as before P1.7.
     let active = serde_json::to_value(&bot).unwrap();
     assert!(active.get("lifecycle").is_none());
     assert!(active.get("open_operation").is_none());
+    assert!(active.get("held_by").is_none());
     assert_eq!(serde_json::from_value::<Bot>(active.clone()).unwrap(), bot);
     let mut archived = bot.clone();
     archived.lifecycle = BotLifecycle::Archived;
@@ -251,6 +253,40 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
     );
     let mut unknown = wire;
     unknown["open_operation"]["fingerprint"] = serde_json::json!("guessed");
+    assert!(serde_json::from_value::<Bot>(unknown).is_err());
+}
+
+#[test]
+fn the_operation_holding_an_archived_bot_is_additive_and_closed() {
+    let workspace = WorkspaceId::new();
+    let mut bot: Bot = serde_json::from_value(serde_json::json!({
+        "id": BotId::mint(), "home_workspace": workspace, "user_scope": UserScopeId::new(),
+        "owner_device": DeviceId::new().to_string(),
+        "config": {"name": "fixture", "role": {"workspace": workspace, "document": DocumentId::new()},
+            "working_folder": "/fixture",
+            "model": {"provider": "agent-codex", "requested_model": "fixture", "default_reasoning": "default"},
+            "mode": null, "fast": null},
+        "access": "default", "selected_pages": [], "revision": 3, "policy_revision": 1,
+        "main_chat": ChatId::new(), "paused": true, "folder_lock_request": null,
+        "folder_frozen_at_ms": null, "created_at_ms": 1, "updated_at_ms": 1,
+        "lifecycle": "archived"
+    }))
+    .unwrap();
+    assert_eq!(bot.held_by, None);
+    let request = BotRequestId::mint();
+    bot.held_by = Some(BotLifecycleHolder {
+        request_id: request,
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 42,
+    });
+    let wire = serde_json::to_value(&bot).unwrap();
+    assert_eq!(
+        wire["held_by"],
+        serde_json::json!({"request_id": request, "kind": "archive", "completed_at_ms": 42})
+    );
+    assert_eq!(serde_json::from_value::<Bot>(wire.clone()).unwrap(), bot);
+    let mut unknown = wire;
+    unknown["held_by"]["stage"] = serde_json::json!("completed");
     assert!(serde_json::from_value::<Bot>(unknown).is_err());
 }
 

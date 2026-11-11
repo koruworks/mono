@@ -83,6 +83,12 @@ pub struct Bot {
     /// fill it in; omitted when there is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_operation: Option<BotOpenLifecycle>,
+    /// For an archived or trashed Bot, the completed operation that holds it
+    /// there, to name in the Restore. Reads fill it in (`list_lifecycle`,
+    /// and `read` of an archived Bot); omitted for an active Bot, so an
+    /// active Bot's serialized form and every stored receipt are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_by: Option<BotLifecycleHolder>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

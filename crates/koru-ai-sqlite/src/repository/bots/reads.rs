@@ -92,7 +92,121 @@ pub(crate) const TRASHED_BOT_CHAT_PAGE_SQL: &str =
   ORDER BY t.chat_id
   LIMIT ?5";
 
+/// The owner's completed whole-Bot Archive and Trash operations of the named
+/// Bots that no completed Restore names as its source: the candidates for
+/// what holds each archived or trashed Bot. There is no index from a Bot to
+/// its finished operations in ai.db 18 (QUESTIONS O44), so this walks the
+/// owner's own lifecycle journal through its primary key, which leads with
+/// the owner's scope (`sqlite_autoindex_bot_lifecycle_intents_1`): it reads
+/// every lifecycle operation that owner has ever made, across all their Bots,
+/// never another owner's, and checks each candidate's reversal through
+/// `bot_lifecycle_source`. `?3` is a JSON array of the Bot IDs wanted.
+pub(crate) const BOT_LIFECYCLE_HOLDERS_SQL: &str =
+    "SELECT i.bot_id, i.operation_id, i.kind, i.completed_at_ms
+   FROM bot_lifecycle_intents AS i INDEXED BY sqlite_autoindex_bot_lifecycle_intents_1
+  WHERE i.user_scope_id = ?1 AND i.owner_device_id = ?2
+    AND i.chat_id IS NULL AND i.kind IN ('archive', 'trash') AND i.stage = 'completed'
+    AND i.bot_id IN (SELECT value FROM json_each(?3))
+    AND NOT EXISTS(SELECT 1 FROM bot_lifecycle_intents AS r INDEXED BY bot_lifecycle_source
+                    WHERE r.user_scope_id = i.user_scope_id AND r.source_operation_id = i.operation_id
+                      AND r.stage = 'completed')";
+
 impl Repository {
+    /// What holds each archived or trashed Bot of `bots` where it is: the
+    /// completed, unreversed Trash of a trashed Bot, the completed,
+    /// unreversed Archive of an archived one. An active Bot, or one with no
+    /// such operation, is absent from the answer. One read serves a whole
+    /// listing. The caller has checked the owner's authority over the Bots.
+    ///
+    /// Which operation holds is decided by the Bot's lifecycle, not by
+    /// comparing completion times: Archive needs an active Bot and Trash a
+    /// Bot that is not trashed, and only a Restore leaves either state, so a
+    /// trashed Bot has one unreversed Trash and an archived Bot one
+    /// unreversed Archive (a Bot archived then trashed has both, and the
+    /// Trash holds it).
+    pub fn bot_lifecycle_holders(
+        &self,
+        owner: BotOwner,
+        bots: &[(BotId, BotLifecycle)],
+    ) -> Result<std::collections::HashMap<BotId, BotLifecycleHolder>, BotError> {
+        let wanted: Vec<(BotId, BotLifecycleKind)> = bots
+            .iter()
+            .filter_map(|(bot, lifecycle)| match lifecycle {
+                BotLifecycle::Archived => Some((*bot, BotLifecycleKind::Archive)),
+                BotLifecycle::Trashed => Some((*bot, BotLifecycleKind::Trash)),
+                BotLifecycle::Active => None,
+            })
+            .collect();
+        let mut holders = std::collections::HashMap::new();
+        if wanted.is_empty() {
+            return Ok(holders);
+        }
+        let ids: Vec<BotId> = wanted.iter().map(|(bot, _)| *bot).collect();
+        for (bot, holder) in self.unreversed_whole_bot_operations(owner, &ids)? {
+            let Some((_, kind)) = wanted.iter().find(|(id, _)| *id == bot) else {
+                continue;
+            };
+            if holder.kind != *kind {
+                continue;
+            }
+            // Only one can hold; should the journal ever hold two, the
+            // answer is still one of them, never a mixture.
+            let newer = holders.get(&bot).is_none_or(|known: &BotLifecycleHolder| {
+                (holder.completed_at_ms, holder.request_id.to_storage())
+                    > (known.completed_at_ms, known.request_id.to_storage())
+            });
+            if newer {
+                holders.insert(bot, holder);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// The candidate scan behind [`Self::bot_lifecycle_holders`]. An indexed
+    /// lookup from a Bot to its finished operations replaces only this.
+    fn unreversed_whole_bot_operations(
+        &self,
+        owner: BotOwner,
+        bots: &[BotId],
+    ) -> Result<Vec<(BotId, BotLifecycleHolder)>, BotError> {
+        let ids =
+            serde_json::to_string(&bots.iter().map(|bot| bot.to_storage()).collect::<Vec<_>>())
+                .map_err(bad)?;
+        let mut statement = self
+            .connection
+            .prepare(BOT_LIFECYCLE_HOLDERS_SQL)
+            .map_err(bad)?;
+        let rows = statement
+            .query_map(
+                params![
+                    owner.user_scope.to_storage(),
+                    owner.device.to_storage(),
+                    ids
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .map_err(bad)?;
+        rows.map(|row| {
+            let (bot, operation, kind, completed_at_ms) = row.map_err(bad)?;
+            Ok((
+                bot.parse().map_err(bad)?,
+                BotLifecycleHolder {
+                    request_id: operation.parse().map_err(bad)?,
+                    kind: BotLifecycleKind::parse(&kind).ok_or(BotError::Storage)?,
+                    completed_at_ms,
+                },
+            ))
+        })
+        .collect()
+    }
+
     /// One page of the owner's Bot conversations in Trash whose Bot lives in
     /// `workspace`, active, archived or trashed. The caller has checked the
     /// owner's current authority over the workspace.

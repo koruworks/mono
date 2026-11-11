@@ -584,6 +584,7 @@ impl BotCreationRecord {
             updated_at_ms: now,
             lifecycle: Default::default(),
             open_operation: None,
+            held_by: None,
         })
     }
 

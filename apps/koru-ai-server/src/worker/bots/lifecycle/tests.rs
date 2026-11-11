@@ -43,6 +43,7 @@ fn bot() -> Bot {
         updated_at_ms: 1,
         lifecycle: Default::default(),
         open_operation: None,
+        held_by: None,
     }
 }
 

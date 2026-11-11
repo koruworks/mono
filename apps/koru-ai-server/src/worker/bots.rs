@@ -374,6 +374,7 @@ fn execute_bot_command(
                     updated_at_ms: now,
                     lifecycle: Default::default(),
                     open_operation: None,
+                    held_by: None,
                 },
                 None,
             )

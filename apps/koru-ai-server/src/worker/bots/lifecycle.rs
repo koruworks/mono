@@ -539,6 +539,7 @@ impl WorkerState {
             .repository
             .bot_open_lifecycle(id)
             .map_err(bot_failure)?;
+        self.with_lifecycle_holders(prepared_owner(context)?, std::slice::from_mut(&mut bot))?;
         Ok(BotResponse::Bot { bot })
     }
 
@@ -706,6 +707,7 @@ impl WorkerState {
             .bots_in_lifecycle(owner, workspace, lifecycle)
             .map_err(bot_failure)?;
         self.with_open_operations(&mut bots)?;
+        self.with_lifecycle_holders(owner, &mut bots)?;
         Ok(BotResponse::List { bots })
     }
 

@@ -41,6 +41,7 @@ pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot
         updated_at_ms: 0,
         lifecycle: Default::default(),
         open_operation: None,
+        held_by: None,
     }
 }
 

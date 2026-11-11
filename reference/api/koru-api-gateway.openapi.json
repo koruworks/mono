@@ -2645,6 +2645,20 @@
               }
             ]
           },
+          "held_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycleHolder"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "For an archived or trashed Bot, the completed operation that holds it\nthere, to name in the Restore. Reads fill it in (`list_lifecycle`,\nand `read` of an archived Bot); omitted for an active Bot, so an\nactive Bot's serialized form and every stored receipt are unchanged."
+          },
           "home_workspace": {
             "$ref": "#/components/schemas/WorkspaceId"
           },
@@ -4344,6 +4358,33 @@
           "trashed"
         ],
         "type": "string"
+      },
+      "BotLifecycleHolder": {
+        "additionalProperties": false,
+        "description": "The completed, unreversed whole-Bot Archive or Trash that holds an\narchived or trashed Bot where it is: what a client names as\n`source_request_id` to unarchive or restore it, found again after a\nrestart. For a Bot archived and then trashed it is the Trash; once that\nTrash is restored, the Archive again.",
+        "properties": {
+          "completed_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycleKind"
+              }
+            ],
+            "description": "`archive` or `trash`."
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          }
+        },
+        "required": [
+          "request_id",
+          "kind",
+          "completed_at_ms"
+        ],
+        "type": "object"
       },
       "BotLifecycleIntended": {
         "description": "What the operation means to do to a member.",
