@@ -3715,7 +3715,10 @@ fn the_library_stops_above_the_floor_and_does_not_scroll_into_it() {
     let a = area();
     let floor = v.rows_bottom(a);
     let (_, trash) = v.footer_rects(a)[0];
-    assert_eq!(floor, trash.y, "the band ends where the pinned Trash begins");
+    assert_eq!(
+        floor, trash.y,
+        "the band ends where the pinned Trash begins"
+    );
 
     v.scroll_by(a, -100_000.0);
     assert_eq!(
