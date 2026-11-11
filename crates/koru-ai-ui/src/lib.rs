@@ -508,7 +508,8 @@ pub struct ChatSurface {
     /// (Bots P1.8, QUESTIONS O36): the live `failed` event's engine stop
     /// code said so, and the reply says it in words of its own instead of
     /// the generic failure. Kept while this surface lives; a reloaded
-    /// transcript does not carry the code yet (`refused_pictures()`).
+    /// transcript says the same from its `MessageUsage.stop_code`
+    /// (`rebuild_messages`).
     refused_pictures: HashSet<MessageId>,
     pending_user: Option<String>,
     /// The running reply carries an agent's answers sent as the next
@@ -7500,10 +7501,15 @@ impl ChatSurface {
                         .then(|| usage_by_message.get(&message.id))
                         .flatten()
                         .and_then(|usage| usage_line(usage, self.lang));
+                    // Refused pictures: from the live event while this surface
+                    // lives, and from the reloaded transcript's stop code (O36).
                     let display = if message.markdown.is_empty()
                         && message.state == MessageState::Failed
-                        && self.refused_pictures.contains(&message.id)
-                    {
+                        && (self.refused_pictures.contains(&message.id)
+                            || transcript.usage.iter().any(|entry| {
+                                entry.message_id == message.id
+                                    && refused_pictures(entry.stop_code.as_deref())
+                            })) {
                         koru_i18n::t(self.lang, koru_i18n::Key::BotsPicturesRefused).to_owned()
                     } else if message.markdown.is_empty() && message.state == MessageState::Failed {
                         failure_label(message.error_class, self.lang)
@@ -10432,18 +10438,13 @@ fn destination_row(panel: Rect, index: usize) -> Rect {
     )
 }
 
-/// The sentence for a failed response, by its class, in the person's
-/// language. A class the surface does not name reads as the generic one.
 /// **Whether an engine stop code says the agent refused a task's pictures**
 /// (Bots P1.8, QUESTIONS O36): the owner's `bot_input_pictures_refused`, or
 /// `bot_input_too_large` for pictures over the agent's limit. The sentence
 /// is information only: what the surface receives cannot tell whether the
 /// pictures were then sent as files. Read from the live `failed` event's
-/// `AiError.stop_code`; the reloaded transcript does not carry the code yet.
-/// When it does (an optional `MessageUsage.stop_code` is the planned
-/// carrier), the transcript's failed reply should be read through this same
-/// function so the sentence survives a reload; until then a reload shows
-/// [`failure_label`]'s words.
+/// `AiError.stop_code`, and after a reload from the transcript's
+/// `MessageUsage.stop_code` for that reply, so the sentence survives it.
 pub(crate) fn refused_pictures(code: Option<&str>) -> bool {
     matches!(
         code,
@@ -10451,6 +10452,8 @@ pub(crate) fn refused_pictures(code: Option<&str>) -> bool {
     )
 }
 
+/// The sentence for a failed response, by its class, in the person's
+/// language. A class the surface does not name reads as the generic one.
 fn failure_label(class: Option<AiErrorClass>, lang: koru_i18n::Lang) -> String {
     let key = match class {
         Some(AiErrorClass::Configuration) => koru_i18n::Key::AiFailureConfiguration,
@@ -14795,6 +14798,64 @@ mod tests {
         assert!(surface.refused_pictures.is_empty());
         assert!(!refused_pictures(None));
         assert!(!refused_pictures(Some("bot_input_unknown")));
+    }
+
+    /// **O36, the reload half: a reopened transcript still says the pictures
+    /// were refused**, from the reply's `MessageUsage.stop_code`, with no
+    /// live event heard by this surface. A failed reply with no code, or
+    /// another one, keeps its generic failure.
+    #[test]
+    fn refused_pictures_survive_a_reload_from_the_stop_code() {
+        for (code, refused) in [
+            (Some("bot_input_pictures_refused"), true),
+            (Some("bot_input_too_large"), true),
+            (Some("bot_input_unknown"), false),
+            (None, false),
+        ] {
+            let mut surface = ChatSurface::new();
+            surface.lang = koru_i18n::Lang::En;
+            let mut transcript = transcript();
+            let reply = MessageId::new();
+            transcript.messages.push(koru_ai_core::Message {
+                id: reply,
+                chat_id: transcript.chat.id,
+                ordinal: 0,
+                role: ChatRole::Assistant,
+                state: MessageState::Failed,
+                markdown: String::new(),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: Some(AiErrorClass::Provider),
+                created_at: koru_ai_core::Timestamp::from_millis(1),
+                completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+            });
+            transcript.usage.push(koru_ai_wire::MessageUsage {
+                message_id: reply,
+                usage: Default::default(),
+                context: None,
+                stop_code: code.map(str::to_owned),
+            });
+            surface.transcript = Some(transcript);
+            surface.rebuild_messages(600.0);
+            let shown = surface
+                .message_layouts
+                .iter()
+                .find(|layout| layout.id == Some(reply))
+                .map(|layout| layout.display.clone())
+                .expect("the failed reply is laid out");
+            let expected = if refused {
+                koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::BotsPicturesRefused)
+            } else {
+                koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::AiFailureGeneric)
+            };
+            assert_eq!(shown, expected, "{code:?}");
+            assert!(
+                surface.refused_pictures.is_empty(),
+                "no live event: {code:?}"
+            );
+        }
     }
 
     #[test]
