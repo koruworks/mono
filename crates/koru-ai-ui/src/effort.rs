@@ -146,6 +146,7 @@ pub(crate) fn word(lang: Lang, choice: ReasoningChoice) -> String {
 /// **A level's short word** (D76, the design's *Low · Med · High · XH ·
 /// Max*): what its segment in the effort strip shows, where six share the
 /// picker's width. Off and On are short already.
+#[cfg(test)]
 pub(crate) fn short_word(lang: Lang, choice: ReasoningChoice) -> String {
     cfg::short_word(lang, effort(choice))
 }

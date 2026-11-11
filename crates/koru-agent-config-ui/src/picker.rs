@@ -29,11 +29,18 @@ use crate::effort::{self, Effort, Levels};
 
 pub mod context;
 pub mod elements;
+pub mod inputs;
 pub mod mark;
 pub mod paint;
 pub mod tokens;
+pub mod view;
 
+pub use inputs::{
+    Agent, AgentId, Applies, Builtin, BuiltinModel, Context, Current, DEFAULT_MODEL, FooterOffer,
+    Inputs, Listing, ModelRecord, Outcome, Place, Readiness,
+};
 pub use paint::{SearchLeaf, SearchPaint};
+pub use view::{ModelPicker, Picker};
 
 /// The rail's width, and the square of each of its marks.
 pub const RAIL_W: f32 = 44.0;
@@ -150,26 +157,43 @@ pub enum PickerFocus {
     Context,
 }
 
-/// The picker's own state. It lives only while the picker is open; opening
-/// resets it.
-pub struct PickerState<P> {
-    /// The rail's selected entry: whose models the list shows.
-    pub rail: Option<RailEntry<P>>,
-    /// First agent mark on the visible rail page.
-    pub rail_offset: usize,
-    pub query: SharedInput,
-    /// The row the keyboard is on, by index into the rows.
-    pub highlight: Option<usize>,
-    /// The first row shown.
-    pub offset: usize,
-    pub scroll_drag: Option<f32>,
-    pub focus: PickerFocus,
-    /// Agents whose ↻ is under way: the list reads *Checking…* meanwhile.
-    pub refreshing: HashSet<P>,
-    /// *Legacy models (N)* is expanded: the agent's older models follow it
-    /// in the list (QUESTIONS M4, the user's design, 2026-11-03).
-    pub legacy_open: bool,
+/// **The picker's own state**, which its host keeps and lends it. It lives
+/// only while the picker is open; opening resets it. A host reaches it only
+/// through the methods below — its fields are the picker's, open to a
+/// host's suite under the `test-support` feature alone.
+macro_rules! picker_state {
+    ($vis:vis) => {
+        pub struct PickerState<P> {
+            /// The rail's selected entry: whose models the list shows.
+            $vis rail: Option<RailEntry<P>>,
+            /// First agent mark on the visible rail page.
+            $vis rail_offset: usize,
+            $vis query: SharedInput,
+            /// The row the keyboard is on, by index into the rows.
+            $vis highlight: Option<usize>,
+            /// The first row shown.
+            $vis offset: usize,
+            $vis scroll_drag: Option<f32>,
+            $vis focus: PickerFocus,
+            /// Agents whose ↻ is under way: the list reads *Checking…*
+            /// meanwhile.
+            $vis refreshing: HashSet<P>,
+            /// *Legacy models (N)* is expanded: the agent's older models
+            /// follow it in the list (QUESTIONS M4, the user's design,
+            /// 2026-11-03).
+            $vis legacy_open: bool,
+            /// What the person chose, for the host to carry out.
+            pub(crate) outcomes: Vec<inputs::Outcome<P>>,
+            /// What the picker owes once the host has.
+            pub(crate) pending: Option<view::Pending<P>>,
+        }
+    };
 }
+
+#[cfg(feature = "test-support")]
+picker_state!(pub);
+#[cfg(not(feature = "test-support"))]
+picker_state!(pub(crate));
 
 impl<P> PickerState<P> {
     pub fn new(engine: &mut TextEngine) -> Self {
@@ -183,7 +207,44 @@ impl<P> PickerState<P> {
             focus: PickerFocus::Search,
             refreshing: HashSet::new(),
             legacy_open: false,
+            outcomes: Vec::new(),
+            pending: None,
         }
+    }
+
+    /// What the person chose since the last drain, in order, for the host
+    /// to carry out.
+    pub fn take_outcomes(&mut self) -> Vec<inputs::Outcome<P>> {
+        std::mem::take(&mut self.outcomes)
+    }
+
+    /// Whether the picker still owes something once the host has carried
+    /// out the outcomes: then call [`ModelPicker::resume`].
+    pub fn pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Whether the list's thumb is held.
+    pub fn dragging(&self) -> bool {
+        self.scroll_drag.is_some()
+    }
+
+    /// The pointer let go: the list's thumb with it.
+    pub fn release_drag(&mut self) {
+        self.scroll_drag = None;
+    }
+}
+
+impl<P: Eq + std::hash::Hash> PickerState<P> {
+    /// The host asked for `agent`'s ↻ ([`Outcome::Refresh`]): its list reads
+    /// *Checking…* until it lands.
+    pub fn refresh_started(&mut self, agent: P) {
+        self.refreshing.insert(agent);
+    }
+
+    /// An answer about `agent`'s models landed: its ↻ is over.
+    pub fn refresh_answered(&mut self, agent: &P) {
+        self.refreshing.remove(agent);
     }
 }
 

@@ -79,12 +79,4 @@ impl crate::ChatSurface {
         let id = if long { choice.long } else { choice.base };
         self.choose_agent_model(choice.agent, id)
     }
-
-    /// The pill pressed, or Space or Enter on it: the other window.
-    pub(crate) fn toggle_context(&mut self) -> bool {
-        match self.picker_context() {
-            Some(choice) => self.choose_context(!choice.chosen_long),
-            None => false,
-        }
-    }
 }

@@ -19,6 +19,8 @@ use koru_draw::el::{El, Frame, FrameCx, TextCache};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 
+// The control's tree, by the names the suite reads it by.
+#[cfg(test)]
 pub(crate) use koru_agent_config_ui::picker::elements::*;
 
 /// FNV-1a over `text`, widened: the same id gives the same key in every

@@ -72,26 +72,50 @@ impl AgentStatus {
         }
     }
 
-    /// The word beside an agent that is not simply ready; `None` when it is.
+    /// The word beside an agent that is not simply ready; `None` when it is
+    /// — the agent-configuration control's words for it ([`readiness`]).
     pub(crate) fn word(self, lang: Lang) -> Option<String> {
-        let key = match self {
-            Self::Ready => return None,
-            Self::Checking => Key::TerminalChecking,
-            Self::NotInstalled => Key::TerminalNotInstalled,
-            // Settings' own headline for the same row, where the detail
-            // names the missing program; the picker has room for the word.
-            Self::AdapterMissing => Key::SettingsAgentNeedsAttention,
-            Self::SignedOut => Key::TerminalManagedSignedOut,
-            Self::UnsupportedVersion => Key::AiAgentUnsupportedVersion,
-            Self::CheckFailed => Key::TerminalManagedCheckFailed,
-            Self::Unavailable => Key::AiAgentUnavailable,
-        };
-        Some(t(lang, key).to_owned())
+        readiness(self).word(lang)
     }
 
     pub(crate) fn selectable(self) -> bool {
         self == Self::Ready
     }
+}
+
+/// How ready one agent is, in the agent-configuration control's words, one
+/// for one.
+pub(crate) fn readiness(status: AgentStatus) -> koru_agent_config_ui::picker::Readiness {
+    use koru_agent_config_ui::picker::Readiness;
+    match status {
+        AgentStatus::Checking => Readiness::Checking,
+        AgentStatus::Ready => Readiness::Ready,
+        AgentStatus::NotInstalled => Readiness::NotInstalled,
+        // Settings' own headline for the same row, where the detail names
+        // the missing program; the picker has room for the word.
+        AgentStatus::AdapterMissing => Readiness::AdapterMissing,
+        AgentStatus::SignedOut => Readiness::SignedOut,
+        AgentStatus::UnsupportedVersion => Readiness::UnsupportedVersion,
+        AgentStatus::CheckFailed => Readiness::CheckFailed,
+        AgentStatus::Unavailable => Readiness::Unavailable,
+    }
+}
+
+/// The service's agents in the person's order: by `order`, by key; an agent
+/// it does not name follows the ones it does, in the service's order.
+pub(crate) fn ordered_views<'a>(
+    settings: Option<&'a koru_ai_wire::ProviderSettingsResponse>,
+    order: &[String],
+) -> Vec<&'a AgentProviderView> {
+    let mut agents: Vec<&AgentProviderView> = settings
+        .map(|settings| settings.agents.iter().collect())
+        .unwrap_or_default();
+    agents.sort_by_key(|agent| {
+        agent_key(&agent.id)
+            .and_then(|key| order.iter().position(|known| known == key))
+            .unwrap_or(usize::MAX)
+    });
+    agents
 }
 
 /// What the picker knows about one agent's models.
@@ -104,6 +128,7 @@ pub(crate) enum AgentModels {
 
 /// The groups an agent's models fall into, in the order first seen. The
 /// agent's own `default` entry is the *Default* row, in no group.
+#[cfg(test)]
 pub(crate) fn model_groups(models: &[AgentModelView]) -> Vec<String> {
     let mut groups: Vec<String> = Vec::new();
     for model in listed_models(models) {
@@ -116,6 +141,7 @@ pub(crate) fn model_groups(models: &[AgentModelView]) -> Vec<String> {
 
 /// An agent's models other than its own `default` entry, which is drawn as
 /// the *Default* row at the top instead of a second time in the list.
+#[cfg(test)]
 pub(crate) fn listed_models(models: &[AgentModelView]) -> impl Iterator<Item = &AgentModelView> {
     models
         .iter()
@@ -153,6 +179,7 @@ pub(crate) fn model_label(model: &AgentModelView) -> String {
 }
 
 /// A group's heading: the agent's own name for it, or the id formatted.
+#[cfg(test)]
 pub(crate) fn group_label(models: &[AgentModelView], group: &str) -> String {
     models
         .iter()
@@ -171,71 +198,9 @@ pub(crate) fn default_model_label(models: &[AgentModelView], lang: Lang) -> Stri
         .unwrap_or_else(|| t(lang, Key::AiModelAgentDefault).to_owned())
 }
 
-/// A model id as a person would write it, when the agent sends no name. A
-/// formatting rule rather than a table, so it never goes stale: the group
-/// prefix (or else everything up to the last `/`) goes, `-`, `_` and spaces
-/// split words, a date (`2025-01-31`) stays whole, runs of one- and
-/// two-digit numbers join with `.`, and each word that starts with a letter
-/// is capitalised. `claude-opus-4-1` reads `Claude Opus 4.1`;
-/// `o3-mini-2025-01-31` reads `O3 Mini 2025-01-31`; `deepseek/v4-pro` under
-/// `deepseek` reads `V4 Pro`.
-pub(crate) fn fallback_label(id: &str, group: &str) -> String {
-    let tail = id
-        .strip_prefix(&format!("{group}/"))
-        .filter(|_| !group.is_empty())
-        .unwrap_or_else(|| id.rsplit('/').next().unwrap_or(id));
-    let digits = |token: &str, lengths: std::ops::RangeInclusive<usize>| {
-        lengths.contains(&token.len()) && token.bytes().all(|b| b.is_ascii_digit())
-    };
-    let raw: Vec<&str> = tail
-        .split(['-', '_', ' '])
-        .filter(|token| !token.is_empty())
-        .collect();
-    // A year, a month and a day in a row are one date, not a year and a
-    // version number.
-    let mut tokens: Vec<String> = Vec::new();
-    let mut index = 0;
-    while index < raw.len() {
-        if let [year, month, day, ..] = raw[index..]
-            && digits(year, 4..=4)
-            && digits(month, 2..=2)
-            && digits(day, 2..=2)
-        {
-            tokens.push(format!("{year}-{month}-{day}"));
-            index += 3;
-        } else {
-            tokens.push(raw[index].to_owned());
-            index += 1;
-        }
-    }
-    let mut words: Vec<String> = Vec::new();
-    let mut previous_short_number = false;
-    for token in &tokens {
-        let token = token.as_str();
-        let number = digits(token, 1..=2);
-        match words.last_mut() {
-            Some(last) if number && previous_short_number => {
-                last.push('.');
-                last.push_str(token);
-            }
-            _ => {
-                let mut chars = token.chars();
-                words.push(match chars.next() {
-                    Some(first) if first.is_alphabetic() => {
-                        first.to_uppercase().chain(chars).collect()
-                    }
-                    _ => token.to_owned(),
-                });
-            }
-        }
-        previous_short_number = number;
-    }
-    if words.is_empty() {
-        id.to_owned()
-    } else {
-        words.join(" ")
-    }
-}
+/// A model id as a person would write it, when the agent sends no name: the
+/// agent-configuration control's rule, which the chip and a row share.
+pub(crate) use koru_agent_config_ui::picker::inputs::fallback_label;
 
 pub(crate) fn is_agent_provider(provider: &AiProviderId) -> bool {
     provider.as_str().starts_with("agent-")
@@ -895,7 +860,7 @@ impl crate::ChatSurface {
 
     pub(crate) fn close_picker(&mut self) {
         self.chat_model_open = false;
-        self.picker.scroll_drag = None;
+        self.picker.release_drag();
         self.picker_tooltip.clear();
     }
 
@@ -1133,17 +1098,7 @@ impl crate::ChatSurface {
 
     /// The service's agents in the person's order.
     pub(crate) fn ordered_agents(&self) -> Vec<&AgentProviderView> {
-        let mut agents: Vec<&AgentProviderView> = self
-            .settings
-            .as_ref()
-            .map(|settings| settings.agents.iter().collect())
-            .unwrap_or_default();
-        agents.sort_by_key(|agent| {
-            agent_key(&agent.id)
-                .and_then(|key| self.agent_order.iter().position(|known| known == key))
-                .unwrap_or(usize::MAX)
-        });
-        agents
+        ordered_views(self.settings.as_ref(), &self.agent_order)
     }
 
     /// Whether `agent` is offered as a choice: not turned off.

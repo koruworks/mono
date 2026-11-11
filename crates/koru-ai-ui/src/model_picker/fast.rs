@@ -68,12 +68,4 @@ impl crate::ChatSurface {
             },
         ))
     }
-
-    /// The pill pressed, or Space or Enter on it: Fast mode the other way.
-    pub(crate) fn toggle_fast(&mut self) -> bool {
-        match self.picker_fast() {
-            Some(choice) => self.choose_fast(!choice.on),
-            None => false,
-        }
-    }
 }

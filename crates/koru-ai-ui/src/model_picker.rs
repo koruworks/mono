@@ -42,35 +42,49 @@
 //! **The chrome is an element tree** (D64, [`elements`]): the rail and the
 //! content column, the search row, the list and the rows under it are
 //! laid out by `koru_draw::el`, and [`Geometry`] is read back from that
-//! frame; drawn ([`paint`]), the same tree nests inside the *Popover
+//! frame; drawn, the same tree nests inside the *Popover
 //! surface* record. The rows, the search and the footer's words are pure
 //! functions, tested beside this file. The surface keeps the state
 //! ([`PickerState`]).
+//!
+//! **The picker is the agent-configuration control's** (Bots P1.8,
+//! `koru_agent_config_ui::picker`): its rail, list, search, keyboard,
+//! pointer, geometry, drawing and semantics run there, over plain data. This
+//! module is the chat's side of it: it builds the control's inputs from the
+//! chat's catalog, settings and transcript for each call, lends it the
+//! picker's state, and carries out what the person chose — a model through
+//! `choose_agent_model`, a level through `choose_level`, Fast, the window,
+//! the favorites, the catalog asks — with the chat's own rules, before the
+//! control settles its list against the result. Every method the chat and
+//! its suite called keeps its name and signature, one line over the
+//! control.
 
-use koru_agent_config_ui::picker as cfg;
-use koru_ai_core::{AGENT_DEFAULT_MODEL, AiProviderId, ReasoningChoice, ReasoningControl};
-use koru_draw::el::FrameCx;
+use std::collections::{HashMap, HashSet};
+
+use koru_agent_config_ui::picker::{
+    self as cfg, Agent, Applies, Builtin, BuiltinModel, Context, Current, FooterOffer, Inputs,
+    Listing, ModelPicker, ModelRecord, Outcome, Picker, Place,
+};
+use koru_ai_core::{AGENT_DEFAULT_MODEL, AiProviderId, ReasoningChoice};
+use koru_ai_wire::{AgentModelView, ChatTranscript, ProviderSettingsResponse};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{brand, icons};
-use koru_i18n::{Key, Lang, t};
-use koru_ui::Typed;
-use koru_ui::popover::PopoverAlign;
+use koru_i18n::{Key, t};
 use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
 use vello::kurbo::Affine;
-use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
+use winit::keyboard::{Key as WinitKey, ModifiersState};
 
 use crate::agents::{
     AgentModels, AgentStatus, agent_key, default_model_label, fallback_label, find_listed,
-    group_label, is_agent_provider, listed_models, model_groups, model_label, provider_mark,
+    is_agent_provider, model_label, provider_mark,
 };
 use crate::effort;
 
 mod context;
 mod elements;
 mod fast;
-mod paint;
 
 /// **The element layout the composer's panels share** (D64, D105): one
 /// engine and text cache per UI thread, and one way to key a row by its
@@ -78,24 +92,16 @@ mod paint;
 /// laid out on them as the picker is.
 pub(crate) use elements::{layout as layout_elements, stable_id};
 
-// **The picker's vocabulary is the agent-configuration control's**
-// (`koru_agent_config_ui::picker`, Bots P1.8): its sizes, the rail's
-// entries, the list's rows, the keyboard's places, its state, its parts and
-// the pure rules over them — and the search field's adapter, which the
-// workspace-access panel's filter field is too (D106). The chat names them
-// here, its own agent id in the generic ones, so this crate's code and its
-// suite read as they did.
+// The picker's vocabulary, named for the chat: the favorites the app names,
+// the state the surface keeps, and the search field's adapter, which the
+// workspace-access panel's filter field is too (D106).
 pub use cfg::FavoriteModel;
-pub(crate) use cfg::{
-    Geometry, LIST_ROWS, PickerFocus, RAIL_PAGE, ROW_H, SearchLeaf, SearchPaint, SharedInput,
-    TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED, TOOLTIP_RAIL, TOOLTIP_REFRESH, geometry_with, matches,
-    rail_dividers, rail_height, rail_rects, row_id, scroll_into_view, size, step_highlight,
-    toggled,
-};
+pub(crate) use cfg::{Geometry, SearchLeaf, SearchPaint, SharedInput};
 
 /// One mark on the rail, the chat's provider id its agent's.
 pub(crate) type RailEntry = cfg::RailEntry<AiProviderId>;
 /// One row of the list, the chat's provider id its agent's.
+#[cfg(test)]
 pub(crate) type Row = cfg::Row<AiProviderId>;
 /// The picker's own state on the surface. It lives only while the picker
 /// is open; opening resets it.
@@ -105,18 +111,29 @@ pub(crate) type PickerState = cfg::PickerState<AiProviderId>;
 // suite moves into the control's crate and drives its public API.
 #[cfg(test)]
 pub(crate) use cfg::{
-    FOOTER_H, FOOTER_TOGGLES_H, MAX_W, PAD, PILL_H, RAIL_BUTTON, RAIL_CONTENT_GAP, RAIL_DIVIDER,
-    RAIL_GAP, RAIL_W, SEARCH_H, SEGMENT_H, STRIP_H, geometry, star_rect,
+    FOOTER_H, FOOTER_TOGGLES_H, LIST_ROWS, MAX_W, PAD, PILL_H, PickerFocus, RAIL_BUTTON,
+    RAIL_CONTENT_GAP, RAIL_DIVIDER, RAIL_GAP, RAIL_PAGE, RAIL_W, ROW_H, SEARCH_H, SEGMENT_H,
+    STRIP_H, geometry, matches, rail_dividers, rail_height, rail_rects, scroll_into_view, size,
+    star_rect, step_highlight, toggled,
 };
 #[cfg(test)]
+use koru_ai_core::ReasoningControl;
+#[cfg(test)]
+use koru_draw::el::FrameCx;
+#[cfg(test)]
 use koru_draw::theme;
+#[cfg(test)]
+use koru_i18n::Lang;
+#[cfg(test)]
+use winit::keyboard::NamedKey;
 
 /// The note over the strip when a level is chosen during a reply (D70).
 const LEVEL_NOTE_KEY: u64 = 0x5049_1004;
 const LEVEL_NOTE_HOLD: std::time::Duration = std::time::Duration::from_millis(2200);
 
 /// **The footer's readout** (§9.3, D76) for the chat's reasoning control
-/// and choice, in the control's words ([`cfg::readout`]).
+/// and choice, in the control's words.
+#[cfg(test)]
 pub(crate) fn readout(
     control: &ReasoningControl,
     choice: ReasoningChoice,
@@ -129,7 +146,271 @@ pub(crate) fn readout(
     )
 }
 
+/// What the chat works out before it lends the picker its fields: where the
+/// picker opens, what the footer offers, whom the rail opens on, a begun
+/// chat's built-in provider, and what the choosing applies to.
+struct Precomputed {
+    place: Place,
+    footer: FooterOffer,
+    preferred: Option<AiProviderId>,
+    builtin: Option<Builtin<AiProviderId>>,
+    applies: Applies,
+}
+
+/// An agent's model as the control takes it, borrowed.
+fn record(model: &AgentModelView) -> ModelRecord<'_> {
+    ModelRecord {
+        id: &model.id,
+        group: &model.group,
+        name: model.name.as_deref(),
+        description: model.description.as_deref(),
+        group_name: model.group_name.as_deref(),
+        legacy: model.legacy,
+        context: model.context.as_ref().map(|window| window.id.as_str()),
+    }
+}
+
+/// **The control's inputs from the chat's fields**, each borrowed: the
+/// agents in the person's order, each with its readiness, whether it is
+/// turned off and its listing; the chat's model; an owned conversation's
+/// one agent; the favorites; the **+** while the host offers it.
+#[allow(clippy::too_many_arguments)]
+fn chat_inputs<'a>(
+    lang: koru_i18n::Lang,
+    settings: &'a Option<ProviderSettingsResponse>,
+    transcript: &'a Option<ChatTranscript>,
+    agent_models: &'a HashMap<AiProviderId, AgentModels>,
+    agent_status: &'a HashMap<AiProviderId, AgentStatus>,
+    hidden: &'a HashSet<String>,
+    order: &'a [String],
+    favorites: &'a [FavoriteModel],
+    owned: &'a Option<crate::OwnedConversation>,
+    manage: bool,
+    pre: Precomputed,
+) -> Inputs<'a, AiProviderId> {
+    let agents = crate::agents::ordered_views(settings.as_ref(), order)
+        .into_iter()
+        .map(|view| Agent {
+            id: view.id.clone(),
+            key: agent_key(&view.id),
+            label: &view.label,
+            mark: provider_profile_mark(&view.id, true),
+            readiness: agent_status
+                .get(&view.id)
+                .copied()
+                .map(crate::agents::readiness),
+            hidden: agent_key(&view.id).is_some_and(|key| hidden.contains(key)),
+            listing: match agent_models.get(&view.id) {
+                Some(AgentModels::Listed(models)) => {
+                    Listing::Listed(models.iter().map(record).collect())
+                }
+                Some(AgentModels::Failed) => Listing::Failed,
+                None | Some(AgentModels::Loading) => Listing::Loading,
+            },
+        })
+        .collect();
+    Inputs {
+        lang,
+        agents,
+        builtin: pre.builtin,
+        current: transcript.as_ref().map(|transcript| {
+            let model = &transcript.chat.current_model;
+            Current {
+                provider: &model.provider,
+                model: &model.requested_model,
+                effort: effort::effort(model.default_reasoning),
+            }
+        }),
+        applies: pre.applies,
+        allowed: owned.as_ref().map(|owned| &owned.provider),
+        preferred: pre.preferred,
+        favorites,
+        manage,
+        footer: pre.footer,
+        place: pre.place,
+    }
+}
+
+/// The control's inputs from `$surface`'s fields: a macro, so the borrows
+/// are of fields, and the picker's own state can be lent beside them.
+macro_rules! inputs_of {
+    ($surface:expr, $pre:expr) => {
+        chat_inputs(
+            $surface.lang,
+            &$surface.settings,
+            &$surface.transcript,
+            &$surface.agent_models,
+            &$surface.agent_status,
+            &$surface.hidden_agents,
+            &$surface.agent_order,
+            &$surface.favorite_models,
+            &$surface.owned,
+            $surface.agent_settings_offered,
+            $pre,
+        )
+    };
+}
+
 impl crate::ChatSurface {
+    /// What the chat works out for the picker before lending it anything.
+    fn picker_precompute(&self) -> Precomputed {
+        let begun = self
+            .transcript
+            .as_ref()
+            .is_some_and(|transcript| !transcript.messages.is_empty());
+        let builtin = self
+            .transcript
+            .as_ref()
+            .filter(|transcript| {
+                !transcript.messages.is_empty()
+                    && !is_agent_provider(&transcript.chat.current_model.provider)
+            })
+            .map(|transcript| {
+                let provider = &transcript.chat.current_model.provider;
+                let ids = if provider.as_str() == AiProviderId::KORU {
+                    vec![AiProviderId::KORU_HOSTED_MODEL.to_owned()]
+                } else {
+                    self.chat_model_options()
+                };
+                Builtin {
+                    id: provider.clone(),
+                    name: provider_name(provider),
+                    mark: provider_profile_mark(provider, false),
+                    models: ids
+                        .into_iter()
+                        .map(|id| BuiltinModel {
+                            label: builtin_model_label(&id),
+                            id,
+                        })
+                        .collect(),
+                }
+            });
+        Precomputed {
+            place: Place {
+                anchor: self.chat_model_button(),
+                viewport: self.viewport,
+                width: self.composer_hit_rect.w,
+            },
+            footer: FooterOffer {
+                levels: self.effort_control().and_then(effort::levels),
+                fast: self.picker_fast().map(|fast| fast.on),
+                context: self.picker_context().map(|window| Context {
+                    tokens: window.tokens,
+                    long: window.chosen_long,
+                }),
+            },
+            // The default agent where one is set (D40), else the last
+            // chosen.
+            preferred: self.default_agent_provider().or_else(|| {
+                self.settings
+                    .as_ref()
+                    .and_then(|settings| settings.selected_provider.clone())
+            }),
+            builtin,
+            applies: Applies::Conversation {
+                begun,
+                agent_begun: self.agent_chat_begun(),
+                model_locked: self.model_locked(),
+                effort_locked: self.effort_locked(),
+            },
+        }
+    }
+
+    /// The picker, read, over the chat's fields as they are.
+    fn picker_read<R>(&self, f: impl FnOnce(Picker<'_, '_, AiProviderId>) -> R) -> R {
+        let pre = self.picker_precompute();
+        let inputs = inputs_of!(self, pre);
+        f(Picker::new(&inputs, &self.picker, self.chat_model_open))
+    }
+
+    /// The picker, driven, over the chat's fields as they are; what it
+    /// queues is left for [`Self::picker_run`] to carry out.
+    fn picker_drive<R>(
+        &mut self,
+        f: impl FnOnce(&mut ModelPicker<'_, '_, AiProviderId>) -> R,
+    ) -> R {
+        let pre = self.picker_precompute();
+        let inputs = inputs_of!(self, pre);
+        let mut view = ModelPicker::new(
+            &inputs,
+            &mut self.picker,
+            &mut self.chat_model_open,
+            &mut self.picker_tooltip,
+            &mut self.engine,
+            self.pointer,
+        );
+        f(&mut view)
+    }
+
+    /// **The picker driven, and what the person chose carried out**: the
+    /// call, then each outcome in order with the chat's own rules, then —
+    /// over the chat as it now is — what the picker still owes, until it
+    /// owes nothing. The second half is the host's answer to the last
+    /// choice the call made, which is the call's answer.
+    fn picker_run<R>(
+        &mut self,
+        f: impl FnOnce(&mut ModelPicker<'_, '_, AiProviderId>) -> R,
+    ) -> (R, Option<bool>) {
+        let result = self.picker_drive(f);
+        let mut answer = None;
+        loop {
+            for outcome in self.picker.take_outcomes() {
+                if let Some(answered) = self.apply_picker_outcome(outcome) {
+                    answer = Some(answered);
+                }
+            }
+            if !self.picker.pending() {
+                break;
+            }
+            self.picker_drive(|view| view.resume());
+        }
+        (result, answer)
+    }
+
+    /// **One choice carried out** the way the chat always has; `Some` with
+    /// the chat's answer for a choice that answers the call that made it.
+    fn apply_picker_outcome(&mut self, outcome: Outcome<AiProviderId>) -> Option<bool> {
+        let answers = outcome.answers();
+        let answer = match outcome {
+            Outcome::Model { provider, model } => self.choose_agent_model(provider, model),
+            Outcome::BuiltinModel(model) => self.change_chat_model(model),
+            Outcome::Level(choice) => self.choose_level(effort::reasoning(choice)),
+            Outcome::EffortLocked => {
+                self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
+                true
+            }
+            Outcome::Fast(on) => self.choose_fast(on),
+            Outcome::Context(long) => self.choose_context(long),
+            // The picker closed itself first.
+            Outcome::Setup => {
+                self.agent_settings_request = true;
+                true
+            }
+            Outcome::Favorites(next) => {
+                self.favorite_models = next.clone();
+                self.favorite_models_request = Some(next);
+                true
+            }
+            Outcome::Catalog(agent) => {
+                self.ask_agent_models(agent);
+                true
+            }
+            Outcome::Refresh(agent) => {
+                let sent = self.reader.as_ref().is_some_and(|reader| {
+                    reader
+                        .send(crate::reader::Command::RefreshModels(agent.clone()))
+                        .is_ok()
+                });
+                if sent {
+                    self.picker.refresh_started(agent.clone());
+                    self.agent_models_asked.insert(agent);
+                }
+                true
+            }
+        };
+        answers.then_some(answer)
+    }
+
     /// **Say the host can open Settings on *Agent providers*** — then the
     /// rail ends in a **+** that asks it to.
     pub fn offer_agent_settings(&mut self, offered: bool) {
@@ -165,7 +446,7 @@ impl crate::ChatSurface {
         let moved = self.favorite_models != favorites;
         self.favorite_models = favorites;
         if moved {
-            self.settle_picker_highlight();
+            self.picker_drive(|view| view.settle_highlight());
         }
         moved
     }
@@ -176,287 +457,246 @@ impl crate::ChatSurface {
         self.favorite_models_request.take()
     }
 
-    /// The favorites the picker lists (D46): those of every agent the
-    /// service offers and this machine has turned on, in the rail's agent
-    /// order and, within an agent, the order they were starred. A turned-off
-    /// agent's are kept in the setting and only hidden here.
+    /// The favorites the picker lists (D46).
+    #[cfg(test)]
     pub(crate) fn picker_favorites(&self) -> Vec<(AiProviderId, String)> {
-        let mut shown = Vec::new();
-        for agent in self.ordered_agents() {
-            let Some(key) = agent_key(&agent.id) else {
-                continue;
-            };
-            if !self.agent_shown(&agent.id) {
-                continue;
-            }
-            shown.extend(
-                self.favorite_models
-                    .iter()
-                    .filter(|favorite| favorite.agent == key)
-                    .map(|favorite| (agent.id.clone(), favorite.model.clone())),
-            );
-        }
-        shown
+        self.picker_read(|picker| picker.favorites())
     }
 
     /// Whether `agent`'s model `model` is starred.
+    #[cfg(test)]
     pub(crate) fn is_favorite(&self, agent: &AiProviderId, model: &str) -> bool {
-        agent_key(agent).is_some_and(|key| {
-            self.favorite_models
-                .iter()
-                .any(|favorite| favorite.agent == key && favorite.model == model)
-        })
+        self.picker_read(|picker| picker.is_favorite(agent, model))
     }
 
-    /// The model a row would star: an agent's listed model, or a favorite.
-    /// The agent's *Default* is no model of its own, and a built-in
-    /// provider's models are not an agent's, so neither has a ☆.
+    /// The model a row would star.
+    #[cfg(test)]
     pub(crate) fn row_favorite(
         &self,
         entry: &RailEntry,
         row: &Row,
     ) -> Option<(AiProviderId, String)> {
-        match (entry, row) {
-            (_, Row::Found(entry, row)) => self.row_favorite(entry, row),
-            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
-                agent_key(agent)
-                    .is_some()
-                    .then(|| (agent.clone(), id.clone()))
-            }
-            _ => None,
-        }
+        self.picker_read(|picker| picker.row_favorite(entry, row))
     }
 
-    /// **Star or unstar** `agent`'s `model` (D46): shown at once, and the
-    /// whole list handed to the host to store.
+    /// **Star or unstar** `agent`'s `model` (D46).
+    #[cfg(test)]
     pub(crate) fn toggle_favorite(&mut self, agent: &AiProviderId, model: &str) -> bool {
-        let Some(key) = agent_key(agent) else {
-            return false;
-        };
-        let next = toggled(&self.favorite_models, FavoriteModel::new(key, model));
-        self.favorite_models = next.clone();
-        self.favorite_models_request = Some(next);
-        self.settle_picker_highlight();
-        true
+        self.picker_run(|view| view.toggle_favorite(agent, model)).0
     }
 
-    /// Keep the keyboard on a row that is still there after the list
-    /// changed under it — an unstarred favorite leaves *Favorites*, and the
-    /// last one takes *Favorites* off the rail.
-    fn settle_picker_highlight(&mut self) {
-        if !self.chat_model_open {
-            return;
-        }
-        // An entry that left the rail is replaced by the one shown in its
-        // place, so a later star does not bring it back under the pointer.
-        if self
-            .picker
-            .rail
-            .as_ref()
-            .is_some_and(|entry| !self.picker_rail().contains(entry))
-        {
-            self.picker.rail = self.picker_entry();
-        }
-        let rows = self.picker_rows();
-        let choosable = self.picker_choosable(&rows);
-        let fine = self
-            .picker
-            .highlight
-            .is_some_and(|index| choosable.get(index).copied().unwrap_or(false));
-        if !fine {
-            let from = self.picker.highlight.map(|index| index.min(rows.len()));
-            self.picker.highlight = step_highlight(&choosable, from, -1)
-                .or_else(|| step_highlight(&choosable, None, 1));
-        }
-        self.picker.offset = self.picker.offset.min(self.picker_max_offset());
-        self.scroll_highlight_into_view();
-    }
-
-    /// What the **+** is called for a screen reader and the inspector — it
-    /// raises no tooltip (D25: the picker's rows show none; the rail's marks
-    /// keep theirs because they are named nowhere else, and this one is).
-    /// The element names it by its key; this is its words, for the tests.
+    /// What the **+** is called for a screen reader and the inspector.
     #[cfg(test)]
     pub(crate) fn picker_manage_name(&self) -> &'static str {
         t(self.lang, Key::AiPickerManageAgents)
     }
 
-    /// The rail's entries: every offered agent in the person's order (Agent
-    /// providers; Claude first until it is dragged), led —
-    /// on a chat that has begun on Koru AI, OpenAI or Ollama — by that
-    /// provider (S1). A chat with no message yet is offered only agents
-    /// (the user's call, 2026-10-31). An agent turned off on *Agent
-    /// providers* is left out, unless it is the chat's own: that chat keeps
-    /// its agent, and keeps working.
-    ///
-    /// **A begun chat's rail is its own entry alone**, and is not drawn
-    /// ([`Self::picker_rail_hidden`]): the chat keeps its provider, so the
-    /// list, the search and the keyboard know only that one.
+    /// The rail's entries ([`cfg::Picker::rail`]).
     pub(crate) fn picker_rail(&self) -> Vec<RailEntry> {
-        let current = self
-            .transcript
-            .as_ref()
-            .map(|transcript| &transcript.chat.current_model.provider);
-        let mut rail = Vec::new();
-        if !self.picker_favorites().is_empty() {
-            rail.push(RailEntry::Favorites);
-        }
-        if let Some(transcript) = &self.transcript
-            && !transcript.messages.is_empty()
-            && !is_agent_provider(&transcript.chat.current_model.provider)
-        {
-            rail.push(RailEntry::Provider(
-                transcript.chat.current_model.provider.clone(),
-            ));
-        }
-        rail.extend(
-            self.ordered_agents()
-                .into_iter()
-                .filter(|agent| self.agent_shown(&agent.id) || Some(&agent.id) == current)
-                .map(|agent| RailEntry::Agent(agent.id.clone())),
-        );
-        if self.picker_rail_hidden() {
-            rail.retain(|entry| entry.provider() == current);
-        }
-        // An owned conversation offers its owner's agent and no other
-        // (`owned`): no favorites from another agent, no second mark.
-        if let Some(owned) = &self.owned {
-            rail.retain(|entry| entry.provider() == Some(&owned.provider));
-        }
-        rail
+        self.picker_read(|picker| picker.rail())
     }
 
-    /// **Whether the rail is hidden: the chat has begun** (the user: *once
-    /// the chat is running, hide the model rail since we don't support
-    /// switching models*). From its first message a chat belongs to its
-    /// provider (AGENTUX D1-2) — the same test by which
-    /// [`Self::choose_agent_model`] refuses another agent and
-    /// [`Self::entry_choosable`] dims every other agent's rows — so the
-    /// rail would offer only what cannot be chosen. The picker then shows the
-    /// chat's own provider's list with no rail, *Favorites* or **+**, and
-    /// its search looks only there. A new chat with no message, or no chat
-    /// yet, keeps the rail.
+    /// Whether the rail is hidden: the chat has begun, or it is owned.
+    #[cfg(test)]
     pub(crate) fn picker_rail_hidden(&self) -> bool {
-        // An owned conversation belongs to its owner's agent from the start,
-        // as a begun chat belongs to its own (`owned`).
-        self.owned.is_some()
-            || self
-                .transcript
-                .as_ref()
-                .is_some_and(|transcript| !transcript.messages.is_empty())
+        self.picker_read(|picker| picker.rail_hidden())
     }
 
-    /// The marks the rail draws, presses and steps through: its entries,
-    /// or none while it is hidden.
+    /// The marks the rail draws, presses and steps through.
+    #[cfg(test)]
     pub(crate) fn picker_marks(&self) -> Vec<RailEntry> {
-        if self.picker_rail_hidden() {
-            Vec::new()
-        } else {
-            self.picker_rail()
-        }
-    }
-
-    fn rail_page_start(&self, count: usize) -> usize {
-        self.picker
-            .rail_offset
-            .min(count.saturating_sub(1) / RAIL_PAGE * RAIL_PAGE)
+        self.picker_read(|picker| picker.marks())
     }
 
     /// Only these marks enter the panel's element tree and hit targets.
+    #[cfg(test)]
     pub(crate) fn picker_visible_rail(&self) -> Vec<RailEntry> {
-        let rail = self.picker_marks();
-        let start = self.rail_page_start(rail.len());
-        rail.into_iter().skip(start).take(RAIL_PAGE).collect()
+        self.picker_read(|picker| picker.visible_rail())
     }
 
-    pub(crate) fn picker_rail_pages(&self) -> (bool, bool) {
-        let count = self.picker_marks().len();
-        let start = self.rail_page_start(count);
-        (start > 0, start + RAIL_PAGE < count)
-    }
-
-    fn page_rail(&mut self, down: bool) {
-        let count = self.picker_marks().len();
-        let start = self.rail_page_start(count);
-        self.picker.rail_offset = if down {
-            (start + RAIL_PAGE).min(count.saturating_sub(1) / RAIL_PAGE * RAIL_PAGE)
-        } else {
-            start.saturating_sub(RAIL_PAGE)
-        };
-        self.picker.focus = PickerFocus::Rail;
-    }
-
-    /// **The rail's entry on open** (§9.1): *Favorites*, while there are
-    /// favorites and the rail shows (the user: *by default, open
-    /// favorites*); else the chat's own provider; else the default agent
-    /// from settings; else the first agent that is ready; else the first.
-    /// Every open starts here: the entry looked at last is not kept.
+    /// **The rail's entry on open** (§9.1).
+    #[cfg(test)]
     pub(crate) fn picker_initial_entry(&self) -> Option<RailEntry> {
-        let rail = self.picker_rail();
-        if !self.picker_rail_hidden() && rail.contains(&RailEntry::Favorites) {
-            return Some(RailEntry::Favorites);
-        }
-        let current = self
-            .transcript
-            .as_ref()
-            .map(|transcript| transcript.chat.current_model.provider.clone());
-        // The default agent where one is set (D40), else the last chosen.
-        let selected = self.default_agent_provider().or_else(|| {
-            self.settings
-                .as_ref()
-                .and_then(|settings| settings.selected_provider.clone())
-        });
-        let ready = |entry: &&RailEntry| {
-            entry.provider().is_some_and(|provider| {
-                self.agent_status.get(provider).copied() == Some(AgentStatus::Ready)
-            })
-        };
-        // With no favorites — the rail then has no *Favorites* — it opens
-        // on whose models the chat is on.
-        rail.iter()
-            .find(|entry| entry.provider() == current.as_ref())
-            .or_else(|| {
-                rail.iter().find(|entry| {
-                    matches!(entry, RailEntry::Agent(_)) && entry.provider() == selected.as_ref()
-                })
-            })
-            .or_else(|| rail.iter().find(ready))
-            .or_else(|| rail.first())
-            .cloned()
+        self.picker_read(|picker| picker.initial_entry())
     }
 
     /// The entry whose models the list shows.
+    #[cfg(test)]
     pub(crate) fn picker_entry(&self) -> Option<RailEntry> {
-        let rail = self.picker_rail();
-        self.picker
-            .rail
-            .clone()
-            .filter(|entry| rail.contains(entry))
-            .or_else(|| self.picker_initial_entry())
+        self.picker_read(|picker| picker.entry())
     }
 
-    fn picker_query(&self) -> String {
-        self.picker.query.raw_text().trim().to_owned()
+    /// Whether `agent` has a model the query finds.
+    #[cfg(test)]
+    fn agent_matches_query(&self, agent: &AiProviderId, query: &str) -> bool {
+        self.picker_read(|picker| picker.agent_matches_query(agent, query))
     }
 
-    /// Whether a row of `entry` can be chosen now: an agent while the chat
-    /// has no message and the agent is ready — and in a begun chat its own
-    /// agent, where that agent's host takes a model per message
-    /// ([`Self::model_locked`]); the chat's own built-in provider's models
-    /// always, as today. *Favorites* answers row by row, by each favorite's
-    /// agent.
-    fn entry_choosable(&self, entry: &RailEntry) -> bool {
-        match entry {
-            RailEntry::Favorites | RailEntry::Provider(_) => true,
-            RailEntry::Agent(agent) => {
-                self.agent_status.get(agent).copied() == Some(AgentStatus::Ready)
-                    && self.transcript.as_ref().is_none_or(|transcript| {
-                        transcript.messages.is_empty()
-                            || (&transcript.chat.current_model.provider == agent
-                                && !self.model_locked())
-                    })
-            }
-        }
+    /// **The list** (§9.2).
+    #[cfg(test)]
+    pub(crate) fn picker_rows(&self) -> Vec<Row> {
+        self.picker_read(|picker| picker.rows())
+    }
+
+    /// Whether row `row` of `entry` is a model its agent marks as older.
+    #[cfg(test)]
+    fn row_is_legacy(&self, entry: &RailEntry, row: &Row) -> bool {
+        self.picker_read(|picker| picker.row_is_legacy(entry, row))
+    }
+
+    /// Which rows can be chosen now.
+    #[cfg(test)]
+    fn picker_choosable(&self, rows: &[Row]) -> Vec<bool> {
+        self.picker_read(|picker| picker.choosable(rows))
+    }
+
+    /// A row's label.
+    #[cfg(test)]
+    fn picker_row_label(&self, entry: &RailEntry, row: &Row) -> String {
+        self.picker_read(|picker| picker.row_label(entry, row))
+    }
+
+    /// **The open picker's frame, with its list** (M1).
+    #[cfg(test)]
+    fn picker_frame(&self) -> Option<(Geometry, elements::Spec, koru_draw::el::Frame)> {
+        self.picker_read(|picker| picker.frame())
+    }
+
+    /// Row `index` where it is drawn, while it is in view.
+    #[cfg(test)]
+    pub(crate) fn picker_row_rect(&self, _geometry: &Geometry, index: usize) -> Option<Rect> {
+        let (geometry, _, frame) = self.picker_frame()?;
+        let rect = frame.named(elements::MODEL_ROW).nth(index)?.rect;
+        let list = geometry.list;
+        (rect.y >= list.y - 0.01 && rect.y + rect.h <= list.y + list.h + 0.01).then_some(rect)
+    }
+
+    /// The effort strip's segment for `choice`, where it is drawn.
+    #[cfg(test)]
+    pub(crate) fn picker_segment_rect(&self, choice: impl effort::AsEffort) -> Option<Rect> {
+        let (_, _, frame) = self.picker_frame()?;
+        Some(frame.node(elements::segment_key(choice.as_effort()))?.rect)
+    }
+
+    /// Whether a row is the chat's current model.
+    #[cfg(test)]
+    fn picker_row_current(&self, entry: &RailEntry, row: &Row) -> bool {
+        self.picker_read(|picker| picker.row_current(entry, row))
+    }
+
+    /// The picker follows the model chip and flips to the side with room.
+    pub(crate) fn picker_geometry(&self) -> Option<Geometry> {
+        self.picker_read(|picker| picker.geometry())
+    }
+
+    /// The list's scrollbar, as the frame draws it (M1: the shared bar).
+    #[cfg(test)]
+    pub(crate) fn picker_scrollbar(
+        &self,
+        _geometry: &Geometry,
+    ) -> Option<koru_draw::scrollbar::ScrollbarGeom> {
+        self.picker_frame()?.2.scrollbar(elements::LIST_KEY)
+    }
+
+    /// **Open the picker** on the chat's own entry, the query empty, the
+    /// search field focused and the current model in view.
+    pub(crate) fn reset_picker(&mut self) {
+        self.picker_run(|view| view.reset());
+    }
+
+    /// **Show `entry`'s list**: a mark pressed on the rail, or stepped to.
+    #[cfg(test)]
+    fn select_rail_entry(&mut self, entry: RailEntry) {
+        self.picker_run(|view| view.select_rail_entry(entry));
+    }
+
+    /// **Choose row `index`**: the chat takes the model, and the picker
+    /// stays open (D66), its list settled against the new model's footer.
+    #[cfg(test)]
+    pub(crate) fn choose_picker_row(&mut self, index: usize) -> bool {
+        let (chosen, answer) = self.picker_run(|view| view.choose_row(index));
+        answer.unwrap_or(chosen)
+    }
+
+    /// **The picker after a model is chosen** (D66): the list kept in range
+    /// and the chosen row in view — run too when a chat's model lands from
+    /// the service.
+    pub(crate) fn settle_after_choice(&mut self) {
+        self.picker_drive(|view| view.settle_after_choice());
+    }
+
+    /// **↻** (D13): the selected agent's list rebuilt now.
+    #[cfg(test)]
+    pub(crate) fn refresh_picker_agent(&mut self) -> bool {
+        self.picker_run(|view| view.refresh()).0
+    }
+
+    #[cfg(test)]
+    fn refresh_enabled(&self, agent: &AiProviderId) -> bool {
+        self.picker_read(|picker| picker.refresh_enabled(agent))
+    }
+
+    /// An answer about `agent`'s models landed: its ↻ is over.
+    pub(crate) fn agent_models_answered(&mut self, agent: &AiProviderId) {
+        self.picker.refresh_answered(agent);
+    }
+
+    /// A press while the picker is open. `None` when the press is not the
+    /// picker's — on the chip, which toggles it — and `Some` when the picker
+    /// took it, closing it for a press outside.
+    pub(crate) fn picker_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
+        let (handled, answer) = self.picker_run(|view| view.mouse_down(x, y));
+        handled.map(|handled| answer.unwrap_or(handled))
+    }
+
+    /// The pointer moved with the picker open: a scrollbar drag, and the
+    /// tooltip under it. `Some` when the picker claimed the move.
+    pub(crate) fn picker_mouse_move(&mut self, x: f32, y: f32) -> Option<bool> {
+        self.picker_run(|view| view.mouse_move(x, y, std::time::Instant::now()))
+            .0
+    }
+
+    #[cfg(test)]
+    fn picker_tooltip_at(&self, geometry: &Geometry, x: f32, y: f32) -> Option<TooltipContent> {
+        self.picker_read(|picker| picker.tooltip_at(geometry, x, y))
+    }
+
+    /// **The pointer over the open picker** (D44).
+    pub(crate) fn picker_cursor(&self, x: f32, y: f32) -> Option<winit::window::CursorIcon> {
+        self.picker_read(|picker| picker.cursor(x, y))
+    }
+
+    /// The wheel over the open picker scrolls its list, a row a notch.
+    pub(crate) fn picker_scroll(&mut self, dy: f32) -> bool {
+        self.picker_drive(|view| view.scroll(dy))
+    }
+
+    /// **The keyboard inside the picker** (§9.5): `None` when it is closed.
+    pub(crate) fn picker_key(
+        &mut self,
+        key: &WinitKey,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<bool> {
+        let (handled, answer) = self.picker_run(|view| view.key(key, text, mods));
+        handled.map(|handled| answer.unwrap_or(handled))
+    }
+
+    /// What the open picker's tree declares.
+    #[cfg(test)]
+    pub(super) fn picker_spec(&self) -> elements::Spec {
+        self.picker_read(|picker| picker.spec())
+    }
+
+    /// **The footer** (D76), or `None` for a model that offers none of it.
+    #[cfg(test)]
+    pub(crate) fn picker_footer(&self) -> Option<elements::Footer> {
+        self.picker_read(|picker| picker.footer())
+    }
+
+    /// Draw the open picker inside the *Popover surface* record.
+    pub(crate) fn draw_model_picker(&mut self, canvas: &mut Scene, root: Affine) {
+        self.picker_drive(|view| view.draw(canvas, root));
     }
 
     /// An agent's model as its row reads it — its *Default*, its name, or
@@ -479,774 +719,6 @@ impl crate::ChatSurface {
             Some((listed, false)) => model_label(listed),
             None => fallback_label(id, ""),
         }
-    }
-
-    /// Whether `agent` has a model the query finds, for the rail's dimming
-    /// while typing (S3): what its group in the search would hold.
-    fn agent_matches_query(&self, agent: &AiProviderId, query: &str) -> bool {
-        query.is_empty()
-            || self
-                .agent_model_rows(agent, query)
-                .iter()
-                .any(|row| !matches!(row, Row::Note(_)))
-    }
-
-    /// An entry's name, as its heading in a search and its rail mark's
-    /// tooltip read.
-    fn entry_name(&self, entry: &RailEntry) -> String {
-        match entry {
-            RailEntry::Favorites => t(self.lang, Key::AiPickerFavorites).to_owned(),
-            RailEntry::Agent(agent) => {
-                let agents = self
-                    .settings
-                    .as_ref()
-                    .map(|settings| settings.agents.as_slice())
-                    .unwrap_or_default();
-                crate::agents::agent_label(agents, agent)
-            }
-            RailEntry::Provider(provider) => provider_name(provider),
-        }
-    }
-
-    /// **The list** (§9.2): with a query, what it finds across every entry
-    /// ([`Self::search_rows`], D67); without one, the selected entry's. In
-    /// a begun chat, with no rail ([`Self::picker_rail_hidden`]), a query
-    /// narrows the chat's own provider's list and finds nothing elsewhere.
-    pub(crate) fn picker_rows(&self) -> Vec<Row> {
-        let query = self.picker_query();
-        if !query.is_empty() && !self.picker_rail_hidden() {
-            return self.search_rows(&query);
-        }
-        let Some(entry) = self.picker_entry() else {
-            return Vec::new();
-        };
-        self.entry_rows(&entry, &query)
-    }
-
-    /// **A search across every entry** (D67): each agent on the rail — the
-    /// ones turned on, and the chat's own — and a begun chat's built-in
-    /// provider, in the rail's order, with what `query` finds in its list
-    /// under a heading of its own; an entry where it finds nothing is left
-    /// out. *Favorites* is not searched apart: its models are the agents'.
-    /// The rows are the entry's own, so whether one can be chosen is what
-    /// that entry says, as on its own list.
-    fn search_rows(&self, query: &str) -> Vec<Row> {
-        let mut rows = Vec::new();
-        for entry in self.picker_rail() {
-            if entry == RailEntry::Favorites {
-                continue;
-            }
-            // Its words — loading, checking, nothing found — and its own
-            // group headings stay on its own list.
-            let found: Vec<Row> = self
-                .entry_rows(&entry, query)
-                .into_iter()
-                .filter(|row| !matches!(row, Row::Note(_) | Row::Heading(_)))
-                .map(|row| Row::Found(entry.clone(), Box::new(row)))
-                .collect();
-            if found.is_empty() {
-                continue;
-            }
-            rows.push(Row::EntryHeading(entry));
-            rows.extend(found);
-        }
-        if rows.is_empty() {
-            rows.push(Row::Note(t(self.lang, Key::AiModelsNoMatch).to_owned()));
-        }
-        rows
-    }
-
-    /// **The list for `entry`** (§9.2): the agent's *Default*, then its
-    /// models — by group with a heading when it has more than one — the
-    /// query applied; or the one word its state calls for.
-    fn entry_rows(&self, entry: &RailEntry, query: &str) -> Vec<Row> {
-        let note = |key: Key| Row::Note(t(self.lang, key).to_owned());
-        match entry {
-            // Every agent's starred models; a query searches every agent's
-            // list instead (D67).
-            RailEntry::Favorites => {
-                let rows: Vec<Row> = self
-                    .picker_favorites()
-                    .into_iter()
-                    .map(|(agent, id)| Row::Favorite(agent, id))
-                    .collect();
-                if rows.is_empty() {
-                    vec![note(Key::AiModelsNoMatch)]
-                } else {
-                    rows
-                }
-            }
-            RailEntry::Provider(provider) => {
-                let name = provider_name(provider);
-                let models = if provider.as_str() == AiProviderId::KORU {
-                    vec![AiProviderId::KORU_HOSTED_MODEL.to_owned()]
-                } else {
-                    self.chat_model_options()
-                };
-                let rows: Vec<Row> = models
-                    .into_iter()
-                    .filter(|model| {
-                        matches(query, &[model, &self.provider_model_label(model), &name])
-                    })
-                    .map(Row::Model)
-                    .collect();
-                if rows.is_empty() && !query.is_empty() {
-                    vec![note(Key::AiModelsNoMatch)]
-                } else {
-                    rows
-                }
-            }
-            RailEntry::Agent(agent) => {
-                let status = self
-                    .agent_status
-                    .get(agent)
-                    .copied()
-                    .unwrap_or(AgentStatus::Checking);
-                let known = matches!(self.agent_models.get(agent), Some(AgentModels::Listed(_)));
-                match status {
-                    AgentStatus::Ready if self.picker.refreshing.contains(agent) => {
-                        vec![note(Key::TerminalChecking)]
-                    }
-                    AgentStatus::Ready => match self.agent_models.get(agent) {
-                        None | Some(AgentModels::Loading) => vec![note(Key::AiAgentModelsLoading)],
-                        Some(AgentModels::Failed) => {
-                            let mut rows = vec![note(Key::AiAgentModelsFailed)];
-                            if matches(
-                                query,
-                                &[
-                                    &default_model_label(&[], self.lang),
-                                    &self.entry_name(entry),
-                                ],
-                            ) {
-                                rows.push(Row::Default);
-                            }
-                            rows
-                        }
-                        Some(AgentModels::Listed(_)) => self.agent_model_rows(agent, query),
-                    },
-                    // A list kept from the last run, dimmed, under *Checking…*.
-                    AgentStatus::Checking if known => {
-                        let mut rows = vec![note(Key::TerminalChecking)];
-                        rows.extend(
-                            self.agent_model_rows(agent, query)
-                                .into_iter()
-                                .filter(|row| !matches!(row, Row::Note(_))),
-                        );
-                        rows
-                    }
-                    other => {
-                        let mut rows =
-                            vec![Row::Note(other.word(self.lang).unwrap_or_else(|| {
-                                t(self.lang, Key::TerminalChecking).to_owned()
-                            }))];
-                        // Checking will settle on its own; everything else
-                        // here is put right in *Agent providers*.
-                        if other != AgentStatus::Checking && self.agent_settings_offered {
-                            rows.push(Row::ManageAgents);
-                        }
-                        rows
-                    }
-                }
-            }
-        }
-    }
-
-    /// An agent's listed models as rows, the query applied: a model is
-    /// found by its name, id, group and description — the description is
-    /// matched though no row shows it (D43) — and by its agent's name, so
-    /// a search across every agent can be narrowed to one (as *Favorites*
-    /// was searched, D46).
-    fn agent_model_rows(&self, agent: &AiProviderId, query: &str) -> Vec<Row> {
-        let models = self.listed_agent_models(agent);
-        let name = self.entry_name(&RailEntry::Agent(agent.clone()));
-        let mut rows = Vec::new();
-        let default = models.iter().find(|model| model.id == AGENT_DEFAULT_MODEL);
-        if matches(
-            query,
-            &[
-                &default_model_label(models, self.lang),
-                default
-                    .and_then(|model| model.description.as_deref())
-                    .unwrap_or_default(),
-                &name,
-            ],
-        ) {
-            rows.push(Row::Default);
-        }
-        // Headings for the groups the current models fall into; an older
-        // model's group is the flyout's.
-        let groups: Vec<String> = model_groups(models)
-            .into_iter()
-            .filter(|group| listed_models(models).any(|m| &m.group == group && !m.legacy))
-            .collect();
-        for group in &groups {
-            let heading = group_label(models, group);
-            let found: Vec<Row> = listed_models(models)
-                .filter(|model| &model.group == group && !model.legacy)
-                .filter(|model| {
-                    matches(
-                        query,
-                        &[
-                            &model_label(model),
-                            &model.id,
-                            &heading,
-                            model.description.as_deref().unwrap_or_default(),
-                            &name,
-                        ],
-                    )
-                })
-                .map(|model| Row::Model(model.id.clone()))
-                .collect();
-            if found.is_empty() {
-                continue;
-            }
-            if groups.len() > 1 {
-                rows.push(Row::Heading(heading));
-            }
-            rows.extend(found);
-        }
-        // The models the agent marks as older (D11): under one row at the
-        // foot, while it is expanded (M4), or — while searching — inline
-        // after the others, tagged.
-        let legacy: Vec<_> = listed_models(models).filter(|m| m.legacy).collect();
-        if query.is_empty() {
-            if !legacy.is_empty() {
-                rows.push(Row::LegacyToggle);
-                if self.picker.legacy_open {
-                    rows.extend(legacy.iter().map(|model| Row::Model(model.id.clone())));
-                }
-            }
-        } else {
-            rows.extend(
-                legacy
-                    .into_iter()
-                    .filter(|model| {
-                        let heading = group_label(models, &model.group);
-                        matches(
-                            query,
-                            &[
-                                &model_label(model),
-                                &model.id,
-                                &heading,
-                                model.description.as_deref().unwrap_or_default(),
-                                &name,
-                            ],
-                        )
-                    })
-                    .map(|model| Row::Model(model.id.clone())),
-            );
-        }
-        if rows.is_empty() {
-            rows.push(Row::Note(t(self.lang, Key::AiModelsNoMatch).to_owned()));
-        }
-        rows
-    }
-
-    /// Whether row `row` of `entry` is a model its agent marks as older.
-    fn row_is_legacy(&self, entry: &RailEntry, row: &Row) -> bool {
-        match (entry, row) {
-            (_, Row::Found(entry, row)) => self.row_is_legacy(entry, row),
-            (RailEntry::Agent(agent), Row::Model(id)) => self
-                .listed_agent_models(agent)
-                .iter()
-                .any(|model| &model.id == id && model.legacy),
-            _ => false,
-        }
-    }
-
-    /// **Expand or collapse *Legacy models (N)*** (M4, the user's design):
-    /// the agent's older models follow the row in the same list, or go.
-    /// The keyboard stays on the row; the list keeps in range.
-    fn toggle_legacy(&mut self, index: usize, open: bool) -> bool {
-        if self.picker.legacy_open == open {
-            return true;
-        }
-        self.picker.legacy_open = open;
-        self.picker.highlight = Some(index);
-        self.settle_after_choice();
-        true
-    }
-
-    /// Whether the chat's own model is one `entry` lists as older: then its
-    /// *Legacy models* row opens expanded, so the ✓ is in the list.
-    fn current_is_legacy(&self, entry: &RailEntry) -> bool {
-        let (Some(transcript), RailEntry::Agent(agent)) = (&self.transcript, entry) else {
-            return false;
-        };
-        let model = &transcript.chat.current_model;
-        &model.provider == agent
-            && find_listed(self.listed_agent_models(agent), &model.requested_model)
-                .is_some_and(|(listed, _)| listed.legacy)
-    }
-
-    /// How many older models `entry` lists: *Legacy models (N)*.
-    fn legacy_count(&self, entry: &RailEntry) -> usize {
-        match entry {
-            RailEntry::Agent(agent) => listed_models(self.listed_agent_models(agent))
-                .filter(|model| model.legacy)
-                .count(),
-            RailEntry::Favorites | RailEntry::Provider(_) => 0,
-        }
-    }
-
-    /// A built-in provider's model as its row reads.
-    fn provider_model_label(&self, model: &str) -> String {
-        if model == AiProviderId::KORU_HOSTED_MODEL {
-            AiProviderId::KORU_HOSTED_MODEL_LABEL.to_owned()
-        } else {
-            model.to_owned()
-        }
-    }
-
-    /// Which rows can be chosen now. A favorite can be when its own agent's
-    /// rows could be, and a search's row when its entry's could (D67).
-    fn picker_choosable(&self, rows: &[Row]) -> Vec<bool> {
-        let entry_choosable = self
-            .picker_entry()
-            .is_some_and(|entry| self.entry_choosable(&entry));
-        rows.iter()
-            .map(|row| match row {
-                // Showing the older models chooses nothing: it works in a
-                // begun chat too, even where its models are only shown.
-                Row::LegacyToggle => true,
-                // Opening Settings chooses nothing either.
-                Row::ManageAgents => true,
-                Row::Favorite(agent, _) => self.entry_choosable(&RailEntry::Agent(agent.clone())),
-                // A search's row can be chosen as on its own entry's list.
-                Row::Found(entry, found) => self.entry_choosable(entry) && found.choosable(),
-                // A begun agent chat moves only to a model its agent names:
-                // *Default* is the agent's own choice when a session starts.
-                Row::Default if self.agent_chat_begun() => false,
-                _ => entry_choosable && row.choosable(),
-            })
-            .collect()
-    }
-
-    /// A row's label. A row raises no tooltip (D25, the user: *don't show
-    /// tooltips*): the row already reads the model's name, and the tooltip
-    /// that repeated it — with the description and id beside it — covered
-    /// the next rows while choosing.
-    fn picker_row_label(&self, entry: &RailEntry, row: &Row) -> String {
-        match (entry, row) {
-            (_, Row::Found(entry, row)) => self.picker_row_label(entry, row),
-            (_, Row::EntryHeading(entry)) => self.entry_name(entry),
-            (_, Row::Heading(text) | Row::Note(text)) => text.clone(),
-            (RailEntry::Provider(_), Row::Model(id)) => self.provider_model_label(id),
-            (RailEntry::Provider(_) | RailEntry::Favorites, Row::Default | Row::Model(_)) => {
-                String::new()
-            }
-            (_, Row::ManageAgents) => t(self.lang, Key::AiPickerManageAgents).to_owned(),
-            (_, Row::LegacyToggle) => koru_i18n::fill(
-                t(self.lang, Key::AiModelsLegacy),
-                &[&koru_i18n::number::decimal(
-                    self.lang,
-                    self.legacy_count(entry) as u64,
-                )],
-            ),
-            (RailEntry::Agent(agent), Row::Default) => {
-                default_model_label(self.listed_agent_models(agent), self.lang)
-            }
-            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
-                let models = self.listed_agent_models(agent);
-                match models.iter().find(|model| &model.id == id) {
-                    Some(model) => model_label(model),
-                    None => fallback_label(id, ""),
-                }
-            }
-        }
-    }
-
-    /// **The open picker's frame, with its list** (M1): where a press
-    /// lands, which row it is, the list's scrollbar — what is drawn, laid
-    /// out without the pointer.
-    fn picker_frame(&self) -> Option<(Geometry, elements::Spec, koru_draw::el::Frame)> {
-        let geometry = self.picker_geometry()?;
-        let spec = self.picker_spec();
-        let frame = elements::layout(
-            &elements::tree(&spec, elements::Painted::default()),
-            geometry.panel,
-            FrameCx::root(),
-        );
-        Some((geometry, spec, frame))
-    }
-
-    /// Row `index` where it is drawn, while it is in view.
-    #[cfg(test)]
-    pub(crate) fn picker_row_rect(&self, _geometry: &Geometry, index: usize) -> Option<Rect> {
-        let (geometry, _, frame) = self.picker_frame()?;
-        let rect = frame.named(elements::MODEL_ROW).nth(index)?.rect;
-        let list = geometry.list;
-        (rect.y >= list.y - 0.01 && rect.y + rect.h <= list.y + list.h + 0.01).then_some(rect)
-    }
-
-    /// The effort strip's segment for `choice`, where it is drawn.
-    #[cfg(test)]
-    pub(crate) fn picker_segment_rect(&self, choice: impl effort::AsEffort) -> Option<Rect> {
-        let (_, _, frame) = self.picker_frame()?;
-        Some(frame.node(elements::segment_key(choice.as_effort()))?.rect)
-    }
-
-    /// How many rows the open list shows.
-    fn picker_visible_rows(&self) -> usize {
-        self.picker_geometry()
-            .map_or(LIST_ROWS, |geometry| geometry.visible_rows())
-    }
-
-    /// The furthest the list scrolls: its last row at the list's foot.
-    fn picker_max_offset(&self) -> usize {
-        self.picker_rows()
-            .len()
-            .saturating_sub(self.picker_visible_rows())
-    }
-
-    /// Whether a row is the chat's current model.
-    fn picker_row_current(&self, entry: &RailEntry, row: &Row) -> bool {
-        let Some(model) = self
-            .transcript
-            .as_ref()
-            .map(|transcript| &transcript.chat.current_model)
-        else {
-            return false;
-        };
-        if let Row::Found(entry, row) = row {
-            return self.picker_row_current(entry, row);
-        }
-        // Whose row it is: the entry's, or a favorite's own agent.
-        let (provider, id) = match (row, entry.provider()) {
-            (Row::Favorite(agent, id), _) => (agent, Some(id)),
-            (Row::Default, Some(provider)) => (provider, None),
-            (Row::Model(id), Some(provider)) => (provider, Some(id)),
-            _ => return false,
-        };
-        if &model.provider != provider {
-            return false;
-        }
-        match id {
-            None => model.requested_model == AGENT_DEFAULT_MODEL,
-            // A chat on a model's longer context is on that model.
-            Some(id) => {
-                &model.requested_model == id
-                    || find_listed(self.listed_agent_models(provider), &model.requested_model)
-                        .is_some_and(|(listed, _)| &listed.id == id)
-            }
-        }
-    }
-
-    /// The picker follows the model chip and flips to the side with room.
-    pub(crate) fn picker_geometry(&self) -> Option<Geometry> {
-        if !self.chat_model_open {
-            return None;
-        }
-        let hide_rail = self.picker_rail_hidden();
-        let rail = self.picker_visible_rail();
-        let (previous, next) = self.picker_rail_pages();
-        let marks = rail.len()
-            + usize::from(previous)
-            + usize::from(next)
-            + usize::from(self.agent_settings_offered && !hide_rail && !next);
-        let rail_h = rail_height(marks, rail_dividers(&rail).len());
-        let (w, h) = size(self.composer_hit_rect.w, rail_h);
-        let chip = self.chat_model_button();
-        let panel = self.toolbar_popover(chip, w, h, PopoverAlign::End);
-        // The footer as it is drawn: its pills are as wide as their words.
-        Some(geometry_with(panel, self.picker_footer(), hide_rail))
-    }
-
-    /// The list's scrollbar, as the frame draws it (M1: the shared bar).
-    #[cfg(test)]
-    pub(crate) fn picker_scrollbar(
-        &self,
-        _geometry: &Geometry,
-    ) -> Option<koru_draw::scrollbar::ScrollbarGeom> {
-        self.picker_frame()?.2.scrollbar(elements::LIST_KEY)
-    }
-
-    /// The first row a drag of the list's thumb to `y` shows, the thumb
-    /// held `grab` below its top: the frame's whole rows.
-    fn picker_drag_to(&self, frame: &koru_draw::el::Frame, y: f32, grab: f32) -> Option<usize> {
-        let scroll = frame.drag_offset(elements::LIST_KEY, y, grab)?;
-        Some(((scroll / ROW_H).round().max(0.0) as usize).min(self.picker_max_offset()))
-    }
-
-    /// **Open the picker** on the chat's own entry, the query empty, the
-    /// search field focused and the current model in view.
-    pub(crate) fn reset_picker(&mut self) {
-        self.picker.rail = self.picker_initial_entry();
-        self.picker.rail_offset = self
-            .picker
-            .rail
-            .as_ref()
-            .and_then(|selected| {
-                self.picker_marks()
-                    .iter()
-                    .position(|entry| entry == selected)
-            })
-            .map_or(0, |index| index / RAIL_PAGE * RAIL_PAGE);
-        self.picker.legacy_open = self
-            .picker
-            .rail
-            .as_ref()
-            .is_some_and(|entry| self.current_is_legacy(entry));
-        self.picker.query.set_text(&mut self.engine, "");
-        self.picker.focus = PickerFocus::Search;
-        self.picker.scroll_drag = None;
-        self.picker.offset = 0;
-        self.highlight_current_row();
-    }
-
-    /// Put the keyboard on the current model's row, or the first choosable
-    /// one, and scroll it into view.
-    fn highlight_current_row(&mut self) {
-        let rows = self.picker_rows();
-        let choosable = self.picker_choosable(&rows);
-        let entry = self.picker_entry();
-        let current = entry.as_ref().and_then(|entry| {
-            rows.iter()
-                .position(|row| self.picker_row_current(entry, row))
-        });
-        self.picker.highlight = current.or_else(|| step_highlight(&choosable, None, 1));
-        self.scroll_highlight_into_view();
-    }
-
-    fn scroll_highlight_into_view(&mut self) {
-        let Some(index) = self.picker.highlight else {
-            self.picker.offset = 0;
-            return;
-        };
-        let visible = self.picker_visible_rows();
-        self.picker.offset = scroll_into_view(index, self.picker.offset, visible);
-    }
-
-    /// **Show `entry`'s list**: a mark pressed on the rail, or stepped to
-    /// from it. A query is cleared, as its results span every entry (D67)
-    /// and would hide the list asked for.
-    fn select_rail_entry(&mut self, entry: RailEntry) {
-        if let Some(index) = self.picker_marks().iter().position(|mark| mark == &entry) {
-            self.picker.rail_offset = index / RAIL_PAGE * RAIL_PAGE;
-        }
-        self.picker.legacy_open = self.current_is_legacy(&entry);
-        if !self.picker.query.raw_text().is_empty() {
-            self.picker.query.set_text(&mut self.engine, "");
-        }
-        // The lists the entry's rows are named from: the agent's, or under
-        // *Favorites* every favorite's agent's.
-        let agents: Vec<AiProviderId> = match &entry {
-            RailEntry::Agent(agent) => vec![agent.clone()],
-            RailEntry::Favorites => self
-                .picker_favorites()
-                .into_iter()
-                .map(|(agent, _)| agent)
-                .collect(),
-            RailEntry::Provider(_) => Vec::new(),
-        };
-        for agent in agents {
-            if !matches!(self.agent_models.get(&agent), Some(AgentModels::Listed(_))) {
-                self.ask_agent_models(agent);
-            }
-        }
-        self.picker.rail = Some(entry);
-        self.picker.offset = 0;
-        self.highlight_current_row();
-    }
-
-    /// **Choose row `index`**: an agent's model makes the agent and model
-    /// the chat's (the level kept when it is offered, D18) — a favorite
-    /// too, with its own agent (D46); a built-in provider's model is the
-    /// chat's next model. **The picker stays open** (D66): the ✓ moves to
-    /// the row and the footer becomes the new model's, to be set next. A
-    /// press outside, or Esc, closes it.
-    pub(crate) fn choose_picker_row(&mut self, index: usize) -> bool {
-        let rows = self.picker_rows();
-        let choosable = self.picker_choosable(&rows);
-        let (Some(entry), Some(row)) = (self.picker_entry(), rows.get(index)) else {
-            return true;
-        };
-        if !choosable.get(index).copied().unwrap_or(false) {
-            return true;
-        }
-        if *row == Row::LegacyToggle {
-            return self.toggle_legacy(index, !self.picker.legacy_open);
-        }
-        if *row == Row::ManageAgents {
-            self.ask_for_agent_settings();
-            return true;
-        }
-        // A search's row is its own entry's (D67).
-        let (entry, row) = match row.clone() {
-            Row::Found(entry, row) => (entry, *row),
-            row => (entry, row),
-        };
-        self.picker.highlight = Some(index);
-        let chosen = match (entry, row) {
-            (RailEntry::Agent(agent), Row::Default) => {
-                self.choose_agent_model(agent, AGENT_DEFAULT_MODEL.to_owned())
-            }
-            (RailEntry::Agent(agent), Row::Model(id)) | (_, Row::Favorite(agent, id)) => {
-                self.choose_agent_model(agent, id)
-            }
-            (RailEntry::Provider(_), Row::Model(id)) => self.change_chat_model(id),
-            _ => true,
-        };
-        self.settle_after_choice();
-        chosen
-    }
-
-    /// **The picker after a model is chosen** (D66): still open, its
-    /// footer now the new model's — Fast, Context and the level come and go
-    /// with it, and the list gets or gives up their room — so the list is
-    /// kept in range and the chosen row in view. Also run when a chat's
-    /// model lands from the service, which a chat already made answers.
-    pub(crate) fn settle_after_choice(&mut self) {
-        if !self.chat_model_open {
-            return;
-        }
-        self.picker.offset = self.picker.offset.min(self.picker_max_offset());
-        self.scroll_highlight_into_view();
-    }
-
-    /// **↻** (D13): the selected agent's list rebuilt now. *Checking…*
-    /// stands in the list until it lands; a second press waits for the
-    /// first. Not for an agent that is not installed.
-    pub(crate) fn refresh_picker_agent(&mut self) -> bool {
-        let Some(RailEntry::Agent(agent)) = self.picker_entry() else {
-            return false;
-        };
-        if !self.refresh_enabled(&agent) {
-            return true;
-        }
-        let sent = self.reader.as_ref().is_some_and(|reader| {
-            reader
-                .send(crate::reader::Command::RefreshModels(agent.clone()))
-                .is_ok()
-        });
-        if sent {
-            self.picker.refreshing.insert(agent.clone());
-            self.agent_models_asked.insert(agent);
-        }
-        true
-    }
-
-    fn refresh_enabled(&self, agent: &AiProviderId) -> bool {
-        !self.picker.refreshing.contains(agent)
-            && self.agent_status.get(agent).copied() != Some(AgentStatus::NotInstalled)
-    }
-
-    /// An answer about `agent`'s models landed: its ↻ is over.
-    pub(crate) fn agent_models_answered(&mut self, agent: &AiProviderId) {
-        self.picker.refreshing.remove(agent);
-    }
-
-    /// A press while the picker is open. `None` when the press is not the
-    /// picker's — on the chip, which toggles it — and `Some` when the picker
-    /// took it, closing it for a press outside.
-    pub(crate) fn picker_mouse_down(&mut self, x: f32, y: f32) -> Option<bool> {
-        let (geometry, spec, frame) = self.picker_frame()?;
-        if !geometry.panel.contains(x, y) {
-            if self.chat_model_button().contains(x, y) {
-                return None;
-            }
-            self.close_picker();
-            return Some(true);
-        }
-        if let Some(scrollbar) = frame.scrollbar(elements::LIST_KEY)
-            && scrollbar.in_gutter(x, y)
-        {
-            let grab = scrollbar.grab_at(x, y);
-            self.picker.scroll_drag = Some(grab);
-            if let Some(offset) = self.picker_drag_to(&frame, y, grab) {
-                self.picker.offset = offset;
-            }
-            return Some(true);
-        }
-        let hit = frame.hit_at(x, y);
-        if hit == Some(elements::RAIL_PREVIOUS_KEY) {
-            self.page_rail(false);
-            return Some(true);
-        }
-        if hit == Some(elements::RAIL_NEXT_KEY) {
-            self.page_rail(true);
-            return Some(true);
-        }
-        let rail = self.picker_visible_rail();
-        if let Some(index) = rail
-            .iter()
-            .position(|entry| hit == Some(elements::mark_key(entry)))
-        {
-            self.picker.focus = PickerFocus::Rail;
-            self.select_rail_entry(rail[index].clone());
-            return Some(true);
-        }
-        if hit == Some(elements::MANAGE_KEY) {
-            self.ask_for_agent_settings();
-            return Some(true);
-        }
-        if geometry.refresh.contains(x, y) {
-            return Some(self.refresh_picker_agent());
-        }
-        if geometry.search.contains(x, y) {
-            self.picker.focus = PickerFocus::Search;
-            self.picker
-                .query
-                .click(&mut self.engine, geometry.search, x, y);
-            return Some(true);
-        }
-        // The footer (D76): a level's segment — read only once an agent
-        // chat has begun on an older session host, the press saying why
-        // (D70) — and the pills.
-        if geometry.strip.is_some_and(|strip| strip.contains(x, y)) {
-            self.picker.focus = PickerFocus::Effort;
-            if self.effort_locked() {
-                self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
-                return Some(true);
-            }
-            let pressed = spec.footer.as_ref().and_then(|footer| {
-                footer.segments.iter().find(|segment| {
-                    frame
-                        .node(segment.key)
-                        .is_some_and(|node| node.rect.contains(x, y))
-                })
-            });
-            return Some(match pressed {
-                Some(segment) => self.choose_level(effort::reasoning(segment.choice)),
-                None => true,
-            });
-        }
-        if geometry.fast.is_some_and(|pill| pill.contains(x, y)) {
-            self.picker.focus = PickerFocus::Fast;
-            return Some(self.toggle_fast());
-        }
-        if geometry.context.is_some_and(|pill| pill.contains(x, y)) {
-            self.picker.focus = PickerFocus::Context;
-            return Some(self.toggle_context());
-        }
-        if geometry.list.contains(x, y) {
-            self.picker.focus = PickerFocus::List;
-            let hit = frame.hit_at(x, y);
-            // The ☆ stars the row rather than choosing it (D46), and
-            // whether or not the row can be chosen now: it is a target of
-            // its own, over its row.
-            if let Some(index) = spec
-                .list
-                .iter()
-                .position(|row| row.star.as_ref().is_some_and(|star| Some(star.key) == hit))
-                && let Some(entry) = self.picker_entry()
-                && let Some((agent, model)) = self
-                    .picker_rows()
-                    .get(index)
-                    .and_then(|row| self.row_favorite(&entry, row))
-            {
-                self.picker.highlight = Some(index);
-                return Some(self.toggle_favorite(&agent, &model));
-            }
-            if let Some(index) = spec
-                .list
-                .iter()
-                .position(|row| row.key.is_some() && row.key == hit)
-            {
-                return Some(self.choose_picker_row(index));
-            }
-        }
-        Some(true)
     }
 
     /// **Choose a level on the strip** (D76): the model's own default level
@@ -1320,322 +792,19 @@ impl crate::ChatSurface {
             LEVEL_NOTE_HOLD,
         );
     }
+}
 
-    /// The pointer moved with the picker open: a scrollbar drag, and the
-    /// tooltip under it. `Some` when the picker claimed the move.
-    pub(crate) fn picker_mouse_move(&mut self, x: f32, y: f32) -> Option<bool> {
-        let geometry = self.picker_geometry()?;
-        if let Some(grab) = self.picker.scroll_drag {
-            if let Some((_, _, frame)) = self.picker_frame()
-                && let Some(next) = self.picker_drag_to(&frame, y, grab)
-            {
-                let changed = next != self.picker.offset;
-                self.picker.offset = next;
-                return Some(changed);
-            }
-            return Some(true);
-        }
-        let tip = self.picker_tooltip_at(&geometry, x, y);
-        let changed = self
-            .picker_tooltip
-            .set_hover(tip, std::time::Instant::now());
-        // Over the panel the picker is all there is; outside it, only a
-        // tooltip that went away is news.
-        (geometry.panel.contains(x, y) || changed).then_some(true)
-    }
-
-    fn picker_tooltip_at(&self, geometry: &Geometry, x: f32, y: f32) -> Option<TooltipContent> {
-        if !geometry.panel.contains(x, y) {
-            return None;
-        }
-        let rail = self.picker_marks();
-        for (index, rect) in rail_rects(geometry.rail, rail.len(), &rail_dividers(&rail))
-            .into_iter()
-            .enumerate()
-        {
-            if rect.contains(x, y) {
-                let entry = &rail[index];
-                let name = self.entry_name(entry);
-                let word = entry
-                    .provider()
-                    .and_then(|provider| self.agent_status.get(provider))
-                    .and_then(|status| status.word(self.lang))
-                    .filter(|_| matches!(entry, RailEntry::Agent(_)));
-                let label = match word {
-                    Some(word) => format!("{name} — {word}"),
-                    None => name,
-                };
-                return Some(TooltipContent::new(
-                    TOOLTIP_RAIL + index as u64,
-                    rect,
-                    label,
-                ));
-            }
-        }
-        if geometry.refresh.contains(x, y)
-            && matches!(self.picker_entry(), Some(RailEntry::Agent(_)))
-        {
-            return Some(TooltipContent::new(
-                TOOLTIP_REFRESH,
-                geometry.refresh,
-                t(self.lang, Key::AiModelsRefresh),
-            ));
-        }
-        if let Some(context) = geometry.context
-            && context.contains(x, y)
-            && self.model_locked()
-        {
-            return Some(TooltipContent::new(
-                TOOLTIP_CONTEXT_LOCKED,
-                context,
-                t(self.lang, Key::AiModelContextLockedAfterStart),
-            ));
-        }
-        if let Some(strip) = geometry.strip
-            && strip.contains(x, y)
-            && self.effort_locked()
-        {
-            return Some(TooltipContent::new(
-                TOOLTIP_LOCKED,
-                strip,
-                t(self.lang, Key::AiEffortLockedAfterStart),
-            ));
-        }
-        // **A model row raises none** (D25): the row already reads its name,
-        // and a tooltip over the list hid the rows below it while choosing.
-        // A rail mark keeps its tooltip above: an icon with no name on
-        // screen, its tooltip is the only place its agent is named.
-        None
-    }
-
-    /// **The pointer over the open picker** (D44): the I-beam over its
-    /// search field, the one place in it that takes typing, and the arrow
-    /// everywhere else — the rows, *Legacy models*, the rail, ↻ and the
-    /// footer. A scrollbar drag keeps its resize arrows. `None` when the
-    /// picker is closed or the pointer is outside it.
-    pub(crate) fn picker_cursor(&self, x: f32, y: f32) -> Option<winit::window::CursorIcon> {
-        use winit::window::CursorIcon;
-        let geometry = self.picker_geometry()?;
-        if self.picker.scroll_drag.is_some() {
-            return Some(CursorIcon::NsResize);
-        }
-        if !geometry.panel.contains(x, y) {
-            return None;
-        }
-        Some(if search_field(&geometry).contains(x, y) {
-            CursorIcon::Text
-        } else {
-            CursorIcon::Default
-        })
-    }
-
-    /// The wheel over the open picker scrolls its list, a row a notch.
-    pub(crate) fn picker_scroll(&mut self, dy: f32) -> bool {
-        let previous = self.picker.offset;
-        let max = self.picker_max_offset();
-        if dy > 0.0 {
-            self.picker.offset = self.picker.offset.saturating_sub(dy.ceil() as usize);
-        } else if dy < 0.0 {
-            self.picker.offset = (self.picker.offset + (-dy).ceil() as usize).min(max);
-        }
-        previous != self.picker.offset
-    }
-
-    /// **The keyboard inside the picker** (§9.5; widget navigation, D12):
-    /// typing edits the query wherever the focus is; Up and Down move the
-    /// highlighted row, or the rail's entry from the rail; Enter chooses,
-    /// and the picker stays open (D66);
-    /// Left and Right move the effort strip's level a segment, and Space or
-    /// Enter toggles a pill (D76); Tab and Shift+Tab move between search,
-    /// rail, list, the strip and the pills; Esc clears the query, else
-    /// closes. Starring a model is a click on its ☆ only (D47 taken back). `None` when the picker is closed.
-    /// With the rail hidden in a begun chat, neither Tab nor an arrow lands
-    /// on it: the keyboard goes from the search to the list.
-    pub(crate) fn picker_key(
-        &mut self,
-        key: &WinitKey,
-        text: Option<&str>,
-        mods: ModifiersState,
-    ) -> Option<bool> {
-        if !self.chat_model_open {
-            return None;
-        }
-        let hide_rail = self.picker_rail_hidden();
-        // The chat began with the keyboard on the rail: it is on the list.
-        if hide_rail && self.picker.focus == PickerFocus::Rail {
-            self.picker.focus = PickerFocus::List;
-        }
-        let levels = self.effort_control().is_some();
-        let context = self.picker_context().is_some();
-        let fast = self.picker_fast().is_some();
-        match key {
-            WinitKey::Named(NamedKey::Escape) => {
-                if !self.picker.query.raw_text().is_empty() {
-                    self.picker.query.set_text(&mut self.engine, "");
-                    self.highlight_current_row();
-                } else {
-                    self.close_picker();
-                }
-                return Some(true);
-            }
-            WinitKey::Named(NamedKey::Tab) => {
-                let mut order = vec![PickerFocus::Search];
-                if !hide_rail {
-                    order.push(PickerFocus::Rail);
-                }
-                order.push(PickerFocus::List);
-                if levels {
-                    order.push(PickerFocus::Effort);
-                }
-                if fast {
-                    order.push(PickerFocus::Fast);
-                }
-                if context {
-                    order.push(PickerFocus::Context);
-                }
-                let at = order
-                    .iter()
-                    .position(|focus| *focus == self.picker.focus)
-                    .unwrap_or(0);
-                let next = if mods.shift_key() {
-                    (at + order.len() - 1) % order.len()
-                } else {
-                    (at + 1) % order.len()
-                };
-                self.picker.focus = order[next];
-                return Some(true);
-            }
-            _ => {}
-        }
-        match self.picker.focus {
-            PickerFocus::Rail => match key {
-                WinitKey::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => {
-                    let rail = self.picker_marks();
-                    let at = self
-                        .picker_entry()
-                        .and_then(|entry| rail.iter().position(|candidate| *candidate == entry));
-                    let next = match (at, key) {
-                        (Some(at), WinitKey::Named(NamedKey::ArrowUp)) => at.saturating_sub(1),
-                        (Some(at), _) => (at + 1).min(rail.len().saturating_sub(1)),
-                        (None, _) => 0,
-                    };
-                    if let Some(entry) = rail.get(next).cloned() {
-                        self.select_rail_entry(entry);
-                    }
-                    return Some(true);
-                }
-                WinitKey::Named(NamedKey::Enter | NamedKey::ArrowRight) => {
-                    self.picker.focus = PickerFocus::List;
-                    return Some(true);
-                }
-                _ => {}
-            },
-            // Left and Right move the level a segment.
-            PickerFocus::Effort => {
-                if let WinitKey::Named(direction @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) =
-                    key
-                {
-                    return Some(self.step_level(*direction == NamedKey::ArrowRight));
-                }
-            }
-            // Space or Enter toggles the pill the keyboard is on.
-            PickerFocus::Fast => {
-                if matches!(key, WinitKey::Named(NamedKey::Enter | NamedKey::Space)) {
-                    return Some(self.toggle_fast());
-                }
-            }
-            PickerFocus::Context => {
-                if matches!(key, WinitKey::Named(NamedKey::Enter | NamedKey::Space)) {
-                    return Some(self.toggle_context());
-                }
-            }
-            PickerFocus::Search | PickerFocus::List => {}
-        }
-        match key {
-            WinitKey::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => {
-                let rows = self.picker_rows();
-                let choosable = self.picker_choosable(&rows);
-                let step = if matches!(key, WinitKey::Named(NamedKey::ArrowUp)) {
-                    -1
-                } else {
-                    1
-                };
-                if let Some(next) = step_highlight(&choosable, self.picker.highlight, step) {
-                    self.picker.highlight = Some(next);
-                    self.scroll_highlight_into_view();
-                }
-                Some(true)
-            }
-            WinitKey::Named(NamedKey::Enter) => {
-                let index = self.picker.highlight?;
-                Some(self.choose_picker_row(index))
-            }
-            // On *Legacy models*, Right expands it and Left collapses it;
-            // in the search, either moves the caret as ever.
-            WinitKey::Named(direction @ (NamedKey::ArrowRight | NamedKey::ArrowLeft))
-                if (self.picker.focus != PickerFocus::Search
-                    || self.picker.query.raw_text().is_empty())
-                    && self.picker.highlight.is_some_and(|index| {
-                        self.picker_rows().get(index) == Some(&Row::LegacyToggle)
-                    }) =>
-            {
-                let index = self.picker.highlight?;
-                Some(self.toggle_legacy(index, *direction == NamedKey::ArrowRight))
-            }
-            WinitKey::Named(NamedKey::ArrowRight)
-                if self.picker.focus != PickerFocus::Search
-                    || self.picker.query.raw_text().is_empty() =>
-            {
-                let before = self.picker.query.raw_text().to_owned();
-                let typed =
-                    self.picker.query.key(&mut self.engine, key, text, mods) == Typed::Handled;
-                Some(typed || before != self.picker.query.raw_text())
-            }
-            _ => {
-                // Typing is the query's, wherever the focus was.
-                let before = self.picker.query.raw_text().to_owned();
-                let typed =
-                    self.picker.query.key(&mut self.engine, key, text, mods) == Typed::Handled;
-                if self.picker.query.raw_text() != before {
-                    self.picker.focus = PickerFocus::Search;
-                    self.picker.offset = 0;
-                    let rows = self.picker_rows();
-                    let choosable = self.picker_choosable(&rows);
-                    self.picker.highlight = step_highlight(&choosable, None, 1);
-                }
-                Some(typed || self.picker.focus == PickerFocus::Search)
-            }
-        }
-    }
-
-    /// Left or Right on the strip: the chat's level one segment over — the
-    /// model's default level is its *Default*, as a press makes it.
-    fn step_level(&mut self, up: bool) -> bool {
-        if self.effort_locked() {
-            self.status = Some(t(self.lang, Key::AiEffortLockedAfterStart).to_owned());
-            return true;
-        }
-        let Some(control) = self.effort_control().cloned() else {
-            return false;
-        };
-        let stops = effort::stops(&control);
-        let at = self
-            .effective_reasoning()
-            .and_then(|choice| stops.iter().position(|stop| *stop == choice));
-        let next = match (at, up) {
-            (Some(at), true) => (at + 1).min(stops.len().saturating_sub(1)),
-            (Some(at), false) => at.saturating_sub(1),
-            (None, true) => 0,
-            (None, false) => stops.len().saturating_sub(1),
-        };
-        match stops.get(next) {
-            Some(choice) => self.choose_level(*choice),
-            None => false,
-        }
+/// A built-in provider's model as its row reads.
+fn builtin_model_label(model: &str) -> String {
+    if model == AiProviderId::KORU_HOSTED_MODEL {
+        AiProviderId::KORU_HOSTED_MODEL_LABEL.to_owned()
+    } else {
+        model.to_owned()
     }
 }
 
 /// The search field itself: the search row short of ↻ at its end.
+#[cfg(test)]
 fn search_field(geometry: &Geometry) -> Rect {
     geometry.field
 }

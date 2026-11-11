@@ -1682,7 +1682,7 @@ impl ChatSurface {
         {
             return CursorIcon::NsResize;
         }
-        if self.picker.scroll_drag.is_some() || self.tool_workspace_drag.is_some() {
+        if self.picker.dragging() || self.tool_workspace_drag.is_some() {
             return CursorIcon::NsResize;
         }
         if self.retry_link.is_some_and(|rect| rect.contains(p.0, p.1))
@@ -2943,7 +2943,7 @@ impl ChatSurface {
             return handled;
         }
         self.conversation_scroll_drag = None;
-        self.picker.scroll_drag = None;
+        self.picker.release_drag();
         self.tool_workspace_drag = None;
         self.composer.mouse_up();
         self.workspace_search.release();
