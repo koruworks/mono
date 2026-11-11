@@ -372,6 +372,10 @@ impl WorkerState {
                 (Phase::Stop | Phase::Interrupt | Phase::Delivery, Ok(reply)) => {
                     !matches!(reply, BotReply::Applied)
                 }
+                // A finishing task its owner never admitted: Missing until
+                // its receipt is refused, which can take as long as its
+                // refusal fence cannot land. It waits like any stall.
+                (Phase::Admission, Ok(BotReply::Missing)) => true,
                 _ => false,
             };
         // The identical recovery scope was already retained by the first
