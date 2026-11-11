@@ -11,6 +11,7 @@ pub use branch::HistoricalBotRun;
 pub use lifecycle::{
     BotHold, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
 };
+mod reads;
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage

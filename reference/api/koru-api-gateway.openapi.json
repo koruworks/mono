@@ -2703,6 +2703,85 @@
         ],
         "type": "string"
       },
+      "BotChatCursor": {
+        "additionalProperties": false,
+        "description": "The position after the last conversation of a page, in the page's own\norder (main first, then newest first, then by ID). It names only what\nthat page already returned and grants nothing.",
+        "properties": {
+          "chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "main": {
+            "type": "boolean"
+          },
+          "updated_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "main",
+          "updated_at_ms",
+          "chat_id"
+        ],
+        "type": "object"
+      },
+      "BotChatLabel": {
+        "description": "Which Bot a conversation belongs to, as its authorized owner reads it.\nDisplay data, never authority: commands still name the Bot and Chat and\nare checked against the owner's current proof.",
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "bot_name": {
+            "description": "The Bot's current name.",
+            "type": "string"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/BotChatPurpose"
+          }
+        },
+        "required": [
+          "bot_id",
+          "bot_name",
+          "purpose"
+        ],
+        "type": "object"
+      },
+      "BotChatPage": {
+        "description": "One page of a Bot's conversations; `next_cursor` is absent on the last page.",
+        "properties": {
+          "chats": {
+            "items": {
+              "$ref": "#/components/schemas/BotConversation"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotChatCursor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "chats"
+        ],
+        "type": "object"
+      },
+      "BotChatPurpose": {
+        "description": "Why a conversation belongs to its Bot (`bot_chats.purpose`, ai16).",
+        "enum": [
+          "main",
+          "additional"
+        ],
+        "type": "string"
+      },
       "BotChatReference": {
         "additionalProperties": false,
         "description": "A durable conversation identity; history remains behind normal Chat reads.",
@@ -3377,6 +3456,46 @@
               "lifecycle"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One bounded page of an active Bot's conversations outside Trash: the\nmain conversation first, then the rest by recency. `cursor` is the\nprevious page's `next_cursor`; `limit` is 1 to 100.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "list_bot_chats"
+                ],
+                "type": "string"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotChatCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "limit": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "limit"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -3409,6 +3528,22 @@
           "role",
           "working_folder",
           "model"
+        ],
+        "type": "object"
+      },
+      "BotConversation": {
+        "description": "One conversation of a Bot, with the label its owner sees.",
+        "properties": {
+          "chat": {
+            "$ref": "#/components/schemas/Chat"
+          },
+          "label": {
+            "$ref": "#/components/schemas/BotChatLabel"
+          }
+        },
+        "required": [
+          "chat",
+          "label"
         ],
         "type": "object"
       },
@@ -4025,6 +4160,24 @@
             "required": [
               "result",
               "bots"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotChatPage"
+              },
+              "result": {
+                "enum": [
+                  "chats"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
             ],
             "type": "object"
           }
@@ -20366,7 +20519,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, authorized listing, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately.",
+        "description": "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -20387,7 +20540,7 @@
                 }
               }
             },
-            "description": "A durable configuration, authorized listing, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately."
+            "description": "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -20447,7 +20600,7 @@
             ]
           }
         ],
-        "summary": "Read, configure, archive, trash or restore an engine-owned Bot, add a conversation to it or request admission"
+        "summary": "Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations or request admission"
       }
     },
     "/v1/ai/chats": {

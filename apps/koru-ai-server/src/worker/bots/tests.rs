@@ -5,6 +5,7 @@ mod chat;
 mod conversations;
 mod holds;
 mod lifecycle;
+mod reads;
 
 #[test]
 fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {

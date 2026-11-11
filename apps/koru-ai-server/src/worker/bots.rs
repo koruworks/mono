@@ -19,6 +19,7 @@ pub(in crate::worker) mod chat;
 mod lifecycle;
 pub(crate) mod policy;
 mod preparation;
+mod reads;
 pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
 pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingBotBranch};
 pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
@@ -56,6 +57,9 @@ impl WorkerState {
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
         if let Some(result) = self.bot_lifecycle_command(&context, &request) {
+            return result;
+        }
+        if let Some(result) = self.bot_read_command(&context, &request) {
             return result;
         }
         if let BotCommand::CreateChat { request_id, bot_id } = &request {
@@ -233,7 +237,8 @@ fn execute_bot_command(
         | BotCommand::PurgeBot { .. }
         | BotCommand::PurgeChat { .. }
         | BotCommand::ReadLifecycleOperation { .. }
-        | BotCommand::ListLifecycle { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ListLifecycle { .. }
+        | BotCommand::ListBotChats { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

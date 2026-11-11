@@ -2,7 +2,7 @@
 
 //! Engine-owned Bot configuration. No execution, HTTP or database owner lives here.
 
-use crate::{ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
+use crate::{Chat, ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
 pub use koru_delegate_core::{BotId, BotRequestId, DeviceId};
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
@@ -265,6 +265,14 @@ pub enum BotCommand {
         workspace: WorkspaceId,
         lifecycle: BotLifecycle,
     },
+    /// One bounded page of an active Bot's conversations outside Trash: the
+    /// main conversation first, then the rest by recency. `cursor` is the
+    /// previous page's `next_cursor`; `limit` is 1 to 100.
+    ListBotChats {
+        bot_id: BotId,
+        cursor: Option<BotChatCursor>,
+        limit: u16,
+    },
 }
 
 impl BotCommand {
@@ -292,6 +300,50 @@ pub enum BotResponse {
     Operation { operation: BotOperation },
     Bot { bot: Bot },
     List { bots: Vec<Bot> },
+    Chats { page: BotChatPage },
+}
+
+/// The most conversations one [`BotCommand::ListBotChats`] page returns.
+pub const BOT_CHAT_PAGE_LIMIT: u16 = 100;
+
+/// One page of a Bot's conversations; `next_cursor` is absent on the last page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotChatPage {
+    pub chats: Vec<BotConversation>,
+    pub next_cursor: Option<BotChatCursor>,
+}
+
+/// Which Bot a conversation belongs to, as its authorized owner reads it.
+/// Display data, never authority: commands still name the Bot and Chat and
+/// are checked against the owner's current proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotChatLabel {
+    pub bot_id: BotId,
+    /// The Bot's current name.
+    pub bot_name: String,
+    pub purpose: BotChatPurpose,
+}
+
+/// One conversation of a Bot, with the label its owner sees.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotConversation {
+    pub chat: Chat,
+    pub label: BotChatLabel,
+}
+
+/// The position after the last conversation of a page, in the page's own
+/// order (main first, then newest first, then by ID). It names only what
+/// that page already returned and grants nothing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotChatCursor {
+    pub main: bool,
+    pub updated_at_ms: i64,
+    pub chat_id: ChatId,
 }
 
 /// A durable conversation identity; history remains behind normal Chat reads.

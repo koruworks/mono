@@ -62,3 +62,50 @@ fn bot_model_rejects_settings_it_does_not_understand() {
         "ordinary Chat compatibility stays unchanged"
     );
 }
+
+#[test]
+fn a_conversation_page_request_is_closed_and_its_reply_is_additive() {
+    let request = BotCommand::ListBotChats {
+        bot_id: BotId::mint(),
+        cursor: Some(BotChatCursor {
+            main: false,
+            updated_at_ms: 7,
+            chat_id: ChatId::new(),
+        }),
+        limit: 20,
+    };
+    let mut json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["command"], "list_bot_chats");
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+        request
+    );
+    // The first page omits its cursor.
+    let mut first = json.clone();
+    first.as_object_mut().unwrap().remove("cursor");
+    assert!(matches!(
+        serde_json::from_value::<BotCommand>(first).unwrap(),
+        BotCommand::ListBotChats { cursor: None, .. }
+    ));
+    json["cursor"]["offset"] = serde_json::json!(3);
+    assert!(
+        serde_json::from_value::<BotCommand>(json).is_err(),
+        "a cursor is exactly what a page returned"
+    );
+
+    let reply = serde_json::json!({
+        "result": "chats",
+        "page": { "chats": [], "next_cursor": null, "added_later": true },
+        "added_later": true,
+    });
+    assert_eq!(
+        serde_json::from_value::<BotResponse>(reply).unwrap(),
+        BotResponse::Chats {
+            page: BotChatPage {
+                chats: vec![],
+                next_cursor: None
+            }
+        },
+        "a reply field a later build adds is ignored"
+    );
+}

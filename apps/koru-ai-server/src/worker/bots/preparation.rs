@@ -263,7 +263,8 @@ impl WorkerState {
                     | BotCommand::RestoreChat { .. }
                     | BotCommand::PurgeBot { .. }
                     | BotCommand::PurgeChat { .. }
-                    | BotCommand::ReadLifecycleOperation { .. } => {}
+                    | BotCommand::ReadLifecycleOperation { .. }
+                    | BotCommand::ListBotChats { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -442,7 +443,8 @@ pub(super) fn bot_targets(
             | BotCommand::RestoreChat { bot_id, .. }
             | BotCommand::PurgeBot { bot_id, .. }
             | BotCommand::PurgeChat { bot_id, .. }
-            | BotCommand::ReadLifecycleOperation { bot_id, .. } => *bot_id,
+            | BotCommand::ReadLifecycleOperation { bot_id, .. }
+            | BotCommand::ListBotChats { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
         };
         match super::lifecycle::provable_bot(repository, id, command) {
