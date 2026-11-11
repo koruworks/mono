@@ -366,6 +366,18 @@ impl MainView {
         )
     }
 
+    /// **The person's own choices about agents, for a Bot tab's catalog**
+    /// (Bots P1.8 S6): the same off list, order, favorites and default agent
+    /// every chat surface is handed, read from what the window holds.
+    pub(super) fn bot_agent_settings(&self) -> crate::bots::catalog::AgentSettings {
+        crate::bots::catalog::AgentSettings {
+            hidden: self.disabled_agents().to_vec(),
+            order: self.agent_order(),
+            favorites: self.favorite_models(),
+            default_agent: self.delegate_folder.authoritative().default_agent.clone(),
+        }
+    }
+
     /// The models starred in the chat's picker, as the Global link last read
     /// (or was just told) them.
     pub(super) fn favorite_models(&self) -> Vec<koru_ai_ui::FavoriteModel> {

@@ -105,6 +105,7 @@ fn paint_turning_caret(
     scene::draw_layout(canvas, turned, &layout, x, y, Some(color));
 }
 
+pub mod agent_catalog;
 mod agents;
 mod approval_modes;
 mod attachments;

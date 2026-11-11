@@ -765,6 +765,12 @@ impl BotView {
             self.sync_name_field();
             self.settings_return = from_header;
             self.focus = Some(SETTINGS_BUTTON);
+            // The agents-and-models catalog, read while the settings show
+            // (S6): the agents, their readiness, the Bot's agent's list.
+            self.catalog.shown();
+            if let Some(facts) = &self.facts {
+                self.catalog.want(&facts.provider);
+            }
         } else {
             let back = std::mem::take(&mut self.settings_return);
             self.focus = back.then_some(SETTINGS_BUTTON);

@@ -1297,12 +1297,8 @@ fn decorate_tool_activity(
     activity
 }
 
-/// How many times one ask is made while the host says the list is still
-/// being built. Each answer comes within the host's budget, and the host
-/// keeps listing between them, so the later asks find the list it made.
-const LISTING_ASKS: usize = 3;
-
-/// An agent's list, asked again while the host is still building it.
+/// An agent's list, asked again while the host is still building it
+/// (`crate::agent_catalog::discover`, the retry a catalog host shares).
 /// `refresh` rebuilds it first (↻); the asks after the first only wait for
 /// that rebuild.
 fn list_agent_models(
@@ -1311,19 +1307,7 @@ fn list_agent_models(
     refresh: bool,
 ) -> Update {
     let started = Instant::now();
-    let mut asks = 0;
-    let answer = loop {
-        asks += 1;
-        let answer = if refresh && asks == 1 {
-            client.ai().refresh_agent_models(&provider)
-        } else {
-            client.ai().discover_agent_models(&provider)
-        };
-        match answer {
-            Err(failure) if failure.code == AGENT_MODELS_LISTING && asks < LISTING_ASKS => {}
-            answer => break answer,
-        }
-    };
+    let answer = crate::agent_catalog::discover(client, &provider, refresh);
     match answer {
         Ok(response) => {
             tracing::info!(
@@ -1337,7 +1321,7 @@ fn list_agent_models(
         }
         // Still being built after every ask: the picker keeps saying so,
         // and the next open asks again.
-        Err(failure) if failure.code == AGENT_MODELS_LISTING => {
+        Err(failure) if crate::agent_catalog::is_still_listing(&failure) => {
             tracing::info!(
                 target: "koru_ai::ui",
                 provider = %provider,
@@ -1358,9 +1342,6 @@ fn list_agent_models(
         }
     }
 }
-
-/// The AI service's answer for a list the host is still building.
-const AGENT_MODELS_LISTING: &str = "agent_models_listing";
 
 /// Run `work` on a short-lived thread of its own, the way a pull's stream
 /// is read, so the client thread goes straight on to the next command. A

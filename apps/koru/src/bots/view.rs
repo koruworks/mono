@@ -331,6 +331,13 @@ pub(crate) struct BotView {
     /// Why the list did not act on a row's Trash: several picked, or another
     /// operation is still finishing.
     list_notice: Option<Words>,
+    // ------------------------------------------ agent and model (S6)
+    /// The agents-and-models catalog the settings' card reads, on a link of
+    /// its own, asked only while the settings are shown. Boxed for the
+    /// reason the settings are.
+    catalog: Box<super::catalog::Catalog>,
+    /// The person's own choices about agents, as the window holds them.
+    agent_settings: Box<super::catalog::AgentSettings>,
 }
 
 impl BotView {
@@ -386,7 +393,20 @@ impl BotView {
             return_focus: None,
             chat_in_trash: false,
             list_notice: None,
+            catalog: Box::default(),
+            agent_settings: Box::default(),
         }
+    }
+
+    /// **The person's own choices about agents** — turned off, their order,
+    /// the starred models, the default agent — as the window holds them.
+    /// `true` when they changed.
+    pub(crate) fn set_agent_settings(&mut self, settings: &super::catalog::AgentSettings) -> bool {
+        if *self.agent_settings == *settings {
+            return false;
+        }
+        *self.agent_settings = settings.clone();
+        true
     }
 
     /// **A Bot opened from the roster**: the roster's answer is fresh, so
@@ -654,7 +674,7 @@ impl BotView {
         }
         if !self.started_link {
             self.started_link = true;
-            self.link = BotsLink::start(root);
+            self.link = BotsLink::start(root.clone());
         }
         if self.stale && !self.in_flight {
             self.stale = false;
@@ -666,6 +686,8 @@ impl BotView {
             if self.facts.as_ref().is_some_and(|facts| facts.trashed) {
                 self.trash_read_owed = true;
             }
+            // The agents and their readiness may have moved too.
+            self.catalog.shown();
         }
         let lifecycle = self.lifecycle_pass(std::time::Instant::now());
         if self.settings.take_read_owed() {
@@ -682,7 +704,9 @@ impl BotView {
         }
         // A trashed Bot lists nothing: its list would be refused.
         let listed = !self.facts.as_ref().is_some_and(|facts| facts.trashed) && self.list_pass();
-        asked || answered || polled || listed || lifecycle
+        // The catalog only while the settings are shown (S6).
+        let catalog = self.settings_open && self.catalog.pass(root);
+        asked || answered || polled || listed || lifecycle || catalog
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -1543,7 +1567,10 @@ impl View for BotView {
         // asked about only while the tab is shown, which is the only time the
         // window asks this. The list's page on its way too (S8).
         let read = read.or_else(|| {
-            (self.conversations.awaiting() || self.trash_awaiting()).then(|| {
+            (self.conversations.awaiting()
+                || self.trash_awaiting()
+                || (self.settings_open && self.catalog.waiting()))
+            .then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
                     .unwrap_or(now)
             })
@@ -1576,7 +1603,10 @@ impl View for BotView {
         let listed = !self.stale
             && self.facts.as_ref().is_some_and(|facts| !facts.trashed)
             && self.list_pass();
-        let folded = folded || polled || listed || lifecycle;
+        // A catalog answer on its way while the settings are shown (S6).
+        let catalog =
+            !self.stale && self.settings_open && self.catalog.pass(crate::search::gateway_root());
+        let folded = folded || polled || listed || lifecycle || catalog;
         let chat = self
             .conversation
             .as_mut()

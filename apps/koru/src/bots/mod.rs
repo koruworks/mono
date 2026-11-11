@@ -22,6 +22,7 @@
 //! - **A hidden roster does no work.** It asks nothing and lays nothing out
 //!   while another view is showing; being shown again asks once.
 
+pub(crate) mod catalog;
 pub(crate) mod labels;
 pub(crate) mod lifecycle;
 pub(crate) mod link;

@@ -632,6 +632,14 @@ impl MainView {
             .map(|home| (home, self.workspace_name(home)))
             .collect();
         let titles = self.bot_page_titles();
+        // The person's choices about agents, for the tabs' catalogs (S6):
+        // worked out only while a Bot tab is open.
+        let agent_settings = self
+            .panes
+            .iter_groups()
+            .flat_map(|(_, group)| group.iter_tabs())
+            .any(|tab| matches!(tab.view, TabView::Bot(_)))
+            .then(|| self.bot_agent_settings());
         let roster = self.explore.bots();
         let mut work_moved = false;
         let mut moved = false;
@@ -642,6 +650,9 @@ impl MainView {
                 if let TabView::Bot(view) = &mut tab.view {
                     if index != active {
                         view.hidden();
+                    }
+                    if let Some(settings) = &agent_settings {
+                        moved |= view.set_agent_settings(settings);
                     }
                     // A conversation's work moved (started, stopped, asked):
                     // the roster's activity is read again (S10).
