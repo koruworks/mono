@@ -1023,13 +1023,26 @@ impl BotsRoster {
     }
 
     /// **What the arrow keys walk, in the order the roster draws it**: the
-    /// Bot rows; the empty roster's *Create a bot*; the Unfinished group's
+    /// Bot rows, each followed by its running and Needs-you sub-rows; the
+    /// empty roster's *Create a bot*; the Unfinished group's
     /// *Open role page* and each row's Retry and Abandon; the Archived
     /// toggle; and while it is open each archived row and its Unarchive.
     /// Exactly the controls drawn now, so the keyboard never lands on one
     /// that is not there.
     pub(crate) fn keyboard_stops(&self) -> Vec<Key> {
-        let mut stops: Vec<Key> = self.bots.iter().map(|bot| row_key(bot.id)).collect();
+        // Each Bot row, then its running and Needs-you sub-rows under it,
+        // as `bot_row` draws them: the pointer and an assistive technology
+        // press those too.
+        let mut stops: Vec<Key> = Vec::new();
+        for bot in &self.bots {
+            stops.push(row_key(bot.id));
+            stops.extend(
+                self.activity
+                    .iter()
+                    .filter(|entry| entry.bot_id == bot.id)
+                    .map(|entry| activity_key(entry.chat_id)),
+            );
+        }
         if self.load == Load::Ready && self.bots.is_empty() {
             stops.push(CREATE);
         }
@@ -1135,6 +1148,17 @@ impl BotsRoster {
                 .find(|bot| bot.as_uuid().as_u128() == id)
         {
             return self.ask_open(bot);
+        }
+        // A running or Needs-you sub-row opens its conversation, as a
+        // press of it does.
+        if key.part == ACTIVITY_PART
+            && let Some(chat) = self
+                .activity
+                .iter()
+                .map(|entry| entry.chat_id)
+                .find(|chat| activity_key(*chat) == key)
+        {
+            return self.ask_open_chat(chat);
         }
         let pressed =
             if key == ARCHIVED_TOGGLE || key.part == ARCHIVED_PART || key.part == UNARCHIVE_PART {
@@ -1355,6 +1379,7 @@ impl BotsRoster {
             .radius(Radius::M)
             .states(&BOT_ROW_STATES)
             .hit()
+            .focusable()
             .action(Action::Click)
             .semantics(Role::ListItem)
             .name_text(self.activity_name(bot, entry))

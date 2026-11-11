@@ -594,6 +594,31 @@ fn the_access_choice_has_exactly_two_segments_and_a_press_drafts_it() {
     assert!(f.commands.try_recv().is_err(), "nothing sent until Save");
 }
 
+/// **An assistive technology cannot act on the access choice while a save
+/// of it is on its way** (the second review's item 11): the choice is drawn
+/// held still, and a click on either of its segments is refused before any
+/// path acts — as a press would be.
+#[test]
+fn an_assistive_click_on_an_access_segment_does_nothing_while_its_save_is_on_its_way() {
+    let mut f = Fixture::opened(unpaused());
+    f.view.perform(Act::Choose(BotAccess::Workspace));
+    assert!(f.press(SAVE_ACCESS));
+    let _ = f.wrote();
+    assert!(
+        f.view
+            .with_frame(|_, frame| frame.node(ACCESS_CHOICE).is_some_and(|node| node.disabled)),
+        "held still while saving"
+    );
+    for segment in ACCESS_SEGMENTS {
+        assert!(
+            !f.view.accessibility_action(segment, true),
+            "{segment:?}: refused"
+        );
+    }
+    assert_eq!(f.view.settings().access_shown(), BotAccess::Workspace);
+    assert!(f.commands.try_recv().is_err(), "nothing else was sent");
+}
+
 /// **Pending states**: access, pause and the folder each show their pending
 /// line in place of their control until the owner answers, and nothing is
 /// shown as done before it does.

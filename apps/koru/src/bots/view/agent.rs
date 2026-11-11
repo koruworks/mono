@@ -683,43 +683,48 @@ pub(crate) fn control_of(
 
 impl BotView {
     /// **What an assistive technology asked of the card's popover**: a
-    /// click presses the node where it is drawn, a focus is taken where it
-    /// is. `None` when no popover is up or the key is not one of its.
+    /// focus is taken where it is; a click acts on the control by its key,
+    /// through that control's own choose path — a model row, a rail mark, a
+    /// level's segment, Fast and the context window, ↻, a ☆, a mode row —
+    /// never by a press at its centre, which for a control outside the
+    /// popover's visible part lands outside it and closes it. A control
+    /// drawn inert does nothing. `None` when no popover is up or the key is
+    /// not one of its.
     pub(super) fn agent_accessibility_action(&mut self, key: Key, click: bool) -> Option<bool> {
         let (nodes, _, _) = self.agent_semantics()?;
-        fn find(nodes: &[koru_draw::el::SemNode], key: Key) -> Option<Rect> {
-            nodes.iter().find_map(|node| {
-                if node.key.map(published_key) == Some(key) {
-                    Some(node.bounds)
-                } else {
-                    find(&node.children, key)
-                }
+        fn find(nodes: &[koru_draw::el::SemNode], key: Key) -> Option<(Key, bool)> {
+            nodes.iter().find_map(|node| match node.key {
+                Some(own) if published_key(own) == key => Some((own, node.disabled)),
+                _ => find(&node.children, key),
             })
         }
-        let rect = find(&nodes, key)?;
+        // The control's own key: the tab publishes a surface key under its
+        // own surface ([`published_key`]).
+        let (own, disabled) = find(&nodes, key)?;
         if !click {
             return Some(true);
         }
-        // **A model row is chosen by its key, through the row's own choose
-        // path** — never by a press at its centre, which for a row below
-        // the list's visible part lands outside the picker and closes it.
-        if key.part == "row" {
-            use koru_ai_ui::agent_catalog::config::picker::{elements, row_id};
-            let index = self
-                .agent_picker_read(|picker| {
-                    let entry = picker.entry()?;
-                    picker.rows().iter().position(|row| {
-                        row_id(&entry, row).map(|id| elements::row_key(&id)) == Some(key)
-                    })
-                })
-                .flatten();
-            if let Some(index) = index {
-                return Some(
-                    self.agent_picker_run(|view| view.choose_row(index))
-                        .unwrap_or(false),
-                );
-            }
+        if disabled {
+            return Some(false);
         }
-        Some(self.agent_press(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5))
+        if self
+            .agent
+            .as_deref()
+            .is_some_and(|popover| popover.picker_open)
+        {
+            return Some(
+                self.agent_picker_run(|view| view.act(own))
+                    .flatten()
+                    .unwrap_or(false),
+            );
+        }
+        // The mode list: a mode chosen by its key.
+        let index = self.mode_rows().iter().position(|row| {
+            koru_ai_ui::agent_catalog::config::modes::elements::row_key(&row.id) == own
+        });
+        Some(match index {
+            Some(index) => self.choose_agent_mode(index),
+            None => false,
+        })
     }
 }

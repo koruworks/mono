@@ -1595,6 +1595,14 @@ impl BotView {
 
     /// Do what an assistive technology asked of the control `key`.
     pub(crate) fn accessibility_action(&mut self, key: Key, click: bool) -> bool {
+        // **An inert control is inert to an assistive technology too**, as
+        // it is to the pointer (`region_press`) — checked before any path
+        // acts: a segment by its choice (the access choice is held still
+        // while a save of it is on its way), the list's and the popovers'
+        // controls by their own node.
+        if click && self.inert_to_assistive(key) {
+            return false;
+        }
         if let Some(done) = self.agent_accessibility_action(key, click) {
             return done;
         }
@@ -1625,11 +1633,6 @@ impl BotView {
             self.focus = Some(key);
             return true;
         }
-        // An inert control is inert to an assistive technology too, as it is
-        // to the pointer (`region_press`).
-        if self.with_frame(|_, frame| frame.node(key).is_some_and(|node| node.disabled)) {
-            return false;
-        }
         if key == super::create::ROLE_CHOICE {
             return self.perform(Act::ChooseRole(self.other_role()));
         }
@@ -1644,6 +1647,26 @@ impl BotView {
             Some(act) => self.perform(act),
             None => false,
         }
+    }
+}
+
+impl BotView {
+    /// Whether `key` is drawn inert: its own node, or — for a segment of
+    /// the access or role choice — the choice it belongs to.
+    fn inert_to_assistive(&self, key: Key) -> bool {
+        let owner = if ACCESS_SEGMENTS.contains(&key) {
+            Some(ACCESS_CHOICE)
+        } else if super::create::ROLE_SEGMENTS.contains(&key) {
+            Some(super::create::ROLE_CHOICE)
+        } else {
+            None
+        };
+        self.with_frame(|_, frame| {
+            [Some(key), owner]
+                .into_iter()
+                .flatten()
+                .any(|key| frame.node(key).is_some_and(|node| node.disabled))
+        })
     }
 }
 

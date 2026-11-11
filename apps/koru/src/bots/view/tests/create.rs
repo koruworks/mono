@@ -723,6 +723,59 @@ fn an_assistive_click_on_a_model_row_chooses_it_by_its_key() {
     );
 }
 
+/// **Every control the card's popovers publish acts by its key** (the
+/// second review's item 11): Fast is toggled, another agent's rail mark
+/// selects that agent's list, and a mode row chooses that mode — each
+/// through its own choose path, never a press at its published centre.
+#[test]
+fn an_assistive_click_acts_on_every_popover_control_by_its_key() {
+    use koru_ai_ui::agent_catalog::config::picker::elements;
+    let mut c = shown();
+    c.fill();
+    assert!(c.view.perform(Act::OpenModelPicker));
+    let gpt = all_controls(&c.view)
+        .into_iter()
+        .find(|control| control.role == ControlRole::ListItem && control.label == "GPT-5")
+        .expect("GPT-5 is published");
+    assert!(c.view.accessibility_action(gpt.key, true));
+    // Fast, by its key.
+    let fast = crate::bots::view::agent::published_key(elements::FAST_KEY);
+    assert!(
+        all_controls(&c.view)
+            .iter()
+            .any(|control| control.key == fast),
+        "Fast is published for GPT-5"
+    );
+    assert!(c.view.accessibility_action(fast, true));
+    assert_eq!(c.form().model_shown().unwrap().fast, Some(true));
+    // Claude's mark, by its key: its list is the one shown.
+    let claude_id = AiProviderId::parse("agent-claude").unwrap();
+    let claude = elements::mark_key(&RailEntry::Agent(claude_id.clone()));
+    assert!(
+        all_controls(&c.view)
+            .iter()
+            .any(|control| control.key == claude),
+        "Claude's mark is published"
+    );
+    assert!(c.view.accessibility_action(claude, true));
+    assert_eq!(
+        c.view.agent_picker_read(|picker| picker.entry()).flatten(),
+        Some(RailEntry::Agent(claude_id))
+    );
+    c.view.agent = None;
+    // A mode row, by its key.
+    assert!(c.view.perform(Act::OpenModes));
+    let ask = koru_ai_ui::agent_catalog::config::modes::elements::row_key("ask");
+    assert!(
+        all_controls(&c.view)
+            .iter()
+            .any(|control| control.key == ask),
+        "the ask mode is published"
+    );
+    assert!(c.view.accessibility_action(ask, true));
+    assert_eq!(c.form().model_shown().unwrap().mode.as_deref(), Some("ask"));
+}
+
 /// **A model row below the list's visible part is chosen by an assistive
 /// click** (review fault 7, its geometry): forty models, so the picker's
 /// list scrolls and the last rows are published beneath the part of it a

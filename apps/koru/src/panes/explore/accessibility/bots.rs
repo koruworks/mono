@@ -384,7 +384,8 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
 }
 
 /// Where the keyboard is, read off the same focus the ring is drawn from:
-/// a Bot row, *Create a bot*, *Open role page*, an Unfinished row's Retry or
+/// a Bot row or one of its running and Needs-you sub-rows, *Create a bot*,
+/// *Open role page*, an Unfinished row's Retry or
 /// Abandon, the Archived toggle, an archived row or its Unarchive — each the
 /// occurrence [`semantics`] publishes for it.
 pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occurrence> {
@@ -413,6 +414,7 @@ pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occu
             ARCHIVED_TOGGLE_PART,
         )),
         crate::bots::roster::ROW_PART => model(ControlPart::ROOT),
+        ACTIVITY_PART => model(ACTIVITY),
         CREATION_RETRY_PART => model(CREATION_RETRY),
         CREATION_ABANDON_PART => model(CREATION_ABANDON),
         ARCHIVED_PART => model(ARCHIVED),
