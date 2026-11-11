@@ -87,6 +87,10 @@ pub(crate) struct Op {
     /// The owner has answered something about it: a read that answers
     /// `not_found` before that means the command never reached it.
     answered: bool,
+    /// **The last ask went unanswered** — Koru AI did not answer. It is
+    /// still asked about on the clock; the tab says Koru AI is not
+    /// answering rather than that the Bot's work is finishing.
+    pub unanswered: bool,
     next_read: Option<Instant>,
     backoff: Duration,
     /// What the window records when it finishes: the Bot's name and home,
@@ -296,6 +300,7 @@ impl Lifecycle {
             command: Some(command),
             in_flight: true,
             answered: false,
+            unanswered: false,
             next_read: None,
             backoff: READ_FIRST,
             name: bot.config.name.clone(),
@@ -331,6 +336,7 @@ impl Lifecycle {
             command: Some(command),
             in_flight: true,
             answered: false,
+            unanswered: false,
             next_read: None,
             backoff: READ_FIRST,
             name: bot.config.name.clone(),
@@ -352,6 +358,7 @@ impl Lifecycle {
         };
         op.stage = Stage::Moving;
         op.in_flight = true;
+        op.unanswered = false;
         op.next_read = None;
         op.backoff = READ_FIRST;
         self.outcome = None;
@@ -403,6 +410,7 @@ impl Lifecycle {
             command: Some(command),
             in_flight: true,
             answered: false,
+            unanswered: false,
             next_read: None,
             backoff: READ_FIRST,
             name: parked.name.clone(),
@@ -497,6 +505,8 @@ impl Lifecycle {
             return false;
         };
         op.in_flight = false;
+        op.unanswered = matches!(result, Err(Failure::Unreachable));
+        let kind = op.kind;
         match result {
             Ok(BotResponse::Lifecycle { operation }) if operation.request_id == request => {
                 op.answered = true;
@@ -514,7 +524,7 @@ impl Lifecycle {
             Err(Failure::Refused(code)) if code == "not_found" && !op.answered => {
                 self.refuse(Words::BotsErrUnreachable);
             }
-            Err(Failure::Refused(code)) => self.refuse(refusal_words(&code)),
+            Err(Failure::Refused(code)) => self.refuse(words_for(kind, &code)),
         }
         true
     }
@@ -628,6 +638,7 @@ fn adopted(open: &BotOpenLifecycle, bot: &Bot, now: Instant) -> Op {
         command: None,
         in_flight: false,
         answered: true,
+        unanswered: false,
         next_read: (!parked).then_some(now),
         backoff: READ_FIRST,
         name: bot.config.name.clone(),
@@ -670,15 +681,38 @@ fn now_ms() -> i64 {
 }
 
 /// **A lifecycle refusal's sentence, by its stable code**: the holds
-/// (`bot_conversation_trashed`, `bot_lifecycle_pending`), and a lifecycle
-/// command's `request_conflict`, which means another operation of the Bot
-/// is unfinished (a fresh request is minted for every new command, so it is
-/// never this request's own repeat). Everything else as the settings say it
-/// ([`super::settings::refusal_words`]).
+/// (`bot_conversation_trashed`, `bot_lifecycle_pending`), and an Archive's,
+/// a Trash's or a conversation's Trash's `request_conflict`, which means
+/// another operation of the Bot is unfinished (a fresh request is minted
+/// for every new command, so it is never this request's own repeat).
+/// Everything else as the settings say it
+/// ([`super::settings::refusal_words`]). A Restore's is
+/// [`restore_refusal_words`].
 pub(crate) fn refusal_words(code: &str) -> Words {
     match code {
         "request_conflict" => Words::BotsErrPending,
         _ => super::settings::refusal_words(code),
+    }
+}
+
+/// **A Restore's refusal** — an Unarchive, a Restore from the Trash, a
+/// conversation's, or the Cancel of a parked operation. Its
+/// `request_conflict` is the owner's `require_source` (or the lifecycle's
+/// prior state): the operation it names was restored already, or the Bot
+/// moved since — another tab, another window, the Trash. The tab reads the
+/// Bot again either way, so what holds it now is shown.
+pub(crate) fn restore_refusal_words(code: &str) -> Words {
+    match code {
+        "request_conflict" => Words::BotsErrRestoreConflict,
+        _ => refusal_words(code),
+    }
+}
+
+/// The refusal's sentence for an operation of `kind`.
+fn words_for(kind: BotLifecycleKind, code: &str) -> Words {
+    match kind {
+        BotLifecycleKind::Restore | BotLifecycleKind::RestoreChat => restore_refusal_words(code),
+        _ => refusal_words(code),
     }
 }
 

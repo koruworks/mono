@@ -35,7 +35,7 @@ use koru_ai_core::bots::{
 use koru_i18n::{Key as Words, Lang, t};
 use koru_store_core::ids::WorkspaceId;
 
-use super::lifecycle::{Finished, refusal_words};
+use super::lifecycle::{Finished, refusal_words, restore_refusal_words};
 use super::link::{Answer, BotsLink, Command, Failure};
 
 /// What a Bot row of the Trash is.
@@ -591,16 +591,21 @@ impl BotTrash {
             // not happen as asked.
             Ok(_) => self.fail(&restoring.name, Words::BotsErrNotApplied),
             Err(Failure::Unreachable) => self.fail(&restoring.name, Words::BotsErrUnreachable),
-            Err(Failure::Refused(code)) => self.fail(&restoring.name, refusal_words(&code)),
+            // `require_source`'s `request_conflict`: what it names was
+            // restored already, or the Bot moved since.
+            Err(Failure::Refused(code)) => {
+                self.fail(&restoring.name, restore_refusal_words(&code));
+            }
         }
     }
 
+    /// A Restore that did not happen, said in one sentence: the row's name
+    /// and why, through one template each language places and spaces.
     fn fail(&mut self, name: &str, why: Words) {
         self.receipts.push(Receipt {
-            words: format!(
-                "{} {}",
-                koru_i18n::fill(t(self.lang, Words::TrashBotRestoreFailed), &[name]),
-                t(self.lang, why)
+            words: koru_i18n::fill(
+                t(self.lang, Words::TrashBotRestoreFailed),
+                &[name, t(self.lang, why)],
             ),
         });
         self.fresh = false;

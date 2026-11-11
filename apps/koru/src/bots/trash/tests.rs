@@ -435,3 +435,61 @@ fn a_link_restore_of_a_conversation_hidden_by_its_bots_trash_says_why() {
         "“Notes” wasn't restored. This bot is in the Trash. Restore the bot first."
     );
 }
+
+/// **A Restore of a Trash another surface restored first** is refused as
+/// the owner refuses it — `require_source`
+/// (`crates/koru-ai-sqlite/src/repository/bots/lifecycle.rs`) answers
+/// `request_conflict` for a source an intent already names — and the
+/// receipt says it was restored already or the Bot changed, in one
+/// template each language places and spaces; the Trash reads again.
+#[test]
+fn a_restore_of_a_used_source_says_it_was_restored_already() {
+    let (mut trash, commands, answers, home) = feed();
+    trash.set_shown(true, None);
+    let source = BotRequestId::mint();
+    let bot = trashed(home, "Scout", Some(source));
+    listed(
+        &mut trash,
+        &commands,
+        &answers,
+        vec![bot.clone()],
+        Vec::new(),
+    );
+    for (lang, said) in [
+        (
+            Lang::En,
+            "“Scout” wasn't restored. This was already restored, or the bot changed somewhere else.",
+        ),
+        (
+            Lang::Ja,
+            "「Scout」は復元されませんでした。これはすでに復元されたか、Bot が別の場所で変更されました。",
+        ),
+    ] {
+        trash.set_lang(lang);
+        assert!(trash.restore(BotSubject::Bot(bot.id)));
+        let request = commands
+            .try_iter()
+            .find_map(|command| match command {
+                Command::Write { request, .. } => Some(request),
+                _ => None,
+            })
+            .expect("a Restore");
+        answers
+            .send(Answer::Wrote {
+                bot: bot.id,
+                request,
+                result: Err(Failure::Refused("request_conflict".into())),
+            })
+            .unwrap();
+        trash.maintain();
+        assert_eq!(trash.take_receipts().pop().unwrap().words, said);
+        // It reads again, to show what the owner holds now.
+        trash.maintain();
+        assert!(
+            commands
+                .try_iter()
+                .any(|command| matches!(command, Command::Lifecycle { .. })),
+            "read again"
+        );
+    }
+}

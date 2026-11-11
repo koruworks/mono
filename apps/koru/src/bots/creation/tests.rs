@@ -485,3 +485,29 @@ fn the_resolved_folder_is_shown_when_it_differs_from_the_choice() {
     answer(&mut form, moving, Instant::now());
     assert_eq!(form.resolved_folder(), Some("D:\\real"));
 }
+
+/// **A Create under a request the owner already holds with other input**
+/// is refused as `create_bot_with_role` refuses it
+/// (`apps/koru-ai-server/src/worker/bots/creation.rs`: a known request whose
+/// fingerprint or Bot differs answers `request_conflict`). The form says
+/// so, reads what the owner holds under that request, and then shows the
+/// owner's creation — never the draft as if it were what is being made.
+#[test]
+fn a_create_under_a_request_held_with_other_input_shows_what_the_owner_holds() {
+    let mut form = ready();
+    form.create(None).expect("sent");
+    let request = form.request();
+    form.answer(
+        request,
+        Err(Failure::Refused("request_conflict".into())),
+        Instant::now(),
+    );
+    assert_eq!(form.notice(), Some(Words::BotsErrRequestConflict));
+    let read = form.read(Instant::now()).expect("what it holds is read");
+    assert_eq!(request_of(&read), request);
+    let mut held = creation(&form, BotCreationStage::Pending);
+    held.name = "Other".to_owned();
+    answer(&mut form, held, Instant::now());
+    assert!(!form.editable(), "the owner's creation, not the draft");
+    assert_eq!(form.live().map(|live| live.name.as_str()), Some("Other"));
+}

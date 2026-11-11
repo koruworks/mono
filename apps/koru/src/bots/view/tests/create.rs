@@ -20,6 +20,8 @@ struct Create {
     home: WorkspaceId,
     catalog_commands: Receiver<catalog::Command>,
     catalog_answers: SyncSender<catalog::Answer>,
+    /// What every agent's listing answers.
+    listing: CatalogListing,
 }
 
 fn agent(id: &str, label: &str) -> CatalogAgent {
@@ -67,6 +69,11 @@ fn shown() -> Create {
 }
 
 fn shown_with_default(default_agent: &str) -> Create {
+    shown_with(default_agent, listing())
+}
+
+/// A shown create tab whose agents list `listing`.
+fn shown_with(default_agent: &str, listing: CatalogListing) -> Create {
     let (link, commands, answers) = BotsLink::test_pair();
     let home = WorkspaceId::new();
     let mut view = BotView::creating_with_link(home, link);
@@ -85,6 +92,7 @@ fn shown_with_default(default_agent: &str) -> Create {
         home,
         catalog_commands,
         catalog_answers,
+        listing,
     };
     c.view.shown_pass(None);
     c.serve_catalog();
@@ -102,6 +110,7 @@ impl Create {
 
     fn serve_catalog_once(&mut self) {
         let (catalog_commands, catalog_answers) = (&self.catalog_commands, &self.catalog_answers);
+        let served = &self.listing;
         while let Ok(command) = catalog_commands.try_recv() {
             match command {
                 catalog::Command::Agents { seq } => catalog_answers
@@ -128,7 +137,7 @@ impl Create {
                     .send(catalog::Answer::Listing {
                         seq,
                         agent,
-                        result: Ok(listing()),
+                        result: Ok(served.clone()),
                     })
                     .unwrap(),
             }
@@ -711,5 +720,57 @@ fn an_assistive_click_on_a_model_row_chooses_it_by_its_key() {
     assert_eq!(
         c.form().model_shown().unwrap().model.requested_model,
         "gpt-5"
+    );
+}
+
+/// **A model row below the list's visible part is chosen by an assistive
+/// click** (review fault 7, its geometry): forty models, so the picker's
+/// list scrolls and the last rows are published beneath the part of it a
+/// person sees. A click on one through the accessibility tree chooses that
+/// model; it never lands as a press outside the picker that closes it.
+#[test]
+fn an_assistive_click_on_a_model_row_below_the_fold_chooses_it() {
+    let mut many = listing();
+    many.models = (1..=40)
+        .map(|n| CatalogModel {
+            id: format!("model-{n}"),
+            group: "openai".into(),
+            name: Some(format!("Model {n}")),
+            description: None,
+            group_name: None,
+            legacy: false,
+            levels: None,
+            context: None,
+            fast: Some(false),
+        })
+        .collect();
+    let mut c = shown_with("codex", many);
+    c.fill();
+    assert!(c.view.perform(Act::OpenModelPicker));
+    let controls = all_controls(&c.view);
+    let list = controls
+        .iter()
+        .find(|control| {
+            control.role == ControlRole::List
+                && control.children.iter().any(|row| row.label == "Model 40")
+        })
+        .expect("the picker's list is published with its rows");
+    let row = list
+        .children
+        .iter()
+        .find(|row| row.label == "Model 40")
+        .expect("the last model is published")
+        .clone();
+    assert!(
+        row.rect.y >= list.rect.y + list.rect.h,
+        "below the fold: row {:?}, list {:?}",
+        row.rect,
+        list.rect
+    );
+    assert_eq!(row.key.part, "row");
+    assert!(c.view.accessibility_action(row.key, true));
+    assert_eq!(
+        c.form().model_shown().unwrap().model.requested_model,
+        "model-40"
     );
 }

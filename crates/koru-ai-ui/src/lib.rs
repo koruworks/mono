@@ -10531,6 +10531,9 @@ pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lan
         // The Bot-level refusal on a trashed Bot: since the engine's Trash
         // review fix, every refusal a Bot in Trash causes.
         koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED => Some(koru_i18n::Key::BotsErrBotTrashed),
+        // `BotError::Settling`: a pause, resume or access change of the Bot
+        // is still being delivered, and a Start waits for it. Retryable.
+        "bot_operation_pending" => Some(koru_i18n::Key::BotsErrOperationPending),
         _ => None,
     };
     if let Some(key) = lifecycle {

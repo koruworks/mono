@@ -513,3 +513,164 @@ fn the_actions_button_is_named_ordered_and_gets_the_keyboard_back() {
     f.view.dialog_closed();
     assert_eq!(f.view.focus(), None);
 }
+
+/// **Between an Archive's answer and the next read the tab offers only what
+/// the owner would take**: Unarchive and Move to Trash, never Archive
+/// again, and no conversation's Trash — the owner refuses that for an
+/// archived Bot (`bot_archived`).
+#[test]
+fn after_an_archive_the_menu_and_rows_are_true_before_the_read() {
+    let mut f = listed(&[]);
+    f.view.begin_lifecycle(Ask::Archive);
+    let (request, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    // No read of the Bot has answered yet.
+    assert_eq!(f.view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
+    assert_eq!(
+        f.view.conversations.surface.row_actions(),
+        koru_chats_ui::RowActions::OPEN_ONLY
+    );
+}
+
+/// **A Restore gives the Bot back to what it was before its Trash** —
+/// archived, trashed, restored comes back archived — so between the
+/// Restore's answer and the Bot's read the tab neither claims it active
+/// nor offers anything the owner might refuse; the read then says which.
+#[test]
+fn after_a_restore_nothing_is_claimed_until_the_read_says_what_the_bot_is() {
+    let mut f = listed(&[]);
+    // Archived first, as the owner's read says.
+    f.view.shown_pass(None);
+    let mut archived = f.bot.clone();
+    archived.lifecycle = BotLifecycle::Archived;
+    archived.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 1,
+    });
+    f.view.lifecycle_moved_elsewhere();
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    f.answer(seq, archived.id, Ok(archived.clone()));
+    assert!(f.view.facts().unwrap().archived);
+    // Then into the Trash, and back.
+    f.view.begin_lifecycle(Ask::Trash);
+    let (trash, _) = f.wrote();
+    f.reply(
+        trash,
+        progress(
+            &archived,
+            trash,
+            BotLifecycleKind::Trash,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    let mut trashed = archived.clone();
+    trashed.lifecycle = BotLifecycle::Trashed;
+    f.view.take_trash_listing(Ok(vec![trashed.clone()]));
+    assert!(f.view.perform(region::Act::Restore));
+    let (undo, _) = f.wrote();
+    f.reply(
+        undo,
+        progress(
+            &trashed,
+            undo,
+            BotLifecycleKind::Restore,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    let facts = f.view.facts().unwrap();
+    assert!(!facts.trashed);
+    assert!(facts.archived, "never claimed active before the read");
+    assert!(f.view.lifecycle_rows().is_empty(), "nothing offered yet");
+    assert_eq!(
+        f.view.conversations.surface.row_actions(),
+        koru_chats_ui::RowActions::OPEN_ONLY
+    );
+    // The read says archived: what an archived Bot offers.
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    f.answer(seq, archived.id, Ok(archived.clone()));
+    assert!(f.view.facts().unwrap().archived);
+    assert_eq!(f.view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
+}
+
+/// **A trashed Bot's conversation is let go** (verified: before this, the
+/// tab kept its embedded chat bound and maintained behind the header, its
+/// reader free to read a conversation the owner refuses as `bot_trashed`).
+/// A Restore's read binds it again.
+#[test]
+fn a_trashed_bots_conversation_is_let_go_and_bound_again_on_restore() {
+    let mut f = listed(&[]);
+    assert!(f.view.conversation().is_some(), "bound while active");
+    f.view.begin_lifecycle(Ask::Trash);
+    let (request, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Trash,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    assert!(f.view.conversation().is_none(), "nothing of it is bound");
+    let mut trashed = f.bot.clone();
+    trashed.lifecycle = BotLifecycle::Trashed;
+    f.view.take_trash_listing(Ok(vec![trashed.clone()]));
+    assert!(f.view.conversation().is_none());
+    assert!(f.view.perform(region::Act::Restore));
+    let (undo, _) = f.wrote();
+    f.reply(
+        undo,
+        progress(
+            &trashed,
+            undo,
+            BotLifecycleKind::Restore,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    let active = f.bot.clone();
+    f.answer(seq, active.id, Ok(active));
+    assert!(f.view.conversation().is_some(), "bound again once read");
+    assert_eq!(f.view.lifecycle_rows(), [Ask::Archive, Ask::Trash]);
+}
+
+/// **An Archive Koru AI does not answer** says Koru AI is not answering,
+/// never *Finishing the bot's current work…*, while it is still asked
+/// about.
+#[test]
+fn an_unanswered_archive_says_koru_ai_is_not_answering() {
+    let mut f = listed(&[]);
+    f.view.begin_lifecycle(Ask::Archive);
+    let (request, _) = f.wrote();
+    f.reply(request, Err(Failure::Unreachable));
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsLifecycleUnanswered)
+    );
+    assert!(f.view.lifecycle_busy(), "still on its way");
+}
+
+/// The read of the Bot the tab just sent, past the other reads a lifecycle
+/// answer leaves owed (its Trash filter, its list).
+fn bot_read(f: &Fixture) -> u64 {
+    loop {
+        match f.commands.try_recv().expect("the Bot is read") {
+            Command::Read { seq, .. } => return seq,
+            _ => continue,
+        }
+    }
+}

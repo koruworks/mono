@@ -318,6 +318,11 @@ pub(crate) struct BotView {
     /// The trashed Bot as the owner's Trash filter lists it — its revision
     /// is what a Restore carries, and its read answers *not found*.
     trashed_bot: Option<Box<Bot>>,
+    /// **A Restore answered and the Bot's read has not**: a Trash reversed
+    /// gives the Bot back to what it was before — active or archived — and
+    /// only the read says which, so the ⋯ and the rows' Trash offer nothing
+    /// until it answers rather than something the owner would refuse.
+    lifecycle_awaits_read: bool,
     /// A Trash filter read is owed: the Bot went to Trash, or its read said
     /// it is not found.
     trash_read_owed: bool,
@@ -407,6 +412,7 @@ impl BotView {
             seen_status: koru_chats_ui::ChatStatus::Idle,
             lifecycle: Box::default(),
             trashed_bot: None,
+            lifecycle_awaits_read: false,
             trash_read_owed: false,
             trash_in_flight: false,
             trash_seq: 0,
@@ -671,6 +677,7 @@ impl BotView {
     fn know(&mut self, facts: BotFacts) {
         self.conversations.set_bot(facts.id);
         self.lifecycle.set_bot(facts.id);
+        self.lifecycle_awaits_read = false;
         // A conversation's Trash is offered only while the Bot is active:
         // the owner refuses it for an archived Bot (`bot_archived`).
         self.conversations
@@ -681,6 +688,7 @@ impl BotView {
             if self.settings_open {
                 self.set_settings_open(false);
             }
+            self.release_conversation();
             self.facts = Some(facts);
             self.load = Load::Ready;
             return;
@@ -705,6 +713,16 @@ impl BotView {
         }
         self.facts = Some(facts);
         self.load = Load::Ready;
+    }
+
+    /// **A trashed Bot's conversation is let go**: the owner refuses every
+    /// read of it (`bot_trashed`), so the embedded chat — its reader, its
+    /// maintenance — is dropped rather than left bound and maintained
+    /// behind a header that no longer shows it. A Restore's read binds a
+    /// new one ([`Self::know`]).
+    pub(super) fn release_conversation(&mut self) {
+        self.conversation = None;
+        self.started_chat = false;
     }
 
     /// **The pass a shown tab runs** — from its draw and its maintenance,

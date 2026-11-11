@@ -508,3 +508,108 @@ fn an_operation_the_owner_no_longer_names_is_dropped() {
         "the one named"
     );
 }
+
+/// **A second Restore of a source already used is refused as the owner
+/// refuses it** — `require_source` in
+/// `crates/koru-ai-sqlite/src/repository/bots/lifecycle.rs` answers
+/// `request_conflict` when an intent already names that source — and the
+/// tab says it was restored already or the Bot changed elsewhere, never
+/// that another change is still finishing. It reads the Bot again.
+#[test]
+fn a_restore_of_a_source_already_used_says_it_was_restored_already() {
+    let (mut model, mut bot) = fixture();
+    bot.lifecycle = BotLifecycle::Archived;
+    let archive = held(&mut bot, BotLifecycleKind::Archive);
+    model.know(&bot);
+    let (request, command) = sent(model.begin(Ask::Unarchive, &bot).unwrap());
+    assert!(
+        matches!(command, BotCommand::Restore { source_request_id, .. } if source_request_id == archive)
+    );
+    // Another tab restored it first: the source is used.
+    model.answer(
+        request,
+        Err(Failure::Refused("request_conflict".into())),
+        Instant::now(),
+    );
+    assert_eq!(
+        model.outcome(),
+        Some(&Outcome::Refused(Words::BotsErrRestoreConflict))
+    );
+    assert!(model.take_read_bot_owed(), "what holds it now is read");
+    // An Archive's own `request_conflict` still says another change is open.
+    assert_eq!(refusal_words("request_conflict"), Words::BotsErrPending);
+    assert_eq!(
+        restore_refusal_words("request_conflict"),
+        Words::BotsErrRestoreConflict
+    );
+    // A code no build knows yet is the general sentence, never blank.
+    assert_eq!(
+        restore_refusal_words("bot_new_in_a_later_build"),
+        Words::BotsErrNotApplied
+    );
+}
+
+/// **Continue of a parked operation another tab already reversed** is
+/// answered as the owner answers it: `resume_bot_lifecycle` leaves a
+/// reversed operation parked, so `repeat_bot_lifecycle`
+/// (`apps/koru-ai-server/src/worker/bots/lifecycle.rs`) returns its
+/// progress still `incomplete`. The tab shows it parked, reads the Bot, and
+/// the read — which no longer names it — drops it.
+#[test]
+fn continue_of_a_reversed_parked_operation_stays_parked_until_the_read_drops_it() {
+    let (mut model, mut bot) = fixture();
+    let request = BotRequestId::mint();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: request,
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::WorkRunning),
+    });
+    model.know(&bot);
+    let (again, _) = sent(model.continue_parked(&bot).unwrap());
+    assert_eq!(again, request);
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Incomplete,
+        ),
+        Instant::now(),
+    );
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    assert!(model.take_read_bot_owed(), "the Bot is read again");
+    // The reversal finished elsewhere: the Bot names nothing open.
+    bot.open_operation = None;
+    model.know(&bot);
+    assert!(!model.busy(), "dropped, never a Continue the owner ignores");
+}
+
+/// **A sent Archive that Koru AI does not answer** is said as that — not
+/// as the Bot's work finishing — while it is still asked about on the
+/// clock; the first answer that comes back clears it.
+#[test]
+fn an_unanswered_archive_says_koru_ai_is_not_answering() {
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
+    assert!(!model.op().unwrap().unanswered);
+    let now = Instant::now();
+    model.answer(request, Err(Failure::Unreachable), now);
+    assert!(model.op().unwrap().unanswered);
+    assert!(model.busy(), "still on its way, as far as anyone knows");
+    let later = now + Duration::from_secs(5);
+    model.read(later).expect("asked again on the clock");
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Settling,
+        ),
+        later,
+    );
+    assert!(!model.op().unwrap().unanswered, "it answered");
+}

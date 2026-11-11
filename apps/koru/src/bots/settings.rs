@@ -666,22 +666,33 @@ pub(crate) const BOT_PENDING: &str = "bot_lifecycle_pending";
 /// name (it does not depend on `koru-ai-wire`). `bot_conversation_trashed`
 /// stays for a conversation in Trash under a live Bot.
 pub(crate) const BOT_TRASHED_BOT: &str = "bot_trashed";
+/// **An earlier pause, resume or access change of the Bot is still being
+/// delivered** to what runs it (`BotError::Settling`): the owner refuses a
+/// pause, resume, settings save, access change, Start or lifecycle capture
+/// until it is acknowledged, and offers it again at once, so a retry soon
+/// succeeds. Retryable; never a reused request id.
+pub(crate) const BOT_OPERATION_PENDING: &str = "bot_operation_pending";
 
 /// **A refusal's sentence, by its stable code** (`BotError::code`, and the
 /// lifecycle's `bot_archived`, `bot_conversation_trashed` and
 /// `bot_lifecycle_pending`). The server's message is English developer
 /// text and is never shown; a code this build does not know reads as a
 /// change that was not applied.
+///
+/// `workspace_unavailable` is `BotError::Unavailable`, which the owner
+/// answers when the agent or Koru Agent that runs the Bot is not ready
+/// (no delegate port, an agent not started): never the workspace itself.
 pub(crate) fn refusal_words(code: &str) -> Words {
     match code {
         BOT_ARCHIVED => Words::BotsErrArchived,
         BOT_TRASHED => Words::BotsErrTrashed,
         BOT_TRASHED_BOT => Words::BotsErrBotTrashed,
         BOT_PENDING => Words::BotsErrPending,
+        BOT_OPERATION_PENDING => Words::BotsErrOperationPending,
         "invalid_request" => Words::BotsErrInvalid,
         "not_found" => Words::BotsErrNotFound,
         "wrong_owner" => Words::BotsErrWrongOwner,
-        "workspace_unavailable" => Words::BotsErrWorkspaceUnavailable,
+        "workspace_unavailable" => Words::BotsErrNotReady,
         "request_conflict" => Words::BotsErrRequestConflict,
         "revision_conflict" => Words::BotsChangedElsewhere,
         "folder_locked" => Words::BotsErrFolderLocked,

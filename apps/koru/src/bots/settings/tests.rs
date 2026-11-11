@@ -302,6 +302,7 @@ fn refused_codes_map_to_sentences() {
         BotError::RevisionConflict,
         BotError::FolderLocked,
         BotError::Storage,
+        BotError::Settling,
     ];
     let mut seen = Vec::new();
     for error in errors {
@@ -325,6 +326,21 @@ fn refused_codes_map_to_sentences() {
         Words::BotsChangedElsewhere
     );
     assert_eq!(refusal_words("bot_something_new"), Words::BotsErrNotApplied);
+    assert_eq!(refusal_words(""), Words::BotsErrNotApplied);
+    // `BotError::Unavailable` is what runs the Bot not being ready, never
+    // the workspace; `Settling` is retryable and says so.
+    assert_eq!(
+        refusal_words(BotError::Unavailable.code()),
+        Words::BotsErrNotReady
+    );
+    assert_eq!(
+        refusal_words(BotError::Settling.code()),
+        Words::BotsErrOperationPending
+    );
+    assert!(
+        koru_i18n::t(koru_i18n::Lang::En, Words::BotsErrOperationPending)
+            .contains("Try again in a moment")
+    );
 
     let (mut settings, _) = known();
     settings.edit_name("Other");

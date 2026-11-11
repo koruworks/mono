@@ -99,7 +99,11 @@ impl BotView {
         let Some(facts) = &self.facts else {
             return Vec::new();
         };
-        if facts.trashed || self.lifecycle.busy() || self.settings.bot().is_none() {
+        if facts.trashed
+            || self.lifecycle.busy()
+            || self.lifecycle_awaits_read
+            || self.settings.bot().is_none()
+        {
             return Vec::new();
         }
         if facts.archived {
@@ -370,16 +374,43 @@ impl BotView {
                 // Its revision is the Trash filter's to say.
                 self.trash_read_owed = true;
                 self.conversations.offer_trash(false);
+                // Its conversation is refused now: let go of it.
+                self.release_conversation();
                 self.keep_keyboard_on(RESTORE);
             }
-            Outcome::Restored | Outcome::Unarchived | Outcome::Archived => {
-                if let Some(facts) = &mut self.facts
-                    && !matches!(outcome, Outcome::Archived)
-                {
+            // **Archived**: offered as the owner holds it from now —
+            // Unarchive and Move to Trash, and no conversation's Trash,
+            // which the owner refuses for an archived Bot.
+            Outcome::Archived => {
+                if let Some(facts) = &mut self.facts {
+                    facts.archived = true;
+                }
+                self.conversations.offer_trash(false);
+                self.conversations.owe_read();
+                self.keep_keyboard_on(ACTIONS_BUTTON);
+            }
+            // **Unarchived**: active again, and paused.
+            Outcome::Unarchived => {
+                if let Some(facts) = &mut self.facts {
                     facts.trashed = false;
                     facts.archived = false;
                 }
                 self.trashed_bot = None;
+                self.conversations.offer_trash(true);
+                self.conversations.owe_read();
+                self.keep_keyboard_on(ACTIONS_BUTTON);
+            }
+            // **Restored**: back as it was before its Trash, active or
+            // archived — archived, trashed, restored comes back archived —
+            // which only the Bot's read says. Out of the Trash now; nothing
+            // else is offered until that read answers.
+            Outcome::Restored => {
+                if let Some(facts) = &mut self.facts {
+                    facts.trashed = false;
+                }
+                self.trashed_bot = None;
+                self.lifecycle_awaits_read = true;
+                self.conversations.offer_trash(false);
                 self.conversations.owe_read();
                 self.keep_keyboard_on(ACTIONS_BUTTON);
             }
@@ -442,6 +473,8 @@ impl BotView {
                     facts.paused = bot.paused;
                 }
                 self.conversations.offer_trash(false);
+                // Trashed, perhaps elsewhere: its conversation is refused.
+                self.release_conversation();
                 self.trashed_bot = Some(Box::new(bot));
                 self.load = super::Load::Ready;
             }
@@ -535,6 +568,9 @@ impl BotView {
         if let Some(op) = self.lifecycle.op() {
             return match op.stage {
                 Stage::Parked => fact(parked_words(op.kind)),
+                // Koru AI did not answer the last ask: said, rather than
+                // that the Bot's work is finishing. Still asked on the clock.
+                Stage::Moving if op.unanswered => fact(Words::BotsLifecycleUnanswered),
                 Stage::Moving => fact(match op.kind {
                     koru_ai_core::bots::BotLifecycleKind::Restore
                     | koru_ai_core::bots::BotLifecycleKind::RestoreChat => Words::BotsRestoring,

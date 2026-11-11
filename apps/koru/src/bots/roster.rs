@@ -654,7 +654,7 @@ impl BotsRoster {
             Ok(_) => self.unarchive_refused = Some(Words::BotsErrNotApplied),
             Err(Failure::Unreachable) => self.unarchive_refused = Some(Words::BotsErrUnreachable),
             Err(Failure::Refused(code)) => {
-                self.unarchive_refused = Some(super::lifecycle::refusal_words(&code));
+                self.unarchive_refused = Some(super::lifecycle::restore_refusal_words(&code));
             }
         }
         // Either way the lists are the owner's to say again.
