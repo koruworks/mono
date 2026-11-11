@@ -301,6 +301,10 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
             | BotCommand::ReadLifecycleOperation { .. }
             | BotCommand::List { .. }
             | BotCommand::ListLifecycle { .. }
+            // P1.8 reads: an archived Bot's conversations stay listable;
+            // activity is read for active Bots only by its own query.
+            | BotCommand::ListBotChats { .. }
+            | BotCommand::ListActivity { .. }
     )
 }
 
@@ -386,10 +390,7 @@ impl WorkerState {
     /// operation, if any, so a client that lost an operation's id can find
     /// it. Owner and current workspace authority come first.
     fn read_bot(&self, context: &CommandContext, id: BotId) -> ApiResult<BotResponse> {
-        let (mut bot, lifecycle) = self.owned_bot(context, id)?;
-        if lifecycle == BotLifecycle::Trashed {
-            return Err(not_found());
-        }
+        let mut bot = self.readable_owned_bot(context, id)?;
         bot.open_operation = self
             .repository
             .bot_open_lifecycle(id)
@@ -397,14 +398,41 @@ impl WorkerState {
         Ok(BotResponse::Bot { bot })
     }
 
+    /// A Bot whose history its owner may read: active or archived, after the
+    /// trusted owner and the current authority over its home workspace are
+    /// checked. A trashed Bot is `not_found` once the owner is known (its
+    /// workspace is not inspected for it), as a missing one is.
+    pub(super) fn readable_owned_bot(&self, context: &CommandContext, id: BotId) -> ApiResult<Bot> {
+        let (bot, lifecycle) = self.bot_of_owner(context, id)?;
+        if lifecycle == BotLifecycle::Trashed {
+            return Err(not_found());
+        }
+        self.bot_workspace_reachable(context, &bot)?;
+        Ok(bot)
+    }
+
     /// A Bot in any lifecycle, after the trusted owner and the current
     /// authority over its home workspace are checked.
     fn owned_bot(&self, context: &CommandContext, id: BotId) -> ApiResult<(Bot, BotLifecycle)> {
-        let owner = prepared_owner(context)?;
-        let proof = context
+        let (bot, lifecycle) = self.bot_of_owner(context, id)?;
+        self.bot_workspace_reachable(context, &bot)?;
+        Ok((bot, lifecycle))
+    }
+
+    fn bot_workspace_reachable(&self, context: &CommandContext, bot: &Bot) -> ApiResult<()> {
+        context
             .prepared
             .as_ref()
-            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+            .ok_or_else(|| bot_failure(BotError::Unavailable))?
+            .authority
+            .workspace(bot.home_workspace)
+            .map_err(bot_failure)?;
+        Ok(())
+    }
+
+    /// A Bot in any lifecycle whose fixed owner is the trusted caller.
+    fn bot_of_owner(&self, context: &CommandContext, id: BotId) -> ApiResult<(Bot, BotLifecycle)> {
+        let owner = prepared_owner(context)?;
         let (bot, lifecycle) = self
             .repository
             .bot_any_lifecycle(id)
@@ -417,10 +445,6 @@ impl WorkerState {
         {
             return Err(bot_failure(BotError::Forbidden));
         }
-        proof
-            .authority
-            .workspace(bot.home_workspace)
-            .map_err(bot_failure)?;
         Ok((bot, lifecycle))
     }
 

@@ -48,8 +48,8 @@ impl WorkerState {
 
     /// The owner's view of one Bot's conversations. An archived Bot's stay
     /// listable by name (its history is kept in the Archived filter, as
-    /// `provable_bot` admits for reads); a trashed Bot is refused as `read`
-    /// refuses it. A Bot of another owner or device, or one out of the
+    /// `bot_read_command` admits); a trashed Bot is `not_found`, as `read`
+    /// answers it. A Bot of another owner or device, or one out of the
     /// caller's current reach, reads as refused before any conversation is
     /// looked at.
     fn list_bot_chats(
@@ -60,20 +60,7 @@ impl WorkerState {
         limit: u16,
     ) -> ApiResult<BotResponse> {
         authorize(context, AiScope::ManageBots)?;
-        let proof = context
-            .prepared
-            .as_ref()
-            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
-        let bot =
-            match super::lifecycle::readable_bot(&self.repository, bot_id).map_err(bot_failure)? {
-                Some(bot) => bot,
-                None => self
-                    .repository
-                    .bot(bot_id)
-                    .map_err(bot_failure)?
-                    .ok_or_else(not_found)?,
-            };
-        validate_owner(&proof.authority, &bot)?;
+        let bot = self.readable_owned_bot(context, bot_id)?;
         let page = self
             .repository
             .bot_chat_page(bot.id, cursor, limit)

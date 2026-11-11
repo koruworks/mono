@@ -155,11 +155,6 @@ impl WorkerCommand {
                 | Self::ExportChat { .. }
                 | Self::Usage { .. }
                 | Self::ResolveAttachments { .. }
-                // An archived Bot's conversations stay listable by name.
-                | Self::Bots {
-                    request: BotCommand::ListBotChats { .. },
-                    ..
-                }
         )
     }
 }

@@ -26,6 +26,8 @@ impl koru_delegate_api::bots::BotDelegatePort for ObservedBotPort {
             BotCommand::Interrupt { .. } => "interrupt",
             BotCommand::IngestAttachment { .. } => "ingest",
             BotCommand::ListAttachments { .. } => "list-attachments",
+            // IPC 12: the per-Bot read lifecycle settles from.
+            BotCommand::UnsettledWork { .. } => "unsettled-work",
             _ => "owner-command",
         };
         let observed_fence = match &command {
@@ -50,6 +52,12 @@ impl koru_delegate_api::bots::BotDelegatePort for ObservedBotPort {
                 admission.fence.is_some()
             ),
             Ok(BotReply::Turn { .. }) => eprintln!("native owner {phase}: turn bound"),
+            Ok(BotReply::UnsettledWork { work }) => eprintln!(
+                "native owner {phase}: admissions={} held={} more={}",
+                work.admissions.len(),
+                work.admissions.iter().filter(|a| a.held).count(),
+                work.more
+            ),
             Ok(BotReply::Attachment { attachment }) => eprintln!(
                 "native owner {phase}: status={:?} delivery={:?}",
                 attachment.status, attachment.delivery_mode

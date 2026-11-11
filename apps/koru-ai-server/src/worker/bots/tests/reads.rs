@@ -196,6 +196,9 @@ fn a_trashed_bots_conversations_are_refused_as_read_refuses_it() {
         .bots(context(true), BotCommand::Read { bot_id: bot.id })
         .unwrap_err()
         .code;
+    // P1.7 S4b: a trashed Bot reads as missing to its owner (it was
+    // `wrong_owner`, because its workspace is not inspected for it).
+    assert_eq!(read, "not_found");
     assert_eq!(
         client
             .bots(context(true), list(bot.id, None, 10))
