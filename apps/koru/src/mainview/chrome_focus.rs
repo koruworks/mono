@@ -7,7 +7,11 @@
 //! over what is *standing* rather than a chord per surface: "a stop that is
 //! not there is never a dead press". The stops here follow that rule:
 //! the lane is always there (its toggle is, in the pane or in the caption's
-//! chain), and the rail is reachable only while the pane is open.
+//! chain), and the rail is reachable only while the pane is open. Last, the
+//! header of the tab in front, while it has a control of its own — today a
+//! Bot tab's *Settings* (Bots P1.8): a tab answers its own keys, so this stop
+//! hands it the keyboard (`BotView::focus_header`) and takes it back when
+//! `F6` moves on or a press lands outside it.
 //!
 //! **One key contract**, written in
 //! `docs/features/koruui/CONTRIBUTING.md`: ← and → move between the stop's
@@ -26,6 +30,7 @@
 
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
+use super::tab::TabView;
 use super::{MainView, WorkspaceDoc};
 use crate::panes::explore::ExploreChromeFocus;
 
@@ -51,13 +56,20 @@ pub(super) enum LaneControl {
 }
 
 /// The rotation's order, as the eye reads the chrome: the reminder pill and
-/// the bell (when reminders are shown), then the lane and the visible rail.
+/// the bell (when reminders are shown), then the lane and the visible rail,
+/// then the header of the tab in front when it has controls of its own.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Stop {
     Pill,
     Bell,
     Lane,
     Apps,
+    /// **The tab's header** (Bots P1.8): a Bot tab's *Settings*, which
+    /// otherwise only the pointer and an assistive technology reach, because
+    /// with the settings closed every key is the conversation's. The tab
+    /// keeps its own keyboard state and draws its own ring; this stop only
+    /// hands the keyboard to it and takes it back.
+    Tab,
 }
 
 impl MainView {
@@ -73,6 +85,9 @@ impl MainView {
         if self.sidebar.is_open() {
             out.push(Stop::Apps);
         }
+        if self.tab_header_stands() {
+            out.push(Stop::Tab);
+        }
         out
     }
 
@@ -83,10 +98,33 @@ impl MainView {
         if self.reminder_shell.bell_is_focused() {
             return Some(Stop::Bell);
         }
-        self.chrome_focus.map(|stop| match stop {
-            ChromeStop::Lane(_) => Stop::Lane,
-            ChromeStop::Apps(_) => Stop::Apps,
-        })
+        if let Some(stop) = self.chrome_focus {
+            return Some(match stop {
+                ChromeStop::Lane(_) => Stop::Lane,
+                ChromeStop::Apps(_) => Stop::Apps,
+            });
+        }
+        self.tab_holds_keyboard().then_some(Stop::Tab)
+    }
+
+    /// The tab in front has a header control the rotation can land on.
+    fn tab_header_stands(&self) -> bool {
+        matches!(&self.tabs().active_tab().view, TabView::Bot(view) if view.header_stop())
+    }
+
+    /// One of the front tab's own header or settings controls has the
+    /// keyboard — what [`Stop::Tab`] is, read from the tab's own state.
+    pub(super) fn tab_holds_keyboard(&self) -> bool {
+        matches!(&self.tabs().active_tab().view, TabView::Bot(view) if view.holds_keyboard())
+    }
+
+    /// Take the keyboard back from the front tab's own controls. `true` when
+    /// they had it.
+    pub(super) fn release_tab_keyboard(&mut self) -> bool {
+        match self.active_view() {
+            TabView::Bot(view) => view.release_keyboard(),
+            _ => false,
+        }
     }
 
     /// `F6`: move the keyboard to the next standing stop. Returns whether
@@ -106,6 +144,7 @@ impl MainView {
         let mut moved = self.reminder_shell.blur_bell();
         moved |= self.reminder_creation.blur_pill();
         moved |= self.chrome_focus.take().is_some();
+        moved |= self.release_tab_keyboard();
         match next {
             Stop::Pill => moved |= self.reminder_creation.focus_first_failed_pill(),
             Stop::Bell => moved |= self.reminder_shell.focus_bell(),
@@ -127,6 +166,15 @@ impl MainView {
                     .unwrap_or(0);
                 self.chrome_focus = Some(ChromeStop::Apps(i));
                 moved = true;
+            }
+            Stop::Tab => {
+                // The keys go to the tab, which answers them from its own
+                // focus: nothing in front of it may claim them first.
+                self.ai_focused = false;
+                self.explore.clear_focus();
+                if let TabView::Bot(view) = self.active_view() {
+                    moved |= view.focus_header();
+                }
             }
         }
         super::chrome_debug::chrome_debug!(

@@ -368,6 +368,8 @@ pub enum Key {
     EntityScopeCurrent,
     EntitySearchingIn,
     EntitySearchAllHint,
+    /// The standalone link picker's own query field while it is empty (`EntityPicker::for_link`: a Tasks page's *Add existing…*, a Bot's *Add a page…*). Non-English columns machine-written, awaiting a native read (Bots P1.8).
+    EntityLinkHint,
     AiComposerFilesAndFolders,
     AiComposerUploadFiles,
     AiComposerAddFolder,
@@ -3278,7 +3280,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2268] = [
+    pub const ALL: [Key; 2269] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3538,6 +3540,7 @@ impl Key {
         Key::EntityScopeCurrent,
         Key::EntitySearchingIn,
         Key::EntitySearchAllHint,
+        Key::EntityLinkHint,
         Key::AiComposerFilesAndFolders,
         Key::AiComposerUploadFiles,
         Key::AiComposerAddFolder,
@@ -8410,6 +8413,7 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::EntityScopeCurrent, en: "this workspace", es: "este espacio", pt_br: "este espaço de trabalho", de: "diesem Arbeitsbereich", fr: "cet espace de travail", ar: "مساحة العمل هذه", zh_hans: "此工作区", ja: "このワークスペース" },
     Row { key: Key::EntitySearchingIn, en: "Searching in {}", es: "Buscando en {}", pt_br: "Pesquisando em {}", de: "Suche in {}", fr: "Recherche dans {}", ar: "البحث في {}", zh_hans: "正在搜索{}", ja: "{}を検索中" },
     Row { key: Key::EntitySearchAllHint, en: "{} for all", es: "{} para todos", pt_br: "{} para todos", de: "{} für alle", fr: "{} pour tout", ar: "{} للكل", zh_hans: "{} 搜索全部", ja: "{}ですべて検索" },
+    Row { key: Key::EntityLinkHint, en: "Add a document or file…", es: "Añadir un documento o archivo…", pt_br: "Adicionar um documento ou arquivo…", de: "Dokument oder Datei hinzufügen…", fr: "Ajouter un document ou un fichier…", ar: "إضافة مستند أو ملف…", zh_hans: "添加文档或文件…", ja: "ドキュメントやファイルを追加…" },
     Row { key: Key::AiComposerFilesAndFolders, en: "Files and folders", es: "Archivos y carpetas", pt_br: "Arquivos e pastas", de: "Dateien und Ordner", fr: "Fichiers et dossiers", ar: "الملفات والمجلدات", zh_hans: "文件和文件夹", ja: "ファイルとフォルダー" },
     Row { key: Key::AiComposerUploadFiles, en: "Upload or add files", es: "Subir o añadir archivos", pt_br: "Enviar ou adicionar arquivos", de: "Dateien hochladen oder hinzufügen", fr: "Importer ou ajouter des fichiers", ar: "رفع الملفات أو إضافتها", zh_hans: "上传或添加文件", ja: "ファイルをアップロードまたは追加" },
     Row { key: Key::AiComposerAddFolder, en: "Add folder", es: "Añadir carpeta", pt_br: "Adicionar pasta", de: "Ordner hinzufügen", fr: "Ajouter un dossier", ar: "إضافة مجلد", zh_hans: "添加文件夹", ja: "フォルダーを追加" },

@@ -551,3 +551,137 @@ fn a_bound_surface_boots_on_its_conversation() {
     );
     assert!(!surface.open_link(ChatId::new(), None), "no other chat");
 }
+
+/// A message of `chat`, failed or complete, with its origin.
+fn message(
+    chat: ChatId,
+    ordinal: u32,
+    role: koru_ai_core::ChatRole,
+    state: koru_ai_core::MessageState,
+    origin: Option<MessageId>,
+) -> koru_ai_core::Message {
+    koru_ai_core::Message {
+        id: MessageId::new(),
+        chat_id: chat,
+        ordinal,
+        role,
+        state,
+        markdown: String::new(),
+        origin_message_id: origin,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: Timestamp::from_millis(1),
+        completed_at: None,
+    }
+}
+
+/// A branch's transcript: a question and a failed reply copied from another
+/// chat (their origins are that chat's messages), then a new question and
+/// its failed reply, retried here once — the retry's origin is the failed
+/// reply it replaced, a message of this chat.
+struct Branch {
+    transcript: ChatTranscript,
+    copied_reply: MessageId,
+    own_reply: MessageId,
+    retried_reply: MessageId,
+}
+
+fn branch(chat: ChatId) -> Branch {
+    use koru_ai_core::{ChatRole, MessageState};
+    let mut transcript = chat_on(chat, codex());
+    let copied_question = message(
+        chat,
+        0,
+        ChatRole::User,
+        MessageState::Complete,
+        Some(MessageId::new()),
+    );
+    let copied_reply = message(
+        chat,
+        1,
+        ChatRole::Assistant,
+        MessageState::Failed,
+        Some(MessageId::new()),
+    );
+    let question = message(chat, 2, ChatRole::User, MessageState::Complete, None);
+    let own_reply = message(chat, 3, ChatRole::Assistant, MessageState::Failed, None);
+    let retried_reply = message(
+        chat,
+        4,
+        ChatRole::Assistant,
+        MessageState::Failed,
+        Some(own_reply.id),
+    );
+    let (copied, own, retried) = (copied_reply.id, own_reply.id, retried_reply.id);
+    transcript.messages = vec![
+        copied_question,
+        copied_reply,
+        question,
+        own_reply,
+        retried_reply,
+    ];
+    Branch {
+        transcript,
+        copied_reply: copied,
+        own_reply: own,
+        retried_reply: retried,
+    }
+}
+
+/// **A Bot branch leaves Retry off a reply it copied** (QUESTIONS O34): the
+/// Bot owner retries from the attempt behind a reply, and a branch copies
+/// messages, not attempts, so that Retry could only answer not-found. The
+/// copy is told apart by where its origin points — another chat — not by
+/// having one: a reply this branch retried itself has an origin too, in this
+/// chat, and keeps its Retry, as does a failed reply with none. The command
+/// floor refuses the copied reply's Retry as well.
+#[test]
+fn an_owned_branch_offers_no_retry_on_a_copied_reply() {
+    let chat = ChatId::new();
+    let (mut surface, commands) = owned_surface(chat, WorkspaceId::new());
+    let branch = branch(chat);
+    surface.transcript = Some(branch.transcript.clone());
+    assert!(
+        !surface.offers_retry(branch.copied_reply),
+        "copied: no Retry"
+    );
+    assert!(surface.offers_retry(branch.own_reply));
+    assert!(
+        surface.offers_retry(branch.retried_reply),
+        "retried here: its origin is this chat's"
+    );
+    assert!(
+        surface.offers_retry(MessageId::new()),
+        "a reply not in the transcript yet is not a copy"
+    );
+
+    surface.perform_response_action(ResponseAction::Retry(branch.copied_reply));
+    assert!(drained(&commands).is_empty(), "nothing queued for the copy");
+    surface.perform_response_action(ResponseAction::Retry(branch.retried_reply));
+    let Some(Command::Retry(_, request)) = commands.try_recv().ok() else {
+        panic!("the branch's own reply is retried");
+    };
+    assert_eq!(request.message_id, branch.retried_reply);
+}
+
+/// **An ordinary surface is unchanged**: the same branch offers Retry on
+/// every failed reply, the copied one included, and queues it.
+#[test]
+fn an_ordinary_branch_still_offers_retry_on_a_copied_reply() {
+    let mut surface = ChatSurface::new();
+    let (reader, commands, _updates) = Reader::test_pair();
+    surface.reader = Some(reader);
+    let chat = ChatId::new();
+    let branch = branch(chat);
+    surface.transcript = Some(branch.transcript.clone());
+    for reply in [branch.copied_reply, branch.own_reply, branch.retried_reply] {
+        assert!(surface.offers_retry(reply));
+    }
+    surface.perform_response_action(ResponseAction::Retry(branch.copied_reply));
+    let Some(Command::Retry(_, request)) = commands.try_recv().ok() else {
+        panic!("an ordinary Retry is queued as before");
+    };
+    assert_eq!(request.message_id, branch.copied_reply);
+}

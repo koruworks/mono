@@ -8297,7 +8297,8 @@ impl ChatSurface {
                     } else if matches!(
                         message.state,
                         MessageState::Failed | MessageState::Interrupted
-                    ) {
+                    ) && message.id.is_some_and(|id| self.offers_retry(id))
+                    {
                         let rect = action_rect(card, 0);
                         IconButton::new(icons::REDO, rect)
                             .with_state(IconButtonState {
@@ -8506,7 +8507,8 @@ impl ChatSurface {
                 } else if matches!(
                     message.state,
                     MessageState::Failed | MessageState::Interrupted
-                ) && action_rect(card, 0).contains(x, y)
+                ) && self.offers_retry(message_id)
+                    && action_rect(card, 0).contains(x, y)
                 {
                     return Some(ResponseAction::Retry(message_id));
                 }
@@ -8701,7 +8703,8 @@ impl ChatSurface {
                 } else if matches!(
                     message.state,
                     MessageState::Failed | MessageState::Interrupted
-                ) {
+                ) && message.id.is_some_and(|id| self.offers_retry(id))
+                {
                     1
                 } else {
                     0

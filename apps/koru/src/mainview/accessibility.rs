@@ -372,6 +372,14 @@ impl MainView {
         {
             return Some(occurrence);
         }
+        // A Bot tab's own control — its header's *Settings* (`F6`'s tab
+        // stop) or one of its settings' — read from the focus its ring is
+        // drawn from.
+        if let TabView::Bot(view) = &self.tabs().active_tab().view
+            && let Some(key) = view.focus()
+        {
+            return Some(bot_occurrence(&cx, key));
+        }
         if let Some(query) = commands::focus(self, &cx) {
             return Some(query);
         }
@@ -981,13 +989,7 @@ fn bot_control_node(
     moved: &dyn Fn(Rect) -> Rect,
 ) -> SemanticNode {
     use crate::bots::view::ControlRole;
-    use koru_draw::el::Object;
-    use koru_workspace_host::accessibility::ControlPart;
-    let part = ControlPart::new(control.key.part);
-    let occurrence = match control.key.object {
-        Object::Model(id) => Occurrence::model(cx.window, cx.view, uuid::Uuid::from_u128(id), part),
-        _ => Occurrence::surface(cx.window, cx.view, crate::bots::view::SURFACE, part),
-    };
+    let occurrence = bot_occurrence(cx, control.key);
     let role = match control.role {
         ControlRole::Group => Role::Group,
         ControlRole::Button => Role::Button,
@@ -1022,6 +1024,18 @@ fn bot_control_node(
 
 /// The element a client's target names on a Bot tab: the inverse of
 /// [`bot_control_node`]'s occurrence.
+/// The occurrence a Bot tab's control is published under: a selected
+/// page's by its document, everything else by the tab's surface.
+fn bot_occurrence(cx: &Shell, key: koru_draw::el::Key) -> Occurrence {
+    use koru_draw::el::Object;
+    use koru_workspace_host::accessibility::ControlPart;
+    let part = ControlPart::new(key.part);
+    match key.object {
+        Object::Model(id) => Occurrence::model(cx.window, cx.view, uuid::Uuid::from_u128(id), part),
+        _ => Occurrence::surface(cx.window, cx.view, crate::bots::view::SURFACE, part),
+    }
+}
+
 fn bot_key(target: Occurrence) -> Option<koru_draw::el::Key> {
     use koru_workspace_host::accessibility::ObjectKey;
     let part = target.part.name();

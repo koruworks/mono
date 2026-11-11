@@ -231,6 +231,41 @@ impl ChatSurface {
         );
     }
 
+    /// **A failed reply a branch copied from another conversation** (QUESTIONS
+    /// O34): its `origin_message_id` names a message this chat does not hold.
+    /// An ordinary Retry also sets the origin — to the failed reply it
+    /// replaces, a message **of the same chat** (`koru_ai_core::reading_order`)
+    /// — so the origin alone says nothing; where it points does. The
+    /// transcript a surface holds is the whole chat (`read_chat` reads every
+    /// message, in order, with no window), so an origin it does not hold is
+    /// one in another chat, not one outside a loaded page.
+    ///
+    /// A message the transcript does not hold yet — a reply still arriving
+    /// live — is not a copy.
+    pub(crate) fn copied_from_elsewhere(&self, message: koru_ai_core::MessageId) -> bool {
+        let Some(transcript) = &self.transcript else {
+            return false;
+        };
+        let Some(origin) = transcript
+            .messages
+            .iter()
+            .find(|held| held.id == message)
+            .and_then(|held| held.origin_message_id)
+        else {
+            return false;
+        };
+        !transcript.messages.iter().any(|held| held.id == origin)
+    }
+
+    /// **Whether a failed reply offers Retry.** Always on an ordinary
+    /// surface. On an owned one, not on a reply a branch copied: the Bot
+    /// owner retries a reply from the attempt behind it, which a branch does
+    /// not copy, so that Retry could only answer not-found (O34). The person
+    /// sends the request again instead.
+    pub(crate) fn offers_retry(&self, message: koru_ai_core::MessageId) -> bool {
+        self.owned.is_none() || !self.copied_from_elsewhere(message)
+    }
+
     /// **Whether an owned surface will queue `command`.** The controls the
     /// owner refuses are absent already; this is the floor under them, so a
     /// host's own call or a path nobody drew cannot reach the service either.
@@ -258,6 +293,8 @@ impl ChatSurface {
             Command::UpdateToolPolicy(..) | Command::AddGrants(..) => offers.tool_access,
             // Another model of the owner's agent, never another agent.
             Command::UpdateModel(_, request) => request.model.provider == owned.provider,
+            // Never a Retry of a copied reply: it has no attempt to retry.
+            Command::Retry(_, request) => !self.copied_from_elsewhere(request.message_id),
             _ => true,
         }
     }

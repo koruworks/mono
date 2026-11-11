@@ -9906,6 +9906,17 @@ impl MainView {
         }
         // A press anywhere moves the keyboard off the chrome stop it was on.
         self.chrome_focus = None;
+        // ...and a press outside the tab in front off the tab's own header
+        // stop (`F6`'s `Stop::Tab`); inside it, the tab decides.
+        if self.tab_holds_keyboard()
+            && !self
+                .panes
+                .view_rect_for(self.content(), self.panes.focused_path())
+                .unwrap_or_else(|| self.content())
+                .contains(x, y)
+        {
+            self.release_tab_keyboard();
+        }
         // Keyboard focus also decides which surface receives the matching
         // release. Opening the AI pane gives it focus, but a later press in
         // Explore used to leave that bit set: Explore seeded a latent row drag

@@ -712,18 +712,25 @@ impl BotView {
     }
 
     /// Open or close the region. Opening it before the tab holds the Bot as
-    /// the owner does asks for it; closing it gives the keyboard back to the
-    /// conversation.
+    /// the owner does asks for it. **Closing it gives the keyboard back to
+    /// where it came from**: to *Settings* when the keyboard opened the
+    /// region from there (`F6`, then Enter), and to the conversation
+    /// otherwise — a pointer's press opened it, and the keyboard was the
+    /// conversation's. (Opening always puts the keyboard on *Settings*, so
+    /// where it is at the close says nothing about where it came from.)
     pub(crate) fn set_settings_open(&mut self, open: bool) {
+        let from_header = self.focus == Some(SETTINGS_BUTTON);
         self.settings_open = open;
         if open {
             if self.settings.bot().is_none() {
                 self.settings.owe_read();
             }
             self.sync_name_field();
+            self.settings_return = from_header;
             self.focus = Some(SETTINGS_BUTTON);
         } else {
-            self.focus = None;
+            let back = std::mem::take(&mut self.settings_return);
+            self.focus = back.then_some(SETTINGS_BUTTON);
             self.hot = None;
             self.picker = None;
             if let Some(input) = self.name_field.borrow().as_ref() {

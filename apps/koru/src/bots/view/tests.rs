@@ -747,3 +747,112 @@ fn selected_pages_are_added_through_the_picker_and_removed_by_their_row() {
     assert!(f.view.settings().pages_shown().is_empty());
     assert!(f.commands.try_recv().is_err(), "nothing sent before Save");
 }
+
+// ------------------------------------------------- keyboard reach and words
+
+/// A key the tab is given, as the window gives it.
+fn key(view: &mut BotView, key: WinitKey, text: Option<&str>) -> bool {
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    View::key(view, &mut ws, &key, text, ModifiersState::empty())
+}
+
+fn named(named: winit::keyboard::NamedKey) -> WinitKey {
+    WinitKey::Named(named)
+}
+
+/// **`F6`'s tab stop reaches *Settings*, and closing the settings gives the
+/// keyboard back where it came from.** Landed on, the header's *Settings*
+/// has the keyboard; Enter opens the settings on it; Escape closes them
+/// and the keyboard is on *Settings* again; a second Escape gives it to
+/// the conversation. Opened by the pointer instead, Escape gives the
+/// keyboard straight back to the conversation, where it was.
+#[test]
+fn the_header_stop_opens_the_settings_and_closing_returns_the_keyboard() {
+    use winit::keyboard::NamedKey;
+    let mut f = Fixture::opened(unpaused());
+    f.view.set_settings_open(false);
+    assert_eq!(f.view.focus(), None, "the conversation has the keyboard");
+    assert!(f.view.header_stop());
+    assert!(!f.view.holds_keyboard());
+
+    assert!(f.view.focus_header());
+    assert_eq!(f.view.focus(), Some(SETTINGS_BUTTON));
+    assert!(f.view.holds_keyboard());
+    assert!(key(&mut f.view, named(NamedKey::Enter), None));
+    assert!(f.view.settings_open, "Enter opened the settings");
+    assert_eq!(f.view.focus(), Some(SETTINGS_BUTTON));
+    assert!(key(&mut f.view, named(NamedKey::Tab), None));
+    assert_eq!(f.view.focus(), Some(NAME_FIELD), "into the region");
+    assert!(key(&mut f.view, named(NamedKey::Escape), None));
+    assert!(!f.view.settings_open);
+    assert_eq!(
+        f.view.focus(),
+        Some(SETTINGS_BUTTON),
+        "back on the control that opened them"
+    );
+    assert!(key(&mut f.view, named(NamedKey::Escape), None));
+    assert_eq!(f.view.focus(), None, "then the conversation");
+
+    // The pointer's way: the keyboard was the conversation's.
+    assert!(f.press(SETTINGS_BUTTON));
+    assert!(f.view.settings_open);
+    assert!(key(&mut f.view, named(NamedKey::Escape), None));
+    assert!(!f.view.settings_open);
+    assert_eq!(f.view.focus(), None, "straight back to the conversation");
+
+    // Released by the window (F6 moved on, or a press elsewhere).
+    assert!(f.view.focus_header());
+    assert!(f.view.release_keyboard());
+    assert_eq!(f.view.focus(), None);
+    assert!(!f.view.release_keyboard(), "nothing left to release");
+}
+
+/// **No header stop before the tab knows its Bot**: there is no *Settings*
+/// to land on, so the rotation skips the tab rather than landing nowhere.
+#[test]
+fn a_tab_that_does_not_know_its_bot_has_no_header_stop() {
+    let mut f = fixture();
+    assert!(!f.view.header_stop());
+    assert!(!f.view.focus_header());
+    assert_eq!(f.view.focus(), None);
+}
+
+/// **A Bot's name in any of the eight languages is saved as typed.** Text
+/// that arrives with a key — an Arabic or accented layout's letters — is
+/// kept byte for byte by the name field, so the owner is sent exactly that
+/// name. (Composition through an input method is not delivered to the main
+/// window at all; see the Bots design notes §11.)
+#[test]
+fn a_name_typed_in_any_script_is_saved_as_typed() {
+    use winit::keyboard::NamedKey;
+    for name in [
+        "Investigación",
+        "Pesquisa",
+        "Recherche",
+        "Prüfer",
+        "باحث المصادر",
+        "资料研究员",
+        "資料リサーチャー",
+        "Scout مختلط 混合",
+    ] {
+        let mut f = Fixture::opened(unpaused());
+        while f.view.focus() != Some(NAME_FIELD) {
+            assert!(key(&mut f.view, named(NamedKey::Tab), None));
+        }
+        let input = f.view.name_input();
+        crate::input_engine::with(|engine| input.borrow_mut().select_all(engine));
+        assert!(key(
+            &mut f.view,
+            WinitKey::Character(name.into()),
+            Some(name)
+        ));
+        assert_eq!(f.view.settings().name_shown(), name);
+        assert!(key(&mut f.view, named(NamedKey::Enter), None));
+        let (_, sent) = f.wrote();
+        let BotCommand::Update { config, .. } = sent else {
+            panic!("the name is saved through Update");
+        };
+        assert_eq!(config.name, name, "byte for byte");
+    }
+}

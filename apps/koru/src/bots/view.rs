@@ -210,6 +210,9 @@ pub(crate) struct BotView {
     /// The control the keyboard is on: the header's *Settings*, or one of
     /// the region's. `None` gives the keyboard to the conversation.
     focus: Option<Key>,
+    /// The keyboard opened the settings from *Settings*: closing them gives
+    /// it back there rather than to the conversation.
+    settings_return: bool,
     /// The control under the pointer, and the access segment it is over.
     hot: Option<Key>,
     hot_segment: Option<usize>,
@@ -255,6 +258,7 @@ impl BotView {
             settings: Box::default(),
             settings_open: false,
             focus: None,
+            settings_return: false,
             hot: None,
             hot_segment: None,
             pressed: None,
@@ -749,6 +753,85 @@ impl BotView {
         rev.str(self.home_name.as_deref().unwrap_or(""))
             .f32(self.size.0)
             .f32(self.size.1);
+        // The controls and the keyboard's place among them: opening the
+        // settings, an edit, a pending change or a focus move each change
+        // what is published. Asked only while a client is attached.
+        rev.bool(self.settings_open);
+        match self.focus {
+            Some(key) => {
+                rev.byte(1).str(key.part);
+                if let koru_draw::el::Object::Model(id) = key.object {
+                    rev.u64(id as u64).u64((id >> 64) as u64);
+                }
+            }
+            None => {
+                rev.byte(0);
+            }
+        }
+        fn fold(rev: &mut koru_workspace_host::accessibility::Revision, controls: &[Control]) {
+            for control in controls {
+                rev.str(control.key.part)
+                    .str(&control.label)
+                    .str(control.value.as_deref().unwrap_or(""))
+                    .byte(match control.selected {
+                        None => 0,
+                        Some(false) => 1,
+                        Some(true) => 2,
+                    })
+                    .bool(control.disabled)
+                    .u64(control.children.len() as u64);
+                fold(rev, &control.children);
+            }
+        }
+        fold(rev, &self.controls());
+    }
+
+    // ------------------------------------------------- the window's F6
+
+    /// Whether the settings are open in the conversation's place.
+    pub(crate) fn settings_shown(&self) -> bool {
+        self.settings_open
+    }
+
+    /// Whether the header has a control the window's `F6` rotation can land
+    /// on: *Settings*, which the header draws once it knows its Bot.
+    pub(crate) fn header_stop(&self) -> bool {
+        self.facts.is_some()
+    }
+
+    /// Whether one of the tab's own controls has the keyboard — *Settings*
+    /// or one of the region's — rather than the conversation.
+    pub(crate) fn holds_keyboard(&self) -> bool {
+        self.focus.is_some()
+    }
+
+    /// **`F6` landed on this tab**: the keyboard goes to the header's
+    /// *Settings*, where Enter or Space opens the settings and Escape gives
+    /// it back to the conversation. `false` when the header has no control.
+    pub(crate) fn focus_header(&mut self) -> bool {
+        if !self.header_stop() {
+            return false;
+        }
+        self.blur_name_field();
+        self.focus = Some(region::SETTINGS_BUTTON);
+        true
+    }
+
+    /// **`F6` moved on, or a press landed outside the tab**: none of the
+    /// tab's controls has the keyboard any more. The settings stay as they
+    /// were. `true` when one had it.
+    pub(crate) fn release_keyboard(&mut self) -> bool {
+        let had = self.focus.take().is_some();
+        if had {
+            self.blur_name_field();
+        }
+        had
+    }
+
+    fn blur_name_field(&self) {
+        if let Some(input) = self.name_field.borrow().as_ref() {
+            crate::input_engine::with(|engine| input.borrow_mut().blur(engine));
+        }
     }
 }
 

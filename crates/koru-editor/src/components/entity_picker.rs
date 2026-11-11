@@ -246,7 +246,10 @@ impl EntityPicker {
         };
         let mut picker = Self::new(trigger);
         picker.link_mode = true;
-        picker.own_hint = "Add a document or file\u{2026}";
+        // In the process's language: the field keeps its `&'static str`,
+        // so every host reads it as before (English: *Add a document or
+        // file…*).
+        picker.own_hint = koru_i18n::t(koru_i18n::current(), koru_i18n::Key::EntityLinkHint);
         picker.own_query = Some(TextField::new(engine, koru_draw::theme::role::ui()));
         picker
     }
@@ -911,6 +914,26 @@ mod tests {
             picker.click(20.0, footer_y, koru_draw::theme::PANEL_W),
             Outcome::Consumed
         ));
+    }
+
+    /// **The link picker's hint is in the person's language**: English
+    /// reads as it always did, Japanese reads Japanese, and no language
+    /// leaves it blank.
+    #[test]
+    fn the_link_pickers_hint_is_in_the_persons_language() {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let english = koru_i18n::with_current(koru_i18n::Lang::En, || {
+            EntityPicker::for_link(&mut engine).own_hint
+        });
+        assert_eq!(english, "Add a document or file\u{2026}");
+        for lang in koru_i18n::Lang::ALL {
+            let hint =
+                koru_i18n::with_current(lang, || EntityPicker::for_link(&mut engine).own_hint);
+            assert!(!hint.trim().is_empty(), "{lang:?}");
+            if lang != koru_i18n::Lang::En {
+                assert_ne!(hint, english, "{lang:?} is translated");
+            }
+        }
     }
 
     /// The standalone link picker (a Tasks page's *Add existing…*): its own

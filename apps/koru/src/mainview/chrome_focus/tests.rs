@@ -369,3 +369,88 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
         v.explore.close_popover();
     });
 }
+
+/// **`F6` reaches a Bot tab's *Settings***, the one control its header has,
+/// which no key reaches otherwise while the conversation has the keyboard
+/// (Bots P1.8). The tab's header is the rotation's last stop; landing there
+/// gives the tab the keyboard on *Settings*, Enter opens the settings and
+/// Escape closes them with the keyboard back on *Settings*. `F6` moves on
+/// and takes it from the tab; a press outside the tab takes it too. Every
+/// other tab has no such stop.
+#[test]
+fn f6_reaches_a_bot_tabs_settings_and_gives_the_keyboard_back() {
+    use crate::bots::view::region::SETTINGS_BUTTON;
+    use crate::mainview::tab::TabView;
+    let features = koru_features::Features {
+        agents: true,
+        ai: true,
+        ..koru_features::Features::ALL_OFF
+    };
+    koru_features::testing::with(features, || {
+        let (mut v, mut workspace) = container();
+        let rotation_without_a_bot_tab = {
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                press(&mut v, &mut workspace.ws, NamedKey::F6);
+                seen.push(v.current_stop());
+            }
+            seen
+        };
+        assert!(
+            !rotation_without_a_bot_tab.contains(&Some(Stop::Tab)),
+            "a document tab has no header stop"
+        );
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
+
+        let bot = crate::bots::roster::RosterBot::from(crate::bots::tests::bot(
+            koru_ai_core::bots::BotId::mint(),
+            koru_store_core::ids::WorkspaceId::new(),
+            "Scout",
+            false,
+        ));
+        assert!(v.open_bot_tab(bot));
+        let bot_focus = |v: &MainView| match &v.tabs().active_tab().view {
+            TabView::Bot(view) => view.focus(),
+            _ => panic!("the Bot tab is in front"),
+        };
+        let settings_shown = |v: &MainView| match &v.tabs().active_tab().view {
+            TabView::Bot(view) => view.settings_shown(),
+            _ => panic!("the Bot tab is in front"),
+        };
+        // The pane is shut: the lane, then the tab.
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Lane(LaneControl::Toggle)));
+        assert_eq!(bot_focus(&v), None);
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
+        assert_eq!(v.chrome_focus, None, "the sidebar's stop is left");
+        assert_eq!(bot_focus(&v), Some(SETTINGS_BUTTON), "on Settings");
+        assert_eq!(v.current_stop(), Some(Stop::Tab));
+
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
+        assert!(settings_shown(&v), "Enter opened the settings");
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
+        assert!(!settings_shown(&v));
+        assert_eq!(
+            bot_focus(&v),
+            Some(SETTINGS_BUTTON),
+            "the keyboard came back to Settings"
+        );
+
+        // F6 moves on, round to the lane, and the tab lets go.
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
+        assert_eq!(v.chrome_focus, Some(ChromeStop::Lane(LaneControl::Toggle)));
+        assert_eq!(bot_focus(&v), None);
+
+        // Back on the tab, then a press outside it.
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
+        assert_eq!(bot_focus(&v), Some(SETTINGS_BUTTON));
+        let lane = v.lane_controls().toggle;
+        v.mouse_down(
+            &mut workspace.ws,
+            lane.x + lane.w * 0.5,
+            lane.y + lane.h * 0.5,
+            false,
+        );
+        assert_eq!(bot_focus(&v), None, "a press outside the tab clears it");
+    });
+}
