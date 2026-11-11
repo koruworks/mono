@@ -6,14 +6,44 @@
 //! conversation task and any tasks started through the public API, which
 //! have no conversation. Archive stops work as the person's Stop, so a
 //! session a person holds is ended, never waited for.
+//!
+//! The fake owner applies the delegate's own rules wherever lifecycle
+//! depends on them, so a test cannot pass on a permission the real owner
+//! never gives: an admission barrier's epoch never goes back
+//! (`apply_bot_barrier`); a Submit under a newer barrier epoch is refused
+//! `bot_stale` and under a paused barrier `bot_fenced` (`admit_bot`); the
+//! unsettled-work read returns the live admission and at most `limit` queued
+//! ones with `more`; held native effects are paged by cursor with `next`;
+//! and a drain is refused unless the delegate would allow it
+//! (`check_native_effect_drain`).
 use super::*;
 use koru_ai_core::bots::replay::BotReplayStop;
 use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, PENDING, TRASHED};
 use std::sync::atomic::AtomicUsize;
 mod trash;
+mod unadmitted;
+
+/// The delegate's refusal of a command, as its host answers it.
+fn refused(code: &str) -> koru_delegate_api::Failure {
+    koru_delegate_api::Failure::new(code, "The Bot operation cannot be admitted.", false)
+}
+
+/// A held effect's position in the delegate's recovery order
+/// (`created_at_ms`, Run, operation), as its owner query orders it.
+fn effect_order(cursor: &d::NativeRecoveryCursor) -> (i64, String, Uuid) {
+    (
+        cursor.created_at_ms,
+        cursor.run.to_storage(),
+        cursor.operation_id,
+    )
+}
 
 /// A task the fake owner runs that no conversation of this writer drives.
 struct ApiTask {
+    /// Whether the owner admitted it. One prepared in AI whose submission
+    /// never reached the owner is not admitted: Reconcile answers Missing,
+    /// and Submit admits it only as the delegate's rules allow.
+    admitted: bool,
     view: d::BotAdmissionView,
     /// Stops the owner still answers as unconfirmed before it settles.
     pending: usize,
@@ -35,7 +65,15 @@ struct Archiving {
     stop_pending: AtomicBool,
     /// The next policy installs answer Pending (effects still in flight).
     policy_pending: Mutex<usize>,
+    /// Every admission barrier offered, applied or refused.
     barriers: Mutex<Vec<d::BotAdmissionBarrier>>,
+    /// The barrier the owner holds for each Bot: the newest it applied.
+    barrier: Mutex<std::collections::HashMap<d::BotId, d::BotAdmissionBarrier>>,
+    /// Every Submit that reached the owner, by Run, admitted or refused. A
+    /// lifecycle operation never submits a captured subject's work.
+    submits: Mutex<Vec<d::RunId>>,
+    /// Held-effect pages read.
+    effect_pages: AtomicUsize,
     policies: Mutex<Vec<d::BotPolicyBarrier>>,
     api: Mutex<Vec<ApiTask>>,
     /// Unsettled-work reads.
@@ -75,7 +113,8 @@ impl Archiving {
             }
         }
         for task in self.api.lock().unwrap().iter() {
-            if task.view.key.bot == bot
+            if task.admitted
+                && task.view.key.bot == bot
                 && !matches!(
                     task.view.state,
                     d::BotAdmissionState::Settled | d::BotAdmissionState::Refused
@@ -88,6 +127,42 @@ impl Archiving {
             }
         }
         admissions
+    }
+    /// The delegate's read of it (`unsettled_bot`): the reserved or
+    /// executing admission, then at most `limit` queued ones, and whether
+    /// more are queued past them.
+    fn unsettled_page(&self, bot: d::BotId, limit: u16) -> d::BotUnsettledWork {
+        let (mut admissions, queued): (Vec<_>, Vec<_>) = self
+            .unsettled(bot)
+            .into_iter()
+            .partition(|a| a.admission.state != d::BotAdmissionState::Queued);
+        let limit = usize::from(limit.clamp(1, 64));
+        let more = queued.len() > limit;
+        admissions.extend(queued.into_iter().take(limit));
+        d::BotUnsettledWork { admissions, more }
+    }
+    /// Whether the owner's barrier for this Bot refuses the submission, and
+    /// with which code (`admit_bot`): a newer epoch than its configuration
+    /// is stale, a paused barrier fences it.
+    fn admission_refusal(&self, submission: &d::BotSubmission) -> Option<&'static str> {
+        let barrier = self.barrier.lock().unwrap();
+        let current = barrier.get(&submission.provenance.bot)?;
+        if submission.provenance.config_revision < current.epoch {
+            Some("bot_stale")
+        } else if current.paused {
+            Some("bot_fenced")
+        } else {
+            None
+        }
+    }
+    /// Submits of `run` that reached the owner.
+    fn submits_of(&self, run: d::RunId) -> usize {
+        self.submits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| **r == run)
+            .count()
     }
     fn interrupts_of(&self, run: d::RunId) -> usize {
         self.interrupts
@@ -133,8 +208,70 @@ impl BotDelegatePort for Archiving {
         match &command {
             D::Barrier { barrier } => {
                 self.barriers.lock().unwrap().push(barrier.clone());
+                // `apply_bot_barrier`: an epoch never goes back, and one
+                // epoch names exactly one barrier.
+                let mut held = self.barrier.lock().unwrap();
+                if let Some(old) = held.get(&barrier.bot) {
+                    if barrier.epoch < old.epoch {
+                        return Err(refused("bot_stale"));
+                    }
+                    if barrier.epoch == old.epoch && old != barrier {
+                        return Err(refused("bot_conflict"));
+                    }
+                }
+                held.insert(barrier.bot, barrier.clone());
                 Ok(BotReply::Barrier {
                     barrier: barrier.clone(),
+                })
+            }
+            // Every Submit is admitted only as `admit_bot` would admit it.
+            D::Submit { submission } => {
+                self.submits.lock().unwrap().push(submission.request.run);
+                if let Some(code) = self.admission_refusal(submission) {
+                    return Err(refused(code));
+                }
+                let mut api = self.api.lock().unwrap();
+                if let Some(task) = api
+                    .iter_mut()
+                    .find(|t| t.view.run == submission.request.run)
+                {
+                    // A task started through the API, admitted by this owner.
+                    task.admitted = true;
+                    return Ok(BotReply::Admission {
+                        admission: task.view.clone(),
+                    });
+                }
+                drop(api);
+                self.native.execute(command)
+            }
+            D::CheckNativeEffectDrain { key, reason } => {
+                // `check_native_effect_drain`: only a held effect, and only
+                // once its Run has ended for the drain's reason. Nothing in
+                // these tests configures native recovery, so no drain job
+                // asks; this keeps the fake from allowing one if it did.
+                let ended = self.api.lock().unwrap().iter().any(|t| {
+                    t.view.run == key.run && t.view.state == d::BotAdmissionState::Settled
+                }) || {
+                    let state = self.native.state.lock().unwrap();
+                    state
+                        .submission
+                        .as_ref()
+                        .is_some_and(|s| s.request.run == key.run)
+                        && state.stopped
+                        && !state.stop_unconfirmed
+                };
+                let allowed = matches!(
+                    reason,
+                    d::NativeDrainReason::RunRecovery | d::NativeDrainReason::OwnerStop
+                ) && ended;
+                Ok(BotReply::NativeDrainEligibility {
+                    target: self
+                        .effects
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|e| e.key == *key && allowed)
+                        .cloned(),
                 })
             }
             D::SynchronizePolicy { barrier } => {
@@ -164,38 +301,35 @@ impl BotDelegatePort for Archiving {
                     false,
                 ))
             }
-            D::PendingNativeEffects { bot, limit, .. } => {
+            D::PendingNativeEffects {
+                bot, after, limit, ..
+            } => {
                 assert!(*limit >= 1 && *limit <= 64);
-                Ok(BotReply::NativePendingEffects {
-                    page: d::NativePendingEffects {
-                        targets: self
-                            .effects
-                            .lock()
-                            .unwrap()
-                            .iter()
-                            .filter(|e| Some(e.bot) == *bot)
-                            .cloned()
-                            .collect(),
-                        next: None,
-                    },
-                })
-            }
-            // A task started through the API, admitted by this owner.
-            D::Submit { submission }
-                if self
-                    .api
+                self.effect_pages.fetch_add(1, Ordering::SeqCst);
+                // The owner's recovery order, from just past the cursor, at
+                // most `limit` a page, with the next cursor while more remain.
+                let mut held: Vec<_> = self
+                    .effects
                     .lock()
                     .unwrap()
                     .iter()
-                    .any(|t| t.view.run == submission.request.run) =>
-            {
-                let api = self.api.lock().unwrap();
-                let task = api
-                    .iter()
-                    .find(|t| t.view.run == submission.request.run)
-                    .unwrap();
-                Ok(BotReply::Admission {
-                    admission: task.view.clone(),
+                    .filter(|e| Some(e.bot) == *bot)
+                    .filter(|e| {
+                        after
+                            .as_ref()
+                            .is_none_or(|a| effect_order(&e.cursor) > effect_order(a))
+                    })
+                    .cloned()
+                    .collect();
+                held.sort_by_key(|e| effect_order(&e.cursor));
+                let more = held.len() > usize::from(*limit);
+                held.truncate(usize::from(*limit));
+                let next = more.then(|| held.last().unwrap().cursor.clone());
+                Ok(BotReply::NativePendingEffects {
+                    page: d::NativePendingEffects {
+                        targets: held,
+                        next,
+                    },
                 })
             }
             D::Reconcile { key }
@@ -211,18 +345,19 @@ impl BotDelegatePort for Archiving {
                     .iter()
                     .find(|t| t.view.key.request == key.request)
                     .unwrap();
-                Ok(BotReply::Admission {
-                    admission: task.view.clone(),
+                Ok(if task.admitted {
+                    BotReply::Admission {
+                        admission: task.view.clone(),
+                    }
+                } else {
+                    BotReply::Missing
                 })
             }
             D::UnsettledWork { bot, limit, .. } => {
                 assert!(*limit >= 1 && *limit <= 64);
                 self.reads.fetch_add(1, Ordering::SeqCst);
                 Ok(BotReply::UnsettledWork {
-                    work: d::BotUnsettledWork {
-                        admissions: self.unsettled(*bot),
-                        more: false,
-                    },
+                    work: self.unsettled_page(*bot, *limit),
                 })
             }
             D::Interrupt { key, .. } => {
@@ -244,6 +379,10 @@ impl BotDelegatePort for Archiving {
                 self.stops.lock().unwrap().push(key.run);
                 let mut api = self.api.lock().unwrap();
                 if let Some(task) = api.iter_mut().find(|t| t.view.run == key.run) {
+                    // A Run the owner never admitted is unknown to it.
+                    if !task.admitted {
+                        return Err(refused("run_unknown"));
+                    }
                     // Only the owner's current fence is accepted.
                     assert_eq!(fence, &task.view.fence);
                     if task.take_on_stop {
@@ -324,6 +463,16 @@ fn spawn(
     authority: Arc<Authority>,
     port: Arc<Archiving>,
 ) -> (WorkerHandle, Receiver<Repository>) {
+    spawn_with(repository, authority, port, None)
+}
+
+/// [`spawn`], with a Store context reader for the Sends' context jobs.
+fn spawn_with(
+    repository: Repository,
+    authority: Arc<Authority>,
+    port: Arc<Archiving>,
+    store_context: Option<Arc<dyn StoreContextPort>>,
+) -> (WorkerHandle, Receiver<Repository>) {
     let (return_tx, returned) = sync_channel(1);
     let mut config = WorkerConfig::new(
         PathBuf::from("unused-memory-lifecycle"),
@@ -335,6 +484,9 @@ fn spawn(
         port: port.clone(),
     }))
     .with_bot_delegate(port);
+    if let Some(store_context) = store_context {
+        config = config.with_store_context(store_context);
+    }
     config.test_repository = Some(repository);
     config.test_repository_return = Some(return_tx);
     (AiWorker::new(config).spawn().unwrap(), returned)
@@ -486,6 +638,7 @@ fn owner_of(bot: &Bot) -> d::BotOwner {
 fn api_task(bot: &Bot, state: d::BotAdmissionState, pending: usize) -> ApiTask {
     let run = d::RunId::mint();
     ApiTask {
+        admitted: true,
         view: d::BotAdmissionView {
             key: d::BotSubmissionKey {
                 owner: owner_of(bot),

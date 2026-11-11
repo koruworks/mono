@@ -7,14 +7,17 @@
 //! reached ([`StoreSpy`]).
 use super::*;
 
-fn lifecycle(client: &AiWorkerClient, command: BotCommand) -> ApiResult<BotLifecycleProgress> {
+pub(super) fn lifecycle(
+    client: &AiWorkerClient,
+    command: BotCommand,
+) -> ApiResult<BotLifecycleProgress> {
     match client.bots(context(true), command)? {
         BotResponse::Lifecycle { operation } => Ok(operation),
         _ => panic!("lifecycle progress"),
     }
 }
 
-fn trash_at(
+pub(super) fn trash_at(
     client: &AiWorkerClient,
     bot: &Bot,
     request: BotRequestId,
@@ -30,7 +33,7 @@ fn trash_at(
     )
 }
 
-fn trash_chat_at(
+pub(super) fn trash_chat_at(
     client: &AiWorkerClient,
     bot: &Bot,
     chat: ChatId,
@@ -48,7 +51,7 @@ fn trash_chat_at(
     )
 }
 
-fn restore_at(
+pub(super) fn restore_at(
     client: &AiWorkerClient,
     bot: &Bot,
     source: BotRequestId,
@@ -65,7 +68,7 @@ fn restore_at(
     )
 }
 
-fn restore_chat_at(
+pub(super) fn restore_chat_at(
     client: &AiWorkerClient,
     bot: &Bot,
     chat: ChatId,
@@ -99,7 +102,7 @@ fn trashed(client: &AiWorkerClient, bot: &Bot) -> Vec<Bot> {
 }
 
 /// The current revision of a Bot in the Trash filter.
-fn trashed_revision(client: &AiWorkerClient, bot: &Bot) -> u64 {
+pub(super) fn trashed_revision(client: &AiWorkerClient, bot: &Bot) -> u64 {
     trashed(client, bot)
         .into_iter()
         .find(|b| b.id == bot.id)
@@ -124,7 +127,7 @@ fn chats_of(client: &AiWorkerClient, bot: &Bot) -> Vec<ChatId> {
     page.chats.into_iter().map(|c| c.chat.id).collect()
 }
 
-fn read_code(client: &AiWorkerClient, chat: ChatId) -> Option<String> {
+pub(super) fn read_code(client: &AiWorkerClient, chat: ChatId) -> Option<String> {
     client
         .read_chat(context(true), chat)
         .err()
@@ -132,7 +135,11 @@ fn read_code(client: &AiWorkerClient, chat: ChatId) -> Option<String> {
 }
 
 /// Another conversation of the Bot, made before the worker starts.
-fn another_chat(repository: &mut Repository, authority: &Authority, bot: &Bot) -> ChatId {
+pub(super) fn another_chat(
+    repository: &mut Repository,
+    authority: &Authority,
+    bot: &Bot,
+) -> ChatId {
     repository
         .create_bot_chat(
             bot,
@@ -148,7 +155,7 @@ fn another_chat(repository: &mut Repository, authority: &Authority, bot: &Bot) -
 /// A task started through the API in `chat`: its AI submission is prepared
 /// (so AI knows which conversation its Run is), and the fake owner admits it
 /// in `state` when it is submitted.
-fn api_task_in(
+pub(super) fn api_task_in(
     repository: &mut Repository,
     bot: &Bot,
     chat: ChatId,
@@ -188,7 +195,7 @@ fn api_task_in(
 }
 
 /// A native effect the owner still holds for `run`.
-fn held_effect(bot: &Bot, run: d::RunId) -> d::NativePendingEffect {
+pub(super) fn held_effect(bot: &Bot, run: d::RunId) -> d::NativePendingEffect {
     let operation_id = Uuid::new_v4();
     d::NativePendingEffect {
         owner: owner_of(bot),
@@ -218,7 +225,7 @@ fn held_effect(bot: &Bot, run: d::RunId) -> d::NativePendingEffect {
 }
 
 /// No delegate-side Run Trash/Restore, and no Store call, ever (O41).
-fn no_owner_effects(port: &Archiving) {
+pub(super) fn no_owner_effects(port: &Archiving) {
     assert_eq!(port.run_lifecycle.load(Ordering::SeqCst), 0);
     assert_eq!(port.store_calls.load(Ordering::SeqCst), 0);
 }
@@ -341,7 +348,7 @@ fn trash_ends_a_held_running_task_and_restore_brings_back_a_paused_bot_that_star
 }
 
 /// A Send for `chat` of the Bot.
-fn request_for(bot: &Bot, chat: ChatId) -> SendTurnRequest {
+pub(super) fn request_for(bot: &Bot, chat: ChatId) -> SendTurnRequest {
     let mut send = request(bot);
     send.chat_id = chat;
     send
@@ -666,7 +673,7 @@ fn trashing_the_main_conversation_waits_for_its_native_effect_then_restores_the_
 }
 
 /// A whole-Bot Trash captured by an earlier worker, as the driver captures it.
-fn captured_trash(repository: &mut Repository, bot: &Bot) -> BotRequestId {
+pub(super) fn captured_trash(repository: &mut Repository, bot: &Bot) -> BotRequestId {
     let request = BotRequestId::mint();
     repository
         .capture_bot_lifecycle(&koru_ai_sqlite::LifecycleCapture {
@@ -706,7 +713,11 @@ fn captured_trash(repository: &mut Repository, bot: &Bot) -> BotRequestId {
 }
 
 /// One conversation's Trash captured by an earlier worker.
-fn captured_chat_trash(repository: &mut Repository, bot: &Bot, chat: ChatId) -> BotRequestId {
+pub(super) fn captured_chat_trash(
+    repository: &mut Repository,
+    bot: &Bot,
+    chat: ChatId,
+) -> BotRequestId {
     let mut capture =
         super::super::super::holds::capture(bot, BotLifecycleKind::TrashChat, Some(chat));
     capture.operation = BotRequestId::mint();
@@ -821,7 +832,8 @@ fn unfinished_trash_keeps_settling(begin: Begin) {
         read_operation(&client, bot.id, request).stage,
         BotLifecycleStage::Settling
     );
-    // One moving operation per Bot: anything else conflicts.
+    // One moving operation per Bot: anything else answers that one is
+    // pending, and the Bot's read names it.
     let current = read_bot(&client, bot.id);
     assert_eq!(current.open_operation.unwrap().request_id, request);
     for competing in [
@@ -838,7 +850,7 @@ fn unfinished_trash_keeps_settling(begin: Begin) {
     ] {
         assert_eq!(
             client.bots(context(true), competing).unwrap_err().code,
-            BotError::Conflict.code()
+            PENDING
         );
     }
     // The same id with another input conflicts too.
