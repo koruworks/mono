@@ -4516,7 +4516,7 @@
       },
       "BotLifecycleProgress": {
         "additionalProperties": false,
-        "description": "Where a lifecycle operation stands. A pending or incomplete operation is\nnever reported as done; owner timeouts stay visible as `incomplete`.",
+        "description": "Where a lifecycle operation stands. A pending or incomplete operation is\nnever reported as done; owner timeouts stay visible as `incomplete`. An\noperation a Restore reversed reads `reversed`, with the `refusal` it had\nparked for, if it had.",
         "properties": {
           "bot_id": {
             "$ref": "#/components/schemas/BotId"
@@ -4618,7 +4618,7 @@
         "type": "string"
       },
       "BotLifecycleStage": {
-        "description": "Where an operation has got to. `Incomplete` is parked and retryable;\nonly `Completed` is final.",
+        "description": "Where an operation has got to. `Incomplete` is parked and retryable.\n`Completed` and `Reversed` are final: `Reversed` is an Archive, Trash\nor conversation Trash, completed or parked, that a completed Restore\nnamed (its `refusal` is kept when it had parked, absent when it had\ncompleted). It holds nothing and is never resumed.",
         "enum": [
           "captured",
           "settling",
@@ -4627,7 +4627,8 @@
           "preserving_references",
           "purging",
           "completed",
-          "incomplete"
+          "incomplete",
+          "reversed"
         ],
         "type": "string"
       },
@@ -5351,7 +5352,7 @@
         "type": "object"
       },
       "BotTrashedChatPage": {
-        "description": "One page of a workspace's Bot conversations in Trash, in conversation ID\norder; `next_cursor` is absent on the last page. A page examines a\nbounded window of the device's Trash, so it may hold fewer than asked,\nor none at all, and still not be the last: follow `next_cursor` until it\nis absent.",
+        "description": "One page of a workspace's Bot conversations in Trash, in conversation ID\norder; `next_cursor` is absent on the last page. Every page but the last\nholds exactly `limit` conversations, and `next_cursor` names the last of\nthem.",
         "properties": {
           "chats": {
             "items": {
