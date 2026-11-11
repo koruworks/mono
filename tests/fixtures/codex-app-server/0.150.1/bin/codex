@@ -180,7 +180,12 @@ for line in sys.stdin:
             native_discover()
         send({"id": message["id"], "result": {"thread": {"id": "fixture-thread"}}})
     elif method == "turn/start":
-        image = next((part for part in message["params"]["input"] if part.get("type") == "localImage"), None)
+        images = [part for part in message["params"]["input"] if part.get("type") == "localImage"]
+        image = images[0] if images else None
+        if __import__("os").environ.get("CODEX_FIXTURE_TURN") == "native":
+            # Counts only: a picture's path names the disposable root.
+            trace("native:images:" + str(len(images)))
+            trace("native:images-on-disk:" + str(sum(1 for part in images if __import__("os").path.isfile(part["path"]))))
         send({"id": message["id"], "result": {"turn": {"id": "fixture-turn", "status": "inProgress", "items": []}}})
         text = "FIXTURE_NATIVE_TEXT" if __import__("os").environ.get("CODEX_FIXTURE_TURN") == "native" else "FIXTURE_TEXT"
         send({"method": "item/agentMessage/delta", "params": {"threadId": "fixture-thread", "turnId": "fixture-turn", "itemId": "message-1", "delta": text}})

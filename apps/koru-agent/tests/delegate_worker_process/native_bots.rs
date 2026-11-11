@@ -64,6 +64,20 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     };
     assert_eq!(bot.owner_device, stack.device);
     assert_eq!((bot.revision, bot.policy_revision), (1, 1));
+    // One small picture through the public AI attachment API, staged into the
+    // Run's session natively before the first input is frozen.
+    let picture = koru_ai_core::ChatAttachmentId::new();
+    stack
+        .client
+        .ai()
+        .put_attachment(
+            bot.main_chat,
+            picture,
+            "picture.png",
+            koru_ai_core::AttachmentSource::Clipboard,
+            ONE_PIXEL_PNG.to_vec().into(),
+        )
+        .unwrap();
     let send = SendTurnRequest {
         destination_workspace: Some(workspace),
         operation_id: uuid::Uuid::new_v4(),
@@ -75,7 +89,7 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         web_search: false,
         system_prompt_override: None,
         replace_pinned_documents: false,
-        attachment_ids: Vec::new(),
+        attachment_ids: vec![picture],
         answers: None,
         skills: Vec::new(),
     };
@@ -149,6 +163,26 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
             .map(|model| model.as_str()),
         Some("fixture-model")
     );
+    // The turn is still open: the picture was handed to the agent natively,
+    // exactly once, from the session's own attachment directory.
+    let staged = stack
+        .root
+        .path()
+        .join("agent/sessions/attachments")
+        .join(fence.session.to_string());
+    assert_eq!(
+        std::fs::read_dir(&staged)
+            .map(|entries| entries.count())
+            .unwrap_or(0),
+        1,
+        "one staged picture in the Run's session"
+    );
+    let trace = std::fs::read_to_string(stack.root.path().join("native-fixture.trace")).unwrap();
+    assert!(
+        trace.lines().any(|line| line == "native:images:1"),
+        "the agent was given exactly one native image"
+    );
+    assert!(trace.lines().any(|line| line == "native:images-on-disk:1"));
     std::fs::write(&finish, []).unwrap();
     let mut terminal = false;
     for frame in &mut stream.events {
@@ -349,10 +383,23 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
                 })
         })
     });
+    // The session host removes the session's attachment directory once the
+    // provider has exited; Koru never removes a staged copy itself.
+    wait_until("staged picture removed with the session", PROMPT, || {
+        !staged.exists()
+    });
     let trace = std::fs::read_to_string(stack.root.path().join("native-fixture.trace")).unwrap();
     assert_eq!(
         trace.lines().filter(|line| *line == "native:turn").count(),
         1
+    );
+    assert_eq!(
+        trace
+            .lines()
+            .filter(|line| line.starts_with("native:images:"))
+            .collect::<Vec<_>>(),
+        ["native:images:1"],
+        "one turn, one native image"
     );
     assert!(trace.lines().any(|line| line == "native:catalog:4"));
     assert_eq!(
@@ -412,6 +459,16 @@ fn ordinary_supervised_client_cannot_manage_bots_when_opted_in() {
     assert!(!failure.retryable);
     eprintln!("ordinary supervised client verified: bots.manage forbidden and nonretryable");
 }
+
+/// A valid 1x1 RGBA PNG: the smallest picture both the AI's attachment check
+/// and the session host's image ingest accept.
+const ONE_PIXEL_PNG: [u8; 67] = [
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
 
 fn paragraph_text(snapshot: &[u8]) -> Vec<String> {
     let document = koru_core::WorkspaceDoc::from_snapshot(snapshot).unwrap();

@@ -637,6 +637,14 @@ them deliberate refusals (a changed-payload create and a stale edit). The
 journey checks the trace names all eight in order and the transcript holds
 eight durable tool rows: six complete, two failed. Tool calls are tool rows,
 not message blocks; the reply's own markdown is its single paragraph block.
+The Send carries one 1x1 PNG uploaded through the public AI attachment API.
+The Codex adapter hands a native picture to `turn/start` as a `localImage`
+input item naming the session's stored copy; the fixture records only how many
+it received and how many of those files existed (`native:images:<n>`,
+`native:images-on-disk:<n>`), never a path. The journey asserts exactly one,
+that the Run's session attachment directory holds one file while the turn is
+open, and that the session host has removed that directory once the provider
+exits.
 A separate supervised ordinary-client case checks
 the specific missing-scope refusal. This composition does not prove trusted
 first-party executable admission, production model discovery, GUI behavior or

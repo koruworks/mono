@@ -171,6 +171,11 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
         }
         'turn/start' {
             $image = @($message.params.input | Where-Object { $_.type -eq 'localImage' })
+            if ($env:CODEX_FIXTURE_TURN -eq 'native') {
+                # Counts only: a picture's path names the disposable root.
+                Trace-Fixture ('native:images:' + $image.Count)
+                Trace-Fixture ('native:images-on-disk:' + @($image | Where-Object { [System.IO.File]::Exists($_.path) }).Count)
+            }
             Send-Frame @{ id=$message.id; result=@{ turn=@{ id='fixture-turn'; status='inProgress'; items=@() } } }
             $text = $(if ($env:CODEX_FIXTURE_TURN -eq 'native') { 'FIXTURE_NATIVE_TEXT' } else { 'FIXTURE_TEXT' })
             Send-Frame @{ method='item/agentMessage/delta'; params=@{ threadId='fixture-thread'; turnId='fixture-turn'; itemId='message-1'; delta=$text } }

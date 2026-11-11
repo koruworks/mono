@@ -24,6 +24,8 @@ impl koru_delegate_api::bots::BotDelegatePort for ObservedBotPort {
             // The automatic interruption is never a person's Stop; label it
             // apart so a diagnostic says which one reached the owner.
             BotCommand::Interrupt { .. } => "interrupt",
+            BotCommand::IngestAttachment { .. } => "ingest",
+            BotCommand::ListAttachments { .. } => "list-attachments",
             _ => "owner-command",
         };
         let observed_fence = match &command {
@@ -48,6 +50,10 @@ impl koru_delegate_api::bots::BotDelegatePort for ObservedBotPort {
                 admission.fence.is_some()
             ),
             Ok(BotReply::Turn { .. }) => eprintln!("native owner {phase}: turn bound"),
+            Ok(BotReply::Attachment { attachment }) => eprintln!(
+                "native owner {phase}: status={:?} delivery={:?}",
+                attachment.status, attachment.delivery_mode
+            ),
             _ => {}
         }
         if let (Some(fence), Ok(BotReply::Observation { observation })) = (observed_fence, &result)
