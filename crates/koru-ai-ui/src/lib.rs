@@ -10513,6 +10513,13 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
 /// it. A code the surface does not know reads as the service's words alone,
 /// so nothing a service can say goes unshown.
 pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lang) -> String {
+    // **A change to an archived Bot's conversation** (P1.7): the owner's
+    // stable code reads as its own sentence and nothing more — the owner's
+    // message is English developer text, and it names a way to unarchive that
+    // this build does not offer.
+    if failure.code == koru_ai_wire::bot_lifecycle_codes::ARCHIVED {
+        return koru_i18n::t(lang, koru_i18n::Key::BotsErrArchived).to_owned();
+    }
     let key = match failure.code.as_str() {
         "ai_configuration" => Some(koru_i18n::Key::AiFailureConfiguration),
         "ai_authentication" => Some(koru_i18n::Key::AiFailureAuthentication),

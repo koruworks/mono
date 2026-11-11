@@ -1857,6 +1857,8 @@ pub enum Key {
     BotsErrUnreachable,
     /// An operation the owner rejected, or a refusal code this build does not know. The Bot is read again.
     BotsErrNotApplied,
+    /// The owner's `bot_archived`: a change to an archived Bot, or to one of its conversations, is refused; its history still reads (P1.7). Names no way to unarchive: none is in this build yet. Non-English columns machine-written, awaiting a native read.
+    BotsErrArchived,
     /// A tab opened on a conversation before the window knows whether it is a Bot's: neutral, never a Bot or a new chat claimed early (Bots P1.8, B1). Non-English columns machine-written, awaiting a native read.
     BotsChatOpening,
     /// The heading over a Bot's conversation list in its tab, and the list's accessible name (Bots P1.8 S8). Non-English columns machine-written, awaiting a native read.
@@ -3304,7 +3306,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2281] = [
+    pub const ALL: [Key; 2282] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4607,6 +4609,7 @@ impl Key {
         Key::BotsErrStorage,
         Key::BotsErrUnreachable,
         Key::BotsErrNotApplied,
+        Key::BotsErrArchived,
         Key::BotsChatOpening,
         Key::BotsConversations,
         Key::BotsConversationsA11y,
@@ -15250,6 +15253,17 @@ pub const ROWS: &[Row] = &[
         ar: "لم يُطبَّق هذا التغيير. تُعرض إعدادات البوت الحالية.",
         zh_hans: "该更改未被应用。显示的是 Bot 当前的设置。",
         ja: "その変更は適用されませんでした。Bot の現在の設定を表示しています。",
+    },
+    Row {
+        key: Key::BotsErrArchived,
+        en: "This bot is archived. Its history can be read, but it can't be changed.",
+        es: "Este bot está archivado. Su historial se puede leer, pero no se puede cambiar.",
+        pt_br: "Este bot está arquivado. O histórico pode ser lido, mas ele não pode ser alterado.",
+        de: "Dieser Bot ist archiviert. Sein Verlauf ist lesbar, aber er kann nicht geändert werden.",
+        fr: "Ce bot est archivé. Son historique reste lisible, mais il ne peut pas être modifié.",
+        ar: "هذا البوت مؤرشف. يمكن قراءة سجله، لكن لا يمكن تغييره.",
+        zh_hans: "此 Bot 已归档。可以查看它的历史记录，但无法更改。",
+        ja: "この Bot はアーカイブされています。履歴は読めますが、変更はできません。",
     },
     Row {
         key: Key::BotsChatOpening,

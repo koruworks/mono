@@ -766,6 +766,28 @@ mod failure_words {
             "Only the service knows"
         );
     }
+
+    /// **A refusal because the Bot is archived reads as its own sentence
+    /// alone**, in every language — never with the owner's English message
+    /// after it, which names an unarchive this build does not offer.
+    #[test]
+    fn an_archived_bots_refusal_reads_as_its_own_sentence_alone() {
+        let refused = failure(
+            koru_ai_wire::bot_lifecycle_codes::ARCHIVED,
+            "This Bot is archived. Its history can be read; unarchive it to change it.",
+        );
+        assert_eq!(
+            crate::failure_text(&refused, Lang::En),
+            "This bot is archived. Its history can be read, but it can't be changed."
+        );
+        for lang in Lang::ALL {
+            assert_eq!(
+                crate::failure_text(&refused, lang),
+                koru_i18n::t(lang, koru_i18n::Key::BotsErrArchived),
+                "{lang:?}"
+            );
+        }
+    }
 }
 
 pub(crate) fn is_agent_provider_str(provider: &str) -> bool {
