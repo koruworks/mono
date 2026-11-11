@@ -1364,6 +1364,20 @@ fn a_wheel_notch_is_a_line_of_body_text_in_both_runners() {
     );
 }
 
+/// **A plain notch scrolls at the chosen wheel speed** (2026-11-10), two
+/// lines of body text by default; Ctrl+wheel above stays the zoom's step.
+#[test]
+fn a_plain_wheel_notch_scrolls_at_the_chosen_speed_in_both_runners() {
+    let trace = parity(&[Step::Wheel(1.0)], no_arming);
+    let expected = koru_draw::theme::text_metrics::DOC_BODY.line_height
+        * f32::from(koru_draw::theme::wheel_speed());
+    assert!(
+        trace[0].contains(&format!("scroll_by {expected}")),
+        "{}",
+        trace[0]
+    );
+}
+
 #[test]
 fn window_facts_that_change_nothing_drawn_ask_for_no_frame_in_either_runner() {
     let trace = parity(&[Step::Moved(300, 120), Step::Occluded(true)], no_arming);

@@ -33,8 +33,8 @@ use crate::values::{
     AgentPermission, CanvasBackground, CaretColorChoice, CaretHeightChoice, CaretWidthChoice,
     CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput, DictationLanguage,
     DictationShortcut, DictationTier, FontFamily, FontSetting, GlobalShortcut, LanguageChoice,
-    PopoutCloseChoice, RgbColor, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth,
-    ThemeChoice, ViewModeChoice, Zoom,
+    PopoutCloseChoice, RgbColor, ScrollSpeedChoice, TerminalCursorBlink, TerminalCursorHeight,
+    TerminalCursorWidth, ThemeChoice, ViewModeChoice, Zoom,
 };
 
 #[cfg(test)]
@@ -89,7 +89,10 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "doc_text_size",
     "base_color_light",
     "base_color_dark",
+    "accent_color_light",
+    "accent_color_dark",
     "density",
+    "scroll_speed",
     "dictation_toggle",
     "dictation_language",
     "dictation_quality",
@@ -97,6 +100,7 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "spellcheck_enabled",
     "spellcheck_language",
     "pinned_show_title",
+    "tabs_per_workspace",
     "zoom",
     "popout_close",
     "view_mode",
@@ -157,6 +161,8 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             // Anything else follows the theme, like a size not offered.
             "base_color_light" => into.base_color_light = RgbColor::parse(value),
             "base_color_dark" => into.base_color_dark = RgbColor::parse(value),
+            "accent_color_light" => into.accent_color_light = RgbColor::parse(value),
+            "accent_color_dark" => into.accent_color_dark = RgbColor::parse(value),
             // Only a pack this build knows is a choice; anything else follows
             // the default rather than snapping to whichever pack parses first.
             "icon_pack" => {
@@ -175,6 +181,7 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             // No v1 build wrote it, so no auto-written value to discount.
             "chat_font" => into.chat_font = FontSetting::parse_file_value(value),
             "density" => into.density = DensityChoice::parse(value),
+            "scroll_speed" => into.scroll_speed = ScrollSpeedChoice::parse(value),
             "dictation_toggle" => into.dictation_gesture = DictationGesture::parse(value),
             "dictation_language" => into.dictation_language = DictationLanguage::parse(value),
             "dictation_quality" => into.dictation_tier = DictationTier::parse(value),
@@ -182,6 +189,7 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
             "spellcheck_enabled" => into.spellcheck_enabled = value != "0" && value != "false",
             "spellcheck_language" => into.spellcheck_language = LanguageChoice::parse(value),
             "pinned_show_title" => into.pinned_show_title = value == "1" || value == "true",
+            "tabs_per_workspace" => into.tabs_per_workspace = value == "1" || value == "true",
             "zoom" => into.zoom = Zoom::parse_or_default(value),
             "popout_close" => into.popout_close = PopoutCloseChoice::parse(value),
             "view_mode" => into.default_view_mode = ViewModeChoice::parse(value),
@@ -245,12 +253,15 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     for (key, color) in [
         ("base_color_light", settings.base_color_light),
         ("base_color_dark", settings.base_color_dark),
+        ("accent_color_light", settings.accent_color_light),
+        ("accent_color_dark", settings.accent_color_dark),
     ] {
         if let Some(color) = color {
             line(key, &color.token());
         }
     }
     line("density", settings.density.token());
+    line("scroll_speed", settings.scroll_speed.token());
     line("dictation_toggle", settings.dictation_gesture.token());
     line("dictation_language", settings.dictation_language.token());
     line("dictation_quality", settings.dictation_tier.token());
@@ -267,6 +278,14 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
     line(
         "pinned_show_title",
         if settings.pinned_show_title { "1" } else { "0" },
+    );
+    line(
+        "tabs_per_workspace",
+        if settings.tabs_per_workspace {
+            "1"
+        } else {
+            "0"
+        },
     );
     line("zoom", &format!("{:.2}", settings.zoom.get()));
     line("popout_close", settings.popout_close.token());

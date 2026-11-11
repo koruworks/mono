@@ -775,3 +775,80 @@ fn the_removal_notice_does_not_follow_the_person_to_another_profile() {
         "the last Profile's notice stayed under a different one"
     );
 }
+
+/// **A hosted delete that needs a fresh sign-in asks for one.** The service
+/// answers the delete with the provider-neutral 428
+/// `fresh_authentication_required`; only the Google-worded code used to be
+/// matched, so the page said *try again when Koru can connect* to a person
+/// who was connected. A sign-in resumes the delete from its inspection, and
+/// a cancelled one gives the page its choices back instead of *Deleting…*.
+#[test]
+fn a_hosted_delete_that_needs_a_fresh_sign_in_asks_for_one_and_resumes() {
+    for code in [
+        "fresh_authentication_required",
+        "fresh_google_authentication_required",
+    ] {
+        for cancel in [false, true] {
+            let mut c = ProfilesController::new();
+            c.take_request();
+            let profile = ProfileId::new();
+            c.pending_hosted_delete = Some(PendingHostedDelete {
+                profile,
+                profile_name: "Work".into(),
+                stage: HostedDeleteStage::Deleting,
+            });
+            c.complete(AccountOperationResult::Failed { code: code.into() });
+            assert_eq!(
+                c.pending_hosted_delete.as_ref().map(|p| p.stage),
+                Some(HostedDeleteStage::Reauthenticating),
+                "{code}"
+            );
+            assert!(matches!(
+                c.take_request(),
+                Some(AccountCommand::StartGoogle { .. })
+            ));
+            if cancel {
+                c.complete(AccountOperationResult::Cancelled);
+                assert_eq!(
+                    c.pending_hosted_delete.as_ref().map(|p| p.stage),
+                    Some(HostedDeleteStage::Failed),
+                    "a cancelled sign-in gives the choices back"
+                );
+                assert_eq!(c.take_request(), None);
+            } else {
+                c.complete(AccountOperationResult::SignedIn);
+                assert_eq!(
+                    c.pending_hosted_delete.as_ref().map(|p| p.stage),
+                    Some(HostedDeleteStage::Inspecting)
+                );
+                assert_eq!(
+                    c.take_request(),
+                    Some(AccountCommand::InspectProfileLifecycle {
+                        profile_id: profile.to_storage(),
+                    })
+                );
+            }
+        }
+    }
+}
+
+/// **No account id on a Profile's line** (2026-11-10): an account Profile
+/// says how it connects and syncs, not *Account 02e1519b*; one on no
+/// account still says *Local only*.
+#[test]
+fn a_profiles_status_line_never_shows_its_account_id() {
+    let c = ProfilesController::new();
+    let identity = "0f1e2d3c-4b5a-4968-8776-02e1519bcafe";
+    let bound = local_profile(ProfileId::new(), identity);
+    let line = c.status_line(&bound);
+    assert!(
+        !line.contains("cafe") && !line.contains("Account "),
+        "{line}"
+    );
+    assert!(!line.starts_with(" · "), "no leading dot: {line}");
+    let local = offline_profile("Mine");
+    assert!(c.status_line(&local).starts_with(koru_i18n::t(
+        crate::format::lang(),
+        koru_i18n::Key::AccountSwitcherLocalOnly
+    )));
+}

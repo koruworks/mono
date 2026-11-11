@@ -1058,3 +1058,26 @@ fn the_pointer_finds_the_row_the_frame_draws() {
         None
     );
 }
+
+/// **The list wears the same colours as the send button** (2026-11-10):
+/// each row's tone is the one the button takes when that mode is chosen.
+#[test]
+fn every_rows_tone_is_the_send_buttons_for_that_mode() {
+    let (mut surface, _commands) = surface();
+    let ids: Vec<String> = surface
+        .approval_mode_rows()
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+    assert!(ids.len() > 2, "{ids:?}");
+    for id in ids {
+        let row_tone = surface
+            .approval_mode_specs()
+            .into_iter()
+            .find(|spec| spec.key == elements::row_key(&id))
+            .unwrap()
+            .tone;
+        assert!(surface.choose_approval_mode(&id), "{id}");
+        assert_eq!(row_tone, surface.approval_presentation().unwrap().1, "{id}");
+    }
+}

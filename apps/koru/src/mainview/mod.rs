@@ -1234,6 +1234,12 @@ pub struct MainView {
     /// help popover. `None` until the read lands or when no notes shipped.
     help_headlines: Option<Vec<String>>,
     help_headlines_rx: Option<std::sync::mpsc::Receiver<Option<Vec<String>>>>,
+    /// The published releases the Help popover lists, once read.
+    help_releases: Option<Vec<crate::whatsnew::PublishedRelease>>,
+    help_releases_rx:
+        Option<std::sync::mpsc::Receiver<Option<Vec<crate::whatsnew::PublishedRelease>>>>,
+    /// Asked once per window, whatever the answer.
+    help_releases_asked: bool,
     help_notes_read: bool,
     /// The global-search chord the agent registered (`Ctrl+Shift+K`), once it
     /// has said so; `None` before that, without an agent, or with no chord.
@@ -1994,6 +2000,9 @@ impl MainView {
             relayouts: 0,
             help_headlines: None,
             help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
+            help_releases: None,
+            help_releases_rx: None,
+            help_releases_asked: false,
             help_notes_read: false,
             global_search_chord: None,
             tooltip: Tooltip::default(),
@@ -10804,11 +10813,17 @@ impl View for MainView {
     /// Required rather than defaulted (see [`View::reseat`]): forgetting it
     /// would leave every tab subscribed to a document nobody holds, rendering
     /// once and then going quiet with nothing to show for it.
-    fn reseat(&mut self, ws: &WorkspaceDoc) {
-        self.tabs_mut().reset_to_welcome();
-        if !self.tabs().active_tab().is_pinned() {
-            self.tabs_mut().active_view().reseat(ws);
-        }
+    fn reseat(&mut self, _ws: &WorkspaceDoc) {
+        // **The strip is left alone** (the user, 2026-11-10: "don't close
+        // chats when I switch workspaces, leave them open"). This used to
+        // reset the main strip to one Welcome tab, so a live workspace switch
+        // — the one caller with no `restore` after it — closed every unpinned
+        // tab: chats, sessions, documents. The shell keeps their rooms open
+        // across the switch for exactly this ("a tab is what keeps a room
+        // alive"), and `on_workspace_switched` reseats each tab against its
+        // own document. The Profile switch and the empty workspace call
+        // `restore` next, which rebuilds the whole pane tree from the saved
+        // session, so they never needed the reset either.
         // **Recents survive a workspace switch.** They are store document ids,
         // so a list wiped here would throw away every document opened in the
         // workspace just left; unresolved ids are dropped on display instead.
@@ -12053,6 +12068,11 @@ impl View for MainView {
         // receipt would wait for the pointer to move. It stops the moment the
         // answer lands.
         if self.run_index.awaiting_deletion() {
+            return true;
+        }
+        // **The releases list is on its way** from another thread, which
+        // cannot ask for a frame. Bounded by the request's 8 s timeout.
+        if self.help_releases_rx.is_some() {
             return true;
         }
         self.tooltip.animating(Instant::now())
@@ -14813,6 +14833,12 @@ impl View for MainView {
     }
 
     fn on_workspace_switched(&mut self, ws: &Workspace, settings: &Settings) {
+        // **Workspace tabs: per workspace** — this workspace's own tabs, which
+        // the shell has adopted into `tabs`, replace the focused column's
+        // Main strip. Pins stay. With *Shared* tabs the strip stays.
+        if settings.tabs_per_workspace {
+            self.adopt_workspace_strip(ws, settings);
+        }
         // Explore width / collapsed are per workspace; the strip is not.
         if let Some(w) = settings.workspace.and_then(|id| settings.sidebar_w_in(id)) {
             self.sidebar
@@ -15678,6 +15704,25 @@ impl MainView {
         // everything else through**. A panel hanging off a column is not a
         // modal over the document, so Ctrl+E must still shut the pane under it
         // and typing must still reach the view.
+        // **The quick switcher's field takes the typing**; Escape, Enter,
+        // Tab and Up/Down still drive the list, so Enter opens the match.
+        if self.explore.workspace_filter_active()
+            && filter_field_takes(key, mods)
+            && !matches!(
+                key,
+                Key::Named(
+                    winit::keyboard::NamedKey::Escape
+                        | winit::keyboard::NamedKey::Enter
+                        | winit::keyboard::NamedKey::Tab
+                        | winit::keyboard::NamedKey::ArrowUp
+                        | winit::keyboard::NamedKey::ArrowDown
+                )
+            )
+        {
+            return self
+                .explore
+                .workspace_filter_key(&mut self.engine, key, text, mods);
+        }
         if self.explore.popover_open()
             && let Some(out) = self.explore.popover_key(key)
         {
@@ -15772,7 +15817,7 @@ impl MainView {
                 Chord::ShowNavigator(mode) => self.show_navigator(mode),
                 Chord::ShowRailSlot(slot) => self.show_rail_slot(slot),
                 Chord::ManageWorkspaces => self.open_manage_workspaces(None),
-                Chord::WorkspacesPopover => self.open_workspaces_popover(),
+                Chord::WorkspacesPopover => self.open_workspace_switcher(),
                 Chord::ProfilesPopover => self.open_profiles_popover(),
                 Chord::NextContextSection => self.next_context_section(),
                 Chord::CopyCloudDetails => self.copy_cloud_details(),
@@ -16936,6 +16981,29 @@ mod account_startup_tests;
 mod manage_tests;
 #[cfg(test)]
 mod product_flags_tests;
+
+/// **Which keys the quick switcher's field takes** (2026-11-10): typing, and
+/// the editing chords a field claims — select all, copy, cut, paste, undo,
+/// and the word moves and deletes. Anything with Alt held (Ctrl+Alt+W again,
+/// Alt+digit) and every other chord goes on to the window, so the chord that
+/// opened the switcher still shuts it.
+fn filter_field_takes(key: &Key, mods: ModifiersState) -> bool {
+    use winit::keyboard::NamedKey;
+    if mods.alt_key() {
+        return false;
+    }
+    if !koru_keys::is_chord(mods) {
+        return true;
+    }
+    match key {
+        Key::Named(
+            NamedKey::Backspace | NamedKey::Delete | NamedKey::ArrowLeft | NamedKey::ArrowRight,
+        ) => true,
+        Key::Character(c) => matches!(c.to_lowercase().as_str(), "a" | "c" | "v" | "x" | "z"),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

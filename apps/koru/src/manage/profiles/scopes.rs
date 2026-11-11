@@ -283,6 +283,49 @@ impl ProfilesController {
         &mut self,
         owner_scope: u64,
         generation: u64,
+        result: AccountOperationResult,
+    ) -> bool {
+        // **A hosted delete leaves a trail** (2026-11-10): one stalled on
+        // *Deleting…* after a fresh sign-in, and nothing on either side said
+        // which answer the page had been given. Only while a delete is in
+        // flight, so the Cloud page's polling does not fill the log. The
+        // result's `Debug` is redacted; a refusal's code is not personal.
+        let before = self
+            .pending_hosted_delete
+            .as_ref()
+            .map(|pending| pending.stage);
+        let code = match &result {
+            AccountOperationResult::Failed { code } => Some(code.clone()),
+            _ => None,
+        };
+        let described = before.map(|_| format!("{result:?}"));
+        let active = self.account.active_scope;
+        let handled = self.complete_scoped_inner(owner_scope, generation, result);
+        if let Some(described) = described {
+            let after = self
+                .pending_hosted_delete
+                .as_ref()
+                .map(|pending| pending.stage);
+            tracing::info!(
+                target: "koru_profiles",
+                result = %described,
+                code = code.as_deref().unwrap_or(""),
+                owner_scope,
+                active_scope = active,
+                generation,
+                handled,
+                before = ?before,
+                after = ?after,
+                "hosted delete: an account result arrived"
+            );
+        }
+        handled
+    }
+
+    fn complete_scoped_inner(
+        &mut self,
+        owner_scope: u64,
+        generation: u64,
         mut result: AccountOperationResult,
     ) -> bool {
         // Both Cloud reads are owner-correlated: a subscription answer and a

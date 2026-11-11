@@ -29,30 +29,33 @@ fn committed(row: &Row, listing: ListingState) -> PinnedWorkspace {
 
 #[test]
 fn cap_counts_pending_choices_and_unpin_still_runs_above_cap() {
-    let mut rows = rows(5);
-    rows[0].pinned = true;
-    rows[1].pinned = true;
+    // The rail's pins less one saved, the last one pending, then one more.
+    let cap = crate::RAIL_PINS;
+    let mut rows = rows(cap + 2);
+    for row in &mut rows[..cap - 1] {
+        row.pinned = true;
+    }
     let mut c = WorkspacesController::new();
     c.adopt_rows(&rows);
-    c.perform(Action::TogglePinned(rows[2].id));
-    assert_eq!(c.pending_pin(rows[2].id), Some(true));
+    c.perform(Action::TogglePinned(rows[cap - 1].id));
+    assert_eq!(c.pending_pin(rows[cap - 1].id), Some(true));
     assert_eq!(
-        c.reason_for(&Action::TogglePinned(rows[3].id), &rows[3]),
+        c.reason_for(&Action::TogglePinned(rows[cap].id), &rows[cap]),
         Some(t(c.lang, Key::WorkspacePinLimit).into())
     );
-    c.perform(Action::TogglePinned(rows[3].id));
+    c.perform(Action::TogglePinned(rows[cap].id));
     assert!(
-        c.pending_pin(rows[3].id).is_none(),
+        c.pending_pin(rows[cap].id).is_none(),
         "dispatch bypassed the cap"
     );
     for row in &mut rows {
         row.pinned = true;
     }
     c.adopt_rows(&rows);
-    c.perform(Action::TogglePinned(rows[4].id));
-    assert_eq!(c.pending_pin(rows[4].id), Some(false));
+    c.perform(Action::TogglePinned(rows[cap + 1].id));
+    assert_eq!(c.pending_pin(rows[cap + 1].id), Some(false));
     assert!(
-        c.row(rows[3].id).unwrap().pinned,
+        c.row(rows[cap].id).unwrap().pinned,
         "restore silently removed an excess pin"
     );
 }

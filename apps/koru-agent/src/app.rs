@@ -7620,6 +7620,17 @@ impl WindowApp for Agent {
                 {
                     self.pending_profile_cleanup.remove(&lifecycle.profile_id);
                 }
+                // Profiles were just chosen onto this device from the account.
+                // Their Cloud sync starts on (ADR-000-createdwithaccount), and
+                // until the reconcile opens the Store to Cloud every pull of
+                // theirs is refused — so it is asked for now rather than at
+                // the next heartbeat.
+                if matches!(
+                    &result,
+                    koru_agent_wire::AccountOperationResult::ProfilesSelected { .. }
+                ) {
+                    self.reconcile_cloud_sync();
+                }
                 self.push(
                     requester,
                     Push::AccountResult {
@@ -7635,6 +7646,13 @@ impl WindowApp for Agent {
                 profile_id,
                 result,
             } => {
+                // A Profile has just joined the account on this device. One
+                // created with it starts with Cloud sync on
+                // (ADR-000-createdwithaccount), and the reconcile is what
+                // starts it — asked for now, not at the next heartbeat.
+                if result.is_ok() {
+                    self.reconcile_cloud_sync();
+                }
                 let response = match result {
                     Ok(outcome) => Response::LocalProfileAccountBound {
                         profile_id,

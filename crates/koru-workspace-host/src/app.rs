@@ -284,6 +284,7 @@ fn effective_dark(pref: theme::ThemePreference) -> bool {
 /// The theme has to be set before the first layout is built, since brushes are
 /// baked into parley layouts.
 fn apply_settings(settings: &Settings) {
+    theme::set_tabs_per_workspace(settings.tabs_per_workspace);
     koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
@@ -297,7 +298,9 @@ fn apply_settings(settings: &Settings) {
     theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
     apply_base_colors(settings.base_color_light, settings.base_color_dark);
+    apply_accent_colors(settings.accent_color_light, settings.accent_color_dark);
     theme::set_density(settings.density);
+    theme::set_wheel_speed(settings.scroll_speed);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
     theme::set_default_canvas_bg(settings.canvas_bg);
@@ -314,6 +317,26 @@ fn apply_settings(settings: &Settings) {
     crate::spelling::set_preferred(settings.spellcheck_language);
 }
 
+/// **A wheel notch at the chosen speed** (Settings → Appearance → Scroll
+/// speed). Scaled here, once, rather than in each view: every pane converts
+/// a line its own way, and one factor applied before any of them keeps them
+/// in step. Line deltas only — a pixel delta is a precise trackpad following
+/// the finger, and doubling it would make the page run ahead of the hand.
+/// The primary+wheel zoom above reads the raw delta and is not scaled.
+fn wheel_scaled(
+    delta: winit::event::MouseScrollDelta,
+    speed: u8,
+) -> winit::event::MouseScrollDelta {
+    use winit::event::MouseScrollDelta;
+    match delta {
+        MouseScrollDelta::LineDelta(x, y) => {
+            let factor = f32::from(speed.max(1));
+            MouseScrollDelta::LineDelta(x * factor, y * factor)
+        }
+        pixels @ MouseScrollDelta::PixelDelta(_) => pixels,
+    }
+}
+
 /// The window's base color for each theme, `None` following the theme.
 ///
 /// Split out of [`apply_settings`] so a test can prove it without moving
@@ -321,6 +344,12 @@ fn apply_settings(settings: &Settings) {
 fn apply_base_colors(light: Option<u32>, dark: Option<u32>) {
     theme::set_base_color(false, light);
     theme::set_base_color(true, dark);
+}
+
+/// The accent for each theme, `None` following the theme.
+fn apply_accent_colors(light: Option<u32>, dark: Option<u32>) {
+    theme::set_accent_color(false, light);
+    theme::set_accent_color(true, dark);
 }
 
 fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
@@ -337,7 +366,9 @@ fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
     theme::set_font_setting(theme::FontSlot::Chat, settings.chat_font.clone());
     theme::set_doc_text_size(settings.doc_text_size);
     apply_base_colors(settings.base_color_light, settings.base_color_dark);
+    apply_accent_colors(settings.accent_color_light, settings.accent_color_dark);
     theme::set_density(settings.density);
+    theme::set_wheel_speed(settings.scroll_speed);
     theme::set_zoom(clamp_zoom(settings.zoom));
     theme::set_default_view_mode(settings.view_mode);
     theme::set_default_canvas_bg(settings.canvas_bg);
@@ -4141,6 +4172,13 @@ impl<H: Host> OnboardingApp<H> {
             ) || state.enrollment != koru_agent_wire::EnrollmentState::Idle
             {
                 self.view.show_account_state(&state);
+            } else if matches!(
+                state.stage,
+                koru_agent_wire::AccountStage::SignedOut | koru_agent_wire::AccountStage::Cancelled
+            ) {
+                // The look for a saved sign-in ended with none: a page left
+                // on *Finishing…* goes back to where the first run starts.
+                self.view.account_settled_signed_out();
             }
             if state.stage != koru_agent_wire::AccountStage::SignedIn {
                 self.signed_in_profiles_requested = false;
@@ -14057,14 +14095,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
             self.host.workspace_closed(profile_id, outgoing);
         }
         self.runtime.settings.workspace = Some(id);
-        // The Main strip is window-scoped — do not replace it with a
-        // per-workspace session list.
+        // **Workspace tabs** (2026-11-10): with *Per workspace* the incoming
+        // workspace's own strip replaces the open one — before the documents
+        // are reopened below, so its documents are among them, and before
+        // the window is told, which rebuilds its strip from `tabs`. With
+        // *Shared* tabs this changes nothing and the strip stays.
         // "Last opened" is **when you looked at it on this machine**, so it is a
         // settings key rather than a CRDT write a peer would overwrite with a
         // time from a different computer.
         self.runtime
             .settings
             .set_opened_in(id, koru_workspace::open::now_ms());
+        self.runtime.settings.adopt_tabs_of(id);
         // Nothing here is owed any more for rooms we did not keep.
         self.releasing.clear();
         // Re-open every document still named by the strip (rooms already in
@@ -14328,7 +14370,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
         self.runtime.settings.base_color_light = theme::base_color(false);
         self.runtime.settings.base_color_dark = theme::base_color(true);
+        self.runtime.settings.accent_color_light = theme::accent_color(false);
+        self.runtime.settings.accent_color_dark = theme::accent_color(true);
         self.runtime.settings.density = theme::density();
+        self.runtime.settings.scroll_speed = theme::wheel_speed();
+        self.runtime.settings.tabs_per_workspace = theme::tabs_per_workspace();
         self.runtime.settings.view_mode = theme::default_view_mode();
         self.runtime.settings.canvas_bg = theme::default_canvas_bg();
         self.runtime.settings.dictation_language = crate::voice_prefs::language();
@@ -18452,7 +18498,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     // Scrolling closes an open list, and with it a font
                     // preview the list was showing.
                     let was_shown = AppearanceShown::now();
-                    pane.view.scroll_by(delta);
+                    pane.view
+                        .scroll_by(wheel_scaled(delta, theme::wheel_speed()));
                     self.show_appearance_change(&was_shown);
                 }
                 self.request_redraw(id);
@@ -19674,6 +19721,23 @@ fn other_profile_workspace<'a>(
 mod tests {
     use super::*;
 
+    /// **A wheel notch moves by the chosen speed; a trackpad's pixels do not.**
+    #[test]
+    fn a_wheel_notch_is_scaled_and_a_pixel_delta_is_not() {
+        use winit::event::MouseScrollDelta;
+        assert_eq!(
+            wheel_scaled(MouseScrollDelta::LineDelta(0.5, -1.0), 2),
+            MouseScrollDelta::LineDelta(1.0, -2.0)
+        );
+        assert_eq!(
+            wheel_scaled(MouseScrollDelta::LineDelta(0.0, 1.0), 1),
+            MouseScrollDelta::LineDelta(0.0, 1.0),
+            "1x is the step views had before the setting"
+        );
+        let pixels = MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition::new(0.0, 40.0));
+        assert_eq!(wheel_scaled(pixels, 4), pixels);
+    }
+
     /// **The first window waits for its settings, and only so long** (D8). A
     /// settings answer — including one that changes nothing — reveals it at
     /// once; with no answer it is revealed at the budget; nothing reveals twice,
@@ -20250,6 +20314,18 @@ mod tests {
         assert_eq!(theme::base_color(true), Some(0x0A0B0C));
         apply_base_colors(None, None);
         assert_eq!(theme::base_color(true), None);
+    }
+
+    /// Applying settings sets each theme's accent, and `None` puts the
+    /// theme's own back (2026-11-10). The only test here that moves it.
+    #[test]
+    fn applying_settings_sets_each_themes_accent() {
+        apply_accent_colors(Some(0x1F7A7A), Some(0xA88BD6));
+        assert_eq!(theme::accent_color(false), Some(0x1F7A7A));
+        assert_eq!(theme::accent_color(true), Some(0xA88BD6));
+        apply_accent_colors(None, None);
+        assert_eq!(theme::accent_color(false), None);
+        assert_eq!(theme::accent_color(true), None);
     }
 
     /// **A Chat font change lays every window out again** (koru-ai D79), as
@@ -21401,6 +21477,9 @@ struct AppearanceShown {
     /// The base color per theme: paint only, like the icons' artwork, and
     /// a saved choice, which the icons' artwork is not.
     base: [Option<u32>; 2],
+    /// The accent per theme: a saved choice, and text is drawn in it, so a
+    /// change lays text out again like a face does.
+    accent: [Option<u32>; 2],
     choices: (
         [koru_settings::FontSetting; 5],
         Option<u8>,
@@ -21423,6 +21502,7 @@ impl AppearanceShown {
             density: theme::density(),
             icon_paint: koru_draw::icons::rendered_pack(),
             base: [theme::base_color(false), theme::base_color(true)],
+            accent: [theme::accent_color(false), theme::accent_color(true)],
             choices: (
                 [
                     theme::font_setting(FontSlot::Ui),
@@ -21442,6 +21522,7 @@ impl AppearanceShown {
         self.faces != before.faces
             || self.doc_text_size != before.doc_text_size
             || self.density != before.density
+            || self.accent != before.accent
     }
 
     /// Only the icons' artwork changed: a repaint, never a layout.
@@ -21452,6 +21533,6 @@ impl AppearanceShown {
     /// A saved choice changed, whether or not anything drawn did. The base
     /// color is both: a swatch has no preview, so what is drawn is the choice.
     fn choice_moved(&self, before: &Self) -> bool {
-        self.choices != before.choices || self.base != before.base
+        self.choices != before.choices || self.base != before.base || self.accent != before.accent
     }
 }

@@ -100,8 +100,9 @@ inspector does not see it (it is not drawn), and session restore drops it.
   an account* leads — with no *Back*; every later step is unchanged. The Manage
   tab's *New profile* page embeds the same form and its lead drops the account
   half.
-- **Manage** (`apps/koru/src/manage/`): no *Koru Cloud* nav row or chip, no
-  *Other Profiles*, no *{n} Profiles hidden*; a Profile's page has no
+- **Manage** (`apps/koru/src/manage/`): no *Koru Cloud* nav row or chip —
+  and so no list of the account's Profiles that are not on this computer,
+  which is that page's — no *{n} Profiles hidden*; a Profile's page has no
   *Sign-in and sync* section and no *Can't reach Koru — see Koru Cloud*
   pointer; the account switcher does not open; the page's footer offers
   *Delete profile and its workspaces…* and *Remove from this device…* but no

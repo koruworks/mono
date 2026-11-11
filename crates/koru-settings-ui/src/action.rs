@@ -15,8 +15,8 @@ use koru_draw::theme::FontChoice;
 use koru_settings::{
     CaretColorChoice, CaretHeightChoice, CaretWidthChoice, CloseBehaviorChoice, DensityChoice,
     DictationGesture, DictationInput, DictationLanguage, DictationTier, FontFamily, IconPackChoice,
-    LanguageChoice, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
-    ViewModeChoice,
+    LanguageChoice, ScrollSpeedChoice, TerminalCursorBlink, TerminalCursorHeight,
+    TerminalCursorWidth, ThemeChoice, ViewModeChoice,
 };
 
 /// Which of the five font roles a chip belongs to.
@@ -108,8 +108,11 @@ pub(crate) enum Action {
     CanvasBackground,
     ApplyLayoutToAll,
     Density(DensityChoice),
+    ScrollSpeed(ScrollSpeedChoice),
     IconPack(IconPackChoice),
     PinnedShowTitle(bool),
+    /// *Workspace tabs*: `true` for *Per workspace*, `false` for *Shared*.
+    WorkspaceTabs(bool),
     Font(FontRole, FontChoice),
     /// A document body size, in px, from `DocTextSize::ALL`.
     DocTextSize(u8),
@@ -117,6 +120,9 @@ pub(crate) enum Action {
     /// dark (`true`) theme:
     /// `0xRRGGBB`, or `None` for the theme's own.
     BaseColor(bool, Option<u32>),
+    /// The accent for the light (`false`) or dark (`true`) theme:
+    /// `0xRRGGBB`, or `None` for the theme's own.
+    AccentColor(bool, Option<u32>),
     /// A font role set to exactly this — the row for an installed family
     /// that is not installed here keeps it.
     FontSetting(FontRole, koru_settings::FontSetting),

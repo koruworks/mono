@@ -221,6 +221,42 @@ token_enum! {
 }
 
 token_enum! {
+    /// `scroll_speed=` — how many steps one mouse-wheel notch moves a pane.
+    /// `1x` is the step views had before the setting; `2x` is the default
+    /// (the user, 2026-11-10). Pixel-precise trackpad scrolling is not
+    /// scaled: it follows the finger.
+    ScrollSpeedChoice, default = X2, fold_case = true,
+    {
+        X1 => "1x";
+        X2 => "2x";
+        X3 => "3x";
+        X4 => "4x";
+    }
+}
+
+impl ScrollSpeedChoice {
+    /// The multiplier, 1 to 4.
+    pub fn factor(self) -> u8 {
+        match self {
+            Self::X1 => 1,
+            Self::X2 => 2,
+            Self::X3 => 3,
+            Self::X4 => 4,
+        }
+    }
+
+    /// The choice for a multiplier; anything outside 1..=4 is held to it.
+    pub fn from_factor(factor: u8) -> Self {
+        match factor {
+            0 | 1 => Self::X1,
+            2 => Self::X2,
+            3 => Self::X3,
+            _ => Self::X4,
+        }
+    }
+}
+
+token_enum! {
     /// `popout_close=`. Note `RestoreTab` persists as `restore`.
     PopoutCloseChoice, default = Ask, fold_case = false,
     {

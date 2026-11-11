@@ -33,21 +33,48 @@ impl ExploreView {
         self.workspaces
             .iter()
             .filter(|w| w.pinned && !w.archived && w.deleted_at.is_none())
-            .take(3)
+            .take(koru_workspaces_ui::RAIL_PINS)
             .map(|w| w.id)
             .collect()
     }
 
-    /// Every workspace square, top to bottom: the pinned run, then the open
-    /// workspace when it is not in it.
+    /// Every workspace square, top to bottom: the pinned run, then the
+    /// visiting workspace — the last unpinned one opened — and the open
+    /// workspace when it is neither.
     fn saved_workspace_run(&self) -> Vec<WorkspaceId> {
         let mut ids = self.pinned_workspace_run();
-        if let Some(current) = self.current
-            && !ids.contains(&current)
-        {
-            ids.push(current);
+        for id in [self.rail_visitor, self.current].into_iter().flatten() {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
         }
         ids
+    }
+
+    /// **Keep the visiting square** (the user, 2026-11-10: "don't remove the
+    /// non-pinned workspace when I click a pinned one; only when I click
+    /// another non-pinned one"). Opening an unpinned workspace makes it the
+    /// visitor; opening a pinned one leaves the visitor where it is. It goes
+    /// when it is pinned (it is among the pins then), archived, deleted, or
+    /// no longer listed — another Profile's list, say.
+    pub(crate) fn note_rail_visitor(&mut self) {
+        let pins = self.pinned_workspace_run();
+        if let Some(current) = self.current
+            && !pins.contains(&current)
+        {
+            self.rail_visitor = Some(current);
+            return;
+        }
+        let gone = self.rail_visitor.is_some_and(|id| {
+            pins.contains(&id)
+                || !self
+                    .workspaces
+                    .iter()
+                    .any(|w| w.id == id && !w.archived && w.deleted_at.is_none())
+        });
+        if gone {
+            self.rail_visitor = None;
+        }
     }
 
     /// Where the run starts among the rail's squares: after the waiting

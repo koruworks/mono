@@ -301,9 +301,10 @@ fn the_cloud_row_is_the_shared_switch_or_the_way_to_koru_cloud() {
         panic!("the shared switch")
     };
     assert_eq!(toggle, Toggle::new(false));
-    // Turning it on raises D258's question about the Profile's Workspaces.
+    // Turning it on is the whole act: nothing is asked (2026-11-11).
     assert!(press(&mut view, Control::CloudSync));
-    assert!(view.c.prompts().next().is_some());
+    assert!(view.c.prompts().next().is_none());
+    assert_eq!(view.c.cloud_sync_pending_for(synced.id), Some(true));
 }
 
 #[test]

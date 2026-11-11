@@ -201,6 +201,32 @@ fn terminal(stage: CloudStage) -> bool {
 }
 
 impl Host for DesktopCloudHost {
+    /// From the Store's own inventory: the Profiles that are here, bound to
+    /// this account, and not removed from this device. An inventory that
+    /// cannot be read answers the empty list rather than `None`, so a pass
+    /// that cannot tell asks for nothing instead of for everything.
+    fn held_profiles(
+        &self,
+        account: koru_account_core::KoruIdentityId,
+    ) -> Option<std::collections::BTreeSet<koru_account_core::ProfileId>> {
+        let binding = format!("koru:{account}");
+        Some(
+            self.local_profiles
+                .inventory()
+                .map(|inventory| {
+                    inventory
+                        .profiles
+                        .iter()
+                        .filter(|item| {
+                            item.account_binding == binding && item.removed_at_millis.is_none()
+                        })
+                        .map(|item| item.profile_id)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        )
+    }
+
     fn local_workspace(
         &self,
         account: KoruIdentityId,
@@ -287,8 +313,9 @@ impl Host for DesktopCloudHost {
             } if acknowledged == sequence => {
                 *self.context.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some((account_id, account_generation));
+                // Debug: one per workspace on every install (2026-11-10).
                 for permit in permits {
-                    tracing::info!(
+                    tracing::debug!(
                         permit_id = %permit.permit_id,
                         placement = ?permit.placement_profile(),
                         dataset = ?permit.dataset(),
@@ -382,7 +409,7 @@ impl Host for DesktopCloudHost {
                 sequence: acknowledged,
                 ..
             } if acknowledged == sequence => {
-                tracing::info!(
+                tracing::debug!(
                     ?permit_ids,
                     account_generation,
                     sequence,
@@ -613,7 +640,8 @@ impl Host for DesktopCloudHost {
             }
         };
         if matches!(report.stage, Stage::Settled | Stage::CheckingCoverage) {
-            tracing::info!(permit_id = %permit.permit_id, dataset = ?dataset,
+            // Debug: the ordinary end of every workspace's reconciliation.
+            tracing::debug!(permit_id = %permit.permit_id, dataset = ?dataset,
                 "cloud subscription: retained after initial reconciliation");
             self.sessions
                 .lock()

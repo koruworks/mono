@@ -38,7 +38,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme;
 
 use crate::dates;
-use crate::text_field::{self, TextField, draw_field};
+use crate::text_field::{self, TextField};
 
 pub const CELL: f32 = 30.0;
 pub const PANEL_W: f32 = CELL * 7.0 + theme::PANEL_PAD * 2.0;
@@ -433,22 +433,8 @@ fn draw_phrase_field(
 ) {
     // The placeholder is the grammar's shortest useful sample: it has to teach
     // that this box takes a phrase rather than a date, or it reads as a filter.
-    let ghost = engine.simple_layout("friday 17:30, +4h", theme::role::ui());
-    let r = field_rect(pw);
-    let shape = rrect(px + r.x, py + r.y, r.w, r.h, 6.0);
-    fill(scene, root, theme::p().bg, &shape);
-    stroke(scene, root, theme::p().focus_ring, theme::BORDER_W, &shape);
     if let Some(field) = &mut grid.query {
-        let empty = field.is_empty();
-        draw_field(
-            scene,
-            root,
-            field,
-            engine,
-            empty.then_some(&ghost),
-            (px + r.x, py + r.y, r.w, r.h),
-            true,
-        );
+        text_field::draw_panel_search(scene, root, field, engine, "friday 17:30, +4h", px, py, pw);
     }
 }
 

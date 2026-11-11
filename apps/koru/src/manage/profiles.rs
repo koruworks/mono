@@ -568,7 +568,6 @@ impl ProfilesController {
     pub fn prompts(&self) -> impl Iterator<Item = &Confirm> {
         [
             self.confirm_hosted_delete.as_ref(),
-            self.cloud.move_prompt.as_ref(),
             self.attach_prompt.as_ref(),
         ]
         .into_iter()
@@ -580,9 +579,6 @@ impl ProfilesController {
         if let Some((_, confirm)) = self.confirm_hosted_delete.as_mut() {
             return Some((confirm, Intent::AnswerHostedDelete));
         }
-        if let Some((_, confirm)) = self.cloud.move_prompt.as_mut() {
-            return Some((confirm, Intent::AnswerCloudMove));
-        }
         self.attach_prompt
             .as_mut()
             .map(|(_, confirm)| (confirm, Intent::AnswerAttach as fn(_) -> _))
@@ -591,21 +587,21 @@ impl ProfilesController {
     // ---- the clock -----------------------------------------------------------
 
     /// **The one clock this controller contributes**, and only while a
-    /// transport mode write it started is unanswered or the Cloud progress
+    /// deletion preview it asked for is unanswered or the Cloud progress
     /// section is showing.
     pub fn maintenance_deadline(&self) -> Option<std::time::Instant> {
-        let transport = (self.cloud_move_pending() || self.preview_request.is_some())
+        let preview = self
+            .preview_request
+            .is_some()
             .then(|| std::time::Instant::now() + std::time::Duration::from_millis(16));
-        match (transport, self.progress.deadline()) {
+        match (preview, self.progress.deadline()) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
     }
 
     pub fn maintain(&mut self, now: std::time::Instant) -> bool {
-        self.drain_transport_answer()
-            | self.drain_deletion_preview()
-            | self.maintain_cloud_progress(now)
+        self.drain_deletion_preview() | self.maintain_cloud_progress(now)
     }
 }
 

@@ -330,6 +330,40 @@ impl Host for MobileCloudHost {
         }))
     }
 
+    /// The Profiles that are on this phone, bound to this account and not
+    /// removed from it: the only ones a Cloud pass asks for. The service no
+    /// longer requires a device to be bound to a Profile before it issues a
+    /// credential (ADR-000-cloudneedsnopeer), so without this a phone would
+    /// be handed every Profile the account owns. A Store that cannot answer
+    /// gives the empty list, so a pass that cannot tell asks for nothing.
+    fn held_profiles(
+        &self,
+        account: KoruIdentityId,
+    ) -> Option<std::collections::BTreeSet<ProfileId>> {
+        let Ok(binding) =
+            koru_store_core::ProfileAccountBinding::from_identity_uuid(account.as_uuid())
+        else {
+            return Some(Default::default());
+        };
+        Some(
+            self.with_store(move |store| {
+                store
+                    .profile_lifecycle_inventory()
+                    .map(|inventory| {
+                        inventory
+                            .iter()
+                            .filter(|stored| {
+                                stored.account_binding == binding && stored.removed_at.is_none()
+                            })
+                            .map(|stored| stored.profile)
+                            .collect()
+                    })
+                    .map_err(|_| "store_unavailable")
+            })
+            .unwrap_or_default(),
+        )
+    }
+
     /// The Profile whose Identity/Private units are about to sync must be
     /// present here and bound to this account (the selection path's
     /// provisioning, TECHNICAL §7.4). A Profile bound to another account is

@@ -2217,9 +2217,11 @@ impl SettingsSurface {
             }
             Action::PreviewSampleDocument => self.requests.push(Request::OpenSampleDocument),
             Action::Density(choice) => theme::set_density(density(choice)),
+            Action::ScrollSpeed(choice) => theme::set_wheel_speed(choice.factor()),
             Action::IconPack(choice) => {
                 icons::set_icon_pack(icons::IconPack::parse(choice.token()))
             }
+            Action::WorkspaceTabs(per_workspace) => theme::set_tabs_per_workspace(per_workspace),
             Action::PinnedShowTitle(show) => {
                 self.pinned_show_title = show;
                 self.requests.push(Request::SetPinnedShowTitle(show));
@@ -2227,6 +2229,7 @@ impl SettingsSurface {
             Action::Font(role, family) => role.set(family),
             Action::DocTextSize(px) => theme::set_doc_text_size(Some(px)),
             Action::BaseColor(dark, rgb) => theme::set_base_color(dark, rgb),
+            Action::AccentColor(dark, rgb) => theme::set_accent_color(dark, rgb),
             Action::FontSetting(role, setting) => theme::set_font_setting(role.slot(), setting),
             Action::MoreFonts(role) => self.requests.push(Request::MoreFonts(role)),
             Action::VoiceLanguage(language) => {
@@ -2490,11 +2493,14 @@ fn clone_action(action: &Action) -> Action {
         Action::CanvasBackground => Action::CanvasBackground,
         Action::ApplyLayoutToAll => Action::ApplyLayoutToAll,
         Action::Density(v) => Action::Density(*v),
+        Action::ScrollSpeed(v) => Action::ScrollSpeed(*v),
         Action::IconPack(v) => Action::IconPack(*v),
         Action::PinnedShowTitle(v) => Action::PinnedShowTitle(*v),
+        Action::WorkspaceTabs(v) => Action::WorkspaceTabs(*v),
         Action::Font(role, family) => Action::Font(*role, *family),
         Action::DocTextSize(px) => Action::DocTextSize(*px),
         Action::BaseColor(dark, rgb) => Action::BaseColor(*dark, *rgb),
+        Action::AccentColor(dark, rgb) => Action::AccentColor(*dark, *rgb),
         Action::FontSetting(role, setting) => Action::FontSetting(*role, setting.clone()),
         Action::MoreFonts(role) => Action::MoreFonts(*role),
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),

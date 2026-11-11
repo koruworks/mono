@@ -362,12 +362,6 @@ impl ManageView {
             // *{n} Profiles hidden* opens the account switcher, which lives on
             // the Koru Cloud page (maintainers' decision 16).
             nav::Entry::Hidden => self.open_account_switcher(),
-            nav::Entry::Other(profile) => {
-                if self.c.connect_label(profile).is_none() {
-                    return false;
-                }
-                self.perform(Intent::Connect(profile));
-            }
         }
         true
     }

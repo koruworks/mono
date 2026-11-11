@@ -7214,7 +7214,15 @@ fn back_across_a_workspace_swap_routes_to_the_prior_document() {
     v.open_node(&other, other_root);
     v.tabs_mut().active_mut().document = Some(other_document);
 
-    assert_eq!(v.history.len(), 1, "the source survived the reseat");
+    // The Source tab stays open across the switch now (2026-11-10), so
+    // opening Bugs from it records a stop of its own; what matters is that
+    // the Source stop survived the reseat, which Back below relies on.
+    assert!(
+        v.history
+            .first()
+            .is_some_and(|spot| spot.document == Some(source_document)),
+        "the source survived the reseat"
+    );
     assert!(v.navigate_history(&other, -1));
     assert_eq!(
         v.take_pane_request(),
@@ -15031,4 +15039,194 @@ fn foreign_file_attachment_allows_reads_and_detach_but_rejects_mutation() {
     assert!(local.contains(&MenuAction::Rename));
     assert!(local.contains(&MenuAction::MoveToTrash));
     assert!(local.contains(&MenuAction::AddNote));
+}
+
+/// **A workspace switch leaves the strip open** (the user, 2026-11-10:
+/// "don't close chats when I switch workspaces, leave them open"). The
+/// switch reseats the window and then tells it the workspace changed; a
+/// chat tab and the document tab beside it are both still there after.
+#[test]
+fn a_workspace_switch_leaves_chats_and_documents_open() {
+    let (mut v, mut w) = container();
+    let root = a_document(&mut w.ws, "Notes");
+    v.open_node(&w.ws, root);
+    assert!(v.open_ai_chat_tab(), "a chat tab opened");
+    let before = v.tabs().len();
+    let mut other = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "other").unwrap();
+    a_document(&mut other, "Elsewhere");
+    v.reseat(&other);
+    assert_eq!(v.tabs().len(), before, "nothing closed");
+    assert!(
+        v.tabs()
+            .iter()
+            .any(|tab| matches!(tab.view, TabView::AiChat(_))),
+        "the chat is still open"
+    );
+    assert!(
+        v.tabs().iter().any(|tab| tab.view.root() == Some(root)),
+        "and so is the document"
+    );
+}
+
+/// **Ctrl+Alt+W is a quick switcher** (2026-11-10): the workspaces as a
+/// list under a search field, like the `/` menu. Typing narrows it, Enter
+/// switches to the match, and the rail's `…` still opens the whole menu.
+#[test]
+fn ctrl_alt_w_filters_the_workspaces_and_enter_switches_to_the_match() {
+    use crate::panes::explore::PopoverRow;
+    let (mut v, mut w) = container();
+    v.toggle_sidebar();
+    let profile = koru_core::ProfileSummary {
+        id: koru_core::ProfileId::new(),
+        name: "mine".into(),
+        email: String::new(),
+        avatar: None,
+        icon: None,
+        color: None,
+        account: None,
+        folder: "C:/dev/mine".into(),
+    };
+    let list: Vec<_> = ["PM", "Specs", "Concepts", "Signals"]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| koru_core::WorkspaceEntry::new(WorkspaceId::new(), name, i as i64))
+        .collect();
+    v.set_pane_context(
+        vec![profile.clone()],
+        profile.id,
+        list.clone(),
+        Some(list[0].id),
+    );
+
+    assert!(v.open_workspace_switcher());
+    assert!(v.explore.workspace_filter_active());
+    let area = v.explore_popover_area();
+    let rows = |v: &MainView| v.explore.popover_rects(area, v.viewport);
+    assert!(
+        rows(&v)
+            .iter()
+            .all(|(row, _)| matches!(row, PopoverRow::Workspace(_))),
+        "only the workspaces: no heading, no New or Import"
+    );
+    assert_eq!(rows(&v).len(), 4);
+    // The field is an element of the page, inside the floating panel.
+    let field = v
+        .explore
+        .popover_filter_rect(area, v.viewport)
+        .expect("the field");
+    let panel = v
+        .explore
+        .popover_panel(area, v.viewport)
+        .expect("the panel");
+    assert!(
+        field.x >= panel.x && field.x + field.w <= panel.x + panel.w + 0.5 && field.y >= panel.y,
+        "{field:?} inside {panel:?}"
+    );
+
+    for typed in ["s", "i"] {
+        assert!(v.key(
+            &mut w.ws,
+            &Key::Character(typed.into()),
+            Some(typed),
+            ModifiersState::empty()
+        ));
+    }
+    let shown = rows(&v);
+    assert_eq!(shown.len(), 1, "\"si\" matches Signals alone");
+    assert!(v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(
+        v.take_pane_request(),
+        Some(koru_workspace_host::PaneRequest::Switch(list[3].id))
+    );
+
+    // The `…` is the whole menu again, heading and all.
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    assert!(v.explore.toggle_workspace_menu());
+    assert!(!v.explore.workspace_filter_active());
+    assert!(
+        rows(&v)
+            .iter()
+            .any(|(row, _)| *row == PopoverRow::WorkspacesHeading)
+    );
+}
+
+/// Escape leaves the quick switcher, and the field goes with it.
+#[test]
+fn escape_closes_the_quick_switcher() {
+    let (mut v, mut w, _) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    assert!(v.open_workspace_switcher());
+    assert!(v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(!v.explore.workspace_filter_active());
+}
+
+/// **Ctrl+Alt+W opens at the mouse** (2026-11-10): the panel's corner on the
+/// pointer, kept inside the window; with the pointer off the window it
+/// hangs off the rail as before.
+#[test]
+fn the_quick_switcher_opens_at_the_mouse() {
+    let (mut v, _w, _) = with_summary_open();
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.pointer = (420.0, 260.0);
+    assert!(v.open_workspace_switcher());
+    let area = v.explore_popover_area();
+    let panel = v.explore.popover_panel(area, v.viewport).expect("open");
+    assert_eq!(
+        (panel.x, panel.y),
+        (420.0, 260.0),
+        "its corner on the pointer"
+    );
+
+    // Near the window's corner it is pulled back inside.
+    v.explore.close_popover();
+    v.explore
+        .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
+    v.pointer = (v.viewport.0 - 5.0, v.viewport.1 - 5.0);
+    assert!(v.open_workspace_switcher());
+    let panel = v.explore.popover_panel(area, v.viewport).expect("open");
+    assert!(panel.x + panel.w <= v.viewport.0 && panel.y + panel.h <= v.viewport.1);
+}
+
+/// **Workspace tabs: per workspace** (2026-11-10): on a switch the focused
+/// column's main tabs become the incoming workspace's own — here none, so
+/// the Welcome floor — and with *Shared* tabs they stay as they were.
+#[test]
+fn per_workspace_tabs_replace_the_strip_on_a_switch_and_shared_keeps_it() {
+    let (mut v, mut w) = container();
+    let first = a_document(&mut w.ws, "First");
+    v.open_node(&w.ws, first);
+    assert!(v.open_ai_chat_tab());
+    let open = v.tabs().len();
+    assert!(open >= 2);
+
+    let shared = koru_workspace_host::Settings::default();
+    View::on_workspace_switched(&mut v, &w, &shared);
+    assert_eq!(v.tabs().len(), open, "shared: the tabs stay");
+
+    let per_workspace = koru_workspace_host::Settings {
+        tabs_per_workspace: true,
+        ..koru_workspace_host::Settings::default()
+    };
+    View::on_workspace_switched(&mut v, &w, &per_workspace);
+    assert_eq!(
+        v.tabs().len(),
+        1,
+        "the incoming workspace had none of its own"
+    );
+    assert!(matches!(v.tabs().active_tab().view, TabView::Welcome(_)));
 }

@@ -9,6 +9,10 @@ impl ExploreView {
         if self.live().is_some_and(|p| p.kind == PopoverKind::Summary) {
             self.close_popover()
         } else {
+            // The `…`'s page is the whole menu, never the quick switcher.
+            self.workspace_filter = None;
+            self.workspace_filter_field = None;
+            self.switcher_at = None;
             self.open_popover(PopoverKind::Summary)
         }
     }

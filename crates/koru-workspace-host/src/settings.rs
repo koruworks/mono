@@ -957,9 +957,15 @@ pub struct Settings {
     pub base_color_light: Option<u32>,
     /// The same for the dark theme.
     pub base_color_dark: Option<u32>,
+    /// The accent chosen for the light and the dark theme, as `0xRRGGBB`,
+    /// or `None` while it follows the theme.
+    pub accent_color_light: Option<u32>,
+    pub accent_color_dark: Option<u32>,
     /// Display density — Compact, Normal or Comfortable. Shifts the UI and
     /// document-body type roles.
     pub density: Density,
+    /// How many steps one mouse-wheel notch moves a pane, 1 to 4.
+    pub scroll_speed: u8,
     /// **How the dictation gesture works.** `false` is push-to-talk, which is
     /// the default; `true` is a toggle — press once to start, press again to
     /// stop — which exists for accessibility and for dictation longer than a
@@ -1068,8 +1074,10 @@ pub struct Settings {
     /// Persisted split-view pane tree. `None` means the session predates split
     /// views and should be read from [`tabs`](Self::tabs) instead.
     pub pane_tree: Option<PaneTreeState>,
-    /// Legacy per-workspace Main strips. Still read on load for migration; no
-    /// longer written. The live strip is [`tabs`](Self::tabs).
+    /// Each workspace's Main strip while *Workspace tabs* is *Per workspace*
+    /// ([`tabs_per_workspace`](Self::tabs_per_workspace)): filed on the way
+    /// out, adopted on the way in, and written as `session.<id>=` lines only
+    /// while that is on. The live strip is [`tabs`](Self::tabs).
     pub sessions: Vec<(WorkspaceId, Vec<(TabRef, f32)>, usize)>,
     /// Documents opened, most recent first. What the welcome tab offers.
     ///
@@ -1084,6 +1092,10 @@ pub struct Settings {
     pub pinned_tab: Option<usize>,
     /// Welcome default: newly pinned tabs show their title.
     pub pinned_show_title: bool,
+    /// **Workspace tabs: per workspace** (2026-11-10). While on, each
+    /// workspace's Main strip is filed under it in [`sessions`](Self::sessions)
+    /// on the way out and put back on the way in; off, the strip stays.
+    pub tabs_per_workspace: bool,
     /// **The terminal's theme and font, per agent** (ADR-475): `claude`,
     /// `codex`, `powershell`, or `custom:<id>` to the look that agent's tabs
     /// use instead of the Settings page's. A key absent here follows Settings.
@@ -1207,7 +1219,10 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) doc_text_size: Option<u8>,
     pub(crate) base_color_light: Option<u32>,
     pub(crate) base_color_dark: Option<u32>,
+    pub(crate) accent_color_light: Option<u32>,
+    pub(crate) accent_color_dark: Option<u32>,
     pub(crate) density: Density,
+    pub(crate) scroll_speed: u8,
     pub(crate) dictation_toggle: bool,
     pub(crate) dictation_language: Requested,
     pub(crate) dictation_tier: ModelTier,
@@ -1254,7 +1269,10 @@ impl PreIdentitySettings {
             doc_text_size: self.values.doc_text_size,
             base_color_light: self.values.base_color_light,
             base_color_dark: self.values.base_color_dark,
+            accent_color_light: self.values.accent_color_light,
+            accent_color_dark: self.values.accent_color_dark,
             density: self.values.density,
+            scroll_speed: self.values.scroll_speed,
             dictation_toggle: self.values.dictation_toggle,
             dictation_language: self.values.dictation_language,
             dictation_tier: self.values.dictation_tier,
@@ -1434,7 +1452,10 @@ impl Default for Settings {
             doc_text_size: None,
             base_color_light: None,
             base_color_dark: None,
+            accent_color_light: None,
+            accent_color_dark: None,
             density: Density::default(),
+            scroll_speed: koru_settings::ScrollSpeedChoice::default().factor(),
             dictation_toggle: false,
             dictation_language: Requested::Auto,
             spellcheck_enabled: true,
@@ -1458,6 +1479,7 @@ impl Default for Settings {
             pinned_tabs: Vec::new(),
             pinned_tab: None,
             pinned_show_title: false,
+            tabs_per_workspace: false,
             terminal_looks: std::collections::BTreeMap::new(),
             collapsed: Vec::new(),
             show_archived: false,
@@ -1950,13 +1972,38 @@ impl Settings {
         }
     }
 
-    /// No-op kept for call sites that still name the old per-workspace strip.
-    ///
-    /// The Main strip is window-scoped; capture writes `tabs` directly.
-    pub fn remember_tabs_of(&mut self, _workspace: WorkspaceId) {}
+    /// **File the Main strip under `workspace`** while each workspace keeps
+    /// its own tabs; with *Shared* tabs the strip is the window's and nothing
+    /// is filed.
+    pub fn remember_tabs_of(&mut self, workspace: WorkspaceId) {
+        if !self.tabs_per_workspace {
+            return;
+        }
+        let entry = (workspace, self.tabs.clone(), self.tab);
+        match self.sessions.iter_mut().find(|(id, _, _)| *id == workspace) {
+            Some(slot) => *slot = entry,
+            None => self.sessions.push(entry),
+        }
+    }
 
-    /// No-op: switching workspace must not replace the open strip.
-    pub fn adopt_tabs_of(&mut self, _workspace: WorkspaceId) {}
+    /// **Take `workspace`'s own strip** while each workspace keeps its own
+    /// tabs: what it had when it was left, or nothing for one never opened
+    /// this way — the window then lands on its document. Before the
+    /// documents are reopened, so the strip's are among them. *Shared* tabs
+    /// leave the strip as it is.
+    pub fn adopt_tabs_of(&mut self, workspace: WorkspaceId) {
+        if !self.tabs_per_workspace {
+            return;
+        }
+        let (tabs, tab) = self
+            .sessions
+            .iter()
+            .find(|(id, _, _)| *id == workspace)
+            .map(|(_, tabs, tab)| (tabs.clone(), *tab))
+            .unwrap_or_default();
+        self.tabs = tabs;
+        self.tab = tab;
+    }
 
     /// Every document still open in this window (Main + pinned, in every
     /// column), for parking rooms across a workspace switch.
@@ -2551,8 +2598,18 @@ impl Settings {
         if let Some(i) = self.pinned_tab {
             out.push_str(&format!("pinned_tab={i}\n"));
         }
-        // Legacy `session.<ws>=` lines are still *read* on load but no longer
-        // written: the Main strip is window-scoped in `tabs=`.
+        // `session.<ws>=` lines: each workspace's own strip, written only
+        // while *Workspace tabs* is *Per workspace*. With *Shared* tabs the
+        // strip is the window's, in `tabs=`, and these are not needed.
+        if self.tabs_per_workspace {
+            for (id, tabs, active) in &self.sessions {
+                out.push_str(&format!(
+                    "{SESSION_PREFIX}{}={active};{}\n",
+                    id.to_storage(),
+                    write_tabs(tabs)
+                ));
+            }
+        }
         let recents: Vec<String> = self.recents.iter().map(DocumentId::to_storage).collect();
         out.push_str(&format!("recents={}\n", recents.join(",")));
         // The two that came *in* from `preferences.conf` (ADR-266). Written
@@ -3009,6 +3066,51 @@ mod tests {
     fn a_negative_position_is_kept() {
         let s = Settings::from_text("x=-1500\ny=-900\nw=940\nh=620\n");
         assert_eq!(s.pos, Some((-1500, -900)));
+    }
+
+    /// **Workspace tabs: per workspace** (2026-11-10). Each strip is filed
+    /// under its workspace on the way out and adopted on the way in; one
+    /// never opened this way starts with none; the filed strips survive a
+    /// save. With *Shared* tabs nothing is filed or adopted.
+    #[test]
+    fn per_workspace_tabs_file_each_strip_and_adopt_it_back() {
+        let one = WorkspaceId::new();
+        let two = WorkspaceId::new();
+        let page = TabRef::Document {
+            id: DocumentId::new(),
+            workspace: Some(one),
+        };
+        let mut s = Settings {
+            tabs_per_workspace: true,
+            tabs: vec![(page.clone(), 40.0)],
+            tab: 0,
+            ..Settings::default()
+        };
+        s.remember_tabs_of(one);
+        s.adopt_tabs_of(two);
+        assert!(s.tabs.is_empty(), "never opened this way: nothing of one's");
+        s.tabs = vec![(TabRef::Welcome, 0.0)];
+        s.remember_tabs_of(two);
+        s.adopt_tabs_of(one);
+        assert_eq!(s.tabs, vec![(page.clone(), 40.0)], "one's own, back");
+        let after = Settings::from_text(&s.profile_body());
+        assert_eq!(after.sessions.len(), 2, "the filed strips are saved");
+        assert!(
+            after
+                .sessions
+                .iter()
+                .any(|(id, tabs, _)| *id == one && tabs == &vec![(page.clone(), 40.0)])
+        );
+
+        let mut shared = Settings {
+            tabs: vec![(page.clone(), 0.0)],
+            ..Settings::default()
+        };
+        shared.remember_tabs_of(one);
+        shared.adopt_tabs_of(two);
+        assert!(shared.sessions.is_empty(), "shared tabs file nothing");
+        assert_eq!(shared.tabs, vec![(page, 0.0)], "and the strip stays");
+        assert!(!shared.profile_body().contains("session."));
     }
 
     // ------------------------------------------------------------- the session

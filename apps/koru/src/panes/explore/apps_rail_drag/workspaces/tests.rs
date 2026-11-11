@@ -3,11 +3,11 @@
 use super::*;
 use crate::panes::explore::WorkspaceEntry;
 
-/// Five workspaces, four of them pinned, and the open one — `0` — not
-/// pinned. The run is the first three pins, then the open workspace.
+/// The rail's pins plus one more pinned past them, and the open one — `0` —
+/// not pinned. The run is the first [`N`] pins, then the open workspace.
 fn view() -> ExploreView {
     let mut view = ExploreView::new();
-    view.workspaces = (0..5)
+    view.workspaces = (0..N as i64 + 2)
         .map(|i| {
             let mut row = WorkspaceEntry::new(WorkspaceId::new(), &format!("Workspace {i}"), i);
             row.pinned = i > 0;
@@ -18,6 +18,9 @@ fn view() -> ExploreView {
     view
 }
 
+/// How many pins the rail holds.
+const N: usize = koru_workspaces_ui::RAIL_PINS;
+
 fn rail() -> Rect {
     Rect::new(0.0, 0.0, koru_draw::theme::RAIL_W, 600.0)
 }
@@ -26,21 +29,21 @@ fn rail() -> Rect {
 /// stays where it stands among them — it used to be lifted to the top. One
 /// that is not pinned follows the run, and is the one square not carried.
 #[test]
-fn the_run_is_the_first_three_saved_pins_in_order_and_an_unpinned_open_workspace_follows_it() {
-    for current in 0..5 {
+fn the_run_is_the_first_saved_pins_in_order_and_an_unpinned_open_workspace_follows_it() {
+    for current in 0..N + 2 {
         let mut view = view();
         let id = view.workspaces[current].id;
         view.current = Some(id);
-        let pins: Vec<_> = view.workspaces[1..4].iter().map(|w| w.id).collect();
+        let pins: Vec<_> = view.workspaces[1..=N].iter().map(|w| w.id).collect();
         let ids = view.rail_workspace_ids();
-        assert_eq!(ids[..3], pins[..], "the pins keep their saved order");
+        assert_eq!(ids[..N], pins[..], "the pins keep their saved order");
         assert_eq!(ids.iter().filter(|item| **item == id).count(), 1);
-        if (1..=3).contains(&current) {
-            assert_eq!(ids.len(), 3, "a pinned open workspace is not repeated");
+        if (1..=N).contains(&current) {
+            assert_eq!(ids.len(), N, "a pinned open workspace is not repeated");
         } else {
             assert_eq!(ids, [&pins[..], &[id]].concat(), "then the open one");
         }
-        assert!(view.workspaces[4].pinned, "no flag is rewritten");
+        assert!(view.workspaces[N + 1].pinned, "no flag is rewritten");
         let rects = view.apps_rail_rects(rail());
         let square = rects
             .workspaces
@@ -51,7 +54,7 @@ fn the_run_is_the_first_three_saved_pins_in_order_and_an_unpinned_open_workspace
         view.begin_workspace_drag(id, &rects, square.y);
         assert_eq!(
             view.rail_dragging(),
-            (1..=3).contains(&current),
+            (1..=N).contains(&current),
             "a pinned square is carried, an unpinned open one is not"
         );
     }
@@ -70,10 +73,9 @@ fn clicks_switch_on_release_and_drag_commits_only_on_release() {
     );
     view.apps_rail_mouse_down(rail(), x, y);
     view.rail_drag_move(rail(), y + 40.0);
-    assert_eq!(
-        view.rail_workspace_ids(),
-        vec![original[1], original[0], original[2], original[3]]
-    );
+    let mut swapped = original.clone();
+    swapped.swap(0, 1);
+    assert_eq!(view.rail_workspace_ids(), swapped);
     assert_eq!(
         view.release_workspace_drag(rail()),
         Some(Outcome::ReorderWorkspace {
@@ -98,9 +100,12 @@ fn a_drop_on_the_last_pinned_slot_anchors_on_no_unpinned_square() {
     let (x, y) = rects.workspaces[0].1.centre();
     view.apps_rail_mouse_down(rail(), x, y);
     view.rail_drag_move(rail(), 1000.0);
+    let mut carried = original[1..N].to_vec();
+    carried.push(original[0]);
+    carried.push(original[N]);
     assert_eq!(
         view.rail_workspace_ids(),
-        vec![original[1], original[2], original[0], original[3]],
+        carried,
         "carried to the end of the pins, never past the open workspace"
     );
     assert_eq!(
@@ -128,7 +133,7 @@ fn escape_or_membership_change_cancels_and_the_unpinned_open_square_is_never_cro
     view.rail_drag_move(rail(), 1000.0);
     assert_eq!(
         *view.rail_workspace_ids().last().unwrap(),
-        original[3],
+        original[N],
         "the unpinned open workspace stays after the run"
     );
     view.cancel_rail_drag(rail());
@@ -204,10 +209,67 @@ fn the_move_chords_reorder_the_pins_from_the_first_slot_and_leave_the_open_one()
             before: Some(pins[2])
         })
     );
-    assert_eq!(view.nudge_workspace(pins[2], false), None, "already last");
     assert_eq!(
-        view.nudge_workspace(pins[3], true),
+        view.nudge_workspace(pins[N - 1], false),
+        None,
+        "already last"
+    );
+    assert_eq!(
+        view.nudge_workspace(pins[N], true),
         None,
         "the unpinned open workspace has no saved place"
     );
+}
+
+/// **The unpinned square stays when a pinned one is opened** (2026-11-10),
+/// and gives way only to another unpinned workspace.
+#[test]
+fn the_visiting_square_stays_until_another_unpinned_workspace_is_opened() {
+    let mut view = view();
+    let unpinned = view.workspaces[0].id;
+    view.note_rail_visitor();
+    let run = view.rail_workspace_ids();
+    assert_eq!(run.last(), Some(&unpinned));
+
+    // A pinned one is opened: the visitor keeps its square, in its place.
+    view.current = Some(view.workspaces[2].id);
+    view.note_rail_visitor();
+    assert_eq!(
+        view.rail_workspace_ids(),
+        run,
+        "nothing moved, nothing left"
+    );
+    let squares: Vec<_> = view
+        .apps_rail_rects(rail())
+        .workspaces
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    assert_eq!(squares.last(), Some(&Some(unpinned)));
+
+    // Another unpinned workspace takes its place.
+    let mut other = WorkspaceEntry::new(WorkspaceId::new(), "Visitor", 9);
+    other.pinned = false;
+    let other_id = other.id;
+    view.workspaces.push(other);
+    view.current = Some(other_id);
+    view.note_rail_visitor();
+    let run = view.rail_workspace_ids();
+    assert_eq!(run.last(), Some(&other_id));
+    assert!(!run.contains(&unpinned), "the old visitor has gone");
+
+    // Pinned onto the rail, it is among the pins and the visitor is no
+    // more. (Room is made first: the rail shows the first three pins, and a
+    // pin past them keeps its visiting square, since it has no other.)
+    view.current = Some(view.workspaces[1].id);
+    view.workspaces[3].pinned = false;
+    view.workspaces[4].pinned = false;
+    view.workspaces
+        .iter_mut()
+        .find(|w| w.id == other_id)
+        .unwrap()
+        .pinned = true;
+    assert!(view.rail_workspace_ids().contains(&other_id));
+    view.note_rail_visitor();
+    assert_eq!(view.rail_visitor, None);
 }

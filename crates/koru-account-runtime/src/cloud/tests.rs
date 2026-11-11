@@ -400,6 +400,12 @@ struct World {
     authority_generation: u64,
     denied_scopes: HashSet<String>,
     denied: HashSet<WorkspaceId>,
+    /// The Profiles that are on this device, as the host answers
+    /// `held_profiles`; `None` is a host that keeps no such list.
+    held_profiles: Option<BTreeSet<ProfileId>>,
+    /// A successful selection authorizes this device: these token scopes
+    /// stop being denied once any selection is answered.
+    select_lifts: HashSet<String>,
     removed_profiles: HashSet<ProfileId>,
     placement_pending: HashSet<WorkspaceId>,
     not_ready: HashSet<WorkspaceId>,
@@ -568,6 +574,10 @@ impl Api for FakeApi {
         world.note(format!("select:{}", workspace.to_storage()));
         if world.denied.contains(&workspace) {
             return Err(Failure::Denied);
+        }
+        let lifted: Vec<String> = world.select_lifts.drain().collect();
+        for scope in lifted {
+            world.denied_scopes.remove(&scope);
         }
         Ok(())
     }
@@ -878,6 +888,10 @@ fn cancel_at(world: &mut World, index: usize) {
 }
 
 impl Host for FakeHost {
+    fn held_profiles(&self, _account: KoruIdentityId) -> Option<BTreeSet<ProfileId>> {
+        lock(&self.0).held_profiles.clone()
+    }
+
     fn local_workspace(
         &self,
         account: KoruIdentityId,
@@ -1852,6 +1866,26 @@ fn every_refusal_the_service_words_is_answered_as_that_refusal() {
             "{code}"
         );
     }
+    // These two arrive as **403**s, and the code must win over the status:
+    // read as a denied principal, one unit failed the whole pass every 30 s
+    // and the Profile said *Koru Cloud unavailable* (2026-11-10).
+    for (code, expected) in [
+        (
+            ROOT_PLACEMENT_FOREIGN,
+            Failure::UnitRefused(UnitRefusal::PlacementForeign),
+        ),
+        (
+            ROOT_WORKSPACE_UNIT_REQUIRED,
+            Failure::UnitRefused(UnitRefusal::WorkspaceUnitRequired),
+        ),
+    ] {
+        let mut api = coded_hosted_api(World::shared(), 403, code);
+        assert_eq!(
+            api.pull_root_unit(&authority, unit, Vec::new()).err(),
+            Some(expected),
+            "{code}"
+        );
+    }
     assert_eq!(
         coded_hosted_api(World::shared(), 428, CATALOG_BINDING_REQUIRED)
             .root_catalog(&authority, None)
@@ -2040,6 +2074,11 @@ fn a_unit_the_service_refuses_stops_that_unit_and_nothing_else() {
         (UnitRefusal::UnitInvalid, ROOT_UNIT_INVALID),
         (UnitRefusal::ExportRefused, ROOT_EXPORT_REFUSED),
         (UnitRefusal::AddressInvalid, ROOT_UNIT_ADDRESS_INVALID),
+        (UnitRefusal::PlacementForeign, ROOT_PLACEMENT_FOREIGN),
+        (
+            UnitRefusal::WorkspaceUnitRequired,
+            ROOT_WORKSPACE_UNIT_REQUIRED,
+        ),
     ] {
         let world = one_hosted_pair();
         let refused = CloudUnitRefV2::WorkspaceCatalog {
@@ -2829,6 +2868,96 @@ fn a_denied_workspace_token_defers_that_workspace_and_admits_the_other() {
     assert_eq!(snapshot.deferred.len(), 1);
     assert_eq!(snapshot.deferred[0].code, SELECTION_DENIED);
     assert_eq!(snapshot.failure_code, Some(SELECTION_DENIED));
+}
+
+fn selections(log: &[String]) -> usize {
+    log.iter()
+        .filter(|entry| entry.starts_with("select:"))
+        .count()
+}
+
+/// **A Profile the person put on this device is selected for it, and its
+/// Workspaces then arrive.** A device that has just signed in and chosen an
+/// existing Profile has no peer and holds no Workspace, so nothing had told
+/// the service it may sync that Profile here: every Workspace was refused on
+/// every pass. One selection, then the next pass admits them.
+#[test]
+fn a_refused_workspace_of_a_profile_on_this_device_is_selected_and_then_admitted() {
+    let world = hosted([1, 2]);
+    {
+        let mut state = lock(&world);
+        state.denied_scopes.insert("workspace:1".into());
+        state.select_lifts.insert("workspace:1".into());
+        state.held_profiles = Some(BTreeSet::from([profile(1)]));
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_for(|world| selections(&world.log) == 1);
+    // The pass that selected does not also admit: its receipt predates the
+    // selection. The one after it does, and it comes at the debounce rather
+    // than behind a backoff.
+    harness.tick_until(1_000, |world| {
+        world
+            .permits()
+            .iter()
+            .any(|permit| is_workspace(permit) && placement_of(permit) == Some(profile(1)))
+    });
+    harness.wait_snapshot(|snapshot| snapshot.failure_code.is_none());
+    assert_eq!(selections(&harness.log()), 1, "one selection covers it");
+}
+
+/// **Only the Profiles that are on this device are asked for.** The account
+/// owns two Profiles with a Workspace each and this device holds the second.
+/// The first Profile's Workspace is never requested, selected or created
+/// here — which is the device's rule now that the service no longer requires
+/// a device to be bound to a Profile before it issues a credential.
+#[test]
+fn a_workspace_of_a_profile_that_is_not_here_is_not_asked_for() {
+    let world = hosted([1, 2]);
+    lock(&world).held_profiles = Some(BTreeSet::from([profile(2)]));
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_for(|world| {
+        world
+            .permits()
+            .iter()
+            .any(|permit| is_workspace(permit) && placement_of(permit) == Some(profile(2)))
+    });
+    harness.wait_snapshot(|snapshot| snapshot.failure_code.is_none());
+
+    let state = lock(&harness.world);
+    assert_eq!(state.tokens("workspace:1"), 0, "{:?}", state.log);
+    assert_eq!(selections(&state.log), 0);
+    assert!(
+        state
+            .permits()
+            .iter()
+            .all(|permit| placement_of(permit) != Some(profile(1)))
+    );
+    assert!(
+        !state
+            .log
+            .contains(&format!("local:{}", workspace(1).to_storage())),
+        "nothing of it is bootstrapped here: {:?}",
+        state.log
+    );
+}
+
+/// A selection the service refuses is not asked again on every pass.
+#[test]
+fn a_refused_selection_is_asked_once() {
+    let world = hosted([1, 2]);
+    {
+        let mut state = lock(&world);
+        state.denied_scopes.insert("workspace:1".into());
+        state.denied.insert(workspace(1));
+        state.held_profiles = Some(BTreeSet::from([profile(1)]));
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(SELECTION_DENIED));
+    harness.tick_until(2_000, |world| world.tokens("workspace:1") >= 2);
+    assert_eq!(selections(&harness.log()), 1);
 }
 
 #[test]

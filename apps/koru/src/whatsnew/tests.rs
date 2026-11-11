@@ -167,3 +167,57 @@ fn headlines_are_the_second_level_sections_in_order() {
     );
     assert!(super::headlines("no headings here").is_empty());
 }
+
+/// **The actual releases, nightly first** (2026-11-10): the shape of
+/// GitHub's real answer that day, plus what must never become a row.
+#[test]
+fn published_releases_put_the_nightly_first_then_stable_newest_first() {
+    let body = r#"[
+      {"tag_name":"v0.1.5","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.5","draft":false,"prerelease":false,"published_at":"2026-11-07T23:56:17Z"},
+      {"tag_name":"nightly","html_url":"https://github.com/koruworks/mono/releases/tag/nightly","draft":false,"prerelease":true,"published_at":"2026-10-25T21:30:32Z"},
+      {"tag_name":"v0.1.4","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.4","draft":false,"prerelease":false,"published_at":"2026-10-31T00:53:40Z"},
+      {"tag_name":"v0.1.6","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.6","draft":true,"prerelease":false,"published_at":null},
+      {"tag_name":"v0.2.0-rc1","html_url":"https://github.com/koruworks/mono/releases/tag/v0.2.0-rc1","draft":false,"prerelease":true,"published_at":"2026-11-08T00:00:00Z"},
+      {"tag_name":"v0.1.3","html_url":"https://example.com/elsewhere","draft":false,"prerelease":false,"published_at":"2026-10-01T00:00:00Z"}
+    ]"#;
+    let releases = parse_releases(body).expect("a releases list");
+    let versions: Vec<_> = releases.iter().map(|r| r.version.as_deref()).collect();
+    assert_eq!(versions, [None, Some("0.1.5"), Some("0.1.4")]);
+    assert_eq!(
+        releases[0].published, None,
+        "the nightly's date is not its build's"
+    );
+    assert_eq!(releases[1].published, Some((2026, 11, 7)));
+    assert!(releases.iter().all(|r| r.url.starts_with(RELEASES_URL)));
+    assert_eq!(
+        parse_releases(r#"{"message":"API rate limit exceeded"}"#),
+        None
+    );
+}
+
+/// Four stable releases show the newest three; the rest are on the list.
+#[test]
+fn only_the_three_newest_stable_releases_follow_the_nightly() {
+    let entry = |v: &str| {
+        format!(
+            r#"{{"tag_name":"v{v}","html_url":"https://github.com/koruworks/mono/releases/tag/v{v}","published_at":"2026-01-01T00:00:00Z"}}"#
+        )
+    };
+    let body = format!(
+        "[{},{},{},{}]",
+        entry("0.1.2"),
+        entry("0.1.10"),
+        entry("0.1.9"),
+        entry("0.1.1")
+    );
+    let releases = parse_releases(&body).unwrap();
+    let versions: Vec<_> = releases
+        .iter()
+        .filter_map(|r| r.version.as_deref())
+        .collect();
+    assert_eq!(
+        versions,
+        ["0.1.10", "0.1.9", "0.1.2"],
+        "by version, not by text"
+    );
+}

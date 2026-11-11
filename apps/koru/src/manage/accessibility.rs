@@ -12,7 +12,6 @@
 //! Group        the tab            s:manage#page        label = "Manage"
 //! ├── ListBox  the nav            s:manage#nav         size_of_set = its rows
 //! │   ├── ListBoxOption  a Profile        n:<profile uuid>#manage-profile
-//! │   ├── ListBoxOption  Other Profiles   n:<profile uuid>#manage-other
 //! │   ├── ListBoxOption  hidden line      s:manage#hidden
 //! │   ├── ListBoxOption  New profile      s:manage#new-profile
 //! │   ├── ListBoxOption  Linked devices   s:manage#devices
@@ -38,6 +37,7 @@
 //! ├── Button   another account's answers   s:manage#different-create / …
 //! ├── Button   Subscribe / Manage …        s:manage#cloud-primary, learn-more
 //! ├── Switch   a Profile's Cloud sync      n:<profile uuid>#manage-sync
+//! ├── Switch   an account Profile not here n:<profile uuid>#manage-bring
 //! ├── Button   Sign in…                    n:<profile uuid>#manage-sign-in
 //! ├── Button   its progress disclosure     n:<profile uuid>#manage-progress
 //! ├── Button   a held workspace's row      n:<workspace uuid>#manage-progress-row
@@ -79,7 +79,6 @@ pub(crate) mod parts {
     /// Rows that stand for a Profile, scoped by its uuid. Prefixed, because
     /// the same uuid names the Profile in the explore column's switcher.
     pub const PROFILE: ControlPart = ControlPart::new("manage-profile");
-    pub const OTHER: ControlPart = ControlPart::new("manage-other");
     pub const HIDDEN: ControlPart = ControlPart::new("hidden");
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
     pub const DEVICES: ControlPart = ControlPart::new("devices");
@@ -153,6 +152,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::CloudPrimary => "cloud-primary",
         Control::CloudLearnMore => "learn-more",
         Control::ProfileSync(_) => "manage-sync",
+        Control::ProfileBring(_) => "manage-bring",
         Control::ProfileSignIn(_) => "manage-sign-in",
         Control::Progress(_) => "manage-progress",
         Control::ProgressRow(_) => "manage-progress-row",
@@ -185,7 +185,6 @@ impl Context {
     fn occurrence(&self, entry: Entry) -> Occurrence {
         match entry {
             Entry::Profile(id) => self.profile(id, parts::PROFILE),
-            Entry::Other(id) => self.profile(id, parts::OTHER),
             Entry::Hidden => self.surface(parts::HIDDEN),
             Entry::NewProfile => self.surface(parts::NEW_PROFILE),
             Entry::Devices => self.surface(parts::DEVICES),
@@ -230,9 +229,10 @@ impl Context {
             ),
             // Koru Cloud's per-Profile controls are about that Profile, and
             // a progress row about its workspace.
-            Control::ProfileSync(id) | Control::ProfileSignIn(id) | Control::Progress(id) => {
-                self.profile(id, part)
-            }
+            Control::ProfileSync(id)
+            | Control::ProfileBring(id)
+            | Control::ProfileSignIn(id)
+            | Control::Progress(id) => self.profile(id, part),
             Control::ProgressRow(id) => {
                 Occurrence::model(self.window, self.view, id.as_uuid(), part)
             }
@@ -527,6 +527,8 @@ impl ManageView {
         match control {
             Control::Relay => self.devices.relay().is_some_and(|relay| relay.enabled),
             Control::ProfileSync(profile) => self.c.cloud_sync_on(profile),
+            // Not on this computer, so it does not sync here yet.
+            Control::ProfileBring(_) => false,
             _ => self.c_profile_syncs(),
         }
     }
@@ -558,23 +560,6 @@ impl ManageView {
                     said.push_str(", needs attention");
                 }
                 said
-            }
-            Entry::Other(id) => {
-                let name = self
-                    .c
-                    .missing_account_profiles()
-                    .iter()
-                    .find(|row| row.profile_id == id.to_storage())
-                    .and_then(|row| row.name.clone())
-                    .unwrap_or_else(|| "Profile".into());
-                match self
-                    .c
-                    .connect_label(id)
-                    .or_else(|| self.c.profile_connection_status(id))
-                {
-                    Some(state) => format!("{name}, {state}"),
-                    None => name,
-                }
             }
             Entry::Hidden => format!("{} Profiles hidden", self.c.hidden_profile_count()),
             Entry::NewProfile => "New profile".into(),

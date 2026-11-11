@@ -519,6 +519,29 @@ impl MainView {
         tree
     }
 
+    /// **This workspace's own Main tabs** (*Workspace tabs: per workspace*,
+    /// 2026-11-10): the focused column's strip rebuilt from `settings.tabs`,
+    /// which the shell has just adopted for the incoming workspace. Pins are
+    /// left as they are — they stay in every workspace. One Welcome at most,
+    /// and an empty strip is the Welcome floor.
+    pub(super) fn adopt_workspace_strip(&mut self, workspace: &Workspace, settings: &Settings) {
+        let mut main: Vec<Tab> = Vec::new();
+        for (which, scroll) in &settings.tabs {
+            if let Some(tab) = self.tab_from_ref(workspace, settings, which, *scroll) {
+                if matches!(tab.view, TabView::Welcome(_))
+                    && main.iter().any(|t| matches!(t.view, TabView::Welcome(_)))
+                {
+                    continue;
+                }
+                main.push(tab);
+            }
+        }
+        let active = settings.tab.min(main.len().saturating_sub(1));
+        self.tabs_mut().restore_main(main, active);
+        self.tabs_mut().drop_lone_welcome_if_pinned();
+        self.mark_tab_widths_stale();
+    }
+
     fn tab_from_ref(
         &mut self,
         workspace: &Workspace,

@@ -670,6 +670,31 @@ impl LifecycleRepository {
         read_record(&self.connection, profile)
     }
 
+    /// Forget a hosted delete the service refused **before applying
+    /// anything** ([`refusal_applied_nothing`]). Only the exact operation,
+    /// and only while it is still `hosted_pending`: a row the service
+    /// committed is never dropped here. Answers whether a row went.
+    ///
+    /// Kept, such a row had nothing to replay and only blocked the next
+    /// attempt: the owner proof is in memory, the journal (schema 2) has no
+    /// account column, so after an Agent restart every retry was refused as
+    /// `profile_lifecycle_owner_unproven` (2026-11-10).
+    pub fn abandon_unapplied(
+        &mut self,
+        profile: ProfileId,
+        operation: ProfileLifecycleMutationId,
+    ) -> Result<bool, LifecycleError> {
+        let removed = self
+            .connection
+            .execute(
+                "DELETE FROM profile_cleanup
+                 WHERE profile_id = ?1 AND operation_id = ?2 AND stage = 'hosted_pending'",
+                params![profile.to_string(), operation.to_string()],
+            )
+            .map_err(|_| LifecycleError::storage())?;
+        Ok(removed == 1)
+    }
+
     /// Every deletion whose cleanup is still owed, oldest first. A settled
     /// row owes nothing and is not here; see [`Self::get`] for why it exists.
     pub fn pending(&self) -> Result<Vec<CleanupRecord>, LifecycleError> {
@@ -784,6 +809,17 @@ fn stage_index(stage: ProfileCleanupStage) -> u8 {
         ProfileCleanupStage::SettingsCleared => 4,
         ProfileCleanupStage::NavigationSettled => 5,
     }
+}
+
+/// A refusal of the hosted delete that proves the service applied nothing:
+/// the 428 that asks for a fresh sign-in is a precondition, checked before
+/// any lifecycle change. A pending row it leaves has nothing to replay.
+pub fn refusal_applied_nothing(code: &str) -> bool {
+    matches!(
+        code,
+        koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED
+            | koru_account_wire::ErrorCode::FRESH_GOOGLE_AUTHENTICATION_REQUIRED
+    )
 }
 
 pub fn exact_retry(status: ProfileLifecycleMutationStatusV1) -> bool {

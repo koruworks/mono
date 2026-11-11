@@ -409,6 +409,9 @@ pub enum PopoverAnchor {
     Rail,
     /// Beside the rail's `…` under the workspace squares, aligned to its top.
     WorkspaceRail,
+    /// At the mouse: Ctrl+Alt+W's quick switcher opens where the pointer is
+    /// (2026-11-10), its corner on [`ExploreView::switcher_at`].
+    Pointer,
 }
 
 impl Popover {
@@ -872,6 +875,20 @@ pub struct ExploreView {
     /// **Never asked per frame** — see where it is set.
     trash_count: usize,
     workspace_notice: Option<String>,
+    /// **The quick switcher's query** (2026-11-10): `Some` while Ctrl+Alt+W
+    /// shows the workspace page as a filtered list under a search field,
+    /// like the `/` menu. The field itself is the container's, which owns
+    /// the keyboard; it hands each change here.
+    workspace_filter: Option<String>,
+    /// The quick switcher's search field, painted inside the panel by the
+    /// page's own element so it is part of the floating panel (2026-11-10).
+    workspace_filter_field: Option<std::rc::Rc<std::cell::RefCell<koru_ui::text_field::TextField>>>,
+    /// Where the pointer was when Ctrl+Alt+W opened the quick switcher.
+    switcher_at: Option<(f32, f32)>,
+    /// **The visiting workspace**: the last workspace opened that is not
+    /// pinned, which keeps its square after the pins while a pinned one is
+    /// open, until another unpinned one takes its place (2026-11-10).
+    rail_visitor: Option<WorkspaceId>,
     workspace_controller: Option<crate::manage::SharedWorkspaces>,
     workspace_waiting: Option<String>,
     /// Which row's `…` menu is open, so the button stays visible while it is.
@@ -3202,6 +3219,7 @@ impl ExploreView {
         self.current_profile = Some(current_profile);
         self.workspaces = workspaces;
         self.current = current;
+        self.note_rail_visitor();
         self.check_workspace_drag_membership();
         if let Some(id) = focused_workspace {
             let rows = self.popover_rows();
@@ -3636,13 +3654,10 @@ impl ExploreView {
     /// both are drawn.
     fn rows_for(&self, kind: PopoverKind) -> Vec<PopoverRow> {
         match kind {
-            PopoverKind::Help => help::Action::ALL
-                .into_iter()
-                .filter(|action| {
-                    *action != help::Action::Offer || self.help.projection().action.is_some()
-                })
-                .map(PopoverRow::Help)
-                .collect(),
+            PopoverKind::Help => self.help.rows().into_iter().map(PopoverRow::Help).collect(),
+            PopoverKind::Summary if self.workspace_filter.is_some() => {
+                self.filtered_workspace_rows()
+            }
             PopoverKind::Summary => {
                 let list = &self.workspaces;
                 let mut out = Vec::with_capacity(list.len() + 1);
@@ -3817,6 +3832,15 @@ impl ExploreView {
             PopoverKind::LibraryActions => self.actions_button(area).x.max(POPOVER_EDGE),
         };
         let x = x.min((viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE));
+        // **The quick switcher at the mouse**: its corner on the pointer,
+        // pulled back inside the window wherever it would cross an edge.
+        if p.anchor == PopoverAnchor::Pointer
+            && let Some((px, py)) = self.switcher_at
+        {
+            let x = px.min(viewport.0 - w - POPOVER_EDGE).max(POPOVER_EDGE);
+            let y = py.min(viewport.1 - h - POPOVER_EDGE).max(POPOVER_EDGE);
+            return Some(Rect::new(x, y, w, h));
+        }
         let y = match p.kind {
             PopoverKind::Summary => {
                 let menu = self.apps_rail_rects(rail).workspace_menu;
@@ -4250,6 +4274,121 @@ impl ExploreView {
     ///
     /// Enter on a Profile row switches with the list left up; on the
     /// heading it opens the ⋯ menu; on a workspace it switches and shuts.
+    /// **Ctrl+Alt+W: the workspaces as a filtered list** (2026-11-10). The
+    /// workspace page with only its rows under a search field — no heading,
+    /// no unassigned group, no New or Import — so typing narrows it and
+    /// Enter switches. Shut again when it is already what is showing.
+    ///
+    /// **At the mouse** when it is over the window: the corner of the panel
+    /// on the pointer, kept inside the window. With no pointer to go by it
+    /// hangs off the rail as the menu does.
+    pub fn open_workspace_switcher(
+        &mut self,
+        engine: &mut TextEngine,
+        pointer: Option<(f32, f32)>,
+    ) -> bool {
+        if self.workspace_filter_active() {
+            return self.close_popover();
+        }
+        self.workspace_filter = Some(String::new());
+        self.workspace_filter_field = Some(std::rc::Rc::new(std::cell::RefCell::new(
+            koru_ui::text_field::TextField::new(engine, theme::role::ui()),
+        )));
+        self.switcher_at = pointer;
+        let anchor = if pointer.is_some() {
+            PopoverAnchor::Pointer
+        } else {
+            PopoverAnchor::WorkspaceRail
+        };
+        if self.live().is_some_and(|p| p.kind == PopoverKind::Summary) {
+            if let Some(p) = self.popover.as_mut() {
+                p.anchor = anchor;
+            }
+            self.hover_current_workspace();
+            return true;
+        }
+        self.toggle_popover_from(PopoverKind::Summary, anchor);
+        self.hover_current_workspace();
+        true
+    }
+
+    /// A key for the quick switcher's field: typed in, and the list narrowed
+    /// to what it now says.
+    pub fn workspace_filter_key(
+        &mut self,
+        engine: &mut TextEngine,
+        key: &winit::keyboard::Key,
+        text: Option<&str>,
+        mods: winit::keyboard::ModifiersState,
+    ) -> bool {
+        let Some(field) = self.workspace_filter_field.clone() else {
+            return false;
+        };
+        field.borrow_mut().key(engine, key, text, mods);
+        let query = field.borrow().value();
+        self.set_workspace_filter(&query);
+        true
+    }
+
+    /// Whether the quick switcher is the page showing.
+    pub fn workspace_filter_active(&self) -> bool {
+        self.workspace_filter.is_some()
+            && self.live().is_some_and(|p| p.kind == PopoverKind::Summary)
+    }
+
+    /// The field's text changed: narrow the list, and put the keyboard on
+    /// the first match — what Enter then opens.
+    pub fn set_workspace_filter(&mut self, query: &str) {
+        if self.workspace_filter.as_deref() == Some(query) {
+            return;
+        }
+        self.workspace_filter = Some(query.to_owned());
+        let first = (!self.filtered_workspace_rows().is_empty()).then_some(0);
+        if let Some(p) = self.popover.as_mut() {
+            p.hover = first;
+            p.scroll = 0.0;
+        }
+        self.popover_part = None;
+    }
+
+    /// The rows the quick switcher lists: the workspace page's own — pinned
+    /// first, archived only when it is the one open, deleted never — whose
+    /// names hold the query, ignoring case.
+    fn filtered_workspace_rows(&self) -> Vec<PopoverRow> {
+        let query = self
+            .workspace_filter
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_lowercase();
+        let list = &self.workspaces;
+        let mut shown: Vec<usize> = (0..list.len())
+            .filter(|&i| {
+                let w = &list[i];
+                w.deleted_at.is_none()
+                    && (!w.archived || self.current == Some(w.id))
+                    && (query.is_empty() || w.name.to_lowercase().contains(&query))
+            })
+            .collect();
+        shown.sort_by_key(|&i| !list[i].pinned);
+        shown.into_iter().map(PopoverRow::Workspace).collect()
+    }
+
+    /// Where the quick switcher's field is, while it shows. Tests only: the
+    /// field paints itself as an element of the page.
+    #[cfg(test)]
+    pub fn popover_filter_rect(&self, area: Rect, viewport: (f32, f32)) -> Option<Rect> {
+        if !self.workspace_filter_active() {
+            return None;
+        }
+        self.with_page(area, viewport, |frame| {
+            frame
+                .node(popover_elements::WORKSPACE_FILTER)
+                .map(|node| node.rect)
+        })
+        .flatten()
+    }
+
     pub fn popover_key(&mut self, key: &winit::keyboard::Key) -> Option<Outcome> {
         use winit::keyboard::{Key, NamedKey};
         self.live()?;

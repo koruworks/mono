@@ -78,9 +78,9 @@ fn window_wrapper_connects_missing_profile_and_stays_in_manager_after_local_ack(
         let crate::manager_view::ManagerView::Container(inner) = &mut view else {
             unreachable!()
         };
-        // The Profile's page: the account's Profiles that are not here sit in
-        // the nav under it, where Tab reaches them.
-        inner.open_manage(crate::manage::Page::Profile(local));
+        // Koru Cloud: the account's Profiles that are not here are rows of
+        // *Which profiles sync*, each with a switch, where Tab reaches them.
+        inner.open_manage(crate::manage::Page::Cloud);
         while View::take_pane_request(&mut view).is_some() {}
         let profile = ProfileId::new();
         View::account_scoped_result(
@@ -99,21 +99,31 @@ fn window_wrapper_connects_missing_profile_and_stays_in_manager_after_local_ack(
         );
         while View::take_pane_request(&mut view).is_some() {}
         let mut workspace = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "Test").unwrap();
-        assert!(View::key(
-            &mut view,
-            &mut workspace,
-            &Key::Named(NamedKey::Tab),
-            None,
-            ModifiersState::empty(),
-        ));
-        // The open Profile's nav row, then the missing Profile's: Connect.
-        assert!(View::key(
-            &mut view,
-            &mut workspace,
-            &Key::Named(NamedKey::Tab),
-            None,
-            ModifiersState::empty()
-        ));
+        // Tab through the nav and the page to the missing Profile's switch.
+        let on_the_switch = |view: &crate::manager_view::ManagerView| {
+            let crate::manager_view::ManagerView::Container(inner) = view else {
+                unreachable!()
+            };
+            inner.tabs().iter().any(|tab| match &tab.view {
+                TabView::Manage(manage) => {
+                    format!("{:?}", manage.page_focus()).contains("ProfileBring")
+                }
+                _ => false,
+            })
+        };
+        for _ in 0..40 {
+            if on_the_switch(&view) {
+                break;
+            }
+            assert!(View::key(
+                &mut view,
+                &mut workspace,
+                &Key::Named(NamedKey::Tab),
+                None,
+                ModifiersState::empty(),
+            ));
+        }
+        assert!(on_the_switch(&view), "Tab reaches the Profile's switch");
         assert!(View::key(
             &mut view,
             &mut workspace,

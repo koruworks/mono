@@ -212,9 +212,13 @@ impl MainView {
             let range = row.range();
             (!range.is_empty()).then_some((range.start, range.end))
         });
+        // **The tab's own workspace, not the window's.** A tab is kept across
+        // a workspace switch (2026-11-10), so the document in it can live in
+        // a workspace other than the one showing; a stop labelled with the
+        // window's would send Back to the wrong place.
         Some(Spot {
             profile: route.map(|route| route.0),
-            workspace: route.map(|route| route.1),
+            workspace: tab.home.or(route.map(|route| route.1)),
             document: tab.document,
             tab: tab.id,
             tasks: None,
@@ -343,8 +347,22 @@ impl MainView {
                     if let Some(doc) = tab_doc
                         && self.active_document != Some(doc)
                     {
+                        // **Routed when the stop is in another workspace**,
+                        // as the branch below decides it: the shell switches
+                        // first and opens the target a second time, and that
+                        // second open must not count as a new jump. Before
+                        // 2026-11-10 a switch closed every tab, so a Back
+                        // across workspaces never found its tab here.
+                        let crosses = spot.profile.zip(spot.workspace).is_some_and(|route| {
+                            self.pane_context
+                                .as_ref()
+                                .and_then(|(_, profile, _, workspace)| {
+                                    workspace.map(|workspace| (*profile, workspace))
+                                })
+                                != Some(route)
+                        });
                         self.history_pending = Some(spot);
-                        self.history_pending_routed = false;
+                        self.history_pending_routed = crosses;
                         self.ask_pane(koru_workspace_host::PaneRequest::Navigate {
                             target: koru_workspace_host::NavigationTarget::Document {
                                 document: doc,

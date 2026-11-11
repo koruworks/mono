@@ -168,6 +168,9 @@ pub(crate) enum Control {
     CloudLearnMore,
     /// A Profile's Cloud sync switch on *Which profiles sync*.
     ProfileSync(ProfileId),
+    /// The switch of an account Profile that is not on this computer, on
+    /// *Which profiles sync*: on brings the Profile here, and it syncs.
+    ProfileBring(ProfileId),
     /// *Sign in…*: that Profile's page.
     ProfileSignIn(ProfileId),
     /// A syncing Profile's progress disclosure (decision 20).
@@ -522,10 +525,13 @@ impl ManageView {
     /// 8: today's vocabulary, nothing invented).
     fn header_status(&self, profile: &ProfileSummary) -> String {
         let line = self.c.status_line(profile);
-        if self.c.current() == Some(profile.id) {
-            format!("{CURRENT}{line}")
-        } else {
+        if self.c.current() != Some(profile.id) {
             line
+        } else if line.is_empty() {
+            // An account Profile with nothing else to say: no dangling dot.
+            CURRENT.trim_end_matches(" · ").to_owned()
+        } else {
+            format!("{CURRENT}{line}")
         }
     }
 
@@ -844,6 +850,7 @@ impl ManageView {
             | Control::CloudPrimary
             | Control::CloudLearnMore
             | Control::ProfileSync(_)
+            | Control::ProfileBring(_)
             | Control::ProfileSignIn(_)
             | Control::Progress(_)
             | Control::ProgressRow(_) => return false,

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Koru Cloud page: each subscription state, the switches and D258's
-//! question, *Sign in…*, the progress disclosure and its visible-only poll,
+//! The Koru Cloud page: each subscription state, the switches, *Sign in…*, the progress disclosure and its visible-only poll,
 //! the account switcher, and the two account-wide attention cards. What the
 //! controller decides is tested beside it (`manage/profiles/cloud/tests.rs`,
 //! `progress/tests.rs`); this is where it lands on the page.
@@ -259,24 +258,16 @@ fn another_accounts_profile_shows_a_dimmed_switch_that_is_no_control() {
     );
 }
 
-/// D258: turning a Profile's sync on asks about its Workspaces — the same
-/// question its page asks; turning it off asks nothing.
+/// The switch is the whole act: on or off, it sends its one command and
+/// raises no question (2026-11-11; it used to ask D258's about Workspaces).
 #[test]
-fn turning_a_switch_on_raises_the_d258_question_and_off_does_not() {
+fn a_switch_asks_nothing_either_way() {
     let mut view = subscribed();
     let home = id(&view, "Home");
     assert!(press(&mut view, Control::ProfileSync(home)));
     assert_eq!(view.c.cloud_sync_pending_for(home), Some(true));
-    let titles: Vec<String> = view.c.prompts().map(|p| p.title().to_owned()).collect();
-    assert_eq!(
-        titles,
-        vec![koru_i18n::t(crate::format::lang(), TextKey::CloudMoveTitle).to_owned()]
-    );
-    assert_eq!(named(&capture(&mut view), "Manage prompt"), 1);
-    // A second press while the first is out is dropped, and the question
-    // owns the keyboard: Escape is Cancel, which writes nothing more.
-    assert!(key(&mut view, NamedKey::Escape));
     assert_eq!(view.c.prompts().count(), 0);
+    assert_eq!(named(&capture(&mut view), "Manage prompt"), 0);
 
     let mut view = subscribed();
     let work = id(&view, "Work");
@@ -293,6 +284,78 @@ fn sign_in_opens_that_profiles_page() {
     assert_eq!(view.page(), Some(Page::Profile(scratch)));
     assert_eq!(view.controller().selected(), Some(scratch));
     assert!(view.laid.sign_in.is_some(), "on its Sign-in and sync");
+}
+
+// ------------------------------------------- the account's Profiles not here
+
+/// Subscribed, with one account Profile — *Family* — that is not on this
+/// computer.
+fn with_family_elsewhere() -> (ManageView, ProfileId) {
+    let mut view = subscribed();
+    let family = ProfileId::new();
+    view.c.take_request();
+    view.c
+        .complete(koru_agent_wire::AccountOperationResult::Profiles {
+            profiles: vec![koru_agent_wire::AccountProfileRow {
+                profile_id: family.to_storage(),
+                koru_identity_id: ACCOUNT.into(),
+                name: Some("Family".into()),
+                locale: None,
+                auth_identities: vec![],
+            }],
+        });
+    view.c.take_request();
+    view.relayout();
+    (view, family)
+}
+
+/// **The account's Profiles that are not on this computer are rows of *Which
+/// profiles sync*, after the ones that are** (2026-11-11) — not a group in
+/// the nav. Each has a switch, off, and says where it stands.
+#[test]
+fn an_account_profile_that_is_not_here_is_a_row_with_a_switch() {
+    let (view, family) = with_family_elsewhere();
+    let laid = cloud(&view);
+    assert_eq!(laid.rows.len(), 3, "the Profiles on this computer");
+    assert_eq!(laid.elsewhere.len(), 1);
+    let row = &laid.elsewhere[0];
+    assert_eq!(
+        (row.profile, row.name_text.as_str(), row.sub_text.as_str()),
+        (family, "Family", "Not on this computer")
+    );
+    assert!(row.rect.y >= laid.rows[2].rect.y + laid.rows[2].rect.h);
+    assert!(row.rect.y + row.rect.h <= laid.sync_card.y + laid.sync_card.h + 0.5);
+    let placed = view.laid.placed(Control::ProfileBring(family)).unwrap();
+    assert!(matches!(placed.look, Look::Toggle(_)));
+    assert_eq!(placed.label, "Sync Family to this computer");
+    // The nav has no row for it.
+    assert!(view.focus_order().iter().all(
+        |entry| matches!(entry, nav::Entry::Profile(id) if *id != family)
+            || !matches!(entry, nav::Entry::Profile(_))
+    ));
+    // Tab reaches it after the local Profiles' controls.
+    let order = view.page_focus_order();
+    let at = |control| order.iter().position(|c| *c == control).unwrap();
+    assert!(at(Control::ProfileSignIn(id(&view, "Scratch"))) < at(Control::ProfileBring(family)));
+}
+
+/// Its switch is the controller's inline connect — what the nav's *Connect*
+/// was. While that is out the switch shows where it is going and is not a
+/// control.
+#[test]
+fn its_switch_brings_the_profile_to_this_computer() {
+    let (mut view, family) = with_family_elsewhere();
+    assert!(press(&mut view, Control::ProfileBring(family)));
+    assert_eq!(view.controller().inline_connect(), Some((family, false)));
+    view.relayout();
+    assert!(view.laid.placed(Control::ProfileBring(family)).is_none());
+    let row = &cloud(&view).elsewhere[0];
+    assert!(matches!(row.toggle, Some((_, _, false))));
+    assert!(
+        !view
+            .page_focus_order()
+            .contains(&Control::ProfileBring(family))
+    );
 }
 
 // ------------------------------------------------------------- progress

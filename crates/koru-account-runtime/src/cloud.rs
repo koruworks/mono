@@ -125,6 +125,18 @@ pub const ROOT_UNIT_FORMAT_TOO_NEW: &str = "root_unit_format_too_new";
 pub const ROOT_UNIT_INVALID: &str = "root_unit_invalid";
 pub const ROOT_EXPORT_REFUSED: &str = "root_export_refused";
 pub const ROOT_UNIT_ADDRESS_INVALID: &str = "root_unit_address_invalid";
+/// A 403 for one unit: its placement, or the Profile unit itself, names a
+/// Profile the account does not hold (root-catalog-cloud-v2 §admission).
+/// It used to read as a denied principal, which failed the **whole** pass
+/// every 30 s and called the Profile *unavailable* (2026-11-10). Per unit:
+/// skipped this generation, logged by id, and asked again when the
+/// generation is replaced — sign-in, account change, or Koru leaving the
+/// foreground — by which time the Profile may be the account's.
+pub const ROOT_PLACEMENT_FOREIGN: &str = "root_placement_foreign";
+/// A personal unit whose Workspace unit the service has not admitted.
+/// Per unit for the same reason; the Workspace unit goes first in the next
+/// generation's pass.
+pub const ROOT_WORKSPACE_UNIT_REQUIRED: &str = "root_workspace_unit_required";
 /// 428: the route wants the account's catalog binding in place first. Q12
 /// (c): the binding step runs again and the call is retried **once**.
 pub const CATALOG_BINDING_REQUIRED: &str = "catalog_binding_required";
@@ -229,6 +241,8 @@ pub enum UnitRefusal {
     UnitInvalid,
     ExportRefused,
     AddressInvalid,
+    PlacementForeign,
+    WorkspaceUnitRequired,
 }
 
 impl UnitRefusal {
@@ -237,6 +251,8 @@ impl UnitRefusal {
             Self::UnitInvalid => ROOT_UNIT_INVALID,
             Self::ExportRefused => ROOT_EXPORT_REFUSED,
             Self::AddressInvalid => ROOT_UNIT_ADDRESS_INVALID,
+            Self::PlacementForeign => ROOT_PLACEMENT_FOREIGN,
+            Self::WorkspaceUnitRequired => ROOT_WORKSPACE_UNIT_REQUIRED,
         }
     }
 }
@@ -562,6 +578,28 @@ pub trait Host: Send + Sync + 'static {
         account: KoruIdentityId,
         dataset: CloudReplicaPrincipalV1,
     ) -> Result<Option<LocalBootstrap>, Failure>;
+
+    /// **The Profiles of this account that are on this device** — chosen at
+    /// sign-in, created here, or brought here from the Koru Cloud page.
+    ///
+    /// *Sign in, see the account's Profiles, sync the ones you pick.* The
+    /// service answers for every Workspace the account may sync; this is what
+    /// narrows the pass to the ones the person asked for. A Workspace placed
+    /// under a Profile that is not here is not asked for at all, and a
+    /// refused Workspace is answered by selecting its Profile only when that
+    /// Profile is here. It is the device's rule, not the service's: the
+    /// service no longer requires a device to be bound to a Profile before
+    /// it issues a credential, so nothing else keeps a Profile the person
+    /// did not choose off this device.
+    ///
+    /// `None` is a host that keeps no such list, and it is not limited:
+    /// every Workspace the service lists is admitted, as before.
+    fn held_profiles(
+        &self,
+        _account: KoruIdentityId,
+    ) -> Option<std::collections::BTreeSet<ProfileId>> {
+        None
+    }
 
     /// `Store::provision_account_profile(id, account binding, name, locale,
     /// now)`, or the check that it already ran. Since Plan 3.2 this is a

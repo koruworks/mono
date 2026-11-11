@@ -197,6 +197,11 @@ impl ChatSurface {
     pub(crate) fn reply_busy(&self) -> bool {
         let shown = self.shown_chat_id();
         self.attempt.is_some()
+            // A queued message waiting on its workspace grant is on its way.
+            || self
+                .queued_awaiting_grant
+                .as_ref()
+                .is_some_and(|(chat, _)| Some(*chat) == shown)
             || self
                 .sent_message
                 .as_ref()
@@ -303,6 +308,18 @@ impl ChatSurface {
     /// after. An item the send would not take — an attachment still being
     /// stored — goes back to the head of the queue, paused.
     fn send_queued(&mut self, chat: ChatId, item: Queued) -> bool {
+        self.send_queued_item(chat, item)
+    }
+
+    /// Put `item` back first in line, paused: a queued send that did not go.
+    pub(crate) fn queue_back_paused(&mut self, chat: ChatId, item: Queued) {
+        self.queues.push_front(chat, item);
+        self.queues.pause(chat);
+    }
+
+    /// [`Self::send_queued`]'s body, also what a granted workspace calls to
+    /// send the item that was waiting on it.
+    pub(crate) fn send_queued_item(&mut self, chat: ChatId, item: Queued) -> bool {
         let typing = self.composer.stash();
         let walk = (self.history_cursor.take(), self.history_draft.take());
         self.composer.unstash(item.composer);
@@ -320,8 +337,20 @@ impl ChatSurface {
                 markdown: item.markdown,
                 documents: item.documents,
             };
-            self.queues.push_front(chat, item);
-            self.queues.pause(chat);
+            // **Waiting on the workspace grant is not a refusal**
+            // (2026-11-10): an agent's send asks for the context workspace
+            // first and goes when it is granted. Read as a refusal, every
+            // queued message to such a chat — and Steer with no reply
+            // running — came back paused and never went.
+            let awaiting_grant = self
+                .pending_grants
+                .as_ref()
+                .is_some_and(|(key, _)| key.chat == chat && key.markdown == item.markdown);
+            if awaiting_grant {
+                self.queued_awaiting_grant = Some((chat, item));
+            } else {
+                self.queue_back_paused(chat, item);
+            }
         }
         self.composer.unstash(typing);
         for draft in strip {

@@ -6122,6 +6122,22 @@
         "additionalProperties": false,
         "description": "One patch of [`GlobalSettings`]. Absent fields are left alone.",
         "properties": {
+          "accent_color_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_RgbColor"
+              }
+            ],
+            "description": "The same for the dark theme."
+          },
+          "accent_color_light": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Nullable_RgbColor"
+              }
+            ],
+            "description": "`#rrggbb` sets the light theme's accent; `null` puts the theme's own\nback, which Settings offers as the row's first swatch."
+          },
           "agent_order": {
             "description": "The whole order, written whole on every move: an empty list is the\nbuilt-in order. Absent leaves the stored order alone.",
             "items": {
@@ -6501,6 +6517,19 @@
             "nullable": true,
             "type": "boolean"
           },
+          "scroll_speed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScrollSpeedChoice"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "spellcheck_enabled": {
             "nullable": true,
             "type": "boolean"
@@ -6519,6 +6548,10 @@
             ]
           },
           "start_on_login": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "tabs_per_workspace": {
             "nullable": true,
             "type": "boolean"
           },
@@ -6559,6 +6592,36 @@
       "GlobalSettings": {
         "description": "Everything that applies to Koru as a whole, whoever is consuming it.\n\n**Read tolerantly; written strictly.** A section is what the settings\nauthority *answers* — a client reads it — so it ignores a field it does\nnot know: an older Koru reading the section from a newer service keeps\nevery value it understands instead of failing the whole read and falling\nback to defaults. Nothing ever writes a section: a write is a\n[`GlobalPatch`], which still refuses an unknown field, so the service\nanswers a typo with a 400 rather than storing nothing. A field added\nhere is also `#[serde(default)]`, so a newer client reads an older\nservice. (The user's call, 2026-11-03: this reader shipped before any new\nGlobal field did. koru-ai D79's `chat_font` was the first to wait, and\nlanded once the user ruled, 2026-11-04, that an older Koru may ignore it.)",
         "properties": {
+          "accent_color_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RgbColor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "The same for the dark theme, kept apart for the base colour's reason."
+          },
+          "accent_color_light": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RgbColor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "The accent — the colour a primary action wears — for the light\ntheme, as `#rrggbb`; `null` follows the theme (2026-11-10)."
+          },
           "agent_order": {
             "default": [],
             "description": "**The order the coding agents are listed in**, by agent key, as the\nperson dragged them on *Agent providers*: the chat's agent rail, the\nterminal's *Agents ›* menu, the *Default agent* chips and the\ndelegate dialog all follow it. Empty is the built-in order (Claude\nfirst); an agent it does not name — one a later Koru adds — follows\nthe named ones in the built-in order. Each key once.",
@@ -6756,6 +6819,15 @@
           "reminder_start_on_login_explained": {
             "type": "boolean"
           },
+          "scroll_speed": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScrollSpeedChoice"
+              }
+            ],
+            "default": "2x",
+            "description": "Absent from a file written before it existed, which reads as the\ndefault."
+          },
           "spellcheck_enabled": {
             "type": "boolean"
           },
@@ -6763,6 +6835,11 @@
             "$ref": "#/components/schemas/LanguageChoice"
           },
           "start_on_login": {
+            "type": "boolean"
+          },
+          "tabs_per_workspace": {
+            "default": false,
+            "description": "**Workspace tabs**: each workspace keeps its own tabs (`true`, *Per\nworkspace*) or the open tabs stay as you switch (`false`, *Shared*,\nthe default). Absent from an older file, which reads as *Shared*.",
             "type": "boolean"
           },
           "theme": {
@@ -12816,6 +12893,16 @@
           }
         },
         "type": "object"
+      },
+      "ScrollSpeedChoice": {
+        "description": "`scroll_speed=` — how many steps one mouse-wheel notch moves a pane.\n`1x` is the step views had before the setting; `2x` is the default\n(the user, 2026-11-10). Pixel-precise trackpad scrolling is not\nscaled: it follows the finger.",
+        "enum": [
+          "1x",
+          "2x",
+          "3x",
+          "4x"
+        ],
+        "type": "string"
       },
       "ScrollbackPage": {
         "properties": {

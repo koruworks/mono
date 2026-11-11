@@ -266,35 +266,33 @@ impl ProfilesController {
     }
 
     /// One Profile's status line, in today's account and Cloud vocabulary:
-    /// whose it is, then how its connection and its Cloud sync stand, each a
-    /// clause after a middle dot.
+    /// how its connection and its Cloud sync stand, each a clause after a
+    /// middle dot, after *Local only* for a Profile on no account.
+    ///
+    /// **No account id** (the user, 2026-11-10: "users don't care about
+    /// that"). An account Profile used to open with *Account 02e1519b*, the
+    /// tail of an identity UUID nobody can read; the clauses after it say
+    /// what a person needs. The account switcher still names accounts that
+    /// way, because there it is what tells two of them apart.
     pub fn status_line(&self, profile: &ProfileSummary) -> String {
         use koru_store_core::profile_account::LocalProfileAttribution;
         let lang = crate::format::lang();
-        let label =
-            match LocalProfileAttribution::from_binding(profile.account.as_deref().unwrap_or("")) {
-                LocalProfileAttribution::Unbound => {
-                    koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherLocalOnly).to_owned()
-                }
-                LocalProfileAttribution::Account(id) => {
-                    let id = id.identity_id();
-                    koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherLabel)
-                        .replace("{}", &id[id.len().saturating_sub(8)..])
-                }
-                LocalProfileAttribution::Invalid => {
-                    koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherUnknown).to_owned()
-                }
-            };
-        let label = match self.profile_connection_status(profile.id) {
-            Some(status) => format!("{label} · {status}"),
-            None => label,
-        };
-        // The Cloud state is appended to the line that is already there, so
-        // a Profile gains a clause rather than a second line.
-        match self.cloud_sync_subtitle(profile) {
-            Some(cloud) => format!("{label} · {cloud}"),
-            None => label,
+        let mut clauses = Vec::new();
+        match LocalProfileAttribution::from_binding(profile.account.as_deref().unwrap_or("")) {
+            LocalProfileAttribution::Unbound => clauses
+                .push(koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherLocalOnly).to_owned()),
+            LocalProfileAttribution::Account(_) => {}
+            LocalProfileAttribution::Invalid => {
+                clauses.push(koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherUnknown).to_owned())
+            }
         }
+        clauses.extend(
+            self.profile_connection_status(profile.id)
+                .map(str::to_owned),
+        );
+        // The Cloud state is a clause of the same line, not a second line.
+        clauses.extend(self.cloud_sync_subtitle(profile));
+        clauses.join(" · ")
     }
 
     /// What the *Connect* control on an account Profile that is not on this

@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Manage tab's nav: this device's Profiles, the account's Profiles that
-//! are not here yet, *New profile*, and what belongs to this computer.
+//! The Manage tab's nav: this device's Profiles, *New profile*, and what
+//! belongs to this computer.
+//!
+//! **The account's Profiles that are not on this computer are not here**
+//! (maintainer, 2026-11-11). They used to sit under *Other Profiles* with a
+//! *Connect* beside each, which read as Profiles already on the device. They
+//! are rows of *Which profiles sync* on the Koru Cloud page now, each with a
+//! switch that brings it here (`manage::cloud`).
 //!
 //! ```text
 //! Profiles                    caption, as Settings captions a card
 //! ┃[tile] Personal      •     current Profile: an accent dot (decision 19)
 //! │[tile] Work          ⚠     needs attention: a warning mark
-//! Other Profiles              the account's Profiles not on this device
-//! │[tile] Family   Connect    Connect / Retry (decision: under the list)
 //!  2 Profiles hidden          a quiet line (decision 16)
 //! │[+]   New profile          the dashed add square
 //! This computer               caption
@@ -48,7 +52,6 @@ const END_PAD: f32 = 16.0;
 
 /// The words on the nav, and on its chips.
 const PROFILES: &str = "Profiles";
-const OTHERS: &str = "Other Profiles";
 const THIS_COMPUTER: &str = "This computer";
 pub(super) const NEW_PROFILE: &str = "New profile";
 pub(super) const DEVICES: &str = "Linked devices";
@@ -59,8 +62,6 @@ pub(super) const CLOUD: &str = "Koru Cloud";
 pub(crate) enum Entry {
     /// A Profile on this device: its page.
     Profile(ProfileId),
-    /// An account Profile that is not on this device: Connect.
-    Other(ProfileId),
     /// The quiet *{n} Profiles hidden* line.
     Hidden,
     NewProfile,
@@ -89,8 +90,6 @@ pub(crate) struct Laid {
     pub profiles_caption: Rect,
     /// The `NavList` area of this device's Profiles.
     pub profiles: Rect,
-    pub others_heading: Option<Rect>,
-    pub others: Rect,
     pub hidden: Option<Rect>,
     pub new_profile: Rect,
     pub computer_caption: Rect,
@@ -102,16 +101,9 @@ pub(crate) struct Laid {
     pub height: f32,
 }
 
-/// Lay the nav's column out from `area`'s top-left for these Profiles, these
-/// account Profiles not on this device, and whether any are hidden, scrolled
-/// by `scroll`.
-pub(crate) fn layout(
-    area: Rect,
-    profiles: &[ProfileId],
-    others: &[ProfileId],
-    hidden: bool,
-    scroll: f32,
-) -> Laid {
+/// Lay the nav's column out from `area`'s top-left for these Profiles and
+/// whether any are hidden, scrolled by `scroll`.
+pub(crate) fn layout(area: Rect, profiles: &[ProfileId], hidden: bool, scroll: f32) -> Laid {
     let (x, w) = (area.x, area.w);
     let mut y = area.y - scroll;
     let mut rows = Vec::new();
@@ -130,13 +122,6 @@ pub(crate) fn layout(
     let profiles_caption = Rect::new(x, y, w, Card::TITLE_H);
     y += CAPTION_H;
     let profiles = list(&mut y, &mut profiles.iter().copied().map(Entry::Profile));
-    let others_heading = (!others.is_empty()).then(|| {
-        y += SMALL_GAP;
-        let heading = Rect::new(x, y, w, Card::TITLE_H);
-        y += CAPTION_H;
-        heading
-    });
-    let others = list(&mut y, &mut others.iter().copied().map(Entry::Other));
     let hidden = hidden.then(|| {
         y += SMALL_GAP * 0.5;
         let line = Rect::new(x, y, w, QUIET_H);
@@ -157,8 +142,8 @@ pub(crate) fn layout(
             .filter(|entry| *entry != Entry::Cloud || koru_features::cloud_sync()),
     );
     if let Some(line) = hidden {
-        // In order: the hidden line sits between the account's Profiles and
-        // *New profile*, so keyboard order is visual order.
+        // In order: the hidden line sits between the Profiles and *New
+        // profile*, so keyboard order is visual order.
         let at = rows
             .iter()
             .position(|(entry, _)| *entry == Entry::NewProfile)
@@ -169,8 +154,6 @@ pub(crate) fn layout(
         chips: false,
         profiles_caption,
         profiles,
-        others_heading,
-        others,
         hidden,
         new_profile,
         computer_caption,
@@ -181,15 +164,6 @@ pub(crate) fn layout(
 }
 
 impl ManageView {
-    /// The account's Profiles that are not on this device, by id.
-    fn other_ids(&self) -> Vec<ProfileId> {
-        self.c
-            .missing_account_profiles()
-            .iter()
-            .filter_map(|row| ProfileId::parse(&row.profile_id))
-            .collect()
-    }
-
     /// The nav's column, from where its first line goes down.
     fn nav_area(&self) -> Rect {
         page::SHELL.nav_area(self.viewport, self.band_h, PageShell::TOP)
@@ -202,8 +176,6 @@ impl ManageView {
                 chips: true,
                 profiles_caption: none,
                 profiles: none,
-                others_heading: None,
-                others: none,
                 hidden: None,
                 new_profile: none,
                 computer_caption: none,
@@ -212,15 +184,12 @@ impl ManageView {
                 height: 0.0,
             };
         }
-        // *Other Profiles* and *{n} Profiles hidden* are the account's — Koru
-        // Cloud's — so a build that hides it lists neither (koru-features).
-        let cloud = koru_features::cloud_sync();
-        let others = if cloud { self.other_ids() } else { Vec::new() };
+        // *{n} Profiles hidden* is the account's — Koru Cloud's — so a build
+        // that hides it has no such line (koru-features).
         layout(
             self.nav_area(),
             &profile_ids(&self.c),
-            &others,
-            cloud && self.c.hidden_profile_count() > 0,
+            koru_features::cloud_sync() && self.c.hidden_profile_count() > 0,
             scroll,
         )
     }
@@ -280,17 +249,8 @@ impl ManageView {
         self.nav_layout()
             .rows
             .into_iter()
-            .find(|(entry, rect)| rect.contains(x, y) && self.pressable(*entry))
+            .find(|(_, rect)| rect.contains(x, y))
             .map(|(entry, _)| entry)
-    }
-
-    /// An account Profile's row is pressable only while it can be connected;
-    /// every other row always is.
-    fn pressable(&self, entry: Entry) -> bool {
-        match entry {
-            Entry::Other(profile) => self.c.connect_label(profile).is_some(),
-            _ => true,
-        }
     }
 
     /// The rows the keyboard visits, top to bottom.
@@ -299,7 +259,6 @@ impl ManageView {
             .rows
             .into_iter()
             .map(|(entry, _)| entry)
-            .filter(|entry| self.pressable(*entry))
             .collect()
     }
 
@@ -362,10 +321,6 @@ impl ManageView {
         let laid = self.nav_layout();
         self.paint_nav_caption(canvas, root, laid.profiles_caption, PROFILES);
         self.paint_profiles(canvas, root, &laid);
-        if let Some(heading) = laid.others_heading {
-            self.paint_nav_caption(canvas, root, heading, OTHERS);
-            self.paint_others(canvas, root, laid.others);
-        }
         if let Some(line) = laid.hidden {
             self.paint_hidden(canvas, root, line);
         }
@@ -510,39 +465,6 @@ impl ManageView {
             .collect();
         let entries: Vec<Entry> = rows.iter().map(|row| Entry::Profile(row.0)).collect();
         self.paint_list(canvas, root, laid.profiles, &items, &entries);
-    }
-
-    fn paint_others(&mut self, canvas: &mut Scene, root: Affine, area: Rect) {
-        let rows: Vec<(ProfileId, String, Option<&'static str>)> = self
-            .c
-            .missing_account_profiles()
-            .iter()
-            .filter_map(|row| {
-                let id = ProfileId::parse(&row.profile_id)?;
-                let name = row.name.clone().unwrap_or_else(|| "Profile".into());
-                let trailing = self
-                    .c
-                    .connect_label(id)
-                    .or_else(|| self.c.profile_connection_status(id));
-                Some((id, name, trailing))
-            })
-            .collect();
-        let items: Vec<NavItem<'_>> = rows
-            .iter()
-            .map(|(_, name, trailing)| {
-                let mut item = NavItem::new(name).with_tile(Tile {
-                    icon: None,
-                    color: None,
-                    name,
-                });
-                if let Some(trailing) = trailing {
-                    item = item.with_trailing(trailing);
-                }
-                item
-            })
-            .collect();
-        let entries: Vec<Entry> = rows.iter().map(|row| Entry::Other(row.0)).collect();
-        self.paint_list(canvas, root, area, &items, &entries);
     }
 
     fn paint_hidden(&mut self, canvas: &mut Scene, root: Affine, line: Rect) {
