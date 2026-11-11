@@ -581,3 +581,141 @@ fn closing_stops_its_threads_and_refuses_later_work() {
         Err(WorkerError::Stopped)
     ));
 }
+
+/// **A page created in a Store job reaches an open window only through an
+/// announcing job** (Bots P1.8, the first window run's finding 7). A window
+/// learns of a new page from its workspace's manifest room. The typed seed
+/// command tells the room before it answers; the same strict creation run
+/// in a plain job commits the manifest entry and tells nobody, which is
+/// how a Bot's Role page stayed out of the Documents tree until a restart.
+/// An announcing job tells the room exactly what the Store handed back,
+/// once, before the caller hears the answer, and nothing for a replay.
+#[test]
+fn a_page_created_in_a_store_job_is_told_to_the_manifest_room_only_when_announced() {
+    use koru_store_core::manifest::Manifest;
+    let memory = MemoryStore::open("announcements").unwrap();
+    let client = memory.client();
+    let (workspace, manifest) = memory
+        .with_store(|store| {
+            let at = Timestamp::now();
+            let profile = store.create_profile("Person", None, None, Locale::default(), at)?;
+            let workspace = store.create_workspace(profile.id, "Garden", at)?.id;
+            let manifest = store.manifest_id(workspace)?;
+            Ok::<_, Error>((workspace, store.snapshot(workspace, manifest)?))
+        })
+        .unwrap()
+        .unwrap();
+    let mut replica = Manifest::from_snapshot(&manifest).unwrap();
+    let mut window = memory.join_manifest(workspace);
+    let seed = |text: &str| {
+        let doc = loro::LoroDoc::new();
+        doc.get_text("body").insert(0, text).unwrap();
+        doc.commit();
+        doc.export(loro::ExportMode::all_updates()).unwrap()
+    };
+    let key = || uuid::Uuid::new_v4().to_string();
+
+    // The ordinary door: the typed command tells the room before answering.
+    let ordinary = client
+        .seed_document(
+            workspace,
+            "Ordinary".into(),
+            "page".into(),
+            None,
+            None,
+            "fixture".into(),
+            key(),
+            "ordinary".into(),
+            seed("ordinary"),
+            Timestamp::now(),
+        )
+        .unwrap()
+        .unwrap();
+    let told = window.told();
+    assert_eq!(told.len(), 1, "one announcement for one creation");
+    replica.import(&told[0]).unwrap();
+    assert!(replica.contains_document(ordinary));
+
+    // The strict creation in a plain job publishes the entry and tells
+    // nobody.
+    let silent = DocumentId::new();
+    let (silent_key, silent_seed) = (key(), seed("silent"));
+    let created = client
+        .with_store(move |store| {
+            store
+                .create_seeded_document_with_origin(
+                    workspace,
+                    "Silent",
+                    "page",
+                    None,
+                    None,
+                    "fixture-strict",
+                    &silent_key,
+                    "silent",
+                    silent,
+                    silent_seed,
+                    None,
+                    Timestamp::now(),
+                )
+                .map(|proven| proven.creation.manifest_delta)
+        })
+        .unwrap()
+        .unwrap()
+        .expect("the entry was published in the Store");
+    assert!(window.told().is_empty(), "and no open window was told");
+    // A replica missing that change would park every later delta as
+    // pending (a delta whose ancestors are missing imports and applies
+    // nothing), so this one is fetched by hand, as a rejoin would.
+    replica.import(&created).unwrap();
+    assert!(replica.contains_document(silent));
+
+    // The same creation in an announcing job: told once, before the answer.
+    let announced = DocumentId::new();
+    let (announced_key, announced_seed) = (key(), seed("announced"));
+    let create = move |store: &mut crate::WorkerStore, said: &mut crate::Announcements| {
+        let proven = store.create_seeded_document_with_origin(
+            workspace,
+            "Announced",
+            "page",
+            None,
+            None,
+            "fixture-strict",
+            &announced_key,
+            "announced",
+            announced,
+            announced_seed.clone(),
+            None,
+            Timestamp::now(),
+        )?;
+        if let Some(delta) = proven.creation.manifest_delta.clone() {
+            said.manifest(workspace, delta);
+        }
+        Ok::<_, Error>(proven.creation.replayed)
+    };
+    let replayed = client
+        .with_store_announcing(create.clone())
+        .unwrap()
+        .unwrap();
+    assert!(!replayed);
+    let told = window.told();
+    assert_eq!(
+        told.len(),
+        1,
+        "one announcement, already sent on the answer"
+    );
+    replica.import(&told[0]).unwrap();
+    assert!(replica.contains_document(announced));
+    assert_eq!(
+        replica
+            .entries()
+            .into_iter()
+            .find(|entry| entry.id == announced)
+            .map(|entry| entry.title),
+        Some("Announced".to_owned())
+    );
+
+    // A replay committed nothing, and nothing is told.
+    let replayed = client.with_store_announcing(create).unwrap().unwrap();
+    assert!(replayed);
+    assert!(window.told().is_empty(), "a replay is not announced again");
+}

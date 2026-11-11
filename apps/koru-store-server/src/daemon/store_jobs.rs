@@ -5,6 +5,9 @@
 use super::{
     StoreWorkerClient, WorkerCommand, WorkerError, map_admission_error, map_response_error,
 };
+// The reply a job hands back to the worker: sent only after the job's
+// announcements, so a caller never hears of a commit before the rooms do.
+pub(super) type AnnouncedReply = Box<dyn FnOnce() + Send + 'static>;
 use koru_replication::cloud::{
     Refusal,
     client_store::{self, Export, ExportRequest, Failure, Receipt},
@@ -97,6 +100,58 @@ pub trait StoreJobs: Clone + Send + Sync + 'static {
     }
 }
 
+/// **What a Store job committed that open views must hear about.**
+///
+/// A window learns of a new page through its manifest room and of an edit
+/// through the page's room; the HTTP routes and the typed worker commands
+/// tell those rooms after every commit. A job run through
+/// [`StoreWorkerClient::with_store`] has no way to, so a page an in-process
+/// owner created reached no open window until it rejoined. A job run
+/// through [`StoreWorkerClient::with_store_announcing`] adds here exactly
+/// the bytes the Store handed back for what it committed — a creation's
+/// `manifest_delta`, an applied update — and nothing for a replay or a
+/// failure, which committed nothing. The worker then announces them as the
+/// routes do: the same broadcast, once, after the commit and the Store
+/// lock, followed by the replication wake.
+#[derive(Default)]
+pub struct Announcements {
+    changes: Vec<Announced>,
+}
+
+enum Announced {
+    Manifest(koru_store_core::ids::WorkspaceId, Vec<u8>),
+    Document(koru_store_core::ids::DocumentId, Vec<u8>),
+}
+
+impl Announcements {
+    /// A manifest change `workspace`'s Store committed: the delta it
+    /// returned.
+    pub fn manifest(&mut self, workspace: koru_store_core::ids::WorkspaceId, delta: Vec<u8>) {
+        self.changes.push(Announced::Manifest(workspace, delta));
+    }
+
+    /// A committed update to `document`: the bytes that were applied.
+    pub fn document(&mut self, document: koru_store_core::ids::DocumentId, update: Vec<u8>) {
+        self.changes.push(Announced::Document(document, update));
+    }
+
+    /// Tell the rooms, in the order the job named the changes, and wake
+    /// replication once if anything changed. Call only with the Store lock
+    /// released.
+    pub(super) fn announce(self, state: &koru_store_api::AppState) {
+        if self.changes.is_empty() {
+            return;
+        }
+        for change in self.changes {
+            match change {
+                Announced::Manifest(workspace, delta) => state.broadcast_manifest(workspace, delta),
+                Announced::Document(document, update) => state.broadcast_document(document, update),
+            }
+        }
+        state.notify_replication();
+    }
+}
+
 impl StoreJobs for StoreWorkerClient {
     fn submit_store<R, F>(&self, task: F) -> Result<StoreReply<R>, WorkerError>
     where
@@ -155,6 +210,34 @@ impl StoreWorkerClient {
             .try_send(WorkerCommand::Store(Box::new(move |store| {
                 let _ = reply.send(store.map(task));
             })))
+            .map_err(map_admission_error)?;
+        response
+            .recv_timeout(Duration::from_secs(30))
+            .map_err(map_response_error)?
+    }
+
+    /// [`with_store`](Self::with_store) for a job that changes what an open
+    /// view lists or shows. The job names what it committed in
+    /// [`Announcements`]; the worker tells the rooms once the job has
+    /// returned and the Store lock is released, and only then answers — the
+    /// order the HTTP routes and the typed commands keep. A caller that
+    /// stops waiting (the 30 s bound) does not stop the announcement: it is
+    /// the worker's, made for whatever the job committed.
+    pub fn with_store_announcing<R, F>(&self, task: F) -> Result<R, WorkerError>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut crate::WorkerStore, &mut Announcements) -> R + Send + 'static,
+    {
+        let (reply, response) = std::sync::mpsc::sync_channel(1);
+        self.requests
+            .try_send(WorkerCommand::StoreAnnounced(Box::new(
+                move |store, announcements| {
+                    let result = store.map(|store| task(store, announcements));
+                    Box::new(move || {
+                        let _ = reply.send(result);
+                    })
+                },
+            )))
             .map_err(map_admission_error)?;
         response
             .recv_timeout(Duration::from_secs(30))

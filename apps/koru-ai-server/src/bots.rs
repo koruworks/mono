@@ -198,13 +198,18 @@ impl BotAuthority for BotAuthorityAdapter {
     /// of the two non-live placements, so no outcome ever registers a page.
     /// Human edits made since creation stay current; the origin keeps the
     /// original first update.
+    ///
+    /// A page this call creates is told to the workspace's manifest room
+    /// before the call answers, as the Store's own creation routes tell it,
+    /// so a window with the workspace open lists it at once. A replay
+    /// committed nothing and tells nothing.
     fn create_role_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         if seed.owner.device != self.device {
             return Err(BotError::Forbidden);
         }
         let seed = seed.clone();
         self.client
-            .with_store(move |store| {
+            .with_store_announcing(move |store, announcements| {
                 if store
                     .local_user_scope()
                     .map_err(|_| BotError::Unavailable)?
@@ -248,7 +253,15 @@ impl BotAuthority for BotAuthorityAdapter {
                             koru_store_core::model::Timestamp::now(),
                         );
                         match created {
-                            Ok(proven) => proven.origin,
+                            Ok(proven) => {
+                                // The page is in the manifest now: tell a
+                                // window that has the workspace open, as
+                                // the Store's own creation routes do.
+                                if let Some(delta) = proven.creation.manifest_delta {
+                                    announcements.manifest(seed.workspace, delta);
+                                }
+                                proven.origin
+                            }
                             Err(error) => {
                                 // Still no origin: nothing was written, so a
                                 // refusal of the input itself is definite.

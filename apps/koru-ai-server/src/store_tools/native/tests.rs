@@ -237,3 +237,76 @@ fn native_target_visibility_inherits_ancestor_trash_and_denies_other_owner() {
     assert!(stranger.workspace(workspace).is_err());
     assert!(native.persist_update(workspace, child, Vec::new()).is_err());
 }
+
+/// **A page a Bot's native tool creates reaches a window that has the
+/// workspace open, and its edit reaches a window that has the page open**:
+/// both run inside the Store worker, and each tells its room once, before
+/// the tool hears the answer, as the Store's own routes do.
+#[test]
+fn a_native_page_and_its_edit_are_told_to_the_open_rooms_once() {
+    let (memory, authority, _) = setup();
+    let workspace = authority.workspace;
+    let manifest = memory
+        .with_store(move |store| {
+            let id = store.manifest_id(workspace).unwrap();
+            store.snapshot(workspace, id).unwrap()
+        })
+        .unwrap();
+    let mut replica = koru_store_core::manifest::Manifest::from_snapshot(&manifest).unwrap();
+    let mut window = memory.join_manifest(workspace);
+    let backend = native_store_backend(memory.client(), authority.clone());
+    let prepared = backend
+        .prepare_native_write(
+            "create_document",
+            serde_json::json!({"workspace_id": workspace, "title": "Native result"}),
+        )
+        .unwrap();
+    let identity = NativeStoreIdentity {
+        candidate: DocumentId::new(),
+        scope: "native-announce".into(),
+        request_key: uuid::Uuid::new_v4().to_string(),
+    };
+    let page = identity.candidate;
+    backend.execute_native_write(&prepared, identity).unwrap();
+    let told = window.told();
+    assert_eq!(told.len(), 1, "the manifest room is told once");
+    replica.import(&told[0]).unwrap();
+    assert!(replica.contains_document(page));
+
+    // An edit at the exact revision, as the native edit tool makes it.
+    let mut open = memory.join_document(page);
+    let snapshot = memory
+        .with_store(move |store| store.snapshot(workspace, page).unwrap())
+        .unwrap();
+    let doc = loro::LoroDoc::new();
+    doc.import(&snapshot).unwrap();
+    let before = doc.oplog_vv();
+    doc.get_text("native-announce").insert(0, "edited").unwrap();
+    doc.commit();
+    let update = doc.export(loro::ExportMode::updates(&before)).unwrap();
+    let native = NativeStore {
+        client: memory.client(),
+        authority,
+    };
+    let edit = NativeStoreIdentity {
+        candidate: page,
+        scope: "native-announce-edit".into(),
+        request_key: uuid::Uuid::new_v4().to_string(),
+    };
+    native
+        .persist_update_at_version(
+            workspace,
+            page,
+            before.encode(),
+            update.clone(),
+            edit,
+            [9; 32],
+        )
+        .unwrap();
+    assert_eq!(
+        open.told(),
+        vec![update],
+        "the page's room is told the edit once"
+    );
+    assert!(window.told().is_empty(), "an edit is not a manifest change");
+}

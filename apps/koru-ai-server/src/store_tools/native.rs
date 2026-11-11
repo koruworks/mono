@@ -9,7 +9,7 @@ use koru_store_core::service::NativeUpdateError;
 use koru_store_core::{
     CreationOriginLookup, NativeEffectBinding, NativeEffectKind, ProvenSeededCreation,
 };
-use koru_store_server::WorkerStore;
+use koru_store_server::{Announcements, WorkerStore};
 
 /// Supplied only by trusted Run classification and current AI owner evidence.
 /// These values are not accepted from tool arguments or an HTTP principal.
@@ -107,21 +107,26 @@ impl NativeStore {
             })
             .map_err(worker_error)?
     }
+    /// One native effect in one Store hop. What it commits is told to the
+    /// rooms open views listen to before it answers (`Announcements`), as
+    /// the Store's own routes tell them.
     fn effect<T: Send + 'static>(
         &self,
         binding: NativeEffectBinding,
-        operation: impl FnOnce(&mut WorkerStore) -> Result<T, NativeWriteError> + Send + 'static,
+        operation: impl FnOnce(&mut WorkerStore, &mut Announcements) -> Result<T, NativeWriteError>
+        + Send
+        + 'static,
     ) -> Result<T, NativeWriteError> {
         let authority = self.authority.clone();
         self.client
-            .with_store(move |store| {
+            .with_store_announcing(move |store, announcements| {
                 store
                     .check_native_effect(&binding)
                     .map_err(|error| NativeWriteError::Refused(error.into()))?;
                 authority
                     .check(store, binding.workspace)
                     .map_err(NativeWriteError::Refused)?;
-                operation(store)
+                operation(store, announcements)
             })
             .map_err(|error| NativeWriteError::Unconfirmed(worker_error(error)))?
     }
@@ -221,7 +226,8 @@ impl EmbeddedStore for NativeStore {
             NativeEffectKind::CreateDocument,
             fingerprint,
         )?;
-        self.effect(binding.clone(), move |store| {
+        let workspace = request.workspace;
+        self.effect(binding.clone(), move |store, announcements| {
             if request.parent.is_some()
                 || request.index.is_some()
                 || request.kind != "page"
@@ -231,7 +237,7 @@ impl EmbeddedStore for NativeStore {
             }
             // Once the Store seed/publication begins, any returned error may
             // follow durable bytes. Its original-origin proof resolves retries.
-            store
+            let created = store
                 .create_native_document(
                     &binding,
                     &request.title,
@@ -239,7 +245,11 @@ impl EmbeddedStore for NativeStore {
                     request.attribution.as_deref(),
                     Timestamp::now(),
                 )
-                .map_err(native_update_error)
+                .map_err(native_update_error)?;
+            if let Some(delta) = created.creation.manifest_delta.clone() {
+                announcements.manifest(workspace, delta);
+            }
+            Ok(created)
         })
     }
     fn persist_update_at_version(
@@ -260,17 +270,21 @@ impl EmbeddedStore for NativeStore {
             NativeEffectKind::EditDocument,
             request_fingerprint,
         )?;
-        self.effect(binding.clone(), move |store| {
+        self.effect(binding.clone(), move |store, announcements| {
             live_entry(store, workspace, document, true).map_err(NativeWriteError::Refused)?;
-            store
+            let version = store
                 .apply_native_update_at_version(
                     &binding,
                     &expected_version,
-                    update,
+                    update.clone(),
                     Timestamp::now(),
                     koru_store_core::ports::UpdateOrigin::Store,
                 )
-                .map_err(native_update_error)
+                .map_err(native_update_error)?;
+            // Applied and flushed: a window with the page open takes the
+            // same bytes, as from the Store's typed update command.
+            announcements.document(document, update);
+            Ok(version)
         })
     }
     fn retain_creation_version(

@@ -2,7 +2,8 @@
 //! Explicit opt-in process acceptance. The ordinary suite returns before I/O.
 use super::*;
 use koru_ai_core::bots::{
-    BotAccess, BotCommand, BotConfig, BotId, BotPage, BotRequestId, BotResponse,
+    BotAccess, BotCommand, BotConfig, BotCreationConfig, BotCreationStage, BotFolderChoice, BotId,
+    BotPage, BotRequestId, BotResponse, BotRoleInput,
 };
 use koru_ai_core::{AiProviderId, AiSurface, AttemptStatus, ModelSelection, ReasoningChoice};
 use koru_ai_wire::SendTurnRequest;
@@ -25,6 +26,10 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         workspace,
         "Use native Koru pages for this synthetic fixture.",
     );
+    // A window with the workspace open: it lists documents from the
+    // manifest room, and must see pages the owner creates in the Store
+    // worker without rejoining (the first window run's finding 7).
+    let mut window = ManifestWindow::join(&stack.client, workspace);
     let folder = stack.root.path().join("bot-working-folder");
     std::fs::create_dir_all(&folder).unwrap();
     let report = stack.root.path().join("native-result.json");
@@ -64,6 +69,10 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     };
     assert_eq!(bot.owner_device, stack.device);
     assert_eq!((bot.revision, bot.policy_revision), (1, 1));
+    // A Bot created with an authored Role: the open window lists the new
+    // Role page as soon as the creation reports it, with no restart.
+    let role_page = create_with_authored_role(&stack.client, workspace);
+    window.wait_for(role_page, "the new Role page in an open window's manifest");
     // One small picture through the public AI attachment API, staged into the
     // Run's session natively before the first input is frozen.
     let picture = koru_ai_core::ChatAttachmentId::new();
@@ -248,6 +257,11 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         koru_delegate_core::NativeResultKind::EditedPage
     );
     assert_eq!(created.document, edited.document);
+    // The page the Bot's native tool created reached the open window too.
+    window.wait_for(
+        created.document,
+        "the Bot's native page in an open window's manifest",
+    );
     assert_ne!(
         loro::VersionVector::decode(&created.version).unwrap(),
         loro::VersionVector::decode(&edited.version).unwrap()
@@ -626,6 +640,113 @@ fn ordinary_supervised_client_cannot_manage_bots_when_opted_in() {
 /// The one reply of the Bot's main conversation that names its Run in the
 /// public transcript, and `read_run` with exactly those two ids, its whole
 /// history in one window; the raw answer carries no session.
+/// A window's manifest sync session: what the Documents tree lists from.
+struct ManifestWindow {
+    connection: Connection,
+    manifest: koru_store_core::manifest::Manifest,
+}
+
+impl ManifestWindow {
+    fn join(client: &koru_api_client::Client, workspace: koru_delegate_core::WorkspaceId) -> Self {
+        let id = client.store().manifest(workspace).unwrap();
+        let snapshot = client.store().snapshot(workspace, id).unwrap();
+        let manifest = koru_store_core::manifest::Manifest::from_snapshot(&snapshot).unwrap();
+        let mut connection = Connection::open(&client.store().discovery()).unwrap();
+        connection
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let room = format!("workspace:{}:manifest", workspace.to_storage());
+        connection.join(&room, &manifest.version()).unwrap();
+        let mut window = Self {
+            connection,
+            manifest,
+        };
+        window.drain();
+        window
+    }
+
+    /// Everything the room has said so far, imported.
+    fn drain(&mut self) {
+        loop {
+            match self.connection.next_event() {
+                Ok(Some(Event::Updates { updates, .. })) => {
+                    for update in updates {
+                        self.manifest.import(&update).unwrap();
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+    }
+
+    /// Wait until the room has told this window about `document`. The window
+    /// never rejoins or reads a snapshot again: only an announcement can do it.
+    fn wait_for(&mut self, document: koru_delegate_core::DocumentId, what: &str) {
+        wait_until(what, PROMPT, || {
+            self.drain();
+            self.manifest
+                .entries()
+                .iter()
+                .any(|entry| entry.id.as_uuid() == document.as_uuid())
+        });
+    }
+}
+
+/// Create a second Bot with an authored Role page and a managed folder, and
+/// wait for the creation to complete; answers the Role page.
+fn create_with_authored_role(
+    client: &koru_api_client::Client,
+    workspace: koru_delegate_core::WorkspaceId,
+) -> koru_delegate_core::DocumentId {
+    let request_id = BotRequestId::mint();
+    let command = BotCommand::CreateBotWithRole {
+        request_id,
+        bot_id: BotId::mint(),
+        home_workspace: workspace,
+        role: BotRoleInput::Authored {
+            title: "Fixture role".into(),
+            markdown: "A Role page for the open-window check.".into(),
+        },
+        folder: BotFolderChoice::Managed {},
+        config: BotCreationConfig {
+            name: "Role fixture".into(),
+            model: ModelSelection {
+                provider: AiProviderId::parse("agent-codex").unwrap(),
+                requested_model: "fixture-model".into(),
+                default_reasoning: ReasoningChoice::Default,
+            },
+            mode: None,
+            fast: None,
+        },
+        access: BotAccess::Default,
+        selected_pages: Vec::new(),
+    };
+    client.ai().bots(&command).unwrap();
+    let mut role_page = None;
+    wait_until("the Bot creation with its Role page", PROMPT, || {
+        let BotResponse::Creation { creation } = client
+            .ai()
+            .bots(&BotCommand::ReadBotCreation { request_id })
+            .unwrap()
+        else {
+            panic!("creation reply")
+        };
+        assert!(
+            matches!(
+                creation.stage,
+                BotCreationStage::Pending | BotCreationStage::Completed
+            ),
+            "creation stopped: {:?} {:?}",
+            creation.stage,
+            creation.reason
+        );
+        role_page = creation.role_page.map(|page| page.document);
+        creation.stage == BotCreationStage::Completed
+    });
+    role_page.expect("an authored Role page")
+}
+
 fn read_reply_run(
     client: &koru_api_client::Client,
     bot: &koru_ai_core::bots::Bot,

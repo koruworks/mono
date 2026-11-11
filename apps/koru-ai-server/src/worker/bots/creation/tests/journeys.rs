@@ -11,13 +11,17 @@ struct Harness {
 }
 
 fn start(repo: Repository, owner: &Arc<FakeOwner>, fs: &Arc<FakeFs>) -> Harness {
+    start_with(repo, owner.clone(), fs)
+}
+
+fn start_with(repo: Repository, authority: Arc<dyn BotAuthority>, fs: &Arc<FakeFs>) -> Harness {
     let (returned_tx, returned) = sync_channel(1);
     let mut config = WorkerConfig::new(
         PathBuf::from("unused-memory-creation"),
         "internal-debug",
         ProviderRegistry::default(),
     )
-    .with_bot_authority(owner.clone());
+    .with_bot_authority(authority);
     config.test_repository = Some(repo);
     config.test_repository_return = Some(returned_tx);
     config.test_bot_creation =
@@ -1151,5 +1155,56 @@ fn a_definite_store_refusal_is_terminal_not_store_unavailable() {
         h.abandon(request).unwrap().stage,
         BotCreationStage::Abandoned
     );
+    h.stop();
+}
+
+/// **A whole creation tells a window that has the workspace open about its
+/// Role page** (the first window run's finding 7): the real writer and the
+/// real Store authority over an in-memory Store, with the window as a member
+/// of the workspace's manifest room. The page is told once, and is the page
+/// the completed creation names.
+#[test]
+fn a_creation_tells_an_open_window_about_its_role_page_once() {
+    use koru_store_server::memory::MemoryStore;
+    let memory = MemoryStore::open("creation-announced-memory").unwrap();
+    let (workspace, manifest) = memory
+        .with_store(|store| {
+            let at = koru_ai_core::Timestamp::from_millis(1);
+            let profile = store
+                .create_profile("First", None, None, koru_store_core::Locale::default(), at)
+                .unwrap()
+                .id;
+            let workspace = store.create_workspace(profile, "Work", at).unwrap().id;
+            let manifest = store.manifest_id(workspace).unwrap();
+            (workspace, store.snapshot(workspace, manifest).unwrap())
+        })
+        .unwrap();
+    let mut replica = koru_store_core::manifest::Manifest::from_snapshot(&manifest).unwrap();
+    let mut window = memory.join_manifest(workspace);
+    let authority = Arc::new(
+        crate::bots::BotAuthorityAdapter::from_device(memory.client(), &Uuid::new_v4().to_string())
+            .unwrap(),
+    );
+    let fs = FakeFs::with(&[root()]);
+    let h = start_with(Repository::in_memory().unwrap(), authority, &fs);
+    let command = BotCommand::CreateBotWithRole {
+        request_id: BotRequestId::mint(),
+        bot_id: BotId::mint(),
+        home_workspace: workspace,
+        role: authored(),
+        folder: BotFolderChoice::Managed {},
+        config: config(),
+        access: BotAccess::Default,
+        selected_pages: vec![],
+    };
+    let (request, _) = request_of(&command);
+    h.creation(command).unwrap();
+    let done = h.settle(request);
+    assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
+    let page = done.role_page.expect("the authored Role page").document;
+    let told = window.told();
+    assert_eq!(told.len(), 1, "the manifest room is told once");
+    replica.import(&told[0]).unwrap();
+    assert!(replica.contains_document(page), "the open window lists it");
     h.stop();
 }

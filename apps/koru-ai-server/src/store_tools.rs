@@ -199,10 +199,21 @@ impl EmbeddedStore for WorkerEmbeddedStore {
         workspace: WorkspaceId,
         file: DocumentId,
     ) -> Result<(DocumentId, bool), ToolError> {
-        self.read(move |store| store.ensure_file_note(workspace, file, Timestamp::now()))
-            // `created` is a fact the store reports — the same fact the HTTP
-            // route passes through.
-            .map(|ensured| (ensured.id, ensured.created))
+        flatten(
+            self.client
+                .with_store_announcing(move |store, announcements| {
+                    let ensured = store.ensure_file_note(workspace, file, Timestamp::now())?;
+                    // A new note is a manifest change: tell an open window, as
+                    // the HTTP route does. The idempotent answer changed nothing.
+                    if ensured.created {
+                        announcements.manifest(workspace, ensured.delta.clone());
+                    }
+                    Ok::<_, koru_store_core::Error>(ensured)
+                }),
+        )
+        // `created` is a fact the store reports — the same fact the HTTP
+        // route passes through.
+        .map(|ensured| (ensured.id, ensured.created))
     }
 
     fn seed_document(

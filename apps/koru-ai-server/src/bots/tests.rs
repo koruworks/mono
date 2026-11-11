@@ -209,3 +209,71 @@ fn a_role_page_deleted_forever_is_answered_missing_and_never_registered_again() 
     assert!(!adapter.create_role_page(&rival).unwrap().matches(&rival));
     assert_eq!(listed(&memory), (false, count - 1));
 }
+
+/// **A Bot's new Role page reaches a window that has its workspace open**
+/// (the first window run's finding 7): the window lists documents from its
+/// manifest room, and the Role page is created inside the Store worker.
+/// The room is told once, before the creation answers, with the entry the
+/// Store published; a replay of the same creation tells it nothing.
+#[test]
+fn a_new_role_page_is_told_to_an_open_workspaces_manifest_room_once() {
+    use koru_ai_core::Timestamp;
+    use koru_store_core::Locale;
+    use koru_store_server::memory::MemoryStore;
+    let memory = MemoryStore::open("bot-role-announced-memory").unwrap();
+    let (profile, workspace, manifest) = memory
+        .with_store(|store| {
+            let at = Timestamp::from_millis(1);
+            let profile = store
+                .create_profile("First", None, None, Locale::default(), at)
+                .unwrap()
+                .id;
+            let workspace = store.create_workspace(profile, "Work", at).unwrap().id;
+            let manifest = store.manifest_id(workspace).unwrap();
+            (
+                profile,
+                workspace,
+                store.snapshot(workspace, manifest).unwrap(),
+            )
+        })
+        .unwrap();
+    let mut replica = koru_store_core::manifest::Manifest::from_snapshot(&manifest).unwrap();
+    let mut window = memory.join_manifest(workspace);
+    let adapter =
+        BotAuthorityAdapter::from_device(memory.client(), &uuid::Uuid::new_v4().to_string())
+            .unwrap();
+    let initial = koru_import_markdown::document_snapshot(
+        koru_core::WorkspaceId::from_uuid(workspace.as_uuid()),
+        "Research role",
+        "Find primary sources.",
+    )
+    .unwrap();
+    let seed = BotRoleSeed {
+        owner: adapter.owner().unwrap(),
+        workspace,
+        profile,
+        title: "Research role".into(),
+        candidate: koru_ai_core::DocumentId::new(),
+        request_key: uuid::Uuid::new_v4().to_string(),
+        request_hash: blake3::hash(&initial).to_hex().to_string(),
+        seed: initial,
+    };
+    let created = adapter.create_role_page(&seed).unwrap();
+    assert_eq!(created.placement, BotRolePlacement::Live);
+    let told = window.told();
+    assert_eq!(told.len(), 1, "the room is told once");
+    replica.import(&told[0]).unwrap();
+    let entry = replica
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id == seed.candidate)
+        .expect("the open window now lists the Role page");
+    assert_eq!(entry.title, "Research role");
+    assert_eq!(entry.kind, koru_core::explore::KIND_DOCUMENT);
+    // A replay answers from the recorded origin and commits nothing.
+    assert_eq!(
+        adapter.create_role_page(&seed).unwrap().placement,
+        BotRolePlacement::Live
+    );
+    assert!(window.told().is_empty(), "nothing new to tell");
+}

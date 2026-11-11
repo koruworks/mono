@@ -52,7 +52,7 @@ pub mod fake_cloud;
 pub mod memory;
 mod session_io;
 mod store_jobs;
-pub use store_jobs::{StoreJobs, StoreReply};
+pub use store_jobs::{Announcements, StoreJobs, StoreReply};
 
 use crate::tray;
 use koru_store_api::AppState;
@@ -390,6 +390,19 @@ enum WorkerCommand {
     },
     Store(
         Box<dyn FnOnce(std::result::Result<&mut crate::WorkerStore, WorkerError>) + Send + 'static>,
+    ),
+    /// A Store job that names what it committed for the rooms
+    /// ([`StoreWorkerClient::with_store_announcing`]). It returns its reply
+    /// instead of sending it, so the worker announces first.
+    StoreAnnounced(
+        Box<
+            dyn FnOnce(
+                    std::result::Result<&mut crate::WorkerStore, WorkerError>,
+                    &mut store_jobs::Announcements,
+                ) -> store_jobs::AnnouncedReply
+                + Send
+                + 'static,
+        >,
     ),
     Search {
         request: koru_store_wire::search::SearchRequest,

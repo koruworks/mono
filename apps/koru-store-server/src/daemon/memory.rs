@@ -200,6 +200,31 @@ impl MemoryStore {
         self.state.cloud_changes.subscribe(dataset)
     }
 
+    /// Join `workspace`'s manifest room, as a window's sync session does, to
+    /// hear every change to its document list the Store tells the room from
+    /// then on. The member leaves when dropped.
+    pub fn join_manifest(&self, workspace: WorkspaceId) -> RoomMember {
+        self.join_room(koru_store_api::rooms::Room::Manifest(workspace))
+    }
+
+    /// Join `document`'s room, as an open page's sync session does.
+    pub fn join_document(&self, document: koru_store_core::ids::DocumentId) -> RoomMember {
+        self.join_room(koru_store_api::rooms::Room::Document(document))
+    }
+
+    fn join_room(&self, room: koru_store_api::rooms::Room) -> RoomMember {
+        let rooms = Arc::clone(&self.state.rooms);
+        let who = rooms.next_connection();
+        let (sender, frames) = tokio::sync::mpsc::unbounded_channel();
+        rooms.join(room.clone(), who, sender);
+        RoomMember {
+            rooms,
+            room,
+            who,
+            frames,
+        }
+    }
+
     /// The readiness signal: ask for `workspace` to be swept, and answer the
     /// ticket [`Self::swept`] is complete for. `None` when the read model did
     /// not open, which is never ready.
@@ -233,6 +258,40 @@ impl MemoryStore {
                 tracing::error!("an in-memory Store thread panicked");
             }
         }
+    }
+}
+
+/// One member of a sync room of a [`MemoryStore`]
+/// ([`MemoryStore::join_room`]).
+pub struct RoomMember {
+    rooms: Arc<koru_store_api::rooms::Rooms>,
+    room: koru_store_api::rooms::Room,
+    who: koru_store_api::rooms::ConnectionId,
+    frames: tokio::sync::mpsc::UnboundedReceiver<koru_store_api::rooms::Frame>,
+}
+
+impl RoomMember {
+    /// The Loro updates told to the room since the last call, in the order
+    /// the Store sent them: one entry per update a frame carried. Frames
+    /// that carry no update are skipped. Never waits.
+    pub fn told(&mut self) -> Vec<Vec<u8>> {
+        use loro_protocol::protocol::ProtocolMessage;
+        let mut updates = Vec::new();
+        while let Ok(frame) = self.frames.try_recv() {
+            if let Ok(ProtocolMessage::DocUpdate {
+                updates: carried, ..
+            }) = loro_protocol::encoding::decode(&frame)
+            {
+                updates.extend(carried);
+            }
+        }
+        updates
+    }
+}
+
+impl Drop for RoomMember {
+    fn drop(&mut self) {
+        self.rooms.leave(&self.room, self.who);
     }
 }
 

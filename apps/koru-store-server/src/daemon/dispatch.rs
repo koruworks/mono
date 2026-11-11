@@ -56,23 +56,19 @@ pub(crate) async fn serve(
                 });
             }
             WorkerCommand::Store(task) => {
-                static POISON_REPORTED: std::sync::Once = std::sync::Once::new();
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match state
-                    .store
-                    .lock()
-                {
-                    Ok(mut store) => task(Ok(&mut store)),
-                    Err(_) => {
-                        POISON_REPORTED.call_once(|| {
-                            tracing::error!("Store worker state is poisoned");
-                        });
-                        task(Err(WorkerError::Poisoned));
-                    }
-                }));
-                if result.is_err() {
-                    POISON_REPORTED.call_once(|| {
-                        tracing::error!("Store worker task panicked and poisoned Store state");
-                    });
+                run_job(&state, task);
+            }
+            WorkerCommand::StoreAnnounced(task) => {
+                let mut announcements = super::Announcements::default();
+                let reply = run_job(&state, |store| task(store, &mut announcements));
+                // The Store lock is released and what the job committed is
+                // durable: the rooms hear of it before the caller does, as
+                // after an HTTP route's commit. A job that panicked after a
+                // commit still announces what it named; its caller hears
+                // that the worker stopped.
+                announcements.announce(&state);
+                if let Some(reply) = reply {
+                    reply();
                 }
             }
             WorkerCommand::WatchCloud { dataset, reply } => {
@@ -199,6 +195,32 @@ pub(crate) async fn serve(
             }
         }
     }
+}
+
+/// One job under the Store lock, which is released when this returns. A
+/// poisoned lock is handed to the job as [`WorkerError::Poisoned`]; a job
+/// that panics answers `None`, and both are reported once per process.
+fn run_job<T>(
+    state: &AppState,
+    task: impl FnOnce(Result<&mut crate::WorkerStore, WorkerError>) -> T,
+) -> Option<T> {
+    static POISON_REPORTED: std::sync::Once = std::sync::Once::new();
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match state.store.lock() {
+            Ok(mut store) => task(Ok(&mut store)),
+            Err(_) => {
+                POISON_REPORTED.call_once(|| {
+                    tracing::error!("Store worker state is poisoned");
+                });
+                task(Err(WorkerError::Poisoned))
+            }
+        }));
+    if result.is_err() {
+        POISON_REPORTED.call_once(|| {
+            tracing::error!("Store worker task panicked and poisoned Store state");
+        });
+    }
+    result.ok()
 }
 
 /// One search, from the index the composition installed.

@@ -1253,3 +1253,43 @@ fn no_local_path_writes_a_commit_message() {
         .collect();
     assert!(labelled.is_empty(), "{labelled:?}");
 }
+
+/// **A note the tools attach to a file reaches a window that has the
+/// workspace open**: the note is a manifest entry made inside the Store
+/// worker, told to the manifest room once, as the HTTP route tells it; the
+/// idempotent second ask changed nothing and tells nothing.
+#[test]
+fn a_file_note_the_tools_create_is_told_to_the_open_manifest_room_once() {
+    let memory = MemoryStore::open("file-note-announced").unwrap();
+    let client = memory.client();
+    let (workspace, file, manifest) = client
+        .with_store(|store| {
+            let at = Timestamp::from_millis(1);
+            let profile =
+                store.create_profile("Test", None, None, Locale::parse("en").unwrap(), at)?;
+            let workspace = store.create_workspace(profile.id, "Work", at)?.id;
+            let (file, _) =
+                store.create_document(workspace, "Report.pdf", "file", None, None, at)?;
+            let manifest = store.manifest_id(workspace)?;
+            Ok::<_, koru_store_core::Error>((workspace, file, store.snapshot(workspace, manifest)?))
+        })
+        .unwrap()
+        .unwrap();
+    let mut replica = koru_store_core::manifest::Manifest::from_snapshot(&manifest).unwrap();
+    let mut window = memory.join_manifest(workspace);
+    let port = WorkerEmbeddedStore { client };
+    let (note, created) = port.ensure_file_note(workspace, file).unwrap();
+    assert!(created);
+    let told = window.told();
+    assert_eq!(told.len(), 1, "one announcement for one note");
+    replica.import(&told[0]).unwrap();
+    assert!(replica.contains_document(note));
+    assert_eq!(
+        port.ensure_file_note(workspace, file).unwrap(),
+        (note, false)
+    );
+    assert!(
+        window.told().is_empty(),
+        "the idempotent answer tells nothing"
+    );
+}

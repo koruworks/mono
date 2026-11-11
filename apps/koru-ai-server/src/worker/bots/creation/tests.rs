@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! P1.8 §5's creation-recovery gate, over fake Store and filesystem ports.
-//! No test touches the disk, a Store, a provider or telemetry.
+//! No test touches the disk, a provider or telemetry; the one journey with a
+//! Store (an open window hearing of the Role page) uses an in-memory one.
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
