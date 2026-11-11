@@ -19,9 +19,14 @@
 //! Elsewhere the agent started with it, and the pill only shows it.
 
 use koru_ai_core::AiProviderId;
-use koru_i18n::{Key, Lang, fill, number, t};
+use koru_i18n::{Key, t};
 
 use crate::agents::{find_listed, is_agent_provider};
+
+/// The pill's words are the control's (`koru_agent_config_ui::picker::context`).
+pub(crate) use koru_agent_config_ui::picker::context::pill_label;
+#[cfg(test)]
+pub(crate) use koru_agent_config_ui::picker::context::window_label;
 
 /// The chat's model's context choice.
 pub(crate) struct ContextChoice {
@@ -33,30 +38,6 @@ pub(crate) struct ContextChoice {
     pub(super) tokens: u32,
     /// The chat is on the longer window.
     pub(super) chosen_long: bool,
-}
-
-/// A window's size as the pill names it: *1M*, or *200k*.
-pub(crate) fn window_label(lang: Lang, tokens: u32) -> String {
-    let tokens = u64::from(tokens);
-    if tokens >= 1_000_000 && tokens % 1_000_000 == 0 {
-        fill(
-            t(lang, Key::AiModelContextMillions),
-            &[&number::decimal(lang, tokens / 1_000_000)],
-        )
-    } else {
-        fill(
-            t(lang, Key::AiModelContextThousands),
-            &[&number::decimal(lang, tokens / 1_000)],
-        )
-    }
-}
-
-/// The pill's words: *1M context*.
-pub(crate) fn pill_label(lang: Lang, tokens: u32) -> String {
-    fill(
-        t(lang, Key::AiModelContextPill),
-        &[&window_label(lang, tokens)],
-    )
 }
 
 impl crate::ChatSurface {

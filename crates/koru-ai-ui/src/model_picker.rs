@@ -47,19 +47,15 @@
 //! functions, tested beside this file. The surface keeps the state
 //! ([`PickerState`]).
 
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::rc::Rc;
-
+use koru_agent_config_ui::picker as cfg;
 use koru_ai_core::{AGENT_DEFAULT_MODEL, AiProviderId, ReasoningChoice, ReasoningControl};
 use koru_draw::el::FrameCx;
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{brand, icons, scene, theme};
+use koru_draw::{brand, icons, scene};
 use koru_i18n::{Key, Lang, t};
 use koru_ui::Typed;
 use koru_ui::popover::PopoverAlign;
-use koru_ui::text_input::{InputStyle, TextInput};
 use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -86,323 +82,39 @@ pub(crate) use elements::{layout as layout_elements, stable_id};
 /// field is too (D106).
 pub(crate) use paint::{SearchLeaf, SearchPaint};
 
-/// The rail's width, and the square of each of its marks.
-pub(crate) const RAIL_W: f32 = 44.0;
-/// **Air between the rail and the picker's content** — the search row, the
-/// list and the footer all start this far right of the rail, so its marks
-/// are not flush against them (the composer's toolbar keeps the same 8 px
-/// between its controls). The picker lays out with the element token
-/// [`elements::CONTENT_GAP`]; this value is what the tests hold it to.
+// **The picker's vocabulary is the agent-configuration control's**
+// (`koru_agent_config_ui::picker`, Bots P1.8): its sizes, the rail's
+// entries, the list's rows, the keyboard's places, its state, its parts and
+// the pure rules over them. The chat names them here, its own agent id in
+// the generic ones, so this crate's code and its suite read as they did.
+pub use cfg::FavoriteModel;
+pub(crate) use cfg::{
+    Geometry, LIST_ROWS, PILL_H, PickerFocus, RAIL_BUTTON, RAIL_PAGE, RAIL_W, ROW_H, ROW_MARK,
+    SEARCH_H, SEGMENT_H, STAR, STRIP_H, SharedInput, TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED,
+    TOOLTIP_RAIL, TOOLTIP_REFRESH, matches, rail_dividers, rail_height, row_id, scroll_into_view,
+    size, step_highlight, toggled,
+};
+
+/// One mark on the rail, the chat's provider id its agent's.
+pub(crate) type RailEntry = cfg::RailEntry<AiProviderId>;
+/// One row of the list, the chat's provider id its agent's.
+pub(crate) type Row = cfg::Row<AiProviderId>;
+/// The picker's own state on the surface. It lives only while the picker
+/// is open; opening resets it.
+pub(crate) type PickerState = cfg::PickerState<AiProviderId>;
+
+// Names only the suite reads, through `use super::*`; they go when the
+// suite moves into the control's crate and drives its public API.
 #[cfg(test)]
-pub(crate) const RAIL_CONTENT_GAP: f32 = 8.0;
-const RAIL_BUTTON: f32 = 32.0;
-const RAIL_GAP: f32 = 6.0;
-/// The room a divider takes after the chat's own built-in provider (S1).
-const RAIL_DIVIDER: f32 = 9.0;
-/// Keep the rail shorter than the model list panel; the chevrons page through
-/// further agents without letting the popover grow past the viewport.
-const RAIL_PAGE: usize = 6;
-/// The search row, with ↻ at its end.
-pub(crate) const SEARCH_H: f32 = 40.0;
-/// A row of the list: a heading, a note or a model, one line each. A
-/// model's description is not shown under its name (D43, taken back by the
-/// user: only Codex gave its models one), so every row is this tall.
-pub(crate) const ROW_H: f32 = 30.0;
-/// **The picker's one size** (D13): the search row, six rows of the list
-/// and the footer — the box the person chose. The list scrolls inside it
-/// when there are more, and a short list leaves room under it rather than
-/// shrinking the picker, so the picker keeps its size from agent to agent.
-/// A model with no footer gives the room to the list.
-pub(crate) const LIST_ROWS: usize = 6;
-/// The ☆ at a model row's end (D46): its square, and how far its right edge
-/// keeps from the list's, clear of the scrollbar's lane
-/// ([`elements::STAR_INSET`]).
-const STAR: f32 = 22.0;
+pub(crate) use cfg::{
+    FOOTER_H, FOOTER_TOGGLES_H, MAX_W, PAD, RAIL_CONTENT_GAP, RAIL_DIVIDER, RAIL_GAP, star_rect,
+};
 #[cfg(test)]
-const STAR_INSET: f32 = 12.0;
-/// A favorite's agent mark at its row's start.
-const ROW_MARK: f32 = 16.0;
-/// An effort segment's height, and the effort strip's: the segments and
-/// the strip's 2 round them (D76).
-pub(crate) const SEGMENT_H: f32 = 28.0;
-pub(crate) const STRIP_H: f32 = SEGMENT_H + 4.0;
-/// A pill toggle's height: *⚡ Fast*, *1M context*.
-pub(crate) const PILL_H: f32 = 28.0;
-/// **The footer at its tallest** (D76): the divider, 10 above the effort
-/// strip, 8 between it and the pills' row, and 8 under that (12 from the
-/// panel's foot with [`PAD`]). Without levels it is the divider and the
-/// pills' row alone ([`FOOTER_TOGGLES_H`]).
-pub(crate) const FOOTER_H: f32 = 1.0 + 10.0 + STRIP_H + 8.0 + PILL_H + 8.0;
-/// The footer of a model with Fast or a longer window and no levels.
-#[cfg(test)]
-pub(crate) const FOOTER_TOGGLES_H: f32 = 1.0 + 10.0 + PILL_H + 8.0;
-const PAD: f32 = 4.0;
-/// The picker is as wide as the composer, up to this.
-pub(crate) const MAX_W: f32 = 360.0;
-/// The tooltips' keys, so moving from one mark or row to the next is a new
-/// tooltip: the rail's first mark, ↻, the read-only strip and context
-/// pill. A model row has none (D25).
-const TOOLTIP_RAIL: u64 = 0x5049_0000;
-const TOOLTIP_REFRESH: u64 = 0x5049_1000;
-const TOOLTIP_LOCKED: u64 = 0x5049_1002;
-const TOOLTIP_CONTEXT_LOCKED: u64 = 0x5049_1003;
+use koru_draw::theme;
+
 /// The note over the strip when a level is chosen during a reply (D70).
 const LEVEL_NOTE_KEY: u64 = 0x5049_1004;
 const LEVEL_NOTE_HOLD: std::time::Duration = std::time::Duration::from_millis(2200);
-
-/// **One favorite model** (D46): an agent, by its key (`claude`, `codex`,
-/// …), and the model id that agent takes — what the host's roaming
-/// `favorite_models` setting holds, in the order they were starred.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct FavoriteModel {
-    pub agent: String,
-    pub model: String,
-}
-
-impl FavoriteModel {
-    pub fn new(agent: impl Into<String>, model: impl Into<String>) -> Self {
-        Self {
-            agent: agent.into(),
-            model: model.into(),
-        }
-    }
-}
-
-/// One mark on the rail: *Favorites*, first, while there is one (D46); a
-/// local agent; or — first after it, and only on a chat that has begun on
-/// one — Koru AI, OpenAI or Ollama (S1).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum RailEntry {
-    Favorites,
-    Provider(AiProviderId),
-    Agent(AiProviderId),
-}
-
-impl RailEntry {
-    /// Whose models the entry lists; `None` for *Favorites*, which lists
-    /// several agents' — each row says whose.
-    pub(crate) fn provider(&self) -> Option<&AiProviderId> {
-        match self {
-            Self::Favorites => None,
-            Self::Provider(provider) | Self::Agent(provider) => Some(provider),
-        }
-    }
-}
-
-/// Where the keyboard is inside the picker; Tab and Shift+Tab move through
-/// them in this order, the footer's only while the model offers them.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PickerFocus {
-    Search,
-    Rail,
-    List,
-    /// The effort strip (D76): Left and Right move the level.
-    Effort,
-    /// The *⚡ Fast* pill (koru-ai D11): Space or Enter toggles it.
-    Fast,
-    /// The *1M context* pill (koru-ai D10): Space or Enter toggles it.
-    Context,
-}
-
-/// The picker's own state on the surface. It lives only while the picker
-/// is open; opening resets it.
-pub(crate) struct PickerState {
-    /// The rail's selected entry: whose models the list shows.
-    pub(crate) rail: Option<RailEntry>,
-    /// First agent mark on the visible rail page.
-    pub(crate) rail_offset: usize,
-    pub(crate) query: SharedInput,
-    /// The row the keyboard is on, by index into the rows.
-    pub(crate) highlight: Option<usize>,
-    /// The first row shown.
-    pub(crate) offset: usize,
-    pub(crate) scroll_drag: Option<f32>,
-    pub(crate) focus: PickerFocus,
-    /// Agents whose ↻ is under way: the list reads *Checking…* meanwhile.
-    pub(crate) refreshing: HashSet<AiProviderId>,
-    /// *Legacy models (N)* is expanded: the agent's older models follow it
-    /// in the list (QUESTIONS M4, the user's design, 2026-11-03).
-    pub(crate) legacy_open: bool,
-}
-
-impl PickerState {
-    pub(crate) fn new(engine: &mut TextEngine) -> Self {
-        Self {
-            rail: None,
-            rail_offset: 0,
-            query: SharedInput::new(engine),
-            highlight: None,
-            offset: 0,
-            scroll_drag: None,
-            focus: PickerFocus::Search,
-            refreshing: HashSet::new(),
-            legacy_open: false,
-        }
-    }
-}
-
-/// **The search field's input, shared with the leaf that draws it.** An
-/// element leaf owns what it paints (`koru_draw::el::Leaf` is `'static`)
-/// and the input is the picker's state, so the two hold one `TextInput`;
-/// nothing else keeps it.
-#[derive(Clone)]
-pub(crate) struct SharedInput(Rc<RefCell<TextInput>>);
-
-impl SharedInput {
-    fn new(engine: &mut TextEngine) -> Self {
-        Self::with_text(engine, theme::role::row(), "")
-    }
-
-    /// An input in `style` holding `text`: the workspace-access panel's
-    /// filter (D106), which shares the search field's leaf.
-    pub(crate) fn with_text(engine: &mut TextEngine, style: theme::TextStyle, text: &str) -> Self {
-        Self(Rc::new(RefCell::new(TextInput::with_text(
-            engine, style, text,
-        ))))
-    }
-
-    /// What is typed, unmasked.
-    pub(crate) fn raw_text(&self) -> String {
-        self.0.borrow().raw_text().to_owned()
-    }
-
-    /// What is typed, as a field's value.
-    pub(crate) fn value(&self) -> String {
-        self.0.borrow().value()
-    }
-
-    pub(crate) fn set_text(&self, engine: &mut TextEngine, text: &str) {
-        self.0.borrow_mut().set_text(engine, text);
-    }
-
-    pub(crate) fn drag(&self, engine: &mut TextEngine, r: Rect, x: f32) -> bool {
-        self.0.borrow_mut().drag(engine, r, x)
-    }
-
-    pub(crate) fn release(&self) {
-        self.0.borrow_mut().release();
-    }
-
-    pub(crate) fn key(
-        &self,
-        engine: &mut TextEngine,
-        key: &WinitKey,
-        text: Option<&str>,
-        mods: ModifiersState,
-    ) -> Typed {
-        self.0.borrow_mut().key(engine, key, text, mods)
-    }
-
-    pub(crate) fn click(&self, engine: &mut TextEngine, r: Rect, x: f32, y: f32) -> bool {
-        self.0.borrow_mut().click(engine, r, x, y)
-    }
-
-    /// The field in `r`, with its placeholder while it is empty.
-    fn draw(
-        &self,
-        canvas: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        r: Rect,
-        placeholder: &str,
-        focused: bool,
-    ) {
-        self.0.borrow_mut().draw(
-            canvas,
-            root,
-            engine,
-            r,
-            InputStyle::search(),
-            Some(placeholder),
-            focused,
-        );
-    }
-}
-
-/// One row of the list.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Row {
-    /// A group's heading, shown only when the agent has more than one.
-    Heading(String),
-    /// The agent's own default: its `default` entry when it lists one.
-    Default,
-    /// A model, by the id the agent (or provider) takes.
-    Model(String),
-    /// A favorite under *Favorites* (D46): an agent's model, beside the
-    /// agent's mark.
-    Favorite(AiProviderId, String),
-    /// A word in place of models: listing, checking, failed, no match.
-    Note(String),
-    /// *Legacy models (N)*, at the foot: the models the agent marks as
-    /// older (D11) follow it in the list while it is expanded — a click or
-    /// Enter expands it, again collapses it (M4, the user's design). Only
-    /// while not searching; a search shows them inline, tagged.
-    LegacyToggle,
-    /// *Manage agent providers*, under the note of an agent that cannot run
-    /// here — not installed, a version Koru does not support, its chat
-    /// program missing. Opens Settings → Coding → Agent providers, as the
-    /// rail's **+** does: the note says what is wrong, and this is where it
-    /// is put right. Only while the host offers that page.
-    ManageAgents,
-    /// **A search's heading for an entry** (D67): its mark and name, above
-    /// what the query found in its list.
-    EntryHeading(RailEntry),
-    /// **A row a search found in an entry's list** (D67): the row as that
-    /// entry lists it, which it is named, chosen and starred by — the
-    /// entry need not be the one selected on the rail.
-    Found(RailEntry, Box<Row>),
-}
-
-impl Row {
-    fn choosable(&self) -> bool {
-        match self {
-            Self::Found(_, row) => row.choosable(),
-            other => matches!(
-                other,
-                Self::Default | Self::Model(_) | Self::Favorite(..) | Self::LegacyToggle
-            ),
-        }
-    }
-}
-
-/// The picker's parts, read back from its element frame ([`elements`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Geometry {
-    pub(crate) panel: Rect,
-    pub(crate) rail: Rect,
-    /// The search row's box: the field and ↻ at its end.
-    pub(crate) search: Rect,
-    /// The search field itself, short of ↻.
-    pub(crate) field: Rect,
-    pub(crate) refresh: Rect,
-    pub(crate) list: Rect,
-    /// The footer under the list (D76): its divider, the effort strip and
-    /// the pills' row. `None` for a model that offers none of them.
-    pub(crate) footer: Option<Rect>,
-    /// The effort strip, while the model offers levels.
-    pub(crate) strip: Option<Rect>,
-    /// The *1M context* pill (koru-ai D10).
-    pub(crate) context: Option<Rect>,
-    /// The *⚡ Fast* pill (koru-ai D11), first in its row.
-    pub(crate) fast: Option<Rect>,
-}
-
-impl Geometry {
-    /// How many rows the list has room for.
-    pub(crate) fn visible_rows(&self) -> usize {
-        (self.list.h / ROW_H).floor().max(0.0) as usize
-    }
-}
-
-/// The picker's width and height: as wide as the composer up to
-/// [`MAX_W`]; as tall as the search row, [`LIST_ROWS`] rows and the footer
-/// at its tallest, whatever the list holds and whether or not the chat's
-/// model has a footer — never shorter than the rail needs.
-pub(crate) fn size(composer_w: f32, rail_h: f32) -> (f32, f32) {
-    let width = composer_w.min(MAX_W).max(RAIL_W + 160.0);
-    let height = PAD * 2.0 + SEARCH_H + LIST_ROWS as f32 * ROW_H + FOOTER_H;
-    (width, height.max(rail_h))
-}
 
 /// The picker's parts inside `panel`: the footer at the foot when the
 /// model offers `levels`, `context` or `fast` — the strip for levels, the
@@ -443,112 +155,18 @@ pub(crate) fn rail_rects(rail: Rect, count: usize, dividers: &[usize]) -> Vec<Re
         .collect()
 }
 
-/// The height the rail's marks need, with `dividers` dividers among them.
-pub(crate) fn rail_height(count: usize, dividers: usize) -> f32 {
-    PAD * 2.0 + 8.0 + count as f32 * (RAIL_BUTTON + RAIL_GAP) + dividers as f32 * RAIL_DIVIDER
-}
-
-/// The ☆ of a model row drawn at `row` (D46): a square at its end, in the
-/// middle of the row whatever its height. Where the arithmetic put it before
-/// the rows were elements: the record the frame is held to.
-#[cfg(test)]
-pub(crate) fn star_rect(row: Rect) -> Rect {
-    Rect::new(
-        row.x + row.w - STAR_INSET - STAR,
-        row.y + (row.h - STAR) * 0.5,
-        STAR,
-        STAR,
-    )
-}
-
-/// `favorites` with `favorite` added at the end, or taken out where it was
-/// — what one press of a ☆ makes of the list.
-pub(crate) fn toggled(favorites: &[FavoriteModel], favorite: FavoriteModel) -> Vec<FavoriteModel> {
-    if favorites.contains(&favorite) {
-        favorites
-            .iter()
-            .filter(|known| **known != favorite)
-            .cloned()
-            .collect()
-    } else {
-        let mut next = favorites.to_vec();
-        next.push(favorite);
-        next
-    }
-}
-
-/// **Search** (§9.4): case-insensitive, and every whitespace-separated term
-/// must be found in one of the fields — a model's label, its id, its
-/// group's label and its description. An empty query matches everything.
-pub(crate) fn matches(query: &str, fields: &[&str]) -> bool {
-    let fields: Vec<String> = fields.iter().map(|field| field.to_lowercase()).collect();
-    query
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .all(|term| fields.iter().any(|field| field.contains(&term)))
-}
-
-/// **The footer's readout** (§9.3, D76): *Effort: High*, the chat's level
-/// in Koru's full words, and *(default)* after it when the level shown is
-/// the one the model states as its own. A model that states none reads
-/// *Effort: Default* while the chat chooses none.
-///
-/// Longest first: the readout, then shorter forms of it — *High (default)*,
-/// *High* — for a row too narrow for the whole (the pills come first).
+/// **The footer's readout** (§9.3, D76) for the chat's reasoning control
+/// and choice, in the control's words ([`cfg::readout`]).
 pub(crate) fn readout(
     control: &ReasoningControl,
     choice: ReasoningChoice,
     lang: Lang,
 ) -> Vec<String> {
-    let shown = effort::resolve(control, choice).unwrap_or(ReasoningChoice::Default);
-    let word = effort::word(lang, shown);
-    let level = match effort::default_level(control) {
-        Some(default) if default == shown => {
-            format!("{word} {}", t(lang, Key::AiEffortIsDefault))
-        }
-        _ => word.clone(),
-    };
-    let mut forms = vec![koru_i18n::fill(t(lang, Key::AiEffortReadout), &[&level])];
-    if level != word {
-        forms.push(level);
-    }
-    forms.push(word);
-    forms
-}
-
-/// The next choosable row from `from` in `step`'s direction, wrapping at
-/// neither end; `None` when there is none that way.
-pub(crate) fn step_highlight(
-    choosable: &[bool],
-    from: Option<usize>,
-    step: isize,
-) -> Option<usize> {
-    let len = choosable.len() as isize;
-    let mut index = match from {
-        Some(index) => index as isize + step,
-        None if step >= 0 => 0,
-        None => len - 1,
-    };
-    let direction = if step < 0 { -1 } else { 1 };
-    while (0..len).contains(&index) {
-        if choosable[index as usize] {
-            return Some(index as usize);
-        }
-        index += direction;
-    }
-    None
-}
-
-/// The first row shown so that `index` is in view, starting from `offset`,
-/// with room for `visible` rows.
-pub(crate) fn scroll_into_view(index: usize, offset: usize, visible: usize) -> usize {
-    if index < offset {
-        index
-    } else if visible > 0 && index >= offset + visible {
-        index + 1 - visible
-    } else {
-        offset
-    }
+    cfg::readout(
+        effort::levels(control).as_ref(),
+        effort::effort(choice),
+        lang,
+    )
 }
 
 impl crate::ChatSurface {
@@ -2057,18 +1675,6 @@ impl crate::ChatSurface {
     }
 }
 
-/// Where the rail's dividers fall: after *Favorites* and after the chat's
-/// own built-in provider, each while an entry follows it.
-pub(crate) fn rail_dividers(rail: &[RailEntry]) -> Vec<usize> {
-    rail.iter()
-        .enumerate()
-        .filter(|(index, entry)| {
-            matches!(entry, RailEntry::Favorites | RailEntry::Provider(_)) && index + 1 < rail.len()
-        })
-        .map(|(index, _)| index)
-        .collect()
-}
-
 /// The search field itself: the search row short of ↻ at its end.
 fn search_field(geometry: &Geometry) -> Rect {
     geometry.field
@@ -2082,29 +1688,6 @@ fn provider_name(provider: &AiProviderId) -> String {
         AiProviderId::OLLAMA => "Ollama".to_owned(),
         other => other.to_owned(),
     }
-}
-
-/// **A list row's identity** (M1): its entry and what it chooses — a
-/// model, the agent's *Default*, *Legacy models* — never its place, so a
-/// row keeps its key as the list scrolls, filters and reorders. `None` for
-/// a heading or a note, which choose nothing.
-pub(crate) fn row_id(entry: &RailEntry, row: &Row) -> Option<String> {
-    let entry_id = |entry: &RailEntry| match entry {
-        RailEntry::Favorites => "favorites".to_owned(),
-        RailEntry::Provider(provider) => format!("provider:{}", provider.as_str()),
-        RailEntry::Agent(agent) => format!("agent:{}", agent.as_str()),
-    };
-    Some(match row {
-        Row::Found(entry, row) => return row_id(entry, row),
-        Row::Heading(_) | Row::Note(_) | Row::EntryHeading(_) => return None,
-        Row::Default => format!("{}\u{1f}default", entry_id(entry)),
-        Row::Model(id) => format!("{}\u{1f}model\u{1f}{id}", entry_id(entry)),
-        Row::Favorite(agent, id) => {
-            format!("{}\u{1f}{}\u{1f}{id}", entry_id(entry), agent.as_str())
-        }
-        Row::LegacyToggle => format!("{}\u{1f}legacy", entry_id(entry)),
-        Row::ManageAgents => format!("{}\u{1f}manage", entry_id(entry)),
-    })
 }
 
 /// A provider's mark in `inner`: the agent's brand by its kind
