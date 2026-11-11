@@ -787,3 +787,117 @@ fn delivery_publication_constraints_and_decoder_refuse_corruption() {
         Err(BotLedgerError::Ledger(LedgerError::Corrupt { .. }))
     ));
 }
+
+#[test]
+fn unsettled_work_of_one_bot_is_its_live_admission_and_a_bounded_queue_never_its_history() {
+    let (mut db, _) = memory();
+    let executing = submission(1);
+    let owner = executing.provenance.owner;
+    let bot = executing.provenance.bot;
+    let attempt = running(&mut db, &executing);
+    for n in 2..=4 {
+        db.admit_bot(&submission(n)).unwrap();
+    }
+    // Another Bot's queued work is never this Bot's.
+    let mut other = submission(5);
+    other.provenance.bot = BotId::from_uuid(fixtures::v4(0xb9));
+    db.admit_bot(&other).unwrap();
+    // Three thousand settled admissions of the same Bot.
+    {
+        let conn = db.conn();
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM bot_admissions WHERE run_id=?1",
+                [executing.request.run.to_storage()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        for n in 0..3000i64 {
+            let run = Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO run_intents(run_id,workspace_id,payload_json,state,created_at_ms,updated_at_ms) VALUES(?1,?2,'{}','abandoned',1,1)",
+                rusqlite::params![run, executing.workspace.to_storage()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO bot_admissions(run_id,queue_sequence,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,payload_json,state,created_at_ms,updated_at_ms)
+                 VALUES(?1,?2,?3,?4,?5,?6,1,1,?7,'settled',1,1)",
+                rusqlite::params![
+                    run,
+                    10_000 + n,
+                    owner.user_scope.to_storage(),
+                    owner.device.to_storage(),
+                    bot.to_storage(),
+                    Uuid::new_v4().to_string(),
+                    payload,
+                ],
+            )
+            .unwrap();
+        }
+    }
+    let (all, more) = db.unsettled_bot(owner, bot, 64).unwrap();
+    assert!(!more);
+    assert_eq!(
+        all.iter().map(|r| r.state).collect::<Vec<_>>(),
+        vec![
+            BotAdmissionState::Executing,
+            BotAdmissionState::Queued,
+            BotAdmissionState::Queued,
+            BotAdmissionState::Queued
+        ]
+    );
+    assert_eq!(all[0].run, executing.request.run);
+    assert!(all.iter().all(|r| r.bot == bot && r.owner == owner));
+    assert!(all[1..].windows(2).all(|w| w[0].sequence < w[1].sequence));
+    let (page, more) = db.unsettled_bot(owner, bot, 1).unwrap();
+    assert!(more);
+    assert_eq!(page.len(), 2);
+    // A foreign owner, or a Bot with nothing unsettled, reads empty.
+    let mut foreign = owner;
+    foreign.user_scope = Default::default();
+    assert_eq!(db.unsettled_bot(foreign, bot, 64).unwrap(), (vec![], false));
+    // Both reads use their named index and never sort or walk settled rows.
+    let (execution, queue) = super::repository::unsettled_queries();
+    for (query, index) in [
+        (execution, "bot_admissions_execution"),
+        (queue, "bot_admissions_queue"),
+    ] {
+        let plan = db
+            .conn()
+            .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+            .unwrap()
+            .query_map(
+                rusqlite::params_from_iter(
+                    [
+                        rusqlite::types::Value::from(owner.user_scope.to_storage()),
+                        owner.device.to_storage().into(),
+                        bot.to_storage().into(),
+                        65i64.into(),
+                    ]
+                    .into_iter()
+                    .take(if index == "bot_admissions_queue" {
+                        4
+                    } else {
+                        3
+                    }),
+                ),
+                |r| r.get::<_, String>(3),
+            )
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(" ");
+        assert!(plan.contains(index), "{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+        assert!(!plan.contains("sqlite_autoindex"), "{plan}");
+    }
+    // Settled work leaves the read; a settled Bot reads as settled.
+    retired(&mut db, &attempt);
+    db.settle_bot(executing.request.run, BotSettlement::Settled)
+        .unwrap();
+    for n in 2..=4 {
+        db.settle_bot(submission(n).request.run, BotSettlement::Settled)
+            .unwrap();
+    }
+    assert_eq!(db.unsettled_bot(owner, bot, 64).unwrap(), (vec![], false));
+}

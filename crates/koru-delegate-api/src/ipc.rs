@@ -38,7 +38,8 @@ use koru_delegate_core::ArtifactDisposition;
 // explicit model intent on creation and every later start.
 // Version 10 adds scoped native-effect discovery, eligibility and drain proof.
 // Version 11 separates automatic Bot interruption from explicit owner Stop.
-pub const WIRE_VERSION: u8 = 11;
+// Version 12 adds the per-Bot unsettled-work read lifecycle settles from.
+pub const WIRE_VERSION: u8 = 12;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

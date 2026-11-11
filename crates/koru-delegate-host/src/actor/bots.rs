@@ -187,6 +187,12 @@ impl Actor {
                     .bot_barrier(&barrier, device)
                     .map_err(bot_failure)?,
             },
+            BotCommand::UnsettledWork { owner, bot, limit } => BotReply::UnsettledWork {
+                work: self
+                    .orchestrator
+                    .bot_unsettled(owner, bot, limit, device)
+                    .map_err(bot_failure)?,
+            },
             BotCommand::Read { key, window } => {
                 self.orchestrator
                     .bot_read_allowed(&key, device)

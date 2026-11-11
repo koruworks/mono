@@ -43,6 +43,14 @@ impl BotLedger for RecordingStore {
     ) -> Result<Vec<QueuedBotAdmission>, BotLedgerError> {
         self.inner.lock().unwrap().queued_bots(after, limit)
     }
+    fn unsettled_bot(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        limit: u16,
+    ) -> Result<(Vec<BotExecutionRecord>, bool), BotLedgerError> {
+        self.inner.lock().unwrap().unsettled_bot(owner, bot, limit)
+    }
     fn bot_barrier(
         &self,
         owner: BotOwner,

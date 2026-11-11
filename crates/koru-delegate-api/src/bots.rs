@@ -9,7 +9,10 @@ use koru_delegate_core::{
     BotSubmission, CapturedBotPolicy, PendingInput, QuestionAnswer, QuestionRequestId,
     StreamSequence, WorkspaceId,
 };
-pub use koru_delegate_core::{BotAdmissionState, BotAdmissionView, BotRunKey, BotSubmissionKey};
+pub use koru_delegate_core::{
+    BotAdmissionState, BotAdmissionView, BotRunKey, BotSubmissionKey, BotUnsettledAdmission,
+    BotUnsettledWork,
+};
 pub use koru_delegate_core::{
     BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt, BotPolicyBarrierState,
     ConfirmNativeResult, NativeDrainReason, NativePendingEffect, NativePendingEffects,
@@ -89,6 +92,13 @@ pub enum BotCommand {
     },
     Barrier {
         barrier: BotAdmissionBarrier,
+    },
+    /// IPC 12: one Bot's unsettled admissions, read from the ledger now (at
+    /// most one reserved or executing, then up to `limit` queued, 1..=64).
+    UnsettledWork {
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+        limit: u16,
     },
     Read {
         key: BotRunKey,
@@ -196,7 +206,9 @@ impl BotCommand {
     /// commands instead resolve their immutable Run binding inside the actor.
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
         match self {
-            Self::PendingNativeEffects { owner, .. } => Some(owner),
+            Self::PendingNativeEffects { owner, .. } | Self::UnsettledWork { owner, .. } => {
+                Some(owner)
+            }
             Self::Submit { submission } => Some(&submission.provenance.owner),
             Self::Reconcile { key } => Some(&key.owner),
             Self::Barrier { barrier } => Some(&barrier.owner),
@@ -254,6 +266,9 @@ pub enum BotReply {
     Missing,
     Barrier {
         barrier: BotAdmissionBarrier,
+    },
+    UnsettledWork {
+        work: BotUnsettledWork,
     },
     Run {
         view: RunView,

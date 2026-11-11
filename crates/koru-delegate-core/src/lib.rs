@@ -61,12 +61,13 @@ pub use bots::{
     BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView, BotDeliveryReceipt,
     BotExecutionFence, BotInputRefusal, BotOwner, BotPolicyBarrier, BotPolicyBarrierKey,
     BotPolicyBarrierReceipt, BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission,
-    BotSubmissionKey, BotWorkingFolder, CapturedBotPolicy, ConfirmNativeResult, NativeDrainReason,
-    NativeEffectBinding, NativeEffectDrainReceipt, NativeEffectKind, NativeEffectTimestamp,
-    NativePendingEffect, NativePendingEffects, NativePolicyRequestId, NativeRecoveryCursor,
-    NativeResultDisposition, NativeResultIntentView, NativeResultKey, NativeResultKind,
-    NativeResultObservation, NativeResultOperation, NativeResultReference, NativeResultRefusal,
-    NativeResultStage, PrepareNativeResult, RunToolAuthority, native_store_scope,
+    BotSubmissionKey, BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy,
+    ConfirmNativeResult, NativeDrainReason, NativeEffectBinding, NativeEffectDrainReceipt,
+    NativeEffectKind, NativeEffectTimestamp, NativePendingEffect, NativePendingEffects,
+    NativePolicyRequestId, NativeRecoveryCursor, NativeResultDisposition, NativeResultIntentView,
+    NativeResultKey, NativeResultKind, NativeResultObservation, NativeResultOperation,
+    NativeResultReference, NativeResultRefusal, NativeResultStage, PrepareNativeResult,
+    RunToolAuthority, native_store_scope,
 };
 pub use context::{BlobKind, RunContextItem};
 pub use deletion::{ArtifactDisposition, FolderOutcome};

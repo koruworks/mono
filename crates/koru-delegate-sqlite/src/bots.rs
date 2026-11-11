@@ -197,6 +197,17 @@ pub trait BotLedger {
         after: u64,
         limit: u16,
     ) -> Result<Vec<QueuedBotAdmission>, BotLedgerError>;
+    /// One Bot's unsettled admissions, payload-free: its reserved or
+    /// executing one (at most one, through `bot_admissions_execution`), then
+    /// up to `limit` (clamped to 1..=64) queued ones in queue order, through
+    /// `bot_admissions_queue`. Settled history is never walked. The flag is
+    /// whether more queued admissions exist past the page.
+    fn unsettled_bot(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        limit: u16,
+    ) -> Result<(Vec<BotExecutionRecord>, bool), BotLedgerError>;
     fn bot_barrier(
         &self,
         owner: BotOwner,

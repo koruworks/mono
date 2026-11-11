@@ -96,6 +96,64 @@ impl Orchestrator {
             .transpose()
     }
 
+    /// What of one Bot's work is not settled, read from the ledger now: the
+    /// reserved or executing admission and a bounded page of queued ones,
+    /// each with its current fence and whether a person holds its session.
+    /// The AI owner settles exactly this set before it archives or trashes
+    /// the Bot, and asks again every time, so nothing it remembered from an
+    /// earlier round can stand in for the ledger.
+    pub fn bot_unsettled(
+        &mut self,
+        owner: BotOwner,
+        bot: koru_delegate_core::BotId,
+        limit: u16,
+        device: DeviceId,
+    ) -> Result<koru_delegate_core::BotUnsettledWork, RunError> {
+        owner_device(owner, device)?;
+        let (records, more) = self.bot_ledger()?.unsettled_bot(owner, bot, limit)?;
+        let mut admissions = Vec::with_capacity(records.len());
+        for record in records {
+            let admission = self.bot_admission_view(&record)?;
+            let held = self.bot_session_held(record.run)?;
+            admissions.push(koru_delegate_core::BotUnsettledAdmission { admission, held });
+        }
+        Ok(koru_delegate_core::BotUnsettledWork { admissions, more })
+    }
+
+    /// Whether a person holds this Run's session or asked for it. The
+    /// canonical control state says so while the Run is running; after an
+    /// automatic interruption only the session owner's handover state does,
+    /// so both are read. A queued Run, or one whose session is gone, is not
+    /// held. This is a reason to wait: nothing here ends a session.
+    fn bot_session_held(&mut self, run: RunId) -> Result<bool, RunError> {
+        use koru_session_protocol::{CreationLookup, HandoverState};
+        let Some(row) = self.ports.store.current_attempt(run)? else {
+            return Ok(false);
+        };
+        if row.retired {
+            return Ok(false);
+        }
+        if matches!(
+            self.status(run)?.control(),
+            Some(
+                koru_delegate_core::ControlState::Human { .. }
+                    | koru_delegate_core::ControlState::HandoverPending { .. }
+            )
+        ) {
+            return Ok(true);
+        }
+        let Some(key) = row.provider_session else {
+            return Ok(false);
+        };
+        Ok(match self.ports.sessions.lookup(key.idempotency)?.1 {
+            CreationLookup::Known { session } => matches!(
+                session.handover,
+                HandoverState::Requested | HandoverState::Released | HandoverState::Taken
+            ),
+            _ => false,
+        })
+    }
+
     pub fn bot_barrier(
         &mut self,
         barrier: &BotAdmissionBarrier,

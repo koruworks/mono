@@ -147,6 +147,34 @@ pub struct BotAdmissionView {
     pub fence: Option<BotExecutionFence>,
 }
 
+/// One admission of a Bot that has not settled: reserved or executing (at
+/// most one per Bot) or queued. `held` is the session owner's answer to
+/// whether a person holds the Run's session or asked for it; it is a
+/// reason to wait, never permission to end anything.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotUnsettledAdmission {
+    pub admission: BotAdmissionView,
+    pub held: bool,
+}
+
+/// The work of one Bot its execution owner has not settled, read from the
+/// durable ledger every time it is asked (private IPC 12). The reserved or
+/// executing admission comes first, then queued ones in queue order. `more`
+/// says the queued page was cut at the caller's limit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotUnsettledWork {
+    pub admissions: Vec<BotUnsettledAdmission>,
+    pub more: bool,
+}
+impl BotUnsettledWork {
+    /// The owner reports nothing reserved, executing or queued for the Bot.
+    pub fn is_settled(&self) -> bool {
+        self.admissions.is_empty() && !self.more
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]

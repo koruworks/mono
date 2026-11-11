@@ -15,7 +15,7 @@ fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
         fence: None,
     };
     assert_eq!(command.owner(), Some(&key.owner));
-    let bytes = koru_ipc::frame::encode(11, &command).unwrap();
+    let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     let (version, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
     assert_eq!(version, crate::ipc::WIRE_VERSION);
@@ -31,8 +31,49 @@ fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
 }
 
 #[test]
+fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
+    assert_eq!(crate::ipc::WIRE_VERSION, 12);
+    let owner: koru_delegate_core::BotOwner = serde_json::from_value(
+        serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
+    )
+    .unwrap();
+    let command = BotCommand::UnsettledWork {
+        owner,
+        bot: koru_delegate_core::BotId::mint(),
+        limit: 64,
+    };
+    assert_eq!(command.owner(), Some(&owner));
+    let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
+    let (version, decoded): (u8, BotCommand) =
+        koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
+    assert_eq!((version, decoded), (12, command.clone()));
+    let mut wire = serde_json::to_value(&command).unwrap();
+    assert_eq!(wire["command"], "unsettled_work");
+    wire["include_settled"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<BotCommand>(wire).is_err());
+    let reply = BotReply::UnsettledWork {
+        work: BotUnsettledWork {
+            admissions: vec![],
+            more: false,
+        },
+    };
+    let mut wire = serde_json::to_value(&reply).unwrap();
+    assert_eq!(
+        wire,
+        serde_json::json!({"result":"unsettled_work","work":{"admissions":[],"more":false}})
+    );
+    wire["work"]["settled"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<BotReply>(wire).is_err());
+    // A peer still speaking IPC 11 is refused, never reinterpreted.
+    let bytes = koru_ipc::frame::encode(11, &serde_json::json!({"frame":"hello"})).unwrap();
+    let error = crate::local::read_current_response(&mut bytes.as_slice()).unwrap_err();
+    assert_eq!(error.code, "delegate_incompatible");
+    assert!(!error.retryable);
+}
+
+#[test]
 fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 11);
+    assert_eq!(crate::ipc::WIRE_VERSION, 12);
     let request = prepare();
     for reason in [
         NativeDrainReason::GatewayStartup,
@@ -48,7 +89,7 @@ fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
         let encoded = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (version, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut encoded.as_slice()).unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         assert_eq!(decoded, command);
         let mut json = serde_json::to_value(command).unwrap();
         json["reason"]["trusted"] = serde_json::json!(true);

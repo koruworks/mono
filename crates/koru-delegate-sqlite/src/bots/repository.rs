@@ -145,6 +145,23 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
 }
 
 const EXECUTION_COLUMNS: &str = "run_id,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,queue_sequence,state,active_elapsed_ms,active_since_ms,initial_send_key,initial_send_fingerprint,initial_send_attempt_id,initial_send_generation,initial_send_turn_id";
+/// The two per-Bot reads behind [`BotLedger::unsettled_bot`]. Both name
+/// their index: without statistics the planner would prefer the
+/// (user_scope, device_id, bot_id, request_id) uniqueness index, which walks
+/// every settled admission the Bot ever had. Plans are pinned by test.
+pub(crate) fn unsettled_queries() -> (String, String) {
+    (
+        format!(
+            "SELECT {EXECUTION_COLUMNS} FROM bot_admissions INDEXED BY bot_admissions_execution
+             WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state IN ('reserved','executing')"
+        ),
+        format!(
+            "SELECT {EXECUTION_COLUMNS} FROM bot_admissions INDEXED BY bot_admissions_queue
+             WHERE state='queued' AND user_scope=?1 AND device_id=?2 AND bot_id=?3
+             ORDER BY queue_sequence LIMIT ?4"
+        ),
+    )
+}
 fn decode_execution(row: &Row<'_>) -> Result<BotExecutionRecord, LedgerError> {
     let record = BotExecutionRecord {
         run: id(&cell::<String>(row, "run_id")?, "run_id")?,
@@ -359,6 +376,41 @@ impl BotLedger for RunsDb {
             })
         })
         .collect()
+    }
+    fn unsettled_bot(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        limit: u16,
+    ) -> Result<(Vec<BotExecutionRecord>, bool), BotLedgerError> {
+        let conn = self.conn();
+        let decode_rows = |statement: &mut rusqlite::Statement<'_>,
+                           params: &[&dyn rusqlite::ToSql]|
+         -> Result<Vec<BotExecutionRecord>, BotLedgerError> {
+            statement
+                .query_map(params, |row| Ok(decode_execution(row)))
+                .map_err(sql)?
+                .map(|row| row.map_err(sql)?.map_err(BotLedgerError::from))
+                .collect()
+        };
+        let (scope, device, bot) = (
+            owner.user_scope.to_storage(),
+            owner.device.to_storage(),
+            bot.to_storage(),
+        );
+        let (executing, queued) = unsettled_queries();
+        let mut executing = conn.prepare(&executing).map_err(sql)?;
+        let mut records = decode_rows(&mut executing, &[&scope, &device, &bot])?;
+        if records.len() > 1 {
+            return Err(corrupt("bot_capacity").into());
+        }
+        let limit = i64::from(limit.clamp(1, 64));
+        let mut queued = conn.prepare(&queued).map_err(sql)?;
+        let mut page = decode_rows(&mut queued, &[&scope, &device, &bot, &(limit + 1)])?;
+        let more = page.len() as i64 > limit;
+        page.truncate(limit as usize);
+        records.extend(page);
+        Ok((records, more))
     }
     fn bot_barrier(
         &self,
