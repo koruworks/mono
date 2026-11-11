@@ -51,7 +51,7 @@ records 51 truncated false
     pad_top = "alias::APPROVAL_ICON_TOP = Space::S2 -> 8" (El::pad_top)
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     icon size = "IconSize::XS -> 12" (icon)
-    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    ink = "Ink::Accent -> #3B6BB5 / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
 7 ^6 part "text line" b[504.00 432.50 516.00 444.50] c[0.00 0.00 900.00 700.00] z7
@@ -65,7 +65,7 @@ records 51 truncated false
     icon codepoint = "U+E3E8" (stable icon identity)
     icon variant = "regular" (requested state)
     icon size = "12" (layout slot)
-    foreground = "#191919 / alpha 1.000" (resolved paint)
+    foreground = "#3B6BB5 / alpha 1.000" (resolved paint)
 9 ^5 element "Mode words" b[516.00 424.50 796.00 465.50] c[0.00 0.00 900.00 700.00] z9
     element = "column" (El constructor)
     within = "model 00000000-0000-0000-e759-a2190572cf92/approval-mode" (ancestry)
@@ -178,7 +178,7 @@ records 51 truncated false
     pad_top = "alias::APPROVAL_ICON_TOP = Space::S2 -> 8" (El::pad_top)
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     icon size = "IconSize::XS -> 12" (icon)
-    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    ink = "Ink::Success -> #2D7A48 / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
 19 ^18 part "text line" b[504.00 478.50 516.00 490.50] c[0.00 0.00 900.00 700.00] z19
@@ -192,7 +192,7 @@ records 51 truncated false
     icon codepoint = "U+E762" (stable icon identity)
     icon variant = "regular" (requested state)
     icon size = "12" (layout slot)
-    foreground = "#191919 / alpha 1.000" (resolved paint)
+    foreground = "#2D7A48 / alpha 1.000" (resolved paint)
 21 ^17 element "Mode words" b[516.00 470.50 796.00 511.50] c[0.00 0.00 900.00 700.00] z21
     element = "column" (El constructor)
     within = "model 00000000-0000-0000-2f3d-399947d031dd/approval-mode" (ancestry)

@@ -54,7 +54,7 @@ records 88 truncated false
     pad_top = "alias::APPROVAL_ICON_TOP = Space::S2 -> 8" (El::pad_top)
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     icon size = "IconSize::XS -> 12" (icon)
-    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    ink = "Ink::Accent -> #3B6BB5 / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
 8 ^7 part "text line" b[504.00 72.50 516.00 84.50] c[0.00 0.00 900.00 700.00] z8
@@ -68,7 +68,7 @@ records 88 truncated false
     icon codepoint = "U+E3E8" (stable icon identity)
     icon variant = "regular" (requested state)
     icon size = "12" (layout slot)
-    foreground = "#191919 / alpha 1.000" (resolved paint)
+    foreground = "#3B6BB5 / alpha 1.000" (resolved paint)
 10 ^5 element "Mode words" b[516.00 64.50 796.00 105.50] c[0.00 0.00 900.00 700.00] z10
     element = "column" (El constructor)
     within = "model 00000000-0000-0000-ebad-a5168620c5fe/approval-mode" (ancestry)
@@ -204,7 +204,7 @@ records 88 truncated false
     pad_top = "alias::APPROVAL_ICON_TOP = Space::S2 -> 8" (El::pad_top)
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     icon size = "IconSize::XS -> 12" (icon)
-    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    ink = "Ink::Success -> #2D7A48 / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
 23 ^22 part "text line" b[504.00 118.50 516.00 130.50] c[0.00 0.00 900.00 700.00] z23
@@ -218,7 +218,7 @@ records 88 truncated false
     icon codepoint = "U+E3B4" (stable icon identity)
     icon variant = "regular" (requested state)
     icon size = "12" (layout slot)
-    foreground = "#191919 / alpha 1.000" (resolved paint)
+    foreground = "#2D7A48 / alpha 1.000" (resolved paint)
 25 ^21 element "Mode words" b[516.00 110.50 796.00 151.50] c[0.00 0.00 900.00 700.00] z25
     element = "column" (El constructor)
     within = "model 00000000-0000-0000-ea67-6e6e008be2fa/approval-mode" (ancestry)
@@ -334,7 +334,7 @@ records 88 truncated false
     pad_top = "alias::APPROVAL_ICON_TOP = Space::S2 -> 8" (El::pad_top)
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     icon size = "IconSize::XS -> 12" (icon)
-    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    ink = "Ink::Accent -> #3B6BB5 / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
 36 ^35 part "text line" b[504.00 164.50 516.00 176.50] c[0.00 0.00 900.00 700.00] z36
@@ -348,7 +348,7 @@ records 88 truncated false
     icon codepoint = "U+EADC" (stable icon identity)
     icon variant = "regular" (requested state)
     icon size = "12" (layout slot)
-    foreground = "#191919 / alpha 1.000" (resolved paint)
+    foreground = "#3B6BB5 / alpha 1.000" (resolved paint)
 38 ^33 element "Mode words" b[516.00 156.50 796.00 197.50] c[0.00 0.00 900.00 700.00] z38
     element = "column" (El constructor)
     within = "model 00000000-0000-0000-a5e8-4c0db713a4b2/approval-mode" (ancestry)
@@ -715,7 +715,7 @@ records 88 truncated false
     pad_top = "alias::APPROVAL_ICON_TOP = Space::S2 -> 8" (El::pad_top)
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     icon size = "IconSize::XS -> 12" (icon)
-    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    ink = "Ink::Accent -> #3B6BB5 / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
 72 ^71 part "text line" b[504.00 302.50 516.00 314.50] c[0.00 0.00 900.00 700.00] z72
@@ -729,7 +729,7 @@ records 88 truncated false
     icon codepoint = "U+E228" (stable icon identity)
     icon variant = "regular" (requested state)
     icon size = "12" (layout slot)
-    foreground = "#191919 / alpha 1.000" (resolved paint)
+    foreground = "#3B6BB5 / alpha 1.000" (resolved paint)
 74 ^70 element "Mode words" b[516.00 294.50 796.00 335.50] c[0.00 0.00 900.00 700.00] z74
     element = "column" (El constructor)
     within = "model 00000000-0000-0000-d6cf-fa2f3d131853/approval-mode" (ancestry)
