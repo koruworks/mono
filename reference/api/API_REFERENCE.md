@@ -556,9 +556,9 @@ Returns: nothing. Machine-local and derived: it feeds recent queries and a works
 
 ## POST `/v1/ai/bots`
 
-Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or request admission
+Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or a task started through the API, request admission, or stop a task started through the API
 
-Returns: A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, or the Run view of a reply's Run (a bounded window of its history, without its session). Conversation history uses the Chat reads; execution is coordinated separately.
+Returns: A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, the Run view of a reply's or an API task's Run (a bounded window of its history, without its session), or what a task's Stop found and did. Conversation history uses the Chat reads; execution is coordinated separately.
 
 ## GET `/v1/ai/providers/settings`
 
