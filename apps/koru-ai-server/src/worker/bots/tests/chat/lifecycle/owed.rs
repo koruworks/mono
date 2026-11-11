@@ -63,14 +63,17 @@ fn a_pause_the_owner_answers_stale_is_offered_again_newer_and_never_wedges_the_b
             .unwrap()
     );
     let port = Arc::new(Archiving::default());
-    // The owner holds an unpaused barrier well ahead of the AI revision.
+    // The owner holds an unpaused barrier ahead of the AI revision. Each
+    // renewal waits for the backed-off recovery pass (the fourth review's
+    // F4), so a gap of k revisions takes k passes: three here, not twelve,
+    // which would take minutes of backoff.
     port.barrier.lock().unwrap().insert(
         bot.id,
         d::BotAdmissionBarrier {
             owner: owner_of(&bot),
             bot: bot.id,
             request: BotRequestId::mint(),
-            epoch: bot.revision + 12,
+            epoch: bot.revision + 3,
             paused: false,
         },
     );

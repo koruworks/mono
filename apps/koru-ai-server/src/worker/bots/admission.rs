@@ -402,21 +402,30 @@ impl WorkerState {
             Err(_) => {}
         }
         let answered = result.result.is_ok();
+        let refusal = result.result.as_ref().err().map(|error| error.code.clone());
         // A pause or resume being delivered: what its owner answered, for the
         // Bot read's `pending_change`.
         if let Action::Pause(_) = &result.action {
-            self.bot_delivery_answers.record(
-                bot,
-                request,
-                result
-                    .result
-                    .as_ref()
-                    .err()
-                    .map(|error| error.code.as_str()),
-            );
+            self.bot_delivery_answers
+                .record(bot, request, refusal.as_deref());
         }
-        self.apply_bot_coordination(result);
-        self.note_bot_coordination(owner, bot, request);
+        match self.apply_bot_coordination(result) {
+            // The owner definitely refused the pause or resume as conflicting
+            // and the same change was renewed under a request the AI owner
+            // made itself (`settle_refused_bot_pause`). It is still owed: the
+            // read names the new request with the answer that renewed it,
+            // and it is offered on the backed-off recovery pass, never at
+            // once, so an owner that keeps refusing is asked at most once a
+            // pass (250 ms doubling to 32 s), not in a loop.
+            Some(renewed) => {
+                self.bot_delivery_answers.record(bot, request, None);
+                self.bot_delivery_answers
+                    .record(bot, renewed, refusal.as_deref());
+                self.bot_recovery_retry.held.insert((bot, renewed));
+                self.bot_recovery_retry.failed(Instant::now());
+            }
+            None => self.note_bot_coordination(owner, bot, request),
+        }
         // The owner answered for this Bot (its owed pause acknowledged, among
         // others): an operation of it parked for the owner's silence takes up
         // its work again (P1.7).
@@ -465,27 +474,32 @@ impl WorkerState {
     /// The backed-off recovery pass is due: walk the pending receipts again.
     pub(in crate::worker) fn retry_bot_operations(&mut self) {
         self.bot_recovery_retry.at = None;
+        // This pass offers the renewed pauses held for it.
+        self.bot_recovery_retry.held.clear();
         self.bot_recovery_retry.last = Some(Instant::now());
         self.bot_recovery_after.get_or_insert(0);
         self.recover_bot_operations();
         // Operations parked because their owner did not answer ask it again.
         self.probe_parked_bot_lifecycle();
     }
-    fn apply_bot_coordination(&mut self, result: BotCoordinationResult) {
+    /// Apply an owner's answer to a receipt. `Some` names the pause or
+    /// resume renewed under a new request when the owner definitely refused
+    /// it as conflicting; the caller offers that one on the backed-off pass.
+    fn apply_bot_coordination(&mut self, result: BotCoordinationResult) -> Option<BotRequestId> {
         let Ok(Some(bot)) = self.repository.bot(result.bot) else {
-            return;
+            return None;
         };
         if owner(&bot) != result.owner {
-            return;
+            return None;
         }
         let Ok(Some(receipt)) =
             self.repository
                 .bot_admission_receipt(result.owner, result.bot, result.request)
         else {
-            return;
+            return None;
         };
         if receipt.operation().status != BotOperationStatus::Pending {
-            return;
+            return None;
         }
         // Lifecycle holds this task's conversation or Bot: its attempt, if
         // it has not ended, is stopped as the person's Stop before the
@@ -511,12 +525,20 @@ impl WorkerState {
             && let Some(attempt) = unended_attempt(&self.repository, r)
             && !self.bot_chats.contains_key(&attempt)
         {
-            return;
+            return None;
         }
+        let renewing = matches!((&result.action, &result.result), (Action::Pause(_), Err(_)));
         let now = Timestamp::now().millis();
         let next = apply_result(&mut self.repository, result, &receipt, now);
-        if let Ok(Some((receipt, action))) = next {
-            self.queue_bot_receipt(&bot, receipt, action);
+        match next {
+            Ok(Some((BotAdmissionReceipt::Pause(renewed), _))) if renewing => {
+                Some(renewed.intent.barrier.request)
+            }
+            Ok(Some((receipt, action))) => {
+                self.queue_bot_receipt(&bot, receipt, action);
+                None
+            }
+            _ => None,
         }
     }
     /// Finite startup receipt walk. Each page is bounded; continuation follows a
@@ -546,6 +568,9 @@ impl WorkerState {
         for (row, id, scope, request) in rows {
             let previous = self.bot_recovery_after;
             self.bot_recovery_after = Some(row);
+            if self.bot_recovery_retry.held.contains(&(id, request)) {
+                continue;
+            }
             let Some((bot, receipt)) = recovery_candidate(&self.repository, id, scope, request)
             else {
                 continue;
@@ -769,6 +794,10 @@ pub(in crate::worker) struct AdmissionRetry {
     /// The owner was unreachable when it was last asked: the first answer
     /// it gives again brings the pass forward, once.
     away: bool,
+    /// Pauses and resumes renewed after their owner refused them as
+    /// conflicting, waiting for the next pass: a walk already under way
+    /// passes them by, so each is offered once a pass at most.
+    held: HashSet<(BotId, BotRequestId)>,
 }
 impl AdmissionRetry {
     fn failed(&mut self, now: Instant) {

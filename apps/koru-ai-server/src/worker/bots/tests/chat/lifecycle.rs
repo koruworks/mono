@@ -10,8 +10,10 @@
 //! The fake owner applies the delegate's own rules wherever lifecycle
 //! depends on them, so a test cannot pass on a permission the real owner
 //! never gives: an admission barrier's epoch never goes back
-//! (`apply_bot_barrier`); a Submit under a newer barrier epoch is refused
-//! `bot_stale` and under a paused barrier `bot_fenced` (`admit_bot`); the
+//! (`apply_bot_barrier`); a Submit of a request already admitted answers
+//! that record, and only a new one under a newer barrier epoch is refused
+//! `bot_stale` and under a paused barrier `bot_fenced` (`admit_bot`, which
+//! looks the request up before the barrier); the
 //! unsettled-work read returns the live admission and at most `limit` queued
 //! ones with `more`; held native effects are paged by cursor with `next`;
 //! and a drain is refused unless the delegate would allow it
@@ -362,15 +364,45 @@ impl BotDelegatePort for Archiving {
                     barrier: barrier.clone(),
                 })
             }
-            // Every Submit is admitted only as `admit_bot` would admit it.
+            // Every Submit is admitted only as `admit_bot` would admit it,
+            // in its order: the request first, then the Run identity, then
+            // the barrier, then the queue's capacity.
             D::Submit { submission } => {
                 self.submits.lock().unwrap().push(submission.request.run);
-                if let Some(code) = self.admission_refusal(submission) {
-                    return Err(refused(code));
+                let api = self.api.lock().unwrap();
+                // `admit_bot` (`reconcile` first): a repeated Submit of a
+                // request it already admitted answers the record it holds,
+                // whatever its barrier says now. `bot_submit` then completes
+                // the Run intent again while it is still pending, so a task
+                // whose context could not be completed still answers that.
+                if let Some(task) = api
+                    .iter()
+                    .find(|t| t.admitted && t.view.key.request == submission.provenance.submission)
+                {
+                    if task.context_unavailable {
+                        return Err(refused("bot_context_unavailable"));
+                    }
+                    return Ok(BotReply::Admission {
+                        admission: task.view.clone(),
+                    });
                 }
-                let mut api = self.api.lock().unwrap();
+                if self
+                    .native
+                    .state
+                    .lock()
+                    .unwrap()
+                    .submission
+                    .as_ref()
+                    .is_some_and(|held| {
+                        held.provenance.submission == submission.provenance.submission
+                    })
+                {
+                    drop(api);
+                    // The conversation fake's own repeat arm (`admit_bot`).
+                    return self.native.execute(command);
+                }
                 // `admit_bot`: a Run identity already held by another request
-                // conflicts, and a Bot's queue holds at most fifty.
+                // conflicts (`run_intents`).
                 if api.iter().any(|t| {
                     t.admitted
                         && t.view.run == submission.request.run
@@ -378,6 +410,14 @@ impl BotDelegatePort for Archiving {
                 }) {
                     return Err(refused("bot_conflict"));
                 }
+                // `admit_bot`: the barrier, then the capacity. The barrier is
+                // read with the task list let go: the dispatcher takes them
+                // in the other order.
+                drop(api);
+                if let Some(code) = self.admission_refusal(submission) {
+                    return Err(refused(code));
+                }
+                let mut api = self.api.lock().unwrap();
                 let queued = api
                     .iter()
                     .filter(|t| {

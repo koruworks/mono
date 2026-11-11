@@ -189,6 +189,109 @@ fn a_parked_archive_with_nothing_owed_learns_its_owner_is_back_and_stops_the_run
     let _ = stop(worker, returned);
 }
 
+/// A parked Archive the engine takes up again by itself, once its owner
+/// answers, moves with no command of the person's. A Restore pressed at that
+/// moment answers `bot_lifecycle_pending`, retryable (the fourth lifecycle
+/// review's F5): sent again once the Archive has finished, it is accepted.
+#[test]
+fn a_restore_of_an_archive_the_engine_took_up_again_is_retryable_and_accepted_once_it_ends() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    let operation = captured_archive(&mut repository, &bot);
+    let pause = repository
+        .bot_lifecycle_operation(bot.user_scope, operation)
+        .unwrap()
+        .unwrap()
+        .pause_request
+        .unwrap();
+    let Some(BotAdmissionReceipt::Pause(receipt)) = repository
+        .bot_admission_receipt(owner, bot.id, pause)
+        .unwrap()
+    else {
+        panic!("pause receipt")
+    };
+    let barrier = receipt.intent.barrier.clone();
+    repository
+        .acknowledge_bot_pause(owner, bot.id, pause, &barrier, 3)
+        .unwrap();
+    assert!(
+        repository
+            .advance_bot_lifecycle(
+                bot.user_scope,
+                operation,
+                BotLifecycleStage::Captured,
+                BotLifecycleStage::Settling,
+                false,
+                4,
+            )
+            .unwrap()
+    );
+    assert!(
+        repository
+            .park_bot_lifecycle(
+                bot.user_scope,
+                operation,
+                BotLifecycleRefusal::OwnerUnavailable,
+                5
+            )
+            .unwrap()
+    );
+    let port = Arc::new(Archiving::default());
+    port.barrier.lock().unwrap().insert(bot.id, barrier);
+    // A Run whose Stop the owner keeps answering unconfirmed: the Archive,
+    // once taken up, keeps moving.
+    let running = api_task(&bot, d::BotAdmissionState::Executing, usize::MAX);
+    port.api.lock().unwrap().push(running);
+    let (worker, returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    until("the engine took the parked Archive up again", || {
+        !matches!(
+            read_operation(&client, bot.id, operation).stage,
+            BotLifecycleStage::Incomplete | BotLifecycleStage::Completed
+        )
+    });
+    let refused =
+        super::trash::restore_at(&client, &bot, operation, read_bot(&client, bot.id).revision)
+            .unwrap_err();
+    assert_eq!(refused.code, PENDING);
+    assert!(refused.retryable, "a moving source ends: try again");
+    // The Run's Stop lands; the Archive completes; the same Restore, sent
+    // again, is accepted.
+    port.api.lock().unwrap()[0].pending = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let restored = loop {
+        let revision = match client.bots(
+            context(true),
+            BotCommand::ListLifecycle {
+                workspace: bot.home_workspace,
+                lifecycle: BotLifecycle::Archived,
+            },
+        ) {
+            Ok(BotResponse::List { bots }) => {
+                bots.iter().find(|b| b.id == bot.id).map(|b| b.revision)
+            }
+            _ => None,
+        }
+        .unwrap_or_else(|| read_bot(&client, bot.id).revision);
+        match super::trash::restore_at(&client, &bot, operation, revision) {
+            Ok(progress) => break progress,
+            Err(error) if error.retryable && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => panic!("restore {}", error.code),
+        }
+    };
+    assert_eq!(restored.stage, BotLifecycleStage::Completed);
+    let back = read_bot(&client, bot.id);
+    assert_eq!(back.lifecycle, BotLifecycle::Active);
+    assert!(back.paused);
+    let _ = stop(worker, returned);
+}
+
 /// A parked Archive the person reversed is not taken up when the owner
 /// answers, and nothing stops on its behalf: a Run the person starts after
 /// Resume must not be ended by an operation they reversed. What the person

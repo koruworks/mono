@@ -1183,7 +1183,7 @@ impl WorkerState {
                 source.stage,
                 BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
             ) {
-                return Err(hold_failure(BotHold::Pending));
+                return Err(source_moving());
             }
             self.refuse_competing(*bot_id, Some(*source_request_id))?;
         }
@@ -1370,7 +1370,7 @@ impl WorkerState {
                 source.stage,
                 BotLifecycleStage::Completed | BotLifecycleStage::Incomplete
             ) {
-                return Err(hold_failure(BotHold::Pending));
+                return Err(source_moving());
             }
             self.refuse_competing(*bot_id, Some(*source_request_id))?;
         }
@@ -2225,6 +2225,22 @@ pub(super) fn hold_failure(hold: BotHold) -> Failure {
             false,
         ),
     }
+}
+
+/// A Restore (or a conversation's Restore) naming an operation that is
+/// still moving. A moving operation always ends, completed or parked (the
+/// rounds park it at the latest), and the Restore is accepted then, so this
+/// `bot_lifecycle_pending` is retryable, whatever moved it: its capture, a
+/// person's Continue, or the engine taking a parked operation up again
+/// because its owner answered (the fourth lifecycle review's F5). The journal
+/// does not record why an operation moves, and the answer is true either
+/// way. Every other `bot_lifecycle_pending` keeps its flag: a new operation
+/// beside an open one, or a change of a held subject, is not accepted by
+/// waiting alone.
+fn source_moving() -> Failure {
+    let mut moving = hold_failure(BotHold::Pending);
+    moving.retryable = true;
+    moving
 }
 
 fn lifecycle_unavailable() -> Failure {

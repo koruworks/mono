@@ -89,7 +89,12 @@ pub struct BotOperation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct BotPendingChange {
-    /// The change's own operation, readable with `read_operation`.
+    /// The change's own operation, readable with `read_operation`. It may be
+    /// one the AI owner made itself to deliver the same change: a pause or
+    /// resume its execution owner refused for good as conflicting
+    /// (`bot_conflict`, `bot_stale`) is settled `rejected` and offered again
+    /// under a new request, so the client's own request then reads
+    /// `rejected` while this one names the renewal.
     pub request_id: BotRequestId,
     /// `pause`, `resume` or `update_access`.
     pub kind: BotOperationKind,

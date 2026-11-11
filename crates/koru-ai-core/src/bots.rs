@@ -91,7 +91,9 @@ pub struct Bot {
     pub held_by: Option<BotLifecycleHolder>,
     /// A pause, resume or access change of the Bot that its execution owner
     /// has not acknowledged yet, with since when and the owner's last answer:
-    /// while it is there, changes of the Bot answer `bot_operation_pending`.
+    /// while it is there, changes of the Bot answer `bot_operation_pending`,
+    /// except while an Archive, Trash or Restore holds the whole Bot, when
+    /// they answer `bot_lifecycle_pending` (the hold is checked first).
     /// Reads fill it in; omitted when nothing is pending, so a Bot with
     /// nothing pending serializes, and every stored receipt holding one is
     /// stored, exactly as before.
