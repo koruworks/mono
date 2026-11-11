@@ -94,6 +94,9 @@ pub(crate) fn trashed_chat(
         },
         trashed_at_ms: 10,
         restore,
+        // As `list_trashed_bot_chats` answers for an active Bot's
+        // conversation; a test that needs the Bot's holder names it.
+        bot_held_by: None,
     }
 }
 

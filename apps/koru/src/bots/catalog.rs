@@ -12,10 +12,19 @@
 //! their order, the starred models — are the window's already, handed to
 //! the tab ([`AgentSettings`]); nothing here reads them again.
 //!
-//! **An ordinary client, with one scope.** Every catalog read is
-//! `ai.manage_providers`, which the chat's own reader holds ordinarily; the
-//! Bot link's first-party scopes (`ai.chat`, `bots.manage`) would be
-//! refused, and widening a first-party link is the wrong direction.
+//! **An ordinary client, with one scope** ([`SCOPES`]). Every catalog read
+//! is `ai.manage_providers`, which the chat's own reader holds ordinarily;
+//! the Bot link's first-party scopes (`ai.chat`, `bots.manage`) would be
+//! refused, and widening a first-party link is the wrong direction. No
+//! narrower scope serves these reads: the gateway's routes for provider
+//! settings, validation and an agent's models all require
+//! `ai.manage_providers` (`koru-api-gateway-core/src/ai.rs`); `ai.chat`
+//! covers only an agent's commands.
+//!
+//! **The calls are made here, never in the shared crate.** `koru-ai-ui`'s
+//! catalog module only converts what this thread asked for
+//! (`agents_from`, `readiness_from`, `listing_from`), so it stays a
+//! component another project can take without this app's service.
 //!
 //! **The window thread only `try_send`s and `try_recv`s** on bounded
 //! channels; a service that is slow or gone costs it nothing. Every reply
@@ -37,6 +46,12 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use koru_ai_core::AiProviderId;
 use koru_ai_ui::agent_catalog::config::picker::{Agent, FavoriteModel, Listing, Readiness};
 use koru_ai_ui::agent_catalog::{self, CatalogAgent, CatalogListing, ListingFailure};
+
+/// The scopes a catalog client asks for — and, because naming scopes
+/// filters rather than adds, the only ones it holds: `provider_settings`,
+/// `validate_provider`, `discover_agent_models` and `refresh_agent_models`
+/// are each `ai.manage_providers`.
+const SCOPES: &[&str] = &["ai.manage_providers"];
 
 /// Commands waiting for the thread: the agents, and an agent or two's
 /// readiness and listing.
@@ -147,11 +162,19 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
         let answer = match (&client, command) {
             (Some(connected), Command::Agents { seq }) => Answer::Agents {
                 seq,
-                result: agent_catalog::agents(connected).map_err(failure),
+                result: connected
+                    .ai()
+                    .provider_settings()
+                    .map(|settings| agent_catalog::agents_from(&settings))
+                    .map_err(|refused| failure(refused.code)),
             },
             (Some(connected), Command::Readiness { seq, agent }) => Answer::Readiness {
                 seq,
-                result: agent_catalog::readiness(connected, &agent).map_err(failure),
+                result: connected
+                    .ai()
+                    .validate_provider(&agent)
+                    .map(|validation| agent_catalog::readiness_from(&validation))
+                    .map_err(|refused| failure(refused.code)),
                 agent,
             },
             (
@@ -163,7 +186,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 },
             ) => Answer::Listing {
                 seq,
-                result: agent_catalog::listing(connected, &agent, refresh),
+                result: listing(connected, &agent, refresh),
                 agent,
             },
             (None, Command::Agents { seq }) => Answer::Agents {
@@ -199,13 +222,37 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
     }
 }
 
+/// **What `agent` lists**, asked again while its host is still building it
+/// (`agent_models_listing`), as the chat's reader asks; `refresh` rebuilds
+/// it first (↻), and the asks after the first only wait for that rebuild.
+fn listing(
+    client: &koru_api_client::Client,
+    agent: &AiProviderId,
+    refresh: bool,
+) -> Result<CatalogListing, ListingFailure> {
+    let mut asks = 0;
+    loop {
+        asks += 1;
+        let answer = if refresh && asks == 1 {
+            client.ai().refresh_agent_models(agent)
+        } else {
+            client.ai().discover_agent_models(agent)
+        };
+        match answer {
+            Ok(response) => return Ok(agent_catalog::listing_from(&response)),
+            Err(refused)
+                if agent_catalog::is_still_listing(&refused)
+                    && asks < agent_catalog::LISTING_ASKS => {}
+            Err(refused) => return Err(agent_catalog::listing_failure(&refused)),
+        }
+    }
+}
+
 fn connect(root: Option<&std::path::Path>) -> Option<koru_api_client::Client> {
     let segment = koru_channel::segment();
     match root {
-        Some(root) => {
-            koru_api_client::Client::connect_at_with_scopes(segment, root, agent_catalog::SCOPES)
-        }
-        None => koru_api_client::Client::connect_with_scopes(segment, agent_catalog::SCOPES),
+        Some(root) => koru_api_client::Client::connect_at_with_scopes(segment, root, SCOPES),
+        None => koru_api_client::Client::connect_with_scopes(segment, SCOPES),
     }
     .ok()
 }

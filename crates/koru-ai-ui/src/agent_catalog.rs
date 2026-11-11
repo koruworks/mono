@@ -6,14 +6,17 @@
 //! picker reads — which agent runtimes the AI service registers, how ready
 //! each is, what each lists — without a chat surface.
 //!
-//! **The reads, and the conversion, written once here.** A host's own thread
-//! asks with an ordinary client holding [`SCOPES`] — the chat's reader holds
-//! the same scope ordinarily, and a Bot link's first-party scopes would be
-//! refused — and gets plain owned values back ([`CatalogAgent`],
-//! [`CatalogListing`], a [`Readiness`]), which it hands to the control
+//! **The conversion, written once here; never the call.** This module holds
+//! no client and makes no service call — the standalone-component rule: a
+//! host lifts it with the control into another project and feeds it. The
+//! host asks the AI service itself, on its own thread with its own client,
+//! and hands each answer here, which turns it into plain owned values
+//! ([`agents_from`] → [`CatalogAgent`], [`listing_from`] →
+//! [`CatalogListing`], [`readiness_from`] → a [`Readiness`];
+//! [`is_still_listing`] says when to ask again). Those go to the control
 //! borrowed ([`CatalogListing::records`], [`CatalogListing::offers`],
-//! [`CatalogListing::footer`]). The service's types stay in this crate: the
-//! app cannot name them, and a control never sees them.
+//! [`CatalogListing::footer`]). The chat's own reader shares the one retry
+//! of a listing through a crate-private path.
 //!
 //! **Agent runtimes only.** The catalog lists the service's agent providers,
 //! never the API-access ones: a Bot runs on an installed agent runtime.
@@ -30,15 +33,10 @@ use crate::agents::{AgentStatus, agent_key, is_agent_provider};
 /// **The control itself**, for a host that names it through this crate.
 pub use koru_agent_config_ui as config;
 
-/// The scopes a catalog client asks for — and, because naming scopes
-/// filters rather than adds, the only ones it holds. Every catalog read is
-/// `ai.manage_providers` (`provider_settings`, `validate_provider`,
-/// `discover_agent_models`, `refresh_agent_models`).
-pub const SCOPES: &[&str] = &["ai.manage_providers"];
-
 /// How many times one listing is asked while the host says it is still
-/// building it (the chat's reader asks the same way).
-const LISTING_ASKS: usize = 3;
+/// building it (the chat's reader asks the same way; a catalog host may
+/// follow it).
+pub const LISTING_ASKS: usize = 3;
 /// The AI service's answer for a list the host is still building.
 const AGENT_MODELS_LISTING: &str = "agent_models_listing";
 
@@ -162,46 +160,10 @@ impl CatalogListing {
     }
 }
 
-/// **The agent runtimes the service registers**, in its order: the agent
-/// providers of its settings, never an API-access provider.
-pub fn agents(client: &koru_api_client::Client) -> Result<Vec<CatalogAgent>, String> {
-    client
-        .ai()
-        .provider_settings()
-        .map(|settings| agents_from(&settings))
-        .map_err(|failure| failure.code)
-}
-
-/// **How ready `provider` is**, as the chat's picker says it.
-pub fn readiness(
-    client: &koru_api_client::Client,
-    provider: &AiProviderId,
-) -> Result<Readiness, String> {
-    client
-        .ai()
-        .validate_provider(provider)
-        .map(|validation| readiness_from(&validation))
-        .map_err(|failure| failure.code)
-}
-
-/// **What `provider` lists**, asked again while the host is still building
-/// it; `refresh` rebuilds it first (↻).
-pub fn listing(
-    client: &koru_api_client::Client,
-    provider: &AiProviderId,
-    refresh: bool,
-) -> Result<CatalogListing, ListingFailure> {
-    match discover(client, provider, refresh) {
-        Ok(response) => Ok(listing_from(&response)),
-        Err(failure) if failure.code == AGENT_MODELS_LISTING => Err(ListingFailure::StillListing),
-        Err(failure) if failure.code.is_empty() => Err(ListingFailure::Unreachable),
-        Err(failure) => Err(ListingFailure::Refused(failure.code)),
-    }
-}
-
 /// **An agent's list, asked again while the host is still building it** —
-/// the one retry the chat's reader and a catalog host share. `refresh`
-/// rebuilds it first; the asks after the first only wait for that rebuild.
+/// the chat's reader's own retry, crate-private: nothing that takes a client
+/// is public here. `refresh` rebuilds it first; the asks after the first
+/// only wait for that rebuild.
 pub(crate) fn discover(
     client: &koru_api_client::Client,
     provider: &AiProviderId,
@@ -222,13 +184,27 @@ pub(crate) fn discover(
     }
 }
 
-/// Whether `failure` says the host is still building the list.
-pub(crate) fn is_still_listing(failure: &koru_ai_wire::Failure) -> bool {
+/// Whether `failure` says the host is still building the list: ask again,
+/// up to [`LISTING_ASKS`] times.
+pub fn is_still_listing(failure: &koru_ai_wire::Failure) -> bool {
     failure.code == AGENT_MODELS_LISTING
 }
 
-/// The agent runtimes of a settings answer, in its order.
-pub(crate) fn agents_from(settings: &ProviderSettingsResponse) -> Vec<CatalogAgent> {
+/// **A listing's failure as the control reads it**, by the service's code:
+/// still being built, a refusal, or nothing answered.
+pub fn listing_failure(failure: &koru_ai_wire::Failure) -> ListingFailure {
+    if is_still_listing(failure) {
+        ListingFailure::StillListing
+    } else if failure.code.is_empty() {
+        ListingFailure::Unreachable
+    } else {
+        ListingFailure::Refused(failure.code.clone())
+    }
+}
+
+/// **The agent runtimes of a settings answer**, in its order: the agent
+/// providers, never an API-access one.
+pub fn agents_from(settings: &ProviderSettingsResponse) -> Vec<CatalogAgent> {
     settings
         .agents
         .iter()
@@ -242,13 +218,14 @@ pub(crate) fn agents_from(settings: &ProviderSettingsResponse) -> Vec<CatalogAge
         .collect()
 }
 
-/// A validation answer as the control's readiness.
-pub(crate) fn readiness_from(validation: &ProviderValidationResponse) -> Readiness {
+/// **A validation answer as the control's readiness**, as the chat's picker
+/// says it.
+pub fn readiness_from(validation: &ProviderValidationResponse) -> Readiness {
     crate::agents::readiness(AgentStatus::from_validation(validation))
 }
 
-/// A listing answer, owned.
-pub(crate) fn listing_from(response: &AgentModelsResponse) -> CatalogListing {
+/// **What an agent lists**, owned: its models, modes and starting mode.
+pub fn listing_from(response: &AgentModelsResponse) -> CatalogListing {
     CatalogListing {
         models: response
             .models

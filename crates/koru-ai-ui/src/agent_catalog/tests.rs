@@ -179,3 +179,26 @@ fn a_level_crosses_both_ways() {
         assert_eq!(reasoning(effort(choice)), choice);
     }
 }
+
+/// **A listing's failure, as a host hands it in**: the host still building
+/// the list is asked again, a refusal keeps its code, and a failure with no
+/// code is nothing answering. The module makes no call itself.
+#[test]
+fn a_hosts_listing_failure_reads_by_its_code() {
+    let failure = |code: &str| koru_ai_wire::Failure {
+        code: code.to_owned(),
+        message: String::new(),
+        retryable: false,
+        details: Default::default(),
+    };
+    assert!(is_still_listing(&failure("agent_models_listing")));
+    assert_eq!(
+        listing_failure(&failure("agent_models_listing")),
+        ListingFailure::StillListing
+    );
+    assert_eq!(listing_failure(&failure("")), ListingFailure::Unreachable);
+    assert_eq!(
+        listing_failure(&failure("provider_unavailable")),
+        ListingFailure::Refused("provider_unavailable".into())
+    );
+}
