@@ -170,12 +170,23 @@ fn a_parked_archive_resumes_once_and_a_reversed_one_holds_nothing() {
         .unwrap();
     assert_eq!(parked.stage, BotLifecycleStage::Incomplete);
     assert_eq!(parked.refusal, Some(BotLifecycleRefusal::PersonHolding));
-    // Parked keeps its barrier: the Bot stays held, and its barrier is found.
-    assert_eq!(repo.bot_hold(bot.id).unwrap(), Some(BotHold::Pending));
+    // Parked keeps its barrier: the Bot stays held, as parked rather than
+    // moving, and its barrier is found.
+    assert_eq!(repo.bot_hold(bot.id).unwrap(), Some(BotHold::Parked));
+    assert_eq!(
+        repo.bot_chat_hold(bot.main_chat).unwrap(),
+        Some(BotHold::Parked)
+    );
     assert_eq!(
         repo.open_bot_lifecycle(bot.id).unwrap(),
         Some((scope, op.operation))
     );
+    // The Bot's read can name it, with why it stopped.
+    let open = repo.bot_open_lifecycle(bot.id).unwrap().unwrap();
+    assert_eq!(open.request_id, op.operation);
+    assert_eq!(open.kind, BotLifecycleKind::Archive);
+    assert_eq!(open.stage, BotLifecycleStage::Incomplete);
+    assert_eq!(open.refusal, Some(BotLifecycleRefusal::PersonHolding));
     // Parking twice is a no-op; a resume moves it back to captured once.
     assert!(
         !repo
@@ -211,6 +222,7 @@ fn a_parked_archive_resumes_once_and_a_reversed_one_holds_nothing() {
     assert_eq!(repo.bot_hold(bot.id).unwrap(), None);
     assert_eq!(repo.bot_chat_hold(bot.main_chat).unwrap(), None);
     assert_eq!(repo.open_bot_lifecycle(bot.id).unwrap(), None);
+    assert_eq!(repo.bot_open_lifecycle(bot.id).unwrap(), None);
     assert!(!repo.resume_bot_lifecycle(scope, op.operation, 41).unwrap());
 }
 

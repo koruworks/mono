@@ -630,8 +630,11 @@ impl Repository {
 pub enum BotHold {
     /// In Trash, or its Bot is: nothing but Stop may touch it until restored.
     Trashed,
-    /// An Archive, Trash, Restore or Purge is moving or parked incomplete.
+    /// An Archive, Trash, Restore or Purge is moving.
     Pending,
+    /// One stopped before it finished and is parked incomplete: it waits for
+    /// the person to resume or reverse it, and holds the subject meanwhile.
+    Parked,
 }
 
 impl Repository {
@@ -664,18 +667,51 @@ impl Repository {
 
     /// The hold on a whole Bot: trashed, or a whole-Bot operation unfinished.
     pub fn bot_hold(&self, bot: BotId) -> Result<Option<BotHold>, BotError> {
-        let (trashed, pending): (bool, bool) = self
+        let (trashed, moving, parked): (bool, bool, bool) = self
             .connection
             .query_row(
                 &format!(
                     "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='trashed'),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND {OPEN})"
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND i.stage<>'incomplete' AND {OPEN}),
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND i.stage='incomplete' AND {OPEN})"
+                ),
+                [bot.to_storage()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(bad)?;
+        Ok(hold(trashed, moving, parked))
+    }
+
+    /// A Bot's unfinished lifecycle operation, moving or parked and not
+    /// reversed, whole-Bot or of one conversation: what its read reports so
+    /// a client that lost the id can resume or reverse it. The newest wins
+    /// when a moving reversal stands beside the parked operation it names.
+    pub fn bot_open_lifecycle(&self, bot: BotId) -> Result<Option<BotOpenLifecycle>, BotError> {
+        let row: Option<(String, String)> = self
+            .connection
+            .query_row(
+                &format!(
+                    "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open
+                     WHERE bot_id=?1 AND {OPEN} ORDER BY requested_at_ms DESC,operation_id DESC LIMIT 1"
                 ),
                 [bot.to_storage()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
+            .optional()
             .map_err(bad)?;
-        Ok(hold(trashed, pending))
+        let Some((scope, operation)) = row else {
+            return Ok(None);
+        };
+        let scope = UserScopeId::parse(&scope).ok_or(BotError::Storage)?;
+        let op = read_operation(&self.connection, scope, operation.parse().map_err(bad)?)?
+            .ok_or(BotError::Storage)?;
+        Ok(Some(BotOpenLifecycle {
+            request_id: op.operation,
+            kind: op.kind,
+            chat_id: op.chat,
+            stage: op.stage,
+            refusal: op.refusal,
+        }))
     }
 
     /// The hold on one Bot conversation: its own or its whole Bot's.
@@ -683,23 +719,28 @@ impl Repository {
         let Some(bot) = bot_for_chat_on(&self.connection, chat)? else {
             return Ok(None);
         };
-        let (trashed, pending): (bool, bool) = self
+        let (trashed, moving, parked): (bool, bool, bool) = self
             .connection
             .query_row(
                 &format!(
                     "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1),
-                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND {OPEN})"
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND i.stage<>'incomplete' AND {OPEN}),
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE chat_id=?1 AND i.stage='incomplete' AND {OPEN})"
                 ),
                 [chat.to_storage()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(bad)?;
         let whole = self.bot_hold(bot)?;
-        Ok(match (hold(trashed, pending), whole) {
-            (Some(BotHold::Trashed), _) | (_, Some(BotHold::Trashed)) => Some(BotHold::Trashed),
-            (Some(BotHold::Pending), _) | (_, Some(BotHold::Pending)) => Some(BotHold::Pending),
-            (None, None) => None,
-        })
+        // The strongest hold wins: Trash, then a moving operation, then a parked one.
+        Ok([hold(trashed, moving, parked), whole]
+            .into_iter()
+            .flatten()
+            .min_by_key(|hold| match hold {
+                BotHold::Trashed => 0,
+                BotHold::Pending => 1,
+                BotHold::Parked => 2,
+            }))
     }
 
     /// A Bot's fixed owner in any lifecycle, for checking ownership before
@@ -818,11 +859,13 @@ impl Repository {
     }
 }
 
-fn hold(trashed: bool, pending: bool) -> Option<BotHold> {
+fn hold(trashed: bool, moving: bool, parked: bool) -> Option<BotHold> {
     if trashed {
         Some(BotHold::Trashed)
-    } else if pending {
+    } else if moving {
         Some(BotHold::Pending)
+    } else if parked {
+        Some(BotHold::Parked)
     } else {
         None
     }

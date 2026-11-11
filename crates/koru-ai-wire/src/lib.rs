@@ -63,6 +63,9 @@ pub mod bot_lifecycle_codes {
     /// An Archive, Trash, Restore or Purge of this conversation or its Bot is
     /// still in progress or parked incomplete.
     pub const PENDING: &str = "bot_lifecycle_pending";
+    /// The Bot is archived: its history reads, nothing changes it until it
+    /// is unarchived.
+    pub const ARCHIVED: &str = "bot_archived";
 }
 
 pub const AI_WIRE_VERSION: u32 = 1;

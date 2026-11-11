@@ -71,6 +71,16 @@ pub struct Bot {
     pub folder_frozen_at_ms: Option<i64>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// Where the Bot is in its lifecycle. Reads fill it in; it is omitted
+    /// while the Bot is active, so an active Bot's serialized form, and every
+    /// stored receipt that holds one, is unchanged (P1.7).
+    #[serde(default, skip_serializing_if = "BotLifecycle::is_active")]
+    pub lifecycle: BotLifecycle,
+    /// The Bot's unfinished lifecycle operation, moving or parked, so a
+    /// client that lost its id can find it, resume it or reverse it. Reads
+    /// fill it in; omitted when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_operation: Option<BotOpenLifecycle>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

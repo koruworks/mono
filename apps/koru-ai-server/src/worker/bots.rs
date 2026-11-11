@@ -86,13 +86,19 @@ impl WorkerState {
             .as_ref()
             .ok_or_else(|| bot_failure(BotError::Unavailable))?;
         let validation = proof.runtime.clone();
-        execute_bot_command(
+        let mut response = execute_bot_command(
             &mut self.repository,
             proof.authority.clone(),
             move |_| validation.clone(),
             context.request,
             request,
-        )
+        );
+        // A parked operation leaves its Bot active, and so in the roster:
+        // the roster names it.
+        if let Ok(BotResponse::List { bots }) = &mut response {
+            self.with_open_operations(bots)?;
+        }
+        response
     }
     pub(super) fn guard_bot_command(&self, command: WorkerCommand) -> Option<WorkerCommand> {
         let authority = command
@@ -355,6 +361,8 @@ fn execute_bot_command(
                     folder_frozen_at_ms: None,
                     created_at_ms: now,
                     updated_at_ms: now,
+                    lifecycle: Default::default(),
+                    open_operation: None,
                 },
                 None,
             )
@@ -480,6 +488,10 @@ fn guard_command(
                 authority.ok_or_else(|| bot_failure(BotError::Unavailable))?,
                 &bot,
             )?;
+            // An archived Bot's conversations read; nothing changes them.
+            if bot.lifecycle == BotLifecycle::Archived && !command.bot_read_only() {
+                return Err(lifecycle::archived_failure());
+            }
             let implemented = matches!(
                 command,
                 WorkerCommand::SendTurn { .. }
@@ -576,7 +588,10 @@ fn require_held_owner(
     Err(lifecycle::hold_failure(hold))
 }
 
-fn command_chat(repository: &Repository, command: &WorkerCommand) -> ApiResult<Option<ChatId>> {
+pub(super) fn command_chat(
+    repository: &Repository,
+    command: &WorkerCommand,
+) -> ApiResult<Option<ChatId>> {
     Ok(match command.named() {
         Some(Named::Chat(chat)) | Some(Named::NewChat { chat, .. }) => Some(chat),
         Some(Named::Attempt(id)) => repository

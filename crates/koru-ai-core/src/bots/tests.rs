@@ -189,3 +189,67 @@ fn a_stop_code_is_closed_and_absent_by_default() {
         assert!(crate::is_engine_stop_code(refusal.code()));
     }
 }
+
+#[test]
+fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_when_set() {
+    let workspace = WorkspaceId::new();
+    let bot = Bot {
+        id: BotId::mint(),
+        home_workspace: workspace,
+        user_scope: UserScopeId::new(),
+        owner_device: DeviceId::new(),
+        config: BotConfig {
+            name: "fixture".into(),
+            role: BotPage {
+                workspace,
+                document: DocumentId::new(),
+            },
+            working_folder: "/fixture".into(),
+            model: ModelSelection {
+                provider: crate::AiProviderId::parse("agent-codex").unwrap(),
+                requested_model: "fixture".into(),
+                default_reasoning: crate::ReasoningChoice::Default,
+            },
+            mode: None,
+            fast: None,
+        },
+        access: BotAccess::Default,
+        selected_pages: vec![],
+        revision: 1,
+        policy_revision: 1,
+        main_chat: ChatId::new(),
+        paused: false,
+        folder_lock_request: None,
+        folder_frozen_at_ms: None,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        lifecycle: BotLifecycle::Active,
+        open_operation: None,
+    };
+    // Active with nothing open: neither field is written, so receipts that
+    // store a Bot and older readers see the same bytes as before P1.7.
+    let active = serde_json::to_value(&bot).unwrap();
+    assert!(active.get("lifecycle").is_none());
+    assert!(active.get("open_operation").is_none());
+    assert_eq!(serde_json::from_value::<Bot>(active.clone()).unwrap(), bot);
+    let mut archived = bot.clone();
+    archived.lifecycle = BotLifecycle::Archived;
+    archived.open_operation = Some(BotOpenLifecycle {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::PersonHolding),
+    });
+    let wire = serde_json::to_value(&archived).unwrap();
+    assert_eq!(wire["lifecycle"], "archived");
+    assert_eq!(wire["open_operation"]["kind"], "archive");
+    assert_eq!(wire["open_operation"]["refusal"], "person_holding");
+    assert_eq!(
+        serde_json::from_value::<Bot>(wire.clone()).unwrap(),
+        archived
+    );
+    let mut unknown = wire;
+    unknown["open_operation"]["fingerprint"] = serde_json::json!("guessed");
+    assert!(serde_json::from_value::<Bot>(unknown).is_err());
+}

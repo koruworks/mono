@@ -46,6 +46,8 @@ fn fixture(repo: &mut Repository) -> (Bot, PendingTurn, BotSubmission) {
         folder_frozen_at_ms: None,
         created_at_ms: 1,
         updated_at_ms: 1,
+        lifecycle: Default::default(),
+        open_operation: None,
     };
     repo.save_bot(
         &bot,

@@ -29,8 +29,13 @@ impl Repository {
         bot: BotId,
         request: BotRequestId,
     ) -> Result<Option<BotAccessReceipt>, BotError> {
-        let current = self.bot(bot)?.ok_or(BotError::NotFound)?;
-        if current.user_scope != owner.user_scope || current.owner_device != owner.device {
+        // A read: an archived Bot's receipts stay readable by their owner; a
+        // trashed Bot's do not.
+        let (current, lifecycle) = self.bot_any_lifecycle(bot)?.ok_or(BotError::NotFound)?;
+        if lifecycle == BotLifecycle::Trashed
+            || current.user_scope != owner.user_scope
+            || current.owner_device != owner.device
+        {
             return Err(BotError::Forbidden);
         }
         let row: Option<(String, String, String, String, Option<String>)> = self.connection.query_row(

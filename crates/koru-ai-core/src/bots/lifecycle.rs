@@ -47,6 +47,31 @@ closed_vocabulary! {
     BotLifecycle { Active => "active", Archived => "archived", Trashed => "trashed" }
 }
 
+impl Default for BotLifecycle {
+    fn default() -> Self {
+        Self::Active
+    }
+}
+impl BotLifecycle {
+    pub fn is_active(&self) -> bool {
+        *self == Self::Active
+    }
+}
+
+/// A Bot's unfinished lifecycle operation as its read reports it: enough to
+/// resume it (the same command kind with this `request_id`) or to reverse it
+/// (a Restore naming it), with why it stopped when it is parked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotOpenLifecycle {
+    pub request_id: BotRequestId,
+    pub kind: BotLifecycleKind,
+    pub chat_id: Option<ChatId>,
+    pub stage: BotLifecycleStage,
+    pub refusal: Option<BotLifecycleRefusal>,
+}
+
 closed_vocabulary! {
     /// Why a conversation belongs to its Bot (`bot_chats.purpose`, ai16).
     BotChatPurpose { Main => "main", Additional => "additional" }

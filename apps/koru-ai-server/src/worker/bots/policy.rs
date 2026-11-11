@@ -343,11 +343,13 @@ impl WorkerState {
             } => {
                 // While an Archive is settling the Bot, its own effects-off
                 // barrier is the current evidence (P1.7).
+                // A journal read that fails refuses the evidence: it never
+                // falls back to the ordinary effects-allowed barrier.
                 let lifecycle = self.lifecycle_policy_barrier(&result.bot);
                 let value = if same && Instant::now() < deadline {
                     result.result.and_then(|(profile, _)| {
                         Ok(NativePolicyEvidence {
-                            barrier: match lifecycle {
+                            barrier: match lifecycle? {
                                 Some(barrier) => barrier,
                                 None => barrier(&result.bot)?,
                             },

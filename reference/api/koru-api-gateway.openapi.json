@@ -2651,8 +2651,30 @@
           "id": {
             "$ref": "#/components/schemas/BotId"
           },
+          "lifecycle": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycle"
+              }
+            ],
+            "description": "Where the Bot is in its lifecycle. Reads fill it in; it is omitted\nwhile the Bot is active, so an active Bot's serialized form, and every\nstored receipt that holds one, is unchanged (P1.7)."
+          },
           "main_chat": {
             "$ref": "#/components/schemas/ChatId"
+          },
+          "open_operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotOpenLifecycle"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The Bot's unfinished lifecycle operation, moving or parked, so a\nclient that lost its id can find it, resume it or reverse it. Reads\nfill it in; omitted when there is none."
           },
           "owner_device": {
             "type": "string"
@@ -3997,6 +4019,53 @@
             "type": "object"
           }
         ]
+      },
+      "BotOpenLifecycle": {
+        "additionalProperties": false,
+        "description": "A Bot's unfinished lifecycle operation as its read reports it: enough to\nresume it (the same command kind with this `request_id`) or to reverse it\n(a Restore naming it), with why it stopped when it is parked.",
+        "properties": {
+          "chat_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BotLifecycleKind"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycleRefusal"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/BotLifecycleStage"
+          }
+        },
+        "required": [
+          "request_id",
+          "kind",
+          "stage"
+        ],
+        "type": "object"
       },
       "BotOperation": {
         "additionalProperties": false,

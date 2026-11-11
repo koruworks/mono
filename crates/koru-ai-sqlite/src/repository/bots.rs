@@ -343,6 +343,8 @@ impl Repository {
                 folder_frozen_at_ms: r.17,
                 created_at_ms: r.18,
                 updated_at_ms: r.19,
+                lifecycle,
+                open_operation: None,
                 main_chat: main,
                 selected_pages,
             },

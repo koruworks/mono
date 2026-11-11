@@ -674,6 +674,33 @@ impl WorkerState {
             self.work_terminal(id);
         }
     }
+    /// Lifecycle (Archive, later Trash) ends a live conversation task as an
+    /// automatic interruption, never as the person's Stop: the AI attempt
+    /// ends interrupted, and the chat's finishing lane sends the owner's
+    /// `Interrupt`, whose owned cleanup cannot end a session a person holds.
+    /// A chat already finishing (a person's Stop, an earlier interruption)
+    /// is left as it is. `true` when this changed the chat.
+    pub(in crate::worker) fn interrupt_bot_chat_for_lifecycle(
+        &mut self,
+        id: InferenceAttemptId,
+    ) -> bool {
+        if self
+            .bot_chats
+            .get(&id)
+            .is_none_or(|chat| chat.finishing.is_some())
+        {
+            return false;
+        }
+        self.interrupt_bot_chat(id);
+        let Some(chat) = self.bot_chats.get_mut(&id) else {
+            return false;
+        };
+        chat.finishing = Some(Finish::Interrupt);
+        chat.phase = Phase::Admission;
+        chat.retries = 0;
+        chat.due = Instant::now();
+        true
+    }
     /// The owner definitely refused the task's first input. The same
     /// automatic end as [`Self::interrupt_bot_chat`], except that the attempt
     /// fails with the reason in the existing failure vocabulary, and keeps

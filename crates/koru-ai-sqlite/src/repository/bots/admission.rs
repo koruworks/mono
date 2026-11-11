@@ -441,7 +441,11 @@ impl Repository {
         bot: BotId,
         request: BotRequestId,
     ) -> Result<Option<BotAdmissionReceipt>, BotError> {
-        guard(&self.connection, owner, bot)?;
+        // A read: an archived Bot's receipts stay readable by their owner; a
+        // trashed Bot's do not.
+        if guard_any_lifecycle(&self.connection, owner, bot)?.1 == BotLifecycle::Trashed {
+            return Err(BotError::Forbidden);
+        }
         let Some(row) = raw(&self.connection, owner.user_scope, request)? else {
             return Ok(None);
         };

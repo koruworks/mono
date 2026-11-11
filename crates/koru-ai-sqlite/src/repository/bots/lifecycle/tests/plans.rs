@@ -45,7 +45,12 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
     let scope = owner.user_scope.to_storage();
     let id = bot.id.to_storage();
     let chat = bot.main_chat.to_storage();
+    // The Bot read's open operation (bot_open_lifecycle), with the reversal rule.
+    let open_read = format!(
+        "SELECT user_scope_id,operation_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open WHERE bot_id=?1 AND {OPEN} ORDER BY requested_at_ms DESC,operation_id DESC LIMIT 1"
+    );
     let cases: Vec<(&str, &str, Vec<&dyn rusqlite::ToSql>)> = vec![
+        ("bot_lifecycle_open", &open_read, vec![&id]),
         // admission.rs pending_bot_operations
         (
             "bot_unresolved_coordination",
@@ -111,6 +116,10 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
         let found = plan(c, sql, &args);
         assert!(found.contains(index), "{index} not used by {sql}: {found}");
     }
+    let open = repo.bot_open_lifecycle(bot.id).unwrap().unwrap();
+    assert_eq!(open.kind, BotLifecycleKind::TrashChat);
+    assert_eq!(open.chat_id, Some(bot.main_chat));
+    assert_eq!(open.stage, BotLifecycleStage::Captured);
 }
 
 #[test]

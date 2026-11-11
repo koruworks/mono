@@ -39,6 +39,8 @@ pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot
         folder_frozen_at_ms: None,
         created_at_ms: 0,
         updated_at_ms: 0,
+        lifecycle: Default::default(),
+        open_operation: None,
     }
 }
 

@@ -132,6 +132,10 @@ impl WorkerState {
             }
         };
         let snapshot = (|| -> ApiResult<_> {
+            // A change to an archived Bot answers `bot_archived` at dispatch
+            // once its owner's workspace authority is proven; nothing is
+            // captured for it here, not even Role history or a model check.
+            let archived = super::lifecycle::archived_change(&self.repository, &command)?.is_some();
             let mut workspaces = BTreeSet::new();
             let mut pages = BTreeSet::new();
             let mut chats = Vec::new();
@@ -142,13 +146,15 @@ impl WorkerState {
                     Err(error) => return Err(bot_failure(error)),
                 };
                 workspaces.insert(bot.home_workspace);
-                if matches!(
-                    &command,
-                    WorkerCommand::Bots {
-                        request: BotCommand::Update { .. } | BotCommand::UpdateAccess { .. },
-                        ..
-                    }
-                ) {
+                if !archived
+                    && matches!(
+                        &command,
+                        WorkerCommand::Bots {
+                            request: BotCommand::Update { .. } | BotCommand::UpdateAccess { .. },
+                            ..
+                        }
+                    )
+                {
                     pages.insert(bot.config.role.clone());
                     pages.extend(bot.selected_pages.clone());
                 }
@@ -157,7 +163,9 @@ impl WorkerState {
             let mut model = None;
             let mut capture = None;
             let mut chat_snapshot = None;
-            if let WorkerCommand::Bots { request, .. } = &command {
+            if let WorkerCommand::Bots { request, .. } = &command
+                && !archived
+            {
                 match request {
                     BotCommand::Create {
                         home_workspace,
@@ -281,7 +289,7 @@ impl WorkerState {
             }
             // A held conversation is refused by the guard once its owner is
             // known; nothing is captured for it, not even Role history.
-            let held = super::refusing_hold(&self.repository, &command)?.is_some();
+            let held = archived || super::refusing_hold(&self.repository, &command)?.is_some();
             if !held && let Some(chat) = chat::chat_capture(&self.repository, &command)? {
                 pages.extend(chat.pages.clone());
                 model = Some(chat.model);

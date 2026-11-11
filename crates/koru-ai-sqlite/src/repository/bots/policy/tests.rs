@@ -189,6 +189,15 @@ fn completed_legacy_configuration_is_readable_without_inventing_pending_coordina
         .unwrap();
     assert!(old.completed && old.barrier.is_none());
     assert_eq!(old.operation().status, BotOperationStatus::Accepted);
+    // An archived Bot's receipts stay readable (its history is kept).
+    repo.fixture_set_bot_lifecycle(bot.id, BotLifecycle::Archived)
+        .unwrap();
+    assert!(
+        repo.bot_access_receipt(owner(&bot), bot.id, request)
+            .unwrap()
+            .unwrap()
+            .completed
+    );
     repo.connection
         .execute(
             "UPDATE bots SET lifecycle='trashed' WHERE bot_id=?1",
