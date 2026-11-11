@@ -485,9 +485,12 @@ impl Repository {
             )
             .map_err(bad)?;
         }
-        // Before P1.5 introduces per-turn configuration, the main Chat displays Bot defaults.
-        tx.execute("UPDATE chats SET title=?2,current_provider=?3,current_model=?4,current_reasoning=?5,agent_working_folder=?6,agent_mode=?7,agent_fast=?8 WHERE id=?1",
-            params![bot.main_chat.to_storage(),bot.config.name,bot.config.model.provider.as_str(),bot.config.model.requested_model,bot.config.model.default_reasoning.as_token(),bot.config.working_folder,bot.config.mode,bot.config.fast]).map_err(bad)?;
+        // A Bot's defaults seed new conversations only (O23): creation wrote
+        // the main Chat above from them, and an edit writes no conversation.
+        // The main conversation keeps its own title, model, reasoning, mode
+        // and Fast setting like every other; a model change is made in the
+        // conversation it is for. A task runs in the Bot's folder, never the
+        // one a Chat row recorded when it was made.
         tx.execute(
             "DELETE FROM bot_selected_pages WHERE bot_id=?1",
             [bot.id.to_storage()],
