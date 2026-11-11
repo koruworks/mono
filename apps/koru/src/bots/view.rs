@@ -91,6 +91,7 @@ use super::settings::Settings;
 use crate::ai_chat_view::AiChatView;
 
 mod actions;
+pub(crate) mod agent;
 mod controls;
 pub(crate) mod conversations;
 pub(crate) mod list;
@@ -338,6 +339,12 @@ pub(crate) struct BotView {
     catalog: Box<super::catalog::Catalog>,
     /// The person's own choices about agents, as the window holds them.
     agent_settings: Box<super::catalog::AgentSettings>,
+    /// The *Agent and model* card's popover while one is up (S7). Boxed
+    /// for the reason the settings are.
+    agent: Option<Box<agent::AgentPopover>>,
+    /// The starred models after a ☆ in the card's picker, for the window
+    /// to store.
+    favorites_request: Option<Vec<koru_ai_ui::FavoriteModel>>,
 }
 
 impl BotView {
@@ -395,6 +402,8 @@ impl BotView {
             list_notice: None,
             catalog: Box::default(),
             agent_settings: Box::default(),
+            agent: None,
+            favorites_request: None,
         }
     }
 
@@ -706,6 +715,7 @@ impl BotView {
         let listed = !self.facts.as_ref().is_some_and(|facts| facts.trashed) && self.list_pass();
         // The catalog only while the settings are shown (S6).
         let catalog = self.settings_open && self.catalog.pass(root);
+        self.settle_agent_refreshes();
         asked || answered || polled || listed || lifecycle || catalog
     }
 
@@ -1200,6 +1210,7 @@ impl BotView {
                         Some(true) => 2,
                     })
                     .bool(control.disabled)
+                    .bool(control.focused)
                     .u64(control.children.len() as u64);
                 fold(rev, &control.children);
             }
@@ -1284,6 +1295,9 @@ impl View for BotView {
         if self.picker.is_some() {
             return self.picker_key(key, text, mods);
         }
+        if self.agent_popover_open() {
+            return self.agent_key(key, text, mods);
+        }
         if let Some(handled) = self.list_key(key, mods) {
             return handled;
         }
@@ -1301,6 +1315,9 @@ impl View for BotView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         if self.picker.is_some() {
             return self.picker_press(x, y);
+        }
+        if self.agent_popover_open() {
+            return self.agent_press(x, y);
         }
         if !self.settings_open
             && let Some(handled) = self.list_press(x, y)
@@ -1322,6 +1339,9 @@ impl View for BotView {
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         if self.picker.is_some() {
             return self.picker_move(x, y);
+        }
+        if self.agent_popover_open() {
+            return self.agent_move(x, y);
         }
         self.pointer.set((x, y));
         // Over the conversation with nothing lit there is nothing of the
@@ -1352,6 +1372,9 @@ impl View for BotView {
         if self.picker.is_some() {
             return self.picker_release();
         }
+        if self.agent_popover_open() {
+            return self.agent_release();
+        }
         self.region_release();
         if self.settings_open {
             return false;
@@ -1374,6 +1397,10 @@ impl View for BotView {
         // The wheel over the picker scrolls its list, and nothing under it.
         if self.picker.is_some() {
             self.picker_scroll(delta);
+            return;
+        }
+        if self.agent_popover_open() {
+            self.agent_scroll(delta);
             return;
         }
         if self.settings_open {
@@ -1415,6 +1442,13 @@ impl View for BotView {
     fn cursor_icon(&self) -> CursorIcon {
         if self.hot == Some(region::NAME_FIELD) {
             return CursorIcon::Text;
+        }
+        // The I-beam over the card's picker's search field (S7).
+        if let Some(Some(cursor)) = self.agent.as_deref().and_then(|popover| {
+            let (x, y) = popover.pointer;
+            self.agent_picker_read(|picker| picker.cursor(x, y))
+        }) {
+            return cursor;
         }
         if self.settings_open {
             return CursorIcon::Default;
@@ -1519,6 +1553,7 @@ impl View for BotView {
         if let Some((tree, frame)) = &region {
             crate::input_engine::with(|engine| frame.paint(tree, scene_out, root, engine));
             self.paint_picker(scene_out, root);
+            self.paint_agent_popover(scene_out, root);
             return;
         }
         // Nothing of a conversation the tab cannot show: a trashed Bot's, or

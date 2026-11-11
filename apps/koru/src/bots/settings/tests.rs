@@ -406,3 +406,74 @@ fn an_answer_about_another_request_settles_nothing() {
     assert!(settings.is_pending(Change::Name));
     assert_eq!(settings.bot().unwrap().config.name, "Scout");
 }
+
+/// **The agent-and-model card's write** (S7): the draft changes nothing
+/// until *Save*, which is an `Update` of the configuration read with the
+/// chosen model, mode and Fast and nothing else; it is pending until the
+/// owner answers with the Bot, a conflict keeps the draft, and an edit back
+/// to what the owner holds is no edit.
+#[test]
+fn the_model_is_an_update_at_the_read_revision_and_shown_only_when_answered() {
+    let (mut settings, bot) = known();
+    assert!(!settings.can_save_model(), "nothing edited");
+    let mut draft = settings.model_shown().unwrap();
+    draft.model.requested_model = "gpt-5".into();
+    draft.model.default_reasoning =
+        koru_ai_core::ReasoningChoice::Level(koru_ai_core::ReasoningLevel::High);
+    draft.mode = Some("auto-review".into());
+    draft.fast = Some(true);
+    settings.edit_model(draft.clone());
+    assert!(settings.model_edited());
+    let (request, command) = write(settings.save_model().unwrap());
+    let BotCommand::Update {
+        expected_revision,
+        config,
+        ..
+    } = command
+    else {
+        panic!("an update");
+    };
+    assert_eq!(expected_revision, bot.revision);
+    assert_eq!(config.model, draft.model);
+    assert_eq!(config.mode, draft.mode);
+    assert_eq!(config.fast, Some(true));
+    assert_eq!(config.name, bot.config.name, "the name is the owner's");
+    assert_eq!(config.working_folder, bot.config.working_folder);
+    assert!(settings.is_pending(Change::Model));
+    // Nothing moves while it is on its way.
+    let mut other = draft.clone();
+    other.fast = Some(false);
+    settings.edit_model(other);
+    assert_eq!(settings.model_shown(), Some(draft.clone()));
+
+    // A conflict: the draft is kept and the Bot read again.
+    let settled = settings.answer(
+        request,
+        Err(Failure::Refused("revision_conflict".into())),
+        std::time::Instant::now(),
+    );
+    assert!(settled.matched);
+    assert!(settings.take_read_owed());
+    assert_eq!(settings.model_shown(), Some(draft.clone()));
+
+    // Saved again, and answered with the Bot that holds it: no edit left.
+    let (request, _) = write(settings.save_model().unwrap());
+    let mut saved = bot.clone();
+    saved.revision += 1;
+    saved.config.model = draft.model.clone();
+    saved.config.mode = draft.mode.clone();
+    saved.config.fast = draft.fast;
+    let settled = settings.answer(
+        request,
+        Ok(BotResponse::Bot { bot: saved.clone() }),
+        std::time::Instant::now(),
+    );
+    assert_eq!(settled.bot, Some(saved));
+    assert!(!settings.model_edited());
+    assert!(!settings.is_pending(Change::Model));
+
+    // An edit back to what the owner holds is no edit.
+    let held = settings.model_shown().unwrap();
+    settings.edit_model(held);
+    assert!(!settings.model_edited());
+}

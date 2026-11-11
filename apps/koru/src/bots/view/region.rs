@@ -88,6 +88,14 @@ pub(crate) const PAUSE_PENDING: Key = Key::surface(SURFACE, "pause-pending");
 pub(crate) const PAUSED_NOTICE: Key = Key::surface(SURFACE, "paused-notice");
 pub(crate) const RUNS_ON: Key = Key::surface(SURFACE, "runs-on");
 pub(crate) const RUNTIME_LIMITS: Key = Key::surface(SURFACE, "runtime-limits");
+/// The *Agent and model* card (S7) and its parts.
+pub(crate) const AGENT_CARD: Key = Key::surface(SURFACE, "agent-card");
+pub(crate) const MODEL_CHIP: Key = Key::surface(SURFACE, "model-chip");
+pub(crate) const MODE_CHIP: Key = Key::surface(SURFACE, "mode-chip");
+pub(crate) const SAVE_MODEL: Key = Key::surface(SURFACE, "save-model");
+pub(crate) const MODEL_PENDING: Key = Key::surface(SURFACE, "model-pending");
+pub(crate) const MODEL_NOTE: Key = Key::surface(SURFACE, "model-note");
+pub(crate) const AGENT_READINESS: Key = Key::surface(SURFACE, "agent-readiness");
 
 /// The part a selected page's row and its *Remove* are keyed by, under the
 /// page's own document id — never its place in the list.
@@ -124,6 +132,11 @@ pub(crate) enum Act {
     MoreConversations,
     /// The header's ⋯: the Bot's lifecycle menu, which the window opens (S14).
     Actions,
+    /// The *Agent and model* card's model chip, its mode chip and *Save*
+    /// (S7).
+    OpenModelPicker,
+    OpenModes,
+    SaveModel,
     /// A parked operation's *Continue* and *Cancel* (S14).
     ContinueOperation,
     CancelOperation,
@@ -298,6 +311,8 @@ impl BotView {
         if let Some(bot) = settings.bot() {
             content = content
                 .child(self.about_card(engine))
+                .child(card_title(t(self.lang, Words::BotsAgent)))
+                .child(self.agent_card(engine))
                 .child(card_title(t(self.lang, Words::BotsAccess)))
                 .child(self.access_card(engine))
                 .child(card_title(t(self.lang, Words::BotsFolder)))
@@ -571,6 +586,166 @@ impl BotView {
         card(PAUSE_CARD, Words::BotsPause).child(pause)
     }
 
+    /// **The *Agent and model* card** (S7): the model's chip — the agent,
+    /// the model and its level, as the chat's chip reads them — which opens
+    /// the model picker; the mode's chip, which opens the approval-mode
+    /// list; what the choice applies to (QUESTIONS O23); the agent's
+    /// readiness when it is not ready; *Save*, or *Saving…* while the owner
+    /// has not answered.
+    fn agent_card(&self, engine: &mut TextEngine) -> El {
+        let pending = self.settings.is_pending(Change::Model);
+        let model = row("Bot model row").gap(Space::S2).items_center().child(
+            self.button(
+                engine,
+                "Bot model chip",
+                MODEL_CHIP,
+                self.model_chip_words(),
+                ActionStyle::Secondary,
+                pending,
+            )
+            .fill(),
+        );
+        let mut card = card(AGENT_CARD, Words::BotsAgent).child(model);
+        if let Some(mode) = self.mode_chip_words() {
+            card = card.child(
+                row("Bot mode row")
+                    .gap(Space::S2)
+                    .items_center()
+                    .child(
+                        text(self.words(Words::AiAgentAsks))
+                            .named("Bot mode label")
+                            .role(roles::UI)
+                            .ink(Ink::Secondary),
+                    )
+                    .child(
+                        self.button(
+                            engine,
+                            "Bot mode chip",
+                            MODE_CHIP,
+                            mode,
+                            ActionStyle::Secondary,
+                            pending,
+                        )
+                        .fill(),
+                    ),
+            );
+        }
+        if let Some(words) = self.agent_readiness_words() {
+            card = card.child(line(
+                "Bot agent readiness",
+                AGENT_READINESS,
+                words,
+                Ink::Accent,
+            ));
+        }
+        let save = row("Bot model save row")
+            .gap(Space::S2)
+            .items_center()
+            .child(
+                line(
+                    "Bot model note",
+                    MODEL_NOTE,
+                    self.words(Words::BotsAppliesToNewConversations),
+                    Ink::Secondary,
+                )
+                .fill(),
+            )
+            .child(if pending {
+                line(
+                    "Bot model pending",
+                    MODEL_PENDING,
+                    self.words(Words::BotsSaving),
+                    Ink::Hint,
+                )
+            } else {
+                self.button(
+                    engine,
+                    "Bot save model",
+                    SAVE_MODEL,
+                    self.words(Words::BotsSave),
+                    ActionStyle::Primary,
+                    !self.settings.can_save_model(),
+                )
+            });
+        card.child(save)
+    }
+
+    /// The agent's name as the catalog has it, else its id's word.
+    pub(super) fn agent_label(&self) -> String {
+        self.facts
+            .as_ref()
+            .and_then(|facts| {
+                self.catalog
+                    .agents()
+                    .iter()
+                    .find(|agent| agent.id == facts.provider)
+            })
+            .map_or_else(|| self.agent_name(), |agent| agent.label.clone())
+    }
+
+    /// **The model's chip**: *Codex, GPT-5, High* — the agent, the model as
+    /// the picker names it (its *Default* by the agent's own word), and the
+    /// level when one is chosen.
+    pub(super) fn model_chip_words(&self) -> String {
+        use koru_ai_ui::agent_catalog::config::picker::{DEFAULT_MODEL, inputs};
+        let Some(draft) = self.settings.model_shown() else {
+            return String::new();
+        };
+        let id = draft.model.requested_model.as_str();
+        let listing = self.agent_listing();
+        let model = match listing {
+            Some(listing) if id == DEFAULT_MODEL => {
+                inputs::default_model_label(&listing.records(), self.lang)
+            }
+            Some(listing) => match listing.find(id) {
+                Some((listed, _)) => listed
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| inputs::fallback_label(&listed.id, &listed.group)),
+                None => inputs::fallback_label(id, ""),
+            },
+            None if id == DEFAULT_MODEL => self.words(Words::AiModelAgentDefault),
+            None => inputs::fallback_label(id, ""),
+        };
+        let with = t(self.lang, Words::AiPickerRowWith);
+        let mut words = koru_i18n::fill(with, &[self.agent_label().as_str(), model.as_str()]);
+        let effort = koru_ai_ui::agent_catalog::effort(draft.model.default_reasoning);
+        if effort != koru_ai_ui::agent_catalog::config::effort::Effort::Default {
+            let level = koru_ai_ui::agent_catalog::config::effort::word(self.lang, effort);
+            words = koru_i18n::fill(with, &[words.as_str(), level.as_str()]);
+        }
+        words
+    }
+
+    /// **The mode's chip**, while the agent's modes are known: the mode the
+    /// draft names, else the one the agent says it starts in, in Koru's
+    /// words.
+    pub(super) fn mode_chip_words(&self) -> Option<String> {
+        use koru_ai_ui::agent_catalog::config::modes;
+        let provider = self.facts.as_ref()?.provider.clone();
+        let listing = self.agent_listing()?;
+        let rows = modes::rows(self.lang, provider.as_str(), &listing.offers());
+        let shown = self.mode_shown();
+        rows.iter()
+            .find(|row| Some(row.id.as_str()) == shown.as_deref())
+            .or_else(|| rows.first())
+            .map(|row| row.title.clone())
+    }
+
+    /// **The agent's readiness, when it is not ready**: said by its name,
+    /// never replaced by another agent.
+    pub(super) fn agent_readiness_words(&self) -> Option<String> {
+        use koru_ai_ui::agent_catalog::config::picker::Readiness;
+        let provider = &self.facts.as_ref()?.provider;
+        match self.catalog.readiness(provider)? {
+            Readiness::Ready | Readiness::Checking => None,
+            _ => Some(koru_i18n::fill(
+                t(self.lang, Words::BotsAgentNotReady),
+                &[self.agent_label().as_str()],
+            )),
+        }
+    }
+
     /// **The honest disclosures**, as plain sentences: where the Bot runs
     /// and whose account applies, what Koru's access does not reach, and the
     /// first version's agent.
@@ -654,6 +829,9 @@ impl BotView {
             k if k == super::list::NEW_CONVERSATION => Act::NewConversation,
             k if k == super::list::MORE_CONVERSATIONS => Act::MoreConversations,
             k if k == super::actions::ACTIONS_BUTTON => Act::Actions,
+            k if k == MODEL_CHIP => Act::OpenModelPicker,
+            k if k == MODE_CHIP => Act::OpenModes,
+            k if k == SAVE_MODEL => Act::SaveModel,
             k if k == super::actions::CONTINUE => Act::ContinueOperation,
             k if k == super::actions::CANCEL_OPERATION => Act::CancelOperation,
             k if k == super::actions::UNARCHIVE => Act::Unarchive,
@@ -729,6 +907,8 @@ impl BotView {
                 self.actions_request = Some(at);
                 return true;
             }
+            Act::OpenModelPicker => return self.open_agent_picker(),
+            Act::OpenModes => return self.open_agent_modes(),
             Act::ContinueOperation => return self.continue_lifecycle(),
             Act::CancelOperation => return self.cancel_lifecycle(),
             Act::Unarchive => {
@@ -737,6 +917,7 @@ impl BotView {
             Act::Restore => return self.begin_lifecycle(crate::bots::lifecycle::Ask::Restore),
             Act::SaveName => self.settings.save_name(),
             Act::SaveAccess => self.settings.save_access(),
+            Act::SaveModel => self.settings.save_model(),
             Act::TogglePause => self.settings.toggle_pause(),
         };
         match command {
@@ -776,14 +957,20 @@ impl BotView {
             self.focus = back.then_some(SETTINGS_BUTTON);
             self.hot = None;
             self.picker = None;
+            self.agent = None;
             if let Some(input) = self.name_field.borrow().as_ref() {
                 crate::input_engine::with(|engine| input.borrow_mut().blur(engine));
             }
         }
     }
 
+    /// The control the keyboard is on: inside the *Agent and model* card's
+    /// popover while one is up (S7), else the tab's own.
     pub(crate) fn focus(&self) -> Option<Key> {
-        self.focus
+        self.agent_semantics()
+            .and_then(|(_, focus, _)| focus)
+            .map(super::agent::published_key)
+            .or(self.focus)
     }
 
     /// **The keyboard's order**: every focusable, enabled control in the
@@ -1184,6 +1371,16 @@ impl BotView {
                     None => roots.insert(0, control),
                 }
             }
+            // The card's popover while one is up (S7): the control's own
+            // nodes, under the chip that opened it.
+            if let Some((nodes, focus, search)) = self.agent_semantics() {
+                let lang = self.lang;
+                roots.extend(
+                    nodes
+                        .iter()
+                        .map(|node| super::agent::control_of(node, focus, search.as_deref(), lang)),
+                );
+            }
             if !self.settings_open {
                 // The conversation list, after *New conversation* and before
                 // *Show more*, in the keyboard's order (S8).
@@ -1221,7 +1418,13 @@ impl BotView {
                     &[home.as_str()],
                 ),
             },
-            k if k == NAME_PENDING || k == ACCESS_PENDING || k == FOLDER_PENDING => {
+            k if k == MODEL_NOTE => self.words(Words::BotsAppliesToNewConversations),
+            k if k == AGENT_READINESS => return self.agent_readiness_words(),
+            k if k == NAME_PENDING
+                || k == ACCESS_PENDING
+                || k == FOLDER_PENDING
+                || k == MODEL_PENDING =>
+            {
                 self.words(Words::BotsSaving)
             }
             k if k == PAUSE_PENDING => self.words(if settings.is_pending(Change::Resume) {
@@ -1245,6 +1448,9 @@ impl BotView {
 
     /// Do what an assistive technology asked of the control `key`.
     pub(crate) fn accessibility_action(&mut self, key: Key, click: bool) -> bool {
+        if let Some(done) = self.agent_accessibility_action(key, click) {
+            return done;
+        }
         if let Some(done) = self.list_action(key, click) {
             return done;
         }

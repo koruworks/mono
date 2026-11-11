@@ -214,8 +214,6 @@ fn connect(root: Option<&std::path::Path>) -> Option<koru_api_client::Client> {
 /// the agents turned off on this machine, the order they are listed in, the
 /// starred models and the agent a new chat starts with. The window hands
 /// them to every Bot tab (`MainView::apply_hidden_agents`).
-// Read by the settings card and the create form (S7, S8).
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AgentSettings {
     pub hidden: Vec<String>,
@@ -270,26 +268,26 @@ impl Catalog {
         }
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     /// The agents, as the service last said; empty until it has.
     pub(crate) fn agents(&self) -> &[CatalogAgent] {
         self.agents.as_deref().unwrap_or_default()
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn readiness(&self, id: &AiProviderId) -> Option<Readiness> {
         self.readiness.get(id).copied()
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn listing(&self, id: &AiProviderId) -> Option<&CatalogListing> {
         match self.listings.get(id) {
             Some(Known::Listed(listing)) => Some(listing),
             _ => None,
         }
+    }
+
+    /// How ready `agent` is, as a test arms it.
+    #[cfg(test)]
+    pub(crate) fn force_readiness_for_test(&mut self, agent: &AiProviderId, readiness: Readiness) {
+        self.readiness.insert(agent.clone(), readiness);
     }
 
     /// Requests handed to the link. Test only.
@@ -317,16 +315,12 @@ impl Catalog {
         self.listing_owed.push((agent.clone(), false));
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     /// **↻ for `agent`**: its list rebuilt, asked even while one is listed.
     pub(crate) fn refresh(&mut self, agent: &AiProviderId) {
         self.listing_owed.retain(|(owed, _)| owed != agent);
         self.listing_owed.push((agent.clone(), true));
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     /// The ↻s answered since the last call, for the control's state.
     pub(crate) fn take_refreshed(&mut self) -> Vec<AiProviderId> {
         std::mem::take(&mut self.refreshed)
@@ -464,8 +458,6 @@ impl Catalog {
         moved
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     /// **The agents as the control takes them**, in the person's order, each
     /// with its readiness, whether it is turned off and its listing —
     /// borrowed from what the catalog holds. Every registered agent runtime
@@ -504,12 +496,13 @@ impl Catalog {
             .collect()
     }
 
-    // Read by the settings card and the create form (S7, S8).
-    #[cfg_attr(not(test), allow(dead_code))]
     /// The agent a new Bot starts on: the person's default agent where it is
     /// registered and not turned off, else the first ready one in their
     /// order, else the first. Never a fallback the person did not see: the
     /// form shows it and its readiness.
+    // The create form's (S8), which is not built yet: tested here so it is
+    // ready, and read by nothing else meanwhile.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn preferred(&self, settings: &AgentSettings) -> Option<AiProviderId> {
         let agents = self.control_agents(settings);
         let shown: Vec<&Agent<'_, AiProviderId>> =

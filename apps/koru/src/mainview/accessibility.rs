@@ -1051,7 +1051,8 @@ fn bot_key(target: Occurrence) -> Option<koru_draw::el::Key> {
         ObjectKey::Model(id)
             if part == crate::bots::view::region::REMOVE_PART
                 || part == crate::bots::view::region::PAGE_PART
-                || part == crate::bots::view::list::CONVERSATION_PART =>
+                || part == crate::bots::view::list::CONVERSATION_PART
+                || crate::bots::view::agent::MODEL_PARTS.contains(&part) =>
         {
             Some(koru_draw::el::Key::model(id.as_u128(), part))
         }

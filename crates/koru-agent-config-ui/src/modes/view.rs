@@ -47,6 +47,11 @@ pub struct ModeList<'a> {
     /// The composer's width: the list is as wide, up to 340.
     pub width: f32,
     pub pointer: (f32, f32),
+    /// Paint the chat's footer — *Applies to this chat* and *Change
+    /// default* — under the rows. A host whose choice is not a chat's (a
+    /// Bot's next conversations) leaves it out and says what the choice
+    /// applies to itself.
+    pub footer: bool,
 }
 
 impl ModeList<'_> {
@@ -54,7 +59,8 @@ impl ModeList<'_> {
     pub fn panel(&self) -> Rect {
         let count = self.rows.len();
         let width = self.width.min(340.0).max(1.0);
-        let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + FOOTER_H;
+        let footer = if self.footer { FOOTER_H } else { 0.0 };
+        let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + footer;
         PopoverShell::anchored(self.anchor, self.viewport, width, height, PopoverAlign::End).rect
     }
 
@@ -160,7 +166,7 @@ impl ModeList<'_> {
             &scene::Panel::popover(PANEL_RADIUS),
         );
         frame.paint(&tree, canvas, root, engine);
-        {
+        if self.footer {
             let footer = self.footer_rect();
             let _footer = inspect::scope(
                 "ApprovalModeFooter",

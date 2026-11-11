@@ -1797,6 +1797,12 @@ pub enum Key {
     BotsSave,
     /// A Bot setting on its way to the Bot owner, shown until it answers.
     BotsSaving,
+    /// The Bot settings card that holds its agent, model, effort, mode and Fast (Bots P1.8 S7). Non-English columns machine-written, awaiting a native read.
+    BotsAgent,
+    /// What a Bot's agent-and-model defaults apply to: new conversations only, never an existing one (QUESTIONS O23, Bots P1.8 S7). Non-English columns machine-written, awaiting a native read.
+    BotsAppliesToNewConversations,
+    /// A Bot's agent is not ready on this computer, by its name: said beside its settings and its create form, never silently replaced (Bots P1.8 S7). Non-English columns machine-written, awaiting a native read.
+    BotsAgentNotReady,
     /// The Bot's Role page, an ordinary page that says what the Bot is for.
     BotsRole,
     /// Opens the Bot's Role page as an ordinary page tab.
@@ -3416,7 +3422,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2337] = [
+    pub const ALL: [Key; 2340] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4689,6 +4695,9 @@ impl Key {
         Key::BotsName,
         Key::BotsSave,
         Key::BotsSaving,
+        Key::BotsAgent,
+        Key::BotsAppliesToNewConversations,
+        Key::BotsAgentNotReady,
         Key::BotsRole,
         Key::BotsOpenRole,
         Key::BotsAccess,
@@ -15088,6 +15097,39 @@ pub const ROWS: &[Row] = &[
         ar: "جارٍ الحفظ…",
         zh_hans: "正在保存…",
         ja: "保存しています…",
+    },
+    Row {
+        key: Key::BotsAgent,
+        en: "Agent and model",
+        es: "Agente y modelo",
+        pt_br: "Agente e modelo",
+        de: "Agent und Modell",
+        fr: "Agent et modèle",
+        ar: "الوكيل والنموذج",
+        zh_hans: "代理和模型",
+        ja: "エージェントとモデル",
+    },
+    Row {
+        key: Key::BotsAppliesToNewConversations,
+        en: "Applies to new conversations.",
+        es: "Se aplica a las conversaciones nuevas.",
+        pt_br: "Vale para as novas conversas.",
+        de: "Gilt für neue Unterhaltungen.",
+        fr: "S’applique aux nouvelles conversations.",
+        ar: "ينطبق على المحادثات الجديدة.",
+        zh_hans: "适用于新对话。",
+        ja: "新しい会話に適用されます。",
+    },
+    Row {
+        key: Key::BotsAgentNotReady,
+        en: "{} isn't ready on this computer. Set it up, then try again.",
+        es: "{} no está listo en este equipo. Configúralo y vuelve a intentarlo.",
+        pt_br: "{} não está pronto neste computador. Configure-o e tente de novo.",
+        de: "{} ist auf diesem Computer nicht bereit. Richte es ein und versuche es erneut.",
+        fr: "{} n’est pas prêt sur cet ordinateur. Configurez-le, puis réessayez.",
+        ar: "{} غير جاهز على هذا الكمبيوتر. أعدّه ثم حاول مرة أخرى.",
+        zh_hans: "{} 在这台电脑上尚未就绪。请先设置，然后重试。",
+        ja: "{} はこのコンピューターで準備ができていません。設定してからもう一度お試しください。",
     },
     Row {
         key: Key::BotsRole,

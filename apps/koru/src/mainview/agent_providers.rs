@@ -395,6 +395,12 @@ impl MainView {
             {
                 asked = Some(list);
             }
+            // A ☆ in a Bot's *Agent and model* card (S7).
+            if let TabView::Bot(view) = &mut tab.view
+                && let Some(list) = view.take_favorite_models_request()
+            {
+                asked = Some(list);
+            }
             false
         });
         let Some(list) = asked else {

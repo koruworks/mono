@@ -575,6 +575,7 @@ fn both_controls_draw_inside_their_shells_and_declare_their_buttons() {
         viewport: Rect::new(0.0, 0.0, 900.0, 700.0),
         width: 360.0,
         pointer: (0.0, 0.0),
+        footer: true,
     };
     let second = list.row_rect(1).unwrap();
     assert_eq!(
@@ -745,6 +746,7 @@ fn both_controls_publish_their_rows_to_assistive_technology() {
         viewport: Rect::new(0.0, 0.0, 900.0, 700.0),
         width: 360.0,
         pointer: (0.0, 0.0),
+        footer: true,
     };
     let (_, frame) = list.frame();
     assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);

@@ -30,6 +30,7 @@
 
 use std::time::{Duration, Instant};
 
+use koru_ai_core::ModelSelection;
 use koru_ai_core::bots::{
     Bot, BotAccess, BotCommand, BotOperationStatus, BotPage, BotRequestId, BotResponse,
 };
@@ -51,6 +52,8 @@ const NAME_MAX_BYTES: usize = 256;
 pub(crate) enum Change {
     Name,
     Folder,
+    /// The agent-and-model card's model, effort, mode and Fast (S7).
+    Model,
     Access,
     Pause,
     Resume,
@@ -71,6 +74,28 @@ pub(crate) enum Notice {
 pub(crate) struct AccessDraft {
     pub access: BotAccess,
     pub pages: Vec<BotPage>,
+}
+
+/// **The person's unsaved agent-and-model choice** (S7): the Bot's model —
+/// its agent, the model's id and the level — its mode and Fast, `None`
+/// for the agent's own default. What the Bot's next conversations start
+/// on; an existing conversation keeps its own (QUESTIONS O23).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ModelDraft {
+    pub model: ModelSelection,
+    pub mode: Option<String>,
+    pub fast: Option<bool>,
+}
+
+impl ModelDraft {
+    /// What the owner holds for `bot`.
+    fn held(bot: &Bot) -> Self {
+        Self {
+            model: bot.config.model.clone(),
+            mode: bot.config.mode.clone(),
+            fast: bot.config.fast,
+        }
+    }
 }
 
 /// One change on its way.
@@ -103,6 +128,7 @@ pub(crate) struct Settings {
     bot: Option<Bot>,
     name_draft: Option<String>,
     access_draft: Option<AccessDraft>,
+    model_draft: Option<ModelDraft>,
     pending: Vec<Pending>,
     notice: Option<Notice>,
     read_owed: bool,
@@ -123,6 +149,9 @@ impl Settings {
             .is_some_and(|draft| same_access(draft, &bot))
         {
             self.access_draft = None;
+        }
+        if self.model_draft.as_ref() == Some(&ModelDraft::held(&bot)) {
+            self.model_draft = None;
         }
         self.bot = Some(bot);
     }
@@ -198,6 +227,60 @@ impl Settings {
         config.name = self.name_draft.as_deref()?.trim().to_owned();
         let (bot_id, revision) = (bot.id, bot.revision);
         Some(self.send(Change::Name, |request| BotCommand::Update {
+            request_id: request,
+            bot_id,
+            expected_revision: revision,
+            config: config.clone(),
+        }))
+    }
+
+    // ------------------------------------------------ agent and model
+
+    /// The agent and model the card shows: the person's edit, or the
+    /// owner's. `None` until the tab holds the Bot.
+    pub(crate) fn model_shown(&self) -> Option<ModelDraft> {
+        self.model_draft
+            .clone()
+            .or_else(|| self.bot.as_ref().map(ModelDraft::held))
+    }
+
+    /// Whether the agent-and-model choice is an unsaved edit. Test only.
+    #[cfg(test)]
+    pub(crate) fn model_edited(&self) -> bool {
+        self.model_draft.is_some()
+    }
+
+    /// The choice after the person changed something in the card's
+    /// control. An edit back to what the owner holds is no edit; nothing
+    /// changes while a save is on its way.
+    pub(crate) fn edit_model(&mut self, draft: ModelDraft) {
+        if self.is_pending(Change::Model) {
+            return;
+        }
+        let Some(bot) = &self.bot else {
+            return;
+        };
+        self.model_draft = (draft != ModelDraft::held(bot)).then_some(draft);
+    }
+
+    pub(crate) fn can_save_model(&self) -> bool {
+        self.bot.is_some() && self.model_draft.is_some() && !self.is_pending(Change::Model)
+    }
+
+    /// *Save* on the card: an `Update` of the configuration the tab read,
+    /// with the chosen model, mode and Fast.
+    pub(crate) fn save_model(&mut self) -> Option<Command> {
+        if !self.can_save_model() {
+            return None;
+        }
+        let bot = self.bot.as_ref()?;
+        let draft = self.model_draft.clone()?;
+        let mut config = bot.config.clone();
+        config.model = draft.model;
+        config.mode = draft.mode;
+        config.fast = draft.fast;
+        let (bot_id, revision) = (bot.id, bot.revision);
+        Some(self.send(Change::Model, |request| BotCommand::Update {
             request_id: request,
             bot_id,
             expected_revision: revision,
@@ -460,8 +543,10 @@ impl Settings {
         };
         match result {
             Ok(BotResponse::Bot { bot })
-                if matches!(self.pending[index].change, Change::Name | Change::Folder)
-                    && self.bot.as_ref().is_none_or(|known| known.id == bot.id) =>
+                if matches!(
+                    self.pending[index].change,
+                    Change::Name | Change::Folder | Change::Model
+                ) && self.bot.as_ref().is_none_or(|known| known.id == bot.id) =>
             {
                 self.pending.remove(index);
                 self.unanswered = None;

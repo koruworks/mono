@@ -316,6 +316,7 @@ impl crate::ChatSurface {
             viewport: self.viewport,
             width: self.composer_hit_rect.w,
             pointer: self.pointer,
+            footer: true,
         };
         Some(f(&list))
     }
@@ -553,6 +554,7 @@ impl crate::ChatSurface {
             viewport: self.viewport,
             width: self.composer_hit_rect.w,
             pointer: self.pointer,
+            footer: true,
         };
         list.draw(canvas, root, &mut self.engine);
     }

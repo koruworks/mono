@@ -482,7 +482,11 @@ fn the_settings_region_is_an_element_tree_whose_rows_nest_under_their_card() {
             .filter(|(_, node)| node.name == "Bot settings card")
             .map(|(index, _)| index)
             .collect();
-        assert_eq!(cards.len(), 4, "about, access, folder, pause");
+        assert_eq!(
+            cards.len(),
+            5,
+            "about, agent and model, access, folder, pause"
+        );
         for &card in &cards {
             let rect = frame.nodes[card].rect;
             assert!(rect.x >= region.x - 0.5 && rect.x + rect.w <= region.x + region.w + 0.5);
@@ -490,6 +494,8 @@ fn the_settings_region_is_an_element_tree_whose_rows_nest_under_their_card() {
         for row in [
             "Bot name row",
             "Bot role row",
+            "Bot model row",
+            "Bot model save row",
             "Bot access row",
             "Bot access actions",
             "Bot folder actions",
@@ -709,7 +715,10 @@ fn the_controls_publish_names_in_the_keyboards_order() {
         .filter(|c| c.role == ControlRole::Group)
         .map(|c| c.key)
         .collect();
-    assert_eq!(cards, [ABOUT_CARD, ACCESS_CARD, FOLDER_CARD, PAUSE_CARD]);
+    assert_eq!(
+        cards,
+        [ABOUT_CARD, AGENT_CARD, ACCESS_CARD, FOLDER_CARD, PAUSE_CARD]
+    );
 
     fn walk(controls: &[Control], out: &mut Vec<Control>) {
         for control in controls {
@@ -1229,4 +1238,5 @@ fn a_hidden_tabs_list_reads_once_when_shown_again() {
 }
 
 /// The lifecycle half of the tab (S14).
+mod agent;
 mod lifecycle;
