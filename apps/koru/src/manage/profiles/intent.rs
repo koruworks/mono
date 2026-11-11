@@ -93,7 +93,6 @@ pub enum Intent {
 
     // ---- answers to the modal questions --------------------------------------
     AnswerHostedDelete(ConfirmOutcome),
-    AnswerCloudMove(ConfirmOutcome),
     AnswerAttach(ConfirmOutcome),
 }
 
@@ -411,7 +410,6 @@ impl ProfilesController {
             Intent::AnswerHostedDelete(outcome) => {
                 return self.settle_hosted_delete_confirmation(outcome);
             }
-            Intent::AnswerCloudMove(outcome) => return self.settle_move_prompt(outcome),
             Intent::AnswerAttach(outcome) => return self.settle_attach_prompt(outcome),
         }
         true

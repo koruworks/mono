@@ -55,6 +55,8 @@ struct Hosted {
     deletes: Mutex<Vec<koru_account_core::ProfileLifecycleMutationId>>,
     rebinds: AtomicUsize,
     refreshes: AtomicUsize,
+    /// The delete answers the service's 428 for a fresh sign-in.
+    fresh_auth: AtomicBool,
 }
 impl Transport for Hosted {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
@@ -92,6 +94,20 @@ impl Transport for Hosted {
         } else if request.path_and_query == format!("/v1/account/profiles/{}", profile()) {
             let request: DeleteProfileRequestV1 = serde_json::from_slice(&request.body).unwrap();
             self.deletes.lock().unwrap().push(request.operation_id);
+            if self.fresh_auth.load(Ordering::SeqCst) {
+                return Ok(HttpResponse {
+                    status: 428,
+                    body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
+                        retry_after_millis: None,
+                        code: koru_account_wire::ErrorCode::parse(
+                            koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED,
+                        )
+                        .unwrap(),
+                        message: String::new(),
+                    })
+                    .unwrap(),
+                });
+            }
             return Err(TransportError::Unavailable);
         } else {
             panic!("unexpected lifecycle route: {}", request.path_and_query);
@@ -295,4 +311,80 @@ fn retirement_refuses_changed_exact_intent_and_rolls_back_both_tables() {
     // Replaying successful retirement after an ACK loss is harmless.
     journal.retire_for_rebind(profile(), None).unwrap();
     assert_eq!(ProfileLifecycleState::Active, original.lifecycle_state);
+}
+
+/// **A delete refused for a fresh sign-in can be tried again after a
+/// restart** (2026-11-10). The 428 is a precondition: the service applied
+/// nothing, so its pending row is dropped at once. Kept, it outlived the
+/// in-memory owner proof, and every retry after an Agent restart was
+/// refused as owner-unproven — *Profile removal paused* for good.
+#[test]
+fn a_delete_refused_for_a_fresh_sign_in_survives_a_restart() {
+    let hosted = Arc::new(Hosted::default());
+    hosted.fresh_auth.store(true, Ordering::SeqCst);
+    let inventory = Arc::new(Inventory(Mutex::new(owner(1).account)));
+    let mut before = service(hosted.clone(), inventory.clone(), 1);
+    assert_eq!(
+        delete(&mut before).code,
+        koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED
+    );
+    assert!(
+        before.journal().get(profile()).unwrap().is_none(),
+        "nothing to replay, nothing kept"
+    );
+
+    // The restart: the same journal, a new Agent with no owner proof.
+    hosted.fresh_auth.store(false, Ordering::SeqCst);
+    let mut after = service(hosted.clone(), inventory, 1);
+    after.lifecycle_repository = before.lifecycle_repository.clone();
+    assert_ne!(
+        delete(&mut after).code,
+        "profile_lifecycle_owner_unproven",
+        "the signed-in owner may delete again"
+    );
+    let deletes = hosted.deletes.lock().unwrap();
+    assert_eq!(deletes.len(), 2, "the retry reached the service");
+    assert_ne!(deletes[0], deletes[1], "and is a new operation");
+}
+
+/// **A row an older build kept for that refusal is cleared by the next
+/// delete** — the state a person is stuck in after upgrading.
+#[test]
+fn a_kept_fresh_sign_in_refusal_no_longer_blocks_the_next_delete() {
+    let hosted = Arc::new(Hosted::default());
+    let inventory = Arc::new(Inventory(Mutex::new(owner(1).account)));
+    let mut service = service(hosted.clone(), inventory, 1);
+    let stale = {
+        let mut journal = service.journal();
+        let row = journal
+            .begin_delete(profile(), ProfileLifecycleRevision::INITIAL, 50)
+            .unwrap();
+        journal
+            .record_failure(
+                profile(),
+                row.operation,
+                koru_account_wire::ErrorCode::FRESH_AUTHENTICATION_REQUIRED,
+                60,
+            )
+            .unwrap();
+        row.operation
+    };
+    assert_ne!(
+        delete(&mut service).code,
+        "profile_lifecycle_owner_unproven"
+    );
+    let deletes = hosted.deletes.lock().unwrap();
+    assert_eq!(deletes.len(), 1);
+    assert_ne!(deletes[0], stale, "a new operation, not the refused one");
+}
+
+/// A row for a refusal that may have changed something is **kept**: only
+/// the fresh-sign-in precondition proves nothing happened.
+#[test]
+fn any_other_failed_delete_keeps_its_row_for_an_exact_replay() {
+    let hosted = Arc::new(Hosted::default());
+    let inventory = Arc::new(Inventory(Mutex::new(owner(1).account)));
+    let mut service = service(hosted, inventory, 1);
+    delete(&mut service);
+    assert!(service.journal().get(profile()).unwrap().is_some());
 }

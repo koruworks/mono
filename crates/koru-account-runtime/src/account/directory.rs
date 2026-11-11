@@ -149,6 +149,10 @@ pub struct CredentialPersistence {
     /// stores the same token again keeps it, so a rotation already in flight
     /// under it stays replayable, and only a new pair earns a new key.
     armed_pair: Option<[u8; 32]>,
+    /// The session whose credential the active slot holds. A replacement for
+    /// the *same* session is a rotation: its owner and its slot are already
+    /// known, so [`Self::replace`] does not ask the service who owns it.
+    active_session: Option<String>,
 }
 
 /// Exact replacement state stays in PendingDurability until all three effects
@@ -248,6 +252,7 @@ impl CredentialPersistence {
             discovery_required: false,
             retry_key: None,
             armed_pair: None,
+            active_session: None,
         }
     }
     pub fn owner(&self) -> Option<AccountOwner> {
@@ -679,6 +684,10 @@ impl CredentialPersistence {
         // same key the lost rotation did.
         self.retry_key = None;
         self.armed_pair = None;
+        self.active_session = selected
+            .as_ref()
+            .filter(|_| self.active.is_some())
+            .map(|credential| credential.session_id.clone());
         if let Some(credential) = &selected {
             let entry = match &self.active {
                 Some(record) => self.entry(record)?,
@@ -729,8 +738,48 @@ impl CredentialPersistence {
             return Ok(());
         };
         let namespace = self.legacy.namespace();
+        // **A rotation asks the service nothing on its way to the vault.** The
+        // service has already replaced the pair these bytes supersede, so
+        // until the vault write lands the only copy of a working refresh
+        // token is in this process's memory. A rotation changes neither the
+        // account nor the session, so its owner is the one it was restored
+        // with: the write used to wait behind a hosted inspection as well,
+        // and a process that stopped during that round trip came back signed
+        // out.
+        //
+        // The directory's *pending* row still goes first, as it does for
+        // every replacement: while the vault may hold bytes the directory
+        // has not acknowledged, the row has to say so, or another view of
+        // the same account would read them as acknowledged authority
+        // (`switching`'s tests hold that). Writing the vault ahead of it was
+        // tried and broke exactly that.
+        //
+        // One read decides it: a slot whose directory record was removed or
+        // replaced — a sign-out, or a newer incarnation of the account — is
+        // no longer a rotation, and is asked about like any other credential.
+        let rotation = pending.record.is_none()
+            && self.active_session.as_deref() == Some(credential.session_id.as_str())
+            && match &self.active {
+                Some(active) => directory
+                    .snapshot(&namespace)?
+                    .records
+                    .iter()
+                    .any(|r| r.version == active.version && r.owner == active.owner),
+                None => false,
+            };
+        let rotated_owner = self
+            .active
+            .as_ref()
+            .filter(|_| rotation)
+            .map(|active| active.owner);
         if pending.record.is_none() {
-            let owner = service.inspect_credential(credential)?;
+            // The owner of a rotated session is the owner it was restored
+            // with; only a credential this persistence has not held is asked
+            // about.
+            let owner = match rotated_owner {
+                Some(owner) => owner,
+                None => service.inspect_credential(credential)?,
+            };
             if self
                 .selection
                 .flatten()
@@ -769,6 +818,7 @@ impl CredentialPersistence {
             state: DirectoryState::Ready,
             ..record.clone()
         });
+        self.active_session = Some(credential.session_id.clone());
         // A credential for this account has just been accepted and made
         // durable, so the slot restore could not use is repaired. A code about
         // another account's slot is not this acceptance's to clear.
@@ -794,6 +844,7 @@ impl CredentialPersistence {
         // may be armed for bytes that no longer exist.
         self.retry_key = None;
         self.armed_pair = None;
+        self.active_session = None;
         let Some(directory) = self.directory.as_ref().cloned() else {
             return self
                 .vault

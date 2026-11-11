@@ -676,6 +676,32 @@ impl OnboardingView {
         self.error = None;
     }
 
+    /// **The account settled signed out while this showed *Finishing…***
+    /// (2026-11-11). On a new device the Agent starts by looking for a saved
+    /// sign-in — `Restoring`, which this page shows as *Finishing…* — and,
+    /// finding none, says `SignedOut`. That answer was never handed here, so
+    /// the first run stayed on *Finishing…* for good whenever the window
+    /// opened during the look. It goes back to where the first run starts,
+    /// as a cancelled sign-in does; any other page is left alone. Answers
+    /// whether it moved.
+    pub fn account_settled_signed_out(&mut self) -> bool {
+        let finishing = self.screen == Screen::AccountStatus
+            && self
+                .account_surface
+                .as_ref()
+                .is_some_and(|surface| surface.kind == crate::account_ui::SurfaceKind::Finishing);
+        if !finishing {
+            return false;
+        }
+        self.account_surface = None;
+        self.creation_submission = None;
+        self.creation_waiting = false;
+        self.screen = Screen::first();
+        self.focus = 0;
+        self.error = None;
+        true
+    }
+
     pub fn show_account_profiles(&mut self, profiles: Vec<AccountProfileRow>) {
         let choices = profiles
             .into_iter()
@@ -5064,5 +5090,31 @@ mod tests {
         );
         view.activate(Hit::AccountAction(0));
         assert_eq!(view.take_action(), Some(Action::StartGoogle));
+    }
+
+    /// **A new device does not stay on *Finishing…*** (2026-11-11): the
+    /// Agent looks for a saved sign-in (`Restoring`), finds none and says
+    /// `SignedOut`; the first run goes back to where it starts. A page that
+    /// is not the *Finishing…* one is not moved.
+    #[test]
+    fn the_first_run_leaves_finishing_when_the_sign_in_check_finds_none() {
+        let mut view = a_welcome_screen();
+        let start = view.screen;
+        view.show_account_state(&AccountState {
+            stage: koru_agent_wire::AccountStage::Restoring,
+            ..AccountState::default()
+        });
+        assert_eq!(
+            view.screen,
+            Screen::AccountStatus,
+            "Restoring shows Finishing"
+        );
+        assert!(view.account_settled_signed_out());
+        assert_eq!(view.screen, start);
+        assert!(view.account_surface.is_none());
+        assert!(
+            !view.account_settled_signed_out(),
+            "the start page is not moved"
+        );
     }
 }

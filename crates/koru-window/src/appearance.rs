@@ -72,6 +72,10 @@ pub struct Appearance {
     /// following an App font change.
     pub chat_font: Option<FontChoice>,
     pub density: Density,
+    /// How many steps a wheel notch moves, 1 to 4.
+    pub scroll_speed: u8,
+    /// The accent chosen per theme, light then dark; `None` follows it.
+    pub accent: [Option<u32>; 2],
     pub zoom: f32,
 }
 
@@ -108,6 +112,11 @@ impl Appearance {
                 }
             },
             density: Density::parse(section.density.token()),
+            scroll_speed: section.scroll_speed.factor(),
+            accent: [
+                section.accent_color_light.map(koru_settings::RgbColor::rgb),
+                section.accent_color_dark.map(koru_settings::RgbColor::rgb),
+            ],
             zoom: section.zoom.get(),
         }
     }
@@ -130,6 +139,9 @@ impl Appearance {
             ),
         }
         theme::set_density(self.density);
+        theme::set_wheel_speed(self.scroll_speed);
+        theme::set_accent_color(false, self.accent[0]);
+        theme::set_accent_color(true, self.accent[1]);
         theme::set_zoom(self.zoom);
     }
 

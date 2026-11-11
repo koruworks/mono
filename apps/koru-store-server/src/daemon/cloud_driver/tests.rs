@@ -63,7 +63,58 @@ fn profile_permit(units: Vec<ProfileUnitRef>) -> CloudPermitV2 {
             logical_replica_id: id(8),
         },
         allowed_profile_units: units,
+        authority_workspace_id: Some(id(3)),
     })
+}
+
+/// A Profile session is scoped, on the hosted worker, to the Workspace its
+/// credential is issued under: the worker builds its scope from the
+/// credential's `workspace_id` claim and refuses every frame that names
+/// another (`sync_transfer_invalid`). The device's scope must therefore be
+/// the worker's, field for field. Root-catalog 3.2 planned a nil Workspace
+/// here, and every Profile session against production failed on its first
+/// frame while the in-repo fake worker, which shares the device's scope,
+/// never noticed.
+#[test]
+fn a_profile_permit_plans_the_scope_the_worker_admits_under_its_credential() {
+    let permit = profile_permit(vec![
+        ProfileUnitRef::Identity {
+            profile: ProfileId::from_uuid(id(5).as_uuid()),
+        },
+        ProfileUnitRef::Private {
+            profile: ProfileId::from_uuid(id(5).as_uuid()),
+        },
+    ]);
+    let (_, device) = plan_for(&permit).unwrap();
+    // The worker's scope for a Profile dataset, built the way the hosted
+    // worker builds it from the verified credential: the dataset, the
+    // credential's Workspace and Profile, and no manifest.
+    let credential_workspace = WorkspaceId::from_uuid(id(3).as_uuid());
+    let worker = Scope {
+        principal: permit.dataset().unwrap(),
+        eligibility_workspace: credential_workspace,
+        profile: id(5),
+        manifest: DocumentId::from_uuid(uuid::Uuid::nil()),
+    };
+    assert_eq!(device.principal, worker.principal);
+    assert_eq!(device.eligibility_workspace, worker.eligibility_workspace);
+    assert_eq!(device.profile, worker.profile);
+    assert_eq!(device.manifest, worker.manifest);
+
+    // A permit that does not say which Workspace its credential is issued
+    // under cannot be dialled honestly: refused, never planned as nil.
+    let mut unaddressed = permit.clone();
+    if let CloudPermitScopeV2::ProfileUnits {
+        authority_workspace_id,
+        ..
+    } = &mut unaddressed.scope
+    {
+        *authority_workspace_id = None;
+    }
+    assert_eq!(
+        plan_for(&unaddressed).map(|_| ()).unwrap_err(),
+        "cloud_permit_authority_workspace"
+    );
 }
 
 /// A Workspace permit plans its Workspace under the descriptor's manifest,

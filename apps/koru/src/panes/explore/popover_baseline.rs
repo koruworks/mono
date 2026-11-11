@@ -293,7 +293,6 @@ fn cases(page: Page) -> Vec<Case> {
         states.extend([
             State::ProfileAction(MenuAction::New),
             State::ProfileAction(MenuAction::Sync),
-            State::ProfileAction(MenuAction::Settings),
             State::Synced,
         ]);
     }

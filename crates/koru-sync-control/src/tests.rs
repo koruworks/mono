@@ -885,11 +885,17 @@ fn a_v1_permit_keeps_its_v1_meaning_and_a_dead_personal_entry_costs_nothing() {
         let CloudPermitScopeV2::ProfileUnits {
             allowed_profile_units,
             dataset,
+            authority_workspace_id,
         } = &converted.scope
         else {
             panic!("{case}: a v1 Profile permit is the Profile-units scope");
         };
         assert_eq!(dataset, &held.dataset, "{case}");
+        assert_eq!(
+            authority_workspace_id,
+            &Some(held.authority_workspace_id),
+            "{case}: the session stays scoped to the v1 permit's Workspace"
+        );
         assert_eq!(allowed_profile_units, &expected, "{case}");
         assert!(
             !allowed_profile_units.contains(&personal),

@@ -66,7 +66,12 @@ impl ProfilesController {
             return None;
         }
         let profile = self.selected?;
-        if !self.selected_profile_is_local_only() {
+        // A Profile this sign-in is not linked to is connected the way a
+        // local-only one is: the hosted attach puts the link back for a
+        // Profile the account already owns, and the local bind answers
+        // *already bound*. *Add Google Account* would be refused for it —
+        // only a sign-in that is linked to a Profile may add another.
+        if !self.selected_profile_is_local_only() && !self.selected_profile_is_unlinked() {
             return Some((
                 LinkControl::AddGoogle(profile),
                 "Add Google Account".to_owned(),
@@ -113,10 +118,10 @@ impl ProfilesController {
             || self.pending_attach.is_some()
             || self.pending.is_some()
             || self.account.stage != AccountStage::SignedIn
-            || !self
-                .profiles
-                .iter()
-                .any(|row| row.id == profile && row.account.is_none())
+            || !self.profiles.iter().any(|row| {
+                row.id == profile
+                    && (row.account.is_none() || self.profile_unlinked_from_sign_in(row))
+            })
         {
             return;
         }

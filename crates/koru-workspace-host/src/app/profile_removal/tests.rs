@@ -309,3 +309,53 @@ fn the_notice_is_translated_in_every_language_for_every_shape() {
         }
     }
 }
+
+/// A cleanup that stops has to say so: what happened, why it stopped here,
+/// and what finishes it. It used to be a line in the log.
+#[test]
+fn a_stalled_cleanup_says_why_it_stopped_and_what_finishes_it() {
+    let refused = peer_cleanup_stalled_notice(
+        koru_i18n::Lang::En,
+        Some("Work"),
+        CascadeFailure::NotPermitted,
+    );
+    assert!(
+        refused.starts_with(
+            "Koru could not finish removing \u{201c}Work\u{201d} from this device\n\n"
+        ),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("Another trusted device deleted this Profile."),
+        "{refused}"
+    );
+    assert!(refused.contains("nothing was removed here"), "{refused}");
+    assert!(refused.contains("Quit Koru and open it again"), "{refused}");
+    assert!(!refused.contains("{}"), "{refused}");
+
+    // The other failure is retried, and says so instead.
+    for failure in [CascadeFailure::Incomplete, CascadeFailure::Unsupported] {
+        let incomplete = peer_cleanup_stalled_notice(koru_i18n::Lang::En, Some("Work"), failure);
+        assert!(incomplete.contains("Koru tries again"), "{incomplete}");
+        assert!(
+            !incomplete.contains("nothing was removed here"),
+            "{incomplete}"
+        );
+    }
+}
+
+/// An unknown or blank name is a different headline, never an empty pair of
+/// quotes.
+#[test]
+fn a_stalled_cleanup_of_an_unnamed_profile_has_no_quotes() {
+    for name in [None, Some("  ")] {
+        let notice =
+            peer_cleanup_stalled_notice(koru_i18n::Lang::En, name, CascadeFailure::Incomplete);
+        assert!(
+            notice.starts_with("Koru could not finish removing a deleted Profile from this device"),
+            "{notice}"
+        );
+        assert!(!notice.contains('\u{201c}'), "{notice}");
+        assert!(!notice.contains("{}"), "{notice}");
+    }
+}

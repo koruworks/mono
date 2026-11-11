@@ -280,12 +280,23 @@ impl OnboardingView {
             .unwrap_or_else(|| self.chooser_copy(koru_i18n::Key::ProfileChooserBody).into())
     }
 
+    /// The rows a person may tick: authorized, and **not already on this
+    /// computer**. A Profile that is here has nothing to import — its row
+    /// says so and offers *Open local content* instead of a checkbox. It used
+    /// to be a checkbox like the others, counted in *N selected* and sent in
+    /// the selection, which read as importing a Profile a second time.
     pub(super) fn authorized_selection_ids(&self) -> BTreeSet<String> {
         self.account_profiles
             .iter()
-            .filter(|row| self.choice_authorized(row))
-            .map(|row| row.profile_id.clone())
+            .zip(&self.account_profile_sources)
+            .filter(|(row, source)| **source != ProfileSource::Local && self.choice_authorized(row))
+            .map(|(row, _)| row.profile_id.clone())
             .collect()
+    }
+
+    /// Whether the row at `index` is a Profile this computer already holds.
+    fn already_here(&self, index: usize) -> bool {
+        self.account_profile_sources.get(index) == Some(&ProfileSource::Local)
     }
     fn completed_selection_ids(&self) -> BTreeSet<String> {
         self.account_state
@@ -744,7 +755,8 @@ impl OnboardingView {
                 continue;
             }
             let profile = &self.account_profiles[index];
-            let checked = self.selection.checked.contains(&profile.profile_id);
+            let here = self.already_here(index);
+            let checked = !here && self.selection.checked.contains(&profile.profile_id);
             let _row = inspect::scope(
                 "ProfileRow",
                 "container",
@@ -772,14 +784,19 @@ impl OnboardingView {
                 theme::BORDER_W,
                 &scene::rrect(row.rect.x, row.rect.y, row.rect.w, row.rect.h, 8.0),
             );
+            // No checkbox on a Profile that is already here: there is no
+            // choice to make about it. Its name keeps the same inset, so the
+            // list still reads as one column.
             let check = Rect::new(row.rect.x + 12.0, row.rect.y + 11.0, 16.0, 16.0);
-            scene::stroke(
-                canvas,
-                root,
-                p.accent,
-                theme::BORDER_W,
-                &scene::rrect(check.x, check.y, check.w, check.h, 3.0),
-            );
+            if !here {
+                scene::stroke(
+                    canvas,
+                    root,
+                    p.accent,
+                    theme::BORDER_W,
+                    &scene::rrect(check.x, check.y, check.w, check.h, 3.0),
+                );
+            }
             if checked {
                 scene::fill(
                     canvas,

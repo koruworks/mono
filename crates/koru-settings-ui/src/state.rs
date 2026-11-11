@@ -227,6 +227,23 @@ pub struct AgentProviderRow {
     /// command for what `status` says is missing, and runs it in a terminal
     /// tab when pressed ([`Request::InstallAgent`](crate::Request::InstallAgent)).
     pub install: bool,
+    /// A newer release of the agent's CLI, when its channel offers one: the
+    /// row says *Update available* and carries *Update*
+    /// ([`Request::UpdateAgent`](crate::Request::UpdateAgent)). This row is
+    /// where the offer lives; nothing announces it on its own.
+    pub update: Option<AgentUpdate>,
+}
+
+/// **A newer release of one agent's CLI**, as the host's last check read it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentUpdate {
+    /// The version on this computer.
+    pub installed: String,
+    /// The version its channel offers.
+    pub latest: String,
+    /// Its updater is running now: the row says so and offers nothing to
+    /// press, because a running updater cannot be run again.
+    pub running: bool,
 }
 
 /// **Where a new chat starts**, as the host's settings hold it: the

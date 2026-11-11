@@ -90,6 +90,26 @@ impl CloudSyncPort for AgentCloudSync {
         write_replacing(&self.state_path, &body)
             .map_err(|_| ServiceError::retryable("cloud_sync_state_unavailable"))
     }
+
+    /// The desktop can open its Store to Cloud, so a Profile created with
+    /// the account starts with Cloud sync on (ADR-000-createdwithaccount).
+    fn starts_created_profiles_on(&self) -> bool {
+        true
+    }
+
+    /// The Store operation behind the Profile prompt's *Move everything*
+    /// (D258): the Profile and its Workspaces to Cloud, as one group. A
+    /// Profile already there writes nothing, so repeating it is free.
+    fn open_to_cloud(&self, profile: koru_account_core::ProfileId) -> Result<(), ServiceError> {
+        self.store_client()?
+            .set_profile_transport_mode(
+                profile,
+                koru_store_core::TransportMode::Cloud.as_storage(),
+                true,
+            )
+            .map(|_| ())
+            .map_err(|_| ServiceError::retryable("store_unavailable"))
+    }
 }
 
 /// Write `body` and replace `destination` with it, or leave `destination`

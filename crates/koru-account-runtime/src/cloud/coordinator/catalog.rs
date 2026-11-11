@@ -133,8 +133,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         self.ensure_catalog_permit(clock)?;
         let account = self.current_authority()?.owner.account;
         let inventory = self.host.root_inventory()?;
+        // Debug: the same count on every pass, every 30 s (2026-11-10).
         if inventory.held > 0 {
-            tracing::info!(
+            tracing::debug!(
                 target: "koru_cloud",
                 held = inventory.held,
                 "cloud pass: root units held back from Cloud"
@@ -440,7 +441,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             .join_root_unit(account, join_unit(unit), &updates.updates, Some(theirs))
         {
             Ok(CloudRootJoin::Applied { .. }) => {
-                tracing::info!(target: "koru_cloud", unit = ?unit, "cloud pass: root unit joined");
+                tracing::debug!(target: "koru_cloud", unit = ?unit, "cloud pass: root unit joined");
             }
             Ok(CloudRootJoin::Pending { .. }) => {
                 tracing::info!(
@@ -543,7 +544,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                     redacted_ops,
                     ..
                 } => {
-                    tracing::info!(
+                    tracing::debug!(
                         target: "koru_cloud",
                         unit = ?unit,
                         redacted_ops,

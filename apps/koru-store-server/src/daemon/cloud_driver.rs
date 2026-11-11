@@ -698,9 +698,13 @@ pub fn plan_for(permit: &CloudPermitV2) -> Result<(Plan, Scope), &'static str> {
         CloudPermitScopeV2::ProfileUnits {
             dataset,
             allowed_profile_units,
+            authority_workspace_id,
         } => {
             let CloudReplicaPrincipalV1::Profile { profile_id, .. } = *dataset else {
                 return Err("cloud_permit_scope");
+            };
+            let Some(authority_workspace) = authority_workspace_id else {
+                return Err("cloud_permit_authority_workspace");
             };
             let profile = ProfileId::from_uuid(profile_id.as_uuid());
             let mut private = false;
@@ -724,11 +728,13 @@ pub fn plan_for(permit: &CloudPermitV2) -> Result<(Plan, Scope), &'static str> {
                 },
                 Scope {
                     principal: *dataset,
-                    // No authorizing Workspace in v2: the Profile's units are
-                    // eligible on the Profile's own placement facts. The
-                    // carrier consults this for Document and Personal units
-                    // only, neither of which a Profile-units plan carries.
-                    eligibility_workspace: WorkspaceId::from_uuid(uuid::Uuid::nil()),
+                    // Not an eligibility input in v2 (the Profile's units are
+                    // eligible on its own placement facts), but the carrier's
+                    // addressing: every frame names this Workspace, and the
+                    // worker scopes the session to the one its credential is
+                    // issued under and refuses any other. Nil here made every
+                    // Profile session `sync_transfer_invalid`.
+                    eligibility_workspace: WorkspaceId::from_uuid(authority_workspace.as_uuid()),
                     profile: profile_id,
                     // A Profile dataset carries no manifest; the scope's
                     // manifest field is consulted for Document units only.

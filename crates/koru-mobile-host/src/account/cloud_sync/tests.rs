@@ -14,6 +14,8 @@ fn remembered() -> DeviceCloudSync {
         profile,
         ProfileCloudSync {
             enabled: true,
+            // The phone never writes it (mobile/CATCHUP.md).
+            starts_on: false,
             workspaces: std::collections::BTreeMap::from([(
                 workspace,
                 WorkspaceCloudSync {

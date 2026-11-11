@@ -272,6 +272,16 @@ pub enum CloudPermitScopeV2 {
         dataset: CloudReplicaPrincipalV1,
         /// Identity and/or Private of exactly this Profile.
         allowed_profile_units: Vec<ProfileUnitRef>,
+        /// The Workspace the session's credential is issued under: the v1
+        /// pair's Workspace, or the one the service chose for a v2
+        /// `profile_units` token (its credential's `workspace_id` claim).
+        /// The worker scopes a Profile session to that Workspace, as
+        /// `CloudPermitV1::authority_workspace_id` did, and refuses a frame
+        /// naming any other. It is the carrier's addressing, never an
+        /// admission input. `None` only in a permit built before this field
+        /// existed, which no carrier session can be planned from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        authority_workspace_id: Option<CloudId>,
     },
 }
 
@@ -327,11 +337,12 @@ impl CloudPermitV2 {
             CloudPermitScopeV2::ProfileUnits {
                 dataset,
                 allowed_profile_units,
+                authority_workspace_id,
             } => {
                 let CloudReplicaPrincipalV1::Profile { profile_id, .. } = dataset else {
                     return Err(HostCloudError::PermitScope);
                 };
-                if !profile_id.is_v4() {
+                if !profile_id.is_v4() || authority_workspace_id.is_some_and(|id| !id.is_v4()) {
                     return Err(HostCloudError::PermitIdentity);
                 }
                 // A v2 service never mints a permit that authorizes nothing,
@@ -456,6 +467,7 @@ impl CloudPermitV2 {
                 CloudPermitScopeV2::ProfileUnits {
                     dataset,
                     allowed_profile_units,
+                    authority_workspace_id: Some(permit.authority_workspace_id),
                 }
             }
         };

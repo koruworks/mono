@@ -882,6 +882,31 @@ impl SessionRuntime {
                         finish(&worker_active, generation);
                     }
                 }
+                // **A hosted call refused for its own reasons answers its
+                // requester, and the account stays as it is.** The retryable
+                // arm above already held this for outages; a *terminal*
+                // refusal fell through to the arm below and published the
+                // whole account as Failed. Selecting a Profile that had been
+                // removed from this computer was refused this way, and every
+                // surface then read "signed out" while the stored session was
+                // fine — and a Failed account stops its idle refresh, so the
+                // bearer then went stale for real.
+                Err(error)
+                    if hosted_command(&envelope.command)
+                        && !refreshed_first.get()
+                        && !speaks_for_the_session(error.code) =>
+                {
+                    hosted_recovery_started = None;
+                    if requester != 0 {
+                        notify(WorkerEvent::Result {
+                            owner_scope: scope,
+                            requester,
+                            generation,
+                            result: command_failure(&envelope.command, error.code),
+                        });
+                    }
+                    finish(&worker_active, generation);
+                }
                 Err(error) => {
                     hosted_recovery_started = None;
                     failure(generation, error.code, None, &worker_state, &notify);
@@ -962,6 +987,27 @@ fn log_persisted(owner_scope: u64, after_retry: bool) {
 /// removes the credential, and the Google link and rebind flows, whose
 /// continuation the service holds and `Retry` resumes. A command added later
 /// is on the credential's side until someone puts it here.
+/// The terminal refusals of a hosted call that are about the session rather
+/// than the call: the service no longer accepts the credential, or the
+/// credential this device holds is not the one the call was made for. These
+/// still take the account to Failed, because the person has to sign in again.
+/// Every other terminal code — a Profile not authorized, removed from this
+/// computer, bound to another account, a request the service did not like —
+/// is the call's own answer. A revoked session clears the credential in an
+/// arm of its own before this is asked.
+fn speaks_for_the_session(code: &str) -> bool {
+    matches!(
+        code,
+        "authentication_required"
+            | "credential_invalid"
+            | "credential_rejected"
+            | "credential_owner_mismatch"
+            | "credential_owner_unavailable"
+            | "account_repair_identity_mismatch"
+            | "session_revoked"
+    )
+}
+
 fn hosted_command(command: &AccountCommand) -> bool {
     matches!(
         command,

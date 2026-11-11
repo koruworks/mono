@@ -9,7 +9,6 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
         MANAGE_PROFILES,
         MenuAction::New.key(),
         MenuAction::Sync.key(),
-        MenuAction::Settings.key(),
     ] {
         let (mut view, mut workspace) = harness::container();
         let owner = ProfileSummary {
@@ -34,9 +33,7 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
         assert!(view.mouse_down(&mut workspace.ws, x, y, false));
         assert!(!view.explore.popover_open());
         let tab = view.tabs().active_tab();
-        if key == MenuAction::Settings.key() {
-            assert!(matches!(tab.view, TabView::Settings(_)));
-        } else if key == MenuAction::Sync.key() {
+        if key == MenuAction::Sync.key() {
             let TabView::Manage(manage) = &tab.view else {
                 panic!("Global sync must open Manage, not a document");
             };
@@ -57,8 +54,10 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
     }
 }
 
+/// The sync channel icons live on the Profile menu only: the workspace menu
+/// lost its Profile card on 2026-11-10 and lists workspaces.
 #[test]
-fn workspace_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
+fn profile_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
     use crate::manage::Page;
     use koru_agent_wire::{AccountProfileCloud, AccountStage, AccountState, CloudConnectionStage};
     use koru_draw::el::Key;
@@ -96,14 +95,10 @@ fn workspace_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
         .into_iter()
         .filter(|(shown, _, _)| *shown)
         .collect();
-        for profile_menu in [false, true, false, true] {
+        for _ in 0..2 {
             for &(_, part, page) in &destinations {
                 view.select(0);
-                if profile_menu {
-                    view.explore.toggle_profile_popover();
-                } else {
-                    view.explore.toggle_workspace_menu();
-                }
+                view.explore.toggle_profile_popover();
                 let key = Key::surface("explore-popover", part);
                 let (x, y) = view
                     .explore
@@ -126,4 +121,28 @@ fn workspace_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
             }
         }
     }
+}
+
+/// App settings left the Profile menu for a square of its own on the rail,
+/// between Help and the profile square: the app's settings are not a
+/// Profile's, and they are now one press away instead of two.
+#[test]
+fn the_rails_settings_square_sits_between_help_and_the_profile_and_opens_settings() {
+    let (mut view, mut workspace) = harness::container();
+    if view.explore.apps_rail_rects(view.rail_area()).settings.w <= 0.0 {
+        view.toggle_sidebar();
+    }
+    let rail = view.explore.apps_rail_rects(view.rail_area());
+    assert!(rail.settings.w > 0.0, "the square is drawn");
+    assert!(rail.help.y < rail.settings.y, "below Help");
+    assert!(rail.settings.y < rail.profile.y, "above the profile square");
+    assert_eq!(rail.settings.w, rail.help.w);
+
+    let (x, y) = rail.settings.centre();
+    assert!(view.mouse_down(&mut workspace.ws, x, y, false));
+    assert!(matches!(
+        view.tabs().active_tab().view,
+        TabView::Settings(_)
+    ));
+    assert!(!view.explore.popover_open());
 }

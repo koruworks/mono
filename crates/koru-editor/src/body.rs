@@ -189,6 +189,12 @@ pub struct Body {
     /// container's meta anyway; a box is never a row of its own, so nothing
     /// on a row could hold this without copying it onto every line inside.
     callout_boxes: HashMap<NodeId, CalloutBox>,
+    /// Every list block the rows are in. A list block is a container and
+    /// never a row, so this is the only place the body knows it holds one:
+    /// [`defer_pending`](Self::defer_pending) asks it whether a structural
+    /// change that names a list is a change to this view. Filled by
+    /// [`rebuild`](Self::rebuild) from the same walk as the boxes.
+    list_blocks: HashSet<NodeId>,
     /// Vertical room between rows that belongs to no row: a placeholder for
     /// an image still loading (`crate::pending_image`). Resolved to row
     /// indices before every reflow and given its `top` by the same
@@ -352,6 +358,7 @@ impl Body {
         let mut previous: HashMap<NodeId, Paragraph> =
             self.rows.drain(..).map(|r| (r.id, r)).collect();
         self.callout_boxes.clear();
+        self.list_blocks.clear();
         let mut reread = 0usize;
 
         // The title is the root's own text, and `walk_under` starts at its
@@ -510,6 +517,7 @@ impl Body {
                 // A ListBlock is a container, not a row. Push its style so its
                 // visible children render markers and derive their ordinals.
                 let _ = previous.remove(&id);
+                self.list_blocks.insert(id);
                 let style = node.meta.list_style.unwrap_or(koru_core::ListStyle::Bullet);
                 list_stack.push((walk_depth + 1, style, Vec::new()));
                 continue;
@@ -768,7 +776,18 @@ impl Body {
         // Scoped: a change under another document is not this view's business.
         // `structural_touches` answers conservatively — an unnameable change
         // counts as ours.
-        if batch.structural_touches(self.root, |id| self.index_of(id).is_some()) {
+        //
+        // **A container this body holds counts as its row.** A list block and
+        // a callout are walked and never become rows, and a node created
+        // inside one names only the container and itself — neither the root
+        // nor a row. Asking for rows alone judged a bullet a peer or the MCP
+        // bridge added to be another document's, and the page kept the old
+        // list until something else rebuilt it.
+        if batch.structural_touches(self.root, |id| {
+            self.index_of(id).is_some()
+                || self.list_blocks.contains(&id)
+                || self.callout_boxes.contains_key(&id)
+        }) {
             self.pending.structural = true;
         }
         // **`touched` needs scoping too, and for the same reason.** Creating a
@@ -3197,6 +3216,58 @@ mod sync_tests {
         assert!(body.is_stale());
         body.catch_up(&ws);
         assert!(body.rows.iter().any(|r| r.text == "mine"));
+    }
+
+    /// **An item created inside a list or a box reaches the view.**
+    ///
+    /// A list block and a callout are containers, not rows, and a create
+    /// names its parent and the new node: neither was the root or a row this
+    /// body held, so the change was judged another document's and dropped.
+    /// A bullet added by the MCP bridge or a peer stayed off the page until
+    /// something else rebuilt it — a paragraph added beside the list, or a
+    /// local edit. Found 2026-11-11, saving bullets from the MCP document
+    /// view with the document open in a window.
+    #[test]
+    fn an_item_created_inside_a_list_or_a_box_makes_the_body_stale() {
+        let (mut ws, one, two) = two_documents(2);
+        let list = ws
+            .insert(Parent::Node(one), Node::list_block().unwrap())
+            .unwrap();
+        ws.insert(Parent::Node(list), Node::paragraph("first").unwrap())
+            .unwrap();
+        let boxed = ws
+            .insert(Parent::Node(one), Node::callout(None, None).unwrap())
+            .unwrap();
+        ws.insert(Parent::Node(boxed), Node::paragraph("in the box").unwrap())
+            .unwrap();
+        let elsewhere = ws
+            .insert(Parent::Node(two), Node::list_block().unwrap())
+            .unwrap();
+        ws.insert(Parent::Node(elsewhere), Node::paragraph("theirs").unwrap())
+            .unwrap();
+        let mut body = body_over(&ws, one);
+        assert!(!body.is_stale());
+
+        for (container, text) in [(list, "second"), (boxed, "a second line")] {
+            ws.insert(Parent::Node(container), Node::paragraph(text).unwrap())
+                .unwrap();
+            body.defer_pending(&ws);
+            assert!(body.is_stale(), "{text:?} was created in this document");
+            body.catch_up(&ws);
+            assert!(
+                body.rows.iter().any(|row| row.text == text),
+                "{text:?} is a row without anything else rebuilding the page"
+            );
+        }
+
+        // A list in the other document is still not this view's business.
+        ws.insert(
+            Parent::Node(elsewhere),
+            Node::paragraph("theirs too").unwrap(),
+        )
+        .unwrap();
+        body.defer_pending(&ws);
+        assert!(!body.is_stale(), "an item in the other document's list");
     }
 
     /// **A box restyled by a peer or an agent shows its new look.** The look

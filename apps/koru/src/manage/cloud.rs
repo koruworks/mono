@@ -36,8 +36,18 @@
 //! ├────────────────────────────────────────────┤
 //! │ [tile] Scratch                   [Sign in…] │   that Profile's page
 //! │        Not signed in                        │
-//! └────────────────────────────────────────────┘
+//! ├────────────────────────────────────────────┤
+//! │ [tile] Family                        (off)  │   the account's Profile
+//! │        Not on this computer                 │   that is not here: on
+//! └────────────────────────────────────────────┘   brings it, and it syncs
 //! ```
+//!
+//! **The account's Profiles that are not on this computer are rows here**
+//! (maintainer, 2026-11-11), after the ones that are. They were the nav's
+//! *Other Profiles*, each with a *Connect*; this is the page that answers
+//! *which profiles sync*, so this is where one is turned on. The switch is
+//! the controller's inline connect (`Intent::Connect`), and a Profile brought
+//! here starts with Cloud sync on (ADR-000-createdwithaccount).
 //!
 //! **Everything here is the controller's**, as Manage Profiles' Cloud card,
 //! switches and progress section were: the same `Intent`s, the same words
@@ -82,13 +92,19 @@ const LEAD: &str = "One subscription covers every profile on this computer. Each
 const ACCOUNT_TITLE: &str = "Account";
 const ACCOUNTS: &str = "Accounts\u{2026}";
 const SIGNED_IN_HINT: &str = "Signed in on this computer";
+/// Before the time Koru Cloud last accepted the sign-in.
+const CHECKED: &str = "checked";
 const SIGNING_IN: &str = "Signing in\u{2026}";
 const NOT_SIGNED_IN: &str = "Not signed in";
 const SIGNED_OUT_HINT: &str = "Sign in to sync your profiles through Koru Cloud.";
 pub(super) const SYNC_TITLE: &str = "Which profiles sync";
 const NOT_SYNCING: &str = "Not syncing";
+const NOT_HERE: &str = "Not on this computer";
 const SIGNED_IN: &str = "Signed in";
 const SIGN_IN: &str = "Sign in\u{2026}";
+/// On a Profile this sign-in is not linked to: its page, where it is
+/// connected again.
+pub(super) const CONNECT: &str = "Connect\u{2026}";
 pub(super) const SHOW_PROGRESS: &str = "Show sync progress";
 pub(super) const HIDE_PROGRESS: &str = "Hide sync progress";
 const DIFFERENT_TITLE: &str = "This device has Profiles from another account";
@@ -168,6 +184,9 @@ pub(crate) struct CloudLaid {
     /// *Which profiles sync*, its title included.
     pub sync_card: Rect,
     pub rows: Vec<SyncRow>,
+    /// The account's Profiles that are not on this computer, after `rows`:
+    /// the same row, whose switch brings the Profile here.
+    pub elsewhere: Vec<SyncRow>,
     pub empty: Option<Rect>,
 }
 
@@ -428,7 +447,23 @@ impl ManageView {
             ry = row.rect.y + row.rect.h;
             rows.push(row);
         }
-        let empty = rows.is_empty().then(|| {
+        // Then the account's Profiles that are not on this computer.
+        let missing: Vec<(ProfileId, String)> = self
+            .c
+            .missing_account_profiles()
+            .iter()
+            .filter_map(|row| {
+                let id = ProfileId::parse(&row.profile_id)?;
+                Some((id, row.name.clone().unwrap_or_else(|| "Profile".into())))
+            })
+            .collect();
+        let mut elsewhere = Vec::new();
+        for (profile, name) in &missing {
+            let row = self.lay_elsewhere_row(column, ry, *profile, name, &mut controls);
+            ry = row.rect.y + row.rect.h;
+            elsewhere.push(row);
+        }
+        let empty = (rows.is_empty() && elsewhere.is_empty()).then(|| {
             let h = CardRow::MIN_H;
             let rect = Rect::new(column.x, ry, column.w, h);
             ry += h;
@@ -452,6 +487,7 @@ impl ManageView {
                 subscription,
                 sync_card,
                 rows,
+                elsewhere,
                 empty,
             }),
             controls,
@@ -477,15 +513,23 @@ impl ManageView {
                 koru_i18n::t(crate::format::lang(), TextKey::NotSetUpInThisBuild).to_owned(),
             ),
             AccountStage::SignedIn => {
-                let label = self.c.signed_in_email().map(str::to_owned).or_else(|| {
-                    account.active_account_id.as_deref().map(|id| {
-                        koru_i18n::t(crate::format::lang(), TextKey::AccountSwitcherLabel)
-                            .replace("{}", &id[id.len().saturating_sub(8)..])
-                    })
-                });
+                // The email, or plain *Signed in* — never the tail of an
+                // account id (2026-11-10), which tells a person nothing.
+                // …and when Koru Cloud last accepted the sign-in: every
+                // start refreshes it, and nothing on screen said so.
+                let hint = match account
+                    .session_checked_at_millis
+                    .map(|at| crate::format::absolute_local(crate::format::lang(), at))
+                    .filter(|when| !when.is_empty())
+                {
+                    Some(when) => format!("{SIGNED_IN_HINT} \u{b7} {CHECKED} {when}"),
+                    None => SIGNED_IN_HINT.to_owned(),
+                };
                 (
-                    label.unwrap_or_else(|| SIGNED_IN.to_owned()),
-                    SIGNED_IN_HINT.to_owned(),
+                    self.c
+                        .signed_in_email()
+                        .map_or_else(|| SIGNED_IN.to_owned(), str::to_owned),
+                    hint,
                 )
             }
             AccountStage::Restoring
@@ -643,7 +687,11 @@ impl ManageView {
         // The trailing control: the switch for a signed-in Profile, *Sign
         // in…* for any other — and nothing at all in a build with no Koru
         // Cloud, whose sub-line says why.
-        let toggle = signed_in.then(|| {
+        // A Profile this sign-in is not linked to has no switch to offer:
+        // *Connect…* opens its page, where it is linked again.
+        let unlinked = self.c.profile_unlinked_from_sign_in(profile);
+        let action = if unlinked { CONNECT } else { SIGN_IN };
+        let toggle = (signed_in && !unlinked).then(|| {
             Toggle::new(on)
                 .enabled(availability == SyncAvailability::Enabled)
                 .pending(pending)
@@ -653,7 +701,7 @@ impl ManageView {
             Some(toggle) => (toggle.width(), Toggle::H),
             None if !sign_in => (0.0, 0.0),
             None => (
-                ActionButton::new(SIGN_IN, ActionStyle::Secondary, None).width(&mut self.engine),
+                ActionButton::new(action, ActionStyle::Secondary, None).width(&mut self.engine),
                 ActionButton::H,
             ),
         };
@@ -688,7 +736,7 @@ impl ManageView {
             None => controls.push(Placed {
                 control: Control::ProfileSignIn(profile.id),
                 rect: slot,
-                label: SIGN_IN.into(),
+                label: action.into(),
                 look: Look::Action(ActionStyle::Secondary),
             }),
         }
@@ -735,6 +783,70 @@ impl ManageView {
         }
     }
 
+    /// An account Profile that is not on this computer: its tile, name and
+    /// where it stands, then a switch that brings it here. While its connect
+    /// is out the switch shows where it is going and is no control; while
+    /// another Profile's is, none of them is — one connect at a time is the
+    /// controller's rule. After a failed attempt the switch is the retry.
+    fn lay_elsewhere_row(
+        &mut self,
+        column: Rect,
+        y: f32,
+        profile: ProfileId,
+        name: &str,
+        controls: &mut Vec<Placed>,
+    ) -> SyncRow {
+        let x = column.x + CardRow::PAD_X;
+        let right = column.x + column.w - CardRow::PAD_X;
+        let connecting = self.c.inline_connect() == Some((profile, false));
+        let pressable = self.c.connect_label(profile).is_some();
+        let toggle = Toggle::new(connecting)
+            .enabled(pressable)
+            .pending(connecting);
+        let text_x = x + ROW_TILE + TILE_GAP;
+        let text_w = (right - toggle.width() - CONTROL_GAP - text_x).max(1.0);
+        let name_style = theme::role::row();
+        let name_line = name_style.metrics.line_height;
+        let name_text = self.engine.elided(name, name_style, text_w);
+        let name_w = self
+            .engine
+            .simple_layout(&name_text, name_style)
+            .width()
+            .min(text_w);
+        let name_rect = Rect::new(text_x, y + CardRow::PAD_Y, name_w, name_line);
+        let sub_text = self
+            .c
+            .profile_connection_status(profile)
+            .unwrap_or(NOT_HERE)
+            .to_owned();
+        let sub_h = KoruTextParagraph::new(&sub_text, theme::role::meta(), "", theme::p().text_dim)
+            .measure(&mut self.engine, text_w);
+        let sub = Rect::new(text_x, name_rect.y + name_line + 2.0, text_w, sub_h);
+        let head_h = (CardRow::PAD_Y * 2.0 + name_line + 2.0 + sub_h).max(CardRow::MIN_H);
+        let head = Rect::new(column.x, y, column.w, head_h);
+        let tile = Rect::new(x, y + (head_h - ROW_TILE) * 0.5, ROW_TILE, ROW_TILE);
+        let slot = CardRow::control_slot(head, toggle.width(), Toggle::H);
+        if pressable {
+            controls.push(Placed {
+                control: Control::ProfileBring(profile),
+                rect: slot,
+                label: format!("Sync {name} to this computer"),
+                look: Look::Toggle(toggle),
+            });
+        }
+        SyncRow {
+            profile,
+            rect: head,
+            tile,
+            name: name_rect,
+            name_text,
+            sub,
+            sub_text,
+            toggle: Some((toggle, slot, pressable)),
+            progress: None,
+        }
+    }
+
     /// A row's sub-line: *Not signed in*, or who it is signed in as and how
     /// its Cloud sync stands, in today's words (decision 8).
     fn sync_sub_line(&self, profile: &ProfileSummary, signed_in: bool, on: bool) -> String {
@@ -743,6 +855,12 @@ impl ManageView {
         }
         if !signed_in {
             return NOT_SIGNED_IN.to_owned();
+        }
+        // Not linked to the sign-in in use: the email in front of the line
+        // would say the opposite, so the line is the reason alone.
+        if self.c.profile_unlinked_from_sign_in(profile) {
+            return koru_i18n::t(crate::format::lang(), TextKey::CloudSyncNotLinkedReason)
+                .to_owned();
         }
         let who = self
             .c
@@ -787,6 +905,15 @@ impl ManageView {
             // D258's question comes up from the controller when this turns
             // the Profile's sync on, as it does from the Profile's page.
             Control::ProfileSync(profile) => Intent::CloudSync(profile),
+            // Bring the account's Profile to this computer — what the nav's
+            // *Connect* did. It then syncs by itself
+            // (ADR-000-createdwithaccount).
+            Control::ProfileBring(profile) => {
+                if self.c.connect_label(profile).is_none() {
+                    return Some(false);
+                }
+                Intent::Connect(profile)
+            }
             Control::ProfileSignIn(profile) => {
                 self.show(Page::Profile(profile));
                 self.reveal_sign_in();
@@ -1011,13 +1138,24 @@ impl ManageView {
             |rec| {
                 rec.property("rows", laid.rows.len(), "the local Profiles");
                 rec.property(
+                    "not on this computer",
+                    laid.elsewhere.len(),
+                    "missing_account_profiles",
+                );
+                rec.property(
                     "switch",
                     "Intent::CloudSync (D258 on turning on)",
                     "controller",
                 );
             },
         );
-        let dividers: Vec<f32> = laid.rows.iter().skip(1).map(|row| row.rect.y).collect();
+        let dividers: Vec<f32> = laid
+            .rows
+            .iter()
+            .chain(&laid.elsewhere)
+            .skip(1)
+            .map(|row| row.rect.y)
+            .collect();
         let _card =
             Card::new(Some(SYNC_TITLE)).draw(canvas, root, &mut self.engine, r, &dividers, 1.0);
         if let Some(rect) = laid.empty {
@@ -1045,17 +1183,26 @@ impl ManageView {
             let Some(profile) = profiles.iter().find(|profile| profile.id == row.profile) else {
                 continue;
             };
-            self.paint_sync_row(canvas, root, row, profile);
+            let tile = Tile {
+                icon: profile.icon.as_deref(),
+                color: profile.color.as_deref(),
+                name: &profile.name,
+            };
+            self.paint_sync_row(canvas, root, row, tile);
+        }
+        // Not on this computer: no icon or color of its own is known here,
+        // so the tile is the name's.
+        for row in &laid.elsewhere {
+            let tile = Tile {
+                icon: None,
+                color: None,
+                name: &row.name_text,
+            };
+            self.paint_sync_row(canvas, root, row, tile);
         }
     }
 
-    fn paint_sync_row(
-        &mut self,
-        canvas: &mut Scene,
-        root: Affine,
-        row: &SyncRow,
-        profile: &ProfileSummary,
-    ) {
+    fn paint_sync_row(&mut self, canvas: &mut Scene, root: Affine, row: &SyncRow, tile: Tile<'_>) {
         let p = theme::p();
         let r = row.rect;
         let _row = inspect::scope(
@@ -1076,12 +1223,7 @@ impl ManageView {
                 rec.property("progress open", row.progress.is_some(), "decision 20");
             },
         );
-        Tile {
-            icon: profile.icon.as_deref(),
-            color: profile.color.as_deref(),
-            name: &profile.name,
-        }
-        .draw(canvas, root, &mut self.engine, row.tile);
+        tile.draw(canvas, root, &mut self.engine, row.tile);
         koru_ui::text_paragraph::draw_line(
             canvas,
             root,
@@ -1115,6 +1257,7 @@ impl ManageView {
         }
         for control in [
             Control::ProfileSync(row.profile),
+            Control::ProfileBring(row.profile),
             Control::ProfileSignIn(row.profile),
             Control::Progress(row.profile),
         ] {

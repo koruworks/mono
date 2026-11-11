@@ -28,15 +28,24 @@ struct FakePort {
     workspaces: Mutex<Vec<(ProfileId, WorkspaceId)>>,
     state: Mutex<DeviceCloudSync>,
     stores: AtomicUsize,
+    /// Whether this host starts a created Profile's Cloud sync on — the
+    /// desktop does, and a host that cannot open its Store does not.
+    starts_on: AtomicBool,
+    /// The Store cannot be reached, so it cannot be opened to Cloud.
+    closed: AtomicBool,
+    /// Every Profile the Store was opened to Cloud for, in order.
+    opened: Mutex<Vec<ProfileId>>,
 }
 
 impl FakePort {
     fn with(workspaces: Vec<(ProfileId, WorkspaceId)>) -> Arc<Self> {
         Arc::new(Self {
             workspaces: Mutex::new(workspaces),
-            state: Mutex::new(DeviceCloudSync::default()),
-            stores: AtomicUsize::new(0),
+            ..Default::default()
         })
+    }
+    fn opened(&self) -> Vec<ProfileId> {
+        self.opened.lock().unwrap().clone()
     }
     fn saved(&self) -> DeviceCloudSync {
         self.state.lock().unwrap().clone()
@@ -57,6 +66,16 @@ impl CloudSyncPort for FakePort {
     fn store(&self, state: &DeviceCloudSync) -> Result<(), ServiceError> {
         self.stores.fetch_add(1, Ordering::AcqRel);
         *self.state.lock().unwrap() = state.clone();
+        Ok(())
+    }
+    fn starts_created_profiles_on(&self) -> bool {
+        self.starts_on.load(Ordering::Acquire)
+    }
+    fn open_to_cloud(&self, profile: ProfileId) -> Result<(), ServiceError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ServiceError::retryable("store_unavailable"));
+        }
+        self.opened.lock().unwrap().push(profile);
         Ok(())
     }
 }
@@ -84,6 +103,8 @@ struct HostedAccount {
     challenges: Mutex<BTreeMap<uuid::Uuid, WorkspaceId>>,
     paths: Mutex<Vec<String>>,
     minted: AtomicUsize,
+    /// Whether the account has Koru Cloud.
+    subscribed: AtomicBool,
 }
 
 impl HostedAccount {
@@ -99,6 +120,13 @@ impl HostedAccount {
                     || path.ends_with("/cloud/activation/complete")
                     || path.ends_with("/cloud/disable")
             })
+            .count()
+    }
+    /// Reads of the account's subscription.
+    fn subscription_reads(&self) -> usize {
+        self.calls()
+            .iter()
+            .filter(|path| path.starts_with("/v1/account/subscription"))
             .count()
     }
     /// Reads of one Workspace's lifecycle row.
@@ -179,6 +207,17 @@ impl Transport for HostedAccount {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
         let path = request.path_and_query.clone();
         self.paths.lock().unwrap().push(path.clone());
+        if path.starts_with("/v1/account/subscription") {
+            let subscriptions = if self.subscribed.load(Ordering::Acquire) {
+                serde_json::json!([{"status": "active"}])
+            } else {
+                serde_json::json!([])
+            };
+            return Self::json(&serde_json::json!({
+                "subscriptions": subscriptions,
+                "next_cursor": null,
+            }));
+        }
         if path == "/v1/account/cloud/workspaces" {
             let rows = self.rows.lock().unwrap();
             return Self::json(&CloudWorkspacePageV1 {
@@ -786,4 +825,317 @@ fn a_workspace_another_device_turned_off_shows_off_and_can_be_turned_on_again() 
     let row = fixture.hosted.row(local[0].1).unwrap();
     assert!(row.enabled);
     assert_eq!(row.version, 3);
+}
+
+// ----- a Profile created with the account (ADR-000-createdwithaccount) ----
+
+/// A desktop: it can open its Store to Cloud, so a created Profile starts on.
+fn created_with_the_account(hosted: HostedAccount, subscribed: bool, count: usize) -> Fixture {
+    let profile = hosted.profile.expect("the fixture account owns a Profile");
+    hosted.subscribed.store(subscribed, Ordering::Release);
+    let fixture = fixture(hosted, workspaces(profile, count));
+    fixture.port.starts_on.store(true, Ordering::Release);
+    let account = fixture.service.durable_owner.unwrap().account;
+    fixture.service.cloud_sync_starts_on(account, profile);
+    fixture
+}
+
+fn a_new_account_profile() -> HostedAccount {
+    HostedAccount {
+        profile: Some(ProfileId::new()),
+        ..Default::default()
+    }
+}
+
+fn remembered(fixture: &Fixture) -> crate::account::cloud_sync::ProfileCloudSync {
+    fixture
+        .port
+        .saved()
+        .accounts
+        .values()
+        .next()
+        .expect("the account has remembered state")
+        .profiles[&fixture.profile]
+        .clone()
+}
+
+/// **Nobody presses the switch.** A Profile created with a Koru Cloud account
+/// syncs on the first pass: the Store is opened to Cloud, every Workspace is
+/// activated, and the row answers as a pressed switch would.
+#[test]
+fn a_profile_created_with_the_account_starts_syncing_by_itself() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), true, 2);
+    assert!(remembered(&fixture).starts_on);
+    assert!(
+        !remembered(&fixture).enabled,
+        "nothing is on before the pass"
+    );
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+
+    let rows = fixture.inspect().unwrap();
+    assert_eq!(
+        (
+            rows[0].enabled,
+            rows[0].workspaces,
+            rows[0].synced_workspaces,
+            rows[0].error.clone()
+        ),
+        (true, 2, 2, None)
+    );
+    assert_eq!(fixture.port.opened(), vec![fixture.profile]);
+    let saved = remembered(&fixture);
+    assert!(saved.enabled);
+    assert!(!saved.starts_on, "the intention is spent once it is done");
+
+    // And it is an ordinary switched-on Profile from here: the next pass
+    // opens nothing and activates nothing.
+    let mutations = fixture.hosted.lifecycle_calls();
+    fixture.inspect().unwrap();
+    assert_eq!(fixture.hosted.lifecycle_calls(), mutations);
+    assert_eq!(fixture.port.opened().len(), 1);
+}
+
+/// With no Koru Cloud there is nothing to start, and the account is asked
+/// once rather than on every heartbeat. The pass after the settings page
+/// sees a subscription is the one that starts it.
+#[test]
+fn it_waits_for_koru_cloud_without_asking_on_every_pass() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), false, 1);
+    for _ in 0..3 {
+        let rows = fixture.inspect().unwrap();
+        assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (false, 0));
+    }
+    assert_eq!(fixture.hosted.subscription_reads(), 1);
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+    assert!(fixture.port.opened().is_empty());
+    assert!(
+        remembered(&fixture).starts_on,
+        "still waiting, not forgotten"
+    );
+
+    // They subscribe, and the Koru Cloud page asks — which is remembered.
+    fixture.hosted.subscribed.store(true, Ordering::Release);
+    let outcome = fixture
+        .service
+        .execute(
+            7,
+            AccountCommand::InspectCloudSubscription { request_id: 21 },
+            Some(&restored()),
+            &Cancel(Arc::new(AtomicBool::new(false))),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(
+        outcome.result,
+        AccountOperationResult::CloudSubscription {
+            request_id: 21,
+            current: Some(true)
+        }
+    );
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert_eq!(
+        fixture.hosted.subscription_reads(),
+        2,
+        "the pass read the page's answer, not the account again"
+    );
+}
+
+/// The Store half comes first. While it cannot be written the hosted half is
+/// not started — documents would sync with every file held back — and the
+/// pass after the Store answers finishes the job.
+#[test]
+fn a_store_that_cannot_be_opened_starts_nothing_until_it_can() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), true, 1);
+    fixture.port.closed.store(true, Ordering::Release);
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (false, 0));
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+    assert!(remembered(&fixture).starts_on);
+
+    fixture.port.closed.store(false, Ordering::Release);
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert!(!remembered(&fixture).starts_on);
+}
+
+/// A Workspace the account refuses does not spend the intention: the others
+/// sync, and the refused one is tried again on the next pass.
+#[test]
+fn a_refused_workspace_is_tried_again_rather_than_given_up() {
+    let profile = ProfileId::new();
+    let refused = workspaces(profile, 2)[1].1;
+    let mut fixture = created_with_the_account(
+        HostedAccount {
+            profile: Some(profile),
+            unauthorized: BTreeSet::from([refused]),
+            ..Default::default()
+        },
+        true,
+        2,
+    );
+
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert_eq!(rows[0].error.as_deref(), Some("workspace_not_authorized"));
+    let saved = remembered(&fixture);
+    assert!(saved.enabled && saved.starts_on);
+}
+
+/// **A person's answer replaces the default.** Turning the switch off before
+/// anything started leaves it off for good, and a creation retried afterwards
+/// does not arm it again.
+#[test]
+fn a_switch_somebody_moved_is_never_overridden_by_the_default() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), false, 1);
+    let rows = fixture.set(false).unwrap();
+    assert!(!rows[0].enabled);
+    assert!(!remembered(&fixture).starts_on);
+
+    let account = fixture.service.durable_owner.unwrap().account;
+    fixture
+        .service
+        .cloud_sync_starts_on(account, fixture.profile);
+    fixture.hosted.subscribed.store(true, Ordering::Release);
+    fixture.service.cloud_subscribed = None;
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (false, 0));
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+    assert!(fixture.port.opened().is_empty());
+}
+
+/// A host that cannot open its Store — the phone today — remembers no
+/// intention at all, so nothing starts half-way there.
+#[test]
+fn a_host_that_cannot_open_its_store_starts_nothing() {
+    let hosted = a_new_account_profile();
+    let profile = hosted.profile.unwrap();
+    hosted.subscribed.store(true, Ordering::Release);
+    let mut fixture = fixture(hosted, workspaces(profile, 1));
+    let account = fixture.service.durable_owner.unwrap().account;
+    fixture.service.cloud_sync_starts_on(account, profile);
+    assert_eq!(fixture.port.stores.load(Ordering::Acquire), 0);
+
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (false, 0));
+    assert_eq!(fixture.hosted.subscription_reads(), 0);
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+}
+
+/// **A Profile chosen from the account has nothing here until the Store is
+/// open** — that was the deadlock: every pull refused `mode_refuses_transport`
+/// while the Store waited for a Workspace before it would open. It opens on
+/// the first pass with no Workspace at all, once, and the switch reads on.
+/// The Workspace that then arrives was already syncing, so nothing is
+/// activated and the intention is spent.
+#[test]
+fn a_profile_chosen_from_the_account_opens_before_anything_has_arrived() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), true, 0);
+    for _ in 0..3 {
+        let rows = fixture.inspect().unwrap();
+        assert_eq!((rows[0].enabled, rows[0].workspaces), (true, 0));
+    }
+    assert_eq!(
+        fixture.port.opened(),
+        vec![fixture.profile],
+        "opened once, not on every pass"
+    );
+    assert!(remembered(&fixture).starts_on, "nothing has arrived yet");
+
+    let arrived = WorkspaceId::new();
+    fixture.hosted.enabled_elsewhere(arrived);
+    fixture.port.created(fixture.profile, arrived);
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert_eq!(
+        fixture.hosted.lifecycle_calls(),
+        0,
+        "it was already syncing"
+    );
+    assert!(!remembered(&fixture).starts_on);
+    assert_eq!(fixture.port.opened().len(), 1);
+}
+
+/// **A default never undoes somebody's "off".** A Workspace another device
+/// turned off stays off when its Profile starts by itself here; a pressed
+/// switch is the only thing that turns it back on.
+#[test]
+fn a_workspace_turned_off_elsewhere_is_not_turned_on_by_the_default() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), true, 0);
+    let off = WorkspaceId::new();
+    fixture.hosted.enabled_elsewhere(off);
+    fixture.hosted.disabled_elsewhere(off);
+    fixture.port.created(fixture.profile, off);
+
+    let rows = fixture.inspect().unwrap();
+    assert_eq!(
+        (rows[0].synced_workspaces, rows[0].error.clone()),
+        (0, None)
+    );
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+    assert!(!fixture.hosted.row(off).unwrap().enabled);
+
+    // The person's own switch still can.
+    let rows = fixture.set(true).unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+}
+
+/// **Cloud sync on means the Store is open to Cloud.** The switch opens it
+/// in the same command — there is no second answer to give — and once is
+/// enough.
+#[test]
+fn the_switch_opens_the_store_itself() {
+    let profile = ProfileId::new();
+    let mut fixture = fixture(
+        HostedAccount {
+            profile: Some(profile),
+            ..Default::default()
+        },
+        workspaces(profile, 1),
+    );
+    fixture.port.starts_on.store(true, Ordering::Release);
+    let rows = fixture.set(true).unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert_eq!(fixture.port.opened(), vec![profile]);
+    fixture.inspect().unwrap();
+    fixture.inspect().unwrap();
+    assert_eq!(fixture.port.opened().len(), 1, "not on every heartbeat");
+}
+
+/// A Profile left switched on with its Store never opened — every install
+/// that turned the switch on and did not answer the old question — is opened
+/// by the first pass, with no Workspace here and nothing pressed.
+#[test]
+fn a_profile_already_on_is_opened_by_the_next_pass() {
+    let profile = ProfileId::new();
+    let mut fixture = fixture(
+        HostedAccount {
+            profile: Some(profile),
+            ..Default::default()
+        },
+        Vec::new(),
+    );
+    fixture.port.starts_on.store(true, Ordering::Release);
+    let account = fixture.service.durable_owner.unwrap().account;
+    fixture
+        .port
+        .state
+        .lock()
+        .unwrap()
+        .accounts
+        .entry(account.to_string())
+        .or_default()
+        .profiles
+        .entry(profile)
+        .or_default()
+        .enabled = true;
+
+    let rows = fixture.inspect().unwrap();
+    assert!(rows[0].enabled);
+    assert_eq!(fixture.port.opened(), vec![profile]);
+    assert_eq!(
+        fixture.hosted.subscription_reads(),
+        0,
+        "it is already on: nothing to decide"
+    );
 }

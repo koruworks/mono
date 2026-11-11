@@ -17,8 +17,8 @@ use crate::values::{
     CaretWidthChoice, CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput,
     DictationLanguage, DictationShortcut, DictationTier, DocTextSizeSetting, Field, FontSetting,
     GlobalShortcut, IconPackChoice, LanguageChoice, PopoutCloseChoice, ReasoningChoice, RgbColor,
-    TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice, ViewModeChoice,
-    Zoom, validate_endpoint, validate_model, validate_skin_tone,
+    ScrollSpeedChoice, TerminalCursorBlink, TerminalCursorHeight, TerminalCursorWidth, ThemeChoice,
+    ViewModeChoice, Zoom, validate_endpoint, validate_model, validate_skin_tone,
 };
 
 #[cfg(test)]
@@ -170,11 +170,27 @@ pub struct GlobalSettings {
     /// derived from the other.
     #[serde(default)]
     pub base_color_dark: Option<RgbColor>,
+    /// The accent — the colour a primary action wears — for the light
+    /// theme, as `#rrggbb`; `null` follows the theme (2026-11-10).
+    #[serde(default)]
+    pub accent_color_light: Option<RgbColor>,
+    /// The same for the dark theme, kept apart for the base colour's reason.
+    #[serde(default)]
+    pub accent_color_dark: Option<RgbColor>,
     pub density: DensityChoice,
+    /// Absent from a file written before it existed, which reads as the
+    /// default.
+    #[serde(default)]
+    pub scroll_speed: ScrollSpeedChoice,
     pub zoom: Zoom,
     pub default_view_mode: ViewModeChoice,
     pub default_canvas_background: CanvasBackground,
     pub pinned_show_title: bool,
+    /// **Workspace tabs**: each workspace keeps its own tabs (`true`, *Per
+    /// workspace*) or the open tabs stay as you switch (`false`, *Shared*,
+    /// the default). Absent from an older file, which reads as *Shared*.
+    #[serde(default)]
+    pub tabs_per_workspace: bool,
     pub popout_close: PopoutCloseChoice,
     pub emoji_skin_tone: String,
     pub dictation_gesture: DictationGesture,
@@ -278,11 +294,15 @@ impl Default for GlobalSettings {
             document_text_size: DocTextSizeSetting::FollowDefault,
             base_color_light: None,
             base_color_dark: None,
+            accent_color_light: None,
+            accent_color_dark: None,
             density: DensityChoice::default(),
+            scroll_speed: ScrollSpeedChoice::default(),
             zoom: Zoom::default(),
             default_view_mode: ViewModeChoice::default(),
             default_canvas_background: CanvasBackground::default(),
             pinned_show_title: false,
+            tabs_per_workspace: false,
             popout_close: PopoutCloseChoice::default(),
             emoji_skin_tone: String::new(),
             dictation_gesture: DictationGesture::default(),
@@ -362,8 +382,17 @@ pub struct GlobalPatch {
     /// The same for the dark theme.
     #[serde(skip_serializing_if = "Field::is_unchanged")]
     pub base_color_dark: Field<RgbColor>,
+    /// `#rrggbb` sets the light theme's accent; `null` puts the theme's own
+    /// back, which Settings offers as the row's first swatch.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub accent_color_light: Field<RgbColor>,
+    /// The same for the dark theme.
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub accent_color_dark: Field<RgbColor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub density: Option<DensityChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scroll_speed: Option<ScrollSpeedChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zoom: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +401,8 @@ pub struct GlobalPatch {
     pub default_canvas_background: Option<CanvasBackground>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_show_title: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tabs_per_workspace: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub popout_close: Option<PopoutCloseChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -456,11 +487,15 @@ impl GlobalPatch {
             || self.document_text_size.is_some()
             || !self.base_color_light.is_unchanged()
             || !self.base_color_dark.is_unchanged()
+            || !self.accent_color_light.is_unchanged()
+            || !self.accent_color_dark.is_unchanged()
             || self.density.is_some()
+            || self.scroll_speed.is_some()
             || self.zoom.is_some()
             || self.default_view_mode.is_some()
             || self.default_canvas_background.is_some()
             || self.pinned_show_title.is_some()
+            || self.tabs_per_workspace.is_some()
             || self.popout_close.is_some()
             || self.emoji_skin_tone.is_some()
             || self.dictation_gesture.is_some()
@@ -647,9 +682,11 @@ impl GlobalPatch {
             chat_font,
             document_text_size,
             density,
+            scroll_speed,
             default_view_mode,
             default_canvas_background,
             pinned_show_title,
+            tabs_per_workspace,
             popout_close,
             dictation_gesture,
             dictation_tier,
@@ -663,6 +700,9 @@ impl GlobalPatch {
         );
         self.base_color_light.apply(&mut current.base_color_light);
         self.base_color_dark.apply(&mut current.base_color_dark);
+        self.accent_color_light
+            .apply(&mut current.accent_color_light);
+        self.accent_color_dark.apply(&mut current.accent_color_dark);
         if let Some(zoom) = self.zoom.and_then(Zoom::new) {
             current.zoom = zoom;
         }

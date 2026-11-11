@@ -130,7 +130,9 @@ pub trait KoruTabs {
     /// Drop every pinned tab whose document is no longer in the library.
     fn retain_pinned(&mut self, live: impl Fn(DocumentId) -> bool) -> bool;
 
-    /// Replace Main with one fresh welcome tab, keeping the pins.
+    /// Replace Main with one fresh welcome tab, keeping the pins. Tests
+    /// only since 2026-11-10: a workspace switch no longer resets the strip.
+    #[cfg(test)]
     fn reset_to_welcome(&mut self);
 
     /// Whether the strip holds an empty welcome tab.
@@ -172,6 +174,7 @@ impl KoruTabs for TabStrip<Tab> {
         self.retain_pins(|t| t.document.map_or(true, |id| live(id)))
     }
 
+    #[cfg(test)]
     fn reset_to_welcome(&mut self) {
         self.reset_to_floor();
     }

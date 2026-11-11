@@ -673,17 +673,39 @@ fn relay_transition_news(reading: &RelayConnectionStatus) -> (&'static str, Opti
 /// inherit. An unchanged reading writes and logs nothing: the watcher can
 /// wake without a change, and retries are activity, not news
 /// (`guide/contributing/PRINCIPLES.md`).
+///
+/// **An outage is one piece of news, not one per attempt.** While a relay
+/// cannot be reached the reading alternates between *connecting* (an attempt
+/// in flight) and *disconnected* (it failed) for as long as iroh keeps
+/// dialing — about every twenty seconds, which wrote some 3,300 lines in one
+/// fourteen-hour outage. The stored reading still follows every change, so a
+/// status surface shows the truth; the log speaks when the relay is reached,
+/// when it is lost, when its host changes, and when relays are turned off.
 fn set_relay_status(status: &RwLock<NetworkStatus>, reading: RelayConnectionStatus) {
     let mut status = status.write().unwrap_or_else(|error| error.into_inner());
     if status.relay == reading {
         return;
     }
-    let (message, host) = relay_transition_news(&reading);
-    match host {
-        Some(host) => tracing::info!(target: "koru_sync::relay", host = %host, "{message}"),
-        None => tracing::info!(target: "koru_sync::relay", "{message}"),
+    if relay_reachability(&status.relay) != relay_reachability(&reading) {
+        let (message, host) = relay_transition_news(&reading);
+        match host {
+            Some(host) => tracing::info!(target: "koru_sync::relay", host = %host, "{message}"),
+            None => tracing::info!(target: "koru_sync::relay", "{message}"),
+        }
     }
     status.relay = reading;
+}
+
+/// What a relay reading says that is worth a log line: whether relays are on
+/// at all, which host, and whether it is reached. *Connecting* and
+/// *disconnected* are the same answer to all three.
+fn relay_reachability(reading: &RelayConnectionStatus) -> Option<(&str, bool)> {
+    match reading {
+        RelayConnectionStatus::Off => None,
+        RelayConnectionStatus::Connected { host } => Some((host, true)),
+        RelayConnectionStatus::Connecting { host }
+        | RelayConnectionStatus::Disconnected { host } => Some((host, false)),
+    }
 }
 
 /// One home-relay reading mapped to the status value, as a pure function a

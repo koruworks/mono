@@ -3500,6 +3500,33 @@ pub trait Host {
         None
     }
 
+    /// Tell the Agent's cleanup journal that one stage of a removed Profile's
+    /// local cleanup is durable. The journal is the device's own, so this
+    /// carries no account scope; the default keeps a host without a tracked
+    /// path on the plain account command.
+    fn acknowledge_profile_cleanup(
+        &self,
+        profile: ProfileId,
+        stage: koru_agent_wire::ProfileCleanupStage,
+    ) {
+        self.account_command(koru_agent_wire::AccountCommand::AcknowledgeProfileCleanup {
+            profile_id: profile.to_storage(),
+            stage,
+        });
+    }
+
+    /// The Agent's answer to an acknowledgement: the Profile, the stage, and
+    /// `Ok` once the journal holds it or the code it was refused with.
+    fn take_profile_cleanup_acknowledgement(
+        &self,
+    ) -> Option<(
+        String,
+        koru_agent_wire::ProfileCleanupStage,
+        Result<(), String>,
+    )> {
+        None
+    }
+
     /// Atomically compare-and-set one local Profile to the exact hosted Koru identity.
     fn bind_local_profile_account(
         &self,

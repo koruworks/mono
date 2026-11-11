@@ -106,10 +106,20 @@ impl HostCapabilities {
 
     /// Whether this host serves `tool`. A local host serves every shared
     /// tool and none of the hosted-only ones.
+    ///
+    /// **The document view's image tool goes with `read_document`.**
+    /// `read_image` ([`crate::apps`]) reads one image block of a document
+    /// a caller may already read, for a view that tool opened, so a host
+    /// serves it exactly where it serves `read_document`. It is not a row
+    /// of a rung: it is in no catalog, and a hosted server counts it among
+    /// its metrics as `other`.
     pub fn allows(&self, tool: &str) -> bool {
         match self {
             Self::All => !HOSTED_ONLY_TOOLS.contains(&tool),
-            Self::Tools(tools) => tools.contains(&tool),
+            Self::Tools(tools) => {
+                tools.contains(&tool)
+                    || (tool == crate::apps::READ_IMAGE && tools.contains(&"read_document"))
+            }
         }
     }
 

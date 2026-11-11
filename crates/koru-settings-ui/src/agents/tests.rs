@@ -20,6 +20,7 @@ fn rows() -> Vec<AgentProviderRow> {
         // The host offers *Install* for what is missing and installable;
         // here, Grok's missing CLI.
         install: key == "grok",
+        update: None,
     };
     vec![
         row("claude", "Claude", AgentProviderStatus::Ready, true),
@@ -630,5 +631,91 @@ fn the_page_reads_in_every_language() {
     // *Install* is said in every language too.
     for lang in Lang::ALL {
         assert!(!t(lang, Key::SettingsAgentInstall).is_empty());
+    }
+}
+
+/// **An agent whose CLI is behind its channel says so on its row and offers
+/// *Update* there.** This row is where the offer lives: nothing announces it
+/// on its own, so a person who never opens this page is never interrupted,
+/// and one who does finds it beside the agent it is about.
+#[test]
+fn an_agent_behind_its_channel_says_update_available_and_offers_update() {
+    use crate::state::AgentUpdate;
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut list = rows();
+    list.iter_mut()
+        .find(|row| row.key == "claude")
+        .expect("Claude's row")
+        .update = Some(AgentUpdate {
+        installed: "2.5.2".into(),
+        latest: "2.5.3".into(),
+        running: false,
+    });
+    let mut surface = on_page(list.clone());
+    let lines = page_lines(&surface);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Ready — Update available: v2.5.2 → v2.5.3"),
+        "{lines:?}"
+    );
+    let update = t(Lang::En, Key::AgentCliUpdate);
+    assert!(press(&mut surface, update));
+    assert_eq!(
+        surface.take_requests(),
+        [Request::UpdateAgent("claude".into())]
+    );
+    assert_eq!(
+        switch_of(&surface, "Claude"),
+        Some(true),
+        "the switch stays"
+    );
+
+    // While its updater runs the row says that, and offers nothing to press:
+    // a running updater cannot be run again.
+    list.iter_mut()
+        .find(|row| row.key == "claude")
+        .expect("Claude's row")
+        .update = Some(AgentUpdate {
+        installed: "2.5.2".into(),
+        latest: "2.5.3".into(),
+        running: true,
+    });
+    let surface = on_page(list);
+    let lines = page_lines(&surface);
+    assert!(
+        lines.iter().any(|line| line == "Updating Claude"),
+        "{lines:?}"
+    );
+    let claude = surface
+        .laid
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Card(card) => Some(card.rows.iter()),
+            _ => None,
+        })
+        .flatten()
+        .find(|row| row.label == "Claude")
+        .expect("Claude's row");
+    assert!(
+        matches!(claude.widget, Widget::Toggle { .. }),
+        "no Update beside the switch while one runs"
+    );
+}
+
+/// The offer's words exist in every language the app ships.
+#[test]
+fn the_update_offer_is_translated_in_every_language() {
+    for lang in Lang::ALL {
+        let words = t(lang, Key::SettingsAgentUpdateAvailable);
+        assert_eq!(words.matches("{}").count(), 2, "{lang:?}: {words}");
+        if lang != Lang::En {
+            assert_ne!(
+                words,
+                t(Lang::En, Key::SettingsAgentUpdateAvailable),
+                "{lang:?}"
+            );
+        }
     }
 }

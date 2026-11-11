@@ -361,6 +361,7 @@ fn the_default_agent_note_names_an_agent_that_is_not_installed() {
         guide: None,
         on,
         install: false,
+        update: None,
     };
     let rows = [
         row("claude", "Claude", AgentProviderStatus::Ready, true),

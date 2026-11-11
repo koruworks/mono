@@ -814,6 +814,17 @@ fn a_format_2_cache_is_listed_again() {
         "the agent is listed again"
     );
     assert_eq!(world.calls(), 1);
-    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    // The listing thread publishes what it found and only then writes the
+    // file, so the answer above can arrive before the write does. Reading
+    // the store at once failed on a slow runner (CI, 2026-11-11: format 2
+    // still there); wait for the write, with a bound.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let written = loop {
+        let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+        if written["format"] == CATALOG_FORMAT || std::time::Instant::now() >= deadline {
+            break written;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
     assert_eq!(written["format"], CATALOG_FORMAT);
 }

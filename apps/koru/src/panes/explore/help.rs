@@ -5,7 +5,8 @@
 
 use koru_agent_wire::{UpdateReport, UpdateStage};
 use koru_draw::el::{
-    Action as ElAction, El, ElState, FrameCx, Key, Leaf, Role, col, icon, leaf, row, scroll_y, text,
+    Action as ElAction, El, ElState, FrameCx, Key, Leaf, Object, Role, col, icon, leaf, row,
+    scroll_y, text,
 };
 use koru_draw::theme::{IconSize, Ink, Line, Radius, Space, alias, metrics, roles};
 use koru_i18n::{Key as Words, fill, t};
@@ -17,6 +18,10 @@ pub(crate) const LIST: &str = "Help timeline and links";
 
 struct TimelineMark {
     offered: bool,
+    /// The first and the last row of the timeline: the line starts at the
+    /// first dot and ends at the last, rather than running past either.
+    first: bool,
+    last: bool,
 }
 impl Leaf for TimelineMark {
     fn measure(&self, _: Option<f32>) -> (f32, f32) {
@@ -34,13 +39,22 @@ impl Leaf for TimelineMark {
         let x = at.x + at.w * 0.5;
         let radius = Space::S1.px(koru_draw::theme::Profile::Desktop) * 0.5;
         let y = at.y + metrics::ROW_MIN.value * 0.5;
-        koru_draw::scene::stroke(
-            scene,
-            root,
-            Line::Divider.of(cx.palette()),
-            koru_draw::theme::BORDER_W,
-            &vello::kurbo::Line::new((x as f64, at.y as f64), (x as f64, (at.y + at.h) as f64)),
-        );
+        // **One continuous line** (the user, 2026-11-10): the mark's box is
+        // the row's content, and the row pads it by `S1` above and below, so
+        // a line drawn within the box broke at every row. It reaches through
+        // that padding to meet the next row's, and stops at the end dots.
+        let pad = Space::S1.px(koru_draw::theme::Profile::Desktop);
+        let top = if self.first { y } else { at.y - pad };
+        let bottom = if self.last { y } else { at.y + at.h + pad };
+        if bottom > top {
+            koru_draw::scene::stroke(
+                scene,
+                root,
+                Line::Divider.of(cx.palette()),
+                koru_draw::theme::BORDER_W,
+                &vello::kurbo::Line::new((x as f64, top as f64), (x as f64, bottom as f64)),
+            );
+        }
         koru_draw::scene::fill(
             scene,
             root,
@@ -54,13 +68,20 @@ impl Leaf for TimelineMark {
 pub enum Action {
     Offer,
     Current,
+    /// One published release, by its place in [`Model::releases`]. It takes
+    /// the place of [`Action::Current`] once the list has been read.
+    Release(u8),
     Releases,
     Feedback,
     GitHub,
     X,
 }
 
+/// The control part of a release row; its position is the key's number.
+const RELEASE_PART: &str = "help-release";
+
 impl Action {
+    /// The fixed rows. Release rows come from [`Model::releases`].
     pub(crate) const ALL: [Self; 6] = [
         Self::Offer,
         Self::Current,
@@ -75,6 +96,7 @@ impl Action {
             match self {
                 Self::Offer => "help-offer",
                 Self::Current => "help-current",
+                Self::Release(index) => return Key::model(u128::from(index), RELEASE_PART),
                 Self::Releases => "help-releases",
                 Self::Feedback => "help-feedback",
                 Self::GitHub => "help-github",
@@ -83,7 +105,15 @@ impl Action {
         )
     }
     pub(crate) fn from_key(key: Key) -> Option<Self> {
-        Self::ALL.into_iter().find(|a| a.key() == key)
+        Self::ALL
+            .into_iter()
+            .find(|a| a.key() == key)
+            .or(match key.object {
+                Object::Model(index) if key.part == RELEASE_PART => {
+                    u8::try_from(index).ok().map(Self::Release)
+                }
+                _ => None,
+            })
     }
 }
 
@@ -151,9 +181,96 @@ pub(crate) struct Model {
     pub was_offered: bool,
     pub notes_unread: bool,
     pub headline: Option<String>,
+    /// The published releases, once read. `None` (or empty) keeps the one
+    /// row for this build.
+    pub releases: Option<Vec<crate::whatsnew::PublishedRelease>>,
 }
 
 impl Model {
+    /// The rows of the popover, top to bottom: the offered update, then the
+    /// releases (or this build's row while they are not known), then links.
+    pub(crate) fn rows(&self) -> Vec<Action> {
+        let mut rows = Vec::new();
+        if self.projection().action.is_some() {
+            rows.push(Action::Offer);
+        }
+        match self.releases.as_deref() {
+            Some(releases) if !releases.is_empty() => rows.extend(
+                (0..releases.len().min(usize::from(u8::MAX)))
+                    .map(|index| Action::Release(index as u8)),
+            ),
+            _ => rows.push(Action::Current),
+        }
+        rows.extend([
+            Action::Releases,
+            Action::Feedback,
+            Action::GitHub,
+            Action::X,
+        ]);
+        rows
+    }
+
+    pub(crate) fn release(&self, index: u8) -> Option<&crate::whatsnew::PublishedRelease> {
+        self.releases.as_ref()?.get(usize::from(index))
+    }
+
+    /// Whether `release` is the build that is running: the nightly row on a
+    /// nightly build, a version's row on the stable or beta build of it.
+    pub(crate) fn is_running(release: &crate::whatsnew::PublishedRelease) -> bool {
+        use koru_channel::ReleaseChannel;
+        let channel = ReleaseChannel::of_this_build();
+        match &release.version {
+            None => channel == ReleaseChannel::Nightly,
+            Some(version) => {
+                matches!(channel, ReleaseChannel::Stable | ReleaseChannel::Beta)
+                    && version == koru_channel::build_info().version
+            }
+        }
+    }
+
+    /// A release row's two lines: *Nightly* or the version, then what it is
+    /// — built nightly, or the day it was published — and *This version* on
+    /// the one that is running.
+    pub(crate) fn release_lines(&self, index: u8) -> Option<(String, String)> {
+        let release = self.release(index)?;
+        let lang = crate::format::lang();
+        let (title, mut detail) = match &release.version {
+            None => (
+                t(lang, Words::HelpReleaseNightly).to_owned(),
+                t(lang, Words::HelpReleaseNightlyBody).to_owned(),
+            ),
+            Some(version) => (
+                version.clone(),
+                release
+                    .published
+                    .map(|(year, month, day)| {
+                        koru_i18n::time::absolute_date(
+                            lang,
+                            koru_i18n::time::DateTimeParts {
+                                year,
+                                month,
+                                day,
+                                hour: 0,
+                                minute: 0,
+                                second: 0,
+                            },
+                            true,
+                        )
+                    })
+                    .unwrap_or_default(),
+            ),
+        };
+        if Self::is_running(release) {
+            let this = t(lang, Words::HelpReleaseThisVersion);
+            detail = if detail.is_empty() {
+                this.to_owned()
+            } else {
+                format!("{detail} · {this}")
+            };
+        }
+        Some((title, detail))
+    }
+
     pub(crate) fn projection(&self) -> Projection {
         project(self.report.as_ref(), self.was_offered, self.notes_unread)
     }
@@ -167,7 +284,7 @@ impl Model {
                 Some(OfferAction::Retry) => Words::TryAgain,
                 None => return self.stage_label(),
             },
-            Action::Current => Words::WhatsNew,
+            Action::Current | Action::Release(_) => Words::WhatsNew,
             Action::Releases => Words::HelpViewAllReleases,
             Action::Feedback => Words::SendFeedback,
             Action::GitHub => Words::StarOnGitHub,
@@ -240,9 +357,12 @@ impl ExploreView {
         self.help = model;
         if let Some(focused) = focused {
             let rows = self.rows_for(PopoverKind::Help);
+            // A row that went (this build's, once the releases arrive)
+            // hands focus to the first release, or back to this build's.
             let index = rows.iter().position(|row| *row == focused).or_else(|| {
-                rows.iter()
-                    .position(|row| *row == PopoverRow::Help(Action::Current))
+                rows.iter().position(|row| {
+                    matches!(row, PopoverRow::Help(Action::Current | Action::Release(0)))
+                })
             });
             if let Some(p) = &mut self.popover {
                 p.hover = index;
@@ -252,26 +372,48 @@ impl ExploreView {
 
     pub(crate) fn help_page(&self, scroll: f32) -> El {
         let mut list = scroll_y(LIST).fill().offset(scroll);
+        // The timeline's rows, gathered first so each knows whether it is the
+        // first or the last: the line runs between their dots.
+        let mut timeline: Vec<(Action, String, String, bool)> = Vec::new();
         if self.help.projection().offer {
             let version = self
                 .help
                 .report
                 .as_ref()
-                .map(|r| r.version.as_str())
+                .map(|r| r.version.clone())
                 .unwrap_or_default();
-            list = list.child(self.help_timeline_row(
+            timeline.push((
                 Action::Offer,
                 version,
                 self.help.stage_label(),
                 self.help.projection().action.is_some(),
             ));
         }
-        list = list.child(self.help_timeline_row(
-            Action::Current,
-            koru_channel::build_info().version,
-            self.help.current_label(),
-            true,
-        ));
+        let releases = self.help.releases.as_ref().map_or(0, Vec::len);
+        if releases == 0 {
+            timeline.push((
+                Action::Current,
+                koru_channel::build_info().version.to_owned(),
+                self.help.current_label(),
+                true,
+            ));
+        }
+        for index in 0..releases.min(usize::from(u8::MAX)) {
+            let index = index as u8;
+            if let Some((title, detail)) = self.help.release_lines(index) {
+                timeline.push((Action::Release(index), title, detail, true));
+            }
+        }
+        let count = timeline.len();
+        for (at, (action, version, description, enabled)) in timeline.into_iter().enumerate() {
+            list = list.child(self.help_timeline_row(
+                action,
+                &version,
+                description,
+                enabled,
+                (at == 0, at + 1 == count),
+            ));
+        }
         for action in [
             Action::Releases,
             Action::Feedback,
@@ -322,6 +464,7 @@ impl ExploreView {
         version: &str,
         description: String,
         enabled: bool,
+        (first, last): (bool, bool),
     ) -> El {
         let label = self.help.action_label(action);
         let mut item = row("Help release row")
@@ -350,6 +493,8 @@ impl ExploreView {
                 "Release timeline",
                 TimelineMark {
                     offered: action == Action::Offer,
+                    first,
+                    last,
                 },
             )
             .decorative()
@@ -374,7 +519,7 @@ impl ExploreView {
                 ),
         );
         if enabled {
-            item = item.child(if action == Action::Current {
+            item = item.child(if matches!(action, Action::Current | Action::Release(_)) {
                 icon(koru_draw::icons::CARET_RIGHT, IconSize::L)
                     .decorative()
                     .ink(Ink::Secondary)

@@ -90,6 +90,7 @@ impl ModeList<'_> {
             .map(|(index, row)| elements::ModeSpec {
                 key: elements::row_key(&row.id),
                 icon: row.icon,
+                tone: row.tone,
                 current: self.current == Some(row.id.as_str()),
                 lit: self.focus == Some(index),
                 full_access: row.full_access,

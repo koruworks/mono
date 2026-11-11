@@ -49,11 +49,15 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     into.doc_text_size = section.document_text_size.chosen().map(|size| size.px());
     into.base_color_light = section.base_color_light.map(RgbColor::rgb);
     into.base_color_dark = section.base_color_dark.map(RgbColor::rgb);
+    into.accent_color_light = section.accent_color_light.map(RgbColor::rgb);
+    into.accent_color_dark = section.accent_color_dark.map(RgbColor::rgb);
     into.density = Density::parse(section.density.token());
+    into.scroll_speed = section.scroll_speed.factor();
     into.zoom = section.zoom.get();
     into.view_mode = view_mode_of(section.default_view_mode);
     into.canvas_bg = canvas_of(section.default_canvas_background);
     into.pinned_show_title = section.pinned_show_title;
+    into.tabs_per_workspace = section.tabs_per_workspace;
     into.popout_close = crate::settings::PopoutClose::parse(section.popout_close.token());
     into.emoji_skin_tone = section.emoji_skin_tone.clone();
     into.close_behavior = close_behavior_of(section.close_behavior);
@@ -156,6 +160,16 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
             authoritative.base_color_dark,
             &mut patch.base_color_dark,
         ),
+        (
+            settings.accent_color_light,
+            authoritative.accent_color_light,
+            &mut patch.accent_color_light,
+        ),
+        (
+            settings.accent_color_dark,
+            authoritative.accent_color_dark,
+            &mut patch.accent_color_dark,
+        ),
     ] {
         let chosen = chosen.and_then(RgbColor::new);
         if chosen != stored {
@@ -165,6 +179,10 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
     let density = koru_settings::DensityChoice::parse(settings.density.key());
     if density != authoritative.density {
         patch.density = Some(density);
+    }
+    let scroll_speed = koru_settings::ScrollSpeedChoice::from_factor(settings.scroll_speed);
+    if scroll_speed != authoritative.scroll_speed {
+        patch.scroll_speed = Some(scroll_speed);
     }
     // **Compared as it persists, not as it floats.** `0.1 * 7` and the `0.70`
     // read back out of the file are different `f32`s, and an `!=` on them made
@@ -183,6 +201,9 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
     }
     if settings.pinned_show_title != authoritative.pinned_show_title {
         patch.pinned_show_title = Some(settings.pinned_show_title);
+    }
+    if settings.tabs_per_workspace != authoritative.tabs_per_workspace {
+        patch.tabs_per_workspace = Some(settings.tabs_per_workspace);
     }
     let popout = PopoutCloseChoice::parse(settings.popout_close.to_storage());
     if popout != authoritative.popout_close {
@@ -279,7 +300,8 @@ type Preferences = (
         koru_voice_models::ModelTier,
         koru_voice::InputChoice,
     ),
-    (bool, Option<koru_spell::SpellLang>),
+    (bool, Option<koru_spell::SpellLang>, bool),
+    (Option<u32>, Option<u32>, u8),
     (Option<u32>, Option<u32>),
 );
 
@@ -318,8 +340,17 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.dictation_tier,
             settings.dictation_input.clone(),
         ),
-        (settings.spellcheck_enabled, settings.spellcheck_language),
-        (settings.base_color_light, settings.base_color_dark),
+        (
+            settings.spellcheck_enabled,
+            settings.spellcheck_language,
+            settings.tabs_per_workspace,
+        ),
+        (
+            settings.base_color_light,
+            settings.base_color_dark,
+            settings.scroll_speed,
+        ),
+        (settings.accent_color_light, settings.accent_color_dark),
     )
 }
 

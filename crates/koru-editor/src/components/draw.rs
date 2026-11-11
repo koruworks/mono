@@ -1233,32 +1233,22 @@ fn draw_command_search(
     if !menu.has_search() {
         return 0.0;
     }
-    // Laid out before the field is borrowed mutably below.
-    let ghost = view
-        .engine
-        .simple_layout(menu.placeholder(), theme::role::ui());
-    let r = command_menu::search_rect(pw);
-    let shape = rrect(px + r.x, py + r.y, r.w, r.h, 6.0);
-    fill(scene, root, theme::p().bg, &shape);
-    // The focus ring, not the panel border: the caret is in here the moment the
-    // menu opens, so the box has to look like the thing being typed into.
-    stroke(scene, root, theme::p().focus_ring, theme::BORDER_W, &shape);
+    let placeholder = menu.placeholder();
     let Overlay::Command(menu) = &mut view.overlay else {
         return 0.0;
     };
     if let Some(field) = &mut menu.query {
-        // `shows_placeholder`, never `is_empty`: an authored-empty field
-        // holding a dictation transcript is still empty, and the ghost would
-        // be drawn underneath the words (ADR-272).
-        let empty = field.shows_placeholder();
-        draw_field(
+        // The shared panel search box: the one recipe this, the date grid
+        // and the quick workspace switcher draw.
+        koru_ui::text_field::draw_panel_search(
             scene,
             root,
             field,
             &mut view.engine,
-            empty.then_some(&ghost),
-            (px + r.x, py + r.y, r.w, r.h),
-            true,
+            placeholder,
+            px,
+            py,
+            pw,
         );
     }
     command_menu::rows_top()

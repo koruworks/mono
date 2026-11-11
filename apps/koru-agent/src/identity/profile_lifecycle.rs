@@ -175,10 +175,17 @@ pub(crate) fn publish_active<F: LifecycleFanout + ?Sized>(
     Ok(())
 }
 
+/// Record a lifecycle fact a trusted peer sent, and say whether it leaves
+/// this device owing a cleanup.
+///
+/// `true` only for a deletion whose journal row has not settled. The same
+/// signed tombstone arrives again with every device-list exchange for as long
+/// as the peers hold it, and answering "deleted" to each of those is what
+/// made a finished cleanup start over.
 pub(crate) fn observe_received(
     paths: &Paths,
     lifecycle: &koru_device::ProfileLifecycleV1,
-) -> Result<(), &'static str> {
+) -> Result<bool, &'static str> {
     if lifecycle.state == koru_device::ProfileLifecycleStateV1::Active {
         return LifecycleRepository::open(&paths.profile_lifecycle_db())
             .map_err(|error| error.code)?
@@ -186,6 +193,7 @@ pub(crate) fn observe_received(
                 lifecycle.profile_id,
                 ProfileLifecycleRevision::new(lifecycle.lifecycle_revision),
             )
+            .map(|()| false)
             .map_err(|error| error.code);
     }
     let operation =
@@ -199,8 +207,24 @@ pub(crate) fn observe_received(
             operation,
             now_millis(),
         )
-        .map(|_| ())
+        .map(|record| record.stage < ProfileCleanupStage::NavigationSettled)
         .map_err(|error| error.code)
+}
+
+/// Write one cleanup boundary the shell reports, and say whether the cleanup
+/// has now settled. A Profile with no row has nothing left to acknowledge,
+/// which is settled too.
+pub(crate) fn acknowledge_cleanup(
+    paths: &Paths,
+    profile_id: &str,
+    stage: ProfileCleanupStage,
+) -> Result<bool, &'static str> {
+    let profile = koru_store_core::ProfileId::parse(profile_id).ok_or("invalid_id")?;
+    let record = LifecycleRepository::open(&paths.profile_lifecycle_db())
+        .map_err(|error| error.code)?
+        .acknowledge(profile, stage, now_millis())
+        .map_err(|error| error.code)?;
+    Ok(record.is_none_or(|record| record.stage >= ProfileCleanupStage::NavigationSettled))
 }
 
 pub(crate) fn resume_pending<F: LifecycleFanout + ?Sized>(
@@ -456,5 +480,62 @@ mod tests {
                 .unwrap();
         }
         assert!(pending_deleted_profiles(&paths).unwrap().is_empty());
+    }
+
+    /// The loop behind a deletion notice that came back for days. Peers send
+    /// the whole device list, this tombstone included, every few minutes; the
+    /// settled journal row used to be deleted, so each copy read as a
+    /// deletion nobody had cleaned up and the cleanup — and its notice — ran
+    /// again.
+    #[test]
+    fn a_tombstone_redelivered_after_its_cleanup_settled_owes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::for_root(root.path().to_owned());
+        let profile = koru_store_core::ProfileId::new();
+        let tombstone = koru_device::ProfileLifecycleV1::sign(
+            RecordId::new(),
+            DeviceId::new(),
+            profile,
+            koru_device::ProfileLifecycleStateV1::Deleted,
+            1,
+            ProfileLifecycleMutationId::mint().as_uuid(),
+            5,
+            &DeviceSigningKey::generate(),
+        );
+
+        assert_eq!(observe_received(&paths, &tombstone), Ok(true));
+        // Still owed until the shell reports the last boundary: a second copy
+        // before then is a chance to retry, not a reason to stop.
+        assert_eq!(observe_received(&paths, &tombstone), Ok(true));
+
+        for stage in [
+            ProfileCleanupStage::WorkspacesRemoved,
+            ProfileCleanupStage::ProfileRemoved,
+            ProfileCleanupStage::SettingsCleared,
+            ProfileCleanupStage::NavigationSettled,
+        ] {
+            assert_eq!(
+                acknowledge_cleanup(&paths, &profile.to_storage(), stage),
+                Ok(stage == ProfileCleanupStage::NavigationSettled),
+                "{stage:?}"
+            );
+        }
+
+        assert_eq!(observe_received(&paths, &tombstone), Ok(false));
+        assert!(pending_deleted_profiles(&paths).unwrap().is_empty());
+        // A Profile the journal never held has nothing left to acknowledge,
+        // and an id that is not one is refused before the journal is opened.
+        assert_eq!(
+            acknowledge_cleanup(
+                &paths,
+                &koru_store_core::ProfileId::new().to_storage(),
+                ProfileCleanupStage::ProfileRemoved,
+            ),
+            Ok(true)
+        );
+        assert_eq!(
+            acknowledge_cleanup(&paths, "not-a-profile", ProfileCleanupStage::ProfileRemoved),
+            Err("invalid_id")
+        );
     }
 }

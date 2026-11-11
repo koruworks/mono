@@ -16,9 +16,10 @@
 //! ```
 //!
 //! A row lights on the hover plate under the pointer, and stays lit while
-//! the keyboard is on it (`MODE_ROW_LIT_STATES`); *Full access* is in the
-//! notice ink (`Ink::Notice`, the warning colour); the current mode has the
-//! accent ✓. Nothing here is a leaf: every part is a box, text or an icon.
+//! the keyboard is on it (`MODE_ROW_LIT_STATES`); each row's icon wears the
+//! mode's color ([`super::tone_of`], as a send button does); *Full access*
+//! is in the notice ink (`Ink::Notice`, the warning color) in its title too;
+//! the current mode has the accent ✓. Nothing here is a leaf: every part is a box, text or an icon.
 //! Every value is a token or a tagged metric ([`super::tokens`]); this file
 //! is on the source scan's migrated list (`koru_draw::theme::ui_scan`).
 
@@ -28,6 +29,7 @@ use koru_draw::el::{
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::theme::{IconSize, Ink, Radius, Surface, metrics, roles};
+use koru_ui::split_button::SplitTone;
 
 pub use super::tokens::*;
 
@@ -54,6 +56,8 @@ pub const LIST_KEY: Key = Key::surface("approval-modes", "list");
 pub struct ModeSpec {
     pub key: Key,
     pub icon: char,
+    /// The mode's color, as a send button wears it: the icon's ink.
+    pub tone: SplitTone,
     pub title: String,
     pub help: Option<String>,
     /// What a screen reader calls it: its title and the line under it.
@@ -95,6 +99,14 @@ fn mode_row(spec: &ModeSpec) -> El {
         Ink::Notice
     } else {
         Ink::Primary
+    };
+    // The icon in the mode's color; the title stays the reading color,
+    // except *Full access*, which warns in both.
+    let icon_ink = match spec.tone {
+        SplitTone::Warning => Ink::Notice,
+        SplitTone::Success => Ink::Success,
+        SplitTone::Accent => Ink::Accent,
+        SplitTone::Neutral => ink,
     };
     let mut words = col(MODE_WORDS)
         .fill()
@@ -150,7 +162,7 @@ fn mode_row(spec: &ModeSpec) -> El {
         .child(
             icon(spec.icon, IconSize::XS)
                 .decorative()
-                .ink(ink)
+                .ink(icon_ink)
                 .pad_top(ICON_TOP)
                 .named(MODE_ICON),
         )

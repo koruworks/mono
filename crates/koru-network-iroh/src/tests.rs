@@ -5164,6 +5164,34 @@ fn set_relay_status_logs_once_per_transition_and_never_on_repeat() {
             &status,
             RelayConnectionStatus::Connected { host: "h".into() },
         );
+        // An outage: lost once, then iroh dials and fails for as long as it
+        // lasts. That is one piece of news, however many attempts it takes.
+        for attempt in 0..3 {
+            set_relay_status(
+                &status,
+                RelayConnectionStatus::Disconnected { host: "h".into() },
+            );
+            set_relay_status(
+                &status,
+                RelayConnectionStatus::Connecting { host: "h".into() },
+            );
+            assert_eq!(
+                status.read().unwrap().relay,
+                RelayConnectionStatus::Connecting { host: "h".into() },
+                "the stored reading follows every change (attempt {attempt})"
+            );
+        }
+        set_relay_status(
+            &status,
+            RelayConnectionStatus::Connected { host: "h".into() },
+        );
+        // A different relay host is news even without a change in reach.
+        set_relay_status(
+            &status,
+            RelayConnectionStatus::Connected {
+                host: "other".into(),
+            },
+        );
         set_relay_status(&status, RelayConnectionStatus::Off);
     });
     assert_eq!(
@@ -5171,6 +5199,9 @@ fn set_relay_status_logs_once_per_transition_and_never_on_repeat() {
         vec![
             "message=relay connecting host=h".to_owned(),
             "message=relay connected host=h".to_owned(),
+            "message=relay disconnected host=h".to_owned(),
+            "message=relay connected host=h".to_owned(),
+            "message=relay connected host=other".to_owned(),
             "message=relay off".to_owned(),
         ]
     );

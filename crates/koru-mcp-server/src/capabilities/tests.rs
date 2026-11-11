@@ -91,6 +91,39 @@ fn the_read_set_refuses_every_rung_one_mutation() {
     assert!(backend.0.lock().unwrap().is_empty());
 }
 
+/// The document view's image tool is served wherever `read_document` is,
+/// and reaches the backend under its own name.
+#[test]
+fn the_view_s_image_tool_goes_with_read_document() {
+    for capabilities in [
+        HostCapabilities::All,
+        HostCapabilities::rung1(),
+        HostCapabilities::rung1_reads(),
+    ] {
+        assert!(
+            capabilities.allows(crate::apps::READ_IMAGE),
+            "{capabilities:?}"
+        );
+    }
+    assert!(!HostCapabilities::Tools(&["list_documents"]).allows(crate::apps::READ_IMAGE));
+    assert!(
+        !names(&HostCapabilities::rung1().catalog()).contains(&crate::apps::READ_IMAGE.to_owned()),
+        "it is in no catalog"
+    );
+
+    let backend = Arc::new(Recording::default());
+    let executor = WorkspaceToolExecutor::new(backend.clone());
+    let (context, workspace) = hosted(HostCapabilities::rung1_reads());
+    executor
+        .invoke(
+            &context,
+            crate::apps::READ_IMAGE,
+            json!({ "workspace_id": workspace }),
+        )
+        .unwrap();
+    assert_eq!(*backend.0.lock().unwrap(), [crate::apps::READ_IMAGE]);
+}
+
 /// A name that is no tool at all is refused the same way on a hosted host, so
 /// a caller cannot tell a deferred tool from a misspelled one by probing.
 #[test]

@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Account-scoped Koru Cloud state: the subscription, each Profile's sync
-//! switch, and the D258 question about a Profile's Workspaces. No layout, no
-//! credentials and no Stripe IDs; the one I/O is the device-local transport
-//! write, on a worker thread.
+//! Account-scoped Koru Cloud state: the subscription and each Profile's sync
+//! switch. No layout, no credentials, no Stripe IDs and no I/O.
+//!
+//! **The switch is the whole act** (maintainer, 2026-11-11). Turning it on
+//! used to raise D258's question about the Profile's Workspaces, and the
+//! answer was what opened this device's Store to Cloud. A switch left on
+//! with the question dismissed therefore synced nothing. The question is
+//! gone: the Agent opens the Store for every Profile whose Cloud sync is on
+//! (`koru-account-runtime`'s `cloud_sync`, ADR-000-createdwithaccount).
 //!
 //! Two surfaces live here because they are one fact seen twice: the card says
 //! whether this account has Cloud at all, and the switch on each Profile row
@@ -11,8 +16,6 @@
 //! profiles" is counted from the very switches below it, which is why the
 //! subscription read and the per-Profile read share a state struct rather than
 //! sitting in two modules that would have to agree.
-use std::sync::mpsc::{self, Receiver};
-
 use super::*;
 use crate::mainview::cloud_sync::Connection;
 use koru_agent_wire::CloudSyncProfile;
@@ -43,13 +46,6 @@ pub(super) struct SyncPending {
     generation: Option<u64>,
     set: Option<(String, bool)>,
 }
-/// What the Store said about a transport-mode write, off the winit thread.
-#[derive(Debug)]
-pub(super) enum TransportAnswer {
-    Settled(Box<koru_store_wire::ProfileTransportModeOutcome>),
-    Refused(String),
-}
-
 pub(super) struct State {
     pub(super) status: Status,
     due: bool,
@@ -65,20 +61,6 @@ pub(super) struct State {
     /// separately so the row can show the pending state on the very next frame
     /// rather than after the command lane gets a turn.
     pub(super) set_request: Option<(String, bool)>,
-    /// **D258's prompt**, while it is up: *and its Workspaces?*
-    ///
-    /// Raised by turning a Profile's Cloud sync **on**, and by nothing else.
-    /// Turning it off is D227's immediate stop and already has its behaviour;
-    /// a second dialog there would be a second answer to a settled question.
-    pub(super) move_prompt: Option<(ProfileId, Confirm)>,
-    /// An answer given and not yet put on the wire. Held separately for the
-    /// reason `set_request` beside it is: the frame that answered should not
-    /// be the frame that blocks, and a test should be able to read what was
-    /// asked for without a Store to answer it.
-    pub(super) move_request: Option<(ProfileId, bool)>,
-    /// A `SetTransportMode` group in flight. The Store's answer is the truth,
-    /// so only one is ever outstanding.
-    transport: Option<Receiver<TransportAnswer>>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -90,9 +72,6 @@ impl Default for State {
             sync_due: true,
             sync_pending: None,
             set_request: None,
-            move_prompt: None,
-            move_request: None,
-            transport: None,
         }
     }
 }
@@ -356,6 +335,9 @@ impl ProfilesController {
                         if binding.identity_id() == active
                 )
             })
+            // One this sign-in is not linked to cannot sync from here, so
+            // it is neither the `n` nor the `m`.
+            .filter(|row| !self.profile_unlinked_from_sign_in(row))
             .map(|row| row.id.to_storage())
             .collect()
     }
@@ -494,6 +476,11 @@ impl ProfilesController {
         if self.account.stage != AccountStage::SignedIn {
             return SyncAvailability::Disabled(TextKey::CloudSyncSignInReason);
         }
+        // Before the subscription: with or without one, this sign-in cannot
+        // sync a Profile it is not linked to.
+        if self.profile_unlinked_from_sign_in(profile) {
+            return SyncAvailability::Disabled(TextKey::CloudSyncNotLinkedReason);
+        }
         if self.cloud.status != Status::Manage {
             return SyncAvailability::Disabled(TextKey::CloudSyncSubscribeReason);
         }
@@ -529,6 +516,17 @@ impl ProfilesController {
     /// What the switch shows. A pending change shows its *target*, so the switch
     /// moves under the finger and the dimming is what says it is not settled.
     pub fn cloud_sync_on(&self, profile: ProfileId) -> bool {
+        // A Profile this sign-in is not linked to does not sync from here,
+        // whatever this device remembers from before it was unlinked: its
+        // switch reads off, and its line says why instead of *Koru Cloud
+        // unavailable*.
+        if self
+            .profiles
+            .iter()
+            .any(|row| row.id == profile && self.profile_unlinked_from_sign_in(row))
+        {
+            return false;
+        }
         self.cloud_sync_pending_for(profile).unwrap_or_else(|| {
             self.cloud_sync_row(profile).map_or_else(
                 || {
@@ -586,184 +584,6 @@ impl ProfilesController {
         }
         None
     }
-    // ---- the Profile prompt (D258) ----------------------------------------
-
-    /// Whether a transport-mode write is still out.
-    ///
-    /// The window comes back for it on its own clock while this is true — a
-    /// person who pressed *Move everything* is watching for the answer.
-    pub fn cloud_move_pending(&self) -> bool {
-        self.cloud.transport.is_some() || self.cloud.move_request.is_some()
-    }
-
-    /// Raise the prompt for `profile`.
-    fn ask_about_workspaces(&mut self, profile: ProfileId) {
-        if self.cloud.move_prompt.is_some() || self.cloud_move_pending() {
-            return;
-        }
-        let lang = crate::format::lang();
-        let name = self
-            .profiles
-            .iter()
-            .find(|row| row.id == profile)
-            .map(|row| row.name.clone())
-            .unwrap_or_default();
-        let confirm = Confirm::asking(
-            koru_i18n::t(lang, TextKey::CloudMoveTitle),
-            koru_i18n::fill(koru_i18n::t(lang, TextKey::CloudMoveBody), &[&name]),
-            koru_i18n::t(lang, TextKey::CloudMoveConfirm),
-            // **Cancel is Cancel** (D259). This slot used to carry *Just this
-            // Profile*, so the dialog had no dismissal at all and Escape —
-            // which `Confirm::key` answers as `Cancel`, as every modal in this
-            // app does — committed a Profile to Cloud. A question with three
-            // answers gets three buttons; the third one is the one that
-            // writes nothing.
-            koru_i18n::t(lang, TextKey::CloudMoveNotNow),
-        )
-        // *Just this Profile* is the middle answer, where a question with
-        // three answers puts the one that is neither the corner nor the
-        // dismissal (`Confirm::with_alternative`).
-        .with_alternative(koru_i18n::t(lang, TextKey::CloudMoveProfileOnly))
-        // **Enter answers nothing until a button is chosen** (ADR-265, row
-        // four). The corner answer starts sending every file every Workspace
-        // under this Profile references, which on a Workspace of several
-        // years is gigabytes; a modal appearing under somebody's hands must
-        // not read the next keystroke as *yes, send all of that*.
-        .declaring_no_default();
-        self.cloud.move_prompt = Some((profile, confirm));
-    }
-
-    /// Settle the prompt. **Two answers write and one does not** (D259).
-    ///
-    /// *Move everything* and *Just this Profile* are both choices about the
-    /// Workspaces, and the Profile is moving either way — the person said so
-    /// when they turned the switch on. **Cancel is neither.** It used to be
-    /// wired to *Just this Profile* and to commit, which made Escape — and
-    /// the window-manager close that `Confirm::key` answers the same way — a
-    /// durable write about somebody's content that they had asked to get rid
-    /// of. Nothing is written, no mode changes, and the question comes back
-    /// the next time the switch is turned on.
-    pub(super) fn settle_move_prompt(&mut self, outcome: ConfirmOutcome) -> bool {
-        let include = match outcome {
-            ConfirmOutcome::Keep => return false,
-            ConfirmOutcome::Confirm => true,
-            ConfirmOutcome::Alternative => false,
-            ConfirmOutcome::Cancel => {
-                if self.cloud.move_prompt.take().is_none() {
-                    return false;
-                }
-                // Said out loud, because a dialog that vanishes having done
-                // nothing is indistinguishable from one that did something
-                // quietly — and the way back is one sentence long.
-                self.notice = Some(
-                    koru_i18n::t(crate::format::lang(), TextKey::CloudMoveDismissed).to_owned(),
-                );
-                return true;
-            }
-        };
-        let Some((profile, _)) = self.cloud.move_prompt.take() else {
-            return false;
-        };
-        self.cloud.move_request = Some((profile, include));
-        true
-    }
-
-    /// The local Store operation the prompt's answer is (D258).
-    ///
-    /// **Not a hosted route**: D230 settled that the mode is device-local, so
-    /// nothing here tells another device anything. Off the winit thread, like
-    /// every Store call this window makes.
-    fn start_transport_write(&mut self, profile: ProfileId, include_workspaces: bool) {
-        let lang = crate::format::lang();
-        // **A window with no Store claims nothing.** The hosted toggle has
-        // already done its half; what it cannot do is write a device-local
-        // mode, and saying so with the same code a refusal would carry is the
-        // honest answer rather than a dialog that looked like it worked.
-        let Some(client) = self.client.clone() else {
-            self.notice = Some(koru_i18n::fill(
-                koru_i18n::t(lang, TextKey::CloudMoveFailed),
-                &[koru_store_core::errors::Code::StoreUnreachable.as_str()],
-            ));
-            return;
-        };
-        // The window and the Store spell an id in two types. Parsing the
-        // storage form is the one conversion between them, and a Profile
-        // whose id will not parse is a Profile this write must not guess at.
-        let Some(profile) = koru_store_core::ProfileId::parse(&profile.to_storage()) else {
-            return;
-        };
-        let (send, receive) = mpsc::channel();
-        if std::thread::Builder::new()
-            .name("koru-transport-mode-ui".into())
-            .spawn(move || {
-                let answer = match client.set_profile_transport_mode(
-                    profile,
-                    koru_store_core::TransportMode::Cloud.as_storage(),
-                    include_workspaces,
-                ) {
-                    Ok(outcome) => TransportAnswer::Settled(Box::new(outcome)),
-                    // The code, not a sentence: it is a stable identifier a
-                    // support conversation can search for.
-                    Err(error) => TransportAnswer::Refused(error.code().as_str().to_owned()),
-                };
-                let _ = send.send(answer);
-            })
-            .is_err()
-        {
-            return;
-        }
-        self.cloud.transport = Some(receive);
-    }
-
-    /// Put an answered prompt on the wire, then drain whatever came back.
-    ///
-    /// Both in one call because they are one frame's worth of background
-    /// work, and because a caller that had to remember to do the second would
-    /// eventually not.
-    pub(super) fn drain_transport_answer(&mut self) -> bool {
-        if let Some((profile, include)) = self.cloud.move_request.take() {
-            self.start_transport_write(profile, include);
-            return true;
-        }
-        let Some(receiver) = &self.cloud.transport else {
-            return false;
-        };
-        let Ok(answer) = receiver.try_recv() else {
-            return false;
-        };
-        self.cloud.transport = None;
-        let lang = crate::format::lang();
-        self.notice = Some(match answer {
-            TransportAnswer::Refused(code) => {
-                koru_i18n::fill(koru_i18n::t(lang, TextKey::CloudMoveFailed), &[&code])
-            }
-            TransportAnswer::Settled(outcome) if outcome.workspaces_submitted == 0 => {
-                koru_i18n::t(lang, TextKey::CloudMoveProfileOnlyDone).to_owned()
-            }
-            TransportAnswer::Settled(outcome) => {
-                let moved = koru_i18n::fill(
-                    koru_i18n::t(lang, TextKey::CloudMoveDone),
-                    &[&outcome.workspaces_moved.to_string()],
-                );
-                // **A Workspace left alone is not a Workspace that failed.**
-                // Saying so is the difference between a person believing
-                // their own earlier choice was honoured and believing
-                // something went wrong.
-                match outcome.workspaces_left_alone {
-                    0 => moved,
-                    left => format!(
-                        "{moved} · {}",
-                        koru_i18n::fill(
-                            koru_i18n::t(lang, TextKey::CloudMoveKept),
-                            &[&left.to_string()],
-                        )
-                    ),
-                }
-            }
-        });
-        true
-    }
-
     pub(super) fn cloud_sync_activate(&mut self, profile: ProfileId) {
         let Some(row) = self.profiles.iter().find(|row| row.id == profile) else {
             return;
@@ -778,14 +598,9 @@ impl ProfilesController {
             return;
         }
         let enabled = !self.cloud_sync_on(profile);
+        // Nothing is asked either way: on is the Profile and its Workspaces,
+        // and the Agent opens the Store for it; off is D227's immediate stop.
         self.cloud.set_request = Some((profile.to_storage(), enabled));
-        // **Turning it on is the Profile being spoken about** (D258), so this
-        // is where the question about its Workspaces belongs. Turning it off
-        // raises nothing: that is D227's immediate stop, it already has its
-        // behaviour, and the row says plainly what it does while it happens.
-        if enabled {
-            self.ask_about_workspaces(profile);
-        }
     }
 }
 

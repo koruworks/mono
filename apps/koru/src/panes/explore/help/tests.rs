@@ -481,3 +481,55 @@ fn current_release_uses_the_first_heading_or_the_localized_missing_notes_fallbac
         });
     }
 }
+
+/// **The releases replace this build's row once read**, nightly first, and
+/// each keeps a key the popover can map back (2026-11-10).
+#[test]
+fn the_release_rows_follow_the_offer_and_replace_this_builds_row() {
+    use crate::whatsnew::PublishedRelease;
+    let mut model = model(UpdateStage::Idle);
+    let fixed = [
+        Action::Releases,
+        Action::Feedback,
+        Action::GitHub,
+        Action::X,
+    ];
+    let rows = model.rows();
+    assert_eq!(
+        rows[0],
+        Action::Current,
+        "nothing read yet: this build's row"
+    );
+    assert_eq!(&rows[1..], &fixed);
+    let page = |tag: &str| format!("{}/tag/{tag}", crate::whatsnew::RELEASES_URL);
+    model.releases = Some(vec![
+        PublishedRelease {
+            version: None,
+            url: page("nightly"),
+            published: None,
+        },
+        PublishedRelease {
+            version: Some("0.1.5".into()),
+            url: page("v0.1.5"),
+            published: Some((2026, 11, 7)),
+        },
+    ]);
+    let rows = model.rows();
+    assert_eq!(&rows[..2], &[Action::Release(0), Action::Release(1)]);
+    assert!(!rows.contains(&Action::Current));
+    assert_eq!(&rows[2..], &fixed);
+    for action in rows {
+        assert_eq!(Action::from_key(action.key()), Some(action), "{action:?}");
+    }
+    with_current(Lang::En, || {
+        let (title, detail) = model.release_lines(0).unwrap();
+        assert_eq!(title, "Nightly");
+        assert!(
+            detail.starts_with("Built from main every night"),
+            "{detail}"
+        );
+        let (title, detail) = model.release_lines(1).unwrap();
+        assert_eq!(title, "0.1.5");
+        assert!(detail.starts_with("11/07/2026"), "{detail}");
+    });
+}

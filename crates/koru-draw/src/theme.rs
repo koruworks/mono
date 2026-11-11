@@ -65,6 +65,7 @@ impl From<Color> for Brush {
 // ---------------------------------------------------------------- palettes
 
 /// Fill, border, and label colour for one pill kind.
+#[derive(Clone)]
 pub struct PillPalette {
     pub bg: Color,
     pub border: Color,
@@ -78,6 +79,7 @@ pub struct PillPalette {
 /// Nine per theme, tuned by hand — never a mechanical inversion of the other
 /// theme's set, which is how a legible light accent becomes an unreadable
 /// dark one.
+#[derive(Clone)]
 pub struct AccentTone {
     pub fill: Color,
     pub ink: Color,
@@ -99,6 +101,7 @@ pub fn accent_tone(token: &str) -> Option<&'static AccentTone> {
     Some(&p().accents[i])
 }
 
+#[derive(Clone)]
 pub struct Palette {
     /// The reading surface: the page in Page mode, and the whole viewport in
     /// the pageless modes. User-settable per document — see `ViewState::canvas_bg`.
@@ -788,6 +791,62 @@ pub fn base_color(dark: bool) -> Option<u32> {
         0 => None,
         value => Some(value & 0xFF_FFFF),
     }
+}
+
+// ------------------------------------------------------ the accent color
+//
+// The colour a primary action wears, replaced per theme (the user,
+// 2026-11-10): `accent_color_light=` / `accent_color_dark=` in
+// `preferences.conf`, as `#rrggbb`, kept like the base colour. It replaces
+// the palette's `accent` wherever a palette is read — `Theme::palette`, which
+// both `p()` and an element's frame go through — and keeps the theme's
+// `on_accent`: the offered swatches are deep on light (white text reads on
+// them) and light on dark (dark text does).
+
+/// `0` follows the theme; otherwise `0xFF00_0000 | rgb`. Light, then dark.
+static ACCENT_COLOR: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
+/// The accents Settings offers per theme, after the theme's own blue: teal,
+/// green, violet, rose, amber and graphite.
+pub const ACCENT_CHOICES_LIGHT: [u32; 6] =
+    [0x1F7A7A, 0x2D7A48, 0x6B4FB3, 0xB3416E, 0xA65A12, 0x4A4F57];
+pub const ACCENT_CHOICES_DARK: [u32; 6] =
+    [0x5CB8B2, 0x78CC91, 0xA88BD6, 0xD683B2, 0xE0A060, 0xA7ADB7];
+
+/// Set the accent for the light or the dark theme, or `None` for the
+/// theme's own. Text drawn in it is laid out again by the host.
+pub fn set_accent_color(dark: bool, rgb: Option<u32>) {
+    ACCENT_COLOR[usize::from(dark)].store(
+        rgb.map_or(0, |rgb| 0xFF00_0000 | (rgb & 0xFF_FFFF)),
+        Ordering::Relaxed,
+    );
+}
+
+/// The accent chosen for the light or the dark theme, if any.
+pub fn accent_color(dark: bool) -> Option<u32> {
+    match ACCENT_COLOR[usize::from(dark)].load(Ordering::Relaxed) {
+        0 => None,
+        value => Some(value & 0xFF_FFFF),
+    }
+}
+
+/// `base` with its accent replaced by `rgb`. Each palette and colour pair
+/// is made once and kept for the life of the process — a handful at most,
+/// one per swatch tried per theme — so `palette()` can stay `&'static`
+/// and every caller of it keeps working unchanged.
+pub(crate) fn accented(base: &'static Palette, rgb: u32) -> &'static Palette {
+    use std::sync::Mutex;
+    static MADE: Mutex<Vec<(usize, u32, &'static Palette)>> = Mutex::new(Vec::new());
+    let key = std::ptr::from_ref(base) as usize;
+    let mut made = MADE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, _, palette)) = made.iter().find(|(p, c, _)| *p == key && *c == rgb) {
+        return palette;
+    }
+    let mut palette = base.clone();
+    palette.accent = rgb_hex(rgb);
+    let palette: &'static Palette = Box::leak(Box::new(palette));
+    made.push((key, rgb, palette));
+    palette
 }
 
 /// An `0xRRGGBB` value as a colour.
@@ -1648,6 +1707,45 @@ pub fn set_density(d: Density) {
     DENSITY.store(d as u8, Ordering::Relaxed);
 }
 
+// ------------------------------------------------------------ wheel speed
+//
+// How many steps one mouse-wheel notch moves a pane: 1 is the step every
+// view had before the setting existed, 2 the default (the user, 2026-11-10:
+// "too slow, speed it 2x"). A process global for the reason density is one:
+// the Settings row sets it live, and the window's wheel handler reads it.
+
+static WHEEL_SPEED: AtomicU8 = AtomicU8::new(2);
+
+/// The wheel speed, 1 to 4.
+pub fn wheel_speed() -> u8 {
+    WHEEL_SPEED.load(Ordering::Relaxed).clamp(1, 4)
+}
+
+/// Out-of-range values are held to 1..=4.
+pub fn set_wheel_speed(speed: u8) {
+    WHEEL_SPEED.store(speed.clamp(1, 4), Ordering::Relaxed);
+}
+
+// ------------------------------------------------------ workspace tabs
+//
+// **Settings → Appearance → Workspace tabs** (the user, 2026-11-10): `false`,
+// *Shared*, keeps the open tabs as you switch workspace, which is what Koru
+// does by default; `true`, *Per workspace*, gives each workspace its own tabs,
+// put aside on the way out and back on the way in. Pinned tabs stay in every
+// workspace either way. A process global for density's reason: the Settings
+// row sets it live, and the shell reads it back into `Settings`.
+
+static TABS_PER_WORKSPACE: AtomicBool = AtomicBool::new(false);
+
+/// Whether each workspace keeps its own tabs.
+pub fn tabs_per_workspace() -> bool {
+    TABS_PER_WORKSPACE.load(Ordering::Relaxed)
+}
+
+pub fn set_tabs_per_workspace(on: bool) {
+    TABS_PER_WORKSPACE.store(on, Ordering::Relaxed);
+}
+
 // ----------------------------------------------------- default document view mode
 //
 // The global default a new document opens in, and the canvas colour it opens
@@ -2041,7 +2139,20 @@ impl FontChoice {
     /// them. `Mono` itself resolves to *system* faces with no `wght` axis, where
     /// 500 would instead set `embolden` and stroke a second pass — faux bold.
     /// See [`Self::weight_for`] for the heading case.
+    ///
+    /// **And the 500 is the dark appearance's.** The sans, serif and rounded
+    /// families take their weight from the theme on screen
+    /// ([`themes::Appearance::body_weight`]): a light ground gets a real
+    /// Regular, because the same missing correction that thins light text
+    /// thickens dark text. A theme change lays every row out again, so the
+    /// weight follows it.
     pub fn weight(self) -> f32 {
+        self.weight_in(themes::active().appearance)
+    }
+
+    /// [`weight`](Self::weight) under a named appearance, for a caller that
+    /// is not asking about the theme on screen.
+    pub fn weight_in(self, appearance: themes::Appearance) -> f32 {
         // **`System` asks for 400, not the sans 500**, for the `Mono` reason
         // in the paragraph above seen from the sans side: Segoe UI is a static
         // family, so 500 would set `embolden` and stroke a faux-bold second
@@ -2054,7 +2165,7 @@ impl FontChoice {
         }
         match self.class() {
             FontClass::Mono => 400.0,
-            _ => 500.0,
+            _ => appearance.body_weight(),
         }
     }
 
@@ -3272,6 +3383,29 @@ mod tests {
         assert_eq!(FontWeight::Bold.value(), 700.0);
     }
 
+    /// **Body text is a real Regular on a light ground and a real Medium on a
+    /// dark one**, for the variable sans, serif and rounded families; the
+    /// faces that have no axis to move, and the mono class, are 400 under
+    /// both. A heading is heavier than body text under either.
+    #[test]
+    fn body_weight_follows_the_appearance() {
+        use themes::Appearance::{Dark, Light};
+        assert_eq!(FontChoice::Inter.weight_in(Light), 400.0);
+        assert_eq!(FontChoice::Inter.weight_in(Dark), 500.0);
+        for fixed in [FontChoice::Mono, FontChoice::System] {
+            assert_eq!(fixed.weight_in(Light), 400.0, "{fixed:?}");
+            assert_eq!(fixed.weight_in(Dark), 400.0, "{fixed:?}");
+        }
+        for choice in FontChoice::ALL {
+            for appearance in [Light, Dark] {
+                assert!(
+                    choice.weight_for(Some(6)) > choice.weight_in(appearance),
+                    "{choice:?} under {appearance:?}"
+                );
+            }
+        }
+    }
+
     /// `with_weight` overrides only the weight, leaving the metrics intact.
     #[test]
     fn with_weight_keeps_the_metrics() {
@@ -3439,5 +3573,38 @@ mod tests {
         set_code_font(FontChoice::SourceCodePro);
         assert_eq!(terminal_code_font(), FontChoice::SourceCodePro);
         set_code_font(original);
+    }
+}
+
+/// **The accent swap** (2026-11-10), on the pure function: nothing global
+/// moves, so no other test can see it.
+#[cfg(test)]
+mod accent_tests {
+    use super::*;
+
+    #[test]
+    fn an_accented_palette_changes_the_accent_alone_and_is_made_once() {
+        let made = accented(&LIGHT, 0x1F7A7A);
+        assert_eq!(made.accent.to_rgba8(), rgb_hex(0x1F7A7A).to_rgba8());
+        assert_eq!(made.on_accent.to_rgba8(), LIGHT.on_accent.to_rgba8());
+        assert_eq!(made.bg.to_rgba8(), LIGHT.bg.to_rgba8());
+        assert!(
+            std::ptr::eq(made, accented(&LIGHT, 0x1F7A7A)),
+            "kept, not remade"
+        );
+        assert!(
+            !std::ptr::eq(made, accented(&DARK, 0x1F7A7A)),
+            "per palette"
+        );
+    }
+
+    #[test]
+    fn every_offered_accent_is_a_distinct_choice_from_the_themes_own() {
+        for (own, choices) in [(&LIGHT, ACCENT_CHOICES_LIGHT), (&DARK, ACCENT_CHOICES_DARK)] {
+            let own = own.accent.to_rgba8();
+            for rgb in choices {
+                assert_ne!(rgb_hex(rgb).to_rgba8(), own, "{rgb:06X}");
+            }
+        }
     }
 }

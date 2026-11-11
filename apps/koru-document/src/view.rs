@@ -30,14 +30,20 @@ use crate::draw::draw_chrome;
 use crate::upsert_doc_prefs;
 use koru_workspace::Workspace;
 
-/// The first empty paragraph teaches dictation without pinning a platform
-/// chord at the call site. When voice is unavailable, or Guide hints are
-/// hidden, it remains an ordinary writing prompt.
-pub(crate) fn body_placeholder(voice_available: bool, hint: Option<String>) -> String {
+/// The first empty paragraph teaches `/` — the command menu nothing else on
+/// an empty page points at (the user, 2026-11-10) — and dictation, without
+/// pinning a platform chord at the call site. When voice is unavailable, or
+/// Guide hints are hidden, it names `/` alone.
+pub(crate) fn body_placeholder(
+    lang: koru_i18n::Lang,
+    voice_available: bool,
+    hint: Option<String>,
+) -> String {
+    use koru_i18n::{Key, fill, t};
     if voice_available && let Some(hint) = hint {
-        format!("Start typing, or press {hint} to dictate…")
+        fill(t(lang, Key::DocumentEmptyHintDictate), &[&hint])
     } else {
-        "Start typing…".to_owned()
+        t(lang, Key::DocumentEmptyHint).to_owned()
     }
 }
 
@@ -1193,6 +1199,7 @@ impl View for BuiltInDocument {
         let placeholder = match &self.body_placeholder {
             Some(own) => own.clone(),
             None => body_placeholder(
+                crate::caption::lang(),
                 koru_dictation::available(),
                 koru_keys::show_hint(koru_keys::ShortcutId::Dictate, koru_keys::Section::Guide),
             ),

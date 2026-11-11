@@ -72,6 +72,7 @@ fn profile_units_permit() -> CloudPermitV2 {
             allowed_profile_units: vec![ProfileUnitRef::Identity {
                 profile: ProfileId::from_uuid(v4(2)),
             }],
+            authority_workspace_id: Some(cloud(v4(1))),
         },
         ..permit()
     }
@@ -258,6 +259,7 @@ fn a_profile_units_permit_cross_checks_the_profile_and_takes_the_workspace_from_
         allowed_profile_units: vec![ProfileUnitRef::Identity {
             profile: ProfileId::from_uuid(v4(16)),
         }],
+        authority_workspace_id: Some(cloud(v4(1))),
     };
     assert_eq!(
         build_principal(

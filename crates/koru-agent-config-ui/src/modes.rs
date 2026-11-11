@@ -13,6 +13,7 @@
 
 use koru_draw::icons;
 use koru_i18n::{Key as Words, Lang, t};
+use koru_ui::split_button::SplitTone;
 
 pub mod elements;
 pub mod tokens;
@@ -42,6 +43,9 @@ pub struct ModeRow {
     /// *Full access*: drawn in the warning color, never stepped to by
     /// Shift+Tab, and a new conversation's only by a *Yolo* default.
     pub full_access: bool,
+    /// The mode's color ([`tone_of`]): what a send button wears while the
+    /// mode is chosen, and the ink of the row's icon in the list.
+    pub tone: SplitTone,
 }
 
 /// The modes Koru knows: the agent's kind, the mode's id, its title, its
@@ -230,6 +234,21 @@ pub fn is_full_access(agent: &str, id: &str) -> bool {
     role_of(agent, id) == Role::Full
 }
 
+/// **A mode's color**, the one place it is decided: a send button wears it
+/// while the mode is chosen, and the list's row for the mode wears it on its
+/// icon, so the list says what each choice will look like (2026-11-10: the
+/// list had no colors while the button had them). Codex's automatic review
+/// and the agents' accept-edits modes approve safe work; a plain Auto mode
+/// stays neutral; unknown modes keep the accent role.
+pub fn tone_of(agent: &str, id: &str) -> SplitTone {
+    match role_of(agent, id) {
+        Role::Full => SplitTone::Warning,
+        _ if matches!(id, "acceptEdits" | "accept-edits" | "auto-review") => SplitTone::Success,
+        Role::Auto => SplitTone::Neutral,
+        Role::Ask | Role::Other => SplitTone::Accent,
+    }
+}
+
 /// **The permission a new chat starts in**, as the person set it on *Agent
 /// providers*. Each agent's own modes are what a chat runs in;
 /// [`default_mode`] maps this onto them.
@@ -337,6 +356,7 @@ pub fn rows(lang: Lang, agent: &str, modes: &[ModeOffer<'_>]) -> Vec<ModeRow> {
                         .or_else(|| mode.description.map(str::to_owned)),
                     icon: *icon,
                     full_access: *role == Role::Full,
+                    tone: tone_of(agent, mode.id),
                 },
                 // An agent Koru has no words for keeps its own; one of the
                 // known full-access spellings is still drawn and stepped as
@@ -347,6 +367,7 @@ pub fn rows(lang: Lang, agent: &str, modes: &[ModeOffer<'_>]) -> Vec<ModeRow> {
                     help: mode.description.map(str::to_owned),
                     icon: icons::FADERS,
                     full_access: is_full_access(agent, mode.id),
+                    tone: tone_of(agent, mode.id),
                 },
             }
         })

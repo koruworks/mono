@@ -3238,12 +3238,22 @@ fn task_derivation_sql() -> String {
 /// SPEC §4's closed set, rendered from
 /// [`TASK_CAPABLE_KINDS`](koru_core::tasks::TASK_CAPABLE_KINDS) so a kind
 /// added to or taken out of the domain's list cannot leave this query behind.
+///
+/// **`+n.kind`, so this is a filter and never where a query starts.** The
+/// five kinds are nearly every node there is — paragraphs above all — so an
+/// index on `kind` narrows nothing. SQLite 3.54, with no statistics on this
+/// file, nevertheless chose `nodes_kind` to drive the task queries: every
+/// paragraph in every workspace, joined back to the one workspace asked
+/// about. A Tasks page took 0.5–3 s on a 170,000-node projection that it
+/// answers in 7 ms starting from the workspace's listing, which is what 3.49
+/// chose. The unary `+` makes the column ineligible for an index, which
+/// leaves the listing and `attrs_probe` as the planner's only ways in.
 fn task_kind_sql() -> String {
     let kinds: Vec<String> = koru_core::tasks::TASK_CAPABLE_KINDS
         .iter()
         .map(|kind| format!("'{}'", kind.as_str()))
         .collect();
-    format!("n.kind IN ({})", kinds.join(", "))
+    format!("+n.kind IN ({})", kinds.join(", "))
 }
 
 /// Whether the node carries a completed lifecycle. Used as a *column* on every

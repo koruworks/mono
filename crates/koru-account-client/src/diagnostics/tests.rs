@@ -14,6 +14,24 @@ fn server_supplied_unknown_tokens_are_not_diagnostic_text() {
     assert_eq!(diagnostic.status, Some(400));
 }
 
+/// A refused Cloud sync credential says why. Without this a device that was
+/// never authorized for a Workspace and one whose Workspace had Cloud off
+/// both read `unknown_api_error`, and neither could be told apart from a log.
+#[test]
+fn a_refused_sync_credential_names_its_reason() {
+    for code in [
+        "workspace_not_authorized",
+        "cloud_disabled",
+        "authorization_stale",
+    ] {
+        let error = ClientError::Api {
+            status: 403,
+            code: ErrorCode::parse(code).unwrap(),
+        };
+        assert_eq!(Failure::new(Some(403), &error).code, code);
+    }
+}
+
 #[test]
 fn retry_noise_is_suppressed_per_route_until_failure_changes_or_recovers() {
     let diagnostics = Diagnostics::default();

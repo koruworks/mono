@@ -37,17 +37,28 @@ fn document_tabs_do_not_reserve_a_status_bar() {
 }
 
 #[test]
-fn the_first_paragraph_teaches_dictation_without_hard_coding_its_chord() {
+fn the_first_paragraph_teaches_slash_and_dictation_without_hard_coding_its_chord() {
+    use koru_i18n::Lang;
     let chord = koru_keys::registry::label_of(koru_keys::ShortcutId::Dictate);
     assert_eq!(
-        crate::view::body_placeholder(true, Some(chord.clone())),
-        format!("Start typing, or press {chord} to dictate…")
+        crate::view::body_placeholder(Lang::En, true, Some(chord.clone())),
+        format!("Press / for commands, or {chord} to dictate…")
     );
     assert_eq!(
-        crate::view::body_placeholder(false, Some(chord)),
-        "Start typing…"
+        crate::view::body_placeholder(Lang::En, false, Some(chord)),
+        "Start typing, or press / for commands…"
     );
-    assert_eq!(crate::view::body_placeholder(true, None), "Start typing…");
+    assert_eq!(
+        crate::view::body_placeholder(Lang::En, true, None),
+        "Start typing, or press / for commands…"
+    );
+    // Every language names `/` and keeps the chord's slot.
+    for lang in Lang::ALL {
+        assert!(crate::view::body_placeholder(lang, false, None).contains('/'));
+        assert!(
+            crate::view::body_placeholder(lang, true, Some("Ctrl+Q".into())).contains("Ctrl+Q")
+        );
+    }
 }
 
 #[test]

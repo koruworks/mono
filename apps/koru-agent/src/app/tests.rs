@@ -2983,6 +2983,62 @@ fn a_late_shell_is_told_every_durable_profile_cleanup_marker() {
     );
 }
 
+/// A shell says `Hello` again whenever its presence changes. The replay used
+/// to follow every one of them, so a window that had finished the cleanup was
+/// told to start it again — and showed its deletion notice again — for as
+/// long as the journal stayed unsettled.
+#[test]
+fn a_shell_that_says_hello_again_is_not_told_the_same_cleanup_twice() {
+    let mut agent = agent();
+    agent.set_pending_profile_cleanup(vec![ProfileId::new().to_storage()]);
+    let profile = ProfileId::new().to_storage();
+    let workspace = WorkspaceId::new().to_storage();
+    let hello = |agent: &mut Agent, connection: ConnectionId, id: u64| {
+        agent.said(
+            connection,
+            id,
+            Request::Hello {
+                profile: profile.clone(),
+                workspace: workspace.clone(),
+                profile_name: "Personal".into(),
+                workspace_name: "Notes".into(),
+                pinned: Vec::new(),
+                reopen_claim: None,
+            },
+            Duration::ZERO,
+        );
+    };
+    let told = |queue: &std::sync::mpsc::Receiver<FromAgent>| {
+        queue
+            .try_iter()
+            .filter(|message| {
+                matches!(
+                    message,
+                    FromAgent::Push {
+                        body: Push::ProfileLifecycleDeleted { .. },
+                    }
+                )
+            })
+            .count()
+    };
+
+    let first = ConnectionId(82);
+    let (conn, queue) = Connection::for_test(first);
+    agent.connections.push(conn);
+    hello(&mut agent, first, 1);
+    assert_eq!(told(&queue), 1, "a new connection is told once");
+    hello(&mut agent, first, 2);
+    hello(&mut agent, first, 3);
+    assert_eq!(told(&queue), 0, "and not again for saying Hello again");
+
+    // Another window has not been told, and is.
+    let second = ConnectionId(83);
+    let (conn, other_queue) = Connection::for_test(second);
+    agent.connections.push(conn);
+    hello(&mut agent, second, 1);
+    assert_eq!(told(&other_queue), 1);
+}
+
 /// **`UpdateChanged` is a wake, not a change.**
 ///
 /// The update worker raises it whenever it looks at anything, so a banner

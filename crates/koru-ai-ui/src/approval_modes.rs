@@ -74,8 +74,10 @@ pub(crate) struct ListedModes {
 // order. The chat names them here over its own types — the provider id and
 // the listing it keeps — so this crate's code and its suite read as they did.
 pub use cfg::NewChatPermission;
-pub(crate) use cfg::{MODE_ROW_H, ModeList, ModeRow, Role, next_mode};
-// The list's sizes, which only the suite reads now.
+pub(crate) use cfg::{MODE_ROW_H, ModeList, ModeRow, next_mode};
+// The list's sizes and the modes' roles, which only the suite reads now.
+#[cfg(test)]
+pub(crate) use cfg::Role;
 #[cfg(test)]
 use cfg::view::{FOOTER_H, PANEL_PAD};
 
@@ -93,8 +95,16 @@ fn offers(listed: &ListedModes) -> Vec<cfg::ModeOffer<'_>> {
 }
 
 /// `id`'s role for `agent` ([`cfg::role_of`]).
+#[cfg(test)]
 pub(crate) fn role_of(agent: &AiProviderId, id: &str) -> Role {
     cfg::role_of(agent.as_str(), id)
+}
+
+/// **A mode's color** ([`cfg::tone_of`], the one place it is decided): the
+/// send button wears it, and the list's row for the mode wears it on its
+/// icon — the control fills it into every row it words ([`cfg::rows`]).
+pub(crate) fn tone_of(agent: &AiProviderId, id: &str) -> SplitTone {
+    cfg::tone_of(agent.as_str(), id)
 }
 
 /// Whether `id` is `agent`'s *Full access* ([`cfg::is_full_access`]).
@@ -242,18 +252,7 @@ impl crate::ChatSurface {
     pub(crate) fn approval_presentation(&self) -> Option<(ModeRow, SplitTone)> {
         let (agent, _) = self.chat_modes()?;
         let row = self.current_approval_row()?;
-        let tone = match role_of(agent, &row.id) {
-            Role::Full => SplitTone::Warning,
-            _ if matches!(
-                row.id.as_str(),
-                "acceptEdits" | "accept-edits" | "auto-review"
-            ) =>
-            {
-                SplitTone::Success
-            }
-            Role::Auto => SplitTone::Neutral,
-            Role::Ask | Role::Other => SplitTone::Accent,
-        };
+        let tone = tone_of(agent, &row.id);
         Some((row, tone))
     }
 

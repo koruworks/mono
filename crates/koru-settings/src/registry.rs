@@ -181,6 +181,16 @@ pub const REGISTRY: &[SettingSpec] = &[
         doc: "How much space the interface leaves around things.",
     },
     SettingSpec {
+        field: "scroll_speed",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Token,
+        doc: "How many steps one mouse-wheel notch moves a pane: `1x`, `2x` \
+              (the default), `3x` or `4x`. Pixel-precise trackpad scrolling \
+              follows the finger and is not scaled.",
+    },
+    SettingSpec {
         field: "document_text_size",
         section: Section::Global,
         storage: StorageClass::Roaming,
@@ -211,6 +221,25 @@ pub const REGISTRY: &[SettingSpec] = &[
               `base_color_dark=#rrggbb`. Kept apart from the light one: a tint that sits \
               well on light is wrong on dark. Absent, or `null` in a patch, follows the \
               theme.",
+    },
+    SettingSpec {
+        field: "accent_color_light",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The accent — the colour a primary action, a link and a selected control \
+              wear — in the light theme, written as `accent_color_light=#rrggbb`. Absent, \
+              or `null` in a patch, follows the theme.",
+    },
+    SettingSpec {
+        field: "accent_color_dark",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Nullable,
+        doc: "The accent in the dark theme, written as `accent_color_dark=#rrggbb`. Kept \
+              apart from the light one. Absent, or `null` in a patch, follows the theme.",
     },
     SettingSpec {
         field: "zoom",
@@ -247,6 +276,16 @@ pub const REGISTRY: &[SettingSpec] = &[
         backing: Backing::PreferencesConf,
         kind: ValueKind::Flag,
         doc: "Whether pinned tabs show their titles. Selecting an option updates open pins and sets the default for new pins.",
+    },
+    SettingSpec {
+        field: "tabs_per_workspace",
+        section: Section::Global,
+        storage: StorageClass::Roaming,
+        backing: Backing::PreferencesConf,
+        kind: ValueKind::Flag,
+        doc: "Workspace tabs: whether each workspace keeps its own tabs, put aside when \
+              you leave it and back when you return (`1`), or the open tabs stay as you \
+              switch (`0`, the default). Pinned tabs stay in every workspace either way.",
     },
     SettingSpec {
         field: "popout_close",

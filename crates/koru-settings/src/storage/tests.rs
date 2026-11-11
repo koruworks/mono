@@ -252,6 +252,9 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         // And the base colors that follow the theme.
         base_color_light: crate::RgbColor::new(0xDDE7F6),
         base_color_dark: crate::RgbColor::new(0x293750),
+        // And the accents, likewise.
+        accent_color_light: crate::RgbColor::new(0x1F7A7A),
+        accent_color_dark: crate::RgbColor::new(0xA88BD6),
         global_dictation_enabled: Some(false),
         // Both nullable device-local keys are given a value: an absent one is
         // absent from the file on purpose, and what this test is about is a
@@ -1084,4 +1087,66 @@ fn an_installed_family_round_trips_by_name_and_a_bad_name_never_lands() {
         terminal.validate().is_err(),
         "the terminal section takes a bundled mono"
     );
+}
+
+/// **Scroll speed round-trips, and a file from before it reads as 2x.**
+#[test]
+fn scroll_speed_round_trips_and_defaults_to_twice_the_old_step() {
+    assert_eq!(GlobalSettings::default().scroll_speed.factor(), 2);
+    for choice in crate::ScrollSpeedChoice::ALL {
+        assert_eq!(
+            crate::ScrollSpeedChoice::from_factor(choice.factor()),
+            *choice
+        );
+        let mut settings = GlobalSettings::default();
+        crate::GlobalPatch {
+            scroll_speed: Some(*choice),
+            ..Default::default()
+        }
+        .apply(&mut settings);
+        let written = render_preferences(&settings, &PreferencesFile::default());
+        assert!(written.contains(&format!("scroll_speed={}", choice.token())));
+        let mut loaded = GlobalSettings::default();
+        apply_preferences(&written, &mut loaded);
+        assert_eq!(loaded.scroll_speed, *choice);
+    }
+    let mut old = GlobalSettings::default();
+    apply_preferences("version=2\ndensity=compact\n", &mut old);
+    assert_eq!(old.scroll_speed, crate::ScrollSpeedChoice::X2);
+    let mut json = serde_json::to_value(GlobalSettings::default()).unwrap();
+    json.as_object_mut().unwrap().remove("scroll_speed");
+    let old: GlobalSettings = serde_json::from_value(json).unwrap();
+    assert_eq!(old.scroll_speed, crate::ScrollSpeedChoice::X2);
+}
+
+/// **The accent per theme round-trips**, and following the theme writes no
+/// key, like the base colour (2026-11-10).
+#[test]
+fn accent_colors_round_trip_and_following_the_theme_writes_no_key() {
+    let none = render_preferences(&GlobalSettings::default(), &PreferencesFile::default());
+    assert!(!none.contains("accent_color"), "{none}");
+    let mut settings = GlobalSettings::default();
+    crate::GlobalPatch {
+        accent_color_light: crate::Field::Set(crate::RgbColor::new(0x1F7A7A).unwrap()),
+        accent_color_dark: crate::Field::Set(crate::RgbColor::new(0xA88BD6).unwrap()),
+        ..Default::default()
+    }
+    .apply(&mut settings);
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    let mut loaded = GlobalSettings::default();
+    apply_preferences(&written, &mut loaded);
+    assert_eq!(
+        loaded.accent_color_light.map(crate::RgbColor::rgb),
+        Some(0x1F7A7A)
+    );
+    assert_eq!(
+        loaded.accent_color_dark.map(crate::RgbColor::rgb),
+        Some(0xA88BD6)
+    );
+    crate::GlobalPatch {
+        accent_color_light: crate::Field::Clear,
+        ..Default::default()
+    }
+    .apply(&mut loaded);
+    assert_eq!(loaded.accent_color_light, None, "the theme's own is back");
 }

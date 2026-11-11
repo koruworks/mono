@@ -134,5 +134,129 @@ pub fn read_headlines_async() -> std::sync::mpsc::Receiver<Option<Vec<String>>> 
     rx
 }
 
+/// One published release, as the Help popover lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishedRelease {
+    /// `None` for the moving nightly; the version (`0.1.5`) otherwise.
+    pub version: Option<String>,
+    /// Its GitHub page — always under [`RELEASES_URL`], checked when read.
+    pub url: String,
+    /// The day a stable release was published, UTC. None for the nightly:
+    /// its release object keeps the day it was first made while the tag
+    /// moves every night, so that date would be wrong by weeks.
+    pub published: Option<(i32, u8, u8)>,
+}
+
+/// The releases list as data. Unauthenticated, so 60 requests an hour per
+/// address — one per window, and only once its Help popover opens.
+const RELEASES_API: &str = "https://api.github.com/repos/koruworks/mono/releases?per_page=20";
+
+/// How many stable releases follow the nightly. Older ones are a press away
+/// on *View all releases*.
+const STABLE_SHOWN: usize = 3;
+
+/// **The actual releases** (the user, 2026-11-10): the nightly first — it
+/// is always the newest build and a different kind of thing — then stable
+/// versions newest first. Drafts, other prereleases, tags that are not
+/// `v<major>.<minor>.<patch>`, and any entry whose page is not this
+/// repository's release page are left out, so a row can only ever open a
+/// Koru release. `None` when the body is not a releases list at all.
+pub fn parse_releases(json: &str) -> Option<Vec<PublishedRelease>> {
+    #[derive(serde::Deserialize)]
+    struct Raw {
+        tag_name: String,
+        html_url: String,
+        #[serde(default)]
+        draft: bool,
+        #[serde(default)]
+        prerelease: bool,
+        published_at: Option<String>,
+    }
+    fn version_key(version: &str) -> Option<(u64, u64, u64)> {
+        let mut parts = version.split('.');
+        let key = (
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        );
+        parts.next().is_none().then_some(key)
+    }
+    fn day(stamp: &str) -> Option<(i32, u8, u8)> {
+        let mut parts = stamp.get(..10)?.split('-');
+        Some((
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        ))
+    }
+    let raw: Vec<Raw> = serde_json::from_str(json).ok()?;
+    let mut nightly = None;
+    let mut stable = Vec::new();
+    for release in raw {
+        if release.draft || release.html_url != format!("{RELEASES_URL}/tag/{}", release.tag_name) {
+            continue;
+        }
+        if release.tag_name == "nightly" {
+            nightly = Some(PublishedRelease {
+                version: None,
+                url: release.html_url,
+                published: None,
+            });
+            continue;
+        }
+        let Some(version) = release.tag_name.strip_prefix('v') else {
+            continue;
+        };
+        let Some(key) = version_key(version).filter(|_| !release.prerelease) else {
+            continue;
+        };
+        stable.push((
+            key,
+            PublishedRelease {
+                version: Some(version.to_owned()),
+                url: release.html_url.clone(),
+                published: release.published_at.as_deref().and_then(day),
+            },
+        ));
+    }
+    stable.sort_by(|a, b| b.0.cmp(&a.0));
+    Some(
+        nightly
+            .into_iter()
+            .chain(stable.into_iter().take(STABLE_SHOWN).map(|(_, r)| r))
+            .collect(),
+    )
+}
+
+/// Read the releases list off the window's thread. **Nothing about the
+/// person goes out**: a generic user agent, no token, no query but the page
+/// size. Any failure — offline, rate-limited, a changed body — is `None`,
+/// and the popover keeps the row it had for this build.
+pub fn fetch_releases_async() -> std::sync::mpsc::Receiver<Option<Vec<PublishedRelease>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("koru-help-releases".into())
+        .spawn(move || {
+            let answer = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .user_agent("Koru")
+                .build()
+                .ok()
+                .and_then(|client| {
+                    client
+                        .get(RELEASES_API)
+                        .header("Accept", "application/vnd.github+json")
+                        .send()
+                        .ok()
+                })
+                .filter(|response| response.status().is_success())
+                .and_then(|response| response.text().ok())
+                .and_then(|body| parse_releases(&body));
+            let _ = tx.send(answer);
+        })
+        .ok();
+    rx
+}
+
 #[cfg(test)]
 mod tests;

@@ -241,6 +241,10 @@ fn failure(error: ClientError) -> Failure {
             (_, ROOT_UNIT_INVALID) => Failure::UnitRefused(UnitRefusal::UnitInvalid),
             (_, ROOT_EXPORT_REFUSED) => Failure::UnitRefused(UnitRefusal::ExportRefused),
             (_, ROOT_UNIT_ADDRESS_INVALID) => Failure::UnitRefused(UnitRefusal::AddressInvalid),
+            (_, ROOT_PLACEMENT_FOREIGN) => Failure::UnitRefused(UnitRefusal::PlacementForeign),
+            (_, ROOT_WORKSPACE_UNIT_REQUIRED) => {
+                Failure::UnitRefused(UnitRefusal::WorkspaceUnitRequired)
+            }
             (_, CATALOG_BINDING_REQUIRED) => Failure::CatalogBindingRequired,
             (_, ROOT_PROJECTION_CORRUPT) => Failure::AccountDamaged(AccountDamage::RootProjection),
             (_, CATALOG_BINDING_CORRUPT) => Failure::AccountDamaged(AccountDamage::CatalogBinding),

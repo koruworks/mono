@@ -39,6 +39,10 @@ impl ProductionAccountService {
         // Validate the entire set before any local commit. A row from another
         // owner or an identity without a current authorization is not importable.
         let mut initial = Vec::with_capacity(selected.len());
+        // Chosen again after being removed from this computer, under this
+        // same account: brought back before it is provisioned. Restored
+        // only after the whole set validates, as every other local commit is.
+        let mut restore = Vec::new();
         for profile in selected {
             let mut matches = profiles.iter().filter(|row| row.profile_id == *profile);
             let row = matches
@@ -58,11 +62,15 @@ impl ProductionAccountService {
                 .iter()
                 .filter(|row| row.profile_id == *profile)
             {
-                if local.removed_at_millis.is_some() {
-                    return Err(ServiceError::terminal("profile_removed"));
-                }
                 if local.account_binding != binding {
                     return Err(ServiceError::terminal("profile_account_conflict"));
+                }
+                // A Profile this computer removed is still this account's,
+                // and the person just picked it. It used to be refused here
+                // as `profile_removed`, which no surface explained, so
+                // *Connect selected* did nothing a person could see.
+                if local.removed_at_millis.is_some() {
+                    restore.push(*profile);
                 }
             }
             initial.push((
@@ -86,6 +94,10 @@ impl ProductionAccountService {
                         .ok_or_else(|| ServiceError::retryable("clock_unavailable"))?,
                 },
             ));
+        }
+        for profile in restore {
+            self.check_selection_authority(authority, cancel)?;
+            self.local_profiles.restore_removed(profile)?;
         }
         for (profile, initial) in initial {
             self.check_selection_authority(authority, cancel)?;

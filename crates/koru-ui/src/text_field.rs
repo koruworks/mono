@@ -76,6 +76,45 @@ pub fn search_rect(panel_w: f32) -> koru_draw::geometry::Rect {
     )
 }
 
+/// **The panel search box, drawn**: the box [`search_rect`] places — the
+/// page's background, the focus ring, a 6 px corner — and the field in it,
+/// with `placeholder` while it is empty. One recipe for every panel that
+/// wears it: the slash menu, the date grid's phrase field and the quick
+/// workspace switcher (2026-11-10, the user: *reuse that input*). They used
+/// to copy these lines; a copy is a shape that drifts.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_panel_search(
+    scene: &mut Scene,
+    root: Affine,
+    field: &mut TextField,
+    engine: &mut TextEngine,
+    placeholder: &str,
+    panel_x: f32,
+    panel_y: f32,
+    panel_w: f32,
+) {
+    let ghost = engine.simple_layout(placeholder, theme::role::ui());
+    let r = search_rect(panel_w);
+    let shape = koru_draw::scene::rrect(panel_x + r.x, panel_y + r.y, r.w, r.h, 6.0);
+    koru_draw::scene::fill(scene, root, theme::p().bg, &shape);
+    // The focus ring, not the panel border: the caret is in here the moment
+    // the panel opens, so the box looks like the thing being typed into.
+    koru_draw::scene::stroke(scene, root, theme::p().focus_ring, theme::BORDER_W, &shape);
+    // `shows_placeholder`, never `is_empty`: an authored-empty field holding
+    // a dictation transcript is still empty, and the ghost would be drawn
+    // underneath the words (ADR-272).
+    let empty = field.shows_placeholder();
+    draw_field(
+        scene,
+        root,
+        field,
+        engine,
+        empty.then_some(&ghost),
+        (panel_x + r.x, panel_y + r.y, r.w, r.h),
+        true,
+    );
+}
+
 /// What that box costs a panel: the margin, the box, the margin again.
 ///
 /// A caller measuring from *inside* the panel padding subtracts

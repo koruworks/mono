@@ -71,6 +71,52 @@ impl SyncCredential {
     pub fn compact(&self) -> &str {
         &self.0
     }
+
+    /// The credential's `workspace_id` claim, read **unverified**: the
+    /// Workspace a Profile session is scoped to on the worker, whose frames
+    /// must name it. Addressing only, never authority: the worker verifies
+    /// the credential, so a wrong value here is a refusal there. `None` when
+    /// the payload carries no such claim.
+    pub fn unverified_workspace_id(&self) -> Option<Uuid> {
+        #[derive(Deserialize)]
+        struct Claim {
+            workspace_id: Uuid,
+        }
+        let payload = self.0.split('.').nth(1)?;
+        let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+        serde_json::from_slice::<Claim>(&bytes)
+            .ok()
+            .map(|claim| claim.workspace_id)
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    fn compact(body: &str) -> SyncCredential {
+        let head = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#);
+        let signature = URL_SAFE_NO_PAD.encode([9_u8; 64]);
+        SyncCredential::try_from(format!(
+            "{head}.{}.{signature}",
+            URL_SAFE_NO_PAD.encode(body)
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_workspace_claim_is_read_for_addressing_and_absent_when_missing() {
+        let workspace = Uuid::from_u128(0x2000_0000_0000_4000_8000_0000_0000_0001);
+        let issued = compact(&format!(
+            r#"{{"ver":1,"sub":"x","workspace_id":"{workspace}","profile_id":"y"}}"#
+        ));
+        assert_eq!(issued.unverified_workspace_id(), Some(workspace));
+        assert_eq!(compact(r#"{"sub":"x"}"#).unverified_workspace_id(), None);
+        assert_eq!(
+            compact(r#"{"workspace_id":"not-a-uuid"}"#).unverified_workspace_id(),
+            None
+        );
+    }
 }
 
 impl std::fmt::Debug for SyncCredential {

@@ -191,8 +191,20 @@ struct LocalProfiles {
     identities: Mutex<Vec<lifecycle::LocalProfileIdentity>>,
     refuse: AtomicBool,
     cancel_after_commit: Mutex<Option<Arc<AtomicBool>>>,
+    /// Profiles brought back after being removed from this computer, in order.
+    restored: Mutex<Vec<ProfileId>>,
 }
 impl lifecycle::LocalProfileInventory for LocalProfiles {
+    fn restore_removed(&self, profile: ProfileId) -> Result<(), ServiceError> {
+        // Restoring clears the removal mark, as the Store's does.
+        for row in self.inventory.lock().unwrap().iter_mut() {
+            if row.profile_id == profile {
+                row.removed_at_millis = None;
+            }
+        }
+        self.restored.lock().unwrap().push(profile);
+        Ok(())
+    }
     fn inventory(&self) -> Result<koru_store_wire::ProfileLifecycleInventory, ServiceError> {
         Ok(koru_store_wire::ProfileLifecycleInventory {
             profiles: self.inventory.lock().unwrap().clone(),
@@ -615,11 +627,82 @@ fn selection_validates_every_member_and_exact_session_before_any_local_commit() 
     }
 }
 
+/// **A Profile removed from this computer is brought back when it is chosen
+/// again.** It is still this account's, and the person just picked it under
+/// *Import Profiles*. It used to refuse the whole selection as
+/// `profile_removed`, which no surface explained: *Connect selected* simply
+/// did nothing, and the refusal failed the account into looking signed out.
 #[test]
-fn removed_or_differently_bound_local_member_refuses_the_entire_selection() {
+fn a_member_removed_from_this_computer_is_restored_then_connected() {
+    let port = Arc::new(SetPort::default());
+    port.local
+        .inventory
+        .lock()
+        .unwrap()
+        .push(koru_store_wire::ProfileLifecycleInventoryItem {
+            profile_id: ProfileId::parse(SECOND).unwrap(),
+            account_binding: format!("koru:{}", authority_a().owner.account),
+            removed_at_millis: Some(1),
+        });
+    let mut service = service(port.clone(), authority_a());
+    assert!(
+        execute(
+            &mut service,
+            AccountCommand::SelectProfiles {
+                profile_ids: vec![FIRST.into(), SECOND.into()]
+            }
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        *port.local.restored.lock().unwrap(),
+        [ProfileId::parse(SECOND).unwrap()],
+        "only the removed member is restored"
+    );
+    assert_eq!(
+        *port.local.committed.lock().unwrap(),
+        ids(&[FIRST, SECOND]),
+        "and every member is provisioned"
+    );
+}
+
+/// Bringing a Profile back is a local commit like any other: nothing is
+/// restored until the whole set has validated.
+#[test]
+fn nothing_is_restored_when_another_member_refuses_the_selection() {
+    let port = Arc::new(SetPort::default());
+    let mut inventory = port.local.inventory.lock().unwrap();
+    inventory.push(koru_store_wire::ProfileLifecycleInventoryItem {
+        profile_id: ProfileId::parse(FIRST).unwrap(),
+        account_binding: format!("koru:{}", authority_a().owner.account),
+        removed_at_millis: Some(1),
+    });
+    inventory.push(koru_store_wire::ProfileLifecycleInventoryItem {
+        profile_id: ProfileId::parse(SECOND).unwrap(),
+        account_binding: format!("koru:{}", authority_b().owner.account),
+        removed_at_millis: None,
+    });
+    drop(inventory);
+    let mut service = service(port.clone(), authority_a());
+    assert!(
+        execute(
+            &mut service,
+            AccountCommand::SelectProfiles {
+                profile_ids: vec![FIRST.into(), SECOND.into()]
+            }
+        )
+        .is_err()
+    );
+    assert!(port.local.restored.lock().unwrap().is_empty());
+    assert!(port.local.committed.lock().unwrap().is_empty());
+    assert!(port.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_differently_bound_local_member_refuses_the_entire_selection() {
     for (binding, removed) in [
-        (format!("koru:{}", authority_a().owner.account), Some(1)),
         (format!("koru:{}", authority_b().owner.account), None),
+        (format!("koru:{}", authority_b().owner.account), Some(1)),
         (String::new(), None),
     ] {
         let port = Arc::new(SetPort::default());

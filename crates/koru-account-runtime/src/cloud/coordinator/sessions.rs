@@ -85,7 +85,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
     /// Re-admit one session's scope and replace its permit on the host.
     fn renew_session(&mut self, session: &mut Session) -> Result<(), Failure> {
         let authority = self.current_authority()?;
-        tracing::info!(owner = ?session.owner, "cloud session: renewing worker admission");
+        tracing::debug!(owner = ?session.owner, "cloud session: renewing worker admission");
         let replacement = match session.owner {
             Owner::Workspace(workspace) => {
                 let candidate = self

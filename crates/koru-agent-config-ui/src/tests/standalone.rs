@@ -606,6 +606,64 @@ fn both_controls_draw_inside_their_shells_and_declare_their_buttons() {
     );
 }
 
+/// **Each row wears its mode's color** (2026-11-10, ported with the move):
+/// the control words the rows with the tone a send button takes for that
+/// mode, so every host's list — a chat's, a Bot's — shows the same colors
+/// for the same agent and mode, and the list's specs carry it to the icon.
+#[test]
+fn every_row_carries_its_modes_color_into_the_list() {
+    use koru_ui::split_button::SplitTone;
+    let offers = [
+        "default",
+        "acceptEdits",
+        "plan",
+        "auto",
+        "bypassPermissions",
+    ]
+    .map(|id| ModeOffer {
+        id,
+        name: None,
+        description: None,
+    });
+    let rows = modes::rows(Lang::En, "agent-claude", &offers);
+    let tones: Vec<SplitTone> = rows.iter().map(|row| row.tone).collect();
+    assert_eq!(
+        tones,
+        [
+            SplitTone::Accent,
+            SplitTone::Success,
+            SplitTone::Accent,
+            SplitTone::Neutral,
+            SplitTone::Warning,
+        ]
+    );
+    for row in &rows {
+        assert_eq!(
+            row.tone,
+            modes::tone_of("agent-claude", &row.id),
+            "{}",
+            row.id
+        );
+    }
+    assert_eq!(
+        modes::tone_of("agent-codex", "auto-review"),
+        SplitTone::Success
+    );
+    let list = ModeList {
+        lang: Lang::En,
+        rows: &rows,
+        current: None,
+        focus: None,
+        anchor: Rect::new(780.0, 640.0, 40.0, 28.0),
+        viewport: Rect::new(0.0, 0.0, 900.0, 700.0),
+        width: 360.0,
+        pointer: (0.0, 0.0),
+        footer: false,
+    };
+    let spec_tones: Vec<SplitTone> = list.specs().iter().map(|spec| spec.tone).collect();
+    assert_eq!(spec_tones, tones);
+}
+
 /// Every node of a semantics tree, depth first.
 fn every(nodes: &[koru_draw::el::SemNode]) -> Vec<&koru_draw::el::SemNode> {
     let mut all = Vec::new();

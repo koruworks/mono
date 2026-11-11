@@ -84,6 +84,25 @@ pub trait CloudSyncPort: Send + Sync {
 
     /// Replace the remembered state. Called only when something changed.
     fn store(&self, state: &DeviceCloudSync) -> Result<(), ServiceError>;
+
+    /// Whether this host has a Store it must open to Cloud
+    /// ([`Self::open_to_cloud`]) — the desktop does. Where it does, a Profile
+    /// whose Cloud sync is on is opened by the reconcile, and a Profile
+    /// created with the account or chosen from it starts on by itself
+    /// (ADR-000-createdwithaccount). `false` leaves a host exactly as it
+    /// was: nothing is opened and nothing starts unasked.
+    fn starts_created_profiles_on(&self) -> bool {
+        false
+    }
+
+    /// **The device-local half of "on"**: let this device's Store move
+    /// `profile` and its Workspaces through Koru Cloud — the transport mode
+    /// (`Store::choose_transport_mode`, the Profile and its Workspaces as
+    /// one group). Asked once per process for every Profile whose Cloud sync
+    /// is on, before the hosted half, so it must be safe to repeat.
+    fn open_to_cloud(&self, _profile: ProfileId) -> Result<(), ServiceError> {
+        Err(ServiceError::terminal(CLOUD_SYNC_UNAVAILABLE))
+    }
 }
 
 /// The on-disk shape's version. A file written by a newer build is not read by
@@ -134,6 +153,15 @@ pub struct ProfileCloudSync {
     /// The remembered answer to the switch. It is what the reconcile pass
     /// replays, so it outlives every individual Workspace's outcome.
     pub enabled: bool,
+    /// **Created with the account on this device, and its switch not yet
+    /// touched** (ADR-000-createdwithaccount): Cloud sync starts on by
+    /// itself, as soon as the account has Koru Cloud. Written when the
+    /// account's Profile is created, cleared by the pass that leaves every
+    /// Workspace syncing, and by a person moving the switch either way —
+    /// their answer replaces the default. Never set for a Profile that
+    /// existed before it was connected: that one is still asked (D258).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub starts_on: bool,
     #[serde(default)]
     pub workspaces: BTreeMap<WorkspaceId, WorkspaceCloudSync>,
 }
@@ -257,6 +285,69 @@ impl ProductionAccountService {
                 stage: koru_agent_wire::CloudConnectionStage::Connecting,
             })
             .collect()
+    }
+
+    /// **A Profile created with the account starts with Cloud sync on**
+    /// (ADR-000-createdwithaccount). Called once the account's Profile
+    /// exists; what is written is only the intention, and the reconcile pass
+    /// acts on it once the Profile is bound on this device and the account
+    /// has Koru Cloud.
+    ///
+    /// Best effort on purpose: the Profile is already created, and a state
+    /// file that cannot be written costs a person one press of the switch,
+    /// never the Profile. A Profile this device already has an answer or a
+    /// hosted row for is left alone — a retried creation must not undo a
+    /// switch somebody has since turned off.
+    pub(super) fn cloud_sync_starts_on(&self, account: KoruIdentityId, profile: ProfileId) {
+        let Some(port) = self
+            .cloud_sync
+            .as_ref()
+            .filter(|port| port.starts_created_profiles_on())
+        else {
+            return;
+        };
+        let Ok(state) = port.load() else {
+            return;
+        };
+        let mut state = state.accepted();
+        let entry = state
+            .accounts
+            .entry(account.to_string())
+            .or_default()
+            .profiles
+            .entry(profile)
+            .or_default();
+        if entry.enabled || entry.starts_on || !entry.workspaces.is_empty() {
+            return;
+        }
+        entry.starts_on = true;
+        let _ = port.store(&state);
+    }
+
+    /// Whether `account` has Koru Cloud, for a Profile waiting to start.
+    ///
+    /// The settings page's own question (`InspectCloudSubscription`) is
+    /// remembered, so the usual pass costs nothing. Only an Agent nobody has
+    /// asked yet reads it here, once: a `false` is kept until the page asks
+    /// again, so an account with no subscription is not polled on the
+    /// heartbeat. A read that failed is not an answer and is asked again.
+    fn cloud_subscription_known(
+        &mut self,
+        account: KoruIdentityId,
+        cancel: &Cancel,
+    ) -> Option<bool> {
+        if let Some((known, current)) = self.cloud_subscribed
+            && known == account
+        {
+            return Some(current);
+        }
+        let authorization = self.authorization().ok()?;
+        let current = self
+            .client
+            .has_cloud_subscription(&authorization, &|| cancel.cancelled())
+            .ok()?;
+        self.cloud_subscribed = Some((account, current));
+        Some(current)
     }
 
     fn cloud_sync_port(&self) -> Result<Arc<dyn CloudSyncPort>, ServiceError> {
@@ -532,6 +623,7 @@ impl ProductionAccountService {
         state: &mut ProfileCloudSync,
         local: &[WorkspaceId],
         change: Option<bool>,
+        by_default: bool,
         listed: &mut Listed,
         cancel: &Cancel,
         woken: &mut bool,
@@ -551,6 +643,20 @@ impl ProductionAccountService {
                         break;
                     }
                     let entry = state.workspaces.entry(*workspace).or_default();
+                    // **A default never undoes somebody's "off".** A Profile
+                    // that starts by itself activates what the Cloud has
+                    // never held and leaves alone a Workspace another device
+                    // turned off; only a pressed switch turns that back on.
+                    if by_default {
+                        let code =
+                            self.observe_workspace(profile, *workspace, entry, listed, cancel);
+                        let off_elsewhere =
+                            code.is_none() && !entry.enabled && entry.authorization_version > 0;
+                        if code.is_some() || off_elsewhere {
+                            record(entry, code);
+                            continue;
+                        }
+                    }
                     match self.activate_workspace(profile, *workspace, entry, listed, cancel) {
                         None => *woken = true,
                         code => record(entry, code),
@@ -684,14 +790,17 @@ impl ProductionAccountService {
         // must lose at most the activation, never the answer to "did they ask
         // for this?".
         if let Some((profile, enabled)) = change {
-            state
+            let chosen = state
                 .accounts
                 .entry(account_key.clone())
                 .or_default()
                 .profiles
                 .entry(profile)
-                .or_default()
-                .enabled = enabled;
+                .or_default();
+            chosen.enabled = enabled;
+            // A person's own answer replaces the default, whichever way they
+            // moved the switch.
+            chosen.starts_on = false;
             if state != saved {
                 port.store(&state)?;
                 saved = state.clone();
@@ -700,6 +809,7 @@ impl ProductionAccountService {
 
         let mut listed = Listed::new();
         let mut woken = false;
+        let mut started: Vec<ProfileId> = Vec::new();
         let mut rows = Vec::with_capacity(profiles.len());
         for profile in &profiles {
             // `apply_profile` reads the service while it mutates this Profile's
@@ -713,6 +823,51 @@ impl ProductionAccountService {
                 .entry(*profile)
                 .or_default()
                 .clone();
+            let workspaces = local.get(profile).cloned().unwrap_or_default();
+            let mut applied =
+                change.and_then(|(changed, enabled)| (changed == *profile).then_some(enabled));
+            // **A Profile created with the account, or chosen from it,
+            // starts on** (ADR-000-createdwithaccount) — once the account
+            // has Koru Cloud and this device's Store is open to it. The
+            // Store first: until it is open nothing of the Profile's can
+            // arrive here, and the hosted half must never run with every
+            // file held back. It is opened once, before any Workspace is
+            // here, because a Profile chosen from the account has none
+            // until it is. Anything missing leaves the intention for the
+            // next pass.
+            let waiting = applied.is_none()
+                && profile_state.starts_on
+                && self.cloud_subscription_known(account, cancel) == Some(true);
+            // **Cloud sync on means the Store is open to Cloud.** One rule,
+            // however the Profile came to be on: the switch, the default, or
+            // another device's switch mirrored here. The two used to be
+            // separate acts — the switch, then a question whose answer opened
+            // the Store — and a switch left on with the question unanswered
+            // synced nothing while reading *Koru Cloud unavailable*
+            // (2026-11-11). Once per process, since opening an open Store
+            // writes nothing.
+            let on =
+                applied == Some(true) || waiting || (applied.is_none() && profile_state.enabled);
+            let gated = port.starts_created_profiles_on();
+            if gated
+                && on
+                && !self.cloud_opened.contains(profile)
+                && port.open_to_cloud(*profile).is_ok()
+            {
+                self.cloud_opened.insert(*profile);
+                // The Cloud pass was being refused until this moment.
+                woken = true;
+            }
+            let open = !gated || self.cloud_opened.contains(profile);
+            let starting = waiting && open;
+            let opened = starting && !profile_state.enabled;
+            if opened {
+                profile_state.enabled = true;
+                started.push(*profile);
+            }
+            if starting {
+                applied = Some(true);
+            }
             let mut persist = |profile: ProfileId, current: &ProfileCloudSync| {
                 state
                     .accounts
@@ -724,16 +879,28 @@ impl ProductionAccountService {
                     saved = state.clone();
                 }
             };
+            if opened {
+                // Written before it is applied, as a pressed switch is.
+                persist(*profile, &profile_state);
+            }
             let row = self.apply_profile(
                 *profile,
                 &mut profile_state,
-                &local.get(profile).cloned().unwrap_or_default(),
-                change.and_then(|(changed, enabled)| (changed == *profile).then_some(enabled)),
+                &workspaces,
+                applied,
+                starting,
                 &mut listed,
                 cancel,
                 &mut woken,
                 &mut persist,
             );
+            // The intention is spent by the first pass that settled every
+            // Workspace the Profile has here. Until one has arrived there is
+            // nothing to settle; a refusal or an outage tries again on the
+            // next pass, as a Workspace the Cloud has never held does.
+            if starting && row.error.is_none() && row.workspaces > 0 && !cancel.cancelled() {
+                profile_state.starts_on = false;
+            }
             persist(*profile, &profile_state);
             rows.push(row);
         }
@@ -745,11 +912,17 @@ impl ProductionAccountService {
         if woken && let Some(cloud) = &self.cloud {
             cloud.wake();
         }
-        if let Some((profile, _)) = change
-            && let Some(enrollment) = &self.enrollment
-            && let Some(authority) = self.enrollment_authorization()
+        // A Profile that started by itself is owed what a pressed switch is.
+        for profile in change
+            .map(|(profile, _)| profile)
+            .into_iter()
+            .chain(started)
         {
-            enrollment.retry(authority, Some(profile));
+            if let Some(enrollment) = &self.enrollment
+                && let Some(authority) = self.enrollment_authorization()
+            {
+                enrollment.retry(authority, Some(profile));
+            }
         }
         Ok(ServiceOutcome {
             state: self.state(generation, AccountStage::SignedIn),
