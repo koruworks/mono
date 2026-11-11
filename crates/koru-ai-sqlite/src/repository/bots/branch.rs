@@ -9,6 +9,19 @@ use koru_ai_core::MessageId;
 /// past this bound, and a damaged cyclic chain stops here instead of looping.
 const MAX_ORIGIN_HOPS: u32 = 32;
 
+/// The nearest reply a Bot Run wrote, from `?1` back through the copies
+/// Branch made, at most `?2` hops: each hop a `messages` primary-key seek,
+/// each candidate a seek of the unique `bot_chat_runs.assistant_message_id`.
+pub(super) const HISTORICAL_BOT_RUN_SQL: &str = "WITH RECURSIVE chain(id, hops) AS (
+                   SELECT ?1, 0
+                   UNION ALL
+                   SELECT m.origin_message_id, chain.hops + 1 FROM messages m
+                     JOIN chain ON m.id = chain.id
+                    WHERE m.origin_message_id IS NOT NULL AND chain.hops < ?2)
+                 SELECT r.bot_id, r.chat_id, r.assistant_message_id, r.run_id
+                   FROM chain JOIN bot_chat_runs r ON r.assistant_message_id = chain.id
+                  ORDER BY chain.hops LIMIT 1";
+
 /// The Run that produced a reply, found from that reply or any copy of it.
 /// History only: it confers no control, approval or result authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,15 +86,7 @@ impl Repository {
         let row: Option<(String, String, String, String)> = self
             .connection
             .query_row(
-                "WITH RECURSIVE chain(id, hops) AS (
-                   SELECT ?1, 0
-                   UNION ALL
-                   SELECT m.origin_message_id, chain.hops + 1 FROM messages m
-                     JOIN chain ON m.id = chain.id
-                    WHERE m.origin_message_id IS NOT NULL AND chain.hops < ?2)
-                 SELECT r.bot_id, r.chat_id, r.assistant_message_id, r.run_id
-                   FROM chain JOIN bot_chat_runs r ON r.assistant_message_id = chain.id
-                  ORDER BY chain.hops LIMIT 1",
+                HISTORICAL_BOT_RUN_SQL,
                 params![message.to_storage(), MAX_ORIGIN_HOPS],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )

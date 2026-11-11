@@ -14838,6 +14838,7 @@ mod tests {
                 usage: Default::default(),
                 context: None,
                 stop_code: code.map(str::to_owned),
+                run_id: None,
             });
             surface.transcript = Some(transcript);
             surface.rebuild_messages(600.0);

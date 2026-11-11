@@ -299,8 +299,17 @@ fn koru_s_own_data_is_never_a_selected_folder() {
         check_selected(fs.as_ref(), &reserved, selected().to_str().unwrap()),
         Ok(selected().to_str().unwrap().to_owned())
     );
+    let refused =
+        require_existing_folder(fs.as_ref(), &reserved, root().to_str().unwrap()).unwrap_err();
     assert_eq!(
-        require_existing_folder(fs.as_ref(), &reserved, root().to_str().unwrap())
+        refused.code,
+        koru_ai_wire::bot_creation_codes::FOLDER_RESERVED
+    );
+    assert!(!refused.retryable);
+    // A folder that is not there is still an invalid request, not Koru's.
+    let missing = selected().join("missing");
+    assert_eq!(
+        require_existing_folder(fs.as_ref(), &reserved, missing.to_str().unwrap())
             .unwrap_err()
             .code,
         "invalid_request"

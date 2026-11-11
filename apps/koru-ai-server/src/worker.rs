@@ -2062,6 +2062,7 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
                         usage,
                         context,
                         stop_code,
+                        run_id: None,
                     },
                 );
                 (message_id, entry)
@@ -2071,6 +2072,42 @@ fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Ve
     messages
         .iter()
         .filter_map(|message| usage_by_message.remove(&message.id).flatten())
+        .collect()
+}
+
+/// Each reply a Bot Run wrote names that Run in its usage entry, in message
+/// order; a reply with no entry yet gets one holding only the Run. Nothing
+/// changes for a transcript with no Bot Run.
+fn with_bot_runs(
+    usage: Vec<MessageUsage>,
+    messages: &[Message],
+    runs: Vec<(MessageId, koru_delegate_core::RunId)>,
+) -> Vec<MessageUsage> {
+    if runs.is_empty() {
+        return usage;
+    }
+    let runs: HashMap<_, _> = runs.into_iter().collect();
+    let mut entries: HashMap<_, _> = usage
+        .into_iter()
+        .map(|entry| (entry.message_id, entry))
+        .collect();
+    messages
+        .iter()
+        .filter_map(|message| {
+            let mut entry = entries.remove(&message.id);
+            if let Some(run) = runs.get(&message.id) {
+                entry
+                    .get_or_insert_with(|| MessageUsage {
+                        message_id: message.id,
+                        usage: AiUsage::default(),
+                        context: None,
+                        stop_code: None,
+                        run_id: None,
+                    })
+                    .run_id = Some(*run);
+            }
+            entry
+        })
         .collect()
 }
 
@@ -2876,12 +2913,27 @@ impl WorkerState {
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let messages = self.repository.messages(chat_id).map_err(ai_failure)?;
-        let usage = transcript_usage(
+        let mut usage = transcript_usage(
             &messages,
             self.repository
                 .attempts_for_chat(chat_id)
                 .map_err(ai_failure)?,
         );
+        // A Bot conversation, which only its authorized owner reads (the
+        // label is filled from that proof alone): each reply names the Run
+        // `read_run` accepts for it.
+        if let Some(label) = &chat.bot {
+            let replies: Vec<MessageId> = messages
+                .iter()
+                .filter(|message| message.role == ChatRole::Assistant)
+                .map(|message| message.id)
+                .collect();
+            let runs = self
+                .repository
+                .bot_reply_runs(label.bot_id, chat_id, &replies)
+                .map_err(bots::bot_failure)?;
+            usage = with_bot_runs(usage, &messages, runs);
+        }
         let mut sources = Vec::<MessageSources>::new();
         for (message_id, source) in self.repository.citations(chat_id).map_err(ai_failure)? {
             if let Some(group) = sources

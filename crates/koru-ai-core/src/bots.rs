@@ -3,7 +3,7 @@
 //! Engine-owned Bot configuration. No execution, HTTP or database owner lives here.
 
 use crate::{Chat, ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
-pub use koru_delegate_core::{BotId, BotRequestId, DeviceId};
+pub use koru_delegate_core::{BotId, BotRequestId, DeviceId, RunId};
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
 pub mod admission;

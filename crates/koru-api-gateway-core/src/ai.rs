@@ -2093,7 +2093,11 @@ fn invalid_identity(kind: &str) -> Response {
 fn status_for(failure: &Failure) -> StatusCode {
     use koru_ai_wire::attachment_codes as attachment;
     match failure.code.as_str() {
-        "invalid_request" | "invalid_id" | attachment::LIMIT => StatusCode::BAD_REQUEST,
+        "invalid_request"
+        | "invalid_id"
+        | attachment::LIMIT
+        // The status `invalid_request` had for it before it had its own code.
+        | koru_ai_wire::bot_creation_codes::FOLDER_RESERVED => StatusCode::BAD_REQUEST,
         "forbidden" | "wrong_owner" | attachment::WORKSPACE_NOT_GRANTED => StatusCode::FORBIDDEN,
         "not_found"
         | "chat_not_found"

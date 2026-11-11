@@ -188,6 +188,33 @@ fn an_existing_role_and_a_selected_folder_make_nothing_and_stay_shared() {
     h.stop();
 }
 
+/// Koru's own data is refused with its own stable code, never retryable,
+/// before anything is recorded; a folder that does not exist keeps
+/// `invalid_request` (the test below).
+#[test]
+fn a_selected_folder_that_is_korus_own_data_is_refused_with_its_own_code() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let command = create(
+        &owner,
+        authored(),
+        BotFolderChoice::Selected {
+            path: root().to_str().unwrap().into(),
+        },
+    );
+    let (request, _) = request_of(&command);
+    let refused = h.creation(command).unwrap_err();
+    assert_eq!(
+        refused.code,
+        koru_ai_wire::bot_creation_codes::FOLDER_RESERVED
+    );
+    assert!(!refused.retryable);
+    assert_eq!(h.read(request).unwrap_err().code, "not_found");
+    assert_eq!(owner.store_calls(), 0);
+    h.stop();
+}
+
 #[test]
 fn a_selected_folder_that_is_not_a_folder_is_refused_before_any_intent() {
     let owner = FakeOwner::new();

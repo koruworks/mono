@@ -184,7 +184,13 @@ fn koru_s_own_data_is_never_a_working_folder() {
         ai_root().join("bots").join("other").join("work"),
     ] {
         let (command, runtime) = prepare(Some(reserved.to_str().unwrap()));
-        assert_eq!(runtime.unwrap_err().code, "invalid_request", "{reserved:?}");
+        let refused = runtime.unwrap_err();
+        assert_eq!(
+            refused.code,
+            koru_ai_wire::bot_creation_codes::FOLDER_RESERVED,
+            "{reserved:?}"
+        );
+        assert!(!refused.retryable);
         // A refused folder is never bound.
         assert_eq!(folder_of(&command), reserved.to_str().unwrap());
     }

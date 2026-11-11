@@ -10654,6 +10654,20 @@
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
           },
+          "run_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "For a Bot conversation's owner, the Run that wrote this reply, as\n`read_run` accepts it with this `message_id` and the conversation's\n`chat_id` (a copied reply in a branch names the Run it was copied\nfrom). Absent on every reply no Run the execution owner holds wrote,\nand in every ordinary chat. A reply that reports no usage may carry\nonly this."
+          },
           "stop_code": {
             "description": "Why the engine refused this reply, as the same stable code the live\n`failed` event carried (O36): one of the closed `bot_input_*` codes,\nnever provider text. Absent on every other reply. A refused reply\nreports no usage, so an entry may carry only this.",
             "nullable": true,

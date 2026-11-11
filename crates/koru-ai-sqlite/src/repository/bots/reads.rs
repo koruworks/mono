@@ -139,7 +139,77 @@ const BOT_RUN_RECORD_SQL: &str = "SELECT record_workspace_id FROM bot_chat_runs
 const BOT_HISTORICAL_RUN_SQL: &str = "SELECT record_workspace_id FROM bot_historical_run_refs
   WHERE chat_id = ?1 AND message_id = ?2 AND run_id = ?3 AND bot_id = ?4";
 
+/// Whether the execution owner admitted a Run's submission: its receipt,
+/// by primary key from the Run's unique `run_id`, is `completed` (a refused
+/// one is `rejected`, one still in flight `prepared`).
+const BOT_RUN_ADMITTED_SQL: &str = "SELECT EXISTS(SELECT 1 FROM bot_chat_runs AS r
+  JOIN bot_command_receipts AS c ON c.user_scope_id = r.user_scope_id AND c.request_id = r.submission_id
+  WHERE r.run_id = ?1 AND c.stage = 'completed')";
+
+/// The Run a copy whose source was purged keeps a reference to, by the
+/// leading `(chat_id, message_id)` of the primary key.
+const BOT_REPLY_HISTORICAL_RUN_SQL: &str = "SELECT run_id FROM bot_historical_run_refs
+  WHERE chat_id = ?1 AND message_id = ?2 AND bot_id = ?3 ORDER BY run_id LIMIT 1";
+
 impl Repository {
+    /// For each of `replies` in `chat`, a conversation of `bot`, the Run
+    /// [`Self::bound_bot_run`] accepts for it, when the execution owner
+    /// holds one: the reply's own Run or the one a branch copied it from,
+    /// once its submission was admitted (a Run still being submitted, or
+    /// refused before admission, is left out), or the Run a copy keeps a
+    /// reference to after its source was purged. A reply with neither is
+    /// absent. Bounded by `replies`: per reply at most 32 primary-key hops
+    /// and three index seeks. The caller passes only messages of `chat` and
+    /// has checked the owner's authority over the conversation.
+    pub fn bot_reply_runs(
+        &self,
+        bot: BotId,
+        chat: ChatId,
+        replies: &[MessageId],
+    ) -> Result<Vec<(MessageId, koru_delegate_core::RunId)>, BotError> {
+        if replies.is_empty() || bot_for_chat_on(&self.connection, chat)? != Some(bot) {
+            return Ok(Vec::new());
+        }
+        let mut admitted = self.connection.prepare(BOT_RUN_ADMITTED_SQL).map_err(bad)?;
+        let mut referenced = self
+            .connection
+            .prepare(BOT_REPLY_HISTORICAL_RUN_SQL)
+            .map_err(bad)?;
+        let mut runs = Vec::new();
+        for reply in replies {
+            let own = match self.historical_bot_run(*reply)? {
+                Some(found) if found.bot == bot => Some(found.run),
+                _ => None,
+            };
+            let run = match own {
+                Some(run)
+                    if admitted
+                        .query_row([run.to_storage()], |row| row.get::<_, bool>(0))
+                        .map_err(bad)? =>
+                {
+                    Some(run)
+                }
+                // An unadmitted Run of its own wins over no reference; as
+                // in `bound_bot_run`, a reference is asked for only when
+                // the chain names no Run of this Bot.
+                Some(_) => None,
+                None => referenced
+                    .query_row(
+                        params![chat.to_storage(), reply.to_storage(), bot.to_storage()],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .map_err(bad)?
+                    .map(|run| run.parse().map_err(bad))
+                    .transpose()?,
+            };
+            if let Some(run) = run {
+                runs.push((*reply, run));
+            }
+        }
+        Ok(runs)
+    }
+
     /// Whether `run` is the Run of reply `message` in `chat`, a conversation
     /// of `bot`, and if so the workspace its Run record is in. The reply is
     /// the Run's own (`bot_chat_runs`), a copy a branch made of it
@@ -253,6 +323,34 @@ impl Repository {
             )
             .map_err(bad)?;
         Ok(())
+    }
+
+    /// Set the stage of the receipt behind `run`'s submission: `prepared`
+    /// (still being submitted), `rejected` (refused before admission) or
+    /// `completed` (admitted), as the admission path leaves it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn set_bot_run_receipt_stage_for_fixture(
+        &self,
+        run: koru_delegate_core::RunId,
+        stage: &str,
+    ) -> Result<(), BotError> {
+        if !matches!(stage, "prepared" | "rejected" | "completed") {
+            return Err(BotError::Invalid);
+        }
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE bot_command_receipts SET stage = ?2
+                  WHERE (user_scope_id, request_id) =
+                        (SELECT user_scope_id, submission_id FROM bot_chat_runs WHERE run_id = ?1)",
+                params![run.to_storage(), stage],
+            )
+            .map_err(bad)?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(BotError::NotFound)
+        }
     }
 
     /// What a purge of a copied reply's source leaves (no purge writes it

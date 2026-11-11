@@ -242,8 +242,11 @@ fn folder_failure(error: FolderFailure) -> Failure {
             "The selected folder is not an existing folder that can be used as it is named.",
             false,
         ),
+        // Its own code, so a client can say which it was; never retryable,
+        // so a reader that does not know the code still treats it as a
+        // refusal of the request.
         FolderFailure::Reserved => failure(
-            "invalid_request",
+            koru_ai_wire::bot_creation_codes::FOLDER_RESERVED,
             "Koru's own data folders cannot be a Bot's working folder.",
             false,
         ),

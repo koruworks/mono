@@ -144,3 +144,111 @@ fn binding_seeks_the_run_and_the_reference_by_their_keys() {
         "{found}"
     );
 }
+
+/// What the transcript reports for `chat`'s messages, each pair checked
+/// against the binding `read_run` uses: the round trip at this layer.
+fn reported(repo: &Repository, bot: &Bot, chat: ChatId) -> Vec<(MessageId, RunId)> {
+    let messages: Vec<MessageId> = repo.messages(chat).unwrap().iter().map(|m| m.id).collect();
+    let runs = repo.bot_reply_runs(bot.id, chat, &messages).unwrap();
+    for (message, run) in &runs {
+        assert!(
+            repo.bound_bot_run(bot.id, chat, *message, *run)
+                .unwrap()
+                .is_some(),
+            "a reported Run is one read_run binds"
+        );
+    }
+    runs
+}
+
+#[test]
+fn each_reply_reports_the_run_read_run_accepts_and_nothing_else() {
+    let (mut repo, bot, profile, reply, run) = replied();
+    assert_eq!(reported(&repo, &bot, bot.main_chat), vec![(reply, run)]);
+    // A Run still being submitted, or refused before admission, is not
+    // reported; once admitted it is.
+    for stage in ["prepared", "rejected"] {
+        repo.set_bot_run_receipt_stage_for_fixture(run, stage)
+            .unwrap();
+        assert!(reported(&repo, &bot, bot.main_chat).is_empty(), "{stage}");
+    }
+    repo.set_bot_run_receipt_stage_for_fixture(run, "completed")
+        .unwrap();
+    // A reply with no Run, another Bot, another conversation: nothing.
+    let other_chat = additional(&mut repo, &bot, profile, 20);
+    super::super::super::super::tests::complete_turn(&mut repo, other_chat, 0, "x", 30);
+    assert!(reported(&repo, &bot, other_chat).is_empty());
+    assert!(
+        repo.bot_reply_runs(BotId::mint(), bot.main_chat, &[reply])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        repo.bot_reply_runs(bot.id, other_chat, &[])
+            .unwrap()
+            .is_empty()
+    );
+
+    // Copies report the source's Run; after the purge only the copy that
+    // keeps a reference does.
+    let first = copy(&repo, &bot, bot.main_chat, reply);
+    repo.create_bot_branch(&bot, &first).unwrap();
+    let copied = first.messages[1].id;
+    let second = copy(&repo, &bot, first.chat.id, copied);
+    repo.create_bot_branch(&bot, &second).unwrap();
+    let twice = second.messages[1].id;
+    assert_eq!(reported(&repo, &bot, first.chat.id), vec![(copied, run)]);
+    assert_eq!(reported(&repo, &bot, second.chat.id), vec![(twice, run)]);
+    repo.purge_bot_chat_run_source_for_fixture(run, first.chat.id, copied)
+        .unwrap();
+    assert_eq!(reported(&repo, &bot, first.chat.id), vec![(copied, run)]);
+    assert!(reported(&repo, &bot, second.chat.id).is_empty());
+    assert!(reported(&repo, &bot, bot.main_chat).is_empty());
+}
+
+#[test]
+fn reply_runs_seek_by_keys_only() {
+    let (repo, bot, _, reply, run) = replied();
+    let (run_id, message, chat, bot_id) = (
+        run.to_storage(),
+        reply.to_storage(),
+        bot.main_chat.to_storage(),
+        bot.id.to_storage(),
+    );
+    let found = plan(&repo.connection, BOT_RUN_ADMITTED_SQL, &[&run_id]);
+    assert!(
+        found.contains("SEARCH r USING INDEX sqlite_autoindex_bot_chat_runs")
+            && found.contains("(run_id=?)")
+            && found.contains("SEARCH c USING INDEX sqlite_autoindex_bot_command_receipts")
+            && found.contains("(user_scope_id=? AND request_id=?)")
+            && !found.contains("SCAN r")
+            && !found.contains("SCAN c"),
+        "{found}"
+    );
+    let found = plan(
+        &repo.connection,
+        BOT_REPLY_HISTORICAL_RUN_SQL,
+        &[&chat, &message, &bot_id],
+    );
+    assert!(
+        found.contains("sqlite_autoindex_bot_historical_run_refs_1")
+            && found.contains("chat_id=? AND message_id=?"),
+        "{found}"
+    );
+    let hops = 32i64;
+    let found = plan(
+        &repo.connection,
+        super::super::super::branch::HISTORICAL_BOT_RUN_SQL,
+        &[&message, &hops],
+    );
+    assert!(
+        found.contains("sqlite_autoindex_messages_1")
+            || found.contains("USING INTEGER PRIMARY KEY")
+            || found.contains("SEARCH m USING"),
+        "{found}"
+    );
+    assert!(
+        found.contains("SEARCH r USING INDEX sqlite_autoindex_bot_chat_runs"),
+        "{found}"
+    );
+}

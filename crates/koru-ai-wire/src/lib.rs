@@ -73,6 +73,16 @@ pub mod bot_lifecycle_codes {
     pub const ARCHIVED: &str = "bot_archived";
 }
 
+/// Refusals of a Bot creation's request with a stable code of their own,
+/// beside the reasons a recorded creation carries (P1.8). Each is answered
+/// before anything is recorded, never retryable.
+pub mod bot_creation_codes {
+    /// The selected folder is Koru's own data: the AI data root, the
+    /// Store's data root or anything under the AI root's `bots/`. A folder
+    /// that does not exist or is not a folder stays `invalid_request`.
+    pub const FOLDER_RESERVED: &str = "folder_reserved";
+}
+
 pub const AI_WIRE_VERSION: u32 = 1;
 pub const AI_STREAM_VERSION: u32 = 1;
 pub const MODEL_PULL_STREAM_VERSION: u32 = 1;
@@ -207,6 +217,14 @@ pub struct MessageUsage {
     /// reports no usage, so an entry may carry only this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_code: Option<String>,
+    /// For a Bot conversation's owner, the Run that wrote this reply, as
+    /// `read_run` accepts it with this `message_id` and the conversation's
+    /// `chat_id` (a copied reply in a branch names the Run it was copied
+    /// from). Absent on every reply no Run the execution owner holds wrote,
+    /// and in every ordinary chat. A reply that reports no usage may carry
+    /// only this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<koru_ai_core::bots::RunId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1202,6 +1220,56 @@ mod tests {
         assert!(serde_json::from_value::<CancelAttemptResponse>(response).is_ok());
     }
 
+    /// An ordinary chat's transcript, pinned byte for byte: what the Bots
+    /// API adds for a Bot conversation's replies must leave these bytes
+    /// exactly as they were.
+    #[test]
+    fn an_ordinary_transcript_keeps_its_golden_bytes() {
+        let id = |n: u8| format!("00000000-0000-4000-8000-0000000000{n:02x}");
+        let chat_id = ChatId::parse(&id(1)).unwrap();
+        let mut transcript = transcript();
+        transcript.chat.id = chat_id;
+        transcript.tool_policy.chat_id = chat_id;
+        let message = |n: u8, ordinal, role, markdown: &str| Message {
+            id: MessageId::parse(&id(n)).unwrap(),
+            chat_id,
+            ordinal,
+            role,
+            state: koru_ai_core::MessageState::Complete,
+            markdown: markdown.into(),
+            origin_message_id: None,
+            provider: None,
+            requested_model: None,
+            resolved_model: None,
+            error_class: None,
+            created_at: Timestamp::from_millis(2),
+            completed_at: Some(Timestamp::from_millis(3)),
+        };
+        transcript.messages = vec![
+            message(2, 0, koru_ai_core::ChatRole::User, "Question"),
+            message(3, 1, koru_ai_core::ChatRole::Assistant, "Answer"),
+        ];
+        transcript.usage = vec![MessageUsage {
+            message_id: MessageId::parse(&id(3)).unwrap(),
+            usage: AiUsage {
+                prompt_tokens: Some(12),
+                completion_tokens: Some(34),
+                ..AiUsage::default()
+            },
+            context: Some(ReportedContextUsage { used: 5, size: 10 }),
+            stop_code: None,
+            run_id: None,
+        }];
+        let bytes = serde_json::to_string(&transcript).unwrap();
+        assert_eq!(bytes, ORDINARY_TRANSCRIPT);
+        assert_eq!(
+            serde_json::from_str::<ChatTranscript>(ORDINARY_TRANSCRIPT).unwrap(),
+            transcript
+        );
+    }
+
+    const ORDINARY_TRANSCRIPT: &str = r#"{"chat":{"id":"00000000-0000-4000-8000-000000000001","title":"Compatibility fixture","private":false,"current_model":{"provider":"mock","requested_model":"mock-v1","default_reasoning":"default"},"branched_from":null,"created_at":1,"updated_at":1},"tool_policy":{"chat_id":"00000000-0000-4000-8000-000000000001","mode":"manual","workspace_ids":[]},"tool_activities":[],"messages":[{"id":"00000000-0000-4000-8000-000000000002","chat_id":"00000000-0000-4000-8000-000000000001","ordinal":0,"role":"user","state":"complete","markdown":"Question","origin_message_id":null,"provider":null,"requested_model":null,"resolved_model":null,"error_class":null,"created_at":2,"completed_at":3},{"id":"00000000-0000-4000-8000-000000000003","chat_id":"00000000-0000-4000-8000-000000000001","ordinal":1,"role":"assistant","state":"complete","markdown":"Answer","origin_message_id":null,"provider":null,"requested_model":null,"resolved_model":null,"error_class":null,"created_at":2,"completed_at":3}],"blocks":[],"pinned_documents":[],"feedback":[],"usage":[{"message_id":"00000000-0000-4000-8000-000000000003","usage":{"prompt_tokens":12,"cached_prompt_tokens":null,"completion_tokens":34,"reasoning_tokens":null,"total_tokens":null,"source":"unavailable"},"context":{"used":5,"size":10}}],"sources":[],"attachments":[]}"#;
+
     #[test]
     fn transcripts_without_usage_remain_compatible() {
         let mut response = serde_json::to_value(transcript()).unwrap();
@@ -1218,6 +1286,7 @@ mod tests {
             usage: AiUsage::default(),
             context: None,
             stop_code: None,
+            run_id: None,
         };
         let mut value = serde_json::to_value(&entry).unwrap();
         assert!(value.get("context").is_none());
@@ -1236,11 +1305,25 @@ mod tests {
         );
         // A refused reply's stable code reads back; an older reader ignores it.
         value["stop_code"] = serde_json::json!("bot_input_pictures_refused");
-        let decoded = serde_json::from_value::<MessageUsage>(value).unwrap();
+        let decoded = serde_json::from_value::<MessageUsage>(value.clone()).unwrap();
         assert_eq!(
             decoded.stop_code.as_deref(),
             Some("bot_input_pictures_refused")
         );
+        // A Bot reply's Run reads back, and a reader that predates it, which
+        // rejects no unknown field, ignores it.
+        let run = koru_ai_core::bots::RunId::mint();
+        value["run_id"] = serde_json::json!(run);
+        let decoded = serde_json::from_value::<MessageUsage>(value.clone()).unwrap();
+        assert_eq!(decoded.run_id, Some(run));
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct Older {
+            message_id: MessageId,
+            usage: AiUsage,
+            stop_code: Option<String>,
+        }
+        assert!(serde_json::from_value::<Older>(value).is_ok());
     }
 
     #[test]

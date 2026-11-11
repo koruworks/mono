@@ -183,14 +183,10 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         "the agent was given exactly one native image"
     );
     assert!(trace.lines().any(|line| line == "native:images-on-disk:1"));
-    // The Run through the public Bots API (P1.8 B1), named only by what the
-    // conversation names, while its session is live: no session handle.
-    let running = read_run(
-        &stack.client,
-        &bot,
-        accepted.assistant_message_id,
-        fence.run,
-    );
+    // The Run through the public Bots API (P1.8 B1), found from the public
+    // transcript alone, while its session is live: no session handle.
+    let (reply, run, running) = read_reply_run(&stack.client, &bot);
+    assert_eq!((reply, run), (accepted.assistant_message_id, fence.run));
     assert_eq!(running.header.run, fence.run);
     assert_eq!(running.execution.device, stack.device);
     assert_eq!(running.execution.session, None);
@@ -267,12 +263,8 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     assert_eq!(receipt.attempt, fence.attempt);
     assert_eq!(receipt.generation, fence.generation);
     // Read again once finished: the same canonical Run, its whole history.
-    let finished = read_run(
-        &stack.client,
-        &bot,
-        accepted.assistant_message_id,
-        fence.run,
-    );
+    let (reply, run, finished) = read_reply_run(&stack.client, &bot);
+    assert_eq!((reply, run), (accepted.assistant_message_id, fence.run));
     assert_eq!(finished.header.run, fence.run);
     assert!(matches!(
         finished.header.status,
@@ -494,14 +486,26 @@ fn ordinary_supervised_client_cannot_manage_bots_when_opted_in() {
     eprintln!("ordinary supervised client verified: bots.manage forbidden and nonretryable");
 }
 
-/// `read_run` for the Run that wrote `reply` in the Bot's main conversation,
-/// its whole history in one window; the raw answer carries no session.
-fn read_run(
+/// The one reply of the Bot's main conversation that names its Run in the
+/// public transcript, and `read_run` with exactly those two ids, its whole
+/// history in one window; the raw answer carries no session.
+fn read_reply_run(
     client: &koru_api_client::Client,
     bot: &koru_ai_core::bots::Bot,
-    reply: koru_ai_core::MessageId,
-    run: koru_delegate_core::RunId,
-) -> koru_delegate_core::RunView {
+) -> (
+    koru_ai_core::MessageId,
+    koru_delegate_core::RunId,
+    koru_delegate_core::RunView,
+) {
+    let transcript = client.ai().read_chat(bot.main_chat).unwrap();
+    let named: Vec<_> = transcript
+        .usage
+        .iter()
+        .filter_map(|entry| entry.run_id.map(|run| (entry.message_id, run)))
+        .collect();
+    let [(reply, run)] = named[..] else {
+        panic!("one reply names its Run: {named:?}")
+    };
     let response = client
         .ai()
         .bots(&BotCommand::ReadRun {
@@ -519,7 +523,7 @@ fn read_run(
     let BotResponse::Run { view } = response else {
         panic!("a Run view")
     };
-    view
+    (reply, run, view)
 }
 
 /// A valid 1x1 RGBA PNG: the smallest picture both the AI's attachment check

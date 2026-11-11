@@ -888,3 +888,122 @@ fn a_full_pool_answers_the_read_at_once_and_retryably() {
     }
     admin.stop();
 }
+
+/// The pairs a transcript names, in message order.
+fn named(transcript: &ChatTranscript) -> Vec<(MessageId, d::RunId)> {
+    transcript
+        .usage
+        .iter()
+        .filter_map(|entry| entry.run_id.map(|run| (entry.message_id, run)))
+        .collect()
+}
+
+#[test]
+fn the_transcript_names_each_replys_run_and_read_run_accepts_every_pair() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let (kept, kept_run) = replied(&mut repo, &bot, bot.main_chat, 1, bot.home_workspace);
+    // Refused before the execution owner admitted it: no Run to name.
+    let (refused, refused_run) = replied(&mut repo, &bot, bot.main_chat, 3, bot.home_workspace);
+    repo.set_bot_run_receipt_stage_for_fixture(refused_run, "rejected")
+        .unwrap();
+    // A reply no Run wrote.
+    let plain = completed(&mut repo, bot.main_chat, 5);
+    let (gone, gone_run) = replied(&mut repo, &bot, bot.main_chat, 7, bot.home_workspace);
+    let first = copy(&repo, &bot, bot.main_chat, kept.assistant_message.id);
+    repo.create_bot_branch(&bot, &first).unwrap();
+    let second = copy(&repo, &bot, bot.main_chat, gone.assistant_message.id);
+    repo.create_bot_branch(&bot, &second).unwrap();
+    let copied = |branch: &BranchCopy, source: MessageId| {
+        branch
+            .messages
+            .iter()
+            .find(|m| m.origin_message_id == Some(source))
+            .unwrap()
+            .id
+    };
+    let kept_copy = copied(&first, kept.assistant_message.id);
+    let gone_copy = copied(&second, gone.assistant_message.id);
+    repo.purge_bot_chat_run_source_for_fixture(gone_run, second.chat.id, gone_copy)
+        .unwrap();
+    // An ordinary chat beside them.
+    let ordinary = repo
+        .chat_with_access(
+            bot.main_chat,
+            &ChatReadAccess::authorized(vec![bot.main_chat]),
+        )
+        .map(|chat| Chat {
+            id: ChatId::new(),
+            bot: None,
+            ..chat.unwrap()
+        })
+        .unwrap();
+    repo.create_chat(&ordinary).unwrap();
+    completed(&mut repo, ordinary.id, 9);
+    let owner = RunOwner::on(bot.owner_device);
+    for run in [kept_run, refused_run, gone_run] {
+        owner.holds(run, &bot);
+    }
+    let (worker, client) = worker(repo, authority, owner.clone());
+
+    let main = client.read_chat(context(true), bot.main_chat).unwrap();
+    assert_eq!(named(&main), vec![(kept.assistant_message.id, kept_run)]);
+    // The refused reply, the reply with no Run and the questions name none.
+    for absent in [
+        refused.assistant_message.id,
+        plain.assistant_message.id,
+        kept.user_message.id,
+        gone.assistant_message.id,
+    ] {
+        assert!(
+            main.usage
+                .iter()
+                .all(|e| e.message_id != absent || e.run_id.is_none())
+        );
+    }
+    let first_read = client.read_chat(context(true), first.chat.id).unwrap();
+    assert_eq!(named(&first_read), vec![(kept_copy, kept_run)]);
+    // The second branch copied the whole prefix: the first reply's copy
+    // names its live source's Run, the purged one's its reference; the
+    // refused reply's copy names nothing.
+    let second_read = client.read_chat(context(true), second.chat.id).unwrap();
+    assert_eq!(
+        named(&second_read),
+        vec![
+            (copied(&second, kept.assistant_message.id), kept_run),
+            (gone_copy, gone_run)
+        ]
+    );
+    // The round trip: every pair named is one `read_run` accepts for the
+    // same caller.
+    for (chat, transcript) in [
+        (bot.main_chat, &main),
+        (first.chat.id, &first_read),
+        (second.chat.id, &second_read),
+    ] {
+        for (message, run) in named(transcript) {
+            assert_eq!(
+                view(&client, read(bot.id, chat, message, run)).header.run,
+                run
+            );
+        }
+    }
+    // An ordinary chat's transcript is as it was: no Run named anywhere.
+    let plain_read = client.read_chat(context(true), ordinary.id).unwrap();
+    assert!(named(&plain_read).is_empty());
+    assert!(
+        !serde_json::to_string(&plain_read)
+            .unwrap()
+            .contains("run_id")
+    );
+    // Only the Bot's owner reads its conversation, and with it the Runs.
+    assert_eq!(
+        client
+            .read_chat(context(false), bot.main_chat)
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}

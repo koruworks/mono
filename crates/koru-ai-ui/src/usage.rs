@@ -443,6 +443,7 @@ mod tests {
                 size: 258_400,
             }),
             stop_code: None,
+            run_id: None,
         });
         let mut surface = ChatSurface::new();
         surface.transcript = Some(transcript);
@@ -503,6 +504,7 @@ mod tests {
                 usage: usage(Some(2_000), Some(800), None, Some(2_800)),
                 context: None,
                 stop_code: None,
+                run_id: None,
             });
         surface.rebuild_messages(width);
         let message = &surface.message_layouts[0];
