@@ -1,7 +1,28 @@
 // SPDX-License-Identifier: MPL-2.0
-//! One-command authority evidence, prepared off the AI writer by its existing bounded pool.
+//! One-command authority evidence, prepared off the AI writer on preparation's
+//! own lane of its bounded pool (`koru-ai-provider-prepare`).
+//!
+//! What a preparation may wait on: the Store, through the authority adapter
+//! (`inspect`, and `capture` of Role history for a task), each hop bounded by
+//! the Store worker's own 30 s; the session host's model catalog, for a
+//! change that names a model; the folder system, for a changed folder; and,
+//! for a terminal question card answered by the next message, one execution
+//! owner read (`Reconcile`), bounded by [`PREPARATION_OWNER_WITHIN`]. It never
+//! waits on background work: no lifecycle, recovery, probe, walk, branch,
+//! policy or provider job runs on this lane.
 use super::*;
 use std::collections::BTreeSet;
+
+/// The longest a preparation waits on the execution owner (the terminal
+/// question card's `Reconcile`): well inside the caller's own
+/// `RESPONSE_TIMEOUT`, so a hung owner answers `chat_busy` (retryable), not a
+/// worker timeout, and holds the people queued behind it for no longer.
+/// Shorter under test, so a hung owner is proved in seconds.
+#[cfg(not(test))]
+pub(in crate::worker) const PREPARATION_OWNER_WITHIN: Duration = Duration::from_secs(10);
+#[cfg(test)]
+pub(in crate::worker) const PREPARATION_OWNER_WITHIN: Duration = Duration::from_secs(2);
+const _: () = assert!(PREPARATION_OWNER_WITHIN.as_millis() * 3 <= RESPONSE_TIMEOUT.as_millis());
 
 #[derive(Clone)]
 pub(in crate::worker) struct CommandContext {

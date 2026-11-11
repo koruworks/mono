@@ -52,9 +52,14 @@ impl TerminalQuestionProof {
         port: Option<&Arc<dyn BotDelegatePort>>,
     ) -> ApiResult<()> {
         let port = port.ok_or_else(|| bot_failure(BotError::Unavailable))?;
-        match port.execute(DelegateCommand::Reconcile {
-            key: self.key.clone(),
-        }) {
+        // A read, on preparation's own lane: bounded, so a hung execution
+        // owner holds a person's other requests for at most this long.
+        match port.execute_within(
+            DelegateCommand::Reconcile {
+                key: self.key.clone(),
+            },
+            super::super::preparation::PREPARATION_OWNER_WITHIN,
+        ) {
             Ok(BotReply::Admission { admission })
                 if admission.key == self.key
                     && admission.run == self.fence.run

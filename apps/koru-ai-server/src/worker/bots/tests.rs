@@ -549,7 +549,7 @@ impl BotAuthority for BlockingAuthority {
         if let Some(release) = self.release.lock().unwrap().take() {
             assert_eq!(
                 std::thread::current().name(),
-                Some("koru-ai-provider-admin")
+                Some("koru-ai-provider-prepare")
             );
             let _ = self.entered.send(());
             let _ = release.recv();
@@ -615,9 +615,7 @@ fn stalled_bot_authority_is_bounded_and_ordinary_chat_keeps_progressing() {
     };
     let first = enqueue();
     entered.recv_timeout(Duration::from_secs(5)).unwrap();
-    let queued: Vec<_> = (0..PROVIDER_ADMIN_QUEUE_CAPACITY)
-        .map(|_| enqueue())
-        .collect();
+    let queued: Vec<_> = (0..PREPARATION_QUEUE_CAPACITY).map(|_| enqueue()).collect();
     assert_eq!(
         enqueue()
             .recv_timeout(Duration::from_secs(5))

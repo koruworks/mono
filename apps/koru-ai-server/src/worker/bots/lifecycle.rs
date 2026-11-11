@@ -904,13 +904,14 @@ impl WorkerState {
     /// itself, so asking again while it runs starts nothing.
     ///
     /// One at a time because a probe runs on the shared administration lane,
-    /// whose single thread also prepares every person's Bot command, and
-    /// whose queue holds [`PROVIDER_ADMIN_QUEUE_CAPACITY`]: a pass that put
-    /// its whole page on it at once filled it while the owner was silent
-    /// (each probe holding the thread until its owner call gave up), and a
-    /// person's own Bot read or command was refused `ai_worker_saturated`.
-    /// The lane runs one job at a time anyway, so asking one at a time costs
-    /// the walk nothing but a turn of the writer between probes.
+    /// whose queue holds [`PROVIDER_ADMIN_QUEUE_CAPACITY`] and which the
+    /// other background passes share: a pass that put its whole page on it
+    /// at once filled it while the owner was silent (each probe holding the
+    /// thread until its owner call gave up), and the next background job was
+    /// refused `ai_worker_saturated` (before preparation had a lane of its
+    /// own, a person's Bot read or command too). The lane runs one job at a
+    /// time anyway, so asking one at a time costs the walk nothing but a turn
+    /// of the writer between probes.
     ///
     /// The walk keeps its place across passes ([`LifecycleDriver::probe_after`])
     /// and starts again from the first at the end, so every parked operation

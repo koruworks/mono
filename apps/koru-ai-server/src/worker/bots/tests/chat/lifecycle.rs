@@ -26,6 +26,7 @@ mod answered;
 mod context_window;
 mod defaults;
 mod history;
+mod lanes;
 mod listing;
 mod owed;
 mod pending;

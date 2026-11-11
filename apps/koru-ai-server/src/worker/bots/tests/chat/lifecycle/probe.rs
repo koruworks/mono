@@ -8,11 +8,11 @@ use super::*;
 
 /// The owner's authority, per workspace: the owner can lose it over some.
 /// Every inspection naming a lost workspace is counted.
-struct PerWorkspace {
-    owner: BotOwner,
-    profile: koru_ai_core::ProfileId,
-    lost: Mutex<std::collections::HashSet<WorkspaceId>>,
-    lost_inspections: AtomicUsize,
+pub(super) struct PerWorkspace {
+    pub(super) owner: BotOwner,
+    pub(super) profile: koru_ai_core::ProfileId,
+    pub(super) lost: Mutex<std::collections::HashSet<WorkspaceId>>,
+    pub(super) lost_inspections: AtomicUsize,
 }
 impl BotAuthority for PerWorkspace {
     fn owner(&self) -> Result<BotOwner, BotError> {
@@ -63,7 +63,7 @@ impl BotAuthority for PerWorkspace {
 }
 
 /// A Bot of the fixture's owner in a workspace of its own.
-fn bot_in_own_workspace(repository: &mut Repository, template: &Authority) -> Bot {
+pub(super) fn bot_in_own_workspace(repository: &mut Repository, template: &Authority) -> Bot {
     let workspace = WorkspaceId::new();
     let authority = Arc::new(Authority {
         owner: template.owner,
@@ -94,7 +94,7 @@ fn bot_in_own_workspace(repository: &mut Repository, template: &Authority) -> Bo
 /// An Archive whose pause the owner acknowledged, parked in `settling`
 /// because the owner stopped answering: nothing is owed to the owner, so
 /// only the probe can learn that it is back.
-fn parked_with_nothing_owed(repository: &mut Repository, bot: &Bot) -> BotRequestId {
+pub(super) fn parked_with_nothing_owed(repository: &mut Repository, bot: &Bot) -> BotRequestId {
     let owner = BotOwner {
         user_scope: bot.user_scope,
         device: bot.owner_device,

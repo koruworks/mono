@@ -55,6 +55,9 @@ use koru_ai_wire::{
 pub const WORKER_COMMAND_CAPACITY: usize = 64;
 pub const PROVIDER_QUEUE_CAPACITY: usize = 8;
 pub const PROVIDER_ADMIN_QUEUE_CAPACITY: usize = 8;
+/// Bot preparation's own lane (person-facing): requests waiting beside the
+/// one being prepared. One more is answered `ai_worker_saturated` at once.
+pub const PREPARATION_QUEUE_CAPACITY: usize = 8;
 pub const CONTEXT_QUEUE_CAPACITY: usize = 8;
 pub const EXPORT_QUEUE_CAPACITY: usize = 8;
 pub const TOOL_QUEUE_CAPACITY: usize = 8;
@@ -5686,6 +5689,12 @@ enum ProviderAdminJob {
         entered: SyncSender<()>,
         release: Receiver<()>,
     },
+    /// The same, held on preparation's own lane.
+    #[cfg(test)]
+    BlockPreparationForFixture {
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    },
     BotChatControl(bots::chat::StepJob),
     BotInteraction(bots::chat::ControlJob),
     BotInteractionRead(bots::chat::ControlReadJob),
@@ -5727,7 +5736,7 @@ struct ProviderAdminPool {
     /// Bot creation's own lane (P1.8): its steps wait on the Store and the
     /// filesystem for up to two 30 s hops each, so they never occupy the
     /// shared administration queue that automatic interruptions, policy,
-    /// coordination, native drain, lifecycle and preparation use. The writer
+    /// coordination, native drain and lifecycle use. The writer
     /// keeps at most one step in flight, so this queue of one never fills.
     creation_sender: Option<SyncSender<bots::CreationJob>>,
     creation_thread: Option<JoinHandle<()>>,
@@ -5737,7 +5746,33 @@ struct ProviderAdminPool {
     /// A small queue; a full one is answered at once.
     run_read_sender: Option<SyncSender<bots::BotRunReadJob>>,
     run_read_thread: Option<JoinHandle<()>>,
+    /// Preparation's own lane: every Bot command a person sends (reads
+    /// included) is prepared here, and so are the other hops a waiting
+    /// caller depends on (creation's preparation and read, the authority
+    /// read after an answered approval or a steer). Each inspects authority
+    /// and reads local state; none waits on background work, because no
+    /// background job (lifecycle, recovery, probes, the restart walk,
+    /// branch, policy, provider validation, model download) runs here.
+    prepare_sender: Option<SyncSender<ProviderAdminJob>>,
+    prepare_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
+}
+
+impl ProviderAdminJob {
+    /// The jobs on preparation's own lane: each is a hop a person's request
+    /// waits on, and none is background work.
+    fn preparation(&self) -> bool {
+        match self {
+            Self::BotPrepare(_)
+            | Self::BotCreationPrepare(_)
+            | Self::BotCreationRead(_)
+            | Self::BotInteractionRead(_)
+            | Self::BotSteerRead(_) => true,
+            #[cfg(test)]
+            Self::BlockPreparationForFixture { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 impl ProviderAdminPool {
@@ -5750,6 +5785,8 @@ impl ProviderAdminPool {
         let (sender, receiver) = sync_channel(PROVIDER_ADMIN_QUEUE_CAPACITY);
         let control_output = output.clone();
         let creation_output = output.clone();
+        let prepare_output = output.clone();
+        let prepare_agents = agents.clone();
         let thread_shutdown = Arc::clone(&shutdown);
         let thread = std::thread::Builder::new()
             .name("koru-ai-provider-admin".into())
@@ -5791,24 +5828,21 @@ impl ProviderAdminPool {
                                 &thread_shutdown,
                             );
                         }
-                        ProviderAdminJob::BotInteractionRead(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotInteractionRead(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotSteerRead(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotSteerRead(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
                         #[cfg(test)]
                         ProviderAdminJob::BlockForFixture { entered, release } => {
                             let _ = entered.send(());
                             let _ = release.recv();
+                        }
+                        #[cfg(test)]
+                        ProviderAdminJob::BlockPreparationForFixture { .. } => {
+                            unreachable!("preparation lane dispatch")
+                        }
+                        ProviderAdminJob::BotPrepare(_)
+                        | ProviderAdminJob::BotCreationPrepare(_)
+                        | ProviderAdminJob::BotCreationRead(_)
+                        | ProviderAdminJob::BotInteractionRead(_)
+                        | ProviderAdminJob::BotSteerRead(_) => {
+                            unreachable!("preparation lane dispatch")
                         }
                         ProviderAdminJob::BotCoordinate(job) => {
                             let result = job.run();
@@ -5822,17 +5856,6 @@ impl ProviderAdminPool {
                         | ProviderAdminJob::BotInteraction(_)
                         | ProviderAdminJob::BotSteer(_) => {
                             unreachable!("control lane dispatch")
-                        }
-                        ProviderAdminJob::BotPrepare(job) => {
-                            let (command, proof) = job.run(agents.as_ref());
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotPrepared {
-                                    command: Box::new(command),
-                                    proof,
-                                },
-                                &thread_shutdown,
-                            );
                         }
                         ProviderAdminJob::BotLifecycle(job) => {
                             send_admin_envelope(
@@ -5848,22 +5871,8 @@ impl ProviderAdminPool {
                                 &thread_shutdown,
                             );
                         }
-                        ProviderAdminJob::BotCreationPrepare(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotCreationPrepared(Box::new(job.run(agents.as_ref()))),
-                                &thread_shutdown,
-                            );
-                        }
                         ProviderAdminJob::BotCreationStep(_) => {
                             unreachable!("creation lane dispatch")
-                        }
-                        ProviderAdminJob::BotCreationRead(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotCreationRead(Box::new(job.run())),
-                                &thread_shutdown,
-                            );
                         }
                         ProviderAdminJob::BotRunRead(_) => {
                             unreachable!("run read lane dispatch")
@@ -6017,6 +6026,39 @@ impl ProviderAdminPool {
                 return Err(error.to_string());
             }
         };
+        // At shutdown the jobs still queued here are dropped with the
+        // receiver, and with them each caller's reply: every waiting caller
+        // is answered `ai_unavailable` at once rather than left to time out.
+        let (prepare_sender, prepare_receiver) =
+            sync_channel::<ProviderAdminJob>(PREPARATION_QUEUE_CAPACITY);
+        let prepare_shutdown = Arc::clone(&shutdown);
+        let prepare_thread = match std::thread::Builder::new()
+            .name("koru-ai-provider-prepare".into())
+            .spawn(move || {
+                while !prepare_shutdown.load(Ordering::Acquire) {
+                    match prepare_receiver.recv_timeout(LOOP_INTERVAL) {
+                        Ok(job) => run_preparation(
+                            job,
+                            prepare_agents.as_ref(),
+                            &prepare_output,
+                            &prepare_shutdown,
+                        ),
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                drop(sender);
+                drop(creation_sender);
+                drop(run_read_sender);
+                let _ = thread.join();
+                let _ = creation_thread.join();
+                let _ = run_read_thread.join();
+                return Err(error.to_string());
+            }
+        };
         let control_shutdown = Arc::clone(&shutdown);
         let control_thread = match std::thread::Builder::new()
             .name("koru-ai-provider-control".into())
@@ -6064,9 +6106,11 @@ impl ProviderAdminPool {
                 drop(sender);
                 drop(creation_sender);
                 drop(run_read_sender);
+                drop(prepare_sender);
                 let _ = thread.join();
                 let _ = creation_thread.join();
                 let _ = run_read_thread.join();
+                let _ = prepare_thread.join();
                 return Err(error.to_string());
             }
         };
@@ -6080,11 +6124,35 @@ impl ProviderAdminPool {
             creation_thread: Some(creation_thread),
             run_read_sender: Some(run_read_sender),
             run_read_thread: Some(run_read_thread),
+            prepare_sender: Some(prepare_sender),
+            prepare_thread: Some(prepare_thread),
             shutdown,
         })
     }
 
     fn try_submit(&self, job: ProviderAdminJob) -> Result<(), AdminSubmitError> {
+        if job.preparation() {
+            let Some(sender) = &self.prepare_sender else {
+                return Err(AdminSubmitError {
+                    job,
+                    failure: unavailable_failure(),
+                });
+            };
+            return sender.try_send(job).map_err(|error| match error {
+                TrySendError::Full(job) => AdminSubmitError {
+                    job,
+                    failure: failure(
+                        "ai_worker_saturated",
+                        "The Bot preparation queue is busy. Try again.",
+                        true,
+                    ),
+                },
+                TrySendError::Disconnected(job) => AdminSubmitError {
+                    job,
+                    failure: unavailable_failure(),
+                },
+            });
+        }
         if matches!(
             &job,
             ProviderAdminJob::BotInteraction(_) | ProviderAdminJob::BotSteer(_)
@@ -6205,7 +6273,11 @@ impl ProviderAdminPool {
         self.interactive_sender.take();
         self.creation_sender.take();
         self.run_read_sender.take();
+        self.prepare_sender.take();
         if let Some(thread) = self.control_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.prepare_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.creation_thread.take() {
@@ -6218,6 +6290,38 @@ impl ProviderAdminPool {
             let _ = thread.join();
         }
     }
+}
+
+/// One job of preparation's own lane, its result sent to the writer.
+fn run_preparation(
+    job: ProviderAdminJob,
+    agents: Option<&AgentSessions>,
+    output: &SyncSender<Envelope>,
+    shutdown: &AtomicBool,
+) {
+    let envelope = match job {
+        ProviderAdminJob::BotPrepare(job) => {
+            let (command, proof) = job.run(agents);
+            Envelope::BotPrepared {
+                command: Box::new(command),
+                proof,
+            }
+        }
+        ProviderAdminJob::BotCreationPrepare(job) => {
+            Envelope::BotCreationPrepared(Box::new(job.run(agents)))
+        }
+        ProviderAdminJob::BotCreationRead(job) => Envelope::BotCreationRead(Box::new(job.run())),
+        ProviderAdminJob::BotInteractionRead(job) => Envelope::BotInteractionRead(job.run()),
+        ProviderAdminJob::BotSteerRead(job) => Envelope::BotSteerRead(job.run()),
+        #[cfg(test)]
+        ProviderAdminJob::BlockPreparationForFixture { entered, release } => {
+            let _ = entered.send(());
+            let _ = release.recv();
+            return;
+        }
+        _ => unreachable!("preparation lane dispatch"),
+    };
+    send_admin_envelope(output, envelope, shutdown);
 }
 
 fn validate_provider_configuration(

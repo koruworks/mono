@@ -247,9 +247,10 @@ impl WorkerState {
         }
         let now = Instant::now();
         // One probe outstanding at a time: it runs on the shared
-        // administration lane, which also prepares every person's Bot
-        // command and runs one job at a time anyway, so several re-sends
-        // owed at once never fill it.
+        // administration lane, which the other background passes share and
+        // which runs one job at a time anyway, so several re-sends owed at
+        // once never fill it. (The re-send's Retry itself is prepared on
+        // preparation's lane, as a person's Retry is.)
         let mut probing = self
             .bot_resends
             .owed
