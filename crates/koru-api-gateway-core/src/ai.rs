@@ -84,8 +84,8 @@ pub const ROUTES: &[AiRoute] = &[
         method: "POST",
         path: "/v1/ai/bots",
         scope: AiScope::ManageBots,
-        summary: "Read, configure, add a conversation to or request admission for an engine-owned Bot",
-        returns: "A durable configuration, authorized listing, new conversation reference or content-free admission operation. Conversation history uses the Chat reads; execution is coordinated separately.",
+        summary: "Read, configure, archive, trash or restore an engine-owned Bot, add a conversation to it or request admission",
+        returns: "A durable configuration, authorized listing, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately.",
         handler: || post(bot_command),
         request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotCommand>()),
         response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotResponse>()),
@@ -2114,7 +2114,9 @@ fn status_for(failure: &Failure) -> StatusCode {
         | "unsupported_capability"
         | "idempotency_conflict"
         | "model_pull_active"
-        | "steer_unavailable" => StatusCode::CONFLICT,
+        | "steer_unavailable"
+        | koru_ai_wire::bot_lifecycle_codes::TRASHED
+        | koru_ai_wire::bot_lifecycle_codes::PENDING => StatusCode::CONFLICT,
         "deadline_exceeded" | "ai_worker_timeout" => StatusCode::GATEWAY_TIMEOUT,
         "workspace_unavailable"
         | "runtime_unavailable"

@@ -3,6 +3,7 @@ use super::*;
 mod branch;
 mod chat;
 mod conversations;
+mod lifecycle;
 
 #[test]
 fn indirect_keys_resolve_the_actual_bot_chat_before_read_or_mutation() {

@@ -8,9 +8,7 @@ pub(crate) mod policy;
 mod branch;
 pub(crate) mod lifecycle;
 pub use branch::HistoricalBotRun;
-pub use lifecycle::{
-    LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation, LifecycleSubject,
-};
+pub use lifecycle::{LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation};
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage

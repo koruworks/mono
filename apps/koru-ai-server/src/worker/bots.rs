@@ -16,6 +16,7 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
 mod admission;
 mod branch;
 pub(in crate::worker) mod chat;
+mod lifecycle;
 pub(crate) mod policy;
 mod preparation;
 pub(super) use admission::{BotCoordinationJob, BotCoordinationResult};
@@ -48,6 +49,9 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
+        if let Some(result) = self.bot_lifecycle_command(&context, &request) {
+            return result;
+        }
         if let BotCommand::CreateChat { request_id, bot_id } = &request {
             let proof = context
                 .prepared
@@ -214,7 +218,16 @@ fn execute_bot_command(
         | BotCommand::Pause { .. }
         | BotCommand::Resume { .. }
         | BotCommand::ReadOperation { .. }
-        | BotCommand::ReconcileOperation { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ReconcileOperation { .. }
+        | BotCommand::Archive { .. }
+        | BotCommand::Trash { .. }
+        | BotCommand::Restore { .. }
+        | BotCommand::TrashChat { .. }
+        | BotCommand::RestoreChat { .. }
+        | BotCommand::PurgeBot { .. }
+        | BotCommand::PurgeChat { .. }
+        | BotCommand::ReadLifecycleOperation { .. }
+        | BotCommand::ListLifecycle { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

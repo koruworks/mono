@@ -10,58 +10,14 @@
 //! derived from the operation (AI identities are never derived).
 use super::*;
 use koru_ai_core::ChatAttachmentId;
-use koru_delegate_core::{NativePolicyRequestId, RunId};
+use koru_delegate_core::NativePolicyRequestId;
 use rusqlite::TransactionBehavior;
 use uuid::Uuid;
-
-/// What a member is, with exactly the identities its kind stores.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LifecycleSubject {
-    Bot,
-    Chat(ChatId),
-    /// A Run produced in `chat`. Its document is the delegate's to name and
-    /// may be recorded after capture.
-    RunReference {
-        run: RunId,
-        workspace: WorkspaceId,
-        document: Option<DocumentId>,
-        chat: Option<ChatId>,
-    },
-    OwnedRole {
-        workspace: WorkspaceId,
-        document: DocumentId,
-    },
-    AttachmentCopy {
-        chat: ChatId,
-        attachment: ChatAttachmentId,
-    },
-}
-
-impl LifecycleSubject {
-    pub fn kind(&self) -> BotLifecycleMemberKind {
-        match self {
-            Self::Bot => BotLifecycleMemberKind::Bot,
-            Self::Chat(_) => BotLifecycleMemberKind::Chat,
-            Self::RunReference { .. } => BotLifecycleMemberKind::RunReference,
-            Self::OwnedRole { .. } => BotLifecycleMemberKind::OwnedRole,
-            Self::AttachmentCopy { .. } => BotLifecycleMemberKind::AttachmentCopy,
-        }
-    }
-    /// The owner that applies this member's effect. Fixed by kind, so a
-    /// member can never name an owner that cannot act on it.
-    pub fn owner(&self) -> BotLifecycleOwner {
-        match self {
-            Self::Bot | Self::Chat(_) | Self::AttachmentCopy { .. } => BotLifecycleOwner::Ai,
-            Self::RunReference { .. } => BotLifecycleOwner::Delegate,
-            Self::OwnedRole { .. } => BotLifecycleOwner::Store,
-        }
-    }
-}
 
 /// A member as the caller proposes it at capture.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LifecycleMemberDraft {
-    pub subject: LifecycleSubject,
+    pub subject: BotLifecycleSubject,
     pub reason: BotLifecycleReason,
     pub prior_state: BotLifecyclePriorState,
     pub intended: BotLifecycleIntended,
@@ -72,7 +28,7 @@ pub struct LifecycleMemberDraft {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LifecycleMember {
     pub ordinal: u32,
-    pub subject: LifecycleSubject,
+    pub subject: BotLifecycleSubject,
     pub reason: BotLifecycleReason,
     pub prior_state: BotLifecyclePriorState,
     pub intended: BotLifecycleIntended,
@@ -119,6 +75,32 @@ pub struct LifecycleOperation {
     pub updated_at_ms: i64,
     pub completed_at_ms: Option<i64>,
     pub members: Vec<LifecycleMember>,
+}
+
+impl LifecycleOperation {
+    /// The public result: progress and each member's outcome, without the
+    /// owner correlation (child request, pause and policy IDs) it is built from.
+    pub fn progress(&self) -> BotLifecycleProgress {
+        BotLifecycleProgress {
+            request_id: self.operation,
+            bot_id: self.bot,
+            kind: self.kind,
+            chat_id: self.chat,
+            source_request_id: self.source,
+            stage: self.stage,
+            refusal: self.refusal,
+            members: self
+                .members
+                .iter()
+                .map(|member| BotLifecycleMemberOutcome {
+                    subject: member.subject.clone(),
+                    intended: member.intended,
+                    stage: member.stage,
+                    retained: member.retained,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Which member kinds an operation may capture. Restore acts on its source
@@ -348,10 +330,9 @@ fn validate_capture(capture: &LifecycleCapture) -> Result<(), BotError> {
         // A conversation operation captures only that conversation's members.
         if let Some(chat) = capture.chat {
             let own = match &member.subject {
-                LifecycleSubject::Chat(id) | LifecycleSubject::AttachmentCopy { chat: id, .. } => {
-                    *id == chat
-                }
-                LifecycleSubject::RunReference { chat: id, .. } => *id == Some(chat),
+                BotLifecycleSubject::Chat { chat_id }
+                | BotLifecycleSubject::AttachmentCopy { chat_id, .. } => *chat_id == chat,
+                BotLifecycleSubject::RunReference { chat_id, .. } => *chat_id == Some(chat),
                 _ => false,
             };
             if !own {
@@ -430,36 +411,41 @@ fn insert_member(
     member: &LifecycleMemberDraft,
 ) -> Result<(), BotError> {
     let (chat, run, workspace, document, attachment) = match &member.subject {
-        LifecycleSubject::Bot => (None, None, None, None, None),
-        LifecycleSubject::Chat(chat) => (Some(chat.to_storage()), None, None, None, None),
-        LifecycleSubject::RunReference {
-            run,
-            workspace,
-            document,
-            chat,
+        BotLifecycleSubject::Bot => (None, None, None, None, None),
+        BotLifecycleSubject::Chat { chat_id } => {
+            (Some(chat_id.to_storage()), None, None, None, None)
+        }
+        BotLifecycleSubject::RunReference {
+            run_id,
+            workspace_id,
+            document_id,
+            chat_id,
         } => (
-            chat.map(ChatId::to_storage),
-            Some(run.to_storage()),
-            Some(workspace.to_storage()),
-            document.map(|d| d.to_storage()),
+            chat_id.map(ChatId::to_storage),
+            Some(run_id.to_storage()),
+            Some(workspace_id.to_storage()),
+            document_id.map(|d| d.to_storage()),
             None,
         ),
-        LifecycleSubject::OwnedRole {
-            workspace,
-            document,
+        BotLifecycleSubject::OwnedRole {
+            workspace_id,
+            document_id,
         } => (
             None,
             None,
-            Some(workspace.to_storage()),
-            Some(document.to_storage()),
+            Some(workspace_id.to_storage()),
+            Some(document_id.to_storage()),
             None,
         ),
-        LifecycleSubject::AttachmentCopy { chat, attachment } => (
-            Some(chat.to_storage()),
+        BotLifecycleSubject::AttachmentCopy {
+            chat_id,
+            attachment_id,
+        } => (
+            Some(chat_id.to_storage()),
             None,
             None,
             None,
-            Some(attachment.to_storage()),
+            Some(attachment_id.to_storage()),
         ),
     };
     let stage = if member.retained.is_some() {
@@ -635,21 +621,23 @@ fn read_members(
         let workspace = |v: String| WorkspaceId::parse(&v).ok_or(BotError::Storage);
         let document = |v: String| DocumentId::parse(&v).ok_or(BotError::Storage);
         let subject = match token(r.1, BotLifecycleMemberKind::parse)? {
-            BotLifecycleMemberKind::Bot => LifecycleSubject::Bot,
-            BotLifecycleMemberKind::Chat => LifecycleSubject::Chat(chat(need(r.2)?)?),
-            BotLifecycleMemberKind::RunReference => LifecycleSubject::RunReference {
-                run: need(r.3)?.parse().map_err(bad)?,
-                workspace: workspace(need(r.4)?)?,
-                document: r.5.map(document).transpose()?,
-                chat: r.2.map(chat).transpose()?,
+            BotLifecycleMemberKind::Bot => BotLifecycleSubject::Bot,
+            BotLifecycleMemberKind::Chat => BotLifecycleSubject::Chat {
+                chat_id: chat(need(r.2)?)?,
             },
-            BotLifecycleMemberKind::OwnedRole => LifecycleSubject::OwnedRole {
-                workspace: workspace(need(r.4)?)?,
-                document: document(need(r.5)?)?,
+            BotLifecycleMemberKind::RunReference => BotLifecycleSubject::RunReference {
+                run_id: need(r.3)?.parse().map_err(bad)?,
+                workspace_id: workspace(need(r.4)?)?,
+                document_id: r.5.map(document).transpose()?,
+                chat_id: r.2.map(chat).transpose()?,
             },
-            BotLifecycleMemberKind::AttachmentCopy => LifecycleSubject::AttachmentCopy {
-                chat: chat(need(r.2)?)?,
-                attachment: ChatAttachmentId::parse(&need(r.6)?).ok_or(BotError::Storage)?,
+            BotLifecycleMemberKind::OwnedRole => BotLifecycleSubject::OwnedRole {
+                workspace_id: workspace(need(r.4)?)?,
+                document_id: document(need(r.5)?)?,
+            },
+            BotLifecycleMemberKind::AttachmentCopy => BotLifecycleSubject::AttachmentCopy {
+                chat_id: chat(need(r.2)?)?,
+                attachment_id: ChatAttachmentId::parse(&need(r.6)?).ok_or(BotError::Storage)?,
             },
         };
         Ok(LifecycleMember {

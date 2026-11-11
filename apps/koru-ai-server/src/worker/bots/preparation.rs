@@ -231,7 +231,18 @@ impl WorkerState {
                     | BotCommand::Pause { .. }
                     | BotCommand::Resume { .. }
                     | BotCommand::ReadOperation { .. }
-                    | BotCommand::ReconcileOperation { .. } => {}
+                    | BotCommand::ReconcileOperation { .. }
+                    | BotCommand::Archive { .. }
+                    | BotCommand::Trash { .. }
+                    | BotCommand::Restore { .. }
+                    | BotCommand::TrashChat { .. }
+                    | BotCommand::RestoreChat { .. }
+                    | BotCommand::PurgeBot { .. }
+                    | BotCommand::PurgeChat { .. }
+                    | BotCommand::ReadLifecycleOperation { .. } => {}
+                    BotCommand::ListLifecycle { workspace, .. } => {
+                        workspaces.insert(*workspace);
+                    }
                 }
             }
             if let Some(chat) = chat::chat_capture(&self.repository, &command)? {
@@ -356,14 +367,14 @@ pub(super) fn bot_targets(
             | WorkerCommand::ToolSearchChats { .. }
             | WorkerCommand::Usage { chat: None, .. }
             | WorkerCommand::Bots {
-                request: BotCommand::List { .. },
+                request: BotCommand::List { .. } | BotCommand::ListLifecycle { .. },
                 ..
             }
     );
     if aggregate {
         let mut rows = repository.all_bot_chats().map_err(bot_failure)?;
         if let WorkerCommand::Bots {
-            request: BotCommand::List { workspace },
+            request: BotCommand::List { workspace } | BotCommand::ListLifecycle { workspace, .. },
             ..
         } = command
         {
@@ -390,8 +401,16 @@ pub(super) fn bot_targets(
             | BotCommand::Pause { bot_id, .. }
             | BotCommand::Resume { bot_id, .. }
             | BotCommand::ReadOperation { bot_id, .. }
-            | BotCommand::ReconcileOperation { bot_id, .. } => *bot_id,
-            BotCommand::List { .. } => unreachable!(),
+            | BotCommand::ReconcileOperation { bot_id, .. }
+            | BotCommand::Archive { bot_id, .. }
+            | BotCommand::Trash { bot_id, .. }
+            | BotCommand::Restore { bot_id, .. }
+            | BotCommand::TrashChat { bot_id, .. }
+            | BotCommand::RestoreChat { bot_id, .. }
+            | BotCommand::PurgeBot { bot_id, .. }
+            | BotCommand::PurgeChat { bot_id, .. }
+            | BotCommand::ReadLifecycleOperation { bot_id, .. } => *bot_id,
+            BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
         };
         match repository.bot(id) {
             Ok(Some(bot)) => {

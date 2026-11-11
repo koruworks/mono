@@ -208,12 +208,86 @@ pub enum BotCommand {
         access: BotAccess,
         selected_pages: Vec<BotPage>,
     },
+    /// Settle the Bot's work and keep it, with its history, out of the roster.
+    Archive {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+    },
+    /// Settle the Bot's work and move it, as one recoverable unit, to Trash.
+    Trash {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+    },
+    /// Reverse a named Archive or Trash; the Bot returns paused.
+    Restore {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+        source_request_id: BotRequestId,
+    },
+    /// Settle one conversation's work and move only it to Trash.
+    TrashChat {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        chat_id: ChatId,
+        expected_revision: u64,
+    },
+    RestoreChat {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        chat_id: ChatId,
+        expected_revision: u64,
+        source_request_id: BotRequestId,
+    },
+    /// Permanently delete a trashed Bot, from its named Trash operation.
+    PurgeBot {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+        source_request_id: BotRequestId,
+    },
+    PurgeChat {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        chat_id: ChatId,
+        expected_revision: u64,
+        source_request_id: BotRequestId,
+    },
+    /// Progress of one lifecycle operation, with per-member outcomes.
+    ReadLifecycleOperation {
+        request_id: BotRequestId,
+        bot_id: BotId,
+    },
+    /// The Bots of a workspace in one lifecycle (the Archived and Trash filters).
+    ListLifecycle {
+        workspace: WorkspaceId,
+        lifecycle: BotLifecycle,
+    },
+}
+
+impl BotCommand {
+    /// The lifecycle operation a command asks for, if it is one.
+    pub fn lifecycle_kind(&self) -> Option<BotLifecycleKind> {
+        Some(match self {
+            Self::Archive { .. } => BotLifecycleKind::Archive,
+            Self::Trash { .. } => BotLifecycleKind::Trash,
+            Self::Restore { .. } => BotLifecycleKind::Restore,
+            Self::TrashChat { .. } => BotLifecycleKind::TrashChat,
+            Self::RestoreChat { .. } => BotLifecycleKind::RestoreChat,
+            Self::PurgeBot { .. } => BotLifecycleKind::PurgeBot,
+            Self::PurgeChat { .. } => BotLifecycleKind::PurgeChat,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    Lifecycle { operation: BotLifecycleProgress },
     Chat { reference: BotChatReference },
     Operation { operation: BotOperation },
     Bot { bot: Bot },

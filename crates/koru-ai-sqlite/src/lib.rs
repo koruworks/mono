@@ -14,7 +14,7 @@ pub use db::write_at_schema;
 pub use db::{OpenError, SCHEMA_VERSION};
 pub use repository::{
     HistoricalBotRun, KnownAttachmentDirs, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
-    LifecycleOperation, LifecycleSubject, RemovedAttachment, Repository,
+    LifecycleOperation, RemovedAttachment, Repository,
 };
 
 pub const DATABASE_FILE: &str = "ai.db";

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::super::tests::fixture_bot;
 use super::*;
+use koru_delegate_core::RunId;
 use std::collections::BTreeSet;
 mod migration;
 mod plans;
@@ -31,14 +32,16 @@ fn capture(bot: &Bot, owner: BotOwner, kind: BotLifecycleKind) -> LifecycleCaptu
         source: None,
         members: vec![
             LifecycleMemberDraft {
-                subject: LifecycleSubject::Bot,
+                subject: BotLifecycleSubject::Bot,
                 reason: BotLifecycleReason::Bot,
                 prior_state: BotLifecyclePriorState::Live,
                 intended: BotLifecycleIntended::Hide,
                 retained: None,
             },
             LifecycleMemberDraft {
-                subject: LifecycleSubject::Chat(bot.main_chat),
+                subject: BotLifecycleSubject::Chat {
+                    chat_id: bot.main_chat,
+                },
                 reason: BotLifecycleReason::OwnedConversation,
                 prior_state: BotLifecyclePriorState::Live,
                 intended: BotLifecycleIntended::Hide,
@@ -46,7 +49,7 @@ fn capture(bot: &Bot, owner: BotOwner, kind: BotLifecycleKind) -> LifecycleCaptu
             },
         ]
         .into_iter()
-        .filter(|m| !(kind.names_chat() && m.subject == LifecycleSubject::Bot))
+        .filter(|m| !(kind.names_chat() && m.subject == BotLifecycleSubject::Bot))
         .collect(),
         now: 10,
     }
@@ -177,7 +180,12 @@ fn every_stored_vocabulary_equals_its_one_rust_enum() {
     }
     // Every member kind's owner is one the stored vocabulary allows, and the
     // repository never offers a member to an owner that cannot act on it.
-    for subject in [LifecycleSubject::Bot, LifecycleSubject::Chat(ChatId::new())] {
+    for subject in [
+        BotLifecycleSubject::Bot,
+        BotLifecycleSubject::Chat {
+            chat_id: ChatId::new(),
+        },
+    ] {
         assert_eq!(subject.owner(), BotLifecycleOwner::Ai);
     }
 }
@@ -281,9 +289,9 @@ fn stale_foreign_and_malformed_captures_refuse_before_writing() {
     );
     let mut wrong_member = capture(&bot, owner, BotLifecycleKind::Archive);
     wrong_member.members.push(LifecycleMemberDraft {
-        subject: LifecycleSubject::OwnedRole {
-            workspace: bot.config.role.workspace,
-            document: bot.config.role.document,
+        subject: BotLifecycleSubject::OwnedRole {
+            workspace_id: bot.config.role.workspace,
+            document_id: bot.config.role.document,
         },
         reason: BotLifecycleReason::RoleCreationReceipt,
         prior_state: BotLifecyclePriorState::Live,
@@ -315,11 +323,11 @@ fn a_conversation_barrier_needs_no_pause_and_only_its_own_reversal_may_follow() 
     let (mut repo, bot, owner) = setup();
     let mut trash = capture(&bot, owner, BotLifecycleKind::TrashChat);
     trash.members.push(LifecycleMemberDraft {
-        subject: LifecycleSubject::RunReference {
-            run: RunId::mint(),
-            workspace: bot.home_workspace,
-            document: None,
-            chat: Some(bot.main_chat),
+        subject: BotLifecycleSubject::RunReference {
+            run_id: RunId::mint(),
+            workspace_id: bot.home_workspace,
+            document_id: None,
+            chat_id: Some(bot.main_chat),
         },
         reason: BotLifecycleReason::RunOfConversation,
         prior_state: BotLifecyclePriorState::Live,

@@ -3093,6 +3093,290 @@
               "selected_pages"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Settle the Bot's work and keep it, with its history, out of the roster.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "archive"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Settle the Bot's work and move it, as one recoverable unit, to Trash.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "trash"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Reverse a named Archive or Trash; the Bot returns paused.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "restore"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "source_request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision",
+              "source_request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Settle one conversation's work and move only it to Trash.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "command": {
+                "enum": [
+                  "trash_chat"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "chat_id",
+              "expected_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "command": {
+                "enum": [
+                  "restore_chat"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "source_request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "chat_id",
+              "expected_revision",
+              "source_request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Permanently delete a trashed Bot, from its named Trash operation.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "purge_bot"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "source_request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision",
+              "source_request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "command": {
+                "enum": [
+                  "purge_chat"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "source_request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "chat_id",
+              "expected_revision",
+              "source_request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Progress of one lifecycle operation, with per-member outcomes.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read_lifecycle_operation"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The Bots of a workspace in one lifecycle (the Archived and Trash filters).",
+            "properties": {
+              "command": {
+                "enum": [
+                  "list_lifecycle"
+                ],
+                "type": "string"
+              },
+              "lifecycle": {
+                "$ref": "#/components/schemas/BotLifecycle"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "command",
+              "workspace",
+              "lifecycle"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -3172,6 +3456,329 @@
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "BotLifecycle": {
+        "description": "A Bot's stored lifecycle (`bots.lifecycle`, ai16). Pause is separate.",
+        "enum": [
+          "active",
+          "archived",
+          "trashed"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleIntended": {
+        "description": "What the operation means to do to a member.",
+        "enum": [
+          "hide",
+          "restore",
+          "retain",
+          "remove"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleKind": {
+        "description": "What a lifecycle operation does.",
+        "enum": [
+          "archive",
+          "trash",
+          "restore",
+          "trash_chat",
+          "restore_chat",
+          "purge_bot",
+          "purge_chat"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleMemberOutcome": {
+        "additionalProperties": false,
+        "description": "One member's outcome, as a lifecycle result reports it. Internal owner\ncorrelation (child request IDs) is not part of the public result.",
+        "properties": {
+          "intended": {
+            "$ref": "#/components/schemas/BotLifecycleIntended"
+          },
+          "retained": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycleRetained"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Why the member was kept, when it was."
+          },
+          "stage": {
+            "$ref": "#/components/schemas/BotLifecycleMemberStage"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/BotLifecycleSubject"
+          }
+        },
+        "required": [
+          "subject",
+          "intended",
+          "stage"
+        ],
+        "type": "object"
+      },
+      "BotLifecycleMemberStage": {
+        "description": "A member's progress with its owner.",
+        "enum": [
+          "pending",
+          "acknowledged",
+          "retained",
+          "unavailable",
+          "conflict"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleProgress": {
+        "additionalProperties": false,
+        "description": "Where a lifecycle operation stands. A pending or incomplete operation is\nnever reported as done; owner timeouts stay visible as `incomplete`.",
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "chat_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BotLifecycleKind"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/BotLifecycleMemberOutcome"
+            },
+            "type": "array"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotLifecycleRefusal"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "source_request_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "stage": {
+            "$ref": "#/components/schemas/BotLifecycleStage"
+          }
+        },
+        "required": [
+          "request_id",
+          "bot_id",
+          "kind",
+          "stage",
+          "members"
+        ],
+        "type": "object"
+      },
+      "BotLifecycleRefusal": {
+        "description": "Why an operation is parked as incomplete.",
+        "enum": [
+          "owner_unavailable",
+          "work_running",
+          "person_holding",
+          "member_conflict",
+          "store_unavailable",
+          "revision_changed"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleRetained": {
+        "description": "Why a member was kept rather than changed. Shown in the result.",
+        "enum": [
+          "shared_reference",
+          "already_trashed",
+          "uncaptured_descendant",
+          "native_result",
+          "ownership_unproven",
+          "path_attachment",
+          "owner_unavailable"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleStage": {
+        "description": "Where an operation has got to. `Incomplete` is parked and retryable;\nonly `Completed` is final.",
+        "enum": [
+          "captured",
+          "settling",
+          "applying",
+          "restoring",
+          "preserving_references",
+          "purging",
+          "completed",
+          "incomplete"
+        ],
+        "type": "string"
+      },
+      "BotLifecycleSubject": {
+        "description": "What a captured member is, with exactly the identities its kind stores.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "subject": {
+                "enum": [
+                  "bot"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "subject": {
+                "enum": [
+                  "chat"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "chat_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A Run produced in `chat_id`. Its document is the delegate's to name\nand may be recorded after capture.",
+            "properties": {
+              "chat_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ChatId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "document_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DocumentId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "run_id": {
+                "$ref": "#/components/schemas/RunId"
+              },
+              "subject": {
+                "enum": [
+                  "run_reference"
+                ],
+                "type": "string"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "subject",
+              "run_id",
+              "workspace_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "document_id": {
+                "$ref": "#/components/schemas/DocumentId"
+              },
+              "subject": {
+                "enum": [
+                  "owned_role"
+                ],
+                "type": "string"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "subject",
+              "workspace_id",
+              "document_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/ChatAttachmentId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "subject": {
+                "enum": [
+                  "attachment_copy"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "chat_id",
+              "attachment_id"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "BotOperation": {
         "additionalProperties": false,
@@ -3328,6 +3935,24 @@
       },
       "BotResponse": {
         "oneOf": [
+          {
+            "properties": {
+              "operation": {
+                "$ref": "#/components/schemas/BotLifecycleProgress"
+              },
+              "result": {
+                "enum": [
+                  "lifecycle"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "operation"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "reference": {
@@ -19741,7 +20366,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, authorized listing, new conversation reference or content-free admission operation. Conversation history uses the Chat reads; execution is coordinated separately.",
+        "description": "A durable configuration, authorized listing, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -19762,7 +20387,7 @@
                 }
               }
             },
-            "description": "A durable configuration, authorized listing, new conversation reference or content-free admission operation. Conversation history uses the Chat reads; execution is coordinated separately."
+            "description": "A durable configuration, authorized listing, new conversation reference, content-free admission operation or lifecycle progress with per-member outcomes. Conversation history uses the Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -19822,7 +20447,7 @@
             ]
           }
         ],
-        "summary": "Read, configure, add a conversation to or request admission for an engine-owned Bot"
+        "summary": "Read, configure, archive, trash or restore an engine-owned Bot, add a conversation to it or request admission"
       }
     },
     "/v1/ai/chats": {
