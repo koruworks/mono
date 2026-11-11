@@ -2696,6 +2696,20 @@
           "paused": {
             "type": "boolean"
           },
+          "pending_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotPendingChange"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "A pause, resume or access change of the Bot that its execution owner\nhas not acknowledged yet, with since when and the owner's last answer:\nwhile it is there, changes of the Bot answer `bot_operation_pending`.\nReads fill it in; omitted when nothing is pending, so a Bot with\nnothing pending serializes, and every stored receipt holding one is\nstored, exactly as before."
+          },
           "policy_revision": {
             "format": "uint64",
             "minimum": 0,
@@ -4883,6 +4897,44 @@
         "required": [
           "workspace",
           "document"
+        ],
+        "type": "object"
+      },
+      "BotPendingChange": {
+        "additionalProperties": false,
+        "description": "A change to a Bot that is still being delivered to its execution owner:\nwhat a change of the Bot answered `bot_operation_pending` waits on. Reads\nfill it in (`read`, `list`, `list_lifecycle`); it is never stored.",
+        "properties": {
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotOperationKind"
+              }
+            ],
+            "description": "`pause`, `resume` or `update_access`."
+          },
+          "last_answer": {
+            "description": "The stable code of the last failed or refused attempt to deliver it\nsince the AI owner last started (such as `bot_unavailable` when the\nexecution owner could not be reached). Omitted when there was none.",
+            "nullable": true,
+            "type": "string"
+          },
+          "request_id": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            ],
+            "description": "The change's own operation, readable with `read_operation`."
+          },
+          "since_ms": {
+            "description": "When the change was made, in epoch milliseconds (UTC).",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "kind",
+          "since_ms"
         ],
         "type": "object"
       },
