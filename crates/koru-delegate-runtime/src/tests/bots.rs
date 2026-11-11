@@ -1199,4 +1199,158 @@ fn prepared_restart_with_genuine_human_controller_uses_existing_handover_state()
     assert_eq!(count_submits(&h), 0);
 }
 
+/// A running Bot Run whose session the fake host reports in `state`.
+fn running_session(h: &mut Harness, s: &BotSubmission, lookup: CreationLookup) {
+    let native = h
+        .attempt(s.request.run)
+        .provider_session
+        .unwrap()
+        .idempotency;
+    h.sessions
+        .lock()
+        .unwrap()
+        .lookups
+        .insert(native, (host(1), lookup));
+}
+
+/// The person's Stop of a running Bot Run is first unconfirmed (its
+/// terminate was sent, the process has not exited yet); the process then
+/// exits, as the terminate makes it, before the Stop is sent again. The Run
+/// is recorded as the person's cancellation from the first Stop on, stays
+/// unsettled until the exit proves its end, and the resent Stop finds it
+/// cancelled, never the automatic interruption (the lane review's probe,
+/// inverted).
+#[test]
+fn an_unconfirmed_stop_records_the_persons_cancellation_and_an_exit_after_it_stays_cancelled() {
+    let mut h = bot_harness();
+    let s = submission(77);
+    let fence = prepared(&mut h, &s);
+    observe(&mut h, &fence);
+    running_session(
+        &mut h,
+        &s,
+        CreationLookup::Known {
+            session: summary(ManagedState::Running, None),
+        },
+    );
+    let first = h
+        .orchestrator
+        .bot_stop(&key(&s), fence.owner.device, Some(&fence));
+    assert!(
+        matches!(&first, Err(RunError::Port(error)) if error.code == "bot_stop_unconfirmed"),
+        "{first:?}"
+    );
+    assert!(h.calls().contains(&Call::Terminate(fence.session)));
+    assert_eq!(h.status(s.request.run), RunStatus::Cancelled);
+    let run = s.request.run;
+    let cancelled = |h: &mut Harness| {
+        h.steps(run)
+            .iter()
+            .filter(|kind| {
+                matches!(
+                    kind,
+                    StepKind::Cancelled {
+                        reason: koru_delegate_core::CancelReason::Run
+                    }
+                )
+            })
+            .count()
+    };
+    assert_eq!(
+        cancelled(&mut h),
+        1,
+        "the person's cancellation is on the timeline"
+    );
+    // Not settled while the process may still run.
+    assert_eq!(
+        h.schedule_store
+            .bot_execution(s.request.run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Executing
+    );
+    assert!(!h.attempt(s.request.run).retired);
+    running_session(
+        &mut h,
+        &s,
+        CreationLookup::KnownEnded {
+            session: summary(ManagedState::Failed, None),
+        },
+    );
+    h.session_event(s.request.run, SessionEvent::Exited { code: None });
+    assert_eq!(h.status(s.request.run), RunStatus::Cancelled);
+    assert_eq!(
+        h.schedule_store
+            .bot_execution(s.request.run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Settled
+    );
+    h.orchestrator
+        .bot_stop(&key(&s), fence.owner.device, Some(&fence))
+        .unwrap();
+    assert_eq!(h.status(s.request.run), RunStatus::Cancelled);
+    assert_eq!(cancelled(&mut h), 1, "recorded once");
+}
+
+/// The process ended (the host knows it) before the person's Stop arrives,
+/// and no exit was observed yet: the Stop is confirmed at once, recorded as
+/// the person's cancellation, and settles the Run.
+#[test]
+fn a_stop_whose_process_already_ended_is_confirmed_and_recorded_cancelled() {
+    let mut h = bot_harness();
+    let s = submission(78);
+    let fence = prepared(&mut h, &s);
+    observe(&mut h, &fence);
+    running_session(
+        &mut h,
+        &s,
+        CreationLookup::KnownEnded {
+            session: summary(ManagedState::Failed, None),
+        },
+    );
+    h.orchestrator
+        .bot_stop(&key(&s), fence.owner.device, Some(&fence))
+        .unwrap();
+    assert_eq!(h.status(s.request.run), RunStatus::Cancelled);
+    assert!(h.attempt(s.request.run).retired);
+    assert_eq!(
+        h.schedule_store
+            .bot_execution(s.request.run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Settled
+    );
+}
+
+/// A genuine crash, with no Stop: the process exits on its own and the Run
+/// is the automatic `Interrupted`, as before. A Stop sent after it finds the
+/// Run already ended and leaves that record alone.
+#[test]
+fn a_crash_with_no_stop_still_records_the_automatic_interruption() {
+    let mut h = bot_harness();
+    let s = submission(79);
+    let fence = prepared(&mut h, &s);
+    observe(&mut h, &fence);
+    running_session(
+        &mut h,
+        &s,
+        CreationLookup::KnownEnded {
+            session: summary(ManagedState::Failed, None),
+        },
+    );
+    h.session_event(s.request.run, SessionEvent::Exited { code: None });
+    let interrupted = RunStatus::Interrupted {
+        prior_attempt: PriorAttempt::Ended,
+    };
+    assert_eq!(h.status(s.request.run), interrupted);
+    let _ = h
+        .orchestrator
+        .bot_stop(&key(&s), fence.owner.device, Some(&fence));
+    assert_eq!(h.status(s.request.run), interrupted);
+}
+
 mod delivery;
