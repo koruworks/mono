@@ -155,6 +155,8 @@ pub(crate) enum Act {
     Create,
     Retry,
     Abandon,
+    /// *Start over* after Koru could not confirm whether the bot was made.
+    StartOver,
     Example(crate::bots::creation::Example),
     ChooseRole(crate::bots::creation::RoleKind),
     ChooseRolePage,
@@ -999,6 +1001,7 @@ impl BotView {
             Act::Create
             | Act::Retry
             | Act::Abandon
+            | Act::StartOver
             | Act::Example(_)
             | Act::ChooseRole(_)
             | Act::ChooseRolePage

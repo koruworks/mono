@@ -3582,13 +3582,17 @@ pub enum Key {
     BotsUnfinishedRejected,
     /// A Bot's menu or question was answered after the tab that asked closed or moved to another Bot: nothing was sent.
     BotsAskingTabGone,
+    /// The create form, when the read that would say whether the owner took a Create was refused for good: the bot may exist, so the person looks in Bots before creating it again. The form stays locked. Non-English columns machine-written, awaiting a native read.
+    BotsCreateUnconfirmed,
+    /// The create form's button after `BotsCreateUnconfirmed`: the draft is the person's again, under new identities.
+    BotsCreateStartOver,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2423] = [
+    pub const ALL: [Key; 2425] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6012,6 +6016,8 @@ impl Key {
         Key::TrashBotRestoreNotSent,
         Key::BotsUnfinishedRejected,
         Key::BotsAskingTabGone,
+        Key::BotsCreateUnconfirmed,
+        Key::BotsCreateStartOver,
     ];
 }
 
@@ -19352,4 +19358,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TrashBotRestoreNotSent, en: "“{}” wasn't restored: Koru AI isn't answering. Try again.", es: "«{}» no se restauró: Koru AI no responde. Inténtalo de nuevo.", pt_br: "“{}” não foi restaurado: o Koru AI não está respondendo. Tente de novo.", de: "„{}“ wurde nicht wiederhergestellt: Koru AI antwortet nicht. Versuchen Sie es noch einmal.", fr: "« {} » n'a pas été restauré : Koru AI ne répond pas. Réessayez.", ar: "لم تتم استعادة «{}»: لا يستجيب Koru AI. حاول مجددًا.", zh_hans: "“{}”未恢复：Koru AI 没有响应。请再试一次。", ja: "「{}」は復元されませんでした。Koru AI が応答していません。もう一度お試しください。" },
     Row { key: Key::BotsUnfinishedRejected, en: "Nothing was made for that bot. Create it again to try once more.", es: "No se creó nada para ese bot. Créalo de nuevo para volver a intentarlo.", pt_br: "Nada foi criado para esse bot. Crie-o de novo para tentar outra vez.", de: "Für diesen Bot wurde nichts erstellt. Erstellen Sie ihn erneut, um es noch einmal zu versuchen.", fr: "Rien n'a été créé pour ce bot. Créez-le à nouveau pour réessayer.", ar: "لم يُنشأ شيء لهذا البوت. أنشئه مجددًا للمحاولة مرة أخرى.", zh_hans: "该 Bot 没有创建任何内容。请重新创建以再试一次。", ja: "その Bot には何も作成されませんでした。もう一度作成して再試行してください。" },
     Row { key: Key::BotsAskingTabGone, en: "That bot's tab was closed before you answered, so nothing was sent.", es: "La pestaña de ese bot se cerró antes de que respondieras, así que no se envió nada.", pt_br: "A aba desse bot foi fechada antes de você responder, então nada foi enviado.", de: "Der Tab dieses Bots wurde geschlossen, bevor Sie geantwortet haben, daher wurde nichts gesendet.", fr: "L'onglet de ce bot a été fermé avant votre réponse, donc rien n'a été envoyé.", ar: "أُغلق تبويب هذا البوت قبل أن تجيب، لذا لم يُرسل شيء.", zh_hans: "在你回答之前，该 Bot 的标签页已关闭，因此没有发送任何内容。", ja: "回答する前にその Bot のタブが閉じられたため、何も送信されていません。" },
+    // ------------------------------------------- Bots P1.8: the third review's fix round
+    Row { key: Key::BotsCreateUnconfirmed, en: "Koru couldn't confirm whether this bot was created. Look for it in Bots before you create it again.", es: "Koru no pudo confirmar si este bot se creó. Búscalo en Bots antes de volver a crearlo.", pt_br: "O Koru não conseguiu confirmar se este bot foi criado. Procure-o em Bots antes de criá-lo novamente.", de: "Koru konnte nicht bestätigen, ob dieser Bot erstellt wurde. Sehen Sie in Bots nach, bevor Sie ihn erneut erstellen.", fr: "Koru n'a pas pu confirmer si ce bot a été créé. Cherchez-le dans Bots avant de le créer à nouveau.", ar: "تعذّر على Koru التأكد مما إذا كان هذا البوت قد أُنشئ. ابحث عنه في البوتات قبل أن تنشئه مرة أخرى.", zh_hans: "Koru 无法确认此 Bot 是否已创建。请先在 Bot 列表中查找，再重新创建。", ja: "Koru はこの Bot が作成されたかどうかを確認できませんでした。もう一度作成する前に、Bot の一覧で確認してください。" },
+    Row { key: Key::BotsCreateStartOver, en: "Start over", es: "Empezar de nuevo", pt_br: "Recomeçar", de: "Neu beginnen", fr: "Recommencer", ar: "البدء من جديد", zh_hans: "重新开始", ja: "最初からやり直す" },
 ];

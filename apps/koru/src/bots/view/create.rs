@@ -101,6 +101,8 @@ pub(crate) const STAGE_LINES: [Key; 2] = [
 ];
 pub(crate) const ROLE_UNCONFIRMED: Key = Key::surface(SURFACE, "role-unconfirmed");
 pub(crate) const RETRY: Key = Key::surface(SURFACE, "retry");
+/// *Start over*, once Koru could not confirm whether the bot was made.
+pub(crate) const START_OVER: Key = Key::surface(SURFACE, "start-over");
 pub(crate) const ABANDON: Key = Key::surface(SURFACE, "abandon");
 /// A rejected or abandoned creation's sentences, in order: what happened,
 /// then what it left — the role page, the folder — or that it left nothing.
@@ -348,6 +350,24 @@ impl BotView {
                 self.words(notice),
                 Ink::Accent,
             ));
+        }
+        // Koru could not confirm whether the bot was made: the person's own
+        // way forward, which alone takes new identities.
+        if form.can_start_over() {
+            content = content.child(
+                row("Bot create unconfirmed actions")
+                    .gap(Space::S2)
+                    .items_center()
+                    .child(self.button(
+                        engine,
+                        "Bot start over",
+                        START_OVER,
+                        self.words(Words::BotsCreateStartOver),
+                        ActionStyle::Secondary,
+                        false,
+                    ))
+                    .child(spacer()),
+            );
         }
         if let Some(ended) = form.ended() {
             content = content.child(self.ended_block(engine, ended));
@@ -819,6 +839,7 @@ impl BotView {
             k if k == CREATE_BUTTON => Act::Create,
             k if k == RETRY => Act::Retry,
             k if k == ABANDON => Act::Abandon,
+            k if k == START_OVER => Act::StartOver,
             k if k == EXAMPLE_OWN => Act::Example(Example::StartOwn),
             k if k == EXAMPLE_RESEARCH => Act::Example(Example::Research),
             k if k == EXAMPLE_ASSESSMENT => Act::Example(Example::Assessment),
@@ -849,6 +870,14 @@ impl BotView {
                 create.form.create(asking)
             }
             Act::Retry => create.form.retry(),
+            Act::StartOver => {
+                let started = create.form.start_over();
+                // The control is gone: the keyboard goes on to *Create bot*.
+                if started && self.focus == Some(START_OVER) {
+                    self.focus = Some(CREATE_BUTTON);
+                }
+                return started;
+            }
             Act::Abandon => {
                 if !create.form.can_abandon() {
                     return false;

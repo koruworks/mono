@@ -827,3 +827,43 @@ fn an_assistive_click_on_a_model_row_below_the_fold_chooses_it() {
         "model-40"
     );
 }
+
+/// **Koru could not confirm whether the bot was made** (the third review's
+/// fourth finding, through the tab): the Create's answer was lost and the
+/// read that followed was refused for good. The form says it could not
+/// confirm and to look in Bots, stays locked under the same identities, and
+/// offers *Start over*, which alone takes new ones.
+#[test]
+fn an_unconfirmed_create_offers_start_over_and_keeps_its_identities() {
+    let mut c = shown();
+    c.fill();
+    assert!(c.view.perform(Act::Create));
+    c.sent();
+    let (request, bot) = (c.form().request(), c.form().bot());
+    let reply = |c: &mut Create, result| {
+        c.answers
+            .send(Answer::Wrote {
+                bot,
+                request,
+                result,
+            })
+            .expect("the tab's end is open");
+        c.view.poll();
+    };
+    reply(&mut c, Err(Failure::timed_out()));
+    c.view.shown_pass(None);
+    assert!(matches!(c.sent(), BotCommand::ReadBotCreation { .. }));
+    reply(&mut c, Err(Failure::Refused("wrong_owner".into())));
+    assert_eq!(c.form().notice(), Some(Words::BotsCreateUnconfirmed));
+    assert!(!c.form().editable(), "locked");
+    assert_eq!((c.form().request(), c.form().bot()), (request, bot));
+    assert!(c.keys_include(START_OVER));
+    assert!(!c.view.perform(Act::Create), "no second Create");
+    c.nothing_sent();
+    assert!(c.view.perform(Act::StartOver));
+    assert!(!c.keys_include(START_OVER));
+    assert!(c.form().editable());
+    assert_ne!(c.form().request(), request, "new identities");
+    assert_ne!(c.form().bot(), bot);
+    c.nothing_sent();
+}

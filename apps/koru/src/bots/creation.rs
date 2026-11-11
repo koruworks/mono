@@ -12,7 +12,8 @@
 //!   the same creation: the owner replays it. They are replaced only when
 //!   the owner has ended that creation — refused it before it made anything
 //!   (`rejected`) or the person abandoned it — and the person then creates
-//!   again from the same inputs.
+//!   again from the same inputs. When Koru cannot confirm whether the owner
+//!   made it, they are replaced only by the person's *Start over*.
 //! - **A duplicate press sends nothing.** While a command is with the link,
 //!   or while the owner holds the creation, Create sends nothing new.
 //! - **The draft survives every failure.** A refusal, an unanswered command
@@ -143,6 +144,12 @@ pub(crate) struct CreateForm {
     /// request could otherwise be refused, or worse, the form could say
     /// one thing while the owner makes another.
     uncertain: bool,
+    /// **The read that would have said was refused for good**: Koru could
+    /// not confirm whether the owner made the Bot. The identities and the
+    /// lock stay — the owner may hold the creation and go on to complete
+    /// it, and a Create under new identities could make a second Bot and a
+    /// second role page — until the person chooses *Start over*.
+    unconfirmed: bool,
     notice: Option<Words>,
     /// A read is owed: the tab was shown again, or an answer said the
     /// creation may be other than it looks.
@@ -178,6 +185,7 @@ impl CreateForm {
             in_flight: None,
             sent: false,
             uncertain: false,
+            unconfirmed: false,
             notice: None,
             read_owed: false,
             next_read: None,
@@ -571,6 +579,7 @@ impl CreateForm {
             {
                 self.notice = None;
                 self.uncertain = false;
+                self.unconfirmed = false;
                 match creation.stage {
                     BotCreationStage::Pending => {
                         let wait = if self
@@ -635,18 +644,21 @@ impl CreateForm {
                     // is none, and the draft is the person's to send.
                     (Some(Sent::Read), "not_found") if self.live.is_none() => {
                         self.uncertain = false;
+                        self.unconfirmed = false;
                     }
                     // A read the owner turned away for now — busy, or what
                     // the Bot needs not reachable: asked again on the clock.
                     (Some(Sent::Read), _) if again => self.read_again(now),
                     // **A read refused for good while the form does not know
-                    // whether the owner took the Create**: said, and the
-                    // person given a way forward — the draft is theirs
-                    // again, under new identities. A creation the owner did
-                    // hold is listed in the roster's Unfinished group.
+                    // whether the owner took the Create**: the owner may
+                    // hold it and complete it, so nothing is said to be not
+                    // done and the identities and the lock stay. The form
+                    // says it could not confirm, and to look in Bots — a
+                    // creation the owner holds is listed there — and offers
+                    // *Start over*, which alone takes new identities.
                     (Some(Sent::Read), _) if self.uncertain => {
-                        self.notice = Some(super::settings::general_refusal_words(&code));
-                        self.renew();
+                        self.notice = Some(Words::BotsCreateUnconfirmed);
+                        self.unconfirmed = true;
                     }
                     // The same request with other inputs: show what the
                     // owner holds.
@@ -664,6 +676,25 @@ impl CreateForm {
         settled
     }
 
+    /// Whether *Start over* is offered: Koru could not confirm whether the
+    /// owner made the Bot, and nothing is on its way.
+    pub(crate) fn can_start_over(&self) -> bool {
+        self.unconfirmed && self.in_flight.is_none()
+    }
+
+    /// **Start over**, the person's choice after Koru could not confirm the
+    /// creation: the draft stays, under new identities, editable again.
+    /// The creation the owner may hold is left to the roster's Unfinished
+    /// group. `false` when it is not offered.
+    pub(crate) fn start_over(&mut self) -> bool {
+        if !self.can_start_over() {
+            return false;
+        }
+        self.notice = None;
+        self.renew();
+        true
+    }
+
     /// The read went unanswered, or was turned away for now: asked again
     /// on the bounded clock (doubling to two seconds), never while hidden.
     fn read_again(&mut self, now: Instant) {
@@ -678,6 +709,7 @@ impl CreateForm {
         self.live = None;
         self.sent = false;
         self.uncertain = false;
+        self.unconfirmed = false;
         self.read_owed = false;
         self.next_read = None;
         self.backoff = READ_FIRST;

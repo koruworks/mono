@@ -644,9 +644,61 @@ fn an_uncertain_create_is_read_again_until_the_owner_says_and_never_stays_locked
         now += Duration::from_secs(3);
         assert!(form.read(now).is_some(), "{code}: asked again");
     }
-    // A final refusal: its own words, and the draft the person's again.
+    // **A final refusal** (the third review's fourth finding): the owner may
+    // hold the first creation and go on to complete it, so the form keeps
+    // its identities and its lock, says Koru could not confirm, and never
+    // that it was not done; a second Create would be a second Bot.
+    let bot = form.bot();
     form.answer(request, wrote(Err(Said::new("wrong_owner", false))), now);
-    assert_eq!(form.notice(), Some(Words::BotsErrWrongOwner));
-    assert!(form.editable(), "a way forward");
+    assert_eq!(form.notice(), Some(Words::BotsCreateUnconfirmed));
+    assert_ne!(
+        form.notice().map(|words| t(Lang::En, words)),
+        Some(t(Lang::En, Words::BotsErrNotDone)),
+        "never 'that wasn't done'"
+    );
+    assert!(!form.editable(), "still locked");
+    assert_eq!(
+        (form.request(), form.bot()),
+        (request, bot),
+        "the same identities"
+    );
+    assert!(form.create(None).is_none(), "no second Create");
+    // Shown again, it is read again under the same request.
+    form.shown();
+    let read = form.read(now).expect("read once more");
+    assert_eq!(request_of(&read), request);
+    form.answer(request, wrote(Err(Said::new("wrong_owner", false))), now);
+    // **Start over** is the person's way forward, and the only one that
+    // takes new identities.
+    assert!(form.can_start_over());
+    assert!(form.start_over());
+    assert!(form.editable(), "the draft is the person's again");
     assert_ne!(form.request(), request, "under new identities");
+    assert_ne!(form.bot(), bot);
+    assert_eq!(form.notice(), None);
+    assert!(!form.can_start_over());
+    assert!(form.create(None).is_some(), "and can be created");
+}
+
+/// **A read that answers after Koru could not confirm** settles it: the
+/// owner's creation is shown, under the same identities, with no Start
+/// over left behind.
+#[test]
+fn a_creation_read_after_an_unconfirmed_create_settles_it() {
+    use crate::bots::link::{Said, wrote};
+    let mut form = ready();
+    form.create(None).expect("sent");
+    let request = form.request();
+    let now = Instant::now();
+    form.answer(request, Err(Failure::timed_out()), now);
+    form.read(now).expect("the read owed");
+    form.answer(request, wrote(Err(Said::new("wrong_owner", false))), now);
+    assert!(form.can_start_over());
+    form.shown();
+    form.read(now).expect("read again when shown");
+    let held = creation(&form, BotCreationStage::Pending);
+    answer(&mut form, held, now);
+    assert!(!form.can_start_over(), "the owner said");
+    assert_eq!(form.notice(), None);
+    assert_eq!(form.request(), request);
 }
