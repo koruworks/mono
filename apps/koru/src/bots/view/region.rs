@@ -1625,6 +1625,11 @@ impl BotView {
             self.focus = Some(key);
             return true;
         }
+        // An inert control is inert to an assistive technology too, as it is
+        // to the pointer (`region_press`).
+        if self.with_frame(|_, frame| frame.node(key).is_some_and(|node| node.disabled)) {
+            return false;
+        }
         if key == super::create::ROLE_CHOICE {
             return self.perform(Act::ChooseRole(self.other_role()));
         }

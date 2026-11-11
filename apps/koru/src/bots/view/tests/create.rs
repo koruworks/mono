@@ -681,3 +681,35 @@ fn an_existing_page_is_sent_as_the_role() {
     };
     assert_eq!(role, koru_ai_core::bots::BotRoleInput::Existing { page });
 }
+
+/// **An inert control is inert to an assistive technology too**: *Create
+/// bot* is disabled while the form refuses its input, and a client's click
+/// on it sends nothing, as a press would not.
+#[test]
+fn an_assistive_click_on_a_disabled_control_does_nothing() {
+    let mut c = shown();
+    assert!(c.form().problem().is_some(), "no name yet");
+    assert!(c.keys_include(CREATE_BUTTON));
+    assert!(!c.view.accessibility_action(CREATE_BUTTON, true));
+    c.nothing_sent();
+}
+
+/// **An assistive technology chooses a model row by its key**, through the
+/// row's own choose path, not by a press at its published centre — which,
+/// for a row below the list's visible part, lands outside the picker.
+#[test]
+fn an_assistive_click_on_a_model_row_chooses_it_by_its_key() {
+    let mut c = shown();
+    c.fill();
+    assert!(c.view.perform(Act::OpenModelPicker));
+    let row = all_controls(&c.view)
+        .into_iter()
+        .find(|control| control.role == ControlRole::ListItem && control.label == "GPT-5")
+        .expect("GPT-5 is published");
+    assert_eq!(row.key.part, "row");
+    assert!(c.view.accessibility_action(row.key, true));
+    assert_eq!(
+        c.form().model_shown().unwrap().model.requested_model,
+        "gpt-5"
+    );
+}

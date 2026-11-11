@@ -700,6 +700,26 @@ impl BotView {
         if !click {
             return Some(true);
         }
+        // **A model row is chosen by its key, through the row's own choose
+        // path** — never by a press at its centre, which for a row below
+        // the list's visible part lands outside the picker and closes it.
+        if key.part == "row" {
+            use koru_ai_ui::agent_catalog::config::picker::{elements, row_id};
+            let index = self
+                .agent_picker_read(|picker| {
+                    let entry = picker.entry()?;
+                    picker.rows().iter().position(|row| {
+                        row_id(&entry, row).map(|id| elements::row_key(&id)) == Some(key)
+                    })
+                })
+                .flatten();
+            if let Some(index) = index {
+                return Some(
+                    self.agent_picker_run(|view| view.choose_row(index))
+                        .unwrap_or(false),
+                );
+            }
+        }
         Some(self.agent_press(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5))
     }
 }
