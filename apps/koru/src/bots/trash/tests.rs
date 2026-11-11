@@ -309,6 +309,17 @@ fn a_conversations_restore_names_what_hid_it_after_a_restart() {
             source_request_id: source
         }
     );
+    // While it is on its way a second press sends nothing.
+    assert!(!trash.restore(BotSubject::Chat { bot: live.id, chat }));
+    answers
+        .send(Answer::Wrote {
+            bot: live.id,
+            request,
+            result: Err(Failure::Unreachable),
+        })
+        .unwrap();
+    trash.maintain();
+    let _ = trash.take_receipts();
     // The Bot itself in Trash: said, never sent.
     assert!(trash.restore(BotSubject::Chat { bot: live.id, chat }));
     let Ok(Command::Read { seq, bot }) = commands.try_recv() else {
@@ -324,6 +335,101 @@ fn a_conversations_restore_names_what_hid_it_after_a_restart() {
     trash.maintain();
     assert!(commands.try_recv().is_err());
     let receipt = trash.take_receipts().pop().unwrap();
+    assert_eq!(
+        receipt.words,
+        "“Notes” wasn't restored. This bot is in the Trash. Restore the bot first."
+    );
+}
+
+/// **One Restore per row at a time**: a second press while the first is
+/// unanswered sends nothing, so the owner's refusal of a used source
+/// (`require_source` in `worker/bots/lifecycle.rs` answers a second Restore
+/// of one Trash `request_conflict`) can never become the receipt that
+/// follows a Restore that succeeded.
+#[test]
+fn a_second_restore_press_sends_nothing_while_the_first_is_on_its_way() {
+    let (mut trash, commands, answers, home) = feed();
+    trash.set_shown(true, None);
+    let source = BotRequestId::mint();
+    let bot = trashed(home, "Scout", Some(source));
+    listed(
+        &mut trash,
+        &commands,
+        &answers,
+        vec![bot.clone()],
+        Vec::new(),
+    );
+    assert!(trash.restore(BotSubject::Bot(bot.id)));
+    assert!(!trash.restore(BotSubject::Bot(bot.id)), "nothing more");
+    let writes: Vec<_> = commands
+        .try_iter()
+        .filter_map(|command| match command {
+            Command::Write { request, .. } => Some(request),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(writes.len(), 1, "one Restore went");
+    answers
+        .send(Answer::Wrote {
+            bot: bot.id,
+            request: writes[0],
+            result: Ok(BotResponse::Lifecycle {
+                operation: BotLifecycleProgress {
+                    request_id: writes[0],
+                    bot_id: bot.id,
+                    kind: BotLifecycleKind::Restore,
+                    chat_id: None,
+                    source_request_id: Some(source),
+                    stage: BotLifecycleStage::Completed,
+                    refusal: None,
+                    members: Vec::new(),
+                    left_in_place: Vec::new(),
+                },
+            }),
+        })
+        .unwrap();
+    trash.maintain();
+    let receipts = trash.take_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert!(
+        receipts[0].words.starts_with("Restored"),
+        "{}",
+        receipts[0].words
+    );
+}
+
+/// **A link's Restore of a conversation that went with its Bot's Trash
+/// says the Bot comes back first** — never nothing.
+#[test]
+fn a_link_restore_of_a_conversation_hidden_by_its_bots_trash_says_why() {
+    let (mut trash, commands, answers, _home) = feed();
+    let bot = BotId::mint();
+    let chat = ChatId::new();
+    let entry = trashed_chat(
+        bot,
+        "Writer",
+        chat,
+        "Notes",
+        (BotRequestId::mint(), BotLifecycleKind::Trash),
+        BotChatRestore::Bot,
+    );
+    assert!(trash.restore(BotSubject::Chat { bot, chat }));
+    let Ok(Command::TrashedChats { seq, workspace }) = commands.try_recv() else {
+        panic!("listing read first");
+    };
+    answers
+        .send(Answer::TrashedChats {
+            seq,
+            workspace,
+            result: Ok(vec![entry]),
+        })
+        .unwrap();
+    trash.maintain();
+    assert!(
+        commands.try_recv().is_err(),
+        "nothing the owner would refuse"
+    );
+    let receipt = trash.take_receipts().pop().expect("said");
     assert_eq!(
         receipt.words,
         "“Notes” wasn't restored. This bot is in the Trash. Restore the bot first."

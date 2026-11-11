@@ -329,11 +329,22 @@ impl BotTrash {
             .filter(|entry| entry.trashed_by.kind == BotLifecycleKind::TrashChat)
     }
 
-    /// A listed conversation in Trash, by its id: what a link's receipt
-    /// offers Restore for.
+    /// A listed conversation in Trash that its own Restore brings back, by
+    /// its id: what a link's receipt offers Restore for.
     pub(crate) fn trashed_chat(&self, chat: ChatId) -> Option<&BotTrashedChat> {
-        self.own_chats()
-            .find(|entry| entry.conversation.chat.id == chat)
+        self.own_chats().find(|entry| {
+            entry.conversation.chat.id == chat && entry.restore == BotChatRestore::Conversation
+        })
+    }
+
+    /// Whether a Restore of `subject` is on its way already: a second press
+    /// sends nothing, so a refused duplicate never reads as the outcome.
+    fn restoring_subject(&self, subject: BotSubject) -> bool {
+        self.restoring
+            .values()
+            .chain(self.reading.values())
+            .any(|restoring| restoring.subject == subject)
+            || matches!(subject, BotSubject::Chat { chat, .. } if self.wanted == Some(chat))
     }
 
     /// **The rows**, newest first: the owner's trashed Bots of the
@@ -382,7 +393,7 @@ impl BotTrash {
     /// not listed yet (a link's receipt) is read for first, and restored once
     /// the listing names it.
     pub(crate) fn restore(&mut self, subject: BotSubject) -> bool {
-        if self.link.is_none() {
+        if self.link.is_none() || self.restoring_subject(subject) {
             return false;
         }
         match subject {
@@ -427,12 +438,37 @@ impl BotTrash {
     /// `RestoreChat` naming the operation that hid it. Only one the owner
     /// says comes back by its own Restore.
     fn restore_listed_chat(&mut self, chat: ChatId) -> bool {
-        let Some(entry) = self.trashed_chat(chat) else {
+        let Some(entry) = self
+            .chats
+            .iter()
+            .find(|entry| entry.conversation.chat.id == chat)
+            .cloned()
+        else {
             return false;
         };
+        // **Its Bot comes back first.** One that went with its Bot's own
+        // Trash, whose Trash the owner names, comes back with the Bot: that
+        // Restore is the one press. Otherwise it is said, never silent.
         if entry.restore != BotChatRestore::Conversation {
-            return false;
+            let bot = entry.conversation.label.bot_id;
+            let with_its_bot = entry.trashed_by.kind == BotLifecycleKind::Trash;
+            if with_its_bot
+                && self
+                    .listed
+                    .iter()
+                    .any(|listed| listed.id == bot && Self::trash_of(listed).is_some())
+            {
+                return self.restore(BotSubject::Bot(bot));
+            }
+            let why = if with_its_bot || self.listed.iter().any(|listed| listed.id == bot) {
+                Words::BotsErrBotTrashed
+            } else {
+                Words::BotsErrArchived
+            };
+            self.fail(&entry.conversation.chat.title, why);
+            return true;
         }
+        let entry = &entry;
         let bot = entry.conversation.label.bot_id;
         let restoring = Restoring {
             subject: BotSubject::Chat { bot, chat },
