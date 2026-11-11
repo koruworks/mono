@@ -81,6 +81,21 @@ pub(crate) const NOTICE: Key = Key::surface(SURFACE, "notice");
 /// Where the conversation sits.
 pub(crate) const CONVERSATION: Key = Key::surface(SURFACE, "conversation");
 
+/// **What a Bot's conversation offers beyond the conversation itself.**
+/// Files and folders on this computer attached by their path: the Bot owner
+/// delivers them to the agent as an ordinary chat's are (QUESTIONS O30), and
+/// a path reference grants nothing Koru controls. Everything else the owner
+/// refuses — rename, pin, privacy, the chat's own working folder and
+/// workspace access — stays absent.
+pub(crate) const BOT_OFFERS: koru_ai_ui::OwnedOffers = koru_ai_ui::OwnedOffers {
+    rename: false,
+    pin: false,
+    privacy: false,
+    working_folder: false,
+    tool_access: false,
+    path_references: true,
+};
+
 /// **What the tab knows about its Bot**: what the service said, by the Bot
 /// service's own ids.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -286,7 +301,7 @@ impl BotView {
             chat: self.chat,
             destination: facts.home,
             provider: facts.provider.clone(),
-            offers: koru_ai_ui::OwnedOffers::default(),
+            offers: BOT_OFFERS,
         };
         match &mut self.conversation {
             Some(view) => {

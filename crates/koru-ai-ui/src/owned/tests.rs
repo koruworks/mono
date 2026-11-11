@@ -474,6 +474,66 @@ fn an_offer_admits_its_control() {
     assert!(drained(&commands).is_empty(), "pin is still refused");
 }
 
+/// **The path-reference offer, alone, is the reference choice and nothing
+/// more**: with it a folder can be attached by its path and a file from the
+/// computer asks whether to store it or attach its path; without it — the
+/// default — neither is offered and the file is stored. Neither reaches a
+/// grant or the working folder, which stay refused either way.
+#[test]
+fn the_path_reference_offer_alone_is_the_reference_choice() {
+    let file = || {
+        if cfg!(windows) {
+            std::path::PathBuf::from("C:\\fixture\\notes.txt")
+        } else {
+            std::path::PathBuf::from("/fixture/notes.txt")
+        }
+    };
+    let offered = OwnedOffers {
+        path_references: true,
+        ..OwnedOffers::default()
+    };
+    for (offers, expected) in [(offered, true), (OwnedOffers::default(), false)] {
+        let chat = ChatId::new();
+        let mut surface = ChatSurface::new_owned_at(None);
+        surface.bind_owned(OwnedConversation {
+            offers,
+            ..conversation(chat, WorkspaceId::new())
+        });
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        surface.transcript = Some(chat_on(chat, codex()));
+
+        surface.open_plus_menu();
+        let items = surface.plus_menu.as_ref().expect("the menu opened").items();
+        assert_eq!(
+            items
+                .iter()
+                .any(|item| matches!(item, PlusItem::AddFolder(_))),
+            expected,
+            "Add folder follows the offer"
+        );
+        assert!(
+            !items
+                .iter()
+                .any(|item| matches!(item, PlusItem::WorkInProject(..))),
+            "the working folder is refused either way"
+        );
+
+        assert!(surface.computer_path_chosen(crate::ComputerPickerKind::File, file()));
+        assert_eq!(
+            surface.computer_file_choice.is_some(),
+            expected,
+            "the store-or-reference choice follows the offer"
+        );
+        assert!(
+            !drained(&commands)
+                .iter()
+                .any(|command| matches!(command, Command::AddGrants(..))),
+            "no grant either way"
+        );
+    }
+}
+
 /// Binding before activation makes the first boot read that conversation:
 /// a host's bound surface never boots onto the service's latest chat.
 #[test]

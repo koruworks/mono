@@ -105,7 +105,7 @@ fn a_stale_bot_read_is_ignored_and_a_failed_one_keeps_what_was_shown() {
     assert_eq!(owned.chat, f.bot.main_chat);
     assert_eq!(owned.destination, f.bot.home_workspace);
     assert_eq!(owned.provider, f.bot.config.model.provider);
-    assert_eq!(owned.offers, koru_ai_ui::OwnedOffers::default());
+    assert_eq!(owned.offers, BOT_OFFERS);
 
     // Asked again; the answer is a failure.
     assert!(f.view.ask());
@@ -195,6 +195,34 @@ fn the_conversation_sits_below_the_header_in_the_tabs_coordinates() {
     assert!(f.view.on_conversation(conversation.y + 1.0));
     assert!(f.view.place_conversation(conversation));
     assert!(!f.view.place_conversation(conversation), "placed once");
+}
+
+/// **A Bot's conversation offers local path references and nothing else
+/// the owner refuses.** The Bot owner delivers a file or folder attached by
+/// its path as an ordinary chat's (QUESTIONS O30), so the tab admits that
+/// choice; rename, pin, privacy, the chat's own working folder and its
+/// workspace access stay absent. What each offer does to the surface — the
+/// `+` menu's *Add folder*, the stored-or-reference choice for a file — is
+/// pinned beside the seam in `koru-ai-ui`'s `owned/tests.rs`.
+#[test]
+fn a_bot_tab_offers_path_references_and_nothing_else_the_owner_refuses() {
+    let bot = bot(BotId::mint(), WorkspaceId::new(), "Scout", false);
+    let roster = crate::bots::roster::RosterBot::from(bot);
+    let view = BotView::opened(&roster);
+    let offers = view
+        .conversation()
+        .and_then(AiChatView::owned_conversation)
+        .expect("bound to the Bot")
+        .offers;
+    assert!(offers.path_references, "the reference choice is offered");
+    assert_eq!(
+        offers,
+        koru_ai_ui::OwnedOffers {
+            path_references: true,
+            ..koru_ai_ui::OwnedOffers::default()
+        },
+        "and nothing else beyond the conversation"
+    );
 }
 
 /// Every language names the header's words.
