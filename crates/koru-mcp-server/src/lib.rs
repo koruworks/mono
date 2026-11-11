@@ -51,6 +51,7 @@ use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, S
 use koru_workspace::store::{StoreSession, Synced};
 
 pub mod access;
+pub mod apps;
 mod attribution;
 mod capabilities;
 mod chat_tools;
@@ -950,6 +951,7 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
         | "get_file"
         | "read_file"
         | "read_document"
+        | apps::READ_IMAGE
         | "list_document_versions"
         | "compare_document_versions" => ToolPolicy {
             scope: read,
@@ -3529,6 +3531,37 @@ impl Backend for LocalBackend {
                 let (_, doc) = self.join(ws, doc_id)?;
                 Ok(document_json(doc_id, &doc)?)
             }
+            // The document view's images (`apps`): one image block, scaled
+            // for display. In no router and no catalog; only a view asks.
+            apps::READ_IMAGE => {
+                use base64::Engine as _;
+                let a: ImageRequest = from(arguments)?;
+                let ws = workspace(&a.workspace_id)?;
+                let doc_id = document(&a.document_id)?;
+                let id = node(&a.node_id)?;
+                self.ensure_readable(ws, doc_id, "document_id")?;
+                let (_, doc) = self.join(ws, doc_id)?;
+                let stale = || ToolError {
+                    code: "stale_node".into(),
+                    message: format!("node {} is not in this document", id.to_storage()),
+                    details: Some(json!({"node_id": id.to_storage(), "retry": "read_document"})),
+                };
+                let value = doc.read(id).map_err(|_| stale())?;
+                let (Kind::Image | Kind::Canvas, Content::Blob { hash, mime, .. }) =
+                    (value.kind, &value.content)
+                else {
+                    return Err(ToolError::invalid("node_id is not an image block"));
+                };
+                let hash = koru_store_core::model::BlobHash::parse(&hash.0)?;
+                let preview = apps::image_preview(self.get_blob(ws, &hash)?, mime)?;
+                Ok(json!({
+                    "node_id": id.to_storage(),
+                    "mime": preview.mime,
+                    "width": preview.width,
+                    "height": preview.height,
+                    "base64": base64::engine::general_purpose::STANDARD.encode(&preview.bytes),
+                }))
+            }
             "create_document" => {
                 let a: CreateDocumentRequest = from(arguments)?;
                 self.create_document(&call, a)
@@ -3683,6 +3716,14 @@ struct DocumentRequest {
     workspace_id: String,
     /// UUID of the document returned by `list_documents`.
     document_id: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageRequest {
+    workspace_id: String,
+    document_id: String,
+    /// The image block, as `read_document` names it.
+    node_id: String,
 }
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -7100,6 +7141,23 @@ impl ServerHandler for KoruMcp {
             );
             return Ok(rmcp::model::CallToolResponse::Complete(refusal));
         }
+        // A view tool is in no router: it runs as the tool it presents
+        // (`apps`), and is served with that tool's toolset.
+        if let (Some(runs_as), Some(listed_with)) = (
+            apps::executes_as(&request.name),
+            apps::listed_with(&request.name),
+        ) {
+            if let Some(refusal) = self.toolsets.refusal(listed_with) {
+                return Ok(rmcp::model::CallToolResponse::Complete(refusal));
+            }
+            let arguments = Value::Object(request.arguments.unwrap_or_default());
+            let result = self.call(runs_as, &arguments);
+            return Ok(rmcp::model::CallToolResponse::Complete(apps::present(
+                &request.name,
+                &arguments,
+                result,
+            )));
+        }
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(call).await
     }
@@ -7110,7 +7168,14 @@ impl ServerHandler for KoruMcp {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, ErrorData> {
         let cursor = request.and_then(|request| request.cursor);
-        let tools = self.tool_router.list_all();
+        let mut tools = self.tool_router.list_all();
+        // The view tools, each listed while the tool it is listed with is.
+        // Kept in the router's order, by name, so the pages stay the same
+        // pages.
+        tools.extend(apps::app_tools().into_iter().filter(|tool| {
+            apps::listed_with(&tool.name).is_some_and(|with| self.toolsets.refusal(with).is_none())
+        }));
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
         let page = if self.paged_tools {
             tool_pages::page(tools, cursor.as_deref())
         } else if let Some(cursor) = &cursor {
@@ -7169,9 +7234,9 @@ impl ServerHandler for KoruMcp {
         _: Option<rmcp::model::PaginatedRequestParams>,
         _: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
-        std::future::ready(Ok(ListResourcesResult::with_all_items(
-            shared_surface::documentation_resources(),
-        )))
+        let mut resources = shared_surface::documentation_resources();
+        resources.extend(apps::app_resources());
+        std::future::ready(Ok(ListResourcesResult::with_all_items(resources)))
     }
 
     fn list_resource_templates(
@@ -7191,9 +7256,13 @@ impl ServerHandler for KoruMcp {
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         let started = Instant::now();
         tracing::info!(uri = %request.uri, "resource read started");
-        let result =
-            shared_surface::read_with(&request.uri, |answer| self.with_toolsets_note(answer))
-                .map(Into::into);
+        let result = match apps::read_app_resource(&request.uri) {
+            Some(view) => Ok(view),
+            None => {
+                shared_surface::read_with(&request.uri, |answer| self.with_toolsets_note(answer))
+            }
+        }
+        .map(Into::into);
         match &result {
             Ok(_) => tracing::info!(
                 uri = %request.uri,
@@ -7694,7 +7763,8 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        assert_eq!(listed.tools.len(), 25);
+        // The router's 25 and the two view tools (`apps`).
+        assert_eq!(listed.tools.len(), 27);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -7806,13 +7876,16 @@ mod tests {
         server_task.abort();
 
         assert!(pages > 1, "21 compacted tools do not fit one page");
-        let expected: Vec<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
+        // The router's tools and the view tools (`apps`), by name.
+        let mut expected: Vec<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
             .tool_router
             .list_all()
             .into_iter()
+            .chain(apps::app_tools())
             .map(|tool| tool.name.to_string())
             .collect();
-        assert_eq!(expected.len(), 25);
+        expected.sort();
+        assert_eq!(expected.len(), 27);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -7896,9 +7969,15 @@ mod tests {
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect();
+        // `docs` is on, so the view tool that runs as its `read_document` is
+        // listed with it (`apps`).
         let expected: HashSet<String> = [Toolset::Core, Toolset::Docs]
             .into_iter()
             .flat_map(|set| set.tools().iter().map(|tool| tool.to_string()))
+            .chain([
+                apps::SHOW_DOCUMENT.to_string(),
+                apps::READ_IMAGE.to_string(),
+            ])
             .collect();
         assert_eq!(listed, expected);
 
@@ -12545,7 +12624,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 25);
+        assert_eq!(tools.len(), 27);
         assert!(
             tools
                 .iter()
@@ -12569,7 +12648,14 @@ mod tests {
             .iter()
             .map(|resource| resource.uri.as_str())
             .collect();
-        assert_eq!(uris, [ESSENTIALS_RESOURCE_URI, MODEL_RESOURCE_URI]);
+        assert_eq!(
+            uris,
+            [
+                ESSENTIALS_RESOURCE_URI,
+                MODEL_RESOURCE_URI,
+                apps::document_view_uri()
+            ]
+        );
         assert_eq!(
             resources.resources[0].mime_type.as_deref(),
             Some(MODEL_DOCUMENT_MIME)
@@ -12664,6 +12750,8 @@ mod tests {
         entries: Mutex<Vec<DocumentEntry>>,
         snapshots: Mutex<HashMap<StoreDocumentId, Vec<u8>>>,
         blobs: Mutex<Vec<Blob>>,
+        /// The bytes of the blobs a test stored, by hash.
+        blob_bytes: Mutex<HashMap<String, Vec<u8>>>,
         search_hits: Mutex<Vec<koru_store_wire::search::SearchHit>>,
         /// Every history marker captured, with the document as it stood.
         markers: Mutex<Vec<(HistoryEntry, Vec<u8>)>>,
@@ -12681,6 +12769,7 @@ mod tests {
                 entries: Mutex::new(Vec::new()),
                 snapshots: Mutex::new(HashMap::new()),
                 blobs: Mutex::new(Vec::new()),
+                blob_bytes: Mutex::new(HashMap::new()),
                 search_hits: Mutex::new(Vec::new()),
                 markers: Mutex::new(Vec::new()),
                 seeds: Mutex::new(HashMap::new()),
@@ -12748,6 +12837,32 @@ mod tests {
                 trashed_by: None,
             });
             self.seed_root_and_line(id, title, line);
+            id
+        }
+
+        /// Put an image block at the end of a document's body, with its
+        /// bytes in the blob store, and answer the block's id.
+        fn add_image_block(
+            &self,
+            document: StoreDocumentId,
+            digest: &str,
+            bytes: Vec<u8>,
+        ) -> NodeId {
+            let hash = koru_core::BlobHash::new("b3", digest);
+            let mut doc =
+                WorkspaceDoc::from_snapshot(&self.snapshots.lock().unwrap()[&document]).unwrap();
+            let root = doc.children(Parent::Root).unwrap()[0];
+            let id = doc
+                .insert(
+                    Parent::Node(root),
+                    Node::image(hash.clone(), "image/png", None, None).unwrap(),
+                )
+                .unwrap();
+            self.snapshots
+                .lock()
+                .unwrap()
+                .insert(document, doc.export_snapshot().unwrap());
+            self.blob_bytes.lock().unwrap().insert(hash.0, bytes);
             id
         }
 
@@ -13075,14 +13190,135 @@ mod tests {
         fn get_blob(
             &self,
             _workspace: StoreWorkspaceId,
-            _hash: koru_store_core::model::BlobHash,
+            hash: koru_store_core::model::BlobHash,
         ) -> Result<Vec<u8>, ToolError> {
-            unreachable!("the note tests never read blob bytes")
+            self.blob_bytes
+                .lock()
+                .unwrap()
+                .get(hash.as_str())
+                .cloned()
+                .ok_or_else(|| ToolError::invalid("the memory store holds no such blob"))
         }
 
         fn status(&self) -> Result<Status, ToolError> {
             unreachable!("the note tests never ask for status")
         }
+    }
+
+    /// The document view's image tool (`apps`): one image block's bytes, as
+    /// stored when small and scaled when not; anything that is not an image
+    /// block is refused, and so is a document the read tools refuse.
+    #[test]
+    fn read_image_answers_an_image_block_scaled_for_a_view() {
+        fn png(width: u32, height: u32) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            image::RgbImage::from_fn(width, height, |x, y| {
+                image::Rgb([
+                    (x % 251) as u8,
+                    (y % 241) as u8,
+                    ((x * 7 + y * 13) % 239) as u8,
+                ])
+            })
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+            bytes
+        }
+        use base64::Engine as _;
+        let decode = |answer: &Value| {
+            base64::engine::general_purpose::STANDARD
+                .decode(answer["base64"].as_str().expect("the bytes"))
+                .expect("base64")
+        };
+
+        let store = MemoryStore::new();
+        let document = store.add_document("page", "Photos", "Before");
+        let small = png(40, 30);
+        let small_id = store.add_image_block(document, "aa01", small.clone());
+        let large = png(2600, 1300);
+        assert!(
+            large.len() > 256 * 1024,
+            "the large fixture is {} bytes",
+            large.len()
+        );
+        let large_id = store.add_image_block(document, "aa02", large);
+        let executor = WorkspaceToolExecutor::new(Arc::new(store.backend()));
+        let context = RequestContext::local();
+        let read = |node: String| {
+            executor.invoke(
+                &context,
+                apps::READ_IMAGE,
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": document.to_storage(),
+                    "node_id": node,
+                }),
+            )
+        };
+
+        let as_stored = read(small_id.to_storage()).unwrap();
+        assert_eq!(as_stored["mime"], "image/png");
+        assert_eq!(
+            (as_stored["width"].clone(), as_stored["height"].clone()),
+            (json!(40), json!(30))
+        );
+        assert_eq!(
+            decode(&as_stored),
+            small,
+            "a small image is sent as it is stored"
+        );
+
+        let scaled = read(large_id.to_storage()).unwrap();
+        assert_eq!(scaled["mime"], "image/jpeg", "no transparency, so JPEG");
+        assert_eq!(
+            (scaled["width"].clone(), scaled["height"].clone()),
+            (json!(1280), json!(640))
+        );
+        let bytes = decode(&scaled);
+        let shown = image::load_from_memory(&bytes).expect("the preview decodes");
+        assert_eq!((shown.width(), shown.height()), (1280, 640));
+
+        // As a host is answered it: an image content block, and no bytes in
+        // the structured content.
+        let presented = apps::present(
+            apps::READ_IMAGE,
+            &json!({}),
+            CallToolResult::structured(as_stored),
+        );
+        let wire = serde_json::to_value(&presented).expect("result JSON");
+        assert_eq!(wire["content"][0]["type"], "image");
+        assert_eq!(wire["content"][0]["mimeType"], "image/png");
+        assert!(
+            wire["content"][0]["data"]
+                .as_str()
+                .is_some_and(|data| !data.is_empty())
+        );
+        assert!(wire["structuredContent"].get("base64").is_none());
+        assert_eq!(wire["structuredContent"]["width"], 40);
+
+        // A block that is not an image, a node that is not there, and a
+        // document the read tools refuse.
+        let (_, line) = store.stored(document);
+        assert_eq!(read(line.to_storage()).unwrap_err().code, "invalid_request");
+        assert_eq!(
+            read(NodeId::new().to_storage()).unwrap_err().code,
+            "stale_node"
+        );
+        let file = store.add_file("scan.png", "image/png");
+        let refused = executor
+            .invoke(
+                &context,
+                apps::READ_IMAGE,
+                json!({
+                    "workspace_id": store.workspace.to_storage(),
+                    "document_id": file.to_storage(),
+                    "node_id": small_id.to_storage(),
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code, "invalid_request");
     }
 
     /// One canned search hit; only the manifest kind it claims to live in

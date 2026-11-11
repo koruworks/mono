@@ -1,0 +1,1239 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<!--
+  The Koru document view: an MCP App (io.modelcontextprotocol/ui).
+
+  One self-contained document: no build step, no dependency, no network. The
+  host's default content policy (no connections at all) is the one it runs
+  under, so everything is inline and everything it knows arrives through the
+  host.
+
+  Three layers, top to bottom of the script:
+    1. `bridge`  JSON-RPC 2.0 over postMessage, as the MCP Apps spec defines it.
+    2. `koru`    one function, call(tool, arguments), over the bridge's
+                 tools/call. It is the only thing the rest of the view knows
+                 about where its data comes from: a page outside a host would
+                 supply the same function over HTTPS and nothing below it
+                 would change.
+    3. the view  a document as rows, edited in place and saved with
+                 edit_document, whose `expected` text is what keeps a save
+                 from overwriting an edit made somewhere else.
+
+  An image is asked for with read_image and drawn from the bytes the answer
+  carries, as a data: address, which the default policy allows.
+
+  Note text is only ever written with textContent, never as markup.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Koru document</title>
+<style>
+  :root {
+    --k-fg: #1c1b19; --k-muted: #6f6c66; --k-line: #dedbd4; --k-soft: #f3f1ec;
+    --k-bg: #ffffff; --k-accent: #2f6fdb; --k-danger: #b3261e; --k-warn-bg: #fff4d6;
+    --k-hl-yellow: #fff1a8; --k-hl-green: #cdeccd; --k-hl-blue: #cfe3ff; --k-hl-pink: #ffd3e4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --k-fg: #ecebe8; --k-muted: #a09d96; --k-line: #3b3a37; --k-soft: #2a2927;
+      --k-bg: #1f1e1c; --k-accent: #7fb0ff; --k-danger: #ff8a80; --k-warn-bg: #3d3420;
+      --k-hl-yellow: #5c5000; --k-hl-green: #1f4d2a; --k-hl-blue: #1d3b66; --k-hl-pink: #5e2540;
+    }
+  }
+  :root[data-theme="dark"] {
+    --k-fg: #ecebe8; --k-muted: #a09d96; --k-line: #3b3a37; --k-soft: #2a2927;
+    --k-bg: #1f1e1c; --k-accent: #7fb0ff; --k-danger: #ff8a80; --k-warn-bg: #3d3420;
+    --k-hl-yellow: #5c5000; --k-hl-green: #1f4d2a; --k-hl-blue: #1d3b66; --k-hl-pink: #5e2540;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: transparent; }
+  body {
+    color: var(--color-text-primary, var(--k-fg));
+    font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+    font-size: var(--font-text-md-size, 15px);
+    line-height: 1.5;
+  }
+  .app { display: flex; flex-direction: column; min-width: 0; }
+  .app[data-mode="fullscreen"] { height: 100vh; background: var(--color-background-primary, var(--k-bg)); }
+  .bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--color-border-primary, var(--k-line));
+  }
+  .brand { font-weight: 600; letter-spacing: .02em; }
+  .status { color: var(--color-text-secondary, var(--k-muted)); font-size: 13px; }
+  .status[data-kind="error"] { color: var(--color-text-danger, var(--k-danger)); }
+  .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 13px; color: inherit; cursor: pointer;
+    padding: 4px 10px; border-radius: var(--border-radius-md, 8px);
+    border: 1px solid var(--color-border-primary, var(--k-line));
+    background: transparent;
+  }
+  button:hover:not(:disabled) { background: var(--color-background-secondary, var(--k-soft)); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { border-color: var(--k-accent); color: var(--k-accent); }
+  /* A row being typed in shows its caret and no box: a document is not a form. */
+  .text { outline: none; }
+  button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--color-ring-primary, var(--k-accent)); outline-offset: 1px;
+  }
+  .notice {
+    margin: 8px 12px 0; padding: 8px 10px; border-radius: var(--border-radius-md, 8px);
+    background: var(--color-background-warning, var(--k-warn-bg)); font-size: 13px;
+    display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap;
+  }
+  .notice p { margin: 0; flex: 1 1 240px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .doc { padding: 12px 16px 20px; overflow: auto; max-height: var(--max-h, 520px); min-height: 120px; }
+  .app[data-mode="fullscreen"] .doc { max-height: none; flex: 1; }
+  .app[data-mode="fullscreen"] .doc > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+  .muted { color: var(--color-text-secondary, var(--k-muted)); }
+  .row { display: flex; align-items: flex-start; gap: 6px; padding: 2px 0 2px calc(var(--indent, 0) * 22px); }
+  .row[hidden] { display: none; }
+  .row.in-list { padding-left: calc(var(--indent, 0) * 22px + 16px); }
+  .gutter { flex: 0 0 auto; min-width: 18px; text-align: center; color: var(--color-text-secondary, var(--k-muted)); user-select: none; }
+  .gutter:empty { display: none; }
+  .gutter input { margin: 4px 0 0; width: 15px; height: 15px; accent-color: var(--k-accent); }
+  .body { flex: 1; min-width: 0; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.5em; border-radius: 4px; }
+  .text[contenteditable="true"]:empty::before { content: attr(data-placeholder); color: var(--color-text-tertiary, var(--k-muted)); }
+  .row.done .text { text-decoration: line-through; color: var(--color-text-secondary, var(--k-muted)); }
+  .row.v-title .text { font-size: 1.6em; font-weight: 700; line-height: 1.25; padding-bottom: 6px; }
+  .row.h1 .text { font-size: 1.45em; font-weight: 700; line-height: 1.3; margin-top: 8px; }
+  .row.h2 .text { font-size: 1.25em; font-weight: 700; line-height: 1.3; margin-top: 6px; }
+  .row.h3 .text { font-size: 1.1em; font-weight: 700; margin-top: 4px; }
+  .row.h4 .text, .row.h5 .text, .row.h6 .text { font-weight: 700; }
+  .row.k-quote .body { border-left: 3px solid var(--color-border-primary, var(--k-line)); padding-left: 10px; color: var(--color-text-secondary, var(--k-muted)); }
+  .row.v-code .text, .row.v-table .text {
+    font-family: var(--font-mono, ui-monospace, "Cascadia Mono", Consolas, monospace); font-size: .9em;
+    background: var(--color-background-secondary, var(--k-soft)); padding: 8px 10px; border-radius: 6px; overflow-x: auto; white-space: pre;
+  }
+  .row.v-divider .body { border-top: 1px solid var(--color-border-primary, var(--k-line)); margin: 10px 0; }
+  .row.v-media .text, .row.v-other .text { color: var(--color-text-secondary, var(--k-muted)); font-style: italic; }
+  .row.v-media img { display: block; max-width: 100%; height: auto; border-radius: 6px; margin: 4px 0; }
+  .row.v-media.a-center img { margin-left: auto; margin-right: auto; }
+  .row.v-media.a-end img { margin-left: auto; }
+  .text .b { font-weight: 700; } .text .i { font-style: italic; } .text .u { text-decoration: underline; }
+  .text .s { text-decoration: line-through; }
+  .text .c { font-family: var(--font-mono, ui-monospace, Consolas, monospace); font-size: .92em; background: var(--color-background-secondary, var(--k-soft)); padding: 0 3px; border-radius: 3px; }
+  .text .hl-yellow { background: var(--k-hl-yellow); } .text .hl-green { background: var(--k-hl-green); }
+  .text .hl-blue { background: var(--k-hl-blue); } .text .hl-pink { background: var(--k-hl-pink); }
+  .pill {
+    display: inline-block; padding: 0 7px; margin: 0 1px; border-radius: 999px; font-size: .92em;
+    background: var(--color-background-secondary, var(--k-soft)); border: 1px solid var(--color-border-primary, var(--k-line));
+  }
+  button.pill { line-height: inherit; color: var(--k-accent); }
+  .conflict { margin-top: 4px; padding: 6px 8px; border-radius: 6px; font-size: 13px; background: var(--color-background-warning, var(--k-warn-bg)); }
+  .conflict q { display: block; margin: 2px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .conflict button + button { margin-left: 6px; }
+</style>
+</head>
+<body>
+<div id="app" class="app" data-mode="inline">
+  <header class="bar">
+    <button id="back" type="button" hidden>Back</button>
+    <span class="brand">Koru</span>
+    <span id="status" class="status" role="status" aria-live="polite"></span>
+    <span class="spacer"></span>
+    <button id="reload" type="button" disabled>Reload</button>
+    <button id="save" type="button" class="primary" disabled>Save</button>
+    <button id="expand" type="button" hidden>Expand</button>
+  </header>
+  <div id="notice" class="notice" hidden><p id="notice-text"></p><button id="notice-action" type="button" hidden></button><button id="notice-close" type="button">Dismiss</button></div>
+  <main id="doc" class="doc"><p class="muted">Loading…</p></main>
+</div>
+<script>
+(() => {
+  'use strict';
+
+  const VIEW = { name: 'koru-document-view', version: '0.1.0' };
+  const PROTOCOL = '2026-01-26';
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  // ------------------------------------------------------------------ bridge
+  // JSON-RPC 2.0 over postMessage. Only the embedding window is listened to.
+  const bridge = (() => {
+    let next = 1;
+    const waiting = new Map();
+    const on = {};
+    const post = (message) => window.parent.postMessage(message, '*');
+    window.addEventListener('message', (event) => {
+      if (event.source !== window.parent) return;
+      const message = event.data;
+      if (!message || message.jsonrpc !== '2.0') return;
+      const asks = message.id !== undefined && message.id !== null;
+      if (typeof message.method === 'string') {
+        const handler = on[message.method];
+        if (!handler) {
+          if (asks) post({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'method not found' } });
+          return;
+        }
+        let result = {};
+        try { result = handler(message.params || {}) || {}; } catch (error) { console.error(error); }
+        if (asks) post({ jsonrpc: '2.0', id: message.id, result });
+        return;
+      }
+      const wait = waiting.get(message.id);
+      if (!wait) return;
+      waiting.delete(message.id);
+      if (message.error) {
+        const error = new Error(message.error.message || 'The host refused the request.');
+        error.rpc = message.error;
+        wait.reject(error);
+      } else {
+        wait.resolve(message.result);
+      }
+    });
+    return {
+      on,
+      request(method, params, timeoutMs = 90000) {
+        return new Promise((resolve, reject) => {
+          const id = next++;
+          waiting.set(id, { resolve, reject });
+          post({ jsonrpc: '2.0', id, method, params });
+          setTimeout(() => {
+            if (waiting.delete(id)) reject(new Error('The host did not answer in time.'));
+          }, timeoutMs);
+        });
+      },
+      notify(method, params) { post({ jsonrpc: '2.0', method, params }); },
+    };
+  })();
+
+  // -------------------------------------------------------------------- koru
+  // The whole data layer: call a Koru tool, get its object or its refusal;
+  // and one image block's bytes, as an address an <img> can draw.
+  const koru = {
+    async call(name, args) {
+      return unwrap(await bridge.request('tools/call', { name, arguments: args }));
+    },
+    async image(args) {
+      const result = await bridge.request('tools/call', { name: 'read_image', arguments: args });
+      const block = ((result && result.content) || []).find((item) => item && item.type === 'image' && item.data);
+      if (!block) { unwrap(result); throw new Error('The answer carried no image.'); }
+      if (!/^image\/(png|jpeg|gif|webp)$/.test(block.mimeType) || !/^[A-Za-z0-9+/=]+$/.test(block.data)) {
+        throw new Error('The answer was not an image this view draws.');
+      }
+      return 'data:' + block.mimeType + ';base64,' + block.data;
+    },
+  };
+
+  /** A tool result's object, or its `{code, message, details}` as an Error. */
+  function unwrap(result) {
+    let value = result && result.structuredContent;
+    if (!value || typeof value !== 'object') {
+      const text = ((result && result.content) || []).find((block) => block && block.type === 'text');
+      try { value = text ? JSON.parse(text.text) : null; } catch { value = null; }
+      if ((!value || typeof value !== 'object') && result && result.isError) {
+        value = { code: 'error', message: text ? text.text : 'The tool failed.' };
+      }
+    }
+    if (result && result.isError) {
+      const error = new Error((value && value.message) || 'The tool failed.');
+      error.code = (value && value.code) || 'error';
+      error.details = (value && value.details) || null;
+      throw error;
+    }
+    return value;
+  }
+
+  // ------------------------------------------------------------------- state
+  const state = {
+    ws: null, docId: null, rootId: null, revision: null,
+    rows: [], seq: 0, history: [],
+    saving: false, again: false, timer: null, retries: 0,
+    readOnly: false, loaded: false, loading: false, settled: false, context: {}, args: null,
+    readAt: 0, refreshing: false,
+  };
+  const doc = $('doc');
+
+  const byId = () => new Map(state.rows.map((row) => [row.id, row]));
+  const editable = (row) => !state.readOnly && !row.pills && (row.view === 'title' || row.view === 'text');
+  const dirtyRow = (row) => row.isNew || row.removed || row.text !== row.base.text || row.done !== row.base.done
+    || row.parentId !== row.base.parentId;
+  const isDirty = () => state.rows.some(dirtyRow);
+  const conflicts = () => state.rows.filter((row) => row.conflict !== null && !row.removed).length;
+  const title = () => {
+    const root = state.rows.find((row) => row.view === 'title');
+    return (root && root.text.trim()) || 'Untitled';
+  };
+
+  function viewOf(node, isRoot) {
+    if (isRoot) return 'title';
+    if (!node.content || node.content.type !== 'text') return 'media';
+    switch (node.kind) {
+      case 'paragraph': case 'task': case 'quote': return 'text';
+      case 'code': return 'code';
+      case 'table': return 'table';
+      case 'divider': return 'divider';
+      case 'listblock': return 'list';
+      case 'callout': return 'callout';
+      default: return 'other';
+    }
+  }
+
+  /** The rows of a `read_document` projection, in its preorder. */
+  function rowsOf(projection) {
+    const nodes = projection.nodes || [];
+    const index = new Map(nodes.map((node) => [node.node_id, node]));
+    return nodes.map((node) => {
+      const content = node.content || {};
+      const meta = node.metadata || {};
+      const isText = content.type === 'text';
+      const text = isText ? (content.text || '') : '';
+      const runs = isText ? (content.runs || []) : [];
+      const parent = node.parent_id ? index.get(node.parent_id) : null;
+      const list = parent && parent.kind === 'listblock' ? ((parent.metadata || {}).list_style || 'bullet') : null;
+      const view = viewOf(node, node.node_id === projection.root_node_id);
+      let indent = 0;
+      for (let up = parent; up && up.node_id !== projection.root_node_id; up = up.parent_id ? index.get(up.parent_id) : null) {
+        if (up.kind !== 'listblock') indent += 1;
+      }
+      return {
+        id: node.node_id, parentId: node.parent_id || null, afterId: null,
+        isNew: false, removed: false, kind: node.kind, view, indent,
+        heading: meta.heading || null, list,
+        checkbox: view === 'text' && (node.kind === 'task' || list === 'checkbox'),
+        base: { text, done: !!meta.done, parentId: node.parent_id || null }, text, done: !!meta.done,
+        runs, attrs: new Map((content.attributes || []).map((attr) => [attr.attribute_id, attr])),
+        pills: runs.some((run) => run.pill_attribute_id) || text.includes('\u2060'),
+        meta, content, conflict: null, el: null, textEl: null,
+      };
+    });
+  }
+
+  function adopt(projection) {
+    state.docId = projection.document_id;
+    state.rootId = projection.root_node_id;
+    state.revision = projection.revision;
+    if (projection.workspace_id) state.ws = projection.workspace_id;
+    state.rows = rowsOf(projection);
+    state.loaded = true;
+    state.readAt = Date.now();
+  }
+
+  /** A row that is not in the document yet. */
+  function blank(props) {
+    return Object.assign({
+      id: 'new' + (++state.seq), parentId: null, afterId: null, isNew: true, removed: false,
+      kind: 'paragraph', view: 'text', indent: 0, heading: null, list: null, checkbox: false,
+      base: { text: '', done: false, parentId: null }, text: '', done: false,
+      runs: null, attrs: new Map(), pills: false, meta: {}, content: {}, conflict: null, el: null, textEl: null,
+    }, props);
+  }
+
+  // ------------------------------------------------------------------ render
+  function fillText(row) {
+    const target = row.textEl;
+    target.textContent = '';
+    const runs = row.runs || [];
+    const whole = runs.length && row.text === row.base.text && runs.map((run) => run.text).join('') === row.text;
+    if (!whole) {
+      // Edited, or runs that do not cover the text: the text alone. A row
+      // with a pill is never editable, so dropping its anchors here is only
+      // ever a matter of display.
+      target.textContent = row.text.replace(/\u2060/g, '');
+      return;
+    }
+    for (const run of runs) {
+      if (run.pill_attribute_id) {
+        target.appendChild(pill(row.attrs.get(run.pill_attribute_id)));
+        continue;
+      }
+      const marks = ['bold:b', 'italic:i', 'underline:u', 'strike:s', 'code:c']
+        .filter((pair) => run[pair.split(':')[0]]).map((pair) => pair.split(':')[1]);
+      if (typeof run.highlight === 'string' && /^[a-z]+$/.test(run.highlight)) marks.push('hl-' + run.highlight);
+      if (!marks.length) { target.appendChild(document.createTextNode(run.text)); continue; }
+      target.appendChild(el('span', marks.join(' '), run.text));
+    }
+  }
+
+  function pill(attr) {
+    const value = (attr && attr.value) || {};
+    const label = (attr && attr.label) || (value.type === 'url' ? value.value : '') || 'link';
+    if (value.type === 'document' && value.document_id) {
+      const button = el('button', 'pill', label);
+      button.type = 'button';
+      button.dataset.document = value.document_id;
+      return button;
+    }
+    if (value.type === 'url' && /^(https?:|mailto:)/i.test(value.value || '')) {
+      const button = el('button', 'pill', label);
+      button.type = 'button';
+      button.dataset.url = value.value;
+      return button;
+    }
+    return el('span', 'pill', label);
+  }
+
+  function describe(row) {
+    if (row.view === 'media') {
+      const name = row.meta.name || (row.content.type === 'blob' ? row.content.mime : '') || row.kind;
+      return (row.kind === 'image' || row.kind === 'canvas' ? 'Image: ' : 'Attachment: ') + name;
+    }
+    if (row.view === 'list') return row.meta.name || '';
+    if (row.view === 'callout') return '';
+    return row.text;
+  }
+
+  // Images, by the hash of their bytes: an address to draw, or false for one
+  // that cannot be drawn here. One is asked for at a time.
+  const images = new Map();
+  let imageQueue = Promise.resolve();
+  let noImages = false;
+  const isImage = (row) => row.view === 'media' && (row.kind === 'image' || row.kind === 'canvas')
+    && row.content.type === 'blob' && typeof row.content.hash === 'string';
+
+  /** Draw an image row, now if its bytes are here and when they arrive if not. */
+  function picture(row) {
+    const hash = row.content.hash;
+    const text = row.textEl;
+    const place = (address) => {
+      const img = el('img');
+      img.alt = row.meta.name || 'Image';
+      const size = row.meta.image_size;
+      if (size && size.width > 0) img.style.width = size.width + 'px';
+      img.src = address;
+      text.textContent = '';
+      text.appendChild(img);
+    };
+    if (images.get(hash)) { place(images.get(hash)); return; }
+    if (noImages || images.get(hash) === false || row.isNew) return;
+    const args = { workspace_id: state.ws, document_id: state.docId, node_id: row.id };
+    imageQueue = imageQueue.then(async () => {
+      if (noImages) return;
+      if (images.get(hash) === undefined) {
+        try {
+          images.set(hash, await koru.image(args));
+        } catch (error) {
+          // A host that does not serve read_image is not asked again.
+          if (error.rpc || error.code === 'tool_not_available' || error.code === 'toolset_disabled') noImages = true;
+          else images.set(hash, false);
+        }
+      }
+      if (images.get(hash) && text.isConnected) place(images.get(hash));
+    });
+  }
+
+  function renderRow(row) {
+    const node = el('div', 'row v-' + row.view + ' k-' + row.kind + (row.heading ? ' h' + row.heading : '')
+      + (row.list ? ' in-list' : '') + (row.view === 'media' && row.meta.align ? ' a-' + row.meta.align : ''));
+    node.dataset.id = row.id;
+    node.style.setProperty('--indent', row.indent);
+    const gutter = el('span', 'gutter');
+    const body = el('div', 'body');
+    node.append(gutter, body);
+    row.el = node;
+    row.gutterEl = gutter;
+    if (row.view === 'divider') return node;
+    const text = el('div', 'text');
+    row.textEl = text;
+    body.appendChild(text);
+    if (row.view === 'title' || row.view === 'text') {
+      text.contentEditable = editable(row) ? 'true' : 'false';
+      text.spellcheck = true;
+      text.dataset.placeholder = row.view === 'title' ? 'Untitled' : '';
+      if (row.pills && !state.readOnly) text.title = 'This block has links. Edit it in Koru.';
+      fillText(row);
+    } else if (row.view === 'callout') {
+      gutter.textContent = row.meta.icon || '\u{1F4A1}';
+    } else {
+      text.textContent = describe(row);
+      if (row.view === 'list' && !text.textContent) node.hidden = true;
+      if (isImage(row)) picture(row);
+    }
+    if (row.checkbox) {
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = row.done;
+      box.disabled = state.readOnly;
+      box.setAttribute('aria-label', 'Done');
+      gutter.appendChild(box);
+      node.classList.toggle('done', row.done);
+    }
+    if (row.conflict !== null) body.appendChild(conflictBox(row));
+    if (row.removed) node.hidden = true;
+    return node;
+  }
+
+  function conflictBox(row) {
+    const box = el('div', 'conflict');
+    box.append('This block changed in Koru while you were editing. It now says:');
+    box.appendChild(el('q', '', row.conflict));
+    const mine = el('button', '', 'Keep mine');
+    mine.type = 'button';
+    mine.dataset.resolve = 'mine';
+    const theirs = el('button', '', 'Use theirs');
+    theirs.type = 'button';
+    theirs.dataset.resolve = 'theirs';
+    box.append(mine, theirs);
+    return box;
+  }
+
+  const ROMAN = [[10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+  function ordinalLabel(style, n) {
+    if (style === 'numbered') return n + '.';
+    if (style === 'letter') return String.fromCharCode(97 + ((n - 1) % 26)) + '.';
+    if (style === 'roman') {
+      let out = '';
+      let left = Math.min(n, 39);
+      for (const [value, glyph] of ROMAN) while (left >= value) { out += glyph; left -= value; }
+      return out + '.';
+    }
+    return '•';
+  }
+
+  /** List markers, counted over the rows as they stand now. */
+  function mark() {
+    const counts = new Map();
+    for (const row of state.rows) {
+      if (row.removed || !row.list || row.checkbox || !row.gutterEl) continue;
+      const n = (counts.get(row.parentId) || 0) + 1;
+      counts.set(row.parentId, n);
+      row.gutterEl.textContent = ordinalLabel(row.list, n);
+    }
+  }
+
+  function render() {
+    // The caret is kept across a redraw, by the row it is in and how far in.
+    const active = rowOf(document.activeElement);
+    const kept = active && active.textEl === document.activeElement
+      ? { id: active.id, at: caret(active.textEl) } : null;
+    doc.textContent = '';
+    for (const row of state.rows) doc.appendChild(renderRow(row));
+    mark();
+    chrome();
+    const again = kept && state.rows.find((row) => row.id === kept.id && !row.removed);
+    if (again && again.textEl && again.textEl.isContentEditable) setCaret(again.textEl, kept.at);
+  }
+
+  /** Draw one row again, in place. */
+  function redraw(row) {
+    const old = row.el;
+    const fresh = renderRow(row);
+    if (old && old.parentNode) old.parentNode.replaceChild(fresh, old);
+  }
+
+  function chrome() {
+    const status = $('status');
+    const waiting = conflicts();
+    let text = '';
+    let kind = '';
+    if (!state.loaded) text = '';
+    else if (state.readOnly) text = 'Read-only';
+    else if (state.saving) text = 'Saving…';
+    else if (waiting) { text = waiting + (waiting === 1 ? ' conflict' : ' conflicts') + ' to resolve'; kind = 'error'; }
+    else if (isDirty()) text = 'Unsaved changes';
+    else text = 'Saved';
+    status.textContent = text;
+    status.dataset.kind = kind;
+    $('save').disabled = !state.loaded || state.readOnly || state.saving || !isDirty() || waiting > 0;
+    $('reload').disabled = !state.loaded || state.saving;
+    $('back').hidden = state.history.length === 0;
+  }
+
+  function notice(text, action) {
+    $('notice-text').textContent = text;
+    const button = $('notice-action');
+    button.hidden = !action;
+    if (action) { button.textContent = action.label; button.onclick = action.run; }
+    $('notice').hidden = false;
+  }
+  const quiet = () => { $('notice').hidden = true; };
+
+  // ----------------------------------------------------------------- editing
+  function rowOf(target) {
+    const node = target && target.closest ? target.closest('.row') : null;
+    return node ? state.rows.find((row) => row.el === node) || null : null;
+  }
+
+  function caret(target) {
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount || !target.contains(selection.anchorNode)) return target.textContent.length;
+    const before = document.createRange();
+    before.selectNodeContents(target);
+    const at = selection.getRangeAt(0);
+    before.setEnd(at.startContainer, at.startOffset);
+    return before.toString().length;
+  }
+
+  function focus(row, atEnd) {
+    if (!row || !row.textEl) return;
+    row.textEl.focus();
+    const range = document.createRange();
+    range.selectNodeContents(row.textEl);
+    range.collapse(!atEnd);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function setCaret(target, offset) {
+    target.focus();
+    const range = document.createRange();
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    let left = offset;
+    let placed = false;
+    for (let node = walker.nextNode(); node && !placed; node = walker.nextNode()) {
+      if (left <= node.length) { range.setStart(node, left); placed = true; } else left -= node.length;
+    }
+    if (!placed) range.selectNodeContents(target);
+    range.collapse(placed);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  /** Whether `row` is below the row `id`, in the tree the rows describe. */
+  function below(row, id, index) {
+    for (let up = row.parentId; up; up = (index.get(up) || {}).parentId) if (up === id) return true;
+    return false;
+  }
+
+  /** Where a row with this parent and previous sibling sits among the rows. */
+  function slot(parentId, afterId) {
+    const index = byId();
+    const anchor = state.rows.findIndex((row) => row.id === (afterId || parentId));
+    if (anchor < 0) return state.rows.length;
+    if (!afterId) return anchor + 1;
+    let at = anchor + 1;
+    while (at < state.rows.length && below(state.rows[at], afterId, index)) at += 1;
+    return at;
+  }
+
+  /** Save soon, unless there is nothing to save or something to resolve. */
+  function schedule() {
+    chrome();
+    clearTimeout(state.timer);
+    if (!state.readOnly && isDirty() && !conflicts()) state.timer = setTimeout(save, 1500);
+  }
+
+  /** The person changed something. */
+  function touched() {
+    state.retries = 0;
+    schedule();
+  }
+
+  function split(row) {
+    const whole = row.textEl.textContent;
+    const at = row.view === 'title' ? whole.length : caret(row.textEl);
+    const right = whole.slice(at);
+    if (right) {
+      row.text = whole.slice(0, at);
+      row.runs = null;
+      fillText(row);
+    }
+    const first = row.view === 'title';
+    const created = blank({
+      parentId: first ? row.id : row.parentId, afterId: first ? null : row.id,
+      kind: !first && row.kind === 'task' ? 'task' : 'paragraph',
+      indent: first ? 0 : row.indent, list: first ? null : row.list,
+      checkbox: !first && row.checkbox, text: right,
+    });
+    const at_row = slot(created.parentId, created.afterId);
+    // An unsaved sibling that followed the same anchor now follows the new row.
+    for (const other of state.rows) {
+      if (other.isNew && other.parentId === created.parentId && other.afterId === created.afterId) other.afterId = created.id;
+    }
+    state.rows.splice(at_row, 0, created);
+    const next = state.rows[at_row + 1];
+    doc.insertBefore(renderRow(created), next ? next.el : null);
+    mark();
+    focus(created, false);
+    touched();
+  }
+
+  function drop(row) {
+    const index = byId();
+    if (state.rows.some((other) => !other.removed && below(other, row.id, index))) return;
+    const position = state.rows.indexOf(row);
+    let previous = null;
+    for (let i = position - 1; i >= 0 && !previous; i -= 1) {
+      const candidate = state.rows[i];
+      if (!candidate.removed && candidate.textEl && candidate.textEl.isContentEditable) previous = candidate;
+    }
+    if (row.isNew) {
+      // A saved row is removed after every insert, so an insert can still
+      // name it; an unsaved one is never sent, so what followed it follows
+      // its anchor instead.
+      for (const other of state.rows) if (other.isNew && other.afterId === row.id) other.afterId = row.afterId;
+      state.rows.splice(position, 1);
+      row.el.remove();
+    } else {
+      row.removed = true;
+      row.el.hidden = true;
+    }
+    mark();
+    focus(previous, true);
+    touched();
+  }
+
+  // ------------------------------------------------------------------ lists
+  // A bullet list is a listblock whose children are its items. `- ` or `* `
+  // typed at the start of a paragraph makes the paragraph an item: of the
+  // bullet list just above it when there is one, of a new list otherwise.
+  // Other list styles are shown and can be added to, but a new list is a
+  // bullet list, because nothing in edit_document sets a list's style.
+  const isBulletList = (row) => row.kind === 'listblock' && (!row.meta.list_style || row.meta.list_style === 'bullet');
+  const itemsOf = (listId) => state.rows.filter((row) => row.parentId === listId && !row.removed);
+
+  /** The sibling just above `row`, among the rows that are still there. */
+  function previousSibling(row) {
+    for (let at = state.rows.indexOf(row) - 1; at >= 0; at -= 1) {
+      const candidate = state.rows[at];
+      if (!candidate.removed && candidate.parentId === row.parentId) return candidate;
+    }
+    return null;
+  }
+
+  /** Unsaved rows that were placed after `from`, under `parentId`, now follow `to`. */
+  function reanchor(parentId, from, to, except) {
+    for (const other of state.rows) {
+      if (other !== except && other.isNew && other.parentId === parentId && other.afterId === from) other.afterId = to;
+    }
+  }
+
+  function toBullet(row) {
+    row.text = row.textEl.textContent.slice(2);
+    row.runs = null;
+    const outer = row.parentId;
+    const above = previousSibling(row);
+    let list = above && isBulletList(above) ? above : null;
+    if (list) {
+      reanchor(outer, row.id, list.id, row);
+      row.afterId = lastChild(list.id);
+    } else {
+      // The list takes the paragraph's place: an unsaved paragraph's own
+      // anchor, or just after a saved one, which then moves into it.
+      list = blank({ kind: 'listblock', view: 'list', parentId: outer, afterId: row.isNew ? row.afterId : row.id, indent: row.indent });
+      reanchor(outer, row.id, list.id, row);
+      state.rows.splice(state.rows.indexOf(row), 0, list);
+      doc.insertBefore(renderRow(list), row.el);
+      row.afterId = null;
+    }
+    row.parentId = list.id;
+    row.list = 'bullet';
+    row.checkbox = false;
+    redraw(row);
+    mark();
+    focus(row, false);
+    touched();
+  }
+
+  /**
+   * The last item of a list, emptied, becomes a paragraph after the list.
+   * False when `row` is not that, and nothing was changed.
+   */
+  function leaveList(row) {
+    const index = byId();
+    const list = index.get(row.parentId);
+    if (!list || list.kind !== 'listblock' || row.textEl.textContent !== '') return false;
+    const items = itemsOf(list.id);
+    if (items[items.length - 1] !== row) return false;
+    if (state.rows.some((other) => !other.removed && below(other, row.id, index))) return false;
+    reanchor(list.parentId, list.id, row.id, row);
+    row.parentId = list.parentId;
+    row.afterId = list.id;
+    row.list = null;
+    row.checkbox = row.kind === 'task';
+    if (items.length === 1) {
+      // The list has no item left, so it goes too.
+      if (list.isNew) {
+        // A saved paragraph that the list was placed after is its own anchor
+        // again, which is to say it never moved.
+        row.afterId = list.afterId === row.id ? null : list.afterId;
+        state.rows.splice(state.rows.indexOf(list), 1);
+        if (list.el) list.el.remove();
+      } else {
+        list.removed = true;
+      }
+    }
+    redraw(row);
+    mark();
+    focus(row, false);
+    touched();
+    return true;
+  }
+
+  doc.addEventListener('input', (event) => {
+    const row = rowOf(event.target);
+    if (!row || !row.textEl || event.target !== row.textEl) return;
+    row.text = row.textEl.textContent.replace(/[\r\n]+/g, ' ');
+    if (event.inputType === 'insertText' && event.data === ' ' && row.view === 'text' && row.kind === 'paragraph'
+      && !row.list && !row.heading && /^[-*] /.test(row.text) && caret(row.textEl) === 2) {
+      toBullet(row);
+      return;
+    }
+    touched();
+  });
+
+  doc.addEventListener('keydown', (event) => {
+    const row = rowOf(event.target);
+    if (!row || event.target !== row.textEl || !row.textEl.isContentEditable) return;
+    if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      if (!event.shiftKey && !leaveList(row)) split(row);
+      return;
+    }
+    if (event.key === 'Backspace' && row.view === 'text' && row.textEl.textContent === '') {
+      // Backspace in a block that is already empty removes the block; in
+      // the last item of a list it first makes the item a paragraph.
+      event.preventDefault();
+      if (!leaveList(row)) drop(row);
+    }
+  });
+
+  doc.addEventListener('paste', (event) => {
+    const row = rowOf(event.target);
+    if (!row || !row.textEl || !row.textEl.isContentEditable) return;
+    event.preventDefault();
+    const text = (event.clipboardData ? event.clipboardData.getData('text/plain') : '').replace(/\s*[\r\n]+\s*/g, ' ');
+    document.execCommand('insertText', false, text);
+  });
+
+  doc.addEventListener('change', (event) => {
+    const row = rowOf(event.target);
+    if (!row || event.target.type !== 'checkbox') return;
+    row.done = event.target.checked;
+    row.el.classList.toggle('done', row.done);
+    touched();
+  });
+
+  doc.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!target || !target.dataset) return;
+    if (target.dataset.document) { open(target.dataset.document, true); return; }
+    if (target.dataset.url) {
+      bridge.request('ui/open-link', { url: target.dataset.url }).catch(() => {});
+      return;
+    }
+    if (target.dataset.resolve) {
+      const row = rowOf(target);
+      if (!row) return;
+      if (target.dataset.resolve === 'theirs') { row.text = row.base.text; row.runs = row.keptRuns || null; }
+      row.conflict = null;
+      redraw(row);
+      mark();
+      touched();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      save();
+    }
+  });
+
+  // ------------------------------------------------------------------ saving
+  /** The edit batch that turns the document as read into the rows as they are. */
+  function operations() {
+    const ops = [];
+    const tally = { edited: 0, added: 0, removed: 0, ticked: 0, moved: 0 };
+    // In the rows' order, which is the document's: a row's parent and the
+    // sibling it is placed after always come before it.
+    for (const row of state.rows) {
+      if (row.removed) continue;
+      if (row.isNew) {
+        ops.push({ op: 'insert', node_id: row.id, parent_id: row.parentId, after_node_id: row.afterId, kind: row.kind, text: row.text });
+        if (row.done) ops.push({ op: 'set_done', node_id: row.id, expected: row.text, done: true });
+        if (row.view !== 'list') tally.added += 1;
+        continue;
+      }
+      if (row.text !== row.base.text) {
+        ops.push({ op: 'replace_text', node_id: row.id, expected: row.base.text, text: row.text });
+        tally.edited += 1;
+      }
+      if (row.parentId !== row.base.parentId) {
+        ops.push({ op: 'move', node_id: row.id, expected: row.text, parent_id: row.parentId, after_node_id: row.afterId });
+        tally.moved += 1;
+      }
+      if (row.done !== row.base.done) {
+        ops.push({ op: 'set_done', node_id: row.id, expected: row.text, done: row.done });
+        tally.ticked += 1;
+      }
+    }
+    for (const row of state.rows) {
+      if (row.removed && !row.isNew) {
+        ops.push({ op: 'remove', node_id: row.id, expected: row.base.text });
+        if (row.view !== 'list') tally.removed += 1;
+      }
+    }
+    return { ops, tally };
+  }
+
+  async function save() {
+    clearTimeout(state.timer);
+    if (!state.loaded || state.readOnly || conflicts()) return;
+    if (state.saving) { state.again = true; return; }
+    const { ops, tally } = operations();
+    if (!ops.length) { chrome(); return; }
+    const sent = state.rows.map((row) => ({
+      row, text: row.text, done: row.done, parentId: row.parentId, removed: row.removed, isNew: row.isNew,
+    }));
+    state.saving = true;
+    chrome();
+    try {
+      const answer = await koru.call('edit_document', {
+        workspace_id: state.ws, document_id: state.docId, base_revision: state.revision, operations: ops,
+      });
+      const complete = commit(sent, answer || {});
+      quiet();
+      tell(tally);
+      if (!complete) await reconcile(false);
+    } catch (error) {
+      await failed(error);
+    } finally {
+      state.saving = false;
+      chrome();
+      if (state.again) { state.again = false; schedule(); }
+    }
+  }
+
+  /** Make what was sent the new base. False when an insert came back unnamed. */
+  function commit(sent, answer) {
+    const created = answer.created || {};
+    const renamed = new Map();
+    let complete = true;
+    if (answer.revision) state.revision = answer.revision;
+    for (const item of sent) {
+      const row = item.row;
+      if (item.removed) { row.gone = true; continue; }
+      if (item.isNew) {
+        const minted = created[row.id];
+        if (!minted) { complete = false; continue; }
+        renamed.set(row.id, minted);
+        row.id = minted;
+        row.isNew = false;
+        if (row.el) row.el.dataset.id = minted;
+      }
+      row.base = { text: item.text, done: item.done, parentId: renamed.get(item.parentId) || item.parentId };
+    }
+    state.rows = state.rows.filter((row) => !row.gone);
+    for (const row of state.rows) {
+      if (renamed.has(row.parentId)) row.parentId = renamed.get(row.parentId);
+      if (renamed.has(row.afterId)) row.afterId = renamed.get(row.afterId);
+    }
+    return complete;
+  }
+
+  /** Tell the model what the person changed, so its next turn is not stale. */
+  function tell(tally) {
+    const parts = [];
+    if (tally.edited) parts.push(tally.edited + ' edited');
+    if (tally.added) parts.push(tally.added + ' added');
+    if (tally.removed) parts.push(tally.removed + ' removed');
+    if (tally.moved) parts.push(tally.moved + ' moved into or out of a list');
+    if (!parts.length) parts.push('rearranged');
+    if (tally.ticked) parts.push(tally.ticked + ' checked or unchecked');
+    const text = 'The user edited the Koru document "' + title() + '" in the view (document_id ' + state.docId
+      + ', workspace_id ' + state.ws + '): blocks ' + parts.join(', ')
+      + '. The edit is saved. Call read_document for the current content before quoting or changing it.';
+    bridge.request('ui/update-model-context', { content: [{ type: 'text', text }] }).catch(() => {});
+  }
+
+  const STALE = ['precondition_failed', 'stale_node', 'revision_conflict'];
+  const LATER = ['workspace_loading', 'cloud_unavailable', 'authorization_unavailable'];
+  const UNSURE = ['save_status_unknown', 'edit_not_saved', 'partially_saved'];
+
+  async function failed(error) {
+    const code = error.code || '';
+    if (STALE.includes(code)) { await reconcile(true); return; }
+    if (UNSURE.includes(code)) {
+      // What landed is not known here. Read it, and keep what is still unsaved.
+      await reconcile(false);
+      if (!$('notice').hidden) return;
+      const said = error.message || 'Koru could not confirm the save.';
+      if (isDirty()) {
+        notice(said + ' The document was read again, and what is still unsaved is kept here.',
+          { label: 'Save again', run: () => { quiet(); save(); } });
+      } else {
+        notice(said + ' The document was read again, and your changes are in it.');
+      }
+      return;
+    }
+    if (LATER.includes(code) && state.retries < 3) {
+      state.retries += 1;
+      notice('Koru is not ready (' + (error.message || code) + '). Trying again…');
+      state.timer = setTimeout(save, 4000);
+      return;
+    }
+    if (code === 'document_claimed') {
+      const held = error.details || {};
+      notice('An agent is working on this document' + (held.holder ? ' (' + held.holder + ')' : '')
+        + (held.expires_at ? ' until ' + held.expires_at : '') + '. Your changes are kept here.',
+        { label: 'Try again', run: () => { quiet(); save(); } });
+      return;
+    }
+    const message = error.message || 'The save failed.';
+    const scope = /scope|permission|forbidden|not allowed|read.only|403/i.test(code + ' ' + message);
+    notice('Not saved: ' + message + (scope ? ' This connection may be read-only: reconnect Koru with Read & edit to save from here.' : ''),
+      { label: 'Try again', run: () => { quiet(); save(); } });
+  }
+
+  /**
+   * Read the document again and lay the unsaved edits over it. An edit to a
+   * block that also changed elsewhere is not sent until the person chooses.
+   */
+  async function reconcile(retry) {
+    let fresh;
+    try {
+      fresh = await koru.call('read_document', { workspace_id: state.ws, document_id: state.docId });
+    } catch (error) {
+      notice('Could not read the document again: ' + (error.message || 'unknown error') + ' Your changes are kept here.',
+        { label: 'Try again', run: () => { quiet(); reconcile(retry); } });
+      return;
+    }
+    const old = state.rows;
+    quiet();
+    adopt(fresh);
+    const index = byId();
+    const lost = [];
+    for (const was of old) {
+      if (was.isNew) continue;
+      const now = index.get(was.id);
+      const textDirty = was.text !== was.base.text;
+      if (!now) { if (textDirty && !was.removed) lost.push(was.text); continue; }
+      if (was.removed) { now.removed = now.base.text === was.base.text; continue; }
+      if (textDirty && now.base.text !== was.text) {
+        now.keptRuns = now.runs;
+        now.text = was.text;
+        now.runs = null;
+        // A conflict stays one until the person resolves it.
+        if (now.base.text !== was.base.text || was.conflict !== null) now.conflict = now.base.text;
+      }
+      if (was.done !== was.base.done) now.done = was.done;
+    }
+    // Then what is unsaved about the document's shape, in the old rows'
+    // order, so a parent or an anchor is in place before what names it: the
+    // rows not saved yet, and the saved ones moved into or out of a list.
+    for (const was of old) {
+      if (was.removed) continue;
+      const moved = !was.isNew && was.parentId !== was.base.parentId;
+      if (!was.isNew && !moved) continue;
+      const row = was.isNew ? was : index.get(was.id);
+      if (!row) continue;
+      const parent = index.get(was.parentId);
+      if (!parent && moved) continue; // Where it was going is gone: it stays where Koru has it.
+      if (!parent) {
+        Object.assign(row, { parentId: state.rootId, afterId: lastChild(state.rootId), indent: 0, list: null, checkbox: row.kind === 'task' });
+      } else {
+        const after = was.afterId ? index.get(was.afterId) : null;
+        const sibling = after && after.parentId === was.parentId && after !== row;
+        Object.assign(row, {
+          parentId: was.parentId, afterId: sibling ? was.afterId : (was.afterId ? lastChild(was.parentId) : null),
+          indent: was.indent, list: was.list, checkbox: was.checkbox,
+        });
+        if (row.afterId === row.id) row.afterId = null;
+      }
+      if (moved) state.rows.splice(state.rows.indexOf(row), 1);
+      state.rows.splice(slot(row.parentId, row.afterId), 0, row);
+      index.set(row.id, row);
+    }
+    render();
+    if (lost.length) {
+      notice('A block you were editing was removed in Koru. Your text, so you can keep it:\n' + lost.join('\n'));
+    } else if (conflicts()) {
+      notice('This document changed in Koru while you were editing. Choose what to keep for each marked block, then save.');
+    } else if (retry && isDirty() && state.retries < 2) {
+      state.retries += 1;
+      state.again = true;
+    }
+  }
+
+  /**
+   * Show what Koru has now, when nothing here is unsaved: the contract is
+   * ask and answer, so a change made in Koru is seen when the view asks, and
+   * it asks when the person comes back to it.
+   */
+  async function refresh(now) {
+    const idle = () => state.loaded && !state.saving && !isDirty() && !conflicts();
+    if (!idle() || state.refreshing || (now !== true && Date.now() - state.readAt < 4000)) return;
+    state.refreshing = true;
+    const docId = state.docId;
+    try {
+      const fresh = await koru.call('read_document', { workspace_id: state.ws, document_id: docId });
+      state.readAt = Date.now();
+      if (!idle() || state.docId !== docId || fresh.revision === state.revision) return;
+      adopt(fresh);
+      render();
+    } catch { /* The next save or Reload says what is wrong. */ } finally {
+      state.refreshing = false;
+    }
+  }
+  window.addEventListener('focus', () => refresh());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+
+  function lastChild(parentId) {
+    let last = null;
+    for (const row of state.rows) if (row.parentId === parentId && !row.removed) last = row.id;
+    return last;
+  }
+
+  // -------------------------------------------------------------- navigation
+  async function open(documentId, push) {
+    if (isDirty()) await save();
+    if (isDirty()) { notice('Save or resolve your changes before opening another document.'); return; }
+    const from = state.docId;
+    try {
+      const projection = await koru.call('read_document', { workspace_id: state.ws, document_id: documentId });
+      if (push && from) state.history.push(from);
+      adopt(projection);
+      quiet();
+      render();
+      doc.scrollTop = 0;
+    } catch (error) {
+      notice('Could not open that document: ' + (error.message || 'unknown error'));
+    }
+  }
+
+  $('back').addEventListener('click', () => {
+    const previous = state.history.pop();
+    if (previous) open(previous, false);
+  });
+  $('save').addEventListener('click', () => save());
+  $('reload').addEventListener('click', () => { quiet(); reconcile(false); });
+  $('notice-close').addEventListener('click', quiet);
+  $('expand').addEventListener('click', async () => {
+    const wanted = $('app').dataset.mode === 'fullscreen' ? 'inline' : 'fullscreen';
+    try {
+      const answer = await bridge.request('ui/request-display-mode', { mode: wanted });
+      context({ displayMode: (answer && answer.mode) || wanted });
+    } catch { /* the host keeps the mode it has */ }
+  });
+
+  // ----------------------------------------------------------- host context
+  function context(update) {
+    Object.assign(state.context, update || {});
+    const root = document.documentElement;
+    const now = state.context;
+    if (now.theme === 'light' || now.theme === 'dark') {
+      root.dataset.theme = now.theme;
+      root.style.colorScheme = now.theme;
+    }
+    const variables = (now.styles && now.styles.variables) || {};
+    for (const [name, value] of Object.entries(variables)) {
+      if (/^--[a-z0-9-]+$/.test(name) && typeof value === 'string') root.style.setProperty(name, value);
+    }
+    const mode = now.displayMode === 'fullscreen' ? 'fullscreen' : 'inline';
+    $('app').dataset.mode = mode;
+    const modes = now.availableDisplayModes || [];
+    $('expand').hidden = !modes.includes('fullscreen');
+    $('expand').textContent = mode === 'fullscreen' ? 'Collapse' : 'Expand';
+    const box = now.containerDimensions || {};
+    const cap = typeof box.height === 'number' ? box.height : box.maxHeight;
+    if (mode === 'inline' && typeof cap === 'number' && cap > 200) root.style.setProperty('--max-h', (cap - 60) + 'px');
+  }
+
+  function measure() {
+    let last = '';
+    const report = () => {
+      const width = Math.ceil(document.documentElement.clientWidth);
+      const height = Math.ceil($('app').getBoundingClientRect().height);
+      const key = width + 'x' + height;
+      if (key === last || !height) return;
+      last = key;
+      bridge.notify('ui/notifications/size-changed', { width, height });
+    };
+    new ResizeObserver(report).observe($('app'));
+    report();
+  }
+
+  // ------------------------------------------------------------------- start
+  function fail(message) {
+    doc.textContent = '';
+    doc.appendChild(el('p', 'muted', message));
+    chrome();
+  }
+
+  function show(projection) {
+    adopt(projection);
+    quiet();
+    render();
+  }
+
+  async function load() {
+    const args = state.args || {};
+    if (!args.workspace_id || !args.document_id) { fail('No document was named.'); return; }
+    if (state.loading || state.loaded) return;
+    state.loading = true;
+    state.ws = args.workspace_id;
+    try {
+      show(await koru.call('read_document', { workspace_id: args.workspace_id, document_id: args.document_id }));
+    } catch (error) {
+      fail('Could not open the document: ' + (error.message || 'unknown error'));
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  bridge.on['ui/notifications/tool-input'] = (params) => {
+    state.args = params.arguments || {};
+    if (state.args.workspace_id) state.ws = state.args.workspace_id;
+    // A host that never sends the result still gets a document.
+    setTimeout(() => { if (!state.settled) load(); }, 4000);
+  };
+  bridge.on['ui/notifications/tool-result'] = (params) => {
+    if (state.settled) return;
+    state.settled = true;
+    let projection = null;
+    try { projection = unwrap(params); } catch (error) {
+      fail('Could not open the document: ' + (error.message || 'unknown error'));
+      return;
+    }
+    if (projection && Array.isArray(projection.nodes) && projection.root_node_id) {
+      show(projection);
+      // **What a host hands a view is the answer to the call that opened it,
+      // which may be old**: a conversation opened again draws the view from
+      // the result it kept. So the document is read once more, now.
+      refresh(true);
+    } else {
+      load();
+    }
+  };
+  bridge.on['ui/notifications/tool-cancelled'] = () => {
+    if (state.loaded) return;
+    state.settled = true;
+    fail('The request was cancelled.');
+  };
+  bridge.on['ui/notifications/host-context-changed'] = (params) => { context(params); };
+  bridge.on['ui/resource-teardown'] = () => { if (isDirty()) save(); return {}; };
+  bridge.on.ping = () => ({});
+
+  async function start() {
+    if (window.parent === window) {
+      fail('This is the Koru document view. It opens inside an assistant that supports MCP Apps, when it calls show_document.');
+      return;
+    }
+    try {
+      const answer = await bridge.request('ui/initialize', {
+        protocolVersion: PROTOCOL,
+        appInfo: VIEW,
+        appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+        // The names the specification's own sample uses for the same two.
+        clientInfo: VIEW,
+        capabilities: {},
+      }, 30000);
+      context((answer && answer.hostContext) || {});
+    } catch (error) {
+      fail('The host did not start this view: ' + (error.message || 'unknown error'));
+      return;
+    }
+    bridge.notify('ui/notifications/initialized', {});
+    measure();
+  }
+
+  start();
+})();
+</script>
+</body>
+</html>

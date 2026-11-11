@@ -1,0 +1,309 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<!--
+  A stand-in MCP Apps host for Koru's document view, for working on the view
+  without an assistant: open this file in a browser.
+
+  It plays the host's half of the MCP Apps protocol (ui/initialize, the tool
+  input and result, tools/call, display modes, size changes) and answers
+  read_document, edit_document and read_image from a document held in this page, by the
+  rules crates/koru-mcp-server/MCP.md gives them: `expected` is checked, a
+  local name is minted a UUID and answered in `created`, and a batch applies
+  whole or not at all. Nothing here reaches a Koru store.
+
+  It is a development tool, not a test of the server: the server's own tests
+  hold the real tools to the batches the view sends.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Apps host (development)</title>
+<style>
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; display: grid; grid-template-columns: minmax(0, 1fr) 420px; height: 100vh; }
+  body.dark { background: #1f1e1c; color: #ecebe8; }
+  .stage { padding: 16px; overflow: auto; }
+  .card { border: 1px solid #8884; border-radius: 12px; overflow: hidden; max-width: 760px; }
+  .card.fullscreen { position: fixed; inset: 0; max-width: none; border-radius: 0; z-index: 2; background: inherit; }
+  iframe { display: block; width: 100%; border: 0; height: 200px; }
+  .card.fullscreen iframe { height: 100vh !important; }
+  .side { border-left: 1px solid #8884; display: flex; flex-direction: column; min-height: 0; }
+  .tools { padding: 10px; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid #8884; }
+  #log { flex: 1; overflow: auto; margin: 0; padding: 10px; font: 11px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+  .in { color: #2f6fdb; } .out { color: #2e7d32; } .err { color: #b3261e; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <p>The model called <code>show_document</code>. The host renders the view it names:</p>
+  <div id="card" class="card"><iframe id="view" title="Koru document view" sandbox="allow-scripts" src="../../crates/koru-mcp-server/src/apps/document.html"></iframe></div>
+</div>
+<div class="side">
+  <div class="tools">
+    <button id="elsewhere" type="button">Edit a block elsewhere</button>
+    <button id="unknown" type="button">Next save: outcome unknown</button>
+    <button id="theme" type="button">Toggle theme</button>
+    <button id="clear" type="button">Clear log</button>
+  </div>
+  <pre id="log" aria-label="Protocol log"></pre>
+</div>
+<script>
+(() => {
+  'use strict';
+  const frame = document.getElementById('view');
+  const card = document.getElementById('card');
+  const logEl = document.getElementById('log');
+  const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+  const HOME = '22222222-2222-4222-8222-222222222201';
+  const OTHER = '22222222-2222-4222-8222-222222222202';
+  let minted = 0;
+  const uuid = () => '00000000-0000-4000-8000-' + String(++minted).padStart(12, '0');
+  const meta = (extra) => Object.assign({ icon: null, name: null, colour: null, done: false, align: null, heading: null, list_style: null, language: null }, extra);
+  const run = (text, extra) => Object.assign({ text, bold: false, italic: false, underline: false, strike: false, code: false, highlight: null, pill_attribute_id: null }, extra);
+
+  /** One stored document: nodes as read_document answers them, in preorder. */
+  function make(id, title, build) {
+    const root = uuid();
+    const nodes = [{ node_id: root, parent_id: null, kind: 'document', metadata: meta(), content: { type: 'text', text: title, attributes: [], runs: [run(title)] } }];
+    const add = (parent, kind, text, extra = {}) => {
+      const node = { node_id: uuid(), parent_id: parent, kind, metadata: meta(extra.meta), content: extra.content || { type: 'text', text, attributes: extra.attributes || [], runs: extra.runs || (text ? [run(text)] : []) } };
+      nodes.push(node);
+      return node.node_id;
+    };
+    build(add, root);
+    return { document_id: id, root_node_id: root, version: 1, nodes };
+  }
+
+  const store = new Map();
+  store.set(HOME, make(HOME, 'Garden plan', (add, root) => {
+    add(root, 'paragraph', 'This spring', { meta: { heading: 2 } });
+    add(root, 'paragraph', 'Beds two and three get the tomatoes; the herbs move to the wall.', {
+      runs: [run('Beds two and three get the '), run('tomatoes', { bold: true }), run('; the herbs move to the '), run('wall', { highlight: 'yellow' }), run('.')],
+    });
+    add(root, 'paragraph', 'Seeds and timings are in ⁠.', {
+      attributes: [{ attribute_id: 'attr-1', role: 'document', label: 'Seed list', value: { type: 'document', document_id: OTHER, node_id: null } }],
+      runs: [run('Seeds and timings are in '), run('⁠', { pill_attribute_id: 'attr-1' }), run('.')],
+    });
+    const list = add(root, 'listblock', '', { meta: { list_style: 'checkbox' } });
+    add(list, 'paragraph', 'Order compost', { meta: { done: true } });
+    add(list, 'paragraph', 'Fix the hose');
+    const bullets = add(root, 'listblock', '', { meta: { list_style: 'bullet' } });
+    add(bullets, 'paragraph', 'Tomatoes');
+    add(bullets, 'paragraph', 'Basil');
+    add(root, 'image', '', { meta: { name: 'Bed layout', image_size: { width: 180, height: 120 } },
+      content: { type: 'blob', hash: 'b3:layout', mime: 'image/png', width: 360, height: 240, attributes: [] } });
+    add(root, 'task', 'Book the rotavator for Saturday');
+    add(root, 'quote', 'Plant thick, thin quick.');
+    add(root, 'code', 'rows = 4\nspacing_cm = 45', { meta: { language: 'python' } });
+  }));
+  store.set(OTHER, make(OTHER, 'Seed list', (add, root) => {
+    const list = add(root, 'listblock', '', { meta: { list_style: 'numbered' } });
+    add(list, 'paragraph', 'Tomato, Gardener\'s Delight');
+    add(list, 'paragraph', 'Basil, Genovese');
+  }));
+
+  const refuse = (code, message, details) => { const error = new Error(message); error.tool = { code, message, details }; return error; };
+  const projection = (doc) => ({
+    document_id: doc.document_id, root_node_id: doc.root_node_id, revision: String(doc.version).padStart(4, '0'), schema_version: 1,
+    nodes: doc.nodes.map((node) => Object.assign({}, node, { depth: 0, ordinal: 0 })),
+  });
+
+  let unknownNext = false;
+
+  /** edit_document, on a copy first so a refused batch writes nothing. */
+  function edit(args) {
+    const doc = store.get(args.document_id);
+    if (!doc) throw refuse('not_found', 'no such document');
+    const nodes = JSON.parse(JSON.stringify(doc.nodes));
+    const created = {};
+    const find = (id) => {
+      const real = created[id] || id;
+      const node = nodes.find((candidate) => candidate.node_id === real);
+      if (!node) throw refuse('stale_node', 'node ' + real + ' is not in this document', { node_id: real, retry: 'read_document' });
+      return node;
+    };
+    const expect = (node, op) => {
+      if (node.content.text !== op.expected) throw refuse('precondition_failed', op.op + ' expected value does not match');
+    };
+    for (const op of args.operations) {
+      if (op.op === 'replace_text') {
+        const node = find(op.node_id);
+        expect(node, op);
+        node.content.text = op.text;
+        node.content.runs = op.text ? [run(op.text)] : [];
+      } else if (op.op === 'set_done') {
+        const node = find(op.node_id);
+        expect(node, op);
+        node.metadata.done = op.done;
+      } else if (op.op === 'remove') {
+        const node = find(op.node_id);
+        expect(node, op);
+        nodes.splice(nodes.indexOf(node), 1);
+      } else if (op.op === 'move') {
+        const node = find(op.node_id);
+        expect(node, op);
+        const parent = find(op.parent_id);
+        const after = op.after_node_id ? find(op.after_node_id) : null;
+        if (after && after.parent_id !== parent.node_id) throw refuse('invalid_request', 'after_node_id is not a child of parent_id');
+        const under = (candidate, top) => { for (let up = candidate.parent_id; up; up = (nodes.find((n) => n.node_id === up) || {}).parent_id) if (up === top) return true; return false; };
+        const subtree = nodes.filter((candidate) => candidate === node || under(candidate, node.node_id));
+        for (const moved of subtree) nodes.splice(nodes.indexOf(moved), 1);
+        node.parent_id = parent.node_id;
+        let at = nodes.indexOf(after || parent) + 1;
+        if (after) while (at < nodes.length && under(nodes[at], after.node_id)) at += 1;
+        nodes.splice(at, 0, ...subtree);
+      } else if (op.op === 'insert') {
+        const parent = find(op.parent_id);
+        const id = uuid();
+        created[op.node_id] = id;
+        const node = { node_id: id, parent_id: parent.node_id, kind: op.kind, metadata: meta(), content: { type: 'text', text: op.text, attributes: [], runs: op.text ? [run(op.text)] : [] } };
+        // Preorder: after the named sibling's whole subtree, or first under the parent.
+        const under = (candidate, top) => { for (let up = candidate.parent_id; up; up = (nodes.find((n) => n.node_id === up) || {}).parent_id) if (up === top) return true; return false; };
+        let at = nodes.indexOf(op.after_node_id ? find(op.after_node_id) : parent) + 1;
+        if (op.after_node_id) while (at < nodes.length && under(nodes[at], find(op.after_node_id).node_id)) at += 1;
+        nodes.splice(at, 0, node);
+      } else {
+        throw refuse('invalid_request', 'this stand-in does not implement ' + op.op);
+      }
+    }
+    doc.nodes = nodes;
+    doc.version += 1;
+    if (unknownNext) {
+      unknownNext = false;
+      throw refuse('save_status_unknown', 'Koru could not confirm that Cloud has this edit.');
+    }
+    const answer = { revision: String(doc.version).padStart(4, '0') };
+    if (Object.keys(created).length) answer.created = created;
+    return answer;
+  }
+
+  /** A picture drawn here, standing in for a stored one. */
+  function drawing() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 360;
+    canvas.height = 240;
+    const pen = canvas.getContext('2d');
+    pen.fillStyle = '#69d2b0';
+    pen.fillRect(0, 0, 360, 240);
+    pen.fillStyle = '#1c1b19';
+    for (let row = 0; row < 4; row += 1) pen.fillRect(30, 30 + row * 50, 300, 30);
+    return canvas.toDataURL('image/png').split(',')[1];
+  }
+
+  function callTool(name, args) {
+    if (name === 'read_image') {
+      const doc = store.get(args.document_id);
+      const node = doc && doc.nodes.find((candidate) => candidate.node_id === args.node_id && candidate.kind === 'image');
+      if (!node) {
+        const error = { code: 'stale_node', message: 'node is not in this document' };
+        return { content: [{ type: 'text', text: JSON.stringify(error) }], structuredContent: error, isError: true };
+      }
+      return { content: [{ type: 'image', data: drawing(), mimeType: 'image/png' }], structuredContent: { node_id: node.node_id, mime: 'image/png', width: 360, height: 240 }, isError: false };
+    }
+    try {
+      let value;
+      if (name === 'read_document' || name === 'show_document') {
+        const doc = store.get(args.document_id);
+        if (!doc) throw refuse('not_found', 'no such document');
+        value = projection(doc);
+        if (name === 'show_document') value.workspace_id = args.workspace_id;
+      } else if (name === 'edit_document') {
+        value = edit(args);
+      } else {
+        throw refuse('tool_not_available', name + ' is not available on this stand-in');
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value, isError: false };
+    } catch (error) {
+      if (!error.tool) throw error;
+      return { content: [{ type: 'text', text: JSON.stringify(error.tool) }], structuredContent: error.tool, isError: true };
+    }
+  }
+
+  // ------------------------------------------------------------ the protocol
+  const log = (kind, label, body) => {
+    const line = document.createElement('div');
+    line.className = kind;
+    line.textContent = label + ' ' + JSON.stringify(body === undefined ? null : body).slice(0, 600);
+    line.dataset.label = label;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  const send = (message) => { log('out', '→ ' + (message.method || 'result#' + message.id), message.params || message.result || message.error); frame.contentWindow.postMessage(message, '*'); };
+  const context = () => ({
+    theme: document.body.classList.contains('dark') ? 'dark' : 'light',
+    displayMode: card.classList.contains('fullscreen') ? 'fullscreen' : 'inline',
+    availableDisplayModes: ['inline', 'fullscreen'],
+    containerDimensions: { maxHeight: 600 },
+    platform: 'web',
+  });
+  const args = { workspace_id: WORKSPACE, document_id: HOME };
+
+  /**
+   * What the view is opened with. With `#stale` on this page's address it is
+   * an answer from before the document's last three blocks existed, the way
+   * a conversation opened again hands a view the result it kept.
+   */
+  function opening() {
+    const result = callTool('show_document', args);
+    if (location.hash !== '#stale') return result;
+    const old = JSON.parse(JSON.stringify(result.structuredContent));
+    old.nodes = old.nodes.slice(0, -3);
+    old.revision = '0000';
+    return { content: [{ type: 'text', text: JSON.stringify(old) }], structuredContent: old, isError: false };
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== frame.contentWindow) return;
+    const message = event.data;
+    if (!message || message.jsonrpc !== '2.0' || !message.method) return;
+    log('in', '← ' + message.method, message.params);
+    const answer = (result) => send({ jsonrpc: '2.0', id: message.id, result });
+    const params = message.params || {};
+    switch (message.method) {
+      case 'ui/initialize':
+        answer({ protocolVersion: '2026-01-26', hostInfo: { name: 'koru-dev-host', version: '0' }, hostCapabilities: { openLinks: {}, serverTools: {} }, hostContext: context() });
+        break;
+      case 'ui/notifications/initialized':
+        send({ jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: { arguments: args } });
+        send({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: opening() });
+        break;
+      case 'tools/call':
+        // A real host answers after a round trip to the server.
+        setTimeout(() => answer(callTool(params.name, params.arguments || {})), 150);
+        break;
+      case 'ui/notifications/size-changed':
+        if (!card.classList.contains('fullscreen')) frame.style.height = params.height + 'px';
+        break;
+      case 'ui/request-display-mode':
+        card.classList.toggle('fullscreen', params.mode === 'fullscreen');
+        answer({ mode: params.mode });
+        send({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: context() });
+        break;
+      case 'ui/update-model-context': case 'ui/open-link': case 'ui/message':
+        answer({});
+        break;
+      default:
+        if (message.id !== undefined) send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'method not found' } });
+    }
+  });
+
+  document.getElementById('elsewhere').addEventListener('click', () => {
+    const doc = store.get(HOME);
+    const node = doc.nodes.find((candidate) => candidate.kind === 'quote');
+    if (!node) return;
+    node.content.text += ' (edited on the desktop)';
+    node.content.runs = [run(node.content.text)];
+    doc.version += 1;
+    log('err', 'elsewhere: the quote block changed in the store', node.content.text);
+  });
+  document.getElementById('unknown').addEventListener('click', () => { unknownNext = true; log('err', 'the next save lands, and answers save_status_unknown'); });
+  document.getElementById('theme').addEventListener('click', () => {
+    document.body.classList.toggle('dark');
+    send({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: context() });
+  });
+  document.getElementById('clear').addEventListener('click', () => { logEl.textContent = ''; });
+  window.koruDevHost = { store, HOME, OTHER };
+})();
+</script>
+</body>
+</html>

@@ -198,7 +198,10 @@ The current tool surface is:
 - `save_document_version`, `list_document_versions`,
   `compare_document_versions`, and `restore_document_version` for history; and
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
-  Koru AI chats.
+  Koru AI chats; and
+- `show_document`, which shows a person a document in an interactive view,
+  for hosts that render MCP Apps, and `read_image`, which that view draws a
+  document's images from ([Views](#views)).
 
 A bridge serves every one of them unless it was started with `--toolsets`,
 which narrows it to named groups — see [Toolsets](#toolsets).
@@ -376,6 +379,8 @@ and as a test held them against real values. A failure is
 | `list_chats` | `{ chats: [{ chat_id, title, message_count, created_at, updated_at }], next_cursor? }` |
 | `search_chats` | `{ hits: [{ chat_id, message_id, chat_title, snippet, score }], next_cursor? }` |
 | `read_chat` | `{ chat_id, title, total_messages, messages: [{ message_id, ordinal, role, state, markdown, truncated, created_at }], next_cursor? }` |
+| `show_document` | `read_document`'s result plus `workspace_id`; the text block is one sentence naming the document, not its content ([Views](#views)) |
+| `read_image` | `{ node_id, mime, width, height }`, and the image itself as an MCP image content block; for the view only ([Views](#views)) |
 
 ## The boundary
 
@@ -1747,6 +1752,108 @@ callback from the gateway to the run. The instructions the model reads
 first are P1.12's preamble, which names `.artifacts/<RunId>/` and these six
 tools exactly. `KORU_RUN_MCP_DEBUG` prints one line per call — the tool,
 the code, the elapsed time; never an argument, a path or a title.
+
+## Views
+
+`show_document` shows a person one document in an interactive view inside the
+conversation, where they can read it, edit it and save. It is for a host that
+renders MCP Apps (the `io.modelcontextprotocol/ui` extension); an agent that
+wants a document's content calls `read_document`, as before.
+
+**When to call it.** When the person asks to see, open or show a note, a
+document or a task list. It takes `workspace_id` and `document_id`, the
+arguments of `read_document`, and needs the same access. Do not call it to
+read: it puts a view in front of the person each time.
+
+**What it answers.** The structured result is `read_document`'s, with the
+`workspace_id` the call named, and is what the view draws from. The text
+block is one sentence that names the document and says the person may change
+it, not the document: a model is told what is on screen without being handed
+content it did not ask for. Because the person can edit in the view, read the
+document again before quoting or changing it. After a save the view tells the
+host what changed, in one sentence, for the model's next turn.
+
+**What the view does.** It is one self-contained HTML document, served as the
+resource `show_document` names in `_meta.ui.resourceUri`
+(`ui://koru/document-<revision>.html`, MIME `text/html;profile=mcp-app`). It
+loads nothing from the network and asks for no permission. It shows the
+title, headings, paragraphs, quotes, lists, checklists, tasks and images, with
+their formatting; code, tables and files are shown and not editable, and an
+image can be looked at and not changed. A person can change a block's text
+and the title, tick a checkbox or a task, add a block with Enter and remove
+an empty one with Backspace. A block that holds a link or a reference to
+another document is read-only, because its text carries the link's anchor; a
+document reference opens that document in the view.
+
+**Lists.** A list is a `listblock` whose children are its items, and the
+view draws every list style a read reports. `- ` or `* ` typed at the start
+of a paragraph makes the paragraph a bullet: an item of the bullet list just
+above it when there is one, of a new list otherwise. Enter in an item adds
+the next item; Enter or Backspace in the last item, when it is empty, makes
+it a paragraph after the list, and a list left with no item is removed. A
+new list is always a bullet list, because no `edit_document` operation sets
+a list's style: a list inserted without one is drawn as bullets everywhere.
+
+**Images.** A view may load nothing from the network, so an image reaches it
+as the answer to a tool call. `read_image` takes `workspace_id`,
+`document_id` and the `node_id` of an image block, and answers the image as
+an MCP image content block, with `{ node_id, mime, width, height }` as its
+structured content. An image of at most 256 KiB that is a PNG, JPEG, GIF or
+WebP is answered as it is stored. Anything else is scaled to fit 1,280
+pixels on its longer edge and encoded again, as PNG when it has transparency
+and JPEG when it has none, and the answer's `mime`, `width` and `height` are
+those of what was sent. A node that is not an image block is
+`invalid_request`, one that is not in the document `stale_node`, and bytes
+that do not decode `image_not_previewable`. The tool is published for the
+view alone (`_meta.ui.visibility: ["app"]`), so a host that renders views
+does not offer it to the model. **A hosted server serves it too**, wherever
+it serves `read_document`, by fetching the bytes from Koru Cloud under the
+connection's own access: there an image stored larger than 8 MiB is refused
+`image_too_large` before it is fetched, and two images are read at a time.
+Where an image cannot be read the view shows its name in its place.
+
+**It asks again when it opens and when the person comes back.** The
+contract is ask and answer, so the view learns of a change made in Koru only
+by reading. What a host hands a view is the answer to the call that opened
+it, which a conversation opened again serves from what it kept, so the view
+reads the document once as it opens. After that, when it regains focus with
+nothing unsaved and has not read in the last four seconds, it reads again
+and, if the revision moved, draws the document again.
+
+**It saves with `edit_document`, and reads with `read_document`.** The view
+calls those two tools through the host, under the connection's own access, so
+a save is the batch an agent would send: `replace_text`, `set_done`, `insert`
+with local names, `move` into or out of a list, and `remove`, each with the
+block's text as `expected`.
+Nothing about saving is particular to the view:
+
+- A block that changed somewhere else since the view read it is refused
+  `precondition_failed`, as for any caller. The view reads the document
+  again, keeps what the person typed, shows what the block now says, and
+  sends nothing for that block until the person chooses one of the two.
+- A connection that may only read is shown the document and refused the save.
+- On a hosted server, a save that answers `save_status_unknown`,
+  `edit_not_saved` or `partially_saved` makes the view read the document
+  again rather than send the batch a second time.
+
+**It is `read_document` below the surface.** `show_document` is not a tool
+of the executor: the bridge and the hosted server list it beside the catalog
+and run it as `read_document`, so capabilities, scope, workspace access and a
+hosted document's `claim` are that tool's. It is listed with the `docs`
+toolset, and is not in the catalog Koru AI reads, because Koru AI renders no
+views. `read_image` is a tool of the executor, because it reads a blob, but
+is in no router and no catalog either; a host serves it wherever it serves
+`read_document`, and both are listed with the `docs` toolset. A host without the extension ignores `_meta.ui` and can still call
+`show_document`; the text says to use `read_document`.
+
+The two add 1,056 bytes to `tools/list` (`show_document` 621, `read_image`
+435), which is 25,508 bytes with every toolset on (measured 2026-11-11).
+They are in no toolset's own budget, because those are measured over the
+router, but they are in the total: **42 bytes are left under its 25,550**, so
+the next tool or description is a decision about that budget.
+
+`scripts/dev/mcp-app-host.html` is a stand-in host for working on the view in
+a browser, with a document held in the page.
 
 ## Future MCP improvements
 

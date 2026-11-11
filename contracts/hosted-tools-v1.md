@@ -114,6 +114,18 @@ no tool that looks one up; the assistant checks content, as the message says.
   checked before scope and before any backend call, and the published catalog
   is built from the same set, so any other tool called by name answers
   `tool_not_available` with no backend work.
+- **`show_document` is listed beside the catalog, and is `read_document`.**
+  The view tool for hosts that render MCP Apps
+  (`crates/koru-mcp-server/MCP.md`, Views) is listed to every connection that
+  is served `read_document`, and runs as it: the capability set, the scope
+  and a document's `claim` are `read_document`'s. Its view saves with
+  `edit_document`, so a Read connection is shown a document and refused the
+  save, as for any edit. The view's `read_image` is listed the same way and
+  served wherever `read_document` is: the server takes a read capability for
+  the image under the connection's own token and reads it from the object
+  plane, checks it against its hash, and keeps none of it after the call. An
+  image stored larger than 8 MiB answers `image_too_large`, and a server
+  with no blob plane configured answers `tool_not_available`.
 
 ### Image uploads
 
