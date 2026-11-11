@@ -3714,7 +3714,8 @@ fn the_library_stops_above_the_floor_and_does_not_scroll_into_it() {
     let mut v = with_rows(60);
     let a = area();
     let floor = v.rows_bottom(a);
-    assert_eq!(floor, a.y + a.h, "the band ends where the floor begins");
+    let (_, trash) = v.footer_rects(a)[0];
+    assert_eq!(floor, trash.y, "the band ends where the pinned Trash begins");
 
     v.scroll_by(a, -100_000.0);
     assert_eq!(
@@ -3998,12 +3999,14 @@ fn right_clicking_a_row_reports_its_menu_at_the_cursor() {
         },
         "empty space below the rows offers import"
     );
+    // Just above the pinned Trash row is still the library's.
+    let (_, trash) = v.footer_rects(a)[0];
     assert_eq!(
-        v.context_menu(a, a.x + 4.0, a.y + a.h - 2.0),
+        v.context_menu(a, a.x + 4.0, trash.y - 2.0),
         Outcome::LibraryMenu {
-            at: (a.x + 4.0, a.y + a.h - 2.0)
+            at: (a.x + 4.0, trash.y - 2.0)
         },
-        "the former floor is now library space"
+        "the space above the Trash row is library space"
     );
 }
 
