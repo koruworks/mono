@@ -119,6 +119,10 @@ pub(crate) enum Act {
     SaveAccess,
     ChangeFolder,
     TogglePause,
+    /// *New conversation* (S8).
+    NewConversation,
+    /// *Show more* under the conversation list (S8).
+    MoreConversations,
 }
 
 /// One control as the accessibility tree publishes it, in the tab's
@@ -146,6 +150,9 @@ pub(crate) enum ControlRole {
     TextInput,
     Radio,
     Label,
+    /// The conversation list (S8), and one of its rows.
+    List,
+    ListItem,
 }
 
 /// A card's quiet title above it, in the koru_ui `Card`'s words: a meta
@@ -639,6 +646,8 @@ impl BotView {
             k if k == SAVE_ACCESS => Act::SaveAccess,
             k if k == CHANGE_FOLDER => Act::ChangeFolder,
             k if k == PAUSE => Act::TogglePause,
+            k if k == super::list::NEW_CONVERSATION => Act::NewConversation,
+            k if k == super::list::MORE_CONVERSATIONS => Act::MoreConversations,
             k if k.part == REMOVE_PART => Act::RemovePage(
                 settings
                     .pages_shown()
@@ -698,6 +707,8 @@ impl BotView {
                 }
                 return removed;
             }
+            Act::NewConversation => return self.new_conversation(),
+            Act::MoreConversations => return self.more_conversations(),
             Act::SaveName => self.settings.save_name(),
             Act::SaveAccess => self.settings.save_access(),
             Act::TogglePause => self.settings.toggle_pause(),
@@ -764,6 +775,9 @@ impl BotView {
             (Some(i), true) => (i + order.len() - 1) % order.len(),
         };
         self.focus = Some(order[next]);
+        if self.focus == Some(super::list::CONVERSATION_LIST) {
+            self.focus_list();
+        }
         if self.focus != Some(NAME_FIELD)
             && let Some(input) = self.name_field.borrow().as_ref()
         {
@@ -804,8 +818,11 @@ impl BotView {
         if !self.settings_open && self.focus.is_none() {
             return None;
         }
+        // Tab walks the region's controls while it is open, and the
+        // header's and the conversation column's once one of them has the
+        // keyboard (`F6` landed on *Settings*).
         if let WinitKey::Named(NamedKey::Tab) = key
-            && self.settings_open
+            && (self.settings_open || self.focus.is_some())
         {
             return Some(self.step_focus(mods.shift_key()));
         }
@@ -1017,6 +1034,13 @@ impl BotView {
     /// selected.
     pub(crate) fn controls(&self) -> Vec<Control> {
         let labels = self.choice_labels();
+        // Laid out on its own first: the list's rows come from the shared
+        // list's geometry, which reads the tab's frame itself.
+        let list = if self.settings_open {
+            Vec::new()
+        } else {
+            self.list_controls()
+        };
         self.with_frame(|_, frame| {
             // Each published node, and the published node it nests under:
             // its nearest published ancestor in the frame.
@@ -1031,7 +1055,11 @@ impl BotView {
                 let Some(key) = node.key else {
                     continue;
                 };
-                if !self.settings_open && key != SETTINGS_BUTTON {
+                if !self.settings_open
+                    && key != SETTINGS_BUTTON
+                    && key != super::list::NEW_CONVERSATION
+                    && key != super::list::MORE_CONVERSATIONS
+                {
                     continue;
                 }
                 let role = if key == NAME_FIELD {
@@ -1122,6 +1150,15 @@ impl BotView {
                     None => roots.insert(0, control),
                 }
             }
+            if !self.settings_open {
+                // The conversation list, after *New conversation* and before
+                // *Show more*, in the keyboard's order (S8).
+                let more = roots
+                    .iter()
+                    .position(|control| control.key == super::list::MORE_CONVERSATIONS)
+                    .unwrap_or(roots.len());
+                roots.splice(more..more, list);
+            }
             roots
         })
     }
@@ -1172,6 +1209,9 @@ impl BotView {
 
     /// Do what an assistive technology asked of the control `key`.
     pub(crate) fn accessibility_action(&mut self, key: Key, click: bool) -> bool {
+        if let Some(done) = self.list_action(key, click) {
+            return done;
+        }
         if let Some(index) = ACCESS_SEGMENTS.iter().position(|segment| *segment == key) {
             if !self.with_frame(|_, frame| frame.contains(ACCESS_CHOICE)) {
                 return false;

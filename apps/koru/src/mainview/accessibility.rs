@@ -996,6 +996,8 @@ fn bot_control_node(
         ControlRole::TextInput => Role::TextInput,
         ControlRole::Radio => Role::RadioButton,
         ControlRole::Label => Role::Label,
+        ControlRole::List => Role::List,
+        ControlRole::ListItem => Role::ListItem,
     };
     let mut node = SemanticNode::new(occurrence, role)
         .with_label(control.label.clone())
@@ -1008,10 +1010,13 @@ fn bot_control_node(
     }
     if matches!(
         control.role,
-        ControlRole::Button | ControlRole::TextInput | ControlRole::Radio
+        ControlRole::Button | ControlRole::TextInput | ControlRole::Radio | ControlRole::ListItem
     ) && !control.disabled
     {
         node = node.with_actions([Action::Click, Action::Focus]);
+    }
+    if control.role == ControlRole::List {
+        node = node.with_size_of_set(control.children.len());
     }
     node.with_children(
         control
@@ -1045,7 +1050,8 @@ fn bot_key(target: Occurrence) -> Option<koru_draw::el::Key> {
         ),
         ObjectKey::Model(id)
             if part == crate::bots::view::region::REMOVE_PART
-                || part == crate::bots::view::region::PAGE_PART =>
+                || part == crate::bots::view::region::PAGE_PART
+                || part == crate::bots::view::list::CONVERSATION_PART =>
         {
             Some(koru_draw::el::Key::model(id.as_u128(), part))
         }
@@ -1056,10 +1062,11 @@ fn bot_key(target: Occurrence) -> Option<koru_draw::el::Key> {
 /// The control part a Bot header line is published under: its element's
 /// part, the one name it has in the frame.
 fn bot_part(key: koru_draw::el::Key) -> koru_workspace_host::accessibility::ControlPart {
-    use crate::bots::view::{LIMIT, NAME, NOTICE, PAUSED, SAVES};
+    use crate::bots::view::{LIMIT, MAIN_MARK, NAME, NOTICE, PAUSED, SAVES};
     use koru_workspace_host::accessibility::ControlPart;
     match key {
         k if k == NAME => ControlPart::new("name"),
+        k if k == MAIN_MARK => ControlPart::new("main-conversation"),
         k if k == PAUSED => ControlPart::new("paused"),
         k if k == SAVES => ControlPart::new("saves"),
         k if k == LIMIT => ControlPart::new("limit"),

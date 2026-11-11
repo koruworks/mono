@@ -20,7 +20,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
 use koru_ai_core::ChatId;
-use koru_ai_core::bots::{Bot, BotChatLabel, BotCommand, BotId, BotRequestId, BotResponse};
+use koru_ai_core::bots::{
+    Bot, BotChatCursor, BotChatLabel, BotChatPage, BotCommand, BotId, BotRequestId, BotResponse,
+};
 use koru_store_core::ids::WorkspaceId;
 
 /// Commands waiting for the thread. A roster asks one list at a time, so
@@ -52,6 +54,14 @@ pub(crate) enum Command {
     /// read of the chat, whose `Chat.bot` labels a Bot's conversation for a
     /// caller that may open it. Only the label is kept.
     Label { chat: ChatId },
+    /// **One page of a Bot's conversations** (S8): `ListBotChats`, main
+    /// first then newest, Trash left out; `cursor` is the previous page's.
+    ListChats {
+        seq: u64,
+        bot: BotId,
+        cursor: Option<BotChatCursor>,
+        limit: u16,
+    },
 }
 
 #[derive(Debug)]
@@ -77,6 +87,12 @@ pub(crate) enum Answer {
     Labelled {
         chat: ChatId,
         result: Result<Option<BotChatLabel>, Failure>,
+    },
+    /// What a [`Command::ListChats`] answered.
+    Chats {
+        seq: u64,
+        bot: BotId,
+        result: Result<BotChatPage, Failure>,
     },
 }
 
@@ -272,7 +288,52 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::ListChats {
+                seq,
+                bot,
+                cursor,
+                limit,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => chats(
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ListBotChats {
+                                bot_id: bot,
+                                cursor,
+                                limit,
+                            })
+                            .map_err(|failure| failure.code),
+                    ),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A Bot's conversations could not be listed"
+                    );
+                    client = None;
+                }
+                if answers.send(Answer::Chats { seq, bot, result }).is_err() {
+                    return;
+                }
+            }
         }
+    }
+}
+
+/// A `ListBotChats` reply: the page, or why not — never a page made up from
+/// an answer to some other question.
+pub(crate) fn chats(reply: Result<BotResponse, String>) -> Result<BotChatPage, Failure> {
+    match reply {
+        Ok(BotResponse::Chats { page }) => Ok(page),
+        Ok(_) => Err(Failure::Unreachable),
+        Err(code) if code.is_empty() => Err(Failure::Unreachable),
+        Err(code) => Err(Failure::Refused(code)),
     }
 }
 

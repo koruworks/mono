@@ -28,14 +28,31 @@ fn fixture() -> Fixture {
 
 impl Fixture {
     /// The one Read the tab just sent: its sequence number.
+    /// Its conversation list's reads (S8) are the list's, and are skipped.
     fn asked(&self) -> u64 {
-        match self.commands.try_recv().expect("a request was sent") {
-            Command::Read { seq, bot } => {
-                assert_eq!(bot, self.bot.id, "about this tab's Bot");
-                seq
+        loop {
+            match self.commands.try_recv().expect("a request was sent") {
+                Command::Read { seq, bot } => {
+                    assert_eq!(bot, self.bot.id, "about this tab's Bot");
+                    return seq;
+                }
+                Command::ListChats { .. } => continue,
+                Command::List { .. } | Command::Write { .. } | Command::Label { .. } => {
+                    panic!("a Bot tab only reads its Bot here")
+                }
             }
-            Command::List { .. } | Command::Write { .. } | Command::Label { .. } => {
-                panic!("a Bot tab only reads its Bot here")
+        }
+    }
+
+    /// The list read the tab just sent (S8): its sequence number.
+    fn listed(&self) -> u64 {
+        loop {
+            match self.commands.try_recv().expect("a list read was sent") {
+                Command::ListChats { seq, bot, .. } => {
+                    assert_eq!(bot, self.bot.id, "about this tab's Bot");
+                    return seq;
+                }
+                _ => continue,
             }
         }
     }
@@ -142,7 +159,8 @@ fn the_header_is_words_in_its_tree_and_no_control() {
     f.view.set_home_name(Some("Research".into()));
 
     let keys: Vec<Key> = f.view.header_lines().into_iter().map(|l| l.0).collect();
-    assert_eq!(keys, [NAME, PAUSED, SAVES, LIMIT]);
+    // The main conversation is the one shown: the header says so (S8).
+    assert_eq!(keys, [NAME, PAUSED, MAIN_MARK, SAVES, LIMIT]);
     assert_eq!(
         f.view.saves_in(),
         Some(koru_i18n::fill(
@@ -209,8 +227,20 @@ fn the_conversation_sits_below_the_header_in_the_tabs_coordinates() {
             f.view.conversation_area(frame),
         )
     });
-    assert!(!f.view.on_conversation(header.y + 1.0));
-    assert!(f.view.on_conversation(conversation.y + 1.0));
+    assert!(!f.view.on_conversation(conversation.x + 1.0, header.y + 1.0));
+    assert!(
+        f.view
+            .on_conversation(conversation.x + 1.0, conversation.y + 1.0)
+    );
+    // Left of it is the conversation column (S8), not the chat.
+    assert!(
+        conversation.x > 0.0,
+        "the column sits left of the conversation"
+    );
+    assert!(
+        !f.view
+            .on_conversation(conversation.x - 1.0, conversation.y + 1.0)
+    );
     assert!(f.view.place_conversation(conversation));
     assert!(!f.view.place_conversation(conversation), "placed once");
 }
@@ -287,16 +317,20 @@ impl Fixture {
 
     /// The one settings change the tab just sent.
     fn wrote(&self) -> (BotRequestId, BotCommand) {
-        match self.commands.try_recv().expect("a change was sent") {
-            Command::Write {
-                bot,
-                request,
-                command,
-            } => {
-                assert_eq!(bot, self.bot.id);
-                (request, *command)
+        loop {
+            match self.commands.try_recv().expect("a change was sent") {
+                Command::Write {
+                    bot,
+                    request,
+                    command,
+                } => {
+                    assert_eq!(bot, self.bot.id);
+                    return (request, *command);
+                }
+                // The conversation list's own reads (S8).
+                Command::ListChats { .. } => continue,
+                _ => panic!("not a write"),
             }
-            _ => panic!("not a write"),
         }
     }
 
@@ -683,7 +717,9 @@ fn a_hidden_tab_sends_nothing_and_reads_once_when_shown_again() {
                 assert!(matches!(*command, BotCommand::ReadOperation { .. }));
                 polls += 1;
             }
-            Command::List { .. } | Command::Label { .. } => panic!("a tab lists nothing"),
+            // The conversation list reads once too (S8).
+            Command::ListChats { .. } => {}
+            _ => panic!("a tab lists no Bots"),
         }
     }
     assert_eq!(reads, 1, "one read on showing");
@@ -855,4 +891,202 @@ fn a_name_typed_in_any_script_is_saved_as_typed() {
         };
         assert_eq!(config.name, name, "byte for byte");
     }
+}
+
+// ------------------------------------------------ conversations (S8)
+
+fn bot_page(
+    bot: &Bot,
+    rows: &[(ChatId, koru_ai_core::bots::BotChatPurpose)],
+) -> koru_ai_core::bots::BotChatPage {
+    koru_ai_core::bots::BotChatPage {
+        chats: rows
+            .iter()
+            .enumerate()
+            .map(|(i, (id, purpose))| koru_ai_core::bots::BotConversation {
+                chat: koru_ai_core::Chat {
+                    id: *id,
+                    title: format!("Conversation {i}"),
+                    private: false,
+                    current_model: bot.config.model.clone(),
+                    branched_from: None,
+                    agent_working_folder: None,
+                    agent_mode: None,
+                    agent_fast: None,
+                    pinned_at: None,
+                    profile_id: None,
+                    bot: None,
+                    created_at: koru_ai_core::Timestamp::from_millis(10 - i as i64),
+                    updated_at: koru_ai_core::Timestamp::from_millis(10 - i as i64),
+                },
+                label: koru_ai_core::bots::BotChatLabel {
+                    bot_id: bot.id,
+                    bot_name: bot.config.name.clone(),
+                    purpose: *purpose,
+                },
+            })
+            .collect(),
+        next_cursor: None,
+    }
+}
+
+/// A Bot tab that knows its Bot, shown, its list answered with `rows`.
+fn listed(rows: &[(ChatId, koru_ai_core::bots::BotChatPurpose)]) -> Fixture {
+    let mut f = Fixture::opened(unpaused());
+    f.view.set_settings_open(false);
+    f.view.shown_pass(None);
+    let seq = f.listed();
+    let page = bot_page(&f.bot, rows);
+    f.answers
+        .send(Answer::Chats {
+            seq,
+            bot: f.bot.id,
+            result: Ok(page),
+        })
+        .unwrap();
+    assert!(f.view.poll());
+    f
+}
+
+/// **A Bot's conversations sit beside the one shown, open only**: read
+/// through the tab's own link, the shared list's rows with no pin, ⋯ or
+/// Delete; choosing one shows it in the tab, which is found by it from then
+/// on; the header marks the main one only while it is the one shown.
+#[test]
+fn the_tab_lists_its_conversations_and_shows_the_one_chosen() {
+    let mut f = Fixture::opened(unpaused());
+    let (main, other) = (f.bot.main_chat, ChatId::new());
+    f.view.set_settings_open(false);
+    f.view.shown_pass(None);
+    let seq = f.listed();
+    let page = bot_page(
+        &f.bot,
+        &[
+            (main, koru_ai_core::bots::BotChatPurpose::Main),
+            (other, koru_ai_core::bots::BotChatPurpose::Additional),
+        ],
+    );
+    f.answers
+        .send(Answer::Chats {
+            seq,
+            bot: f.bot.id,
+            result: Ok(page),
+        })
+        .unwrap();
+    assert!(f.view.poll());
+    assert_eq!(
+        f.view.conversations.surface.row_actions(),
+        koru_chats_ui::RowActions::OPEN_ONLY
+    );
+    assert_eq!(f.view.conversations.listed().len(), 2);
+    let tree = f.view.with_frame(|_, frame| {
+        (
+            frame.contains(list::CONVERSATIONS),
+            frame.contains(list::NEW_CONVERSATION),
+            frame.contains(MAIN_MARK),
+        )
+    });
+    assert_eq!(tree, (true, true, true), "column, New, and the main mark");
+
+    f.view.conversations.surface.ask_open(other);
+    assert!(f.view.shown_pass(None));
+    assert_eq!(f.view.chat_id(), other, "found by the conversation shown");
+    let owned = f
+        .view
+        .conversation()
+        .and_then(AiChatView::owned_conversation)
+        .expect("bound");
+    assert_eq!(owned.chat, other);
+    assert!(
+        !f.view.with_frame(|_, frame| frame.contains(MAIN_MARK)),
+        "not the main one now"
+    );
+    let named = f.view.conversation_name(main);
+    assert!(
+        named.ends_with(t(Lang::En, Words::BotsMainConversation)),
+        "{named}"
+    );
+}
+
+/// ***New conversation* asks the owner and shows what it made**; the list
+/// reads again so it joins the rows.
+#[test]
+fn new_conversation_shows_what_the_owner_made() {
+    let mut f = listed(&[]);
+    assert!(f.view.perform(region::Act::NewConversation));
+    let (request, command) = f.wrote();
+    assert!(matches!(command, BotCommand::CreateChat { bot_id, .. } if bot_id == f.bot.id));
+    let made = ChatId::new();
+    f.reply(
+        request,
+        Ok(BotResponse::Chat {
+            reference: koru_ai_core::bots::BotChatReference {
+                bot_id: f.bot.id,
+                chat_id: made,
+            },
+        }),
+    );
+    f.view.shown_pass(None);
+    assert_eq!(f.view.chat_id(), made);
+    f.listed();
+}
+
+/// **A Branch moves the tab to the branch**, and the list reads again to
+/// show it: the owned surface is what the branch rebinds.
+#[test]
+fn a_branch_moves_the_tab_to_the_branch_and_reads_the_list() {
+    let mut f = listed(&[]);
+    let branch = ChatId::new();
+    let facts = f.view.facts().cloned().expect("known");
+    f.view
+        .conversation_mut()
+        .expect("bound")
+        .bind_owned(koru_ai_ui::OwnedConversation {
+            chat: branch,
+            destination: facts.home,
+            provider: facts.provider.clone(),
+            offers: BOT_OFFERS,
+        });
+    f.view.shown_pass(None);
+    assert_eq!(f.view.chat_id(), branch);
+    f.listed();
+    // And a later read of the Bot keeps it there.
+    assert!(f.view.ask());
+    let seq = f.asked();
+    let bot = f.bot.clone();
+    f.answer(seq, bot.id, Ok(bot));
+    assert_eq!(f.view.chat_id(), branch, "not snapped back to the main one");
+}
+
+/// **A hidden tab's list sends nothing; shown again it reads once**, and a
+/// failed read keeps the rows.
+#[test]
+fn a_hidden_tabs_list_reads_once_when_shown_again() {
+    let other = ChatId::new();
+    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
+    f.view.hidden();
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    View::maintain(&mut f.view, &mut ws, std::time::Instant::now());
+    assert!(
+        f.commands
+            .try_iter()
+            .all(|command| !matches!(command, Command::ListChats { .. })),
+        "hidden: no list read"
+    );
+    f.view.shown_pass(None);
+    let seq = f.listed();
+    f.answers
+        .send(Answer::Chats {
+            seq,
+            bot: f.bot.id,
+            result: Err(Failure::Unreachable),
+        })
+        .unwrap();
+    f.view.poll();
+    assert_eq!(f.view.conversations.listed().len(), 1, "kept");
+    assert_eq!(
+        f.view.conversations.notice(),
+        Some(Words::BotsConversationsUnavailable)
+    );
 }
