@@ -495,6 +495,10 @@ pub(crate) fn search(
                    WHEN f.field IN ('name','list-name','contact','level-name') THEN 400
                    WHEN f.field='task' THEN 300
                    WHEN f.field='body' THEN 200
+                   -- Words read out of a picture or a file rank with tables
+                   -- and properties, below every kind of typed text: what
+                   -- somebody wrote is a better answer than what was read.
+                   WHEN f.field='read' THEN 100
                    ELSE 100
                  END)
                 + (CASE
@@ -504,7 +508,8 @@ pub(crate) fn search(
                    WHEN q.direct_count=?2 THEN 5
                    ELSE 0
                  END)
-                - q.total_distance*10 AS score
+                - q.total_distance*10 AS score,
+                f.page
          FROM qualified q
          JOIN fragments f ON f.id=q.candidate_id
          LEFT JOIN documents d ON d.document_id=f.document_id
@@ -538,6 +543,7 @@ pub(crate) fn search(
                 observed_modified_at_ms: r.get(7)?,
                 workspace_last_used_at_ms: r.get(8)?,
                 score: r.get(9)?,
+                page: r.get(10)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -612,7 +618,9 @@ pub(crate) fn search(
             score: row.score,
             observed_modified_at_ms: row.observed_modified_at_ms,
             workspace_last_used_at_ms: row.workspace_last_used_at_ms,
-            page: None,
+            // Straight from the winning row: one fragment is one page, so
+            // there is nothing to decide here (TECHNICAL D13).
+            page: row.page,
         });
     }
     let has_more = hits.len() > page_size;
@@ -745,10 +753,13 @@ fn evidence_for(connection: &Connection, hit: &RawHit) -> SearchResult<HitEviden
            AND ((?2 IS NULL AND f.document_id IS NULL) OR f.document_id=?2)
            AND ((?3 IS NULL AND f.node_id IS NULL) OR f.node_id=?3)
            AND f.field=?4
+           -- One file's pages are one node's fragments under one field; the
+           -- page tells them apart, so a hit's highlights are its own page's.
+           AND f.page IS ?5
          ORDER BY e.term_ordinal, e.distance, e.matched_term",
     )?;
     evidence.direct = select_best_terms(direct.query_map(
-        params![hit.workspace, hit.document, hit.node, hit.field],
+        params![hit.workspace, hit.document, hit.node, hit.field, hit.page],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?)?;
 
@@ -796,6 +807,7 @@ struct RawHit {
     observed_modified_at_ms: Option<i64>,
     workspace_last_used_at_ms: Option<i64>,
     score: f64,
+    page: Option<u32>,
 }
 
 /// Keeps the tokens in [`field`] and the boosts above from drifting apart.
@@ -906,6 +918,7 @@ mod tests {
                 kind: "paragraph".to_owned(),
                 field: field::BODY.to_owned(),
                 text: (*text).to_owned(),
+                page: None,
             });
             for (i, tag) in tags.iter().enumerate() {
                 fragments.push(Fragment {
@@ -917,6 +930,7 @@ mod tests {
                     kind: "paragraph".to_owned(),
                     field: field::attr(TAG_ROLE),
                     text: (*tag).to_owned(),
+                    page: None,
                 });
             }
         }
@@ -981,6 +995,7 @@ mod tests {
                 kind: "paragraph".to_owned(),
                 field: field::BODY.to_owned(),
                 text: (*text).to_owned(),
+                page: None,
             });
             for (role, kind, value) in attrs.iter() {
                 values.push(crate::model::AttrRow {
@@ -1126,6 +1141,7 @@ mod tests {
             kind: "paragraph".into(),
             field: field::BODY.into(),
             text: "Ship café".into(),
+            page: None,
         };
         fragment.text = "Launch runway".into();
         let marker = crate::model::AttrRow {
@@ -1200,6 +1216,7 @@ mod tests {
                 kind: "paragraph".into(),
                 field: field::BODY.into(),
                 text: "Ship release".into(),
+                page: None,
             };
             let marker = crate::model::AttrRow {
                 workspace: workspace_id.clone(),

@@ -964,6 +964,51 @@ impl Projections {
         rows.next().transpose().map_err(Into::into)
     }
 
+    /// **Which documents of this workspace carry one of these blobs** — the
+    /// documents whose search text moves when the words read out of those
+    /// blobs do (TECHNICAL §7 "The index").
+    ///
+    /// A node counts when it is **live in its document**: one in the
+    /// document's own bin is not indexed, so re-indexing for it would be work
+    /// with no result. A document in the *workspace's* Trash does count — the
+    /// search index keeps a binned document's rows so the Trash filter can
+    /// find them, and those rows have to be right too.
+    ///
+    /// Each document once, ordered by id. Empty `hashes` answers empty without
+    /// a query.
+    ///
+    /// **The plan starts from the workspace.** `nodes.blob` has no index, so
+    /// the read is `documents_workspace` to this workspace's documents, then
+    /// each document's nodes by document id, with the hash and bin tests as
+    /// filters: work proportional to the workspace, never a scan of every node
+    /// in the store. [`documents_carrying_sql`] says why the `+` on `n.blob`.
+    pub fn documents_carrying(
+        &self,
+        workspace: WorkspaceId,
+        hashes: &[String],
+    ) -> Result<Vec<DocumentId>> {
+        /// Well under SQLite's bound on parameters, and large enough that a
+        /// burst of readings landing is one statement in practice.
+        const CHUNK: usize = 500;
+        let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for chunk in hashes.chunks(CHUNK) {
+            let mut query = self.db.prepare(&documents_carrying_sql(chunk.len()))?;
+            let workspace = workspace.to_storage();
+            let parameters =
+                std::iter::once(workspace.as_str()).chain(chunk.iter().map(String::as_str));
+            let rows = query.query_map(rusqlite::params_from_iter(parameters), |row| {
+                row.get::<_, String>(0)
+            })?;
+            for row in rows {
+                found.insert(row?);
+            }
+        }
+        Ok(found
+            .into_iter()
+            .filter_map(|document| DocumentId::parse(&document))
+            .collect())
+    }
+
     /// **One read of a Workspace's blob-reference sample** — every listed
     /// document, the exact state its rows were projected from, and the
     /// references it holds.
@@ -3254,6 +3299,27 @@ fn task_kind_sql() -> String {
         .map(|kind| format!("'{}'", kind.as_str()))
         .collect();
     format!("+n.kind IN ({})", kinds.join(", "))
+}
+
+/// [`Projections::documents_carrying`]'s statement, for `hashes` hashes: the
+/// workspace as the first parameter, then each hash. One function so the test
+/// that pins its plan reads the statement that runs.
+///
+/// **`+n.blob`, so the hash test stays a filter.** There is no index on
+/// `nodes.blob` today and the plan starts from `documents_workspace`; the `+`
+/// keeps it there if one is ever added for another question, which is the
+/// lesson [`task_kind_sql`] records.
+fn documents_carrying_sql(hashes: usize) -> String {
+    let marks = vec!["?"; hashes.max(1)].join(", ");
+    format!(
+        "SELECT DISTINCT n.document_id
+           FROM documents d
+           JOIN nodes n ON n.document_id = d.document_id
+          WHERE d.workspace_id = ?
+            AND +n.blob IN ({marks})
+            {bin}",
+        bin = NodeScope::Live.clause("n.in_trash"),
+    )
 }
 
 /// Whether the node carries a completed lifecycle. Used as a *column* on every

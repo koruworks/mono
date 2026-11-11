@@ -68,13 +68,18 @@ use crate::normalize::{normalize, term_counts};
 /// was declared with** so a filter can compare dates and numbers rather than
 /// only match words. Here a column really did move, and the rebuild is what
 /// populates it: an older index has the fragments and none of the rows.
-pub const SEARCH_SCHEMA_VERSION: i64 = 5;
+///
+/// 6 adds `fragments.page` and the [`field::READ`](crate::field::READ)
+/// fragments it numbers: the words read out of a picture or a file, one
+/// fragment per page (TECHNICAL D13). An older index has neither the column
+/// nor the rows, and the rebuild is what writes both.
+pub const SEARCH_SCHEMA_VERSION: i64 = 6;
 
 /// The name in the log, so the file that ran is the file on disk.
-const MIGRATION_NAME: &str = "013_search_attr_values_migration.sql";
+const MIGRATION_NAME: &str = "026_search_reading_pages_migration.sql";
 
 const SEARCH_SCHEMA_MIGRATION: &str =
-    include_str!("../migrations/013_search_attr_values_migration.sql");
+    include_str!("../migrations/026_search_reading_pages_migration.sql");
 
 /// One document as the index has it — the half of a listing row a query needs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -854,8 +859,9 @@ impl SearchIndex {
 fn insert_fragment(tx: &rusqlite::Transaction<'_>, fragment: &Fragment) -> SearchResult<()> {
     let mut stmt = tx.prepare_cached(
         "INSERT INTO fragments
-             (stable_key, workspace_id, document_id, node_id, seq, kind, field, text, normalized)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+             (stable_key, workspace_id, document_id, node_id, seq, kind, field, text, normalized,
+              page)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
     )?;
     stmt.execute(params![
         fragment.key,
@@ -867,6 +873,7 @@ fn insert_fragment(tx: &rusqlite::Transaction<'_>, fragment: &Fragment) -> Searc
         fragment.field,
         fragment.text,
         normalize(&fragment.text).text,
+        fragment.page,
     ])?;
     Ok(())
 }
@@ -998,7 +1005,12 @@ CREATE TABLE IF NOT EXISTS fragments (
     kind         TEXT NOT NULL,
     field        TEXT NOT NULL,
     text         TEXT NOT NULL,
-    normalized   TEXT NOT NULL
+    normalized   TEXT NOT NULL,
+    -- The page of a file a `read` fragment came from, and NULL for everything
+    -- else — including a picture, a one-page PDF and a plain-text file, which
+    -- have no page a person would be told about. A hit's page is this column of
+    -- the winning row. No index: nothing filters or joins on it.
+    page         INTEGER
 );
 CREATE INDEX IF NOT EXISTS fragments_document ON fragments(document_id, seq);
 CREATE INDEX IF NOT EXISTS fragments_workspace ON fragments(workspace_id, field);

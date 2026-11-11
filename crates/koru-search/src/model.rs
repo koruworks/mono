@@ -53,6 +53,11 @@ pub struct Fragment {
     /// A [`field`] token.
     pub field: String,
     pub text: String,
+    /// The page of a file this text was read from, **only when the file has
+    /// more than one page** — a picture, a one-page PDF and a plain-text file
+    /// carry `None`, and so does every fragment that is not
+    /// [`field::READ`]. It is what a hit's `page` is read from.
+    pub page: Option<u32>,
 }
 
 /// One attribute of one node, **kept in the type it was declared with**.
