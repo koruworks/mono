@@ -71,7 +71,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use koru_ai_core::bots::{Bot, BotId, BotLifecycle};
+use koru_ai_core::bots::{Bot, BotId, BotLifecycle, BotRequestId, BotResponse};
 use koru_ai_core::{AiProviderId, ChatId};
 use koru_core::schema::WorkspaceDoc;
 use koru_draw::el::{El, Frame, FrameCx, Key, TextCache, boxed, col, divider, icon, row, text};
@@ -880,93 +880,94 @@ impl BotView {
     }
 
     /// Fold what the link answered: **only the latest request's answer about
-    /// this Bot**, so an older reply never replaces newer state.
+    /// this Bot**, so an older reply never replaces newer state — and **in
+    /// the order the link answered**. The link is one thread that answers
+    /// first in first out, so a Bot read sent before the person confirmed
+    /// an Archive is answered before the Archive is; folded in that order,
+    /// the read lands while the Archive is still on its way (and is not
+    /// allowed to drop it), never after the Archive's answer, which it
+    /// would then contradict with an older state.
     fn poll(&mut self) -> bool {
         let Some(link) = &self.link else {
             return false;
         };
-        let mut taken = None;
-        let mut wrote = Vec::new();
-        let mut pages = Vec::new();
-        let mut trash = None;
-        let mut creation = Vec::new();
+        let answers = link.drain();
         let creating = self.create_bot();
-        for answer in link.drain() {
+        let now = std::time::Instant::now();
+        let mut changed = false;
+        for answer in answers {
             match answer {
                 // The create form's (S8): by its draft's reserved BotId.
                 Answer::Wrote {
                     bot,
                     request,
                     result,
-                } if Some(bot) == creating => creation.push((request, result)),
-                Answer::Chats { seq, bot, result } => pages.push((seq, bot, result)),
+                } if Some(bot) == creating => changed |= self.create_answer(request, result),
+                Answer::Chats { seq, bot, result } => {
+                    changed |= self.conversations.answer(seq, bot, result);
+                }
                 Answer::Read { seq, bot, result } if seq == self.seq && Some(bot) == self.bot => {
-                    taken = Some(result);
+                    self.in_flight = false;
+                    self.take(result);
+                    changed = true;
                 }
                 Answer::Wrote {
                     bot,
                     request,
                     result,
-                } if Some(bot) == self.bot => wrote.push((request, result)),
+                } if Some(bot) == self.bot => changed |= self.take_written(request, result, now),
                 Answer::Lifecycle {
                     seq,
                     lifecycle: BotLifecycle::Trashed,
                     result,
                     ..
-                } if seq == self.trash_seq => trash = Some(result),
+                } if seq == self.trash_seq => {
+                    self.trash_in_flight = false;
+                    self.take_trash_listing(result);
+                    changed = true;
+                }
                 _ => {}
             }
-        }
-        let mut changed = false;
-        for (request, result) in creation {
-            changed |= self.create_answer(request, result);
-        }
-        for (seq, bot, result) in pages {
-            changed |= self.conversations.answer(seq, bot, result);
-        }
-        let now = std::time::Instant::now();
-        if let Some(result) = trash {
-            self.trash_in_flight = false;
-            self.take_trash_listing(result);
-            changed = true;
-        }
-        for (request, result) in wrote {
-            // A lifecycle operation's answer is the lifecycle's (S14).
-            if self.lifecycle.owns(request) {
-                self.lifecycle.answer(request, result, now);
-                self.after_lifecycle();
-                changed = true;
-                continue;
-            }
-            // *New conversation*'s answer is the list's, not the settings'.
-            if self.conversations.wrote(request, &result) {
-                // Archived meanwhile: read the Bot again, so the header
-                // says so beside the refusal.
-                let archived = super::settings::BOT_ARCHIVED;
-                if matches!(&result, Err(Failure::Refused(code)) if code == archived) {
-                    self.asked = false;
-                }
-                changed = true;
-                continue;
-            }
-            let settled = self.settings.answer(request, result, now);
-            changed |= settled.matched;
-            if let Some(bot) = settled.bot {
-                // A write's answer: it never drops or replaces the
-                // operation the tab follows — only a read does.
-                self.lifecycle.know_written(&bot);
-                self.know(BotFacts::from(bot));
-            }
-        }
-        if let Some(result) = taken {
-            self.in_flight = false;
-            self.take(result);
-            changed = true;
         }
         if changed {
             self.sync_name_field();
         }
         changed
+    }
+
+    /// **What the owner said to one of this tab's writes**: a lifecycle
+    /// operation's, *New conversation*'s, or a settings change's. `true`
+    /// when it was this tab's.
+    fn take_written(
+        &mut self,
+        request: BotRequestId,
+        result: Result<BotResponse, Failure>,
+        now: std::time::Instant,
+    ) -> bool {
+        // A lifecycle operation's answer is the lifecycle's (S14).
+        if self.lifecycle.owns(request) {
+            self.lifecycle.answer(request, result, now);
+            self.after_lifecycle();
+            return true;
+        }
+        // *New conversation*'s answer is the list's, not the settings'.
+        if self.conversations.wrote(request, &result) {
+            // Archived meanwhile: read the Bot again, so the header says so
+            // beside the refusal.
+            let archived = super::settings::BOT_ARCHIVED;
+            if matches!(&result, Err(Failure::Refused(code)) if code == archived) {
+                self.asked = false;
+            }
+            return true;
+        }
+        let settled = self.settings.answer(request, result, now);
+        if let Some(bot) = settled.bot {
+            // A write's answer: it never drops or replaces the operation the
+            // tab follows — only a read does.
+            self.lifecycle.know_written(&bot);
+            self.know(BotFacts::from(bot));
+        }
+        settled.matched
     }
 
     fn take(&mut self, result: Result<Bot, Failure>) {

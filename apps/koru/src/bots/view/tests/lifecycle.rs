@@ -965,3 +965,102 @@ fn a_tab_in_front_of_a_parked_archive_sees_the_owner_finish_it() {
     assert!(keys.contains(&actions::UNARCHIVE), "Unarchive names it");
     assert_eq!(f.view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
 }
+
+/// **An older Bot read drained with the Archive's answer never drops it** —
+/// the third review's probe, made permanent. A Bot read sent before the
+/// person confirmed Archive is answered first (the link is one thread, first
+/// in first out: `BotsLink`'s `run`), then the Archive's progress, and one
+/// pass drains both. Folded in the order they came, the read lands while
+/// the Archive is still on its way, and the Archive is still followed.
+#[test]
+fn an_older_bot_read_drained_with_the_archives_answer_keeps_it() {
+    let mut f = listed(&[]);
+    f.view.asked = false;
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    assert!(f.view.begin_lifecycle(Ask::Archive));
+    let (request, _) = f.wrote();
+    let bot = f.bot.clone();
+    assert!(
+        bot.open_operation.is_none(),
+        "read taken before the Archive"
+    );
+    f.answers
+        .send(Answer::Read {
+            seq,
+            bot: bot.id,
+            result: Ok(bot.clone()),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Wrote {
+            bot: bot.id,
+            request,
+            result: progress(
+                &bot,
+                request,
+                BotLifecycleKind::Archive,
+                BotLifecycleStage::Captured,
+            ),
+        })
+        .unwrap();
+    f.view.poll();
+    assert!(
+        f.view.lifecycle_busy(),
+        "the Archive on its way is still followed"
+    );
+    assert!(
+        f.view.lifecycle_rows().is_empty(),
+        "no Archive or Trash offered while one moves"
+    );
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsSettling)
+    );
+}
+
+/// **The same with Continue**: a Bot read naming the operation parked was
+/// sent before the person pressed Continue; the read's answer comes first,
+/// the Continue's (moving) second. In that order the read cannot put the
+/// operation back to parked.
+#[test]
+fn an_older_bot_read_drained_with_continues_answer_does_not_park_it_again() {
+    let (held, parked) = parked_conversation_trash();
+    let mut f = Fixture::opened(held.clone());
+    f.view.set_settings_open(false);
+    f.view.asked = false;
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    assert!(f.view.continue_lifecycle());
+    let (again, _) = f.wrote();
+    assert_eq!(again, parked);
+    f.answers
+        .send(Answer::Read {
+            seq,
+            bot: held.id,
+            result: Ok(held.clone()),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Wrote {
+            bot: held.id,
+            request: parked,
+            result: progress(
+                &held,
+                parked,
+                BotLifecycleKind::TrashChat,
+                BotLifecycleStage::Settling,
+            ),
+        })
+        .unwrap();
+    f.view.poll();
+    assert!(f.view.lifecycle_busy());
+    assert!(
+        !offers_continue_and_cancel(&f),
+        "moving: no Continue offered again"
+    );
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsTrashingConversation)
+    );
+}

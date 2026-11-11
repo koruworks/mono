@@ -807,111 +807,94 @@ impl BotsRoster {
 
     /// Fold in what the link answered. **The only place an answer is
     /// accepted**, and only the latest request's for this workspace: an
-    /// older reply can never replace newer state.
+    /// older reply can never replace newer state. **In the order the link
+    /// answered** — it is one thread, first in first out — so a listing
+    /// sent before an Unarchive is never folded after the Unarchive's answer.
     fn poll(&mut self) -> bool {
         let Some(link) = &self.link else {
             return false;
         };
+        let answers = link.drain();
         let mut changed = false;
-        let mut activity = Vec::new();
-        let mut archived = Vec::new();
-        let mut wrote = Vec::new();
-        let mut creations = Vec::new();
-        for answer in link.drain() {
+        for answer in answers {
             // The roster asks for lists, for activity, for its Archived
             // filter and its Unarchives; any other answer is not its.
-            let (seq, workspace, result) = match answer {
+            match answer {
                 Answer::Listed {
                     seq,
                     workspace,
                     result,
-                } => (seq, workspace, result),
+                } => {
+                    if seq != self.seq || Some(workspace) != self.workspace {
+                        continue;
+                    }
+                    self.in_flight = false;
+                    self.take(result);
+                    changed = true;
+                }
                 Answer::Activity {
                     seq,
                     workspace,
                     result,
-                } => {
-                    activity.push((seq, workspace, result));
-                    continue;
-                }
+                } => changed |= self.take_activity(seq, workspace, result),
                 Answer::Lifecycle {
                     seq,
                     workspace,
                     lifecycle: BotLifecycle::Archived,
                     result,
                 } => {
-                    archived.push((seq, workspace, result));
-                    continue;
+                    if seq != self.archived_seq || Some(workspace) != self.workspace {
+                        continue;
+                    }
+                    self.archived_in_flight = false;
+                    match result {
+                        Ok(bots) => {
+                            self.archived = bots;
+                            self.archived_load = Load::Ready;
+                        }
+                        // What was listed stays; the sentence says it may be
+                        // old.
+                        Err(_) => self.archived_load = Load::Unavailable,
+                    }
+                    changed = true;
                 }
                 Answer::Wrote {
                     request, result, ..
                 } => {
-                    wrote.push((request, result));
-                    continue;
+                    changed |= if self.unarchiving.contains_key(&request) {
+                        self.take_unarchived(request, result)
+                    } else {
+                        self.take_creation(request, result)
+                    };
                 }
                 Answer::Creations {
                     seq,
                     workspace,
                     result,
                 } => {
-                    creations.push((seq, workspace, result));
-                    continue;
+                    if seq != self.seq || Some(workspace) != self.workspace {
+                        continue;
+                    }
+                    self.creations_in_flight = false;
+                    // A failed read keeps what was listed.
+                    if let Ok(listed) = result {
+                        self.creations_more = listed.more;
+                        self.creations = listed
+                            .items
+                            .into_iter()
+                            .filter(|creation| {
+                                matches!(
+                                    creation.stage,
+                                    BotCreationStage::Pending | BotCreationStage::Incomplete
+                                )
+                            })
+                            .collect();
+                    }
+                    self.schedule_creations();
+                    changed = true;
                 }
-                _ => continue,
-            };
-            if seq != self.seq || Some(workspace) != self.workspace {
-                continue;
+                _ => {}
             }
-            self.in_flight = false;
-            self.take(result);
-            changed = true;
-        }
-        for (seq, workspace, result) in activity {
-            changed |= self.take_activity(seq, workspace, result);
-        }
-        for (seq, workspace, result) in archived {
-            if seq != self.archived_seq || Some(workspace) != self.workspace {
-                continue;
-            }
-            self.archived_in_flight = false;
-            match result {
-                Ok(bots) => {
-                    self.archived = bots;
-                    self.archived_load = Load::Ready;
-                }
-                // What was listed stays; the sentence says it may be old.
-                Err(_) => self.archived_load = Load::Unavailable,
-            }
-            changed = true;
-        }
-        for (seq, workspace, result) in creations {
-            if seq != self.seq || Some(workspace) != self.workspace {
-                continue;
-            }
-            self.creations_in_flight = false;
-            // A failed read keeps what was listed.
-            if let Ok(listed) = result {
-                self.creations_more = listed.more;
-                self.creations = listed
-                    .items
-                    .into_iter()
-                    .filter(|creation| {
-                        matches!(
-                            creation.stage,
-                            BotCreationStage::Pending | BotCreationStage::Incomplete
-                        )
-                    })
-                    .collect();
-            }
-            self.schedule_creations();
-            changed = true;
-        }
-        for (request, result) in wrote {
-            changed |= if self.unarchiving.contains_key(&request) {
-                self.take_unarchived(request, result)
-            } else {
-                self.take_creation(request, result)
-            };
         }
         if changed {
             self.keep_focus();
