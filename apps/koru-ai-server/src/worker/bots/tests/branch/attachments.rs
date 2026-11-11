@@ -20,8 +20,16 @@ struct Attached {
 }
 
 fn attached() -> Attached {
-    let root = tempfile::tempdir().unwrap();
-    let (mut repo, authority, command) = fixture();
+    let (repo, authority, command) = fixture();
+    attached_from(tempfile::tempdir().unwrap(), repo, authority, command)
+}
+
+fn attached_from(
+    root: tempfile::TempDir,
+    mut repo: Repository,
+    authority: Arc<Authority>,
+    command: BotCommand,
+) -> Attached {
     let bot = created(&mut repo, authority.clone(), command);
     let picture = branch_attachment(bot.main_chat);
     let original = folder(root.path(), bot.main_chat, picture.attachment.id).join("file");
@@ -550,4 +558,88 @@ fn an_ambiguous_commit_is_settled_by_what_is_stored_and_never_removes_a_committe
         repo.attachment(existing.attachment.id).unwrap(),
         Some(existing)
     );
+}
+
+/// A lifecycle hold that lands while the files copy refuses at the commit
+/// fence with the hold's own code, and the copy's files go. The database is a
+/// file in the test's own temporary root, so a second connection can capture
+/// the operation while the writer waits for the gated owner inspection, as a
+/// lifecycle driver on the writer would.
+#[test]
+fn a_hold_that_lands_while_files_copy_refuses_the_commit_and_removes_the_copy() {
+    use koru_ai_wire::bot_lifecycle_codes::{PENDING, TRASHED};
+    for (kind, code) in [
+        // The source conversation moved to Trash.
+        (BotLifecycleKind::TrashChat, TRASHED),
+        // A whole-Bot Archive captured; it also moves the revision, and the
+        // owner reads the stable lifecycle code rather than a conflict.
+        (BotLifecycleKind::Archive, PENDING),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("held-ai.db");
+        let (_, authority, command) = fixture();
+        let fx = attached_from(
+            root,
+            Repository::open(&database).unwrap(),
+            authority,
+            command,
+        );
+        let records = fx.repo.attachment_records(fx.bot.main_chat).unwrap();
+        let before = source_picture(&fx);
+        let Attached {
+            root,
+            repo,
+            authority,
+            bot,
+            through,
+            picture,
+            ..
+        } = fx;
+        let (worker, client, returned) = worker_on(root.path().to_owned(), repo, authority.clone());
+        worker.ping().unwrap();
+        let destination = ChatId::new();
+        let (entered, release) = hold_inspection(&authority);
+        let first = send_branch(
+            &client,
+            prepared(&authority, &bot, destination),
+            bot.main_chat,
+            request(destination, through, "Branch"),
+        );
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(chat_folder_entries(root.path(), destination).len(), 1);
+        {
+            let mut other = Repository::open(&database).unwrap();
+            let chat = (kind == BotLifecycleKind::TrashChat).then_some(bot.main_chat);
+            let operation = other
+                .capture_bot_lifecycle(&super::super::holds::capture(&bot, kind, chat))
+                .unwrap();
+            if let Some(chat) = chat {
+                other.fixture_trash_bot_chat(&operation, chat, 9).unwrap();
+            }
+        }
+        release.send(()).unwrap();
+        let refused = first
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(refused.code, code, "{kind:?}");
+        wait_until(|| chat_folder_entries(root.path(), destination).is_empty());
+        worker.shutdown();
+        assert_eq!(worker.join(), WorkerExit::Clean);
+        let repo = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+        // No branch, and the source's rows and files are as they were.
+        assert_eq!(repo.bot_for_chat(destination).unwrap(), None);
+        assert!(repo.chat(destination).unwrap().is_none());
+        assert!(repo.attachment_records(destination).unwrap().is_empty());
+        assert_eq!(repo.attachment_records(bot.main_chat).unwrap(), records);
+        assert_eq!(
+            std::fs::read(
+                folder(root.path(), bot.main_chat, picture.attachment.id)
+                    .join("file")
+                    .join("fixture.png")
+            )
+            .unwrap(),
+            before
+        );
+    }
 }

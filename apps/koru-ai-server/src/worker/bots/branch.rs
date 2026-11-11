@@ -213,6 +213,21 @@ impl WorkerState {
         if self.is_hidden(copy.chat.profile_id) {
             return Err(not_found());
         }
+        // A lifecycle hold that appeared while the files copied (P1.7): the
+        // source moved to Trash or captured by an operation, or the whole Bot
+        // trashed or under one, refuses as the guard refused it beforehand.
+        // The destination does not exist yet, so the source's hold, which
+        // includes a whole-Bot one, is the only one it can have; an existing
+        // destination is refused below. Checked before the revision, which a
+        // whole-Bot capture also moves, so the owner reads the stable code.
+        let origin = copy.chat.branched_from.as_ref().ok_or_else(not_found)?;
+        if let Some(hold) = self
+            .repository
+            .bot_chat_hold(origin.chat_id)
+            .map_err(bot_failure)?
+        {
+            return Err(super::lifecycle::hold_failure(hold));
+        }
         // The Bot the copy was seeded from, unedited while its files copied.
         // `create_bot_branch` fences the same snapshot inside its transaction.
         let current = self
@@ -228,7 +243,6 @@ impl WorkerState {
         {
             return Err(bot_failure(BotError::RevisionConflict));
         }
-        let origin = copy.chat.branched_from.as_ref().ok_or_else(not_found)?;
         if self
             .repository
             .bot_for_chat(origin.chat_id)

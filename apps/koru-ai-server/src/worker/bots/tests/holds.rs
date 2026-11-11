@@ -15,7 +15,7 @@ fn owner_of(bot: &Bot) -> BotOwner {
     }
 }
 
-fn capture(bot: &Bot, kind: BotLifecycleKind, chat: Option<ChatId>) -> LifecycleCapture {
+pub(super) fn capture(bot: &Bot, kind: BotLifecycleKind, chat: Option<ChatId>) -> LifecycleCapture {
     LifecycleCapture {
         operation: BotRequestId::mint(),
         owner: owner_of(bot),
