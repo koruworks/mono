@@ -74,6 +74,18 @@ pub(crate) fn reserve_bot_id(
     Ok(())
 }
 
+/// One bounded step of the startup scan of unfinished creations.
+#[derive(Debug, Default)]
+pub struct BotCreationScan {
+    /// The unfinished creations found, by owner scope and request.
+    pub found: Vec<(UserScopeId, BotRequestId)>,
+    /// BotIds whose unfinished creation row could not be parsed. Skipped,
+    /// so one damaged row never stops the scan; the caller reports each.
+    pub skipped: Vec<String>,
+    /// Where the next step starts; `None` once every BotId was visited.
+    pub next: Option<String>,
+}
+
 /// The outer stage a record may be stored at.
 fn check_stage(record: &BotCreationRecord, stage: BotReceiptStage) -> Result<(), BotError> {
     let seed = match &record.role {
@@ -356,13 +368,9 @@ impl Repository {
 
     /// One bounded step of the startup scan: up to `bots` distinct BotIds
     /// after `after` (start from `""`), each with its unfinished creation if
-    /// any. Two index seeks per BotId; no outcome is read. The second value
-    /// is where the next step starts, `None` once every BotId was visited.
-    pub fn bot_creation_scan(
-        &self,
-        after: &str,
-        bots: u16,
-    ) -> Result<(Vec<(UserScopeId, BotRequestId)>, Option<String>), BotError> {
+    /// any. Two index seeks per BotId; no outcome is read. A row whose keys
+    /// do not parse is skipped and named, never a reason to stop.
+    pub fn bot_creation_scan(&self, after: &str, bots: u16) -> Result<BotCreationScan, BotError> {
         let mut next = self
             .connection
             .prepare_cached(CREATION_NEXT_BOT_SQL)
@@ -371,7 +379,7 @@ impl Repository {
             .connection
             .prepare_cached(CREATION_OPEN_SQL)
             .map_err(bad)?;
-        let mut found = Vec::new();
+        let mut step = BotCreationScan::default();
         let mut cursor = after.to_owned();
         for _ in 0..bots.clamp(1, 64) {
             let Some(bot) = next
@@ -379,7 +387,7 @@ impl Repository {
                 .optional()
                 .map_err(bad)?
             else {
-                return Ok((found, None));
+                return Ok(step);
             };
             let rows = open
                 .query_map([&bot], |r| {
@@ -388,14 +396,15 @@ impl Repository {
                 .map_err(bad)?;
             for row in rows {
                 let (scope, request) = row.map_err(bad)?;
-                found.push((
-                    UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
-                    request.parse().map_err(bad)?,
-                ));
+                match (UserScopeId::parse(&scope), request.parse::<BotRequestId>()) {
+                    (Some(scope), Ok(request)) => step.found.push((scope, request)),
+                    _ => step.skipped.push(bot.clone()),
+                }
             }
             cursor = bot;
         }
-        Ok((found, Some(cursor)))
+        step.next = Some(cursor);
+        Ok(step)
     }
 
     /// Fixture only: raw SQL against the AI database, for failure injection

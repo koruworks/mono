@@ -88,6 +88,9 @@ pub struct WorkerConfig {
     native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
+    /// The Store's data root beside this AI root, which no Bot's selected
+    /// working folder may be (P1.8).
+    store_root: Option<PathBuf>,
     root: PathBuf,
     channel: String,
     providers: ProviderRegistry,
@@ -133,6 +136,11 @@ impl WorkerConfig {
         self.bot_authority = Some(authority);
         self
     }
+    /// The Store's data root, so a Bot's selected folder is never it.
+    pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
+        self.store_root = Some(store_root);
+        self
+    }
     pub fn new(root: PathBuf, channel: impl Into<String>, providers: ProviderRegistry) -> Self {
         Self {
             root,
@@ -141,6 +149,7 @@ impl WorkerConfig {
             provider_runtime: None,
             store_context: None,
             bot_authority: None,
+            store_root: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -167,6 +176,7 @@ impl WorkerConfig {
             provider_runtime: Some(runtime),
             store_context: None,
             bot_authority: None,
+            store_root: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -198,6 +208,7 @@ impl WorkerConfig {
             provider_runtime: Some(runtime),
             store_context: None,
             bot_authority: None,
+            store_root: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -1755,10 +1766,12 @@ fn run_worker(
     #[cfg(test)]
     let bot_creations = config.test_bot_creation.take().unwrap_or_else(|| {
         bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders))
+            .with_store_root(config.store_root.clone())
     });
     #[cfg(not(test))]
     let bot_creations =
-        bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders));
+        bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders))
+            .with_store_root(config.store_root.clone());
     let provider_pool = ProviderPool::spawn(
         Arc::new(registry),
         provider_output.clone(),
@@ -5583,6 +5596,13 @@ struct ProviderAdminPool {
     control_sender: Option<SyncSender<bots::chat::StepJob>>,
     interactive_sender: Option<SyncSender<ProviderAdminJob>>,
     control_thread: Option<JoinHandle<()>>,
+    /// Bot creation's own lane (P1.8): its steps wait on the Store and the
+    /// filesystem for up to two 30 s hops each, so they never occupy the
+    /// shared administration queue that automatic interruptions, policy,
+    /// coordination, native drain, lifecycle and preparation use. The writer
+    /// keeps at most one step in flight, so this queue of one never fills.
+    creation_sender: Option<SyncSender<bots::CreationJob>>,
+    creation_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -5595,6 +5615,7 @@ impl ProviderAdminPool {
     ) -> Result<Self, String> {
         let (sender, receiver) = sync_channel(PROVIDER_ADMIN_QUEUE_CAPACITY);
         let control_output = output.clone();
+        let creation_output = output.clone();
         let thread_shutdown = Arc::clone(&shutdown);
         let thread = std::thread::Builder::new()
             .name("koru-ai-provider-admin".into())
@@ -5693,12 +5714,8 @@ impl ProviderAdminPool {
                                 &thread_shutdown,
                             );
                         }
-                        ProviderAdminJob::BotCreationStep(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotCreationStep(Box::new(job.run())),
-                                &thread_shutdown,
-                            );
+                        ProviderAdminJob::BotCreationStep(_) => {
+                            unreachable!("creation lane dispatch")
                         }
                         ProviderAdminJob::BotCreationRead(job) => {
                             send_admin_envelope(
@@ -5807,6 +5824,32 @@ impl ProviderAdminPool {
             sync_channel::<bots::chat::StepJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
         let (interactive_sender, interactive_receiver) =
             sync_channel::<ProviderAdminJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
+        let (creation_sender, creation_receiver) = sync_channel::<bots::CreationJob>(1);
+        let creation_shutdown = Arc::clone(&shutdown);
+        let creation_thread = std::thread::Builder::new()
+            .name("koru-ai-bot-creation".into())
+            .spawn(move || {
+                while !creation_shutdown.load(Ordering::Acquire) {
+                    let job = match creation_receiver.recv_timeout(LOOP_INTERVAL) {
+                        Ok(job) => job,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
+                    send_admin_envelope(
+                        &creation_output,
+                        Envelope::BotCreationStep(Box::new(job.run())),
+                        &creation_shutdown,
+                    );
+                }
+            });
+        let creation_thread = match creation_thread {
+            Ok(thread) => thread,
+            Err(error) => {
+                drop(sender);
+                let _ = thread.join();
+                return Err(error.to_string());
+            }
+        };
         let control_shutdown = Arc::clone(&shutdown);
         let control_thread = match std::thread::Builder::new()
             .name("koru-ai-provider-control".into())
@@ -5852,7 +5895,9 @@ impl ProviderAdminPool {
             Ok(thread) => thread,
             Err(error) => {
                 drop(sender);
+                drop(creation_sender);
                 let _ = thread.join();
+                let _ = creation_thread.join();
                 return Err(error.to_string());
             }
         };
@@ -5862,6 +5907,8 @@ impl ProviderAdminPool {
             control_sender: Some(control_sender),
             interactive_sender: Some(interactive_sender),
             control_thread: Some(control_thread),
+            creation_sender: Some(creation_sender),
+            creation_thread: Some(creation_thread),
             shutdown,
         })
     }
@@ -5888,6 +5935,28 @@ impl ProviderAdminPool {
                 },
                 TrySendError::Disconnected(job) => AdminSubmitError {
                     job,
+                    failure: unavailable_failure(),
+                },
+            });
+        }
+        if let ProviderAdminJob::BotCreationStep(step) = job {
+            let Some(sender) = &self.creation_sender else {
+                return Err(AdminSubmitError {
+                    job: ProviderAdminJob::BotCreationStep(step),
+                    failure: unavailable_failure(),
+                });
+            };
+            return sender.try_send(step).map_err(|error| match error {
+                TrySendError::Full(step) => AdminSubmitError {
+                    job: ProviderAdminJob::BotCreationStep(step),
+                    failure: failure(
+                        "ai_worker_saturated",
+                        "The Bot creation lane is busy. Try again.",
+                        true,
+                    ),
+                },
+                TrySendError::Disconnected(step) => AdminSubmitError {
+                    job: ProviderAdminJob::BotCreationStep(step),
                     failure: unavailable_failure(),
                 },
             });
@@ -5941,7 +6010,11 @@ impl ProviderAdminPool {
         self.sender.take();
         self.control_sender.take();
         self.interactive_sender.take();
+        self.creation_sender.take();
         if let Some(thread) = self.control_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.creation_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.thread.take() {

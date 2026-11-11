@@ -228,6 +228,54 @@ fn the_whole_outcome_is_bounded_before_any_effect() {
 }
 
 #[test]
+fn an_intent_that_fits_with_maximal_evidence_fits_at_every_later_step() {
+    let mut record = authored(BotCreationPhase::Intent);
+    let most = record.with_maximal_evidence();
+    assert_eq!(most.phase, BotCreationPhase::RoleVerified);
+    assert_eq!(most.role_page, Some(record.role_target()));
+    assert!(most.reason.is_some());
+    assert_eq!(
+        most.folder_binding.as_ref().map(String::len),
+        Some(BOT_FOLDER_PATH_LIMIT)
+    );
+    // Just under the bound at T1 as recorded, over it with the evidence a
+    // later step adds: refused before any effect.
+    let base = record.encode().unwrap().len();
+    let grows = most.encode().map(|json| json.len()).unwrap_or(0) - base;
+    assert!(grows > 6 * (BOT_FOLDER_PATH_LIMIT - 200), "{grows}");
+    let seed_bytes = (BOT_RECEIPT_OUTCOME_LIMIT - base) / 2 - 1024 - 12;
+    if let BotCreationRole::Authored { seed, .. } = &mut record.role {
+        let mut bytes = seed.take().unwrap().0;
+        bytes.extend(std::iter::repeat_n(7, seed_bytes));
+        *seed = Some(BotSeedBytes(bytes));
+    }
+    assert!(record.encode().is_ok(), "fits as recorded");
+    assert_eq!(
+        record.with_maximal_evidence().encode(),
+        Err(BotError::Invalid)
+    );
+    // Whatever binding, reason and page a later step records, an intent
+    // whose maximal form fits stays within the bound.
+    let mut fits = authored(BotCreationPhase::Intent);
+    if let BotCreationRole::Authored { seed, .. } = &mut fits.role {
+        *seed = Some(BotSeedBytes(vec![7; 300 * 1024]));
+    }
+    fits.with_maximal_evidence().encode().unwrap();
+    let mut later = fits.clone();
+    later.phase = BotCreationPhase::RoleVerified;
+    later.role_page = Some(fits.role_target());
+    later.folder_binding = Some(format!(
+        "{}{}",
+        root(),
+        "\"".repeat(BOT_FOLDER_PATH_LIMIT - root().len())
+    ));
+    for reason in BotCreationReason::ALL {
+        later.reason = Some(*reason);
+        later.encode().unwrap();
+    }
+}
+
+#[test]
 fn groups_must_agree_with_the_phase_and_the_managed_path_with_the_bot() {
     for phase in [
         BotCreationPhase::Intent,

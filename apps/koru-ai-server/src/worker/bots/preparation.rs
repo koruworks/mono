@@ -42,13 +42,13 @@ pub(in crate::worker) struct BotPreparationJob {
     chat_snapshot: Option<Chat>,
     terminal_question: Option<chat::TerminalQuestionProof>,
     delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
-    /// A changed folder to check before the first task (P1.8): it must exist
-    /// and be a folder.
-    folder: Option<(Arc<dyn BotFolderSystem>, String)>,
+    /// A changed folder to check before the first task (P1.8): it must exist,
+    /// be a folder and not be Koru's own data. Update binds its canonical form.
+    folder: Option<(Arc<dyn BotFolderSystem>, creation::ReservedFolders, String)>,
 }
 impl BotPreparationJob {
     pub(in crate::worker) fn run(
-        self,
+        mut self,
         agents: Option<&AgentSessions>,
     ) -> (WorkerCommand, ApiResult<PreparedBotCommand>) {
         let result = catch_unwind(AssertUnwindSafe(|| {
@@ -73,10 +73,17 @@ impl BotPreparationJob {
                     })
                 })
                 .flatten();
-            let runtime = validation.map(|_| ()).and_then(|()| match &self.folder {
-                Some((folders, path)) => creation::require_existing_folder(folders.as_ref(), path),
-                None => Ok(()),
-            });
+            let binding = match &self.folder {
+                Some((folders, reserved, path)) => Some(creation::require_existing_folder(
+                    folders.as_ref(),
+                    reserved,
+                    path,
+                )),
+                None => None,
+            };
+            let runtime = validation
+                .map(|_| ())
+                .and_then(|()| binding.clone().transpose().map(|_| ()));
             let authority: Arc<dyn BotAuthority> = Arc::new(
                 self.authority
                     .inspect(&self.workspaces, &self.pages)
@@ -97,17 +104,35 @@ impl BotPreparationJob {
             if let Some(question) = &self.terminal_question {
                 question.verify(self.delegate.as_ref())?;
             }
-            Ok(PreparedBotCommand {
-                authority,
-                chats: self.chats.clone(),
-                runtime,
-                pins,
-                chat_snapshot: self.chat_snapshot.clone(),
-                settings,
-                terminal_question: self.terminal_question.clone(),
-            })
+            Ok((
+                PreparedBotCommand {
+                    authority,
+                    chats: self.chats.clone(),
+                    runtime,
+                    pins,
+                    chat_snapshot: self.chat_snapshot.clone(),
+                    settings,
+                    terminal_question: self.terminal_question.clone(),
+                },
+                binding.and_then(Result::ok),
+            ))
         }))
         .unwrap_or_else(|_| Err(bot_failure(BotError::Unavailable)));
+        // Update binds the folder where it resolves, as creation does; the
+        // request is fingerprinted with that binding.
+        let result = result.map(|(proof, binding)| {
+            if let (
+                Some(binding),
+                WorkerCommand::Bots {
+                    request: BotCommand::Update { config, .. },
+                    ..
+                },
+            ) = (binding, &mut self.command)
+            {
+                config.working_folder = binding;
+            }
+            proof
+        });
         (self.command, result)
     }
 }
@@ -334,17 +359,30 @@ impl WorkerState {
                     return None;
                 }
             };
+        // A read failure refuses: the folder check is never skipped by an
+        // error. An archived Bot's change is refused at dispatch, and a
+        // trashed or missing one reads as not found there.
         let folder = match &command {
             WorkerCommand::Bots {
                 request: BotCommand::Update { bot_id, config, .. },
                 ..
-            } => self
-                .repository
-                .bot(*bot_id)
-                .ok()
-                .flatten()
-                .filter(|bot| bot.config.working_folder != config.working_folder)
-                .map(|_| (self.bot_creations.folders(), config.working_folder.clone())),
+            } => match super::lifecycle::readable_bot(&self.repository, *bot_id) {
+                Ok(Some(bot))
+                    if bot.lifecycle == BotLifecycle::Active
+                        && bot.config.working_folder != config.working_folder =>
+                {
+                    Some((
+                        self.bot_creations.folders(),
+                        self.bot_creations.reserved(),
+                        config.working_folder.clone(),
+                    ))
+                }
+                Ok(_) => None,
+                Err(error) => {
+                    command.refuse(bot_failure(error));
+                    return None;
+                }
+            },
             _ => None,
         };
         let job = BotPreparationJob {

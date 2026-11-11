@@ -468,6 +468,7 @@ fn prepared(owner: &Arc<FakeOwner>, fs: &Arc<FakeFs>, command: &BotCommand) -> B
         reply,
         authority: owner.clone(),
         folders: fs.clone(),
+        reserved: reserved(),
         root: root(),
         discover_models: false,
     };
@@ -655,6 +656,59 @@ fn a_completed_folder_that_disappears_is_never_recreated() {
     assert_eq!(h.list(owner.workspace, None, 10).unwrap().creations, vec![]);
     assert_eq!(fs.creates().len(), creates);
     assert!(!fs.exists(&work(bot_id)));
+    h.stop();
+}
+
+#[test]
+fn a_step_the_writer_cannot_record_is_shown_and_retried_with_backoff_never_dropped() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let repo = Repository::in_memory().unwrap();
+    // T2, the folder binding, cannot be written.
+    repo.fixture_execute_batch(
+        "CREATE TRIGGER fail_t2 BEFORE UPDATE ON bot_command_receipts
+         WHEN NEW.outcome_json LIKE '%\"phase\":\"folder_ready\"%'
+         BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+    )
+    .unwrap();
+    let h = start(repo, &owner, &fs);
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, bot_id) = request_of(&command);
+    h.creation(command.clone()).unwrap();
+    let folder_jobs = || {
+        fs.state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|(op, at)| *op == "create_dir" && *at == key(&work(bot_id)))
+            .count()
+    };
+    let stalled = h.settle(request);
+    assert_eq!(stalled.stage, BotCreationStage::Incomplete, "{stalled:?}");
+    assert_eq!(stalled.reason, Some(BotCreationReason::StorageFailed));
+    assert_eq!(stalled.phase, BotCreationPhase::FolderPending);
+    // It stays listed, and is tried again after a backoff, not per pass.
+    let listed = h.list(owner.workspace, None, 10).unwrap();
+    assert_eq!(listed.creations.len(), 1);
+    assert_eq!(
+        listed.creations[0].reason,
+        Some(BotCreationReason::StorageFailed)
+    );
+    std::thread::sleep(Duration::from_millis(2500));
+    let tries = folder_jobs();
+    assert!((2..=4).contains(&tries), "{tries} folder jobs in 2.5 s");
+    assert_eq!(owner.store_calls(), 0);
+    let repo = h.stop();
+    repo.fixture_execute_batch("DROP TRIGGER fail_t2").unwrap();
+    // Restarted, it resumes from its durable phase and adopts its own folder.
+    let h = start(repo, &owner, &fs);
+    let done = h.settle(request);
+    assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
+    assert_eq!(
+        done.bot.unwrap().config.working_folder,
+        work(bot_id).to_str().unwrap()
+    );
     h.stop();
 }
 

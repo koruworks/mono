@@ -331,3 +331,173 @@ fn a_native_turn_cancellation_is_automatic_across_ai_restart_and_stop_still_reac
         assert_eq!(native.state.lock().unwrap().begin, 1);
     }
 }
+
+/// The owner's authority, with its strict Role creation held inside the
+/// Store until released: a creation step blocked on the Store.
+struct StoreHeld {
+    inner: Arc<Authority>,
+    gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
+}
+impl BotAuthority for StoreHeld {
+    fn owner(&self) -> Result<BotOwner, BotError> {
+        self.inner.owner()
+    }
+    fn workspace(&self, id: WorkspaceId) -> Result<koru_ai_core::ProfileId, BotError> {
+        self.inner.workspace(id)
+    }
+    fn page(&self, page: &BotPage) -> Result<(), BotError> {
+        self.inner.page(page)
+    }
+    fn inspect(
+        &self,
+        workspaces: &[WorkspaceId],
+        pages: &[BotPage],
+    ) -> Result<koru_ai_core::bots::BotAuthoritySnapshot, BotError> {
+        self.inner.inspect(workspaces, pages)
+    }
+    fn create_role_page(&self, _: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        if let Some((entered, release)) = self.gate.lock().unwrap().take() {
+            let _ = entered.send(());
+            let _ = release.recv();
+        }
+        Err(BotError::Unavailable)
+    }
+}
+
+/// A creation whose next step is its Role page, as a restart finds it.
+fn role_pending(repository: &mut Repository, authority: &Authority, bot: &Bot) -> BotRequestId {
+    let folder = if cfg!(windows) {
+        "D:/isolated-creation"
+    } else {
+        "/isolated-creation"
+    };
+    let seed = vec![1, 2, 3];
+    let record = BotCreationRecord {
+        bot: BotId::mint(),
+        main_chat: ChatId::new(),
+        user_scope: authority.owner.user_scope,
+        owner_device: authority.owner.device,
+        home_workspace: authority.workspace,
+        profile: authority.profile,
+        config: BotCreationConfig {
+            name: "Creating".into(),
+            model: bot.config.model.clone(),
+            mode: None,
+            fast: None,
+        },
+        access: BotAccess::Default,
+        selected_pages: vec![],
+        role: BotCreationRole::Authored {
+            store_request: Uuid::new_v4(),
+            candidate: DocumentId::new(),
+            title: "Role".into(),
+            seed_hash: blake3::hash(&seed).to_hex().to_string(),
+            seed: Some(BotSeedBytes(seed)),
+            request_hash: "b".repeat(64),
+        },
+        folder: BotCreationFolder::Selected {
+            path: folder.into(),
+        },
+        phase: BotCreationPhase::Intent,
+        reason: None,
+        folder_binding: None,
+        role_page: None,
+        created_at_ms: 1,
+    };
+    let request = BotRequestId::mint();
+    let scope = record.user_scope;
+    repository
+        .begin_bot_creation(request, &record, &"c".repeat(64), 1)
+        .unwrap();
+    let mut ready = record.clone();
+    ready.phase = BotCreationPhase::FolderReady;
+    ready.folder_binding = Some(folder.into());
+    repository
+        .advance_bot_creation(
+            scope,
+            request,
+            &record,
+            &ready,
+            BotReceiptStage::Prepared,
+            2,
+        )
+        .unwrap();
+    let mut pending = ready.clone();
+    pending.phase = BotCreationPhase::RolePending;
+    repository
+        .advance_bot_creation(
+            scope,
+            request,
+            &ready,
+            &pending,
+            BotReceiptStage::Prepared,
+            3,
+        )
+        .unwrap();
+    request
+}
+
+#[test]
+fn an_automatic_interrupt_is_dispatched_while_a_creation_step_is_blocked_on_the_store() {
+    let (repository, authority, bot, context) = started();
+    let (begin_tx, begun) = sync_channel(4);
+    let (interrupt_tx, interrupts) = sync_channel(64);
+    let native = Arc::new(Native {
+        hold_observation: true,
+        hold_interrupt: AtomicBool::new(true),
+        begin_reports: Mutex::new(Some(begin_tx)),
+        interrupt_reports: Mutex::new(Some(interrupt_tx)),
+        ..Native::default()
+    });
+    let (worker, returned) = spawn(native.clone(), repository, authority.clone());
+    let stream = send(&worker, context, &bot);
+    begun.recv_timeout(Duration::from_secs(10)).unwrap();
+    worker.shutdown();
+    let _ = worker.join();
+    let mut repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    // A restart finds both an interrupted reply and a creation whose next
+    // step waits on the Store.
+    let creation = role_pending(&mut repository, &authority, &bot);
+    let (entered_tx, entered) = sync_channel(1);
+    let (release_tx, release) = sync_channel(1);
+    let held_store = Arc::new(StoreHeld {
+        inner: authority.clone(),
+        gate: Mutex::new(Some((entered_tx, release))),
+    });
+    let release = Release(Some(release_tx));
+    let (return_tx, returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-in-memory-root"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(held_store)
+    .with_bot_delegate(native.clone());
+    config.test_repository = Some(repository);
+    config.test_repository_return = Some(return_tx);
+    let restarted = AiWorker::new(config).spawn().unwrap();
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    // The creation step is blocked inside the Store; the automatic
+    // Interrupt still runs on the shared administration lane, again and
+    // again while the person's session holds it.
+    for _ in interrupts.try_iter() {}
+    held(&interrupts);
+    assert_eq!(native.state.lock().unwrap().stop_calls, 0);
+    drop(release);
+    restarted.shutdown();
+    let _ = restarted.join();
+    let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    // The creation is still the owner's to retry; nothing else moved it.
+    let receipt = repository
+        .bot_creation(authority.owner.user_scope, creation)
+        .unwrap()
+        .unwrap();
+    assert!(receipt.open());
+    assert_eq!(receipt.record.phase, BotCreationPhase::RolePending);
+    assert!(
+        repository
+            .attempt(stream.accepted.attempt_id)
+            .unwrap()
+            .is_some()
+    );
+}

@@ -12,6 +12,7 @@ pub use lifecycle::{
     BotHold, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
 };
 mod creation;
+pub use creation::BotCreationScan;
 mod reads;
 
 fn bad(_: impl std::fmt::Display) -> BotError {

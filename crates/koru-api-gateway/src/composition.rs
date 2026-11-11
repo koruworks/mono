@@ -181,8 +181,9 @@ pub(crate) fn open(
         });
     let native_mutations = Arc::new(koru_ai_server::NativeMutationGate::closed());
     let ai_config = ai_config.map(|ai_config| {
-        let ai_config =
-            ai_config.with_native_effect_recovery(store_client.clone(), native_mutations.clone());
+        let ai_config = ai_config
+            .with_native_effect_recovery(store_client.clone(), native_mutations.clone())
+            .with_store_root(store_root.to_path_buf());
         match config.bootstrap.as_ref().and_then(|b| {
             koru_ai_server::BotAuthorityAdapter::from_device(
                 store_client.clone(),

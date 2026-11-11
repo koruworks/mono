@@ -45,6 +45,8 @@ pub(in crate::worker) trait BotFolderSystem: Send + Sync {
     fn create_dir(&self, path: &Path) -> std::io::Result<()>;
     /// Whether `path` resolves to a folder.
     fn is_dir(&self, path: &Path) -> std::io::Result<bool>;
+    /// Whether the folder at `path` holds nothing at all.
+    fn is_empty_dir(&self, path: &Path) -> std::io::Result<bool>;
 }
 
 /// The real filesystem.
@@ -66,6 +68,32 @@ impl BotFolderSystem for NativeFolders {
     fn is_dir(&self, path: &Path) -> std::io::Result<bool> {
         Ok(std::fs::metadata(path)?.is_dir())
     }
+    fn is_empty_dir(&self, path: &Path) -> std::io::Result<bool> {
+        Ok(std::fs::read_dir(path)?.next().is_none())
+    }
+}
+
+/// Koru's own data, which no selected folder may be: the AI root, the
+/// Store's data root, and the AI root's `bots/` (every managed folder).
+#[derive(Clone, Debug, Default)]
+pub(in crate::worker) struct ReservedFolders {
+    pub(in crate::worker) ai_root: PathBuf,
+    pub(in crate::worker) store_root: Option<PathBuf>,
+}
+
+impl ReservedFolders {
+    /// Whether the canonical `folder` is one of them. Each root is compared
+    /// in its canonical form when it can be read, as written otherwise.
+    fn holds(&self, fs: &dyn BotFolderSystem, folder: &Path) -> bool {
+        let canonical = |path: &Path| fs.canonical(path).unwrap_or_else(|_| path.to_path_buf());
+        let ai_root = canonical(&self.ai_root);
+        folder == ai_root
+            || folder.starts_with(ai_root.join("bots"))
+            || self
+                .store_root
+                .as_deref()
+                .is_some_and(|store| folder == canonical(store))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,21 +102,42 @@ pub(in crate::worker) enum FolderFailure {
     Occupied,
     /// A level resolves somewhere other than where it was made.
     Mismatch,
-    /// The selected folder does not exist or is not a folder.
+    /// The selected folder does not exist or is not a folder, or its path
+    /// cannot be stored with the same meaning.
     Invalid,
+    /// The selected folder is Koru's own data ([`ReservedFolders`]).
+    Reserved,
     /// The filesystem did not answer.
     Unavailable,
 }
 
-/// A canonical path as it is stored and shown: without Windows' verbatim
-/// prefix, which programs launched in the folder should not see.
-fn display(path: &Path) -> Result<String, FolderFailure> {
-    let text = path.to_str().ok_or(FolderFailure::Unavailable)?;
-    Ok(if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{rest}")
+/// A canonical folder as it is stored and shown. Windows' verbatim prefix
+/// is dropped, so programs launched in the folder do not see it, but only
+/// when the path without it resolves back to exactly the same folder: a
+/// trailing dot or space, a reserved device name or an over-long path can
+/// mean something else without the prefix, and such a folder is refused
+/// rather than bound to a different meaning. A binding must also fit the
+/// stored bound.
+fn display(fs: &dyn BotFolderSystem, path: &Path) -> Result<String, FolderFailure> {
+    let text = path.to_str().ok_or(FolderFailure::Invalid)?;
+    let stripped = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        Some(format!(r"\\{rest}"))
     } else {
-        text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
-    })
+        text.strip_prefix(r"\\?\").map(str::to_owned)
+    };
+    let shown = match stripped {
+        None => text.to_owned(),
+        Some(stripped) => match fs.canonical(Path::new(&stripped)) {
+            Ok(back) if back == path => stripped,
+            Ok(_) => return Err(FolderFailure::Invalid),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(FolderFailure::Invalid);
+            }
+            Err(error) => return Err(io(error)),
+        },
+    };
+    validate_folder_path(&shown).map_err(|_| FolderFailure::Invalid)?;
+    Ok(shown)
 }
 
 fn io(_: std::io::Error) -> FolderFailure {
@@ -110,10 +159,17 @@ fn ensure_level(fs: &dyn BotFolderSystem, level: &Path) -> Result<(), FolderFail
 }
 
 /// The managed folder: exactly `<root>/bots/<BotId>/work`, made level by
-/// level under the canonical root. On `first` acceptance anything already
-/// there is a conflict and nothing is made; a recovery adopts the exact
-/// canonical folder the intent names, which grants no ownership of its
-/// contents. A link anywhere on the way that resolves elsewhere refuses.
+/// level under the canonical root. A link anywhere on the way that resolves
+/// elsewhere refuses.
+///
+/// `first` is true only for the folder job the writer dispatches in the
+/// same step that durably marked `folder_pending`: nothing of this creation
+/// can be at the path yet, so anything there is a conflict and nothing is
+/// made. Any later job (a Retry, a restart, a lost answer) cannot know from
+/// durable state whether an existing folder is the one it made, so it
+/// adopts one only when it is a folder there exactly and empty; a folder
+/// with anything in it is a mismatch. Adopting grants no ownership of the
+/// folder, and nothing here ever removes anything.
 pub(in crate::worker) fn prepare_managed(
     fs: &dyn BotFolderSystem,
     root: &Path,
@@ -129,25 +185,30 @@ pub(in crate::worker) fn prepare_managed(
     }
     ensure_level(fs, &bots)?;
     ensure_level(fs, &parent)?;
-    match fs.create_dir(&target) {
-        Ok(()) => {}
+    let made = match fs.create_dir(&target) {
+        Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             if first {
                 return Err(FolderFailure::Occupied);
             }
+            false
         }
         Err(error) => return Err(io(error)),
-    }
+    };
     if fs.canonical(&target).map_err(io)? != target || !fs.is_dir(&target).map_err(io)? {
         return Err(FolderFailure::Mismatch);
     }
-    display(&target)
+    if !made && !fs.is_empty_dir(&target).map_err(io)? {
+        return Err(FolderFailure::Mismatch);
+    }
+    display(fs, &target)
 }
 
-/// A selected folder: it exists and is a folder. Validated, never made.
-/// Its binding is its canonical form.
+/// A selected folder: it exists, is a folder and is not Koru's own data.
+/// Validated, never made. Its binding is its canonical form.
 pub(in crate::worker) fn check_selected(
     fs: &dyn BotFolderSystem,
+    reserved: &ReservedFolders,
     path: &str,
 ) -> Result<String, FolderFailure> {
     validate_folder_path(path).map_err(|_| FolderFailure::Invalid)?;
@@ -161,27 +222,44 @@ pub(in crate::worker) fn check_selected(
     if !fs.is_dir(&canonical).map_err(io)? {
         return Err(FolderFailure::Invalid);
     }
-    display(&canonical)
+    if reserved.holds(fs, &canonical) {
+        return Err(FolderFailure::Reserved);
+    }
+    display(fs, &canonical)
+}
+
+/// The AI root a managed folder is made under must itself be storable
+/// with its meaning (see [`display`]); checked in preparation, before T1.
+fn check_managed_root(fs: &dyn BotFolderSystem, root: &Path) -> Result<(), FolderFailure> {
+    let canonical = fs.canonical(root).map_err(io)?;
+    display(fs, &canonical).map(|_| ())
 }
 
 fn folder_failure(error: FolderFailure) -> Failure {
     match error {
         FolderFailure::Invalid => failure(
             "invalid_request",
-            "The selected folder is not an existing folder.",
+            "The selected folder is not an existing folder that can be used as it is named.",
+            false,
+        ),
+        FolderFailure::Reserved => failure(
+            "invalid_request",
+            "Koru's own data folders cannot be a Bot's working folder.",
             false,
         ),
         _ => failure("folder_unavailable", "The folder could not be read.", true),
     }
 }
 
-/// "Change folder before the first task": the new folder must exist and be
-/// a folder. Off the writer, in the command's preparation.
+/// "Change folder before the first task": the new folder must exist, be a
+/// folder and not be Koru's own data. Off the writer, in the command's
+/// preparation; the answer is the canonical binding Update stores.
 pub(in crate::worker) fn require_existing_folder(
     fs: &dyn BotFolderSystem,
+    reserved: &ReservedFolders,
     path: &str,
-) -> ApiResult<()> {
-    check_selected(fs, path).map(|_| ()).map_err(folder_failure)
+) -> ApiResult<String> {
+    check_selected(fs, reserved, path).map_err(folder_failure)
 }
 
 fn blake3_hex(bytes: &[u8]) -> String {
@@ -228,11 +306,41 @@ fn role_seed(record: &BotCreationRecord) -> Option<BotRoleSeed> {
 pub(in crate::worker) struct CreationDriver {
     root: PathBuf,
     folders: Arc<dyn BotFolderSystem>,
+    reserved: ReservedFolders,
     /// Off only in fixtures that have no runtime to ask.
     discover_models: bool,
     open: BTreeMap<(UserScopeId, BotRequestId), Tracked>,
     /// The startup scan's next BotId bound; `None` once it has finished.
     scan: Option<String>,
+    /// The scan's own backoff after a failed step.
+    scan_retry: Retry,
+    /// Unfinished creations the scan found but could not read, retried with
+    /// backoff. Each was reported once.
+    unreadable: BTreeMap<(UserScopeId, BotRequestId), Retry>,
+    /// A step is on the creation lane. At most one is, so a creation never
+    /// waits behind another's queued work and the lane's queue never fills.
+    stepping: bool,
+}
+
+/// A backoff: when a failed thing may be tried again, and how often it failed.
+#[derive(Clone, Copy, Debug, Default)]
+struct Retry {
+    not_before: Option<Instant>,
+    failures: u32,
+}
+
+impl Retry {
+    fn ready(&self, now: Instant) -> bool {
+        self.not_before.is_none_or(|at| at <= now)
+    }
+    /// One more failure: wait 1 s, doubling to at most 5 minutes. True for
+    /// the first failure in a row, the one worth reporting.
+    fn failed(&mut self, now: Instant) -> bool {
+        self.failures = self.failures.saturating_add(1);
+        let wait = Duration::from_secs(1u64 << self.failures.min(9).saturating_sub(1));
+        self.not_before = Some(now + wait.min(Duration::from_secs(300)));
+        self.failures == 1
+    }
 }
 
 struct Tracked {
@@ -240,19 +348,28 @@ struct Tracked {
     receipt: BotCreationReceipt,
     busy: bool,
     due: bool,
-    /// `folder_pending` was marked in this process and its first folder job
-    /// has not run: anything at the managed path is then not ours.
-    first: bool,
+    retry: Retry,
+    /// The writer could not record this creation's last step; it is retried
+    /// from its durable phase with backoff and shown with this reason
+    /// meanwhile, never as silently pending.
+    stalled: Option<BotCreationReason>,
 }
 
 impl CreationDriver {
     pub(in crate::worker) fn new(root: PathBuf, folders: Arc<dyn BotFolderSystem>) -> Self {
         Self {
+            reserved: ReservedFolders {
+                ai_root: root.clone(),
+                store_root: None,
+            },
             root,
             folders,
             discover_models: true,
             open: BTreeMap::new(),
             scan: Some(String::new()),
+            scan_retry: Retry::default(),
+            unreadable: BTreeMap::new(),
+            stepping: false,
         }
     }
     #[cfg(test)]
@@ -260,8 +377,16 @@ impl CreationDriver {
         self.discover_models = false;
         self
     }
+    /// The Store's data root, which no selected folder may be.
+    pub(in crate::worker) fn with_store_root(mut self, store_root: Option<PathBuf>) -> Self {
+        self.reserved.store_root = store_root;
+        self
+    }
     pub(in crate::worker) fn folders(&self) -> Arc<dyn BotFolderSystem> {
         self.folders.clone()
+    }
+    pub(in crate::worker) fn reserved(&self) -> ReservedFolders {
+        self.reserved.clone()
     }
     fn track(&mut self, receipt: &BotCreationReceipt, due: bool) {
         let key = (receipt.record.user_scope, receipt.request);
@@ -273,14 +398,49 @@ impl CreationDriver {
             record: receipt.record.without_seed(),
             ..receipt.clone()
         };
+        self.unreadable.remove(&key);
         let entry = self.open.entry(key).or_insert(Tracked {
             receipt: shown.clone(),
             busy: false,
             due: false,
-            first: false,
+            retry: Retry::default(),
+            stalled: None,
         });
         entry.receipt = shown;
         entry.due |= due && receipt.record.reason.is_none();
+    }
+
+    /// A step's write or read failed: retry it from its durable phase after
+    /// a backoff, and show why meanwhile. Reported once per run of failures.
+    fn stall(&mut self, key: (UserScopeId, BotRequestId), reason: BotCreationReason) {
+        if let Some(tracked) = self.open.get_mut(&key) {
+            tracked.due = true;
+            tracked.stalled = Some(reason);
+            if tracked.retry.failed(Instant::now()) {
+                tracing::warn!(target: "koru_ai::bots", request = %key.1, reason = ?reason, "a Bot creation step could not be recorded; retrying with backoff");
+            }
+        }
+    }
+
+    /// A step was recorded: no backoff, nothing to show.
+    fn recorded(&mut self, key: (UserScopeId, BotRequestId)) {
+        if let Some(tracked) = self.open.get_mut(&key)
+            && tracked.stalled.take().is_some()
+        {
+            tracked.retry = Retry::default();
+            tracing::info!(target: "koru_ai::bots", request = %key.1, "a stalled Bot creation is moving again");
+        }
+    }
+
+    /// The view of a tracked creation, with a stall shown as incomplete.
+    fn shown(&self, key: &(UserScopeId, BotRequestId), mut view: BotCreation) -> BotCreation {
+        if view.stage == BotCreationStage::Pending
+            && let Some(reason) = self.open.get(key).and_then(|tracked| tracked.stalled)
+        {
+            view.stage = BotCreationStage::Incomplete;
+            view.reason = Some(reason);
+        }
+        view
     }
 }
 
@@ -291,6 +451,7 @@ pub(in crate::worker) struct CreationPreparationJob {
     reply: SyncSender<ApiResult<BotResponse>>,
     authority: Arc<dyn BotAuthority>,
     folders: Arc<dyn BotFolderSystem>,
+    reserved: ReservedFolders,
     root: PathBuf,
     discover_models: bool,
 }
@@ -398,19 +559,24 @@ impl CreationPreparationJob {
                 }
             };
             let folder = match folder {
-                BotFolderChoice::Managed {} => BotCreationFolder::Managed {
-                    root: self
-                        .root
-                        .to_str()
-                        .ok_or_else(|| bot_failure(BotError::Unavailable))?
-                        .to_owned(),
-                    path: managed_folder(&self.root, *bot_id)
-                        .to_str()
-                        .ok_or_else(|| bot_failure(BotError::Unavailable))?
-                        .to_owned(),
-                },
+                BotFolderChoice::Managed {} => {
+                    check_managed_root(self.folders.as_ref(), &self.root)
+                        .map_err(folder_failure)?;
+                    BotCreationFolder::Managed {
+                        root: self
+                            .root
+                            .to_str()
+                            .ok_or_else(|| bot_failure(BotError::Unavailable))?
+                            .to_owned(),
+                        path: managed_folder(&self.root, *bot_id)
+                            .to_str()
+                            .ok_or_else(|| bot_failure(BotError::Unavailable))?
+                            .to_owned(),
+                    }
+                }
                 BotFolderChoice::Selected { path } => {
-                    check_selected(self.folders.as_ref(), path).map_err(folder_failure)?;
+                    check_selected(self.folders.as_ref(), &self.reserved, path)
+                        .map_err(folder_failure)?;
                     BotCreationFolder::Selected { path: path.clone() }
                 }
             };
@@ -432,8 +598,9 @@ impl CreationPreparationJob {
                 role_page: None,
                 created_at_ms: Timestamp::now().millis(),
             };
-            // Oversize input refuses here, before any effect.
-            record.encode().map_err(|_| {
+            // Oversize input refuses here, before any effect, with the most
+            // evidence any later step can record already counted.
+            record.with_maximal_evidence().encode().map_err(|_| {
                 failure(
                     "invalid_request",
                     "The Role text is too large to create.",
@@ -453,6 +620,7 @@ pub(in crate::worker) struct CreationJob {
     step: CreationStep,
     authority: Arc<dyn BotAuthority>,
     folders: Arc<dyn BotFolderSystem>,
+    reserved: ReservedFolders,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::worker) enum CreationStep {
@@ -511,7 +679,9 @@ impl CreationJob {
                 BotCreationFolder::Managed { root, .. } => {
                     prepare_managed(self.folders.as_ref(), Path::new(root), record.bot, first)
                 }
-                BotCreationFolder::Selected { path } => check_selected(self.folders.as_ref(), path),
+                BotCreationFolder::Selected { path } => {
+                    check_selected(self.folders.as_ref(), &self.reserved, path)
+                }
             }),
             CreationStep::Role => CreationOutcome::Role(match role_seed(record) {
                 Some(seed) if blake3_hex(&seed.seed) == seed.request_hash => {
@@ -590,6 +760,7 @@ impl WorkerState {
                     reply,
                     authority,
                     folders: self.bot_creations.folders.clone(),
+                    reserved: self.bot_creations.reserved.clone(),
                     root: self.bot_creations.root.clone(),
                     discover_models: self.bot_creations.discover_models,
                 })
@@ -723,6 +894,10 @@ impl WorkerState {
         if !receipt.open() || receipt.record.reason.is_none() || busy {
             if receipt.open() {
                 self.bot_creations.track(&receipt, true);
+                // A stalled one is tried again now, not after its backoff.
+                if let Some(tracked) = self.bot_creations.open.get_mut(&key) {
+                    tracked.retry.not_before = None;
+                }
             }
             return Ok(receipt);
         }
@@ -748,43 +923,92 @@ impl WorkerState {
             .then(|| super::lifecycle::readable_bot(&self.repository, receipt.record.bot))
             .and_then(Result::ok)
             .flatten();
-        receipt.view(bot)
+        self.bot_creations.shown(
+            &(receipt.record.user_scope, receipt.request),
+            receipt.view(bot),
+        )
     }
 
-    /// The startup scan, one bounded step per call, then each due
-    /// creation's next step. Called from the writer loop; cheap when idle.
+    /// The startup scan, one bounded step per call, then at most one due
+    /// creation's next step, and only while the creation lane is free.
+    /// Called from the writer loop on every pass: when nothing is due, or a
+    /// step is already on the lane, it reads nothing. A failure waits for its
+    /// backoff; nothing is retried per pass.
     pub(in crate::worker) fn schedule_bot_creations(&mut self) {
         if self.bot_authority.is_none() || self.provider_admin.is_none() {
             return;
         }
-        if let Some(after) = self.bot_creations.scan.clone() {
+        let now = Instant::now();
+        if let Some(after) = self.bot_creations.scan.clone()
+            && self.bot_creations.scan_retry.ready(now)
+        {
             match self.repository.bot_creation_scan(&after, SCAN_STEP) {
-                Ok((found, next)) => {
-                    for (scope, request) in found {
-                        match self.repository.bot_creation(scope, request) {
-                            Ok(Some(receipt)) => self.bot_creations.track(&receipt, true),
-                            Ok(None) => {}
-                            Err(error) => {
-                                tracing::warn!(target: "koru_ai::bots", %request, ?error, "an unfinished Bot creation could not be read");
-                            }
-                        }
+                Ok(step) => {
+                    for bot in &step.skipped {
+                        tracing::warn!(target: "koru_ai::bots", bot = %bot, "an unfinished Bot creation's receipt could not be parsed; skipped");
                     }
-                    self.bot_creations.scan = next;
+                    for key in step.found {
+                        self.read_scanned_creation(key, now);
+                    }
+                    if self.bot_creations.scan_retry.failures > 0 {
+                        tracing::info!(target: "koru_ai::bots", "the Bot creation scan is moving again");
+                    }
+                    self.bot_creations.scan_retry = Retry::default();
+                    self.bot_creations.scan = step.next;
                 }
                 Err(error) => {
-                    tracing::warn!(target: "koru_ai::bots", ?error, "the Bot creation scan stopped; retrying");
+                    if self.bot_creations.scan_retry.failed(now) {
+                        tracing::warn!(target: "koru_ai::bots", ?error, "the Bot creation scan stopped; retrying with backoff");
+                    }
                 }
             }
         }
-        let due: Vec<_> = self
+        let unreadable: Vec<_> = self
+            .bot_creations
+            .unreadable
+            .iter()
+            .filter(|(_, retry)| retry.ready(now))
+            .map(|(key, _)| *key)
+            .collect();
+        for key in unreadable {
+            self.read_scanned_creation(key, now);
+        }
+        if self.bot_creations.stepping {
+            return;
+        }
+        let next = self
             .bot_creations
             .open
             .iter()
-            .filter(|(_, tracked)| tracked.due && !tracked.busy)
-            .map(|(key, _)| *key)
-            .collect();
-        for key in due {
+            .filter(|(_, tracked)| tracked.due && !tracked.busy && tracked.retry.ready(now))
+            .min_by_key(|(_, tracked)| {
+                (tracked.retry.failures, tracked.receipt.record.created_at_ms)
+            })
+            .map(|(key, _)| *key);
+        if let Some(key) = next {
             self.step_bot_creation(key);
+        }
+    }
+
+    /// Read one receipt the scan named. One that cannot be read is kept for
+    /// a later try with backoff, reported once, never dropped.
+    fn read_scanned_creation(&mut self, key: (UserScopeId, BotRequestId), now: Instant) {
+        match self.repository.bot_creation(key.0, key.1) {
+            Ok(Some(receipt)) => self.bot_creations.track(&receipt, true),
+            Ok(None) => {
+                self.bot_creations.unreadable.remove(&key);
+            }
+            Err(error) => {
+                if self
+                    .bot_creations
+                    .unreadable
+                    .entry(key)
+                    .or_default()
+                    .failed(now)
+                {
+                    tracing::warn!(target: "koru_ai::bots", request = %key.1, ?error, "an unfinished Bot creation could not be read; retrying with backoff");
+                }
+            }
         }
     }
 
@@ -795,9 +1019,11 @@ impl WorkerState {
                 self.bot_creations.open.remove(&key);
                 return;
             }
-            Err(error) => {
-                tracing::warn!(target: "koru_ai::bots", request = %key.1, ?error, "a Bot creation could not be read");
-                self.bot_creations.open.remove(&key);
+            // Kept, and tried again after a backoff: a read that failed says
+            // nothing about whether the creation exists.
+            Err(_) => {
+                self.bot_creations
+                    .stall(key, BotCreationReason::StorageFailed);
                 return;
             }
         };
@@ -819,18 +1045,16 @@ impl WorkerState {
                     &mark(BotCreationPhase::FolderPending),
                     receipt.stage,
                 ) {
-                    Some(marked) => {
-                        if let Some(tracked) = self.bot_creations.open.get_mut(&key) {
-                            tracked.first = true;
-                        }
-                        (marked.record, CreationStep::Folder { first: true })
-                    }
+                    // The mark was written just now: this job is the first,
+                    // so nothing of ours can be at the path.
+                    Some(marked) => (marked.record, CreationStep::Folder { first: true }),
                     None => return,
                 }
             }
+            // Any later folder job may follow our own mkdir: it adopts only
+            // an empty folder exactly there.
             BotCreationPhase::FolderPending => {
-                let first = self.bot_creations.open.get(&key).is_some_and(|t| t.first);
-                (record.clone(), CreationStep::Folder { first })
+                (record.clone(), CreationStep::Folder { first: false })
             }
             BotCreationPhase::FolderReady if record.authored() => {
                 match self.advance_creation(
@@ -847,7 +1071,9 @@ impl WorkerState {
                 (record.clone(), CreationStep::Authorize)
             }
         };
-        let Some(authority) = self.bot_authority.clone() else {
+        let (Some(authority), Some(pool)) =
+            (self.bot_authority.clone(), self.provider_admin.as_ref())
+        else {
             return;
         };
         let job = ProviderAdminJob::BotCreationStep(CreationJob {
@@ -856,30 +1082,35 @@ impl WorkerState {
             step,
             authority,
             folders: self.bot_creations.folders.clone(),
+            reserved: self.bot_creations.reserved.clone(),
         });
-        let Some(pool) = self.provider_admin.as_ref() else {
+        let submitted = pool.try_submit(job).is_ok();
+        let Some(tracked) = self.bot_creations.open.get_mut(&key) else {
             return;
         };
-        // A full pool leaves the step due; a freed slot runs it next pass.
-        if pool.try_submit(job).is_ok()
-            && let Some(tracked) = self.bot_creations.open.get_mut(&key)
-        {
+        if submitted {
             tracked.busy = true;
             tracked.due = false;
+            self.bot_creations.stepping = true;
+        } else {
+            // The lane is gone or full: wait out a backoff, never a pass.
+            tracked.retry.failed(Instant::now());
         }
     }
 
-    /// Move a creation on the writer, keeping the list exact. `None` (and
-    /// a log line) when the receipt moved or the write failed.
+    /// Move a creation on the writer, keeping the list exact. `None` when
+    /// the receipt moved meanwhile (it is reread) or the write failed (the
+    /// creation stalls and is retried from its durable phase with backoff).
     fn advance_creation(
         &mut self,
         receipt: &BotCreationReceipt,
         next: &BotCreationRecord,
         stage: BotReceiptStage,
     ) -> Option<BotCreationReceipt> {
+        let key = (receipt.record.user_scope, receipt.request);
         match self.repository.advance_bot_creation(
-            receipt.record.user_scope,
-            receipt.request,
+            key.0,
+            key.1,
             &receipt.record,
             next,
             stage,
@@ -887,10 +1118,24 @@ impl WorkerState {
         ) {
             Ok(moved) => {
                 self.bot_creations.track(&moved, true);
+                self.bot_creations.recorded(key);
                 Some(moved)
             }
-            Err(error) => {
-                tracing::warn!(target: "koru_ai::bots", request = %receipt.request, ?error, "a Bot creation step could not be recorded");
+            Err(BotError::Conflict) => {
+                match self.repository.bot_creation(key.0, key.1) {
+                    Ok(Some(current)) => self.bot_creations.track(&current, true),
+                    Ok(None) => {
+                        self.bot_creations.open.remove(&key);
+                    }
+                    Err(_) => self
+                        .bot_creations
+                        .stall(key, BotCreationReason::StorageFailed),
+                }
+                None
+            }
+            Err(_) => {
+                self.bot_creations
+                    .stall(key, BotCreationReason::StorageFailed);
                 None
             }
         }
@@ -916,11 +1161,9 @@ impl WorkerState {
             step,
             outcome,
         } = result;
+        self.bot_creations.stepping = false;
         if let Some(tracked) = self.bot_creations.open.get_mut(&key) {
             tracked.busy = false;
-            if matches!(step, CreationStep::Folder { .. }) {
-                tracked.first = false;
-            }
         }
         let receipt = match self.repository.bot_creation(key.0, key.1) {
             Ok(Some(receipt)) if receipt.open() && receipt.record == expected => receipt,
@@ -928,7 +1171,18 @@ impl WorkerState {
                 self.bot_creations.track(&receipt, true);
                 return;
             }
-            _ => return,
+            Ok(None) => {
+                self.bot_creations.open.remove(&key);
+                return;
+            }
+            // The answer cannot be applied now: the step runs again from its
+            // durable phase after a backoff, which is safe because every
+            // effect it guards was marked durable before it ran.
+            Err(_) => {
+                self.bot_creations
+                    .stall(key, BotCreationReason::StorageFailed);
+                return;
+            }
         };
         let record = receipt.record.clone();
         let first = matches!(step, CreationStep::Folder { first: true });
@@ -954,7 +1208,7 @@ impl WorkerState {
                 // Refused before anything of ours exists: the BotId is free.
                 let reject = match error {
                     FolderFailure::Occupied if first => Some(BotCreationReason::FolderOccupied),
-                    FolderFailure::Invalid
+                    FolderFailure::Invalid | FolderFailure::Reserved
                         if matches!(record.folder, BotCreationFolder::Selected { .. }) =>
                     {
                         Some(BotCreationReason::FolderInvalid)
@@ -1137,7 +1391,15 @@ impl WorkerState {
             });
         Ok(BotResponse::Creations {
             page: BotCreationPage {
-                creations: open.into_iter().map(|receipt| receipt.view(None)).collect(),
+                creations: open
+                    .into_iter()
+                    .map(|receipt| {
+                        self.bot_creations.shown(
+                            &(receipt.record.user_scope, receipt.request),
+                            receipt.view(None),
+                        )
+                    })
+                    .collect(),
                 next_cursor,
             },
         })

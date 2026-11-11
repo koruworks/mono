@@ -26,7 +26,10 @@ fn the_managed_folder_is_made_level_by_level_under_the_canonical_root() {
     // Nothing but creation and reads ever happens through the port.
     for (op, _) in &fs.state.lock().unwrap().calls {
         assert!(
-            matches!(*op, "canonical" | "occupied" | "create_dir" | "is_dir"),
+            matches!(
+                *op,
+                "canonical" | "occupied" | "create_dir" | "is_dir" | "is_empty_dir"
+            ),
             "{op}"
         );
     }
@@ -123,22 +126,22 @@ fn an_unreachable_root_or_a_failed_mkdir_is_unavailable() {
 fn a_selected_folder_is_validated_and_never_made() {
     let fs = FakeFs::with(&[selected()]);
     assert_eq!(
-        check_selected(fs.as_ref(), selected().to_str().unwrap()),
+        check_selected(fs.as_ref(), &reserved(), selected().to_str().unwrap()),
         Ok(selected().to_str().unwrap().to_owned())
     );
     let missing = selected().join("missing");
     assert_eq!(
-        check_selected(fs.as_ref(), missing.to_str().unwrap()),
+        check_selected(fs.as_ref(), &reserved(), missing.to_str().unwrap()),
         Err(FolderFailure::Invalid)
     );
     let file = selected().join("notes.txt");
     fs.file(&file);
     assert_eq!(
-        check_selected(fs.as_ref(), file.to_str().unwrap()),
+        check_selected(fs.as_ref(), &reserved(), file.to_str().unwrap()),
         Err(FolderFailure::Invalid)
     );
     assert_eq!(
-        check_selected(fs.as_ref(), "relative/folder"),
+        check_selected(fs.as_ref(), &reserved(), "relative/folder"),
         Err(FolderFailure::Invalid)
     );
     // A link is bound to where it resolves.
@@ -147,29 +150,159 @@ fn a_selected_folder_is_validated_and_never_made() {
     fs.mkdirs(&target);
     fs.link(&link, &target);
     assert_eq!(
-        check_selected(fs.as_ref(), link.to_str().unwrap()),
+        check_selected(fs.as_ref(), &reserved(), link.to_str().unwrap()),
         Ok(target.to_str().unwrap().to_owned())
     );
     assert!(fs.creates().is_empty());
     // "Change folder before the first task" uses the same check.
-    assert!(require_existing_folder(fs.as_ref(), selected().to_str().unwrap()).is_ok());
+    assert!(
+        require_existing_folder(fs.as_ref(), &reserved(), selected().to_str().unwrap()).is_ok()
+    );
     assert_eq!(
-        require_existing_folder(fs.as_ref(), missing.to_str().unwrap())
+        require_existing_folder(fs.as_ref(), &reserved(), missing.to_str().unwrap())
             .unwrap_err()
             .code,
         "invalid_request"
     );
 }
 
+/// A filesystem that answers `canonical` from a fixed table, for the
+/// verbatim-prefix round trip.
+struct Canonical(Vec<(PathBuf, PathBuf)>);
+impl BotFolderSystem for Canonical {
+    fn canonical(&self, at: &Path) -> std::io::Result<PathBuf> {
+        self.0
+            .iter()
+            .find(|(from, _)| from == at)
+            .map(|(_, to)| to.clone())
+            .ok_or_else(missing)
+    }
+    fn occupied(&self, _: &Path) -> std::io::Result<bool> {
+        unreachable!()
+    }
+    fn create_dir(&self, _: &Path) -> std::io::Result<()> {
+        unreachable!()
+    }
+    fn is_dir(&self, _: &Path) -> std::io::Result<bool> {
+        unreachable!()
+    }
+    fn is_empty_dir(&self, _: &Path) -> std::io::Result<bool> {
+        unreachable!()
+    }
+}
+
 #[test]
-fn a_stored_binding_never_carries_the_windows_verbatim_prefix() {
+fn the_verbatim_prefix_is_dropped_only_when_the_path_keeps_its_meaning() {
+    let verbatim = PathBuf::from(r"\\?\C:\koru\ai\bots");
+    let unc = PathBuf::from(r"\\?\UNC\server\share\work");
+    let fs = Canonical(vec![
+        (PathBuf::from(r"C:\koru\ai\bots"), verbatim.clone()),
+        (PathBuf::from(r"\\server\share\work"), unc.clone()),
+    ]);
+    // Only Windows reads these as absolute folders.
+    if cfg!(windows) {
+        assert_eq!(display(&fs, &verbatim).unwrap(), r"C:\koru\ai\bots");
+        assert_eq!(display(&fs, &unc).unwrap(), r"\\server\share\work");
+    }
+    // A path without the prefix is stored as it is.
+    assert_eq!(display(&fs, &root()).unwrap(), root().to_str().unwrap());
+    // A trailing dot is trimmed by ordinary path parsing: without the
+    // prefix the path names another folder, so it is refused, not stored.
+    let dotted = PathBuf::from(r"\\?\C:\work\notes.");
+    let fs = Canonical(vec![(
+        PathBuf::from(r"C:\work\notes."),
+        PathBuf::from(r"\\?\C:\work\notes"),
+    )]);
+    assert_eq!(display(&fs, &dotted), Err(FolderFailure::Invalid));
+    // A reserved device name means the device without the prefix.
+    let device = PathBuf::from(r"\\?\C:\work\con");
+    let fs = Canonical(vec![(
+        PathBuf::from(r"C:\work\con"),
+        PathBuf::from(r"\\.\con"),
+    )]);
+    assert_eq!(display(&fs, &device), Err(FolderFailure::Invalid));
+    // An over-long path that does not resolve without the prefix.
+    let long = PathBuf::from(format!(r"\\?\C:\{}", "a".repeat(300)));
     assert_eq!(
-        display(Path::new(r"\\?\C:\koru\ai\bots")).unwrap(),
-        r"C:\koru\ai\bots"
+        display(&Canonical(vec![]), &long),
+        Err(FolderFailure::Invalid)
+    );
+}
+
+#[test]
+fn a_later_folder_job_adopts_only_an_empty_folder_exactly_there() {
+    // A Retry or a restart after `folder_pending`: the folder may be ours.
+    let fs = FakeFs::with(&[root()]);
+    let bot = BotId::mint();
+    fs.mkdirs(&work(bot));
+    assert_eq!(
+        prepare_managed(fs.as_ref(), &root(), bot, false).unwrap(),
+        work(bot).to_str().unwrap()
+    );
+    // Something put in it since: this creation cannot prove it made it.
+    for occupant in ["file", "folder"] {
+        let fs = FakeFs::with(&[root()]);
+        let bot = BotId::mint();
+        fs.mkdirs(&work(bot));
+        if occupant == "file" {
+            fs.file(&work(bot).join("notes.txt"));
+        } else {
+            fs.mkdirs(&work(bot).join("sub"));
+        }
+        let before = fs.present();
+        assert_eq!(
+            prepare_managed(fs.as_ref(), &root(), bot, false),
+            Err(FolderFailure::Mismatch),
+            "{occupant}"
+        );
+        assert_eq!(fs.present(), before, "nothing is removed");
+    }
+    // A folder this job makes itself is bound whatever happens next.
+    let fs = FakeFs::with(&[root()]);
+    let bot = BotId::mint();
+    assert!(prepare_managed(fs.as_ref(), &root(), bot, false).is_ok());
+    assert!(fs.exists(&work(bot)));
+}
+
+#[test]
+fn koru_s_own_data_is_never_a_selected_folder() {
+    let store = PathBuf::from(if cfg!(windows) {
+        r"D:\koru\store"
+    } else {
+        "/koru/store"
+    });
+    let other = root()
+        .join("bots")
+        .join(BotId::mint().to_storage())
+        .join("work");
+    let fs = FakeFs::with(&[root(), store.clone(), other.clone(), selected()]);
+    let reserved = ReservedFolders {
+        ai_root: root(),
+        store_root: Some(store.clone()),
+    };
+    for at in [root(), store.clone(), root().join("bots"), other.clone()] {
+        assert_eq!(
+            check_selected(fs.as_ref(), &reserved, at.to_str().unwrap()),
+            Err(FolderFailure::Reserved),
+            "{at:?}"
+        );
+    }
+    // Through a link it is the same folder.
+    let shortcut = selected().join("shortcut");
+    fs.link(&shortcut, &other);
+    assert_eq!(
+        check_selected(fs.as_ref(), &reserved, shortcut.to_str().unwrap()),
+        Err(FolderFailure::Reserved)
+    );
+    // Anything else is the person's to choose.
+    assert_eq!(
+        check_selected(fs.as_ref(), &reserved, selected().to_str().unwrap()),
+        Ok(selected().to_str().unwrap().to_owned())
     );
     assert_eq!(
-        display(Path::new(r"\\?\UNC\server\share\work")).unwrap(),
-        r"\\server\share\work"
+        require_existing_folder(fs.as_ref(), &reserved, root().to_str().unwrap())
+            .unwrap_err()
+            .code,
+        "invalid_request"
     );
-    assert_eq!(display(Path::new("/koru/ai")).unwrap(), "/koru/ai");
 }

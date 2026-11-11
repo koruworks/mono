@@ -571,10 +571,11 @@ fn the_startup_scan_finds_unfinished_creations_in_bounded_steps() {
     let mut after = String::new();
     let mut steps = 0;
     loop {
-        let (page, next) = repo.bot_creation_scan(&after, 16).unwrap();
-        found.extend(page);
+        let step = repo.bot_creation_scan(&after, 16).unwrap();
+        assert!(step.skipped.is_empty());
+        found.extend(step.found);
         steps += 1;
-        match next {
+        match step.next {
             Some(next) => after = next,
             None => break,
         }
@@ -629,4 +630,23 @@ fn every_creation_lookup_reads_the_guard_index_and_never_the_table() {
         let shown = plan(c, sql);
         assert!(!shown.contains("SCAN bot_command_receipts"), "{shown}");
     }
+}
+
+#[test]
+fn a_row_the_scan_cannot_parse_is_skipped_and_named_and_the_scan_goes_on() {
+    let mut repo = Repository::in_memory().unwrap();
+    let good = record(false);
+    let request = BotRequestId::mint();
+    repo.begin_bot_creation(request, &good, HASH, 1).unwrap();
+    repo.fixture_execute_batch(
+        "INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,outcome_json,created_at_ms,updated_at_ms)
+         VALUES('damaged','not-a-request','00000000-0000-4000-8000-000000000000','x','create','prepared','{}',1,1)",
+    )
+    .unwrap();
+    let step = repo.bot_creation_scan("", 16).unwrap();
+    assert_eq!(step.found, vec![(good.user_scope, request)]);
+    assert_eq!(
+        step.skipped,
+        vec!["00000000-0000-4000-8000-000000000000".to_owned()]
+    );
 }

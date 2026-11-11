@@ -209,6 +209,26 @@ impl BotFolderSystem for FakeFs {
             Err(missing())
         }
     }
+    fn is_empty_dir(&self, at: &Path) -> std::io::Result<bool> {
+        let mut state = self.state.lock().unwrap();
+        state.calls.push(("is_empty_dir", key(at)));
+        let resolved = Self::resolve(&state, at);
+        if !state.dirs.contains(&resolved) {
+            return Err(missing());
+        }
+        let inside = |entry: &Key| entry.len() > resolved.len() && entry.starts_with(&resolved);
+        Ok(!state.dirs.iter().any(inside)
+            && !state.files.iter().any(inside)
+            && !state.links.keys().any(inside))
+    }
+}
+
+/// The reserved folders of the fixtures' AI root, with no Store root.
+fn reserved() -> ReservedFolders {
+    ReservedFolders {
+        ai_root: root(),
+        store_root: None,
+    }
 }
 
 /// One page in the fake Store, with its retained creation origin.

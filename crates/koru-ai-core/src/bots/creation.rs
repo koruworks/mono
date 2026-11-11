@@ -136,10 +136,13 @@ pub fn validate_role_text(title: &str, markdown: &str) -> Result<(), BotError> {
     Ok(())
 }
 
+/// The most bytes a folder path or binding may hold.
+pub const BOT_FOLDER_PATH_LIMIT: usize = 32768;
+
 /// An absolute folder path a person may name.
 pub fn validate_folder_path(path: &str) -> Result<(), BotError> {
     if path.is_empty()
-        || path.len() > 32768
+        || path.len() > BOT_FOLDER_PATH_LIMIT
         || path.contains('\0')
         || !std::path::Path::new(path).is_absolute()
     {
@@ -213,6 +216,22 @@ pub enum BotCreationReason {
     PageUnavailable,
     /// The final transaction failed and rolled back; Retry repeats it alone.
     StorageFailed,
+}
+
+impl BotCreationReason {
+    /// Every reason, for bounds that must hold whichever is recorded.
+    pub const ALL: &[Self] = &[
+        Self::OwnerUnavailable,
+        Self::StoreUnavailable,
+        Self::FolderUnavailable,
+        Self::FolderOccupied,
+        Self::FolderMismatch,
+        Self::FolderInvalid,
+        Self::RoleConflict,
+        Self::RoleUnavailable,
+        Self::PageUnavailable,
+        Self::StorageFailed,
+    ];
 }
 
 /// One creation, as its authorized owner reads it.
@@ -484,6 +503,38 @@ impl BotCreationRecord {
             *seed = None;
         }
         kept
+    }
+
+    /// This intent with the most evidence any later step can add: its last
+    /// phase, the verified Role page, the longest reason and the longest
+    /// folder binding a binding may be, every byte of it escaped in JSON.
+    /// T1 encodes this, so no later step can outgrow the bound, least of all
+    /// after the Role page exists.
+    pub fn with_maximal_evidence(&self) -> Self {
+        let mut most = self.clone();
+        most.phase = match self.role {
+            BotCreationRole::Existing { .. } => BotCreationPhase::FolderReady,
+            BotCreationRole::Authored { .. } => BotCreationPhase::RoleVerified,
+        };
+        if self.authored() {
+            most.role_page = Some(self.role_target());
+        }
+        most.reason = BotCreationReason::ALL
+            .iter()
+            .copied()
+            .max_by_key(|reason| serde_json::to_string(reason).map_or(0, |s| s.len()));
+        let mut binding = match &self.folder {
+            BotCreationFolder::Managed { path, .. } | BotCreationFolder::Selected { path } => {
+                path.clone()
+            }
+        };
+        // A control character is the most a byte grows in JSON (`\u0001`).
+        while binding.len() < BOT_FOLDER_PATH_LIMIT {
+            binding.push('\u{1}');
+        }
+        binding.truncate(BOT_FOLDER_PATH_LIMIT);
+        most.folder_binding = Some(binding);
+        most
     }
 
     /// The receipt outcome this record is stored as, within
