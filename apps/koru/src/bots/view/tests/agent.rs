@@ -8,8 +8,10 @@
 
 use super::*;
 use crate::bots::catalog::{self, Catalog, CatalogLink};
+use koru_ai_ui::agent_catalog::config::modes;
 use koru_ai_ui::agent_catalog::config::picker::{Readiness, Row};
 use koru_ai_ui::agent_catalog::{CatalogAgent, CatalogListing, CatalogMode, CatalogModel};
+use koru_ui::split_button::SplitTone;
 
 fn model(id: &str, name: &str) -> CatalogModel {
     CatalogModel {
@@ -28,7 +30,13 @@ fn model(id: &str, name: &str) -> CatalogModel {
 /// A shown card whose catalog has answered: Codex, ready, with two models
 /// and two modes.
 fn card() -> (Fixture, std::sync::mpsc::Receiver<catalog::Command>) {
-    let mut f = Fixture::opened(unpaused());
+    card_with(unpaused(), &["ask", "auto-review"])
+}
+
+/// The same over `bot`, whose agent lists `modes`, in that order, starting
+/// in *ask*.
+fn card_with(bot: Bot, modes: &[&str]) -> (Fixture, std::sync::mpsc::Receiver<catalog::Command>) {
+    let mut f = Fixture::opened(bot);
     let (link, commands, answers) = CatalogLink::test_pair();
     f.view.catalog = Box::new(Catalog::with_link(link));
     f.view.catalog.shown();
@@ -58,18 +66,14 @@ fn card() -> (Fixture, std::sync::mpsc::Receiver<catalog::Command>) {
                     agent,
                     result: Ok(CatalogListing {
                         models: vec![model("fixture", "Fixture"), model("gpt-5", "GPT-5")],
-                        modes: vec![
-                            CatalogMode {
-                                id: "ask".into(),
+                        modes: modes
+                            .iter()
+                            .map(|id| CatalogMode {
+                                id: (*id).into(),
                                 name: None,
                                 description: None,
-                            },
-                            CatalogMode {
-                                id: "auto-review".into(),
-                                name: None,
-                                description: None,
-                            },
-                        ],
+                            })
+                            .collect(),
                         default_mode: Some("ask".into()),
                     }),
                 })
@@ -101,7 +105,7 @@ fn the_card_chooses_a_model_and_a_mode_for_new_conversations_and_saves_once() {
     let lang = f.view.lang;
     assert_eq!(f.view.model_chip_words(), "Codex, Fixture");
     assert_eq!(
-        f.view.mode_chip_words().as_deref(),
+        f.view.mode_chip_row().map(|row| row.title).as_deref(),
         Some(t(lang, Words::AiAgentModeAskApproval)),
         "the agent's own start, in Koru's words"
     );
@@ -208,4 +212,177 @@ fn an_agent_that_is_not_ready_is_named_and_kept() {
         f.view.settings().model_shown().unwrap().model.provider,
         f.bot.config.model.provider
     );
+}
+
+/// One mode as the chip must wear it: the mode the Bot's read names, the
+/// mode the chip then shows, its color as `tone_of` decides it, the inks
+/// the chip is drawn in (icon, label) and its icon.
+struct Worn {
+    held: &'static str,
+    shown: &'static str,
+    tone: SplitTone,
+    icon_ink: &'static str,
+    label_ink: &'static str,
+    icon: char,
+}
+
+/// Codex's asking mode, its accept-edits equivalent (automatic review), a
+/// plain Auto it does not name, Full access, a mode Koru does not know, and
+/// a mode it no longer lists (the chip falls back to the first).
+const WORN: &[Worn] = &[
+    Worn {
+        held: "ask",
+        shown: "ask",
+        tone: SplitTone::Accent,
+        icon_ink: "Ink::Accent",
+        label_ink: "Ink::Primary",
+        icon: koru_draw::icons::QUESTION,
+    },
+    Worn {
+        held: "auto-review",
+        shown: "auto-review",
+        tone: SplitTone::Success,
+        icon_ink: "Ink::Success",
+        label_ink: "Ink::Primary",
+        icon: koru_draw::icons::ROBOT,
+    },
+    Worn {
+        held: "auto",
+        shown: "auto",
+        tone: SplitTone::Neutral,
+        icon_ink: "Ink::Primary",
+        label_ink: "Ink::Primary",
+        icon: koru_draw::icons::FADERS,
+    },
+    Worn {
+        held: "full-access",
+        shown: "full-access",
+        tone: SplitTone::Warning,
+        icon_ink: "Ink::Notice",
+        label_ink: "Ink::Notice",
+        icon: koru_draw::icons::WARNING,
+    },
+    Worn {
+        held: "custom",
+        shown: "custom",
+        tone: SplitTone::Accent,
+        icon_ink: "Ink::Accent",
+        label_ink: "Ink::Primary",
+        icon: koru_draw::icons::FADERS,
+    },
+    Worn {
+        held: "gone",
+        shown: "ask",
+        tone: SplitTone::Accent,
+        icon_ink: "Ink::Accent",
+        label_ink: "Ink::Primary",
+        icon: koru_draw::icons::QUESTION,
+    },
+];
+
+/// Every mode the fixture agent lists, in its order.
+const LISTED: &[&str] = &["ask", "auto-review", "auto", "full-access", "custom"];
+
+/// The chip's icon as the inspector records it.
+fn glyph(icon: char) -> String {
+    format!("U+{:04X}", icon as u32)
+}
+
+/// **The mode chip wears the mode's color** (P1.8 §20, the owner's
+/// decision): its icon in the color `tone_of` decides for the agent and the
+/// mode — the one a chat's send button and the list's row wear — its label
+/// in the reading ink but for *Full access*, which warns in both; its name
+/// says the mode in words and nothing about the color.
+#[test]
+fn the_settings_mode_chip_wears_the_modes_color() {
+    for worn in WORN {
+        let mut bot = unpaused();
+        bot.config.mode = Some(worn.held.into());
+        let (f, _catalog) = card_with(bot, LISTED);
+        let agent = f.bot.config.model.provider.as_str().to_owned();
+        assert_eq!(
+            modes::tone_of(&agent, worn.shown),
+            worn.tone,
+            "{}: the one decision",
+            worn.held
+        );
+        let drawn = mode_chip_drawn(&f.view);
+        assert_eq!(ink_of(&drawn, "lead ink"), worn.icon_ink, "{}", worn.held);
+        assert_eq!(ink_of(&drawn, "label ink"), worn.label_ink, "{}", worn.held);
+        assert_eq!(
+            drawn.get("lead icon"),
+            Some(&glyph(worn.icon)),
+            "{}",
+            worn.held
+        );
+        let title = modes::rows(f.view.lang, &agent, &offers(LISTED))
+            .into_iter()
+            .find(|row| row.id == worn.shown)
+            .expect("listed")
+            .title;
+        assert_eq!(
+            published(&f.view, MODE_CHIP).as_deref(),
+            Some(title.as_str()),
+            "{}: named in words, the color not in the name",
+            worn.held
+        );
+    }
+}
+
+/// The fixture's modes as the control takes them.
+fn offers<'a>(ids: &'a [&'a str]) -> Vec<modes::ModeOffer<'a>> {
+    ids.iter()
+        .map(|id| modes::ModeOffer {
+            id,
+            name: None,
+            description: None,
+        })
+        .collect()
+}
+
+/// **The chip's states keep working in color**: focused it is ringed and
+/// still wears the mode's color; with its agent not ready it is still
+/// there in color; while a save is on its way it is inert and reads as
+/// inert — the icon and the words in the inert ink, as any inert action.
+#[test]
+fn the_toned_mode_chip_keeps_its_states_and_inert_reads_as_inert() {
+    let mut bot = unpaused();
+    bot.config.mode = Some("full-access".into());
+    let (mut f, _catalog) = card_with(bot, LISTED);
+
+    f.view.focus = Some(MODE_CHIP);
+    let drawn = mode_chip_drawn(&f.view);
+    assert_eq!(
+        drawn.get("hovered / focused").map(String::as_str),
+        Some("false / true")
+    );
+    assert_eq!(ink_of(&drawn, "lead ink"), "Ink::Notice");
+
+    f.view
+        .catalog
+        .force_readiness_for_test(&f.bot.config.model.provider, Readiness::SignedOut);
+    assert!(f.view.agent_readiness_words().is_some(), "not ready");
+    assert_eq!(ink_of(&mode_chip_drawn(&f.view), "lead ink"), "Ink::Notice");
+    f.view
+        .catalog
+        .force_readiness_for_test(&f.bot.config.model.provider, Readiness::Ready);
+
+    // A change, saved: the chips are inert while it is on its way.
+    assert!(f.view.perform(Act::OpenModes));
+    key(&mut f.view, named(winit::keyboard::NamedKey::ArrowUp), None);
+    key(&mut f.view, named(winit::keyboard::NamedKey::Enter), None);
+    assert!(f.view.perform(Act::SaveModel));
+    let _ = f.wrote();
+    let drawn = mode_chip_drawn(&f.view);
+    assert_eq!(
+        drawn.get("implementation").map(String::as_str),
+        Some("koru_ui::button::ActionButton::draw_disabled"),
+        "inert"
+    );
+    assert_eq!(
+        ink_of(&drawn, "lead ink"),
+        "Ink::Secondary",
+        "no color while inert"
+    );
+    assert_eq!(ink_of(&drawn, "label ink"), "Ink::Secondary");
 }

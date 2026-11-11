@@ -1428,6 +1428,52 @@ fn an_archive_refused_while_a_resume_is_delivered_says_so() {
     assert!(said.refused);
 }
 
+/// **The mode chip as it was drawn** (P1.8 §20): the properties of the
+/// shared button painted inside the chip's element, read from the
+/// inspector over the tab's own frame — what reached the scene, not what
+/// the tab meant to draw.
+fn mode_chip_drawn(view: &BotView) -> std::collections::HashMap<String, String> {
+    let snapshot = view.with_frame(|tree, frame| {
+        let capture = koru_draw::inspect::Frame::begin(
+            1,
+            vello::kurbo::Affine::IDENTITY,
+            vello::kurbo::Rect::new(0.0, 0.0, 4000.0, 4000.0),
+        );
+        let mut scene = vello::Scene::new();
+        crate::input_engine::with(|engine| {
+            frame.paint(tree, &mut scene, vello::kurbo::Affine::IDENTITY, engine)
+        });
+        capture.finish()
+    });
+    let chip = snapshot
+        .records
+        .iter()
+        .position(|record| record.name == "Bot mode chip")
+        .expect("the mode chip is drawn");
+    let button = snapshot
+        .records
+        .iter()
+        .find(|record| record.parent == Some(chip) && record.name == "KoruButton")
+        .expect("drawn by the shared button");
+    button
+        .properties
+        .iter()
+        .map(|property| (property.name.to_owned(), property.value.clone()))
+        .collect()
+}
+
+/// The ink role a drawn property names: `Ink::Notice` of
+/// `Ink::Notice -> #rrggbb`.
+fn ink_of(drawn: &std::collections::HashMap<String, String>, name: &str) -> String {
+    drawn
+        .get(name)
+        .unwrap_or_else(|| panic!("no {name} drawn: {drawn:?}"))
+        .split(" -> ")
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// The lifecycle half of the tab (S14).
 mod agent;
 mod create;

@@ -83,3 +83,89 @@ fn primary_action_hover_is_a_real_darken() {
     assert!(hover.components[2] < colour.components[2]);
     assert_eq!(hover.components[3], colour.components[3]);
 }
+
+/// **A lead is measured and recorded, and changes nothing without one**
+/// (Bots P1.8 §20): its mark and gap widen the action; a plain draw records
+/// what it always did; a led draw records the mark and its inks, and an
+/// inert led draw the inert ink for both, whatever the lead asked.
+#[test]
+fn a_lead_widens_the_action_and_is_recorded_in_its_inks() {
+    use koru_draw::inspect;
+    let mut engine = TextEngine::new();
+    let button = ActionButton::new("Full access", ActionStyle::Secondary, None);
+    let lead = Lead {
+        glyph: koru_draw::icons::WARNING,
+        ink: theme::Ink::Notice,
+        label: Some(theme::Ink::Notice),
+    };
+    let mark = engine
+        .icon_layout(lead.glyph, ActionButton::ICON_SIZE)
+        .width();
+    assert_eq!(
+        button.width_led(&mut engine, None),
+        button.width(&mut engine)
+    );
+    let led = button.width_led(&mut engine, Some(lead));
+    assert!((led - button.width(&mut engine) - mark - ActionButton::GAP).abs() < 0.001);
+
+    let rect = Rect::new(10.0, 10.0, 160.0, ActionButton::H);
+    let drawn = |draw: &dyn Fn(&mut Scene, &mut TextEngine)| {
+        let capture = inspect::Frame::begin(
+            1,
+            Affine::IDENTITY,
+            vello::kurbo::Rect::new(0.0, 0.0, 400.0, 100.0),
+        );
+        let mut engine = TextEngine::new();
+        draw(&mut Scene::new(), &mut engine);
+        let snapshot = capture.finish();
+        let record = snapshot
+            .records
+            .iter()
+            .find(|record| record.name == "KoruButton")
+            .expect("the button's record")
+            .clone();
+        record
+            .properties
+            .iter()
+            .map(|property| (property.name, property.value.clone()))
+            .collect::<Vec<_>>()
+    };
+    let named = |props: &[(&str, String)], name: &str| {
+        props
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.split(" -> ").next().unwrap_or_default().to_owned())
+    };
+    let plain = drawn(&|scene, engine| {
+        button.draw_focused(scene, Affine::IDENTITY, engine, rect, false, false)
+    });
+    assert!(
+        named(&plain, "lead ink").is_none(),
+        "a plain draw records no lead"
+    );
+    let with = drawn(&|scene, engine| {
+        button.draw_led(
+            scene,
+            Affine::IDENTITY,
+            engine,
+            rect,
+            false,
+            false,
+            Some(lead),
+        )
+    });
+    assert_eq!(named(&with, "lead ink").as_deref(), Some("Ink::Notice"));
+    assert_eq!(named(&with, "label ink").as_deref(), Some("Ink::Notice"));
+    assert_eq!(
+        named(&with, "lead icon"),
+        Some(format!("U+{:04X}", koru_draw::icons::WARNING as u32))
+    );
+    let inert = drawn(&|scene, engine| {
+        button.draw_disabled_led(scene, Affine::IDENTITY, engine, rect, Some(lead))
+    });
+    assert_eq!(named(&inert, "lead ink").as_deref(), Some("Ink::Secondary"));
+    assert_eq!(
+        named(&inert, "label ink").as_deref(),
+        Some("Ink::Secondary")
+    );
+}

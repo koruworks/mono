@@ -48,12 +48,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use koru_ai_core::bots::{BotAccess, BotPage};
+use koru_ai_ui::agent_catalog::config::modes;
 use koru_draw::el::{El, Frame, Key, Role, col, leaf, row, scroll_y, spacer, text};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{Ink, Radius, Space, Surface, alias, roles};
 use koru_i18n::{Key as Words, t};
-use koru_ui::button::ActionStyle;
+use koru_ui::button::{ActionStyle, Lead};
 use koru_ui::text_field::Typed;
 use koru_ui::text_input::TextInput;
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
@@ -283,10 +284,27 @@ impl BotView {
         style: ActionStyle,
         disabled: bool,
     ) -> El {
+        self.button_led(engine, name, key, label, style, disabled, None)
+    }
+
+    /// [`Self::button`] led by a mark in an ink of its own (the mode chip,
+    /// P1.8 §20). Its name stays its words: the mark and its color add
+    /// nothing to what a screen reader hears.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn button_led(
+        &self,
+        engine: &mut TextEngine,
+        name: &'static str,
+        key: Key,
+        label: String,
+        style: ActionStyle,
+        disabled: bool,
+        lead: Option<Lead>,
+    ) -> El {
         let focused = self.focus == Some(key);
         leaf(
             name,
-            ButtonLeaf::new(engine, label.clone(), style, disabled, focused),
+            ButtonLeaf::led(engine, label.clone(), style, disabled, focused, lead),
         )
         .semantic()
         .id(key)
@@ -681,7 +699,17 @@ impl BotView {
             .fill(),
         );
         let mut card = card(AGENT_CARD, Words::BotsAgent).child(model);
-        if let Some(mode) = self.mode_chip_words() {
+        if let Some(mode) = self.mode_chip_row() {
+            // **The mode chip wears the mode's color** (P1.8 §20, the
+            // owner's decision): the mode's icon in the inks the list's row
+            // for it is drawn in, from the one decision a chat's send button
+            // wears (`modes::tone_of`, carried by the row).
+            let inks = modes::elements::mode_inks(mode.tone, mode.full_access);
+            let lead = Lead {
+                glyph: mode.icon,
+                ink: inks.icon,
+                label: Some(inks.title),
+            };
             card = card.child(
                 row("Bot mode row")
                     .gap(Space::S2)
@@ -693,13 +721,14 @@ impl BotView {
                             .ink(Ink::Secondary),
                     )
                     .child(
-                        self.button(
+                        self.button_led(
                             engine,
                             "Bot mode chip",
                             MODE_CHIP,
-                            mode,
+                            mode.title,
                             ActionStyle::Secondary,
                             pending,
+                            Some(lead),
                         )
                         .fill(),
                     ),
@@ -801,18 +830,19 @@ impl BotView {
     }
 
     /// **The mode's chip**, while the agent's modes are known: the mode the
-    /// draft names, else the one the agent says it starts in, in Koru's
-    /// words.
-    pub(super) fn mode_chip_words(&self) -> Option<String> {
-        use koru_ai_ui::agent_catalog::config::modes;
+    /// draft names, else the one the agent says it starts in, else (a mode
+    /// the agent no longer lists) its first — its row, in Koru's words, with
+    /// its icon and its color.
+    pub(super) fn mode_chip_row(&self) -> Option<modes::ModeRow> {
         let provider = self.agent_provider()?;
         let listing = self.agent_listing()?;
         let rows = modes::rows(self.lang, provider.as_str(), &listing.offers());
         let shown = self.mode_shown();
-        rows.iter()
-            .find(|row| Some(row.id.as_str()) == shown.as_deref())
-            .or_else(|| rows.first())
-            .map(|row| row.title.clone())
+        let at = rows
+            .iter()
+            .position(|row| Some(row.id.as_str()) == shown.as_deref())
+            .unwrap_or(0);
+        rows.into_iter().nth(at)
     }
 
     /// **The agent's readiness, when it is not ready**: said by its name,

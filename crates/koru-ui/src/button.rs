@@ -69,6 +69,30 @@ pub enum ActionStyle {
     Destructive,
 }
 
+/// **A mark before a compact action's label, and the inks of both** (Bots
+/// P1.8 §20): a Bot's mode chip leads with the mode's icon in the mode's
+/// color, and words *Full access* in the warning ink, as the approval-mode
+/// list's row does. The action keeps its style's frame, hover, focus ring
+/// and measure rules; drawn inert, the mark and the label are both in the
+/// inert ink, as an inert action's label is — inert reads as inert.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Lead {
+    pub glyph: char,
+    pub ink: theme::Ink,
+    /// The label's ink; `None` keeps the style's.
+    pub label: Option<theme::Ink>,
+}
+
+/// An ink role as the inspector records it: `Ink::Notice -> #rrggbb`, as an
+/// element's ink is recorded.
+fn ink_record(ink: theme::Ink, palette: &theme::Palette) -> String {
+    format!(
+        "{} -> {}",
+        ink.name(),
+        koru_draw::inspect::color(ink.of(palette))
+    )
+}
+
 /// The reusable compact text-button specification.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ActionButton<'a> {
@@ -97,11 +121,21 @@ impl<'a> ActionButton<'a> {
 
     /// Content-measured width with the component's horizontal air included.
     pub fn width(self, engine: &mut TextEngine) -> f32 {
+        self.width_led(engine, None)
+    }
+
+    /// [`Self::width`] with a [`Lead`] before the label, which counts its
+    /// mark and the gap after it.
+    pub fn width_led(self, engine: &mut TextEngine, lead: Option<Lead>) -> f32 {
         let text = engine.simple_layout(self.label, theme::role::row());
         let icon = self
             .trailing_icon
             .map(|glyph| engine.icon_layout(glyph, Self::ICON_SIZE));
-        text.width()
+        let lead_w = lead.map_or(0.0, |lead| {
+            engine.icon_layout(lead.glyph, Self::ICON_SIZE).width() + Self::GAP
+        });
+        lead_w
+            + text.width()
             + icon.as_ref().map_or(0.0, |icon| Self::GAP + icon.width())
             + Self::PAD_X * 2.0
     }
@@ -135,6 +169,24 @@ impl<'a> ActionButton<'a> {
         hovered: bool,
         focused: bool,
     ) {
+        self.draw_led(canvas, root, engine, rect, hovered, focused, None);
+    }
+
+    /// [`Self::draw_focused`] with a [`Lead`] before the label: the mark in
+    /// its ink, the label in the lead's label ink when it names one. The
+    /// mark, the label and a trailing icon are centred together.
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_led(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        hovered: bool,
+        focused: bool,
+        lead: Option<Lead>,
+    ) {
         let _inspection = koru_draw::inspect::scope(
             "KoruButton",
             "component",
@@ -159,6 +211,9 @@ impl<'a> ActionButton<'a> {
                 );
                 r.property("icon gap", Self::GAP, "ActionButton::GAP");
                 inspect_label(r, theme::role::row(), "theme::role::row()");
+                if let Some(lead) = lead {
+                    inspect_lead(r, lead, lead.ink, lead.label, theme::p());
+                }
             },
         );
         let p = theme::p();
@@ -212,26 +267,44 @@ impl<'a> ActionButton<'a> {
             .map(|glyph| engine.icon_layout(glyph, Self::ICON_SIZE));
         let icon_w = icon.as_ref().map_or(0.0, |icon| icon.width());
         let gap = icon.as_ref().map_or(0.0, |_| Self::GAP);
-        let content_w = text.width() + gap + icon_w;
+        let mark = lead.map(|lead| (engine.icon_layout(lead.glyph, Self::ICON_SIZE), lead));
+        let lead_w = mark
+            .as_ref()
+            .map_or(0.0, |(mark, _)| mark.width() + Self::GAP);
+        let content_w = lead_w + text.width() + gap + icon_w;
         let content_x = rect.x + (rect.w - content_w) * 0.5;
+        if let Some((mark, lead)) = &mark {
+            scene::draw_layout(
+                canvas,
+                root,
+                mark,
+                content_x,
+                rect.y + (rect.h - mark.height()) * 0.5,
+                Some(lead.ink.of(p)),
+            );
+        }
+        let label_colour = lead
+            .and_then(|lead| lead.label)
+            .map_or(colour, |ink| ink.of(p));
+        let label_x = content_x + lead_w;
         let label_y = crate::text_field::baseline_centred_y(&text, rect.y, rect.h);
         crate::typography::line(
             "Button label",
             canvas,
             root,
             &text,
-            content_x,
+            label_x,
             label_y,
             theme::role::row(),
             "theme::role::row()",
-            colour,
+            label_colour,
         );
         if let Some(icon) = icon {
             scene::draw_layout(
                 canvas,
                 root,
                 &icon,
-                content_x + text.width() + gap,
+                label_x + text.width() + gap,
                 rect.y + (rect.h - icon.height()) * 0.5,
                 Some(colour),
             );
@@ -247,6 +320,23 @@ impl<'a> ActionButton<'a> {
         engine: &mut TextEngine,
         rect: Rect,
     ) {
+        self.draw_disabled_led(canvas, root, engine, rect, None);
+    }
+
+    /// [`Self::draw_disabled`] with a [`Lead`] before the label: the mark
+    /// keeps its place and the label its, both in the inert ink — the
+    /// lead's inks are not drawn while the action cannot act.
+    #[track_caller]
+    pub fn draw_disabled_led(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        lead: Option<Lead>,
+    ) {
+        /// The ink an inert action is drawn in: the palette's `text_dim`.
+        const INERT: theme::Ink = theme::Ink::Secondary;
         let _inspection = koru_draw::inspect::scope(
             "KoruButton",
             "component",
@@ -260,21 +350,63 @@ impl<'a> ActionButton<'a> {
                 );
                 r.property("disabled", true, "instance state");
                 inspect_label(r, theme::role::row(), "theme::role::row()");
+                if let Some(lead) = lead {
+                    inspect_lead(r, lead, INERT, Some(INERT), theme::p());
+                }
             },
         );
         let text = engine.simple_layout(self.label, theme::role::row());
+        let label_x = match lead {
+            None => rect.x + (rect.w - text.width()) * 0.5,
+            Some(lead) => {
+                let mark = engine.icon_layout(lead.glyph, Self::ICON_SIZE);
+                let lead_w = mark.width() + Self::GAP;
+                let content_x = rect.x + (rect.w - lead_w - text.width()) * 0.5;
+                scene::draw_layout(
+                    canvas,
+                    root,
+                    &mark,
+                    content_x,
+                    rect.y + (rect.h - mark.height()) * 0.5,
+                    Some(INERT.of(theme::p())),
+                );
+                content_x + lead_w
+            }
+        };
         crate::typography::line(
             "Button label",
             canvas,
             root,
             &text,
-            rect.x + (rect.w - text.width()) * 0.5,
+            label_x,
             crate::text_field::baseline_centred_y(&text, rect.y, rect.h),
             theme::role::row(),
             "theme::role::row()",
             theme::p().text_dim,
         );
     }
+}
+
+/// A [`Lead`]'s record: its mark and the inks the mark and the label were
+/// drawn in (an inert action's are its inert ink, whatever the lead asked).
+fn inspect_lead(
+    r: &mut koru_draw::inspect::Record,
+    lead: Lead,
+    ink: theme::Ink,
+    label: Option<theme::Ink>,
+    palette: &theme::Palette,
+) {
+    r.property(
+        "lead icon",
+        format!("U+{:04X}", lead.glyph as u32),
+        "Lead::glyph",
+    );
+    r.property("lead ink", ink_record(ink, palette), "Lead::ink");
+    r.property(
+        "label ink",
+        label.map_or_else(|| "the style's".to_owned(), |ink| ink_record(ink, palette)),
+        "Lead::label",
+    );
 }
 
 fn darkened(colour: vello::peniko::Color, amount: f32) -> vello::peniko::Color {

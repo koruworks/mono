@@ -15,7 +15,7 @@ use koru_draw::el::{ElState, FrameCx, Leaf};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::metrics;
-use koru_ui::button::{ActionButton, ActionStyle};
+use koru_ui::button::{ActionButton, ActionStyle, Lead};
 use koru_ui::segmented::Segmented;
 use koru_ui::text_field::TextArea;
 use koru_ui::text_input::{InputStyle, TextInput};
@@ -101,6 +101,10 @@ pub(crate) struct ButtonLeaf {
     pub(crate) style: ActionStyle,
     pub(crate) disabled: bool,
     pub(crate) focused: bool,
+    /// A mark before the label and its inks (`ActionButton`'s `Lead`): the
+    /// mode chip's icon in the mode's color (P1.8 §20). `None` for every
+    /// other action.
+    pub(crate) lead: Option<Lead>,
 }
 
 impl ButtonLeaf {
@@ -111,13 +115,26 @@ impl ButtonLeaf {
         disabled: bool,
         focused: bool,
     ) -> Self {
-        let width = ActionButton::new(&label, style, None).width(engine);
+        Self::led(engine, label, style, disabled, focused, None)
+    }
+
+    /// The same action led by `lead`, measured with it.
+    pub(crate) fn led(
+        engine: &mut TextEngine,
+        label: String,
+        style: ActionStyle,
+        disabled: bool,
+        focused: bool,
+        lead: Option<Lead>,
+    ) -> Self {
+        let width = ActionButton::new(&label, style, None).width_led(engine, lead);
         Self {
             label,
             width,
             style,
             disabled,
             focused,
+            lead,
         }
     }
 }
@@ -138,9 +155,17 @@ impl Leaf for ButtonLeaf {
     ) {
         let button = ActionButton::new(&self.label, self.style, None);
         if self.disabled {
-            button.draw_disabled(scene, root, engine, at);
+            button.draw_disabled_led(scene, root, engine, at, self.lead);
         } else {
-            button.draw_focused(scene, root, engine, at, state.hovered, self.focused);
+            button.draw_led(
+                scene,
+                root,
+                engine,
+                at,
+                state.hovered,
+                self.focused,
+                self.lead,
+            );
         }
     }
 }

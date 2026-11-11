@@ -867,3 +867,67 @@ fn an_unconfirmed_create_offers_start_over_and_keeps_its_identities() {
     assert_ne!(c.form().bot(), bot);
     c.nothing_sent();
 }
+
+/// **The create form's mode chip wears the mode's color** (P1.8 §20), as
+/// the settings' does: each mode chosen from the list, the chip's icon in
+/// the color `tone_of` decides, its words in the reading ink but for *Full
+/// access*; and while the Bot is being created it is inert and reads so.
+#[test]
+fn the_create_forms_mode_chip_wears_the_modes_color_and_reads_inert_while_creating() {
+    use koru_ai_ui::agent_catalog::config::modes;
+    use koru_ui::split_button::SplitTone;
+    let ids = ["ask", "auto-review", "auto", "full-access", "custom"];
+    let mut served = listing();
+    served.modes = ids
+        .iter()
+        .map(|id| CatalogMode {
+            id: (*id).into(),
+            name: None,
+            description: None,
+        })
+        .collect();
+    served.default_mode = Some("ask".into());
+    let mut c = shown_with("codex", served);
+    let worn = [
+        (SplitTone::Accent, "Ink::Accent", "Ink::Primary"),
+        (SplitTone::Success, "Ink::Success", "Ink::Primary"),
+        (SplitTone::Neutral, "Ink::Primary", "Ink::Primary"),
+        (SplitTone::Warning, "Ink::Notice", "Ink::Notice"),
+        (SplitTone::Accent, "Ink::Accent", "Ink::Primary"),
+    ];
+    for (index, (id, (tone, icon_ink, label_ink))) in ids.iter().zip(worn).enumerate() {
+        assert!(c.view.perform(Act::OpenModes), "{id}");
+        for _ in 0..ids.len() {
+            key(&mut c.view, named(winit::keyboard::NamedKey::ArrowUp), None);
+        }
+        for _ in 0..index {
+            key(
+                &mut c.view,
+                named(winit::keyboard::NamedKey::ArrowDown),
+                None,
+            );
+        }
+        key(&mut c.view, named(winit::keyboard::NamedKey::Enter), None);
+        assert_eq!(
+            c.view.agent_draft().and_then(|draft| draft.mode).as_deref(),
+            Some(*id)
+        );
+        assert_eq!(modes::tone_of("agent-codex", id), tone, "{id}");
+        let drawn = mode_chip_drawn(&c.view);
+        assert_eq!(ink_of(&drawn, "lead ink"), icon_ink, "{id}");
+        assert_eq!(ink_of(&drawn, "label ink"), label_ink, "{id}");
+    }
+
+    // Created with *custom* chosen: the chip is inert while it is made.
+    c.fill();
+    assert!(c.view.perform(Act::Create));
+    let _ = c.sent();
+    let drawn = mode_chip_drawn(&c.view);
+    assert_eq!(
+        drawn.get("implementation").map(String::as_str),
+        Some("koru_ui::button::ActionButton::draw_disabled"),
+        "inert while creating"
+    );
+    assert_eq!(ink_of(&drawn, "lead ink"), "Ink::Secondary");
+    assert_eq!(ink_of(&drawn, "label ink"), "Ink::Secondary");
+}
