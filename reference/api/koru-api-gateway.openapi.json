@@ -3842,7 +3842,7 @@
           },
           {
             "additionalProperties": false,
-            "description": "One Run of a Bot conversation, read through the execution owner: the\nRun that wrote reply `message_id` of `chat_id` (or the reply a branch\ncopied there), with a window of its history from entry `from`, `len`\nentries (1 to 500). Answered `run` with the Run view\n`GET /v1/runs/{run}` answers, without `execution.session`: no\nstream, control or takeover handle.",
+            "description": "One Run of a Bot conversation, read through the execution owner: the\nRun that wrote reply `message_id` of `chat_id` (or the reply a branch\ncopied there), with a window of its history from entry `from`, `len`\nentries (1 to 500). Without `message_id`, the Run of a task started\nthrough the API (`start`/`continue`, which writes no reply) in\n`chat_id`, bound through the Bot's own admitted receipt; a reply's Run\nis read only through its reply. Answered `run` with the Run view\n`GET /v1/runs/{run}` answers, without `execution.session`: no\nstream, control or takeover handle.",
             "properties": {
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -3868,7 +3868,17 @@
                 "type": "integer"
               },
               "message_id": {
-                "$ref": "#/components/schemas/MessageId"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/MessageId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
               },
               "run_id": {
                 "$ref": "#/components/schemas/RunId"
@@ -3878,10 +3888,33 @@
               "command",
               "bot_id",
               "chat_id",
-              "message_id",
               "run_id",
               "from",
               "len"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The person's own Stop for a task started through the API (`start` or\n`continue`), named by that operation's `request_id`, as\n`read_operation` names it. Its Run is stopped as a conversation's\nStop and Archive stop theirs: a queued Run never starts, a running one\nends even while a person holds its session; never the automatic\ninterruption. Answered `task_stop`. A Stop only reduces work, so no\nhold refuses it. A task a conversation message started is not this\ncommand's: `not_found`.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "stop_task"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id"
             ],
             "type": "object"
           }
@@ -5207,6 +5240,24 @@
               "view"
             ],
             "type": "object"
+          },
+          {
+            "properties": {
+              "result": {
+                "enum": [
+                  "task_stop"
+                ],
+                "type": "string"
+              },
+              "stop": {
+                "$ref": "#/components/schemas/BotTaskStop"
+              }
+            },
+            "required": [
+              "result",
+              "stop"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -5277,6 +5328,64 @@
           "documents"
         ],
         "type": "object"
+      },
+      "BotTaskStop": {
+        "additionalProperties": false,
+        "description": "The answer to a [`BotCommand::StopTask`]: the task's operation, its Run\nand what the Stop found.",
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/BotTaskStopOutcome"
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/RunId"
+          }
+        },
+        "required": [
+          "request_id",
+          "bot_id",
+          "run_id",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "BotTaskStopOutcome": {
+        "description": "What a [`BotCommand::StopTask`] found and did.",
+        "oneOf": [
+          {
+            "description": "The task was queued or running, and this Stop ended it.",
+            "enum": [
+              "stopped"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The Stop was delivered and its execution owner recorded the person's\ncancellation, but the Run's end is not proven yet (its process may\nstill be exiting, or effects are still being drained). Ask again: a\nlater `stop_task` answers `already_settled` once it has settled, or\nsends the Stop again.",
+            "enum": [
+              "stopping"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "It had already ended (finished, failed, or stopped before): nothing\nwas sent.",
+            "enum": [
+              "already_settled"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Its execution owner refused it before admitting it: it never ran.",
+            "enum": [
+              "never_admitted"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "BotTrashedBy": {
         "description": "The lifecycle operation that put a conversation into Trash.",
@@ -21816,7 +21925,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, or the Run view of a reply's Run (a bounded window of its history, without its session). Conversation history uses the Chat reads; execution is coordinated separately.",
+        "description": "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, the Run view of a reply's or an API task's Run (a bounded window of its history, without its session), or what a task's Stop found and did. Conversation history uses the Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -21837,7 +21946,7 @@
                 }
               }
             },
-            "description": "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, or the Run view of a reply's Run (a bounded window of its history, without its session). Conversation history uses the Chat reads; execution is coordinated separately."
+            "description": "A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, the Run view of a reply's or an API task's Run (a bounded window of its history, without its session), or what a task's Stop found and did. Conversation history uses the Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -21897,7 +22006,7 @@
             ]
           }
         ],
-        "summary": "Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or request admission"
+        "summary": "Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or a task started through the API, request admission, or stop a task started through the API"
       }
     },
     "/v1/ai/chats": {

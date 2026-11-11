@@ -382,7 +382,7 @@ fn a_run_read_names_the_reply_and_its_run_and_nothing_else() {
     let request = BotCommand::ReadRun {
         bot_id: BotId::mint(),
         chat_id: ChatId::new(),
-        message_id: crate::MessageId::new(),
+        message_id: Some(crate::MessageId::new()),
         run_id: koru_delegate_core::RunId::mint(),
         from: 0,
         len: BOT_RUN_WINDOW_LIMIT,
@@ -422,7 +422,82 @@ fn a_run_read_names_the_reply_and_its_run_and_nothing_else() {
             "{field}"
         );
     }
+    // An API task's Run is read without `message_id` (omitted when absent;
+    // an explicit null reads the same).
+    let mut task = json.clone();
+    task.as_object_mut().unwrap().remove("message_id");
+    let BotCommand::ReadRun { message_id, .. } =
+        serde_json::from_value::<BotCommand>(task.clone()).unwrap()
+    else {
+        panic!("read_run")
+    };
+    assert_eq!(message_id, None);
+    let BotCommand::ReadRun { run_id, .. } = request else {
+        unreachable!()
+    };
+    let without = serde_json::from_value::<BotCommand>(task.clone()).unwrap();
+    assert!(
+        serde_json::to_value(&without)
+            .unwrap()
+            .get("message_id")
+            .is_none()
+    );
+    task["message_id"] = serde_json::Value::Null;
+    assert!(matches!(
+        serde_json::from_value::<BotCommand>(task).unwrap(),
+        BotCommand::ReadRun { message_id: None, run_id: r, .. } if r == run_id
+    ));
     let mut missing = json;
     missing.as_object_mut().unwrap().remove("len");
     assert!(serde_json::from_value::<BotCommand>(missing).is_err());
+}
+
+#[test]
+fn a_task_stop_names_only_the_operation_and_its_bot_and_answers_what_it_did() {
+    let request = BotCommand::StopTask {
+        request_id: BotRequestId::mint(),
+        bot_id: BotId::mint(),
+    };
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["command"], "stop_task");
+    assert_eq!(
+        json.as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["bot_id", "command", "request_id"])
+    );
+    assert_eq!(
+        serde_json::from_value::<BotCommand>(json.clone()).unwrap(),
+        request
+    );
+    // Closed: no Run, fence or session rides along.
+    for field in ["run_id", "fence", "session"] {
+        let mut extra = json.clone();
+        extra[field] = serde_json::json!("caller-controlled");
+        assert!(
+            serde_json::from_value::<BotCommand>(extra).is_err(),
+            "{field}"
+        );
+    }
+    let answer = BotResponse::TaskStop {
+        stop: BotTaskStop {
+            request_id: BotRequestId::mint(),
+            bot_id: BotId::mint(),
+            run_id: koru_delegate_core::RunId::mint(),
+            outcome: BotTaskStopOutcome::AlreadySettled,
+        },
+    };
+    let wire = serde_json::to_value(&answer).unwrap();
+    assert_eq!(wire["result"], "task_stop");
+    assert_eq!(wire["stop"]["outcome"], "already_settled");
+    for (outcome, token) in [
+        (BotTaskStopOutcome::Stopped, "stopped"),
+        (BotTaskStopOutcome::Stopping, "stopping"),
+        (BotTaskStopOutcome::NeverAdmitted, "never_admitted"),
+    ] {
+        assert_eq!(serde_json::to_value(outcome).unwrap(), token);
+    }
+    assert_eq!(serde_json::from_value::<BotResponse>(wire).unwrap(), answer);
 }

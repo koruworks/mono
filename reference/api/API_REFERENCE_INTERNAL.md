@@ -134,7 +134,7 @@ Generated from the route catalog. Do not edit.
 - PUT `/v1/sessions/{session_id}/size` — Set the process terminal size (sessions.resize)
 - DELETE `/v1/sessions/{session_id}` — Terminate the complete process tree (sessions.terminate)
 - GET `/v1/sessions/{session_id}/subscribe` — Subscribe to ordered output and lifecycle events (sessions.subscribe)
-- POST `/v1/ai/bots` — Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or request admission (Public)
+- POST `/v1/ai/bots` — Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or a task started through the API, request admission, or stop a task started through the API (Public)
 - GET `/v1/ai/providers/settings` — Read non-secret AI provider settings (Public)
 - PUT `/v1/ai/providers/selection` — Select the active AI provider (Public)
 - PUT `/v1/ai/providers/openai` — Update non-secret OpenAI settings (Public)

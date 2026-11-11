@@ -295,3 +295,72 @@ fn finishing_backoff_doubles_from_the_poll_interval_to_the_owner_cap() {
     );
     assert_eq!(finishing_backoff(40), Duration::from_secs(32));
 }
+
+/// Task Stops (`stop_task`) have a lane of their own: with eight of them
+/// sent while the execution owner holds the first, the ones past its queue
+/// are answered `ai_worker_saturated` at once, and a person's approval
+/// answer and conversation Stop on the Stop lane are each accepted and
+/// answered meanwhile (the lane review found task Stops on the Stop lane's
+/// thread, where a stuck one held the person's other Stops).
+#[test]
+fn task_stops_have_their_own_lane_and_never_make_an_approval_or_a_stop_wait() {
+    let (output, events) = sync_channel(32);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let mut admin = ProviderAdminPool::spawn(None, None, output, shutdown.clone()).unwrap();
+    let (entered_tx, entered) = sync_channel(8);
+    let (release_tx, release) = sync_channel(8);
+    let stuck: Arc<dyn BotDelegatePort> = Arc::new(Blocked {
+        entered: entered_tx,
+        release: Mutex::new(release),
+    });
+    let far = Instant::now() + Duration::from_secs(60);
+    let mut answers = Vec::new();
+    let mut saturated = 0;
+    for _ in 0..8 {
+        let (reply, answer) = sync_channel(1);
+        let job = crate::worker::bots::BotTaskStopJob::fixture(stuck.clone(), far, reply);
+        match admin.try_submit(ProviderAdminJob::BotTaskStop(job)) {
+            Ok(()) => answers.push(answer),
+            Err(error) => {
+                assert_eq!(error.failure.code, "ai_worker_saturated");
+                saturated += 1;
+            }
+        }
+        if answers.len() == 1 && saturated == 0 {
+            entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+    }
+    assert_eq!(
+        answers.len(),
+        1 + crate::worker::bots::TASK_STOP_QUEUE_CAPACITY
+    );
+    assert_eq!(saturated, 8 - answers.len());
+    // The person's approval answer and conversation Stop are not behind them.
+    let started = Instant::now();
+    admin
+        .try_submit(ProviderAdminJob::BotInteraction(
+            super::super::controls::ControlJob::fixture(Arc::new(Administrative)),
+        ))
+        .unwrap_or_else(|_| panic!("the interactive queue has room"));
+    admin
+        .try_submit(control_job(Arc::new(Administrative)))
+        .unwrap_or_else(|_| panic!("the Stop lane has room"));
+    let mut seen = (false, false);
+    while !(seen.0 && seen.1) {
+        match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Envelope::BotInteraction(_) => seen.0 = true,
+            Envelope::BotChatStep(result) => {
+                assert!(matches!(result.result, Ok(BotReply::Applied)));
+                seen.1 = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(started.elapsed() < Duration::from_secs(2));
+    shutdown.store(true, Ordering::Release);
+    for _ in 0..8 {
+        let _ = release_tx.try_send(());
+    }
+    admin.stop();
+    drop(answers);
+}

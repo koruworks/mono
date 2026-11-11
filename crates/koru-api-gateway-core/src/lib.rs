@@ -3253,7 +3253,7 @@ mod tests {
         let command = koru_ai_wire::BotCommand::ReadRun {
             bot_id: koru_ai_core::bots::BotId::mint(),
             chat_id: koru_ai_core::ChatId::new(),
-            message_id: koru_ai_core::MessageId::new(),
+            message_id: Some(koru_ai_core::MessageId::new()),
             run_id: koru_delegate_core::RunId::mint(),
             from: 0,
             len: 100,
@@ -3274,6 +3274,73 @@ mod tests {
                         .header(header::AUTHORIZATION, format!("Bearer {token}"))
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            match expected {
+                Some(status) => assert_eq!(response.status(), status),
+                None => {
+                    // This mock host has no Bot authority: the owner refuses
+                    // with its own code, past the route's checks.
+                    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                        .await
+                        .unwrap();
+                    let failure: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(failure["code"], "workspace_unavailable", "{failure}");
+                }
+            }
+        }
+    }
+
+    /// `stop_task` rides the same route: vouched `bots.manage` only, its body
+    /// closed (no run, fence or session field reaches the owner), and a
+    /// well-formed one is answered by the AI owner itself.
+    #[tokio::test]
+    async fn bot_task_stop_rides_the_bot_route_strictly() {
+        let (_root, state, _) = state_with_ai();
+        let (ordinary, _) =
+            state
+                .sessions
+                .mint("claimed-owner", &["bots.manage".into()], now_millis());
+        let (owner, _) = state.sessions.mint_admitted(
+            "owner",
+            &["bots.manage".into()],
+            Admission::Vouched,
+            now_millis(),
+        );
+        let command = koru_ai_wire::BotCommand::StopTask {
+            request_id: koru_ai_core::bots::BotRequestId::mint(),
+            bot_id: koru_ai_core::bots::BotId::mint(),
+        };
+        let valid = serde_json::to_value(&command).unwrap();
+        assert_eq!(valid["command"], "stop_task");
+        for field in ["run_id", "fence", "session"] {
+            let mut extra = valid.clone();
+            extra[field] = serde_json::json!("caller-controlled");
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/bots")
+                        .header(header::AUTHORIZATION, format!("Bearer {owner}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(extra.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{field}");
+        }
+        for (token, expected) in [(&ordinary, Some(StatusCode::FORBIDDEN)), (&owner, None)] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/ai/bots")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(valid.to_string()))
                         .unwrap(),
                 )
                 .await

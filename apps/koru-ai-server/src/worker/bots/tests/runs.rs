@@ -34,6 +34,11 @@ struct RunOwner {
     down: AtomicBool,
     /// Its Runs say the agent asked for them (no Bot Run does).
     agent_requested: AtomicBool,
+    /// It admits a task started through the API (`Submit`) and answers its
+    /// `Reconcile`; otherwise it leaves every such call pending.
+    admits: AtomicBool,
+    /// What it admitted, by request.
+    admitted: Mutex<HashMap<BotRequestId, d::BotAdmissionView>>,
 }
 
 impl RunOwner {
@@ -47,6 +52,8 @@ impl RunOwner {
             gate: Mutex::default(),
             down: AtomicBool::new(false),
             agent_requested: AtomicBool::new(false),
+            admits: AtomicBool::new(false),
+            admitted: Mutex::default(),
         })
     }
     fn holds(&self, run: d::RunId, bot: &Bot) {
@@ -125,6 +132,50 @@ impl BotDelegatePort for RunOwner {
             !matches!(command, D::Read { .. }),
             "a Run read always states how long it may wait"
         );
+        if self.admits.load(Ordering::SeqCst) {
+            match &command {
+                // `Orchestrator::admit_bot` for a new request: queued, with
+                // no fence, under the ledger's immutable binding of its Run.
+                D::Submit { submission } if submission.provenance.ai_attempt_id.is_none() => {
+                    let p = &submission.provenance;
+                    if p.owner.device != self.device {
+                        return Err(refused("bot_owner_mismatch"));
+                    }
+                    let view = d::BotAdmissionView {
+                        key: d::BotSubmissionKey {
+                            owner: p.owner,
+                            bot: p.bot,
+                            request: p.submission,
+                        },
+                        run: submission.request.run,
+                        state: d::BotAdmissionState::Queued,
+                        queue_sequence: 1,
+                        fence: None,
+                    };
+                    self.ledger
+                        .lock()
+                        .unwrap()
+                        .insert(submission.request.run, (p.owner, p.bot));
+                    self.admitted
+                        .lock()
+                        .unwrap()
+                        .entry(p.submission)
+                        .or_insert_with(|| view.clone());
+                    return Ok(BotReply::Admission { admission: view });
+                }
+                // `Orchestrator::bot_reconcile`: the admission it holds, or
+                // Missing.
+                D::Reconcile { key } => {
+                    return Ok(match self.admitted.lock().unwrap().get(&key.request) {
+                        Some(view) if view.key == *key => BotReply::Admission {
+                            admission: view.clone(),
+                        },
+                        _ => BotReply::Missing,
+                    });
+                }
+                _ => {}
+            }
+        }
         // Startup recovery (native effects, deliveries) is not under test.
         Err(koru_delegate_api::Failure::new(
             "fixture_pending",
@@ -263,6 +314,27 @@ fn worker(
     (worker, client)
 }
 
+/// [`worker`], with model discovery answering ready, so a `start` can be
+/// prepared.
+fn worker_with(
+    repo: Repository,
+    authority: Arc<dyn BotAuthority>,
+    owner: Arc<RunOwner>,
+) -> (WorkerHandle, AiWorkerClient) {
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-memory-run-reads"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(authority)
+    .with_bot_delegate(owner);
+    config.test_repository = Some(repo);
+    config.test_bot_runtime_ready = true;
+    let worker = AiWorker::new(config).spawn().unwrap();
+    let client = worker.client();
+    (worker, client)
+}
+
 fn completed(repo: &mut Repository, chat: ChatId, offset: i64) -> PendingTurn {
     let mut pending = turn(chat, Uuid::new_v4(), offset);
     // After whatever the conversation already holds.
@@ -386,7 +458,7 @@ fn read(bot: BotId, chat: ChatId, message: MessageId, run: d::RunId) -> BotComma
     BotCommand::ReadRun {
         bot_id: bot,
         chat_id: chat,
-        message_id: message,
+        message_id: Some(message),
         run_id: run,
         from: 0,
         len: 100,
@@ -419,7 +491,7 @@ fn the_owner_reads_the_run_that_wrote_a_reply_without_its_session() {
             BotCommand::ReadRun {
                 bot_id: bot.id,
                 chat_id: bot.main_chat,
-                message_id: reply.assistant_message.id,
+                message_id: Some(reply.assistant_message.id),
                 run_id: run,
                 from: 1,
                 len: 3,
@@ -848,7 +920,7 @@ fn a_window_is_one_to_five_hundred_entries() {
     let window = |from, len| BotCommand::ReadRun {
         bot_id: bot.id,
         chat_id: bot.main_chat,
-        message_id: reply.assistant_message.id,
+        message_id: Some(reply.assistant_message.id),
         run_id: run,
         from,
         len,
@@ -1215,3 +1287,5 @@ fn a_transcript_whose_runs_cannot_be_named_is_still_answered() {
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+mod tasks;

@@ -364,17 +364,33 @@ pub enum BotCommand {
     /// One Run of a Bot conversation, read through the execution owner: the
     /// Run that wrote reply `message_id` of `chat_id` (or the reply a branch
     /// copied there), with a window of its history from entry `from`, `len`
-    /// entries (1 to 500). Answered `run` with the Run view
+    /// entries (1 to 500). Without `message_id`, the Run of a task started
+    /// through the API (`start`/`continue`, which writes no reply) in
+    /// `chat_id`, bound through the Bot's own admitted receipt; a reply's Run
+    /// is read only through its reply. Answered `run` with the Run view
     /// `GET /v1/runs/{run}` answers, without `execution.session`: no
     /// stream, control or takeover handle.
     ReadRun {
         bot_id: BotId,
         chat_id: ChatId,
-        message_id: crate::MessageId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<crate::MessageId>,
         run_id: koru_delegate_core::RunId,
         from: u64,
         #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 500)))]
         len: u32,
+    },
+    /// The person's own Stop for a task started through the API (`start` or
+    /// `continue`), named by that operation's `request_id`, as
+    /// `read_operation` names it. Its Run is stopped as a conversation's
+    /// Stop and Archive stop theirs: a queued Run never starts, a running one
+    /// ends even while a person holds its session; never the automatic
+    /// interruption. Answered `task_stop`. A Stop only reduces work, so no
+    /// hold refuses it. A task a conversation message started is not this
+    /// command's: `not_found`.
+    StopTask {
+        request_id: BotRequestId,
+        bot_id: BotId,
     },
 }
 
@@ -413,6 +429,39 @@ pub enum BotResponse {
     Creation { creation: BotCreation },
     Creations { page: BotCreationPage },
     Run { view: koru_delegate_core::RunView },
+    TaskStop { stop: BotTaskStop },
+}
+
+/// What a [`BotCommand::StopTask`] found and did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BotTaskStopOutcome {
+    /// The task was queued or running, and this Stop ended it.
+    Stopped,
+    /// The Stop was delivered and its execution owner recorded the person's
+    /// cancellation, but the Run's end is not proven yet (its process may
+    /// still be exiting, or effects are still being drained). Ask again: a
+    /// later `stop_task` answers `already_settled` once it has settled, or
+    /// sends the Stop again.
+    Stopping,
+    /// It had already ended (finished, failed, or stopped before): nothing
+    /// was sent.
+    AlreadySettled,
+    /// Its execution owner refused it before admitting it: it never ran.
+    NeverAdmitted,
+}
+
+/// The answer to a [`BotCommand::StopTask`]: the task's operation, its Run
+/// and what the Stop found.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotTaskStop {
+    pub request_id: BotRequestId,
+    pub bot_id: BotId,
+    pub run_id: RunId,
+    pub outcome: BotTaskStopOutcome,
 }
 
 /// The most conversations one [`BotCommand::ListActivity`] reply names.

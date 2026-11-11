@@ -1,7 +1,28 @@
 // SPDX-License-Identifier: MPL-2.0
-//! One-command authority evidence, prepared off the AI writer by its existing bounded pool.
+//! One-command authority evidence, prepared off the AI writer on preparation's
+//! own lane of its bounded pool (`koru-ai-provider-prepare`).
+//!
+//! What a preparation may wait on: the Store, through the authority adapter
+//! (`inspect`, and `capture` of Role history for a task), each hop bounded by
+//! the Store worker's own 30 s; the session host's model catalog, for a
+//! change that names a model; the folder system, for a changed folder; and,
+//! for a terminal question card answered by the next message, one execution
+//! owner read (`Reconcile`), bounded by [`PREPARATION_OWNER_WITHIN`]. It never
+//! waits on background work: no lifecycle, recovery, probe, walk, branch,
+//! policy or provider job runs on this lane.
 use super::*;
 use std::collections::BTreeSet;
+
+/// The longest a preparation waits on the execution owner (the terminal
+/// question card's `Reconcile`): well inside the caller's own
+/// `RESPONSE_TIMEOUT`, so a hung owner answers `chat_busy` (retryable), not a
+/// worker timeout, and holds the people queued behind it for no longer.
+/// Shorter under test, so a hung owner is proved in seconds.
+#[cfg(not(test))]
+pub(in crate::worker) const PREPARATION_OWNER_WITHIN: Duration = Duration::from_secs(10);
+#[cfg(test)]
+pub(in crate::worker) const PREPARATION_OWNER_WITHIN: Duration = Duration::from_secs(2);
+const _: () = assert!(PREPARATION_OWNER_WITHIN.as_millis() * 3 <= RESPONSE_TIMEOUT.as_millis());
 
 #[derive(Clone)]
 pub(in crate::worker) struct CommandContext {
@@ -321,7 +342,8 @@ impl WorkerState {
                     | BotCommand::PurgeChat { .. }
                     | BotCommand::ReadLifecycleOperation { .. }
                     | BotCommand::ListBotChats { .. }
-                    | BotCommand::ReadRun { .. } => {}
+                    | BotCommand::ReadRun { .. }
+                    | BotCommand::StopTask { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -471,8 +493,11 @@ impl WorkerState {
         // so its proof is not fenced to the revision it was prepared at: an
         // operation moving the revision (Archive's pause, its completion)
         // must not refuse a client polling its progress.
+        // A task's Stop is the same: it proves the owner and the workspace
+        // against the row at dispatch, and only reduces work.
         let read = matches!(&command, WorkerCommand::Bots { request, .. }
-            if super::lifecycle::bot_read_command(request));
+            if super::lifecycle::bot_read_command(request)
+                || matches!(request, BotCommand::StopTask { .. }));
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match super::lifecycle::provable_bot(&self.repository, *id, &command) {
@@ -550,7 +575,8 @@ pub(super) fn bot_targets(
             | BotCommand::PurgeChat { bot_id, .. }
             | BotCommand::ReadLifecycleOperation { bot_id, .. }
             | BotCommand::ListBotChats { bot_id, .. }
-            | BotCommand::ReadRun { bot_id, .. } => *bot_id,
+            | BotCommand::ReadRun { bot_id, .. }
+            | BotCommand::StopTask { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
             // The workspace alone is proved; the read names no Bot or chat.
             BotCommand::ListActivity { .. } | BotCommand::ListTrashedBotChats { .. } => {

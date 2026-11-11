@@ -26,12 +26,14 @@ mod answered;
 mod context_window;
 mod defaults;
 mod history;
+mod lanes;
 mod listing;
 mod owed;
 mod pending;
 mod probe;
 mod reverse;
 mod sibling;
+mod task_stop;
 mod trash;
 mod unadmitted;
 
@@ -76,6 +78,15 @@ struct ApiTask {
     /// intent and answers `bot_context_unavailable` (`bot_submit`): admitted
     /// although the reply is a refusal.
     context_unavailable: bool,
+    /// The owner recorded the person's cancellation of this task (its Stop
+    /// arrived; `Orchestrator::cancel` writes it before proving the end).
+    cancelled: bool,
+    /// The process exits right after an unconfirmed Stop, before the Stop is
+    /// sent again: the exit proves the end and the owner settles the task.
+    exits_after_unconfirmed: bool,
+    /// The task ends by itself just after the next admission read, before a
+    /// Stop arrives: settled, its status `Completed`, never cancelled.
+    finishes_after_read: bool,
 }
 
 #[derive(Default)]
@@ -543,18 +554,23 @@ impl BotDelegatePort for Archiving {
                     .iter()
                     .any(|t| t.view.key.request == key.request) =>
             {
-                let api = self.api.lock().unwrap();
+                let mut api = self.api.lock().unwrap();
                 let task = api
-                    .iter()
+                    .iter_mut()
                     .find(|t| t.view.key.request == key.request)
                     .unwrap();
-                Ok(if task.admitted {
+                let answer = if task.admitted {
                     BotReply::Admission {
                         admission: task.view.clone(),
                     }
                 } else {
                     BotReply::Missing
-                })
+                };
+                if task.finishes_after_read {
+                    task.finishes_after_read = false;
+                    task.view.state = d::BotAdmissionState::Settled;
+                }
+                Ok(answer)
             }
             D::UnsettledWork { bot, limit, .. } => {
                 assert!(*limit >= 1 && *limit <= 64);
@@ -582,9 +598,16 @@ impl BotDelegatePort for Archiving {
                 self.stops.lock().unwrap().push(key.run);
                 let mut api = self.api.lock().unwrap();
                 if let Some(task) = api.iter_mut().find(|t| t.view.run == key.run) {
-                    // A Run the owner never admitted is unknown to it.
+                    // A Run the owner never admitted is unknown to it
+                    // (`RunError::UnknownRun`, spelled `unknown_run`).
                     if !task.admitted {
-                        return Err(refused("run_unknown"));
+                        return Err(refused("unknown_run"));
+                    }
+                    // `bot_stop` of a Run whose attempt already retired (it
+                    // ended, by itself or by an earlier Stop) only retires it
+                    // again: no fence is asked for and its status stays.
+                    if task.view.state == d::BotAdmissionState::Settled {
+                        return Ok(BotReply::Applied);
                     }
                     // Only the owner's current fence is accepted: one read
                     // before the dispatcher started the Run is refused, and
@@ -609,8 +632,17 @@ impl BotDelegatePort for Archiving {
                         task.take_on_stop = false;
                         task.held = true;
                     }
+                    // `Orchestrator::cancel` records the person's
+                    // cancellation first, then proves the end: unproven, the
+                    // task stays unsettled (Executing) and the Stop answers
+                    // unconfirmed.
+                    task.cancelled = true;
                     if task.pending > 0 {
                         task.pending -= 1;
+                        if task.exits_after_unconfirmed {
+                            task.view.state = d::BotAdmissionState::Settled;
+                            task.held = false;
+                        }
                         return Err(unconfirmed());
                     }
                     task.view.state = d::BotAdmissionState::Settled;
@@ -624,8 +656,73 @@ impl BotDelegatePort for Archiving {
                 drop(self.native.execute(command));
                 Ok(BotReply::Applied)
             }
+            // The owner's `Read` of an API task's Run, as `Actor::view`
+            // answers it, with only what a task Stop reads: the Run and its
+            // status (the person's cancellation, an end by itself, or still
+            // running).
+            D::Read { key, .. }
+                if self
+                    .api
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|t| t.view.run == key.run) =>
+            {
+                let api = self.api.lock().unwrap();
+                let task = api.iter().find(|t| t.view.run == key.run).unwrap();
+                let status = if task.cancelled {
+                    d::RunStatus::Cancelled
+                } else if task.view.state == d::BotAdmissionState::Settled {
+                    d::RunStatus::Completed
+                } else {
+                    d::RunStatus::Starting
+                };
+                Ok(BotReply::Run {
+                    view: task_run_view(key.run, status),
+                })
+            }
             _ => self.native.execute(command),
         }
+    }
+}
+
+/// The least Run view the owner answers for an API task's Run, with
+/// `status`.
+fn task_run_view(run: d::RunId, status: d::RunStatus) -> d::RunView {
+    let mut header = d::RunHeader::from_request(
+        d::DelegationRequest {
+            run,
+            requested_by: d::ActorRef::Person {
+                profile: d::ProfileId::from_uuid(Uuid::new_v4()),
+            },
+            objective: d::Objective::new("API-TASK").unwrap(),
+            agent: d::SessionProfileKey::BuiltIn("codex".parse().unwrap()),
+            requested_model: None,
+            scope: d::WorkspaceScope::BotFolder {
+                folder: d::BotWorkingFolder::new("D:/isolated".into()).unwrap(),
+            },
+            context: Vec::new(),
+            grants: Default::default(),
+            executing_device: d::DeviceId::from_uuid(Uuid::new_v4()),
+            origin: Default::default(),
+        },
+        1,
+    );
+    header.status = status;
+    d::RunView {
+        document: d::DocumentId::from_uuid(Uuid::new_v4()),
+        header,
+        execution: d::RunExecution {
+            device: d::DeviceId::from_uuid(Uuid::new_v4()),
+            session: None,
+            run_workspace: None,
+        },
+        context: Vec::new(),
+        timeline: d::TimelineWindow {
+            total: 0,
+            from: 0,
+            items: Vec::new(),
+        },
     }
 }
 
@@ -894,6 +991,9 @@ fn api_task(bot: &Bot, state: d::BotAdmissionState, pending: usize) -> ApiTask {
         dispatch: false,
         started: false,
         context_unavailable: false,
+        cancelled: false,
+        exits_after_unconfirmed: false,
+        finishes_after_read: false,
     }
 }
 

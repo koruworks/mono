@@ -145,6 +145,36 @@ fn binding_seeks_the_run_and_the_reference_by_their_keys() {
     );
 }
 
+/// `read_run` without a message finds an API task's receipt by its unique
+/// planned Run, then the receipt by its primary key: two seeks.
+#[test]
+fn an_api_task_run_seeks_its_receipt_by_its_planned_run() {
+    let (repo, bot, _, _, run) = replied();
+    let (run_id, bot_id) = (run.to_storage(), bot.id.to_storage());
+    let found = plan(&repo.connection, BOT_TASK_RUN_SQL, &[&run_id, &bot_id]);
+    assert!(
+        found.contains("USING INDEX sqlite_autoindex_bot_command_receipts")
+            && found.contains("planned_run_id=?"),
+        "{found}"
+    );
+    let found = plan(&repo.connection, BOT_RUN_HAS_REPLY_SQL, &[&run_id]);
+    assert!(
+        found.contains("USING COVERING INDEX sqlite_autoindex_bot_chat_runs")
+            && found.contains("run_id=?"),
+        "{found}"
+    );
+    // A reply's Run never binds without its reply.
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    assert_eq!(
+        repo.bound_bot_task_run(owner, bot.id, bot.main_chat, run)
+            .unwrap(),
+        None
+    );
+}
+
 /// What the transcript reports for `chat`'s messages, each pair checked
 /// against the binding `read_run` uses: the round trip at this layer.
 fn reported(repo: &Repository, bot: &Bot, chat: ChatId) -> Vec<(MessageId, RunId)> {

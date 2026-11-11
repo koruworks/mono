@@ -23,6 +23,7 @@ mod lifecycle;
 pub(crate) mod policy;
 mod preparation;
 mod reads;
+mod stop;
 pub(super) use admission::{
     AdmissionRetry, BotCoordinationJob, BotCoordinationResult, DeliveryAnswers,
 };
@@ -31,6 +32,7 @@ pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
 pub(super) use reads::{BotRunReadJob, RUN_READ_QUEUE_CAPACITY};
+pub(super) use stop::{BotTaskStopJob, TASK_STOP_QUEUE_CAPACITY};
 mod creation;
 pub(super) use creation::{
     BotFolderSystem, CreationDriver, CreationJob, CreationPreparationJob, CreationPrepared,
@@ -282,7 +284,8 @@ fn execute_bot_command(
         | BotCommand::ListBotCreations { .. }
         | BotCommand::RetryBotCreation { .. }
         | BotCommand::AbandonBotCreation { .. }
-        | BotCommand::ReadRun { .. } => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ReadRun { .. }
+        | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

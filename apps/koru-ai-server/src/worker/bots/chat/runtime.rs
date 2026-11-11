@@ -225,12 +225,13 @@ impl WorkerState {
             chat.finishing == Some(Finish::Stop) && !chat.control_busy && chat.due <= now
         });
         // At most one automatic job is outstanding. It runs on the shared
-        // administration lane, whose single thread also prepares every
-        // person's Bot command and whose queue holds eight: a restart's walk
-        // rebuilds up to eight tasks, and one job each, with the owner
-        // silent, filled that queue and a person's own Bot read or command
-        // was refused `ai_worker_saturated`. The lane runs one job at a time
-        // anyway, so the walk loses nothing but a turn of the writer.
+        // administration lane, whose queue holds eight and which the other
+        // background passes share: a restart's walk rebuilds up to eight
+        // tasks, and one job each, with the owner silent, filled that queue
+        // and refused the next background job `ai_worker_saturated` (before
+        // preparation had a lane of its own, a person's Bot request too).
+        // The lane runs one job at a time anyway, so the walk loses nothing
+        // but a turn of the writer.
         let automatic = !control
             && !self
                 .bot_chats

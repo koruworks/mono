@@ -31,7 +31,7 @@ pub(super) fn raw(
     conn.query_row("SELECT bot_id,fingerprint,command_kind,stage,planned_run_id,captured_config_revision,captured_policy_revision,submission_version,submission_json,desired_pause,expected_revision,pause_ack_stage,outcome_json FROM bot_command_receipts WHERE user_scope_id=?1 AND request_id=?2",
         params![scope.to_storage(),request.to_storage()],|r|Ok(Raw {bot:r.get(0)?,fingerprint:r.get(1)?,kind:r.get(2)?,stage:r.get(3)?,run:r.get(4)?,config:r.get(5)?,policy:r.get(6)?,version:r.get(7)?,submission:r.get(8)?,desired:r.get(9)?,expected:r.get(10)?,ack:r.get(11)?,outcome:r.get(12)?})).optional().map_err(bad)
 }
-fn decode_submission(
+pub(super) fn decode_submission(
     r: Raw,
     scope: UserScopeId,
     request: BotRequestId,
@@ -579,6 +579,34 @@ impl Repository {
             })
             .transpose()
             .map(Option::flatten)
+    }
+    /// One of `bot`'s tasks started through the API (`start`/`continue`,
+    /// with no conversation attempt), whatever the Bot's lifecycle, by its
+    /// operation's request: its submission receipt, for `stop_task`. A Bot
+    /// that does not exist is `NotFound` and another owner's `Forbidden`; an
+    /// unknown request, another Bot's, a pause or access change, or a task a
+    /// conversation started is `None`.
+    pub fn bot_api_task(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+    ) -> Result<Option<BotSubmissionReceipt>, BotError> {
+        guard_any_lifecycle(&self.connection, owner, bot)?;
+        let Some(row) = raw(&self.connection, owner.user_scope, request)? else {
+            return Ok(None);
+        };
+        if row.bot != bot.to_storage() || !matches!(row.kind.as_str(), "start" | "continue") {
+            return Ok(None);
+        }
+        let receipt = decode_submission(row, owner.user_scope, request)?;
+        Ok(receipt
+            .intent
+            .submission
+            .provenance
+            .ai_attempt_id
+            .is_none()
+            .then_some(receipt))
     }
     pub fn prepare_bot_submission(
         &mut self,

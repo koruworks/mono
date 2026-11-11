@@ -458,8 +458,145 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         1
     );
     stack.verify_catalog();
+    // A task started through the public API (P1.8): it writes no reply, so
+    // its Run is found through `read_operation` and read without a message,
+    // and the API's own Stop ends it as the person's Stop.
+    let started = BotRequestId::mint();
+    let answer = stack
+        .client
+        .ai()
+        .bots(&BotCommand::Start {
+            request_id: started,
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
+            expected_revision: bot.revision,
+            destination: workspace,
+            task: koru_ai_core::bots::BotTask {
+                text: "CURRENT-API-TASK".into(),
+                documents: Vec::new(),
+            },
+        })
+        .unwrap();
+    assert!(matches!(answer, BotResponse::Operation { .. }));
+    let mut task_run = None;
+    wait_until("the API task is accepted", PROMPT, || {
+        if let BotResponse::Operation { operation } = stack
+            .client
+            .ai()
+            .bots(&BotCommand::ReadOperation {
+                request_id: started,
+                bot_id: bot.id,
+            })
+            .unwrap()
+            && operation.status == koru_ai_core::bots::BotOperationStatus::Accepted
+        {
+            task_run = operation.run_id;
+        }
+        task_run.is_some()
+    });
+    let task_run = task_run.unwrap();
+    let read = stack
+        .client
+        .ai()
+        .bots(&BotCommand::ReadRun {
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
+            message_id: None,
+            run_id: task_run,
+            from: 0,
+            len: koru_ai_core::bots::BOT_RUN_WINDOW_LIMIT,
+        })
+        .unwrap();
+    let BotResponse::Run { view } = read else {
+        panic!("the API task's Run view")
+    };
+    assert_eq!(view.header.run, task_run);
+    assert_eq!(view.execution.session, None);
+    assert_eq!(
+        view.header
+            .bot
+            .as_ref()
+            .map(|bot| (bot.submission, bot.ai_attempt_id)),
+        Some((started, None))
+    );
+    use koru_ai_core::bots::BotTaskStopOutcome as Outcome;
+    let stop = || match stack
+        .client
+        .ai()
+        .bots(&BotCommand::StopTask {
+            request_id: started,
+            bot_id: bot.id,
+        })
+        .unwrap()
+    {
+        BotResponse::TaskStop { stop } => stop,
+        other => panic!("a task stop, not {other:?}"),
+    };
+    // The task was just accepted, and the scripted provider takes longer to
+    // start and run its turn than this takes: the task is queued or running,
+    // so the first Stop either ends it or is delivered with its end not yet
+    // proven (what the real owner answered on the first run of this step).
+    // Never "already settled".
+    let first = stop();
+    assert_eq!(first.run_id, task_run);
+    eprintln!("API task first stop: {:?}", first.outcome);
+    assert!(
+        matches!(first.outcome, Outcome::Stopped | Outcome::Stopping),
+        "{:?}",
+        first.outcome
+    );
+    // A client asks again, a bounded number of times, while it is stopping.
+    let mut last = first.outcome;
+    for _ in 0..50 {
+        if last != Outcome::Stopping {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        last = stop().outcome;
+        eprintln!("API task stop again: {last:?}");
+    }
+    assert!(
+        matches!(last, Outcome::Stopped | Outcome::AlreadySettled),
+        "{last:?}"
+    );
+    // Settled now: one more answers so, and the Run reads as the person's
+    // cancellation, never an automatic interruption.
+    assert_eq!(stop().outcome, Outcome::AlreadySettled);
+    let BotResponse::Run { view } = stack
+        .client
+        .ai()
+        .bots(&BotCommand::ReadRun {
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
+            message_id: None,
+            run_id: task_run,
+            from: 0,
+            len: koru_ai_core::bots::BOT_RUN_WINDOW_LIMIT,
+        })
+        .unwrap()
+    else {
+        panic!("the API task's Run view")
+    };
+    assert_eq!(view.header.status, RunStatus::Cancelled);
+    // Its operation still reads as the admitted task it was.
+    let BotResponse::Operation { operation } = stack
+        .client
+        .ai()
+        .bots(&BotCommand::ReadOperation {
+            request_id: started,
+            bot_id: bot.id,
+        })
+        .unwrap()
+    else {
+        panic!("the API task's operation")
+    };
+    assert_eq!(
+        operation.status,
+        koru_ai_core::bots::BotOperationStatus::Accepted
+    );
+    assert_eq!(operation.run_id, Some(task_run));
     eprintln!(
-        "scripted native Bot verified: four-tool catalog, one turn, durable receipts, delivery, revocation and provider exit"
+        "scripted native Bot verified: four-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
     );
 }
 
@@ -512,7 +649,7 @@ fn read_reply_run(
         .bots(&BotCommand::ReadRun {
             bot_id: bot.id,
             chat_id: bot.main_chat,
-            message_id: reply,
+            message_id: Some(reply),
             run_id: run,
             from: 0,
             len: koru_ai_core::bots::BOT_RUN_WINDOW_LIMIT,
