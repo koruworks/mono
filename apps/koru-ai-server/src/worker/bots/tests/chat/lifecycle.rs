@@ -22,6 +22,7 @@ use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, BOT_TRASHED, PENDING, TRASHED}
 use std::sync::atomic::AtomicUsize;
 mod defaults;
 mod listing;
+mod reverse;
 mod trash;
 mod unadmitted;
 
@@ -54,6 +55,18 @@ struct ApiTask {
     take_on_stop: bool,
     /// The session owner reports a person holding this session.
     held: bool,
+    /// The owner's dispatcher would start this queued Run when it next
+    /// reserves it (`reserve_bot`): under a paused barrier it answers Paused
+    /// and the Run stays queued with no fence; otherwise it starts executing.
+    /// The fake applies it whenever it is next asked about the Bot's work.
+    dispatch: bool,
+    /// The dispatcher started it: it was reserved while no paused barrier
+    /// held the Bot.
+    started: bool,
+    /// The owner admits this task's Submit, then fails to complete its Run
+    /// intent and answers `bot_context_unavailable` (`bot_submit`): admitted
+    /// although the reply is a refusal.
+    context_unavailable: bool,
 }
 
 #[derive(Default)]
@@ -92,8 +105,70 @@ struct Archiving {
     /// Calls that reached the Store through the authority's capture (see
     /// [`StoreSpy`]); lifecycle makes none.
     store_calls: AtomicUsize,
+    /// The owner is unreachable: every command fails as the host does when
+    /// the delegate is down, retryable, and changes nothing.
+    unavailable: AtomicBool,
+    /// The owner refuses every admission barrier (`bot_conflict`), so no
+    /// refusal fence can be acknowledged.
+    refuse_barriers: AtomicBool,
+    /// Every command offered, reachable or not: when, which, and the request
+    /// it names, so a test can bound how often one thing is asked.
+    calls: Mutex<Vec<(Instant, &'static str, Option<BotRequestId>)>>,
+}
+/// The delegate's limit on a Bot's queued admissions (`BOT_PENDING_LIMIT`).
+const PENDING_LIMIT: usize = 50;
+/// A command's name and the request it is about, for [`Archiving::calls`].
+fn call_of(command: &D) -> (&'static str, Option<BotRequestId>) {
+    match command {
+        D::Submit { submission } => ("submit", Some(submission.provenance.submission)),
+        D::Reconcile { key } => ("reconcile", Some(key.request)),
+        D::Barrier { barrier } => ("barrier", Some(barrier.request)),
+        D::Stop { .. } => ("stop", None),
+        D::UnsettledWork { .. } => ("unsettled", None),
+        D::SynchronizePolicy { .. } => ("policy", None),
+        D::PendingNativeEffects { .. } => ("effects", None),
+        _ => ("other", None),
+    }
 }
 impl Archiving {
+    /// How often `request` was asked as `what` in the window of `span`
+    /// ending at `end`.
+    fn calls_in(&self, what: &str, request: BotRequestId, end: Instant, span: Duration) -> usize {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(at, name, key)| {
+                *name == what && *key == Some(request) && *at <= end && end - *at <= span
+            })
+            .count()
+    }
+    /// The owner's dispatcher (`reserve_bot`), run before it answers about
+    /// the Bot's work: a queued Run it would start stays queued with no fence
+    /// while the Bot's barrier is paused, and starts otherwise.
+    fn dispatch(&self) {
+        let barriers = self.barrier.lock().unwrap();
+        for task in self.api.lock().unwrap().iter_mut() {
+            if !task.admitted
+                || !task.dispatch
+                || task.view.state != d::BotAdmissionState::Queued
+                || barriers.get(&task.view.key.bot).is_some_and(|b| b.paused)
+            {
+                continue;
+            }
+            task.view.state = d::BotAdmissionState::Executing;
+            task.view.fence = Some(d::BotExecutionFence {
+                owner: task.view.key.owner,
+                bot: task.view.key.bot,
+                run: task.view.run,
+                attempt: d::RunAttemptId::mint(),
+                generation: d::AttemptGeneration::from_raw(1).unwrap(),
+                session: s::SessionId::mint(),
+                turn: Some(s::AgentTurnId::mint()),
+            });
+            task.started = true;
+        }
+    }
     fn unsettled(&self, bot: d::BotId) -> Vec<d::BotUnsettledAdmission> {
         let mut admissions = Vec::new();
         {
@@ -207,7 +282,28 @@ impl BotDelegatePort for Archiving {
                 .starts_with("koru-ai-provider"),
             "an owner call ran on the writer"
         );
+        let (name, request) = call_of(&command);
+        self.calls
+            .lock()
+            .unwrap()
+            .push((Instant::now(), name, request));
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(koru_delegate_api::Failure::new(
+                "bot_unavailable",
+                "fixture owner unavailable",
+                true,
+            ));
+        }
+        if matches!(
+            &command,
+            D::UnsettledWork { .. } | D::Reconcile { .. } | D::Stop { .. }
+        ) {
+            self.dispatch();
+        }
         match &command {
+            D::Barrier { .. } if self.refuse_barriers.load(Ordering::SeqCst) => {
+                Err(refused("bot_conflict"))
+            }
             D::Barrier { barrier } => {
                 self.barriers.lock().unwrap().push(barrier.clone());
                 // `apply_bot_barrier`: an epoch never goes back, and one
@@ -233,12 +329,37 @@ impl BotDelegatePort for Archiving {
                     return Err(refused(code));
                 }
                 let mut api = self.api.lock().unwrap();
+                // `admit_bot`: a Run identity already held by another request
+                // conflicts, and a Bot's queue holds at most fifty.
+                if api.iter().any(|t| {
+                    t.admitted
+                        && t.view.run == submission.request.run
+                        && t.view.key.request != submission.provenance.submission
+                }) {
+                    return Err(refused("bot_conflict"));
+                }
+                let queued = api
+                    .iter()
+                    .filter(|t| {
+                        t.admitted
+                            && t.view.key.bot == submission.provenance.bot
+                            && t.view.state == d::BotAdmissionState::Queued
+                            && t.view.key.request != submission.provenance.submission
+                    })
+                    .count();
+                if queued >= PENDING_LIMIT {
+                    return Err(refused("bot_capacity"));
+                }
                 if let Some(task) = api
                     .iter_mut()
                     .find(|t| t.view.run == submission.request.run)
                 {
                     // A task started through the API, admitted by this owner.
                     task.admitted = true;
+                    if task.context_unavailable {
+                        // Admitted, but its Run intent could not be completed.
+                        return Err(refused("bot_context_unavailable"));
+                    }
                     return Ok(BotReply::Admission {
                         admission: task.view.clone(),
                     });
@@ -385,8 +506,12 @@ impl BotDelegatePort for Archiving {
                     if !task.admitted {
                         return Err(refused("run_unknown"));
                     }
-                    // Only the owner's current fence is accepted.
-                    assert_eq!(fence, &task.view.fence);
+                    // Only the owner's current fence is accepted: one read
+                    // before the dispatcher started the Run is refused, and
+                    // the next read reports the new fence.
+                    if fence != &task.view.fence {
+                        return Err(refused("bot_fenced"));
+                    }
                     if task.take_on_stop {
                         // A person takes the session mid-Archive; the
                         // owner's Stop needs no lease, so it ends it anyway.
@@ -663,6 +788,9 @@ fn api_task(bot: &Bot, state: d::BotAdmissionState, pending: usize) -> ApiTask {
         pending,
         take_on_stop: false,
         held: false,
+        dispatch: false,
+        started: false,
+        context_unavailable: false,
     }
 }
 

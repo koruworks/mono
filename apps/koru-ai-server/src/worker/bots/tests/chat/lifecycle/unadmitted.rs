@@ -66,7 +66,7 @@ fn reverse(
 }
 
 /// The status of a Start/Continue receipt, read as its owner reads it.
-fn submission_status(
+pub(super) fn submission_status(
     client: &AiWorkerClient,
     bot: BotId,
     request: BotRequestId,
@@ -223,7 +223,7 @@ fn hold_context_thread(client: &AiWorkerClient, reader: &HeldContext) -> SyncSen
     release_tx
 }
 
-fn send_in(
+pub(super) fn send_in(
     client: &AiWorkerClient,
     context: CommandContext,
     bot: &Bot,
@@ -254,7 +254,10 @@ fn wait_context_window(client: &AiWorkerClient, attempt: InferenceAttemptId) {
     assert_eq!(attempt_status(client, attempt), AttemptStatus::Pending);
 }
 
-fn attempt_status(client: &AiWorkerClient, attempt: InferenceAttemptId) -> AttemptStatus {
+pub(super) fn attempt_status(
+    client: &AiWorkerClient,
+    attempt: InferenceAttemptId,
+) -> AttemptStatus {
     client
         .read_attempt(context(true), attempt)
         .unwrap()
@@ -635,7 +638,11 @@ fn more_than_256_held_effects_of_a_sibling_never_hold_a_conversation_trash_and_i
 
 /// A settled API task of `chat` whose admission AI already recorded, so
 /// further tasks may be prepared beside it (the first freezes the folder).
-fn admitted_api_task_in(repository: &mut Repository, bot: &Bot, chat: ChatId) -> ApiTask {
+pub(super) fn admitted_api_task_in(
+    repository: &mut Repository,
+    bot: &Bot,
+    chat: ChatId,
+) -> ApiTask {
     let mut task = api_task_in(repository, bot, chat, d::BotAdmissionState::Settled, 0);
     repository
         .acknowledge_bot_submission(
