@@ -82,6 +82,25 @@ pub struct BotOperation {
     pub run_id: Option<RunId>,
     pub status: BotOperationStatus,
 }
+/// A change to a Bot that is still being delivered to its execution owner:
+/// what a change of the Bot answered `bot_operation_pending` waits on. Reads
+/// fill it in (`read`, `list`, `list_lifecycle`); it is never stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotPendingChange {
+    /// The change's own operation, readable with `read_operation`.
+    pub request_id: BotRequestId,
+    /// `pause`, `resume` or `update_access`.
+    pub kind: BotOperationKind,
+    /// When the change was made, in epoch milliseconds (UTC).
+    pub since_ms: i64,
+    /// The stable code of the last failed or refused attempt to deliver it
+    /// since the AI owner last started (such as `bot_unavailable` when the
+    /// execution owner could not be reached). Omitted when there was none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_answer: Option<String>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BotSubmissionIntent {

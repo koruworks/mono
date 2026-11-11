@@ -122,6 +122,22 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
     assert_eq!(open.stage, BotLifecycleStage::Captured);
 }
 
+/// The Bot read's `pending_change` seeks the Bot's own pause, resume and
+/// access receipts through ai17's per-Bot guard index, never the 3,000
+/// settled receipts of other Bots.
+#[test]
+fn the_bot_reads_pending_change_seeks_the_bots_guard_index() {
+    let (repo, bot, _) = populated();
+    let found = plan(
+        &repo.connection,
+        super::super::super::admission::BOT_PENDING_CHANGE_SQL,
+        &[&bot.id.to_storage()],
+    );
+    assert!(found.contains("bot_command_guard"), "{found}");
+    assert!(!found.contains("SCAN bot_command_receipts"), "{found}");
+    assert_eq!(repo.bot_pending_change(bot.id).unwrap(), None);
+}
+
 /// The recovery pass's page of operations parked for an owner that did not
 /// answer walks the unfinished operations' partial index, never the 3,000
 /// completed ones, and finds exactly those parked for that reason.

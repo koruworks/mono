@@ -564,10 +564,7 @@ impl WorkerState {
     /// it. Owner and current workspace authority come first.
     fn read_bot(&self, context: &CommandContext, id: BotId) -> ApiResult<BotResponse> {
         let mut bot = self.readable_owned_bot(context, id)?;
-        bot.open_operation = self
-            .repository
-            .bot_open_lifecycle(id)
-            .map_err(bot_failure)?;
+        self.with_open_operations(std::slice::from_mut(&mut bot))?;
         self.with_lifecycle_holders(prepared_owner(context)?, std::slice::from_mut(&mut bot))?;
         Ok(BotResponse::Bot { bot })
     }
@@ -740,13 +737,16 @@ impl WorkerState {
         Ok(BotResponse::List { bots })
     }
 
-    /// Fill in each listed Bot's open lifecycle operation.
+    /// Fill in each read Bot's open lifecycle operation and the change of it
+    /// still being delivered to its execution owner (`pending_change`), each
+    /// one indexed read per Bot.
     pub(super) fn with_open_operations(&self, bots: &mut [Bot]) -> ApiResult<()> {
         for bot in bots {
             bot.open_operation = self
                 .repository
                 .bot_open_lifecycle(bot.id)
                 .map_err(bot_failure)?;
+            bot.pending_change = self.bot_pending_change(bot.id)?;
         }
         Ok(())
     }

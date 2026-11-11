@@ -352,6 +352,10 @@ pub(super) fn refuse_captured_on(
     }
     Ok(())
 }
+/// [`Repository::bot_pending_change`]'s statement.
+pub(crate) const BOT_PENDING_CHANGE_SQL: &str = "SELECT request_id,command_kind,created_at_ms FROM bot_command_receipts INDEXED BY bot_command_guard
+ WHERE bot_id=?1 AND command_kind IN ('pause','resume','update_access') AND stage='prepared'
+ ORDER BY created_at_ms,request_id LIMIT 1";
 /// Whether the AI side would let work of this Bot reach its owner now: the
 /// Bot is active and not paused, and no pause or resume of it is still
 /// waiting for its owner. Nothing is ever submitted for a Bot otherwise.
@@ -535,6 +539,31 @@ impl Repository {
     /// offered to its owner now.
     pub fn bot_admitting(&self, bot: BotId) -> Result<bool, BotError> {
         bot_admitting_on(&self.connection, bot)
+    }
+    /// The oldest change of this Bot its execution owner has not
+    /// acknowledged yet: a pause, resume or access change still `prepared`,
+    /// exactly what [`require_pause_settled`] and `require_policy_settled`
+    /// wait on, with when it was made. Read through ai17's per-Bot
+    /// `bot_command_guard` index; nothing is written.
+    pub fn bot_pending_change(
+        &self,
+        bot: BotId,
+    ) -> Result<Option<(BotRequestId, BotOperationKind, i64)>, BotError> {
+        let row: Option<(String, String, i64)> = self
+            .connection
+            .query_row(BOT_PENDING_CHANGE_SQL, [bot.to_storage()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .optional()
+            .map_err(bad)?;
+        row.map(|(request, kind, since)| {
+            Ok((
+                request.parse().map_err(bad)?,
+                BotOperationKind::parse(&kind).ok_or(BotError::Storage)?,
+                since,
+            ))
+        })
+        .transpose()
     }
     pub fn bot_submission_for_run(
         &self,

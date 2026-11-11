@@ -348,6 +348,7 @@ impl Repository {
                 lifecycle,
                 open_operation: None,
                 held_by: None,
+                pending_change: None,
                 main_chat: main,
                 selected_pages,
             },

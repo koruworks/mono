@@ -379,6 +379,22 @@ impl WorkerState {
                 }
                 self.bot_policy_pending
                     .remove(&(receipt.bot.id, receipt.request));
+                // What the owner answered, for the Bot read's
+                // `pending_change`: a failure's code, or that native effects
+                // still hold the barrier pending.
+                self.bot_delivery_answers.record(
+                    receipt.bot.id,
+                    receipt.request,
+                    match &result.result {
+                        Err(error) => Some(error.code.as_str()),
+                        Ok((_, Some(observed)))
+                            if observed.state == BotPolicyBarrierState::Pending =>
+                        {
+                            Some("bot_native_effects_pending")
+                        }
+                        Ok(_) => None,
+                    },
+                );
                 if !acknowledge_policy_result(&mut self.repository, &receipt, same, result.result) {
                     self.bot_policy_recovery.retry_needed = true;
                 }

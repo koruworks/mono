@@ -89,6 +89,14 @@ pub struct Bot {
     /// active Bot's serialized form and every stored receipt are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_by: Option<BotLifecycleHolder>,
+    /// A pause, resume or access change of the Bot that its execution owner
+    /// has not acknowledged yet, with since when and the owner's last answer:
+    /// while it is there, changes of the Bot answer `bot_operation_pending`.
+    /// Reads fill it in; omitted when nothing is pending, so a Bot with
+    /// nothing pending serializes, and every stored receipt holding one is
+    /// stored, exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_change: Option<BotPendingChange>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

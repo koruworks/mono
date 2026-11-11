@@ -1589,6 +1589,9 @@ struct WorkerState {
     bot_recovery_after: Option<i64>,
     /// When the receipt recovery pass runs again after a receipt stayed owed.
     bot_recovery_retry: bots::AdmissionRetry,
+    /// The last failed delivery of each pending pause, resume or access
+    /// change, for the Bot read (P1.7).
+    bot_delivery_answers: bots::DeliveryAnswers,
     /// The lifecycle operations the writer is driving (P1.7).
     bot_lifecycle: bots::LifecycleDriver,
     /// The Bot creations the writer is driving, and their list (P1.8).
@@ -1864,6 +1867,7 @@ fn run_worker(
         bot_policy_recovery: bots::policy::PolicyRecovery::default(),
         bot_recovery_after: Some(0),
         bot_recovery_retry: Default::default(),
+        bot_delivery_answers: Default::default(),
         bot_lifecycle: Default::default(),
         bot_creations,
         bot_resends: Default::default(),

@@ -389,6 +389,19 @@ impl WorkerState {
             Err(_) => {}
         }
         let answered = result.result.is_ok();
+        // A pause or resume being delivered: what its owner answered, for the
+        // Bot read's `pending_change`.
+        if let Action::Pause(_) = &result.action {
+            self.bot_delivery_answers.record(
+                bot,
+                request,
+                result
+                    .result
+                    .as_ref()
+                    .err()
+                    .map(|error| error.code.as_str()),
+            );
+        }
         self.apply_bot_coordination(result);
         self.note_bot_coordination(owner, bot, request);
         // The owner answered for this Bot (its owed pause acknowledged, among
@@ -417,7 +430,24 @@ impl WorkerState {
             self.bot_recovery_retry.failed(Instant::now());
         } else {
             self.bot_recovery_retry.settled();
+            self.bot_delivery_answers.record(bot, request, None);
         }
+    }
+    /// The Bot's change still being delivered to its execution owner, for its
+    /// read: the oldest pending pause, resume or access change (an indexed
+    /// read), with the last failed attempt's code this worker saw. `None`
+    /// when nothing is pending.
+    pub(super) fn bot_pending_change(&self, bot: BotId) -> ApiResult<Option<BotPendingChange>> {
+        Ok(self
+            .repository
+            .bot_pending_change(bot)
+            .map_err(bot_failure)?
+            .map(|(request_id, kind, since_ms)| BotPendingChange {
+                request_id,
+                kind,
+                since_ms,
+                last_answer: self.bot_delivery_answers.of(bot, request_id),
+            }))
     }
     /// The backed-off recovery pass is due: walk the pending receipts again.
     pub(in crate::worker) fn retry_bot_operations(&mut self) {
@@ -752,6 +782,33 @@ impl AdmissionRetry {
     }
     pub(in crate::worker) fn due(&self, now: Instant) -> bool {
         self.at.is_some_and(|at| at <= now)
+    }
+}
+/// The code of the last failed or refused delivery of each pending pause,
+/// resume or access change, as the writer saw it since it started: what the
+/// Bot read reports as its `pending_change.last_answer`. An answer that is
+/// not a failure clears it. Nothing here is durable; at most one entry is
+/// kept per change still being delivered.
+#[derive(Default)]
+pub(in crate::worker) struct DeliveryAnswers(HashMap<(BotId, BotRequestId), String>);
+impl DeliveryAnswers {
+    pub(in crate::worker) fn record(
+        &mut self,
+        bot: BotId,
+        request: BotRequestId,
+        failure: Option<&str>,
+    ) {
+        match failure {
+            Some(code) => {
+                self.0.insert((bot, request), code.to_owned());
+            }
+            None => {
+                self.0.remove(&(bot, request));
+            }
+        }
+    }
+    fn of(&self, bot: BotId, request: BotRequestId) -> Option<String> {
+        self.0.get(&(bot, request)).cloned()
     }
 }
 /// The AI attempt a submission belongs to, while it has not ended.

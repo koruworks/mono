@@ -23,7 +23,9 @@ mod lifecycle;
 pub(crate) mod policy;
 mod preparation;
 mod reads;
-pub(super) use admission::{AdmissionRetry, BotCoordinationJob, BotCoordinationResult};
+pub(super) use admission::{
+    AdmissionRetry, BotCoordinationJob, BotCoordinationResult, DeliveryAnswers,
+};
 pub(super) use branch::{BotBranchCopy, BotBranchJob, BotBranchPrepared, PendingBotBranch};
 pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
@@ -393,6 +395,7 @@ fn execute_bot_command(
                     lifecycle: Default::default(),
                     open_operation: None,
                     held_by: None,
+                    pending_change: None,
                 },
                 None,
             )

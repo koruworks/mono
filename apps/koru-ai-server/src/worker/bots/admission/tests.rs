@@ -82,6 +82,7 @@ fn fixture() -> (Repository, Bot, Arc<Authority>, BotSubmissionIntent) {
         lifecycle: Default::default(),
         open_operation: None,
         held_by: None,
+        pending_change: None,
     };
     let authority = Arc::new(Authority {
         owner: owner(&bot),

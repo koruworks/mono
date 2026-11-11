@@ -585,6 +585,7 @@ impl BotCreationRecord {
             lifecycle: Default::default(),
             open_operation: None,
             held_by: None,
+            pending_change: None,
         })
     }
 

@@ -226,6 +226,7 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
         lifecycle: BotLifecycle::Active,
         open_operation: None,
         held_by: None,
+        pending_change: None,
     };
     // Active with nothing open: no lifecycle field is written, so receipts
     // that store a Bot and older readers see the same bytes as before P1.7.
@@ -253,6 +254,60 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
     );
     let mut unknown = wire;
     unknown["open_operation"]["fingerprint"] = serde_json::json!("guessed");
+    assert!(serde_json::from_value::<Bot>(unknown).is_err());
+}
+
+/// The exact bytes of an active Bot with nothing open, held or pending, as
+/// every build since P1.3 writes it on the wire and inside a stored receipt
+/// outcome (`configuration`, `access_policy`). Read-only fields are omitted
+/// while empty, so these bytes stay what an older build wrote and reads.
+const UNTOUCHED_BOT: &str = concat!(
+    r#"{"id":"00000000-0000-4000-8000-000000000001","#,
+    r#""home_workspace":"00000000-0000-4000-8000-000000000002","#,
+    r#""user_scope":"00000000-0000-4000-8000-000000000003","#,
+    r#""owner_device":"00000000-0000-4000-8000-000000000004","#,
+    r#""config":{"name":"fixture","role":{"workspace":"00000000-0000-4000-8000-000000000002","#,
+    r#""document":"00000000-0000-4000-8000-000000000005"},"working_folder":"/fixture","#,
+    r#""model":{"provider":"agent-codex","requested_model":"fixture","default_reasoning":"default"},"#,
+    r#""mode":null,"fast":null},"access":"default","selected_pages":[],"revision":3,"#,
+    r#""policy_revision":1,"main_chat":"00000000-0000-4000-8000-000000000006","paused":true,"#,
+    r#""folder_lock_request":null,"folder_frozen_at_ms":null,"created_at_ms":1,"updated_at_ms":2}"#
+);
+
+#[test]
+fn an_untouched_bot_keeps_its_stored_and_wire_bytes() {
+    let bot: Bot = serde_json::from_str(UNTOUCHED_BOT).unwrap();
+    assert_eq!(bot.pending_change, None);
+    assert_eq!(serde_json::to_string(&bot).unwrap(), UNTOUCHED_BOT);
+    let stored = BotReceiptOutcome::Configuration { version: 1, bot };
+    assert_eq!(
+        serde_json::to_string(&stored).unwrap(),
+        format!(r#"{{"kind":"configuration","version":1,"bot":{UNTOUCHED_BOT}}}"#)
+    );
+}
+
+#[test]
+fn a_pending_change_is_additive_closed_and_omits_an_unknown_answer() {
+    let mut bot: Bot = serde_json::from_str(UNTOUCHED_BOT).unwrap();
+    let request = BotRequestId::mint();
+    bot.pending_change = Some(BotPendingChange {
+        request_id: request,
+        kind: BotOperationKind::Pause,
+        since_ms: 42,
+        last_answer: None,
+    });
+    let wire = serde_json::to_value(&bot).unwrap();
+    assert_eq!(
+        wire["pending_change"],
+        serde_json::json!({"request_id": request, "kind": "pause", "since_ms": 42})
+    );
+    assert_eq!(serde_json::from_value::<Bot>(wire.clone()).unwrap(), bot);
+    bot.pending_change.as_mut().unwrap().last_answer = Some("bot_unavailable".into());
+    let wire = serde_json::to_value(&bot).unwrap();
+    assert_eq!(wire["pending_change"]["last_answer"], "bot_unavailable");
+    assert_eq!(serde_json::from_value::<Bot>(wire.clone()).unwrap(), bot);
+    let mut unknown = wire;
+    unknown["pending_change"]["stage"] = serde_json::json!("prepared");
     assert!(serde_json::from_value::<Bot>(unknown).is_err());
 }
 
