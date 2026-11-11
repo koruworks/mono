@@ -83,12 +83,17 @@ impl Sibling {
     /// both wait in their context windows until the returned sender
     /// releases the context thread.
     fn send_held(&self, other: Option<usize>) -> SyncSender<()> {
+        self.send_held_attempt(other).0
+    }
+
+    /// [`Self::send_held`], with the person's own Send's attempt.
+    fn send_held_attempt(&self, other: Option<usize>) -> (SyncSender<()>, InferenceAttemptId) {
         let release = hold_context_thread(&self.client, &self.reader);
-        self.send_in(self.chat);
+        let attempt = self.send_in(self.chat);
         if let Some(n) = other {
             self.send_in(self.others[n]);
         }
-        release
+        (release, attempt)
     }
 
     /// Trash conversation `n` of `others` (its Send waiting in its context
@@ -263,16 +268,41 @@ fn a_message_on_its_way_while_its_bot_is_paused_is_not_sent_again() {
     let _ = run.stop();
 }
 
-/// The AI worker restarts after the refusal and before the re-send: the new
-/// worker sends it again, once.
-#[test]
-fn a_restart_before_the_re_send_sends_it_once() {
-    let run = sibling(1);
-    let release = run.send_held(Some(0));
-    run.trash_other(0);
-    release.send(()).unwrap();
-    // The owner goes silent the moment the refusal is final, so the re-send
-    // cannot be asked for before the restart.
+/// The person's own Retry of the conversation's last reply.
+fn persons_retry(client: &AiWorkerClient, bot: &Bot, chat: ChatId) {
+    let transcript = loop {
+        match client.read_chat(context(true), chat) {
+            Err(error) if error.code == BotError::RevisionConflict.code() => continue,
+            read => break read.unwrap(),
+        }
+    };
+    let last = transcript
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == ChatRole::Assistant)
+        .unwrap()
+        .id;
+    client
+        .retry_turn(
+            context(true),
+            chat,
+            RetryTurnRequest {
+                destination_workspace: Some(bot.home_workspace),
+                operation_id: Uuid::new_v4(),
+                message_id: last,
+                surface: AiSurface::Standalone,
+                explicit_refs: vec![],
+                reasoning_override: None,
+                web_search: false,
+                replace_pinned_documents: false,
+            },
+        )
+        .unwrap();
+}
+
+/// The first Submit's request, once the refusal of it is final.
+fn refused_for_good(run: &Sibling) -> BotRequestId {
     until("the Send reached the owner", || run.submits() == 1);
     let request = run
         .port
@@ -287,8 +317,14 @@ fn a_restart_before_the_re_send_sends_it_once() {
         super::unadmitted::submission_status(&run.client, run.bot.id, request)
             == BotOperationStatus::Rejected
     });
-    run.port.unavailable.store(true, Ordering::SeqCst);
-    assert_eq!(run.submits(), 1, "nothing was sent again yet");
+    request
+}
+
+/// The AI worker, restarted on the same database, owner and context reader:
+/// it sends nothing by itself, the refused reply stays as it ended, and the
+/// person's Retry of it is sent and completes.
+fn after_a_restart_only_the_persons_retry_sends(run: Sibling) {
+    let bot = run.bot.clone();
     let (repository, port, reader, authority, chat) = run.stop();
     port.unavailable.store(false, Ordering::SeqCst);
     let (worker, _returned) = spawn_with(
@@ -298,10 +334,17 @@ fn a_restart_before_the_re_send_sends_it_once() {
         Some(reader as Arc<dyn StoreContextPort>),
     );
     let client = worker.client();
-    until("the re-sent reply completed", || {
+    quiet();
+    assert_eq!(
+        port.submits.lock().unwrap().len(),
+        1,
+        "a restart sent nothing by itself"
+    );
+    assert_eq!(replies(&client, chat), vec![MessageState::Interrupted]);
+    persons_retry(&client, &bot, chat);
+    until("the person's Retry completed", || {
         replies(&client, chat).last() == Some(&MessageState::Complete)
     });
-    quiet();
     assert_eq!(port.submits.lock().unwrap().len(), 2);
     assert_eq!(
         replies(&client, chat),
@@ -309,6 +352,221 @@ fn a_restart_before_the_re_send_sends_it_once() {
     );
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// The AI worker restarts after the refusal and before the re-send: a
+/// re-send is owed only in the run that saw the refusal, so the new worker
+/// sends nothing by itself (the accepted cost of the fourth lifecycle
+/// review's F1), and the person's Retry sends it.
+#[test]
+fn a_restart_before_the_re_send_sends_nothing_and_the_persons_retry_does() {
+    let run = sibling(1);
+    let release = run.send_held(Some(0));
+    run.trash_other(0);
+    release.send(()).unwrap();
+    // The owner goes silent the moment the refusal is final, so the re-send
+    // cannot be asked for before the restart.
+    refused_for_good(&run);
+    run.port.unavailable.store(true, Ordering::SeqCst);
+    assert_eq!(run.submits(), 1, "nothing was sent again yet");
+    after_a_restart_only_the_persons_retry_sends(run);
+}
+
+/// The fourth lifecycle review's proof, inverted. A message refused as stale
+/// whose automatic re-send its Bot refused (the person paused the Bot) stays
+/// dropped: the person's Resume sends nothing in that run, and a restart of
+/// the AI worker after it sends nothing either (it once sent the old
+/// message by itself). The person's Retry still sends it.
+#[test]
+fn a_stale_re_send_a_pause_refused_stays_dropped_through_resume_and_a_restart() {
+    let run = sibling(1);
+    let release = run.send_held(Some(0));
+    run.trash_other(0);
+    release.send(()).unwrap();
+    refused_for_good(&run);
+    // The owner goes silent so the re-send cannot be asked for yet, and the
+    // person pauses the Bot meanwhile.
+    run.port.unavailable.store(true, Ordering::SeqCst);
+    run.client
+        .bots(
+            context(true),
+            BotCommand::Pause {
+                request_id: BotRequestId::mint(),
+                bot_id: run.bot.id,
+                expected_revision: read_bot(&run.client, run.bot.id).revision,
+            },
+        )
+        .unwrap();
+    run.port.unavailable.store(false, Ordering::SeqCst);
+    until("the owner holds the Bot paused", || {
+        run.port
+            .barrier
+            .lock()
+            .unwrap()
+            .get(&run.bot.id)
+            .is_some_and(|b| b.paused)
+    });
+    until("the pause is delivered", || {
+        read_bot(&run.client, run.bot.id).pending_change.is_none()
+    });
+    quiet();
+    quiet();
+    assert_eq!(run.submits(), 1, "the paused Bot refused the re-send");
+    assert_eq!(
+        replies(&run.client, run.chat),
+        vec![MessageState::Interrupted]
+    );
+    // The person resumes the Bot: nothing is sent by itself.
+    run.client
+        .bots(
+            context(true),
+            BotCommand::Resume {
+                request_id: BotRequestId::mint(),
+                bot_id: run.bot.id,
+                expected_revision: read_bot(&run.client, run.bot.id).revision,
+            },
+        )
+        .unwrap();
+    until("the owner holds the Bot resumed", || {
+        run.port
+            .barrier
+            .lock()
+            .unwrap()
+            .get(&run.bot.id)
+            .is_some_and(|b| !b.paused)
+    });
+    // In the same run, the owner answering again and the receipt recovery
+    // pass included: nothing makes the dropped re-send owed again.
+    quiet();
+    assert_eq!(run.submits(), 1, "nothing sent after Resume alone");
+    after_a_restart_only_the_persons_retry_sends(run);
+}
+
+/// The proof's second case, inverted: the re-send the conversation's own
+/// Trash refused is not sent into the restored conversation by a restart.
+#[test]
+fn a_stale_re_send_its_conversations_trash_refused_stays_dropped_after_restore_and_a_restart() {
+    let run = sibling(1);
+    let release = run.send_held(Some(0));
+    run.trash_other(0);
+    release.send(()).unwrap();
+    refused_for_good(&run);
+    // The reply has ended interrupted (an automatic end, not a Stop) before
+    // the owner goes silent and the person trashes the conversation.
+    until("the reply ended interrupted", || {
+        replies(&run.client, run.chat) == vec![MessageState::Interrupted]
+    });
+    run.port.unavailable.store(true, Ordering::SeqCst);
+    // The person trashes the conversation whose message was refused.
+    let trash = BotRequestId::mint();
+    trash_chat_at(
+        &run.client,
+        &run.bot,
+        run.chat,
+        trash,
+        read_bot(&run.client, run.bot.id).revision,
+    )
+    .unwrap();
+    run.port.unavailable.store(false, Ordering::SeqCst);
+    let done = settled(&run.client, run.bot.id, trash);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    quiet();
+    quiet();
+    assert_eq!(run.submits(), 1, "the Trash refused the re-send");
+    // The person restores it: nothing runs.
+    super::trash::restore_chat_at(
+        &run.client,
+        &run.bot,
+        run.chat,
+        trash,
+        read_bot(&run.client, run.bot.id).revision,
+    )
+    .unwrap();
+    quiet();
+    assert_eq!(run.submits(), 1, "nothing ran after the Restore");
+    assert_eq!(
+        replies(&run.client, run.chat),
+        vec![MessageState::Interrupted]
+    );
+    after_a_restart_only_the_persons_retry_sends(run);
+}
+
+/// The proof's third case, inverted: the whole Bot's Archive, Unarchive and
+/// Resume, then a restart, send nothing by themselves.
+#[test]
+fn a_stale_re_send_an_archive_refused_stays_dropped_after_unarchive_resume_and_a_restart() {
+    let run = sibling(1);
+    let release = run.send_held(Some(0));
+    run.trash_other(0);
+    release.send(()).unwrap();
+    until("the Send reached the owner", || run.submits() == 1);
+    until("the reply ended interrupted", || {
+        replies(&run.client, run.chat) == vec![MessageState::Interrupted]
+    });
+    run.port.unavailable.store(true, Ordering::SeqCst);
+    let current = read_bot(&run.client, run.bot.id);
+    let archive_request = BotRequestId::mint();
+    archive_at(&run.client, &current, archive_request, current.revision).unwrap();
+    run.port.unavailable.store(false, Ordering::SeqCst);
+    let done = settled(&run.client, run.bot.id, archive_request);
+    assert_eq!(done.stage, BotLifecycleStage::Completed, "{done:?}");
+    quiet();
+    assert_eq!(run.submits(), 1, "the Archive refused the re-send");
+    let archived = read_bot(&run.client, run.bot.id);
+    super::trash::restore_at(&run.client, &archived, archive_request, archived.revision).unwrap();
+    until("the unarchive's pause is delivered", || {
+        read_bot(&run.client, run.bot.id).pending_change.is_none()
+    });
+    run.client
+        .bots(
+            context(true),
+            BotCommand::Resume {
+                request_id: BotRequestId::mint(),
+                bot_id: run.bot.id,
+                expected_revision: read_bot(&run.client, run.bot.id).revision,
+            },
+        )
+        .unwrap();
+    until("the owner holds the Bot resumed", || {
+        run.port
+            .barrier
+            .lock()
+            .unwrap()
+            .get(&run.bot.id)
+            .is_some_and(|b| !b.paused)
+    });
+    quiet();
+    assert_eq!(run.submits(), 1, "nothing ran after Unarchive and Resume");
+    after_a_restart_only_the_persons_retry_sends(run);
+}
+
+/// A person's Stop of the interrupted reply, in the run that saw the
+/// refusal and before its re-send could go (the owner silent): nothing in
+/// that run sends it once the owner answers again, and neither does a
+/// restart, though the Stop is remembered only in memory.
+#[test]
+fn a_persons_stop_of_the_refused_reply_declines_its_re_send_in_the_run_and_after_a_restart() {
+    let run = sibling(1);
+    let (release, attempt) = run.send_held_attempt(Some(0));
+    run.trash_other(0);
+    release.send(()).unwrap();
+    // Page history cannot be captured for now, so a re-send's preparation
+    // fails (and is tried again later) and nothing can be sent before the
+    // person's Stop reaches the task.
+    run.port.capture_history.store(false, Ordering::SeqCst);
+    refused_for_good(&run);
+    until("the reply ended interrupted", || {
+        super::unadmitted::attempt_status(&run.client, attempt) == AttemptStatus::Interrupted
+    });
+    run.client.cancel_attempt(context(true), attempt).unwrap();
+    run.port.capture_history.store(true, Ordering::SeqCst);
+    quiet();
+    assert_eq!(run.submits(), 1, "the Stop declined the re-send");
+    assert_eq!(
+        replies(&run.client, run.chat),
+        vec![MessageState::Interrupted]
+    );
+    after_a_restart_only_the_persons_retry_sends(run);
 }
 
 /// The AI worker restarts after the re-send: nothing is sent a second time.

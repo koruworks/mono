@@ -57,6 +57,12 @@ pub(in crate::worker) struct LiveChat {
     /// Consecutive finishing replies that made no progress.
     retries: u32,
     finishing: Option<Finish>,
+    /// This worker run saw the task's first input refused (or the task
+    /// otherwise end automatically) while it drove it, so its automatic
+    /// re-send may be owed once it settles (`chat/resend.rs`). Never set on a
+    /// task rebuilt by a restart's recovery or by a person's Stop: a re-send
+    /// is owed only in the run that saw the refusal.
+    resend: bool,
     pub(super) staging: super::attachments::Staging,
 }
 impl LiveChat {
@@ -99,6 +105,7 @@ impl LiveChat {
             automatic: false,
             retries: 0,
             finishing: None,
+            resend: false,
             staging: Default::default(),
         }
     }
@@ -189,6 +196,7 @@ impl WorkerState {
                 automatic: false,
                 retries: 0,
                 finishing: None,
+                resend: false,
                 staging,
             },
         );
@@ -482,11 +490,14 @@ impl WorkerState {
             Ok(true) => {
                 self.bot_chats.insert(step.attempt, chat);
             }
-            // The task's live state ends here; a picture refusal may be owed
-            // its automatic re-send, unless the person's Stop ended it.
-            Ok(false) => {
-                self.bot_chat_ended(step.attempt, chat.finishing == Some(Finish::Interrupt))
-            }
+            // The task's live state ends here. A refusal this run saw may be
+            // owed its automatic re-send; the person's Stop declines it; a
+            // task a restart rebuilt owes none.
+            Ok(false) => match chat.finishing {
+                Some(Finish::Stop) => self.decline_bot_resend(step.attempt),
+                Some(Finish::Interrupt) if chat.resend => self.bot_chat_refused(step.attempt),
+                _ => {}
+            },
             Err(error) if error.class == AiErrorClass::Storage => {
                 // A failed transaction leaves mapper/live state and cursor
                 // unchanged. The next finite observation replays that frame.
@@ -504,6 +515,9 @@ impl WorkerState {
                     // Retries counted before finishing are not finishing stalls.
                     chat.retries = 0;
                     chat.finishing = Some(Finish::Interrupt);
+                    // Seen here, in this run: the one place a re-send can
+                    // become owed.
+                    chat.resend = true;
                 }
                 self.bot_chats.insert(step.attempt, chat);
             }
@@ -868,6 +882,7 @@ impl WorkerState {
             automatic: false,
             retries: 0,
             finishing: Some(Finish::Stop),
+            resend: false,
             staging: Default::default(),
         });
         // A person's Stop is never delayed by an automatic backoff.
@@ -953,6 +968,8 @@ impl WorkerState {
                     automatic: false,
                     retries: 0,
                     finishing: finish,
+                    // A restart never makes a re-send owed (`chat/resend.rs`).
+                    resend: false,
                     staging: Default::default(),
                 },
             );

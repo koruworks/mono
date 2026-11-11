@@ -14,25 +14,32 @@
 //! There is no second mechanism and no new record. The re-send is an
 //! ordinary `RetryTurn` dispatched through the writer's own command path:
 //! fresh preparation (owner, workspace, Role and pages, model discovery), the
-//! guard with its lifecycle holds, and `retry_turn`'s durable records. What
-//! says a re-send is owed is durable already: the attempt failed with a
-//! picture refusal, it was not itself a re-send as paths, its task carried a
-//! picture, and its reply is still the conversation's last message (a Retry,
-//! automatic or the person's, writes a newer one). So a restart between the
-//! refusal and the re-send resumes it (the restart's cleanup inventory ends
-//! the refused task again, which brings it here), and one after it finds the
-//! newer reply and sends nothing.
+//! guard with its lifecycle holds, and `retry_turn`'s durable records.
+//!
+//! **A re-send is owed only in the worker run that saw the refusal**, while
+//! it drove the task live (`LiveChat::resend`, set where the refusal ends the
+//! task). A restart's recovery never makes one owed, for either kind: what a
+//! person did about it in between (a Stop on the refused reply, a Pause, a
+//! Trash and its Restore, an Archive and its Unarchive) is not durable, and
+//! durable state alone would send an old message by itself after the person
+//! had already refused it (the fourth lifecycle review). The cost, accepted:
+//! a restart between the refusal and the re-send loses the automatic
+//! re-send; the refused reply stays as it ended, and the person's Retry
+//! sends it. Durable state still decides whether the one owed in this run
+//! may go: the attempt failed with a picture refusal (or ended refused as
+//! stale, below), it was not itself such a re-send, its task carried a
+//! picture, and its reply is still the conversation's last message (a
+//! Retry, automatic or the person's, writes a newer one), so a restart
+//! after the re-send finds the newer reply and nothing is ever sent twice.
 //!
 //! The re-send waits until the refused task's Run is proven settled: its
 //! live state has ended, and the execution owner answers its admission
 //! `Settled` or `Refused` (the check a Retry's own Submit makes before it may
 //! continue a task). A person's Stop of the refused task cancels a re-send
 //! that has not been prepared yet; the writer checks again, in the same
-//! step that would prepare it, that it is still owed.
-//!
-//! Known limit, the O25 gap: a Stop pressed on an already refused task is
-//! not durable, so if only the AI worker restarts after that Stop and before
-//! the re-send, the re-send happens.
+//! step that would prepare it, that it is still owed. Once this run is done
+//! with a re-send (declined, refused by a hold or a pause, sent, or given
+//! up) nothing else in the run makes it owed again (`Resends::closed`).
 //!
 //! The same mechanism, once, for a task its owner refused as stale (P1.7,
 //! the third lifecycle review's F4): its Submit arrived after the Bot's
@@ -40,7 +47,7 @@
 //! what it refused at that moment, so the owner answered `bot_stale` and the
 //! refusal fence kept that reason (`rejected` with `stale`). Nothing of it
 //! ran and nothing about it is wrong, so it is sent again at the current
-//! revision as a Retry. What says it is owed is durable: the attempt ended
+//! revision as a Retry. Seen in this run, it may go while: the attempt ended
 //! interrupted, its receipt is rejected as stale, its reply is still the
 //! conversation's last message, and it is not itself a Retry of a reply
 //! refused as stale, so a message is sent again at most once however often
@@ -67,8 +74,11 @@ fn backoff(round: u32) -> Duration {
 #[derive(Default)]
 pub(in crate::worker) struct Resends {
     owed: HashMap<InferenceAttemptId, Resend>,
-    /// Refused attempts whose re-send a person's Stop cancelled, in this run.
-    declined: HashSet<InferenceAttemptId>,
+    /// Refused attempts this run is done with: their re-send was declined by
+    /// a person's Stop, refused (a hold, a pause), sent, or given up. None of
+    /// them is owed again in this run, whatever happens later in it (a
+    /// Resume, an owner answering again).
+    closed: HashSet<InferenceAttemptId>,
     /// Each automatic Retry's operation, so the writer recognizes it and
     /// checks once more, as it prepares it, that it is still owed.
     operations: HashMap<Uuid, InferenceAttemptId>,
@@ -174,15 +184,13 @@ fn resend_context(attempt: InferenceAttemptId) -> CommandContext {
 }
 
 impl WorkerState {
-    /// A Bot conversation task's live state has ended. `automatic` is false
-    /// when it ended on the person's Stop lane, which cancels any re-send.
-    pub(in crate::worker) fn bot_chat_ended(&mut self, id: InferenceAttemptId, automatic: bool) {
-        if !automatic {
-            self.decline_bot_resend(id);
-            return;
-        }
+    /// A Bot conversation task this run drove live, and saw end
+    /// automatically, has settled its live state: its re-send is owed if the
+    /// durable state says one may go. Only this run's own refusals reach
+    /// here; a task a restart rebuilt never does.
+    pub(in crate::worker) fn bot_chat_refused(&mut self, id: InferenceAttemptId) {
         if self.bot_resends.owed.contains_key(&id)
-            || self.bot_resends.declined.contains(&id)
+            || self.bot_resends.closed.contains(&id)
             || self.bot_resend_plan(id).is_none()
         {
             return;
@@ -190,7 +198,7 @@ impl WorkerState {
         tracing::info!(
             target: "koru_ai::bots",
             attempt = %id,
-            "Bot task's pictures were refused; it is sent again with them as files once it settles"
+            "Bot task's first input was refused; it is sent again once it settles"
         );
         self.bot_resends.owed.insert(
             id,
@@ -205,7 +213,12 @@ impl WorkerState {
 
     /// The person stopped the refused task: nothing is sent again for it.
     pub(in crate::worker) fn decline_bot_resend(&mut self, id: InferenceAttemptId) {
-        self.bot_resends.declined.insert(id);
+        self.close_bot_resend(id);
+    }
+
+    /// This run is done with `id`'s re-send, whichever way it ended.
+    fn close_bot_resend(&mut self, id: InferenceAttemptId) {
+        self.bot_resends.closed.insert(id);
         self.bot_resends.owed.remove(&id);
     }
 
@@ -216,7 +229,7 @@ impl WorkerState {
         let Some(attempt) = self.bot_resends.operations.get(&operation) else {
             return Ok(());
         };
-        if self.bot_resends.declined.contains(attempt) || self.bot_resend_plan(*attempt).is_none() {
+        if self.bot_resends.closed.contains(attempt) || self.bot_resend_plan(*attempt).is_none() {
             return Err(failure(
                 "invalid_request",
                 "This automatic re-send is no longer owed.",
@@ -244,7 +257,7 @@ impl WorkerState {
                     Ok(Ok(_stream)) => {
                         // The Retry is durable; the conversation shows it.
                         tracing::info!(target: "koru_ai::bots", attempt = %id, "Bot task sent again with its pictures as files");
-                        self.bot_resends.owed.remove(&id);
+                        self.close_bot_resend(id);
                     }
                     Ok(Err(error)) if error.retryable && resend.rounds < ROUNDS => {
                         resend.rounds += 1;
@@ -253,20 +266,20 @@ impl WorkerState {
                     }
                     Ok(Err(error)) => {
                         tracing::info!(target: "koru_ai::bots", attempt = %id, code = %error.code, "Bot task's automatic re-send was refused");
-                        self.bot_resends.owed.remove(&id);
+                        self.close_bot_resend(id);
                     }
                     Err(TryRecvError::Disconnected) => {
-                        self.bot_resends.owed.remove(&id);
+                        self.close_bot_resend(id);
                     }
                 },
                 Stage::Probe if resend.due <= now => {
                     let Some(plan) = self.bot_resend_plan(id) else {
-                        self.bot_resends.owed.remove(&id);
+                        self.close_bot_resend(id);
                         continue;
                     };
                     let (Some(delegate), Some(pool)) = (&self.bot_delegate, &self.provider_admin)
                     else {
-                        self.bot_resends.owed.remove(&id);
+                        self.close_bot_resend(id);
                         continue;
                     };
                     let job = ResendProbe {
@@ -313,13 +326,13 @@ impl WorkerState {
             }
             Settledness::NotYet | Settledness::Never => {
                 tracing::info!(target: "koru_ai::bots", attempt = %id, "Bot task's refused Run did not settle; it is not sent again");
-                self.bot_resends.owed.remove(&id);
+                self.close_bot_resend(id);
                 return;
             }
         }
         let operation = resend.operation;
         let Some(plan) = self.bot_resend_plan(id) else {
-            self.bot_resends.owed.remove(&id);
+            self.close_bot_resend(id);
             return;
         };
         let (reply, answer) = sync_channel(1);

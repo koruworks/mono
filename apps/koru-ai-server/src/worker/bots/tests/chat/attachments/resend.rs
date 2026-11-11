@@ -298,8 +298,12 @@ fn a_persons_stop_of_the_refused_task_cancels_its_re_send() {
     assert_eq!(attempts(&finish(running), chat).len(), 1);
 }
 
+/// A re-send is owed only in the worker run that saw the refusal (the fourth
+/// lifecycle review's F1): a restart before it sends nothing by itself, the
+/// refused reply stays failed, and the person's Retry sends the pictures as
+/// files.
 #[test]
-fn a_restart_before_the_re_send_resumes_it_and_one_after_never_sends_a_second() {
+fn a_restart_before_the_re_send_sends_nothing_and_the_persons_retry_does() {
     let (reports, interrupted) = sync_channel(64);
     let native = Native {
         interrupt_reports: Mutex::new(Some(reports)),
@@ -317,14 +321,39 @@ fn a_restart_before_the_re_send_resumes_it_and_one_after_never_sends_a_second() 
         .native
         .hold_interrupt
         .store(false, Ordering::SeqCst);
-    wait_for("the re-send after the restart", || begins(&running) == 2);
+    // The restart settles the refused Run on its automatic lane (the held
+    // answers before it may still be queued), and sends nothing again.
+    while !interrupted.recv_timeout(Duration::from_secs(20)).unwrap() {}
+    quiet();
+    assert_eq!(begins(&running), 1, "a restart sent nothing by itself");
     let chat = running.request.chat_id;
+    // The person's Retry sends it, with the pictures as files.
+    let again = super::retry(&running, first.accepted.assistant_message_id);
+    let (event, notice) = super::terminal_with_notice(&again);
+    assert!(
+        matches!(event, PublicAiEvent::Completed { .. }),
+        "{event:?}"
+    );
+    assert!(notice, "images sent as files");
+    assert_eq!(begins(&running), 2);
+    let all = attempts(&finish(running), chat);
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].status, AttemptStatus::Failed);
+    assert_eq!(all[1].status, AttemptStatus::Complete);
+}
+
+/// A restart after the re-send finds the newer reply and sends nothing.
+#[test]
+fn a_restart_after_the_re_send_never_sends_a_second() {
+    let running = refusing(&[refusal("bot_input_pictures_refused")], Native::default());
+    let first = send(&running);
+    assert!(matches!(terminal(&first), PublicAiEvent::Failed { .. }));
+    wait_for("the automatic re-send began", || begins(&running) == 2);
     wait_for("the re-send completed", || {
         running.port.native.state.lock().unwrap().delivered
     });
-    // A restart after the re-send finds the newer reply and sends nothing.
-    let stream = first;
-    let running = running.restart(&stream, || {});
+    let chat = running.request.chat_id;
+    let running = running.restart(&first, || {});
     quiet();
     assert_eq!(begins(&running), 2, "never a second re-send");
     let all = attempts(&finish(running), chat);
