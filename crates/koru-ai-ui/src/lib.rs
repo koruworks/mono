@@ -824,9 +824,12 @@ pub struct ChatSurface {
     sent_message: Option<SentMessage>,
     pending_grants: Option<(GrantKey, uuid::Uuid)>,
     grants_ready: Option<GrantKey>,
-    /// A title lookup is with the reader; one at a time, so background
-    /// lookups never crowd a person's own command out of its queue.
-    titles_in_flight: bool,
+    /// **The documents a title lookup with the reader asked for**, empty
+    /// when none is; one at a time, so background lookups never crowd a
+    /// person's own command out of its queue. Kept so a client stopped
+    /// before it answered ([`Self::deactivate`]) leaves them to be asked
+    /// again rather than marked as asked.
+    titles_in_flight: Vec<DocumentId>,
     clipboard_reading: bool,
     /// A picture open in the shared viewer (chat-attachments R3).
     viewer: Option<attachments::ChatViewer>,
@@ -1187,7 +1190,7 @@ impl ChatSurface {
             sent_message: None,
             pending_grants: None,
             grants_ready: None,
-            titles_in_flight: false,
+            titles_in_flight: Vec::new(),
             clipboard_reading: false,
             viewer: None,
             viewer_opening: None,
@@ -1285,7 +1288,8 @@ impl ChatSurface {
     ///   host's Files import;
     /// - **a question only it would answer** — a grant asked before a send,
     ///   a lookup of document titles — is no longer waited for, so the
-    ///   next send or lookup asks again.
+    ///   next send or lookup asks again; the documents that lookup named are
+    ///   no longer marked as asked, so their titles are asked again too.
     fn settle_unanswerable(&mut self) {
         // A send staged until the Store is durable has not reached the
         // client: it is given back with the message, never sent later.
@@ -1302,7 +1306,11 @@ impl ChatSurface {
         self.steered.clear();
         self.pending_grants = None;
         self.grants_ready = None;
-        self.titles_in_flight = false;
+        // The lookup's answer will never come: its documents are no longer
+        // marked as asked, so the next client asks for their titles again.
+        for document in std::mem::take(&mut self.titles_in_flight) {
+            self.titles_requested.remove(&document);
+        }
         self.attempt = None;
         self.ended_attempt = None;
         self.pending_assistant_message_id = None;
@@ -4457,7 +4465,7 @@ impl ChatSurface {
                 });
             }
             Update::DocumentTitles(titles) => {
-                self.titles_in_flight = false;
+                self.titles_in_flight.clear();
                 // Another command may still be streaming; keep polling for it.
                 self.waiting = self.attempt.is_some();
                 let mut changed = false;
@@ -5521,13 +5529,13 @@ impl ChatSurface {
         let Some(reader) = &self.reader else {
             return;
         };
-        if self.titles_in_flight {
+        if !self.titles_in_flight.is_empty() {
             return;
         }
         if reader.send(Command::DocumentTitles(wanted.clone())).is_ok() {
             self.waiting = true;
-            self.titles_in_flight = true;
-            self.titles_requested.extend(wanted);
+            self.titles_requested.extend(wanted.iter().copied());
+            self.titles_in_flight = wanted;
         }
     }
 

@@ -1030,6 +1030,72 @@ fn a_stopped_client_leaves_no_copy_of_an_attachment_storing() {
     assert_eq!(state(stored), Some(attachments::DraftState::Stored));
 }
 
+/// **A title lookup the stopped client never answered is asked again** by
+/// the next client. The lookup (`Command::DocumentTitles`, which
+/// `request_document_titles` sends once per document) went to the client
+/// `deactivate` stopped, so its answer will never come; the documents it
+/// named are not marked as asked, and the client `activate` starts next asks
+/// for their titles once more. A document whose lookup was answered is not
+/// asked again.
+#[test]
+fn a_stopped_client_leaves_no_title_lookup_marked_as_asked() {
+    let (mut surface, mut transcript, commands) =
+        agent_surface("agent-codex", &[("agent-codex", false)]);
+    let (answered, unanswered) = (
+        koru_ai_core::DocumentId::new(),
+        koru_ai_core::DocumentId::new(),
+    );
+    let message = |transcript: &ChatTranscript, markdown: String| koru_ai_core::Message {
+        id: koru_ai_core::MessageId::new(),
+        chat_id: transcript.chat.id,
+        ordinal: transcript.messages.len() as u32,
+        role: ChatRole::User,
+        state: MessageState::Complete,
+        markdown,
+        origin_message_id: None,
+        provider: None,
+        requested_model: None,
+        resolved_model: None,
+        error_class: None,
+        created_at: Timestamp::from_millis(2),
+        completed_at: None,
+    };
+    let titles_asked = |commands: &Receiver<Command>| -> Vec<Vec<koru_ai_core::DocumentId>> {
+        drain(commands)
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::DocumentTitles(asked) => Some(asked),
+                _ => None,
+            })
+            .collect()
+    };
+    // The first lookup is answered.
+    let first = message(&transcript, format!("Read [[koru://doc/{answered}]]"));
+    transcript.messages.push(first);
+    surface.transcript = Some(transcript.clone());
+    surface.request_document_titles();
+    assert_eq!(titles_asked(&commands), [vec![answered]]);
+    surface.apply_update(Update::DocumentTitles(vec![(answered, "Budget".into())]));
+    // The second is with the client when it stops.
+    let second = message(&transcript, format!("And [[koru://doc/{unanswered}]]"));
+    transcript.messages.push(second);
+    surface.transcript = Some(transcript);
+    surface.request_document_titles();
+    assert_eq!(titles_asked(&commands), [vec![unanswered]]);
+    assert!(surface.deactivate(), "a client was running");
+    // `activate`, as a host that may use the conversation again calls it
+    // (a test starts no thread, so the next client is put in its place).
+    let (reader, again, updates) = Reader::test_pair();
+    std::mem::forget(updates);
+    surface.reader = Some(reader);
+    surface.request_document_titles();
+    assert_eq!(
+        titles_asked(&again),
+        [vec![unanswered]],
+        "only the lookup nobody answered is asked again"
+    );
+}
+
 /// **A steer with the stopped client** goes back to the front of its queue,
 /// paused, as a steer whose delivery is uncertain does
 /// (`steer_refused`): it may have reached the reply, so nothing sends it
