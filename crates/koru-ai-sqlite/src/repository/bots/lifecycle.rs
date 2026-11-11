@@ -445,6 +445,41 @@ impl Repository {
         .collect()
     }
 
+    /// The Bot task attempts of a Bot (or of one of its conversations) that
+    /// have not ended, whatever their receipt's stage: an operation stops
+    /// each as the person's Stop and completes only once there is none. A
+    /// running attempt's reply is the conversation's one pending assistant
+    /// message (`one_pending_assistant_per_chat`), so this reads at most one
+    /// per conversation and never a conversation's history; `bot_chats` has
+    /// no index on `bot_id`, so the association table is scanned, as the
+    /// Bots view's reads do.
+    pub fn bot_unended_attempts(
+        &self,
+        bot: BotId,
+        chat: Option<ChatId>,
+    ) -> Result<Vec<InferenceAttemptId>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(
+                "SELECT r.ai_attempt_id FROM bot_chats AS bc
+                  CROSS JOIN messages AS m INDEXED BY one_pending_assistant_per_chat
+                          ON m.chat_id = bc.chat_id AND m.state = 'pending' AND m.role = 'assistant'
+                  CROSS JOIN bot_chat_runs AS r ON r.assistant_message_id = m.id
+                  CROSS JOIN inference_attempts AS a ON a.id = r.ai_attempt_id
+                 WHERE bc.bot_id = ?1 AND (?2 IS NULL OR bc.chat_id = ?2)
+                   AND a.status IN ('pending', 'streaming')",
+            )
+            .map_err(bad)?;
+        let rows = query
+            .query_map(
+                params![bot.to_storage(), chat.map(ChatId::to_storage)],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(bad)?;
+        rows.map(|row| InferenceAttemptId::parse(&row.map_err(bad)?).ok_or(BotError::Storage))
+            .collect()
+    }
+
     /// The unfinished, unreversed whole-Bot operation that installed an
     /// effects-off barrier, if any (at most one moves, and a parked one
     /// blocks any other).

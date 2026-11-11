@@ -7,6 +7,18 @@ use koru_ai_core::{AgentAnswerValue, AnswersRecord, QuestionsRecord};
 use rusqlite::TransactionBehavior;
 
 impl Repository {
+    /// Whether an attempt is a Bot task's, from its association alone, in
+    /// any lifecycle of its Bot. This decides the route an attempt takes; a
+    /// receipt read (which refuses an archived or trashed Bot) never does.
+    pub fn is_bot_attempt(&self, attempt: InferenceAttemptId) -> Result<bool, AiError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bot_chat_runs WHERE ai_attempt_id=?1)",
+                [attempt.to_storage()],
+                |r| r.get(0),
+            )
+            .map_err(storage_failed)
+    }
     /// Internal owner lookup. Public callers must first authorize the stored
     /// attempt's actual Chat; a supplied alternate Chat never grants access.
     pub fn bot_submission_for_attempt(

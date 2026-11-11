@@ -252,6 +252,8 @@ impl BotAdmissionReceipt {
                 run_id: None,
                 status: if r.acknowledged {
                     BotOperationStatus::Accepted
+                } else if r.stage == BotReceiptStage::Rejected {
+                    BotOperationStatus::Rejected
                 } else {
                     BotOperationStatus::Pending
                 },

@@ -156,8 +156,11 @@ fn pause_on(
         _ => return Err(BotError::Storage),
     };
     let stage = BotReceiptStage::parse(&r.stage).ok_or(BotError::Storage)?;
+    // A pause its owner definitely refused is `rejected`, never
+    // acknowledged; it no longer holds back the Bot's other changes.
     if (acknowledged && stage != BotReceiptStage::Completed)
-        || (!acknowledged && stage != BotReceiptStage::Prepared)
+        || (!acknowledged
+            && !matches!(stage, BotReceiptStage::Prepared | BotReceiptStage::Rejected))
     {
         return Err(BotError::Storage);
     }
@@ -671,6 +674,58 @@ impl Repository {
         let result = pause_on(&tx, owner.user_scope, request)?.ok_or(BotError::Storage)?;
         tx.commit().map_err(bad)?;
         Ok(result)
+    }
+    /// The owner definitely refused a pending pause or resume: it can never
+    /// land as it is. The receipt is settled `rejected` so the Bot is not held
+    /// for it. When the refusal says the owner holds a different barrier at
+    /// its epoch or a newer one (`bot_conflict`, `bot_stale`), the AI side's
+    /// state is offered again as a fresh barrier at the next revision, which
+    /// is newer than this one, so what AI says paused is what the owner is
+    /// told; the new receipt is returned. When nothing the owner will accept
+    /// can follow (`renew` false), none is minted, and the Bot stays as AI
+    /// recorded it. A receipt an unfinished whole-Bot operation drives is
+    /// left to it, as is one already settled.
+    pub fn settle_refused_bot_pause(
+        &mut self,
+        owner: BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+        renew: bool,
+        now: i64,
+    ) -> Result<Option<BotPauseReceipt>, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        guard(&tx, owner, bot)?;
+        let r = pause_on(&tx, owner.user_scope, request)?.ok_or(BotError::NotFound)?;
+        if r.stage != BotReceiptStage::Prepared
+            || super::lifecycle::whole_bot_operation_open(&tx, bot)?
+        {
+            return Ok(None);
+        }
+        tx.execute(
+            "UPDATE bot_command_receipts SET stage='rejected',updated_at_ms=?3 WHERE user_scope_id=?1 AND request_id=?2 AND stage='prepared'",
+            params![owner.user_scope.to_storage(), request.to_storage(), now],
+        )
+        .map_err(bad)?;
+        let next = if renew {
+            let g = guard(&tx, owner, bot)?;
+            Some(prepare_bot_pause_on(
+                &tx,
+                owner,
+                bot,
+                BotRequestId::mint(),
+                g.revision,
+                r.intent.barrier.paused,
+                &r.fingerprint,
+                now,
+            )?)
+        } else {
+            None
+        };
+        tx.commit().map_err(bad)?;
+        Ok(next)
     }
     pub fn prepare_bot_refusal_fence(
         &mut self,

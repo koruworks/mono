@@ -1473,7 +1473,35 @@ impl WorkerState {
             self.queue_bot_receipt(bot, BotAdmissionReceipt::Submission(receipt), None);
             unresolved = true;
         }
+        // Every Bot task attempt of the subject not yet ended, whatever its
+        // receipt's stage (one admitted while it was still in its context
+        // window has no live task for the delegate's report to find), is
+        // stopped as the person's Stop. It is read from the journal of
+        // attempts each time, so a restart re-checks it.
+        match self.stop_unended_attempts(op.bot, chat) {
+            Some(false) => return Some(false),
+            Some(true) => unresolved = true,
+            None => {}
+        }
         unresolved.then_some(true)
+    }
+
+    /// Stop, as the person's Stop, each Bot task attempt of a Bot (or of one
+    /// of its conversations) that has not ended. `None` when there is none,
+    /// `Some(true)` when some were stopped, `Some(false)` when they could not
+    /// be read.
+    fn stop_unended_attempts(&mut self, bot: BotId, chat: Option<ChatId>) -> Option<bool> {
+        let attempts = match self.repository.bot_unended_attempts(bot, chat) {
+            Ok(attempts) => attempts,
+            Err(_) => return Some(false),
+        };
+        if attempts.is_empty() {
+            return None;
+        }
+        for attempt in attempts {
+            let _ = self.stop_attempt(attempt);
+        }
+        Some(true)
     }
 
     /// The Runs of this Bot that this writer is driving as live conversation
@@ -1562,6 +1590,10 @@ impl WorkerState {
         // submission is waiting to reach it.
         if !matches!(self.repository.bot_unresolved_submissions(op.bot, 1), Ok(rows) if rows.is_empty())
         {
+            return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
+        }
+        // Nor may any Bot task attempt of it still be unended.
+        if self.stop_unended_attempts(op.bot, None).is_some() {
             return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning);
         }
         let now = Timestamp::now().millis();

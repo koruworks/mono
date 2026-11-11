@@ -262,7 +262,15 @@ impl WorkerState {
                     return;
                 }
                 Some(Ok(Some(_))) | None => {
+                    // Stopped, it moves to the Stop lane; a Stop that failed
+                    // waits its turn like any retry, so it never stands in
+                    // front of the other chats every pass.
                     let _ = self.stop_attempt(id);
+                    if let Some(chat) = self.bot_chats.get_mut(&id)
+                        && chat.finishing.is_none()
+                    {
+                        chat.due = now + Duration::from_millis(250);
+                    }
                     return;
                 }
             }
@@ -359,6 +367,9 @@ impl WorkerState {
         }
     }
     pub(in crate::worker) fn complete_bot_chat_step(&mut self, step: StepResult) {
+        if step.result.is_ok() {
+            self.bot_recovery_retry.answered(Instant::now());
+        }
         let Some(mut chat) = self.bot_chats.remove(&step.attempt) else {
             return;
         };
@@ -684,6 +695,24 @@ impl WorkerState {
             _ => return Err(bot_route_error()),
         }
         Ok(true)
+    }
+    /// A context job returned for a Bot task it can no longer hand on: its
+    /// receipt is unreadable (the Bot was archived or trashed meanwhile) or
+    /// its association could not be read. It ends here, as an automatic
+    /// interruption, and never reaches the ordinary provider route. When even
+    /// that cannot be written, the attempt fails through the ordinary
+    /// failure event, which also starts nothing.
+    pub(in crate::worker) fn end_bot_context(&mut self, id: InferenceAttemptId) {
+        self.interrupt_bot_chat(id);
+        if matches!(self.repository.attempt(id), Ok(Some(attempt)) if attempt.status.is_terminal())
+        {
+            return;
+        }
+        self.handle_provider_event(AiEvent::Failed {
+            attempt_id: id,
+            error: bot_route_error(),
+            at: Timestamp::now(),
+        });
     }
     pub(in crate::worker) fn interrupt_bot_chat(&mut self, id: InferenceAttemptId) {
         if matches!(self.repository.attempt(id),Ok(Some(attempt)) if attempt.status.is_terminal()) {

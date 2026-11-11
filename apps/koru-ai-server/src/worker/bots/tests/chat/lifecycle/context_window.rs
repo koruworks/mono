@@ -215,9 +215,23 @@ fn run(trash_chat: bool, whole: bool) {
         &bot,
         bot.main_chat,
     );
-    until(
-        "the recovery pass admits the Send in its context window",
-        || port.native.state.lock().unwrap().submission.is_some(),
+    // The receipt recovery pass, kept running by the other Bot's owed
+    // start, reaches the Send's receipt while the Send is in its context
+    // window. It must leave it to the Send's own path: never admitted
+    // before its live task exists (which is what let it outlive the
+    // operation before).
+    until("the recovery pass reached the Send's receipt", || {
+        port.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, name, key)| *name == "reconcile" && key.is_some())
+            .count()
+            >= 3
+    });
+    assert!(
+        port.native.state.lock().unwrap().submission.is_none(),
+        "the Send was admitted while still in its context window"
     );
     let before = attempt_status(&client, accepted.attempt_id);
     eprintln!("REVIEW3 trash_chat={trash_chat}: admitted while attempt is {before:?}");

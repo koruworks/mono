@@ -823,3 +823,51 @@ fn a_change_waiting_for_its_owner_answers_settling_never_a_reused_request() {
     );
     assert_eq!(BotError::Settling.code(), "bot_operation_pending");
 }
+#[test]
+fn a_definitely_refused_pause_settles_and_is_offered_again_newer_or_not_at_all() {
+    let (mut repo, bot, owner, _) = fixture();
+    let first = BotRequestId::mint();
+    let paused = repo
+        .prepare_bot_pause(owner, bot.id, first, 1, true, HASH, 2)
+        .unwrap();
+    // Refused stale: settled rejected, and the same state offered again at
+    // the next revision, a newer epoch.
+    let again = repo
+        .settle_refused_bot_pause(owner, bot.id, first, true, 3)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        repo.bot_admission_receipt(owner, bot.id, first)
+            .unwrap()
+            .unwrap()
+            .operation()
+            .status,
+        BotOperationStatus::Rejected
+    );
+    assert!(again.intent.barrier.paused);
+    assert_eq!(again.intent.barrier.epoch, paused.intent.barrier.epoch + 1);
+    // Refused for good: settled rejected, nothing follows, nothing waits.
+    assert_eq!(
+        repo.settle_refused_bot_pause(owner, bot.id, again.intent.barrier.request, false, 4)
+            .unwrap(),
+        None
+    );
+    let current = repo.bot(bot.id).unwrap().unwrap();
+    assert!(current.paused);
+    repo.prepare_bot_pause(
+        owner,
+        bot.id,
+        BotRequestId::mint(),
+        current.revision,
+        false,
+        HASH,
+        5,
+    )
+    .unwrap();
+    // An already settled one is left as it is.
+    assert_eq!(
+        repo.settle_refused_bot_pause(owner, bot.id, first, true, 6)
+            .unwrap(),
+        None
+    );
+}

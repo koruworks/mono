@@ -105,8 +105,11 @@ impl Repository {
         now: Timestamp,
         end: LocalEnd<'_>,
     ) -> Result<(), AiError> {
-        self.bot_submission_for_attempt(attempt)?
-            .ok_or_else(invariant_failed)?;
+        // A Bot task's attempt by its association, whatever its Bot's
+        // lifecycle now: one of an archived or trashed Bot must still end.
+        if !self.is_bot_attempt(attempt)? {
+            return Err(invariant_failed());
+        }
         let tx = self.connection.transaction().map_err(storage_failed)?;
         let current =
             query_attempt(&tx, "id", &attempt.to_storage())?.ok_or_else(invariant_failed)?;

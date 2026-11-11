@@ -383,6 +383,11 @@ impl WorkerState {
             self.bot_recovery_after = Some(0);
         }
         let (owner, bot, request) = (result.owner, result.bot, result.request);
+        match &result.result {
+            Ok(_) => self.bot_recovery_retry.answered(Instant::now()),
+            Err(error) if error.retryable => self.bot_recovery_retry.away = true,
+            Err(_) => {}
+        }
         self.apply_bot_coordination(result);
         self.note_bot_coordination(owner, bot, request);
         self.recover_bot_operations();
@@ -410,6 +415,7 @@ impl WorkerState {
     /// The backed-off recovery pass is due: walk the pending receipts again.
     pub(in crate::worker) fn retry_bot_operations(&mut self) {
         self.bot_recovery_retry.at = None;
+        self.bot_recovery_retry.last = Some(Instant::now());
         self.bot_recovery_after.get_or_insert(0);
         self.recover_bot_operations();
     }
@@ -439,6 +445,21 @@ impl WorkerState {
             && let Some(attempt) = unended_attempt(&self.repository, r)
         {
             let _ = self.stop_attempt(attempt);
+        }
+        // A Send still in its context window (its attempt live, no live task
+        // yet) is submitted by its own path once its live task exists
+        // (`start_bot_chat_context`), never by recovery or a client's
+        // reconcile: a Run admitted with nothing yet driving it could
+        // outlive an operation that captures its Bot.
+        if matches!(
+            (&result.action, &result.result),
+            (Action::Reconcile, Ok(BotReply::Missing))
+        ) && let BotAdmissionReceipt::Submission(r) = &receipt
+            && r.outcome.is_none()
+            && let Some(attempt) = unended_attempt(&self.repository, r)
+            && !self.bot_chats.contains_key(&attempt)
+        {
+            return;
         }
         let now = Timestamp::now().millis();
         let next = apply_result(&mut self.repository, result, &receipt, now);
@@ -607,6 +628,25 @@ fn apply_result(
             )?;
             Ok(Some((BotAdmissionReceipt::Submission(r), None)))
         }
+        // An owed pause or resume the owner definitely refused never lands
+        // as it is (`settle_refused_bot_pause`): with another barrier at its
+        // epoch or a newer one (`bot_conflict`, `bot_stale`) the AI side's
+        // state is offered again at the next revision; to a host that will
+        // never take a barrier for this owner (`bot_owner_mismatch`,
+        // `bot_invalid`) it is settled rejected, and the Bot stays as AI
+        // recorded it. Anything else (unreachable, no ledger yet) stays
+        // pending and is offered again.
+        (Action::Pause(_), Err(error), BotAdmissionReceipt::Pause(_))
+            if matches!(
+                error.code.as_str(),
+                "bot_conflict" | "bot_stale" | "bot_owner_mismatch" | "bot_invalid"
+            ) =>
+        {
+            let renew = matches!(error.code.as_str(), "bot_conflict" | "bot_stale");
+            Ok(repository
+                .settle_refused_bot_pause(result.owner, result.bot, result.request, renew, now)?
+                .map(|next| (BotAdmissionReceipt::Pause(next), None)))
+        }
         _ => Ok(None), // Uncertain/unknown replies keep the durable intent and folder guard.
     }
 }
@@ -657,6 +697,12 @@ fn held_by_lifecycle(repository: &Repository, receipt: &BotSubmissionReceipt) ->
 pub(in crate::worker) struct AdmissionRetry {
     at: Option<Instant>,
     round: u32,
+    /// When the last pass began: a pass brought forward never starts
+    /// sooner than a second after it, whoever asks.
+    last: Option<Instant>,
+    /// The owner was unreachable when it was last asked: the first answer
+    /// it gives again brings the pass forward, once.
+    away: bool,
 }
 impl AdmissionRetry {
     fn failed(&mut self, now: Instant) {
@@ -670,10 +716,23 @@ impl AdmissionRetry {
             self.round = 0;
         }
     }
-    /// A person's command was refused because a change of the Bot is still
-    /// settling: offer what is owed now rather than after the backoff.
-    pub(in crate::worker) fn now(&mut self) {
-        self.at = Some(Instant::now());
+    /// Bring the next pass forward to now, but never sooner than a second
+    /// after the last one began, so a client's retries or a busy owner
+    /// cannot make it run faster than that.
+    pub(in crate::worker) fn soon(&mut self, now: Instant) {
+        let earliest = self
+            .last
+            .map_or(now, |last| last + Duration::from_secs(1))
+            .max(now);
+        self.at = Some(self.at.map_or(earliest, |at| at.min(earliest)));
+    }
+    /// The owner answered something: whatever is owed is offered again soon,
+    /// rather than at the end of its backoff (an owner back after an outage).
+    pub(in crate::worker) fn answered(&mut self, now: Instant) {
+        if self.away && self.at.is_some() {
+            self.away = false;
+            self.soon(now);
+        }
     }
     pub(in crate::worker) fn due(&self, now: Instant) -> bool {
         self.at.is_some_and(|at| at <= now)

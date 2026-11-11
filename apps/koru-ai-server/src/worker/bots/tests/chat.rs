@@ -85,6 +85,13 @@ impl BotDelegatePort for Native {
                                 .is_some())
                 );
                 assert!(submission.provenance.ai_attempt_id.is_some());
+                // `admit_bot` answers a repeated Submit with the record it
+                // already holds, never a fresh admission.
+                if state.submission.as_ref().is_some_and(|held| {
+                    held.provenance.submission == submission.provenance.submission
+                }) {
+                    return Ok(admission(&state));
+                }
                 let fence = d::BotExecutionFence {
                     owner: submission.provenance.owner,
                     bot: submission.provenance.bot,

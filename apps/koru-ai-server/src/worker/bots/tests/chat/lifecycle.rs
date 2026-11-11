@@ -23,6 +23,7 @@ use std::sync::atomic::AtomicUsize;
 mod context_window;
 mod defaults;
 mod listing;
+mod owed;
 mod reverse;
 mod trash;
 mod unadmitted;
@@ -115,6 +116,20 @@ struct Archiving {
     /// Every command offered, reachable or not: when, which, and the request
     /// it names, so a test can bound how often one thing is asked.
     calls: Mutex<Vec<(Instant, &'static str, Option<BotRequestId>)>>,
+    /// The one device this host serves: the first one a command names.
+    device: Mutex<Option<d::DeviceId>>,
+}
+/// The owner a command names, where it names one, for the device check
+/// every Bot command passes at the host (`owner_device`).
+fn owner_named(command: &D) -> Option<d::BotOwner> {
+    match command {
+        D::Submit { submission } => Some(submission.provenance.owner),
+        D::Reconcile { key } => Some(key.owner),
+        D::Barrier { barrier } => Some(barrier.owner),
+        D::Stop { key, .. } | D::Interrupt { key, .. } => Some(key.owner),
+        D::UnsettledWork { owner, .. } | D::PendingNativeEffects { owner, .. } => Some(*owner),
+        _ => None,
+    }
 }
 /// The delegate's limit on a Bot's queued admissions (`BOT_PENDING_LIMIT`).
 const PENDING_LIMIT: usize = 50;
@@ -143,6 +158,13 @@ impl Archiving {
                 *name == what && *key == Some(request) && *at <= end && end - *at <= span
             })
             .count()
+    }
+    /// The owner restarts: its actor drains its Bot queue at once
+    /// (`wake_bots` after the restart classification), before the AI owner
+    /// has contacted it, starting every queued Run its barrier does not hold
+    /// paused.
+    fn restart_owner(&self) {
+        self.dispatch();
     }
     /// The owner's dispatcher (`reserve_bot`), run before it answers about
     /// the Bot's work: a queued Run it would start stays queued with no fence
@@ -294,6 +316,14 @@ impl BotDelegatePort for Archiving {
                 "fixture owner unavailable",
                 true,
             ));
+        }
+        // `owner_device`: the host serves one device; a command naming
+        // another is refused before anything is read.
+        if let Some(owner) = owner_named(&command) {
+            let mut device = self.device.lock().unwrap();
+            if *device.get_or_insert(owner.device) != owner.device {
+                return Err(refused("bot_owner_mismatch"));
+            }
         }
         if matches!(
             &command,
@@ -510,8 +540,19 @@ impl BotDelegatePort for Archiving {
                     // Only the owner's current fence is accepted: one read
                     // before the dispatcher started the Run is refused, and
                     // the next read reports the new fence.
-                    if fence != &task.view.fence {
-                        return Err(refused("bot_fenced"));
+                    // As `bot_stop` checks it: a queued Run takes no fence,
+                    // a running one its owner, Bot, Run, attempt, generation
+                    // and session, never its turn.
+                    let same = |a: &d::BotExecutionFence, b: &d::BotExecutionFence| {
+                        (a.owner, a.bot, a.run, a.attempt, a.generation, a.session)
+                            == (b.owner, b.bot, b.run, b.attempt, b.generation, b.session)
+                    };
+                    match (fence, &task.view.fence) {
+                        (None, None) => {}
+                        (Some(sent), Some(current)) if same(sent, current) => {}
+                        (Some(_), None) => return Err(refused("bot_fenced")),
+                        (None, Some(_)) => return Err(refused("bot_fence_required")),
+                        _ => return Err(refused("bot_fenced")),
                     }
                     if task.take_on_stop {
                         // A person takes the session mid-Archive; the
@@ -1257,10 +1298,10 @@ fn while_archive_is_unfinished_native_evidence_is_its_effects_off_barrier() {
     until("the task's Stop reached the owner", || {
         port.stops_of(run) >= 1
     });
-    assert_eq!(
-        read_operation(&client, bot.id, request).stage,
-        BotLifecycleStage::Settling
-    );
+    // The task is stopped at capture now; the Archive then settles.
+    until("the Archive settles", || {
+        read_operation(&client, bot.id, request).stage == BotLifecycleStage::Settling
+    });
     // The Bot is held while it settles.
     assert_eq!(
         client

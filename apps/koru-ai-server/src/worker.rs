@@ -4724,11 +4724,10 @@ impl WorkerState {
             message_block_refs: Vec::new(),
             replace_pinned_documents: false,
         });
-        if matches!(
-            self.repository.bot_submission_for_attempt(attempt_id),
-            Ok(Some(_))
-        ) {
-            self.interrupt_bot_chat(attempt_id);
+        // A Bot task by its association, never by its guarded receipt read
+        // (which refuses a put-away Bot): it ends as a Bot task does.
+        if !matches!(self.repository.is_bot_attempt(attempt_id), Ok(false)) {
+            self.end_bot_context(attempt_id);
             return;
         }
         self.handle_provider_event(AiEvent::Failed {
@@ -4741,10 +4740,19 @@ impl WorkerState {
     fn handle_context_resolution(&mut self, resolution: ContextResolution) {
         let attempt_id = resolution.commit.attempt_id;
         self.work_returned(attempt_id);
-        if matches!(
-            self.repository.bot_submission_for_attempt(attempt_id),
-            Ok(Some(_))
-        ) {
+        // Whether this is a Bot task is decided by its association, read
+        // without the Bot's lifecycle guard. A Bot task never falls through
+        // to the ordinary provider route: if its receipt cannot be read (its
+        // Bot was archived or trashed meanwhile) it ends here. An
+        // association that cannot be read fails closed the same way.
+        if !matches!(self.repository.is_bot_attempt(attempt_id), Ok(false)) {
+            if !matches!(
+                self.repository.bot_submission_for_attempt(attempt_id),
+                Ok(Some(_))
+            ) {
+                self.end_bot_context(attempt_id);
+                return;
+            }
             let result = self
                 .repository
                 .commit_context(&resolution.commit)

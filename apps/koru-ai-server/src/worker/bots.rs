@@ -72,7 +72,7 @@ impl WorkerState {
         // Refused because another change of the Bot is still waiting for its
         // owner: offer what is owed now, so the person's retry can succeed.
         if matches!(&response, Err(error) if error.code == BotError::Settling.code()) {
-            self.bot_recovery_retry.now();
+            self.bot_recovery_retry.soon(Instant::now());
         }
         response
     }
