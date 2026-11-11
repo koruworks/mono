@@ -17,6 +17,8 @@ mod replay;
 mod runtime;
 mod settings;
 mod steering;
+// Only the attachment tests name the bound from outside its module.
+#[cfg(test)]
 pub(in crate::worker) use attachments::MAX_LISTINGS as MAX_PICTURE_LISTINGS;
 pub(in crate::worker) use controls::{
     ControlJob, ControlReadJob, ControlReadResult, ControlResult,
