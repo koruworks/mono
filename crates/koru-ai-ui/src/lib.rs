@@ -10528,9 +10528,9 @@ pub(crate) fn failure_text(failure: &koru_ai_wire::Failure, lang: koru_i18n::Lan
         koru_ai_wire::bot_lifecycle_codes::ARCHIVED => Some(koru_i18n::Key::BotsErrArchived),
         koru_ai_wire::bot_lifecycle_codes::TRASHED => Some(koru_i18n::Key::BotsErrTrashed),
         koru_ai_wire::bot_lifecycle_codes::PENDING => Some(koru_i18n::Key::BotsErrPending),
-        // The Bot-level refusal on a trashed Bot, additive with the engine's
-        // Trash review fix; `koru-ai-wire` names no constant for it yet.
-        "bot_trashed" => Some(koru_i18n::Key::BotsErrBotTrashed),
+        // The Bot-level refusal on a trashed Bot: since the engine's Trash
+        // review fix, every refusal a Bot in Trash causes.
+        koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED => Some(koru_i18n::Key::BotsErrBotTrashed),
         _ => None,
     };
     if let Some(key) = lifecycle {

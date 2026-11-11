@@ -768,7 +768,10 @@ mod failure_words {
                 koru_ai_wire::bot_lifecycle_codes::PENDING,
                 koru_i18n::Key::BotsErrPending,
             ),
-            ("bot_trashed", koru_i18n::Key::BotsErrBotTrashed),
+            (
+                koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED,
+                koru_i18n::Key::BotsErrBotTrashed,
+            ),
         ] {
             let refused = failure(code, "This Bot conversation is held. Restore it first.");
             for lang in Lang::ALL {

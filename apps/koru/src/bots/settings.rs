@@ -659,10 +659,12 @@ pub(crate) const BOT_TRASHED: &str = "bot_conversation_trashed";
 /// The owner's refusal while a lifecycle operation of the Bot or the
 /// conversation is moving or parked: `bot_lifecycle_codes::PENDING`.
 pub(crate) const BOT_PENDING: &str = "bot_lifecycle_pending";
-/// The owner's Bot-level refusal on a trashed Bot (additive, announced by
-/// the lead on 2026-11-11 with the engine's Trash review fix): the Bot must
-/// be restored first. `bot_conversation_trashed` stays for a conversation in
-/// Trash under a live Bot.
+/// The owner's refusal of anything a Bot in Trash causes — a change to the
+/// Bot, to one of its conversations, a conversation's Restore — since the
+/// engine's Trash review fix: the Bot must be restored first.
+/// `koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED`, which the app cannot
+/// name (it does not depend on `koru-ai-wire`). `bot_conversation_trashed`
+/// stays for a conversation in Trash under a live Bot.
 pub(crate) const BOT_TRASHED_BOT: &str = "bot_trashed";
 
 /// **A refusal's sentence, by its stable code** (`BotError::code`, and the
