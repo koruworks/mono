@@ -16,6 +16,9 @@ use koru_i18n::{Key as Words, Lang, t};
 
 pub mod elements;
 pub mod tokens;
+pub mod view;
+
+pub use view::ModeList;
 
 /// One row of the list: an icon, a title and a line under it.
 pub const MODE_ROW_H: f32 = 46.0;

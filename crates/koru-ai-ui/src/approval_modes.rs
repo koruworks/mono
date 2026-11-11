@@ -36,12 +36,8 @@ use std::time::{Duration, Instant};
 use koru_agent_config_ui::modes as cfg;
 use koru_ai_core::AiProviderId;
 use koru_ai_wire::{AgentModeView, UpdateChatAgentSettingsRequest};
-use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
-use koru_draw::inspect;
-use koru_draw::{scene, theme, theme::role};
 use koru_i18n::{Key as Words, fill, t};
-use koru_ui::popover::PopoverAlign;
 use koru_ui::split_button::SplitTone;
 use koru_ui::tooltip::TooltipContent;
 use vello::Scene;
@@ -55,13 +51,10 @@ use crate::reader::Command;
 // Read only by the suite, through `use super::*`, since the mode table
 // moved; it goes when the suite moves into the control's crate.
 #[cfg(test)]
+use koru_draw::el::Frame;
+#[cfg(test)]
 use koru_draw::icons;
 
-/// The air around the rows inside the panel.
-const PANEL_PAD: f32 = 4.0;
-/// The panel's corners, as the composer's other panels have them.
-const PANEL_RADIUS: f32 = 8.0;
-const FOOTER_H: f32 = 38.0;
 /// How long the note beside the chip stays.
 const NOTE_HOLD: Duration = Duration::from_millis(2200);
 /// The note's tooltip key, apart from every hover tooltip's.
@@ -81,7 +74,10 @@ pub(crate) struct ListedModes {
 // order. The chat names them here over its own types — the provider id and
 // the listing it keeps — so this crate's code and its suite read as they did.
 pub use cfg::NewChatPermission;
-pub(crate) use cfg::{MODE_ROW_H, ModeRow, Role, next_mode};
+pub(crate) use cfg::{MODE_ROW_H, ModeList, ModeRow, Role, next_mode};
+// The list's sizes, which only the suite reads now.
+#[cfg(test)]
+use cfg::view::{FOOTER_H, PANEL_PAD};
 
 /// `listed`'s modes as the control takes them, borrowed.
 fn offers(listed: &ListedModes) -> Vec<cfg::ModeOffer<'_>> {
@@ -301,36 +297,41 @@ impl crate::ChatSurface {
         self.composer_shell.as_ref()?.mode()
     }
 
-    /// The open list follows the split send control that opened it.
-    pub(crate) fn approval_mode_panel(&self) -> Option<Rect> {
+    /// **The open list, as the control lays it out** (`ModeList`): the
+    /// chat's rows, its mode, the keyboard's row and the split button that
+    /// opened it. `None` while the list is shut or has no button.
+    fn with_mode_list<R>(&self, f: impl FnOnce(&ModeList<'_>) -> R) -> Option<R> {
         if !self.approval_mode_open {
             return None;
         }
-        let chip = self.approval_mode_button()?;
-        let count = self.approval_mode_rows().len();
-        let width = self.composer_hit_rect.w.min(340.0).max(1.0);
-        let height = count as f32 * MODE_ROW_H + PANEL_PAD * 2.0 + FOOTER_H;
-        Some(self.toolbar_popover(chip, width, height, PopoverAlign::End))
+        let anchor = self.approval_mode_button()?;
+        let rows = self.approval_mode_rows();
+        let current = self.current_approval_mode();
+        let list = ModeList {
+            lang: self.lang,
+            rows: &rows,
+            current: current.as_deref(),
+            focus: self.approval_mode_focus,
+            anchor,
+            viewport: self.viewport,
+            width: self.composer_hit_rect.w,
+            pointer: self.pointer,
+        };
+        Some(f(&list))
     }
 
+    /// The open list follows the split send control that opened it.
+    pub(crate) fn approval_mode_panel(&self) -> Option<Rect> {
+        self.with_mode_list(|list| list.panel())
+    }
+
+    #[cfg(test)]
     fn approval_mode_footer_rect(&self) -> Option<Rect> {
-        let panel = self.approval_mode_panel()?;
-        Some(Rect::new(
-            panel.x,
-            panel.y + panel.h - FOOTER_H,
-            panel.w,
-            FOOTER_H,
-        ))
+        self.with_mode_list(|list| list.footer_rect())
     }
 
     fn approval_mode_default_rect(&self) -> Option<Rect> {
-        let footer = self.approval_mode_footer_rect()?;
-        Some(Rect::new(
-            footer.x + footer.w * 0.5,
-            footer.y,
-            footer.w * 0.5,
-            footer.h,
-        ))
+        self.with_mode_list(|list| list.default_rect())
     }
 
     fn change_approval_default(&mut self) -> bool {
@@ -340,47 +341,23 @@ impl crate::ChatSurface {
         true
     }
 
-    /// What the open list's tree declares (D105): a row a mode, the
-    /// current one's ✓, the keyboard's row lit.
-    fn approval_mode_specs(&self) -> Vec<elements::ModeSpec> {
-        let current = self.current_approval_mode();
-        self.approval_mode_rows()
-            .into_iter()
-            .enumerate()
-            .map(|(index, row)| elements::ModeSpec {
-                key: elements::row_key(&row.id),
-                icon: row.icon,
-                current: current.as_deref() == Some(row.id.as_str()),
-                lit: self.approval_mode_focus == Some(index),
-                full_access: row.full_access,
-                title: row.title,
-                help: row.help,
-            })
-            .collect()
-    }
-
     /// **The open list's frame** (D105): where a press lands and which row
     /// it is — what is drawn, laid out without the pointer.
+    #[cfg(test)]
     fn approval_mode_frame(&self) -> Option<(Vec<elements::ModeSpec>, Frame)> {
-        let panel = self.approval_mode_panel()?;
-        let specs = self.approval_mode_specs();
-        let frame = elements::layout(&elements::tree(&specs), panel, FrameCx::root());
-        Some((specs, frame))
+        self.with_mode_list(|list| list.frame())
     }
 
     /// Row `index` where it is drawn.
     #[cfg(test)]
     pub(crate) fn approval_mode_row_rect(&self, index: usize) -> Option<Rect> {
-        let (_, frame) = self.approval_mode_frame()?;
-        Some(frame.named(elements::MODE_ROW).nth(index)?.rect)
+        self.with_mode_list(|list| list.row_rect(index)).flatten()
     }
 
     /// The row a press or the pointer at `x`, `y` is on, from the frame's
     /// targets.
     fn approval_mode_row_at(&self, x: f32, y: f32) -> Option<usize> {
-        let (specs, frame) = self.approval_mode_frame()?;
-        let key = frame.hit_at(x, y)?;
-        specs.iter().position(|spec| spec.key == key)
+        self.with_mode_list(|list| list.row_at(x, y)).flatten()
     }
 
     /// The hover part for redraws: the chip, and each row of the open list.
@@ -549,101 +526,28 @@ impl crate::ChatSurface {
         None
     }
 
-    /// **The open list** (D105): its element tree ([`elements`]) — each
-    /// mode's icon, title and line, the ✓ on the current one, *Full access*
-    /// in the notice ink — laid out with the pointer and the keyboard on it
-    /// and painted while the panel's `FloatingPanel` record is open, so
-    /// every row, icon, word and ✓ nests under the panel in the inspector.
+    /// **The open list** (D105), drawn by the control (`ModeList::draw`)
+    /// inside the panel's `FloatingPanel` record.
     pub(crate) fn draw_approval_mode_picker(&mut self, canvas: &mut Scene, root: Affine) {
-        let Some(panel) = self.approval_mode_panel() else {
+        if !self.approval_mode_open {
+            return;
+        }
+        let Some(anchor) = self.approval_mode_button() else {
             return;
         };
-        let tree = elements::tree(&self.approval_mode_specs());
-        // The host's pointer, by key: the frame's own target under it.
-        let hot =
-            elements::layout(&tree, panel, FrameCx::root()).hit_at(self.pointer.0, self.pointer.1);
-        let frame = elements::layout(
-            &tree,
-            panel,
-            FrameCx::root().with_interaction(Interaction {
-                hot,
-                ..Interaction::default()
-            }),
-        );
-        let _panel = scene::floating_panel_scope(
-            canvas,
-            root,
-            panel.x,
-            panel.y,
-            panel.w,
-            panel.h,
-            &scene::Panel::popover(PANEL_RADIUS),
-        );
-        frame.paint(&tree, canvas, root, &mut self.engine);
-        if let Some(footer) = self.approval_mode_footer_rect() {
-            let _footer = inspect::scope(
-                "ApprovalModeFooter",
-                "part",
-                root,
-                scene::rect(footer.x, footer.y, footer.w, footer.h),
-                |record| record.property("scope", "this chat", "mode persistence"),
-            );
-            let p = theme::p();
-            scene::fill(
-                canvas,
-                root,
-                p.panel_border,
-                &scene::rect(
-                    footer.x + 8.0,
-                    footer.y,
-                    footer.w - 16.0,
-                    theme::BORDER_W as f32,
-                ),
-            );
-            let label = t(self.lang, Words::AiAgentModeAppliesThisChat);
-            let label = self
-                .engine
-                .elided(label, role::meta(), (footer.w * 0.5 - 16.0).max(1.0));
-            let label = self.engine.simple_layout(&label, role::meta());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &label,
-                footer.x + 8.0,
-                footer.y + (footer.h - label.height()) * 0.5,
-                Some(p.text_dim),
-            );
-            if let Some(button) = self.approval_mode_default_rect() {
-                let focused = self.approval_mode_focus == Some(self.approval_mode_rows().len());
-                if focused || button.contains(self.pointer.0, self.pointer.1) {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.hover_tint,
-                        &scene::rrect(
-                            button.x,
-                            button.y + 3.0,
-                            button.w - 4.0,
-                            button.h - 6.0,
-                            4.0,
-                        ),
-                    );
-                }
-                let text = t(self.lang, Words::AiAgentModeChangeDefault);
-                let text = self
-                    .engine
-                    .elided(text, role::meta(), (button.w - 16.0).max(1.0));
-                let text = self.engine.simple_layout(&text, role::meta());
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &text,
-                    button.x + button.w - text.width() - 8.0,
-                    button.y + (button.h - text.height()) * 0.5,
-                    Some(p.accent),
-                );
-            }
-        }
+        let rows = self.approval_mode_rows();
+        let current = self.current_approval_mode();
+        let list = ModeList {
+            lang: self.lang,
+            rows: &rows,
+            current: current.as_deref(),
+            focus: self.approval_mode_focus,
+            anchor,
+            viewport: self.viewport,
+            width: self.composer_hit_rect.w,
+            pointer: self.pointer,
+        };
+        list.draw(canvas, root, &mut self.engine);
     }
 }
 

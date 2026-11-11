@@ -5,4 +5,5 @@
 //! tree, names, keys, state recipes and tokens moved there whole, and this
 //! module names them for the chat.
 
+#[cfg(test)]
 pub(crate) use koru_agent_config_ui::modes::elements::*;
