@@ -30,6 +30,13 @@ const _: () = assert!(TASK_STOP_DEADLINE.as_millis() * 2 <= RESPONSE_TIMEOUT.as_
 /// the admission again and retries.
 const FENCE_ROUNDS: usize = 3;
 
+/// The pause before a Stop its owner applied but could not yet confirm
+/// (`bot_stop_unconfirmed`: the Run is cancelled, its record not yet durably
+/// settled) is read and sent again, until the deadline. Seen against the
+/// real owner in the scripted native journey: a running Run's first Stop is
+/// usually unconfirmed.
+const UNCONFIRMED_PAUSE: Duration = Duration::from_millis(100);
+
 /// A `stop_task` the writer has checked: what the job needs to check
 /// authority again and ask the execution owner.
 struct CheckedStop {
@@ -99,7 +106,11 @@ impl CheckedStop {
             return Err(bot_failure(BotError::Forbidden));
         }
         checked.workspace(self.workspace).map_err(bot_failure)?;
-        for _ in 0..FENCE_ROUNDS {
+        // A Stop the owner applied but has not confirmed: once the task
+        // reads settled, it is this Stop that ended it.
+        let mut sent = false;
+        let mut fenced = 0;
+        loop {
             // The owner's own record of the task, now: its state and the
             // fence its Stop must name (none while it is queued).
             let admission = match self.delegate.execute_within(
@@ -123,7 +134,11 @@ impl CheckedStop {
                 admission.state,
                 BotAdmissionState::Settled | BotAdmissionState::Refused
             ) {
-                return Ok(self.answer(BotTaskStopOutcome::AlreadySettled));
+                return Ok(self.answer(if sent {
+                    BotTaskStopOutcome::Stopped
+                } else {
+                    BotTaskStopOutcome::AlreadySettled
+                }));
             }
             match self.delegate.execute_within(
                 DelegateCommand::Stop {
@@ -142,22 +157,30 @@ impl CheckedStop {
                 Err(refused)
                     if matches!(refused.code.as_str(), "bot_fenced" | "bot_fence_required") =>
                 {
-                    continue;
+                    fenced += 1;
+                    if fenced >= FENCE_ROUNDS {
+                        return Err(unavailable());
+                    }
+                }
+                // Applied, not yet confirmed: read and send again shortly.
+                // Past the deadline the caller is answered retryable.
+                Err(refused) if refused.code == "bot_stop_unconfirmed" => {
+                    sent = true;
+                    std::thread::sleep(UNCONFIRMED_PAUSE.min(Self::within(deadline)?));
                 }
                 Err(refused) => return Err(owner_failure(&refused)),
             }
         }
-        Err(unavailable())
     }
 }
 
 /// The execution owner's refusal, in the Bots API's codes. The AI owner has
 /// already checked the caller owns this Bot and that the request is this
 /// Bot's API task, so a Run the owner does not hold (`unknown_run`) or binds
-/// differently (`bot_owner_mismatch`) is `not_found`; anything else, an
-/// unconfirmed Stop (`bot_stop_unconfirmed`, whose Run is cancelled but not
-/// yet durably settled) included, is `bot_unavailable`, retryable: the same
-/// Stop sent again reads the owner's state afresh and answers what it finds.
+/// differently (`bot_owner_mismatch`) is `not_found`; anything else is
+/// `bot_unavailable`, retryable: the same Stop sent again reads the owner's
+/// state afresh and answers what it finds. (An unconfirmed Stop is sent
+/// again within the deadline before it comes to that.)
 fn owner_failure(refused: &koru_delegate_api::Failure) -> Failure {
     match refused.code.as_str() {
         "unknown_run" | "bot_owner_mismatch" => not_found(),

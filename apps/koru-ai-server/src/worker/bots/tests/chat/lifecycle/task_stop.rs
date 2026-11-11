@@ -112,6 +112,31 @@ fn a_running_task_a_person_holds_is_ended_as_the_persons_stop() {
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+/// A running task whose Stop its owner applies but cannot confirm at once
+/// (`bot_stop_unconfirmed`, as `Orchestrator::bot_stop` answers while the
+/// Run's record is not yet durably settled; the real owner did so in the
+/// scripted native journey): the Stop is read and sent again until it is
+/// confirmed, and answers `stopped`.
+#[test]
+fn an_unconfirmed_stop_is_sent_again_until_its_owner_confirms_it() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let mut task = admitted(&mut repository, &bot, d::BotAdmissionState::Executing);
+    task.pending = 2;
+    let (request, run) = (task.view.key.request, task.view.run);
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().push(task);
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    assert_eq!(
+        stop(&worker.client(), bot.id, request).unwrap().outcome,
+        BotTaskStopOutcome::Stopped
+    );
+    assert_eq!(state_of(&port, run), d::BotAdmissionState::Settled);
+    assert_eq!(port.stops_of(run), 3);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
 /// A finished task: nothing to stop and nothing sent.
 #[test]
 fn a_finished_task_answers_already_settled_and_sends_no_stop() {

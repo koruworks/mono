@@ -519,16 +519,24 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
             .map(|bot| (bot.submission, bot.ai_attempt_id)),
         Some((started, None))
     );
-    let stop = |client: &koru_api_client::Client| match client
-        .ai()
-        .bots(&BotCommand::StopTask {
-            request_id: started,
-            bot_id: bot.id,
-        })
-        .unwrap()
-    {
-        BotResponse::TaskStop { stop } => stop,
-        other => panic!("a task stop, not {other:?}"),
+    // A client retries a retryable answer (the owner not yet confirming).
+    let stop = |client: &koru_api_client::Client| {
+        let mut answer = None;
+        wait_until("the API task's Stop is answered", PROMPT, || {
+            match client.ai().bots(&BotCommand::StopTask {
+                request_id: started,
+                bot_id: bot.id,
+            }) {
+                Ok(BotResponse::TaskStop { stop }) => answer = Some(stop),
+                Ok(other) => panic!("a task stop, not {other:?}"),
+                Err(failure) if failure.retryable => {
+                    eprintln!("API task stop retryable: {}", failure.code)
+                }
+                Err(failure) => panic!("the API task's Stop: {failure:?}"),
+            }
+            answer.is_some()
+        });
+        answer.unwrap()
     };
     let first = stop(&stack.client);
     assert_eq!(first.run_id, task_run);
