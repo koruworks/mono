@@ -5,6 +5,7 @@ use koru_delegate_core::RunId;
 use std::collections::BTreeSet;
 mod migration;
 mod plans;
+mod visibility;
 
 const HASH: &str = "abababababababababababababababababababababababababababababababab";
 

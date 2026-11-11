@@ -3,6 +3,7 @@ use super::*;
 mod branch;
 mod chat;
 mod conversations;
+mod holds;
 mod lifecycle;
 
 #[test]

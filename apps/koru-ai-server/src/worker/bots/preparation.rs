@@ -245,17 +245,26 @@ impl WorkerState {
                     }
                 }
             }
-            if let Some(chat) = chat::chat_capture(&self.repository, &command)? {
+            // A held conversation is refused by the guard once its owner is
+            // known; nothing is captured for it, not even Role history.
+            let held = super::refusing_hold(&self.repository, &command)?.is_some();
+            if !held && let Some(chat) = chat::chat_capture(&self.repository, &command)? {
                 pages.extend(chat.pages.clone());
                 model = Some(chat.model);
                 capture = Some((chat.owner, chat.destination, chat.pages));
                 chat_snapshot = Some(chat.chat);
             }
-            if let Some((chat, config)) = chat::settings_capture(&self.repository, &command)? {
+            if !held
+                && let Some((chat, config)) = chat::settings_capture(&self.repository, &command)?
+            {
                 model = Some(config);
                 chat_snapshot = Some(chat);
             }
-            let terminal_question = self.bot_terminal_question_capture(&command)?;
+            let terminal_question = if held {
+                None
+            } else {
+                self.bot_terminal_question_capture(&command)?
+            };
             // Every referenced workspace is inspected, including invalid foreign-page requests.
             workspaces.extend(pages.iter().map(|p| p.workspace));
             Ok((
@@ -372,7 +381,7 @@ pub(super) fn bot_targets(
             }
     );
     if aggregate {
-        let mut rows = repository.all_bot_chats().map_err(bot_failure)?;
+        let mut rows = repository.visible_bot_chats().map_err(bot_failure)?;
         if let WorkerCommand::Bots {
             request: BotCommand::List { workspace } | BotCommand::ListLifecycle { workspace, .. },
             ..

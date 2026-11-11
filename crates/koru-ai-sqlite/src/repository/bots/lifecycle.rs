@@ -308,6 +308,205 @@ impl Repository {
     }
 }
 
+/// Why lifecycle holds a Bot or one of its conversations still.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotHold {
+    /// In Trash, or its Bot is: nothing but Stop may touch it until restored.
+    Trashed,
+    /// An Archive, Trash, Restore or Purge is moving or parked incomplete.
+    Pending,
+}
+
+impl Repository {
+    /// The Bot conversations aggregate owner reads may include: not in
+    /// Trash and not of a trashed Bot. Named-ID guards use the raw
+    /// association instead, so a hidden conversation never reads as ordinary.
+    pub fn visible_bot_chats(&self) -> Result<Vec<(BotId, ChatId)>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(
+                "SELECT bc.bot_id,bc.chat_id FROM bot_chats bc JOIN bots b ON b.bot_id=bc.bot_id
+                 WHERE b.lifecycle<>'trashed'
+                   AND NOT EXISTS(SELECT 1 FROM bot_chat_trash t WHERE t.chat_id=bc.chat_id)",
+            )
+            .map_err(bad)?;
+        let rows = query
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(bad)?;
+        rows.map(|row| {
+            let (bot, chat) = row.map_err(bad)?;
+            Ok((
+                bot.parse().map_err(bad)?,
+                ChatId::parse(&chat).ok_or(BotError::Storage)?,
+            ))
+        })
+        .collect()
+    }
+
+    /// The hold on a whole Bot: trashed, or a whole-Bot operation unfinished.
+    pub fn bot_hold(&self, bot: BotId) -> Result<Option<BotHold>, BotError> {
+        let (trashed, pending): (bool, bool) = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='trashed'),
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE bot_id=?1 AND stage<>'completed' AND chat_id IS NULL)",
+                [bot.to_storage()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(bad)?;
+        Ok(hold(trashed, pending))
+    }
+
+    /// The hold on one Bot conversation: its own or its whole Bot's.
+    pub fn bot_chat_hold(&self, chat: ChatId) -> Result<Option<BotHold>, BotError> {
+        let Some(bot) = bot_for_chat_on(&self.connection, chat)? else {
+            return Ok(None);
+        };
+        let (trashed, pending): (bool, bool) = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM bot_chat_trash WHERE chat_id=?1),
+                        EXISTS(SELECT 1 FROM bot_lifecycle_intents WHERE chat_id=?1 AND stage<>'completed')",
+                [chat.to_storage()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(bad)?;
+        let whole = self.bot_hold(bot)?;
+        Ok(match (hold(trashed, pending), whole) {
+            (Some(BotHold::Trashed), _) | (_, Some(BotHold::Trashed)) => Some(BotHold::Trashed),
+            (Some(BotHold::Pending), _) | (_, Some(BotHold::Pending)) => Some(BotHold::Pending),
+            (None, None) => None,
+        })
+    }
+
+    /// A Bot's fixed owner in any lifecycle, for checking ownership before
+    /// telling a caller that a hidden Bot or conversation is held.
+    pub fn bot_owner(&self, bot: BotId) -> Result<Option<BotOwner>, BotError> {
+        let row: Option<(String, String)> = self
+            .connection
+            .query_row(
+                "SELECT user_scope_id,owner_device_id FROM bots WHERE bot_id=?1",
+                [bot.to_storage()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(bad)?;
+        row.map(|(scope, device)| {
+            Ok(BotOwner {
+                user_scope: UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
+                device: DeviceId::parse(&device).ok_or(BotError::Storage)?,
+            })
+        })
+        .transpose()
+    }
+
+    /// The Bots of one owner's workspace in one lifecycle (Archived, Trash).
+    pub fn bots_in_lifecycle(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        lifecycle: BotLifecycle,
+    ) -> Result<Vec<Bot>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(
+                "SELECT bot_id FROM bots WHERE user_scope_id=?1 AND owner_device_id=?2 AND home_workspace_id=?3 AND lifecycle=?4 ORDER BY created_at_ms,bot_id",
+            )
+            .map_err(bad)?;
+        let ids = query
+            .query_map(
+                params![
+                    owner.user_scope.to_storage(),
+                    owner.device.to_storage(),
+                    workspace.to_storage(),
+                    lifecycle.token()
+                ],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(bad)?;
+        ids.map(|id| {
+            let id: BotId = id.map_err(bad)?.parse().map_err(bad)?;
+            self.bot_any_lifecycle(id)?
+                .map(|(bot, _)| bot)
+                .ok_or(BotError::Storage)
+        })
+        .collect()
+    }
+
+    /// Fixture only: the AI owner's Trash effect for one captured conversation,
+    /// which S6's driver applies after settling it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn fixture_trash_bot_chat(
+        &mut self,
+        operation: &LifecycleOperation,
+        chat: ChatId,
+        now: i64,
+    ) -> Result<(), BotError> {
+        self.connection
+            .execute(
+                "INSERT INTO bot_chat_trash(chat_id,user_scope_id,operation_id,trashed_at_ms) VALUES(?1,?2,?3,?4)",
+                params![
+                    chat.to_storage(),
+                    operation.owner.user_scope.to_storage(),
+                    operation.operation.to_storage(),
+                    now
+                ],
+            )
+            .map_err(bad)?;
+        Ok(())
+    }
+}
+
+impl Repository {
+    /// Fixture only: mark a captured operation completed, as its driver will.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn fixture_complete_bot_lifecycle(
+        &mut self,
+        operation: &LifecycleOperation,
+        now: i64,
+    ) -> Result<(), BotError> {
+        self.connection
+            .execute(
+                "UPDATE bot_lifecycle_intents SET stage='completed',completed_at_ms=?3,updated_at_ms=?3 WHERE user_scope_id=?1 AND operation_id=?2",
+                params![
+                    operation.owner.user_scope.to_storage(),
+                    operation.operation.to_storage(),
+                    now
+                ],
+            )
+            .map_err(bad)?;
+        Ok(())
+    }
+
+    /// Fixture only: a Bot in another lifecycle, as Archive/Trash will leave it.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn fixture_set_bot_lifecycle(
+        &mut self,
+        bot: BotId,
+        lifecycle: BotLifecycle,
+    ) -> Result<(), BotError> {
+        self.connection
+            .execute(
+                "UPDATE bots SET lifecycle=?2 WHERE bot_id=?1",
+                params![bot.to_storage(), lifecycle.token()],
+            )
+            .map_err(bad)?;
+        Ok(())
+    }
+}
+
+fn hold(trashed: bool, pending: bool) -> Option<BotHold> {
+    if trashed {
+        Some(BotHold::Trashed)
+    } else if pending {
+        Some(BotHold::Pending)
+    } else {
+        None
+    }
+}
+
 fn validate_capture(capture: &LifecycleCapture) -> Result<(), BotError> {
     let kinds = allowed_members(capture.kind);
     if capture.kind.names_chat() != capture.chat.is_some()

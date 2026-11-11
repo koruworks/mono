@@ -476,7 +476,13 @@ fn require_bot_branch_destination(
     destination: ChatId,
 ) -> ApiResult<()> {
     match repository.bot_for_chat(destination).map_err(bot_failure)? {
-        Some(owner) if owner == bot => Ok(()),
+        // Even an exact earlier branch is held while it is in Trash or moving.
+        Some(owner) if owner == bot => {
+            match repository.bot_chat_hold(destination).map_err(bot_failure)? {
+                Some(hold) => Err(super::lifecycle::hold_failure(hold)),
+                None => Ok(()),
+            }
+        }
         Some(_) => Err(destination_conflict()),
         None if repository.chat(destination).map_err(ai_failure)?.is_some() => {
             Err(destination_conflict())

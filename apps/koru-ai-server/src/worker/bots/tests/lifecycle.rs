@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The lifecycle contract on the worker: progress is readable by its owner;
-//! changes refuse explicitly until their cross-owner drivers exist.
+//! changes refuse explicitly until their cross-owner drivers exist. (The
+//! Archived/Trash listing is served; see `holds.rs`.)
 use super::*;
 use koru_ai_sqlite::{LifecycleCapture, LifecycleMemberDraft};
 
@@ -106,10 +107,6 @@ fn lifecycle_progress_reads_back_and_changes_refuse_until_built() {
             bot_id: bot.id,
             chat_id: bot.main_chat,
             expected_revision: bot.revision,
-        },
-        BotCommand::ListLifecycle {
-            workspace: bot.home_workspace,
-            lifecycle: BotLifecycle::Archived,
         },
     ] {
         assert_eq!(

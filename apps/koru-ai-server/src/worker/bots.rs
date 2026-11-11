@@ -38,6 +38,9 @@ impl WorkerState {
                 && bot.policy_revision == *policy
                 && self.repository.bot_for_chat(*chat).map_err(bot_failure)? == Some(*id)
                 && validate_owner(&proof.authority, &bot).is_ok()
+                // A conversation in Trash is out of every read, history and context.
+                && self.repository.bot_chat_hold(*chat).map_err(bot_failure)?
+                    != Some(koru_ai_sqlite::BotHold::Trashed)
             {
                 allowed.push(*chat);
             }
@@ -439,6 +442,7 @@ fn guard_command(
             if !context.principal.scopes.contains(&AiScope::ManageBots) {
                 return Err(not_found());
             }
+            require_held_owner(repository, authority, &command)?;
             let bot = repository
                 .bot(id)
                 .map_err(bot_failure)?
@@ -486,6 +490,61 @@ fn guard_command(
             None
         }
     }
+}
+
+/// The lifecycle hold that refuses this command, if any: its own Bot
+/// conversation's, or a context block's taken from a conversation in Trash.
+pub(super) fn refusing_hold(
+    repository: &Repository,
+    command: &WorkerCommand,
+) -> ApiResult<Option<(BotId, koru_ai_sqlite::BotHold)>> {
+    let mut holds = Vec::new();
+    if let Some(chat) = command_chat(repository, command)?
+        && let Some(bot) = repository.bot_for_chat(chat).map_err(bot_failure)?
+        && let Some(hold) = repository.bot_chat_hold(chat).map_err(bot_failure)?
+    {
+        holds.push((bot, hold));
+    }
+    let refs = match command {
+        WorkerCommand::SendTurn { request, .. } => Some(&request.explicit_refs),
+        WorkerCommand::RetryTurn { request, .. } => Some(&request.explicit_refs),
+        _ => None,
+    };
+    for reference in refs.into_iter().flatten() {
+        if let ContextRef::MessageBlock { block_id } = reference
+            && let Some((bot, source)) = repository
+                .bot_chat_for_block(*block_id)
+                .map_err(bot_failure)?
+            && repository.bot_chat_hold(source).map_err(bot_failure)?
+                == Some(koru_ai_sqlite::BotHold::Trashed)
+        {
+            holds.push((bot, koru_ai_sqlite::BotHold::Trashed));
+        }
+    }
+    Ok(holds
+        .into_iter()
+        .find(|(_, hold)| lifecycle::hold_refuses(command, *hold)))
+}
+
+/// A held conversation refuses here, before the active-Bot read (which would
+/// call a trashed Bot someone else's) and before any mutation. Ownership is
+/// checked first, so only the Bot's owner learns it is held.
+fn require_held_owner(
+    repository: &Repository,
+    authority: Option<&Arc<dyn BotAuthority>>,
+    command: &WorkerCommand,
+) -> ApiResult<()> {
+    let Some((bot, hold)) = refusing_hold(repository, command)? else {
+        return Ok(());
+    };
+    let owner = authority
+        .ok_or_else(|| bot_failure(BotError::Unavailable))?
+        .owner()
+        .map_err(bot_failure)?;
+    if repository.bot_owner(bot).map_err(bot_failure)? != Some(owner) {
+        return Err(bot_failure(BotError::Forbidden));
+    }
+    Err(lifecycle::hold_failure(hold))
 }
 
 fn command_chat(repository: &Repository, command: &WorkerCommand) -> ApiResult<Option<ChatId>> {

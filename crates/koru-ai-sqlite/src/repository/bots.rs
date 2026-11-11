@@ -8,7 +8,9 @@ pub(crate) mod policy;
 mod branch;
 pub(crate) mod lifecycle;
 pub use branch::HistoricalBotRun;
-pub use lifecycle::{LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation};
+pub use lifecycle::{
+    BotHold, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
+};
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage
@@ -221,8 +223,36 @@ impl Repository {
     }
 }
 
-impl BotRepository for Repository {
-    fn bot(&self, id: BotId) -> Result<Option<Bot>, BotError> {
+/// The designated main Chat: its live association, or after an explicit
+/// purge of that conversation its retained tombstone, which never reads as a
+/// Chat and is never replaced (O7).
+fn designated_main(conn: &Connection, bot: BotId) -> Result<ChatId, BotError> {
+    let live: Option<String> = conn
+        .query_row(
+            "SELECT chat_id FROM bot_chats WHERE bot_id=?1 AND purpose='main'",
+            [bot.to_storage()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(bad)?;
+    let main = match live {
+        Some(main) => main,
+        None => conn
+            .query_row(
+                "SELECT subject_id FROM bot_purge_tombstones WHERE bot_id=?1 AND subject_kind='chat' AND chat_purpose='main'",
+                [bot.to_storage()],
+                |r| r.get(0),
+            )
+            .map_err(bad)?,
+    };
+    ChatId::parse(&main).ok_or(BotError::Storage)
+}
+
+impl Repository {
+    /// A Bot in any lifecycle, with that lifecycle. Ordinary Bot commands use
+    /// [`BotRepository::bot`], which refuses an inactive Bot; lifecycle reads
+    /// (the Archived and Trash filters, restore) use this.
+    pub fn bot_any_lifecycle(&self, id: BotId) -> Result<Option<(Bot, BotLifecycle)>, BotError> {
         let result = self
             .connection
             .query_row(
@@ -261,17 +291,8 @@ impl BotRepository for Repository {
             .optional()
             .map_err(bad)?;
         let Some(r) = result else { return Ok(None) };
-        if r.20 != "active" {
-            return Err(BotError::Forbidden);
-        }
-        let main: String = self
-            .connection
-            .query_row(
-                "SELECT chat_id FROM bot_chats WHERE bot_id=?1 AND purpose='main'",
-                [id.to_storage()],
-                |r| r.get(0),
-            )
-            .map_err(bad)?;
+        let lifecycle = BotLifecycle::parse(&r.20).ok_or(BotError::Storage)?;
+        let main = designated_main(&self.connection, id)?;
         let mut query=self.connection.prepare("SELECT workspace_id,document_id FROM bot_selected_pages WHERE bot_id=?1 ORDER BY workspace_id,document_id").map_err(bad)?;
         let rows = query
             .query_map([id.to_storage()], |r| {
@@ -287,43 +308,55 @@ impl BotRepository for Repository {
                 })
             })
             .collect::<Result<Vec<_>, BotError>>()?;
-        Ok(Some(Bot {
-            id,
-            user_scope: UserScopeId::parse(&r.0).ok_or(BotError::Storage)?,
-            home_workspace: WorkspaceId::parse(&r.1).ok_or(BotError::Storage)?,
-            owner_device: DeviceId::parse(&r.2).ok_or(BotError::Storage)?,
-            config: BotConfig {
-                name: r.3,
-                role: BotPage {
-                    workspace: WorkspaceId::parse(&r.4).ok_or(BotError::Storage)?,
-                    document: DocumentId::parse(&r.5).ok_or(BotError::Storage)?,
+        Ok(Some((
+            Bot {
+                id,
+                user_scope: UserScopeId::parse(&r.0).ok_or(BotError::Storage)?,
+                home_workspace: WorkspaceId::parse(&r.1).ok_or(BotError::Storage)?,
+                owner_device: DeviceId::parse(&r.2).ok_or(BotError::Storage)?,
+                config: BotConfig {
+                    name: r.3,
+                    role: BotPage {
+                        workspace: WorkspaceId::parse(&r.4).ok_or(BotError::Storage)?,
+                        document: DocumentId::parse(&r.5).ok_or(BotError::Storage)?,
+                    },
+                    working_folder: r.6,
+                    model: ModelSelection {
+                        provider: AiProviderId::parse(r.7).map_err(bad)?,
+                        requested_model: r.8,
+                        default_reasoning: ReasoningChoice::parse(&r.9).ok_or(BotError::Storage)?,
+                    },
+                    mode: r.10,
+                    fast: r.11,
                 },
-                working_folder: r.6,
-                model: ModelSelection {
-                    provider: AiProviderId::parse(r.7).map_err(bad)?,
-                    requested_model: r.8,
-                    default_reasoning: ReasoningChoice::parse(&r.9).ok_or(BotError::Storage)?,
+                revision: r.12,
+                policy_revision: r.13,
+                access: match r.14.as_str() {
+                    "default" => BotAccess::Default,
+                    "workspace" => BotAccess::Workspace,
+                    _ => return Err(BotError::Storage),
                 },
-                mode: r.10,
-                fast: r.11,
+                paused: r.15,
+                folder_lock_request: r.16.map(|v| v.parse().map_err(bad)).transpose()?,
+                folder_frozen_at_ms: r.17,
+                created_at_ms: r.18,
+                updated_at_ms: r.19,
+                main_chat: main,
+                selected_pages,
             },
-            revision: r.12,
-            policy_revision: r.13,
-            access: match r.14.as_str() {
-                "default" => BotAccess::Default,
-                "workspace" => BotAccess::Workspace,
-                _ => return Err(BotError::Storage),
-            },
-            paused: r.15,
-            folder_lock_request: r.16.map(|v| v.parse().map_err(bad)).transpose()?,
-            folder_frozen_at_ms: r.17,
-            created_at_ms: r.18,
-            updated_at_ms: r.19,
-            main_chat: ChatId::parse(&main).ok_or(BotError::Storage)?,
-            selected_pages,
-        }))
+            lifecycle,
+        )))
     }
+}
 
+impl BotRepository for Repository {
+    fn bot(&self, id: BotId) -> Result<Option<Bot>, BotError> {
+        match self.bot_any_lifecycle(id)? {
+            None => Ok(None),
+            Some((bot, BotLifecycle::Active)) => Ok(Some(bot)),
+            Some(_) => Err(BotError::Forbidden),
+        }
+    }
     fn bots(&self, scope: UserScopeId, workspace: WorkspaceId) -> Result<Vec<Bot>, BotError> {
         let mut query=self.connection.prepare("SELECT bot_id FROM bots WHERE user_scope_id=?1 AND home_workspace_id=?2 AND lifecycle='active' ORDER BY created_at_ms,bot_id").map_err(bad)?;
         let ids = query
