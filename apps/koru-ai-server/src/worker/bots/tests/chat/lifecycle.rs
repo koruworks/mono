@@ -26,6 +26,7 @@ mod defaults;
 mod listing;
 mod owed;
 mod pending;
+mod probe;
 mod reverse;
 mod sibling;
 mod trash;

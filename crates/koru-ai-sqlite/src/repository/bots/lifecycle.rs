@@ -343,46 +343,76 @@ impl Repository {
     }
 
     /// Up to `limit` driven operations (Archive, Trash, a conversation's
-    /// Trash) parked because their owner did not answer, unreversed, by Bot:
-    /// the ones that take up their work again once it answers. Read through
-    /// `bot_lifecycle_open`, which holds only unfinished operations, never
-    /// completed history.
+    /// Trash) parked because their owner did not answer, unreversed, in
+    /// `bot_lifecycle_open`'s order (Bot, then row), starting just past
+    /// `after`: the ones that take up their work again once it answers.
+    /// Each comes with its own position, to pass back as `after` so a caller
+    /// can walk them all in turn. Read through `bot_lifecycle_open`, which
+    /// holds only unfinished operations, never completed history.
     pub fn parked_for_owner_bot_lifecycle(
         &self,
+        after: Option<&ParkedCursor>,
         limit: u16,
-    ) -> Result<Vec<(UserScopeId, BotRequestId, BotId)>, BotError> {
+    ) -> Result<Vec<ParkedForOwner>, BotError> {
         let mut query = self
             .connection
             .prepare(&parked_for_owner_sql())
             .map_err(bad)?;
+        // Every Bot id sorts after the empty string.
+        let (bot, row) = after.map_or((String::new(), i64::MIN), |cursor| {
+            (cursor.bot.clone(), cursor.row)
+        });
         let rows = query
-            .query_map([limit.clamp(1, 64)], |row| {
+            .query_map(params![bot, row, limit.clamp(1, 64)], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
                 ))
             })
             .map_err(bad)?;
         rows.map(|row| {
-            let (scope, operation, bot) = row.map_err(bad)?;
-            Ok((
-                UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
-                operation.parse().map_err(bad)?,
-                bot.parse().map_err(bad)?,
-            ))
+            let (scope, operation, bot, row) = row.map_err(bad)?;
+            Ok(ParkedForOwner {
+                scope: UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
+                operation: operation.parse().map_err(bad)?,
+                bot: bot.parse().map_err(bad)?,
+                cursor: ParkedCursor { bot, row },
+            })
         })
         .collect()
     }
 }
 
-/// [`Repository::parked_for_owner_bot_lifecycle`]'s statement.
+/// One operation parked for its owner, from
+/// [`Repository::parked_for_owner_bot_lifecycle`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParkedForOwner {
+    pub scope: UserScopeId,
+    pub operation: BotRequestId,
+    pub bot: BotId,
+    /// Where a page that should start after this operation starts.
+    pub cursor: ParkedCursor,
+}
+
+/// A position in the operations parked for their owner, opaque to callers:
+/// a Bot's id and the operation's row, the order `bot_lifecycle_open` keeps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParkedCursor {
+    bot: String,
+    row: i64,
+}
+
+/// [`Repository::parked_for_owner_bot_lifecycle`]'s statement. The
+/// `(bot_id, rowid)` cursor is the partial index's own order (rowid is its
+/// implicit last column), so the page is a range of the index, never sorted.
 pub(crate) fn parked_for_owner_sql() -> String {
     format!(
-        "SELECT user_scope_id,operation_id,bot_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open
-         WHERE i.stage='incomplete' AND i.refusal='owner_unavailable'
+        "SELECT user_scope_id,operation_id,bot_id,i.rowid FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open
+         WHERE (i.bot_id,i.rowid)>(?1,?2) AND i.stage='incomplete' AND i.refusal='owner_unavailable'
            AND i.kind IN ('archive','trash','trash_chat') AND {OPEN}
-         ORDER BY bot_id LIMIT ?1"
+         ORDER BY i.bot_id,i.rowid LIMIT ?3"
     )
 }
 

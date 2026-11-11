@@ -144,14 +144,22 @@ fn the_bot_reads_pending_change_seeks_the_bots_guard_index() {
 #[test]
 fn the_page_of_operations_parked_for_their_owner_reads_only_unfinished_ones() {
     let (mut repo, bot, owner) = populated();
-    let found = plan(
-        &repo.connection,
-        &super::super::parked_for_owner_sql(),
-        &[&16i64],
+    // From the start and from a cursor: a range of the partial index in its
+    // own order, never a sort.
+    for (bot_after, row_after) in [("", i64::MIN), ("ffffffff", 7)] {
+        let found = plan(
+            &repo.connection,
+            &super::super::parked_for_owner_sql(),
+            &[&bot_after, &row_after, &16i64],
+        );
+        assert!(found.contains("bot_lifecycle_open"), "{found}");
+        assert!(!found.contains("TEMP B-TREE"), "{found}");
+    }
+    assert!(
+        repo.parked_for_owner_bot_lifecycle(None, 16)
+            .unwrap()
+            .is_empty()
     );
-    assert!(found.contains("bot_lifecycle_open"), "{found}");
-    assert!(!found.contains("TEMP B-TREE"), "{found}");
-    assert!(repo.parked_for_owner_bot_lifecycle(16).unwrap().is_empty());
     let open = repo.bot_open_lifecycle(bot.id).unwrap().unwrap();
     assert!(
         repo.park_bot_lifecycle(
@@ -162,9 +170,63 @@ fn the_page_of_operations_parked_for_their_owner_reads_only_unfinished_ones() {
         )
         .unwrap()
     );
+    let page = repo.parked_for_owner_bot_lifecycle(None, 16).unwrap();
     assert_eq!(
-        repo.parked_for_owner_bot_lifecycle(16).unwrap(),
+        page.iter()
+            .map(|p| (p.scope, p.operation, p.bot))
+            .collect::<Vec<_>>(),
         vec![(owner.user_scope, open.request_id, bot.id)]
+    );
+    // Past the last one, nothing.
+    assert!(
+        repo.parked_for_owner_bot_lifecycle(Some(&page[0].cursor), 16)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// More operations parked for their owner than one page holds: walked page
+/// after page by cursor, each is reached exactly once, in a stable order,
+/// and a walk that starts again reads the same first page.
+#[test]
+fn the_operations_parked_for_their_owner_are_walked_in_turn_by_cursor() {
+    let (repo, _, owner) = populated();
+    let scope = owner.user_scope.to_storage();
+    let mut parked = Vec::new();
+    for n in 0..20 {
+        let operation = BotRequestId::mint();
+        repo.connection
+            .execute(
+                "INSERT INTO bot_lifecycle_intents(user_scope_id,operation_id,bot_id,owner_device_id,kind,fingerprint,expected_revision,prior_lifecycle,stage,refusal,requested_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,'trash',?5,1,'archived','incomplete','owner_unavailable',?6,?6)",
+                params![scope, operation.to_storage(), BotId::mint().to_storage(), owner.device.to_storage(), HASH, n as i64],
+            )
+            .unwrap();
+        parked.push(operation);
+    }
+    let first = repo.parked_for_owner_bot_lifecycle(None, 16).unwrap();
+    assert_eq!(first.len(), 16);
+    let second = repo
+        .parked_for_owner_bot_lifecycle(Some(&first[15].cursor), 16)
+        .unwrap();
+    assert_eq!(second.len(), 4);
+    assert!(
+        repo.parked_for_owner_bot_lifecycle(Some(&second[3].cursor), 16)
+            .unwrap()
+            .is_empty()
+    );
+    let mut reached: Vec<_> = first.iter().chain(&second).map(|p| p.operation).collect();
+    let in_order: Vec<_> = first
+        .iter()
+        .chain(&second)
+        .map(|p| p.bot.to_storage())
+        .collect();
+    assert!(in_order.windows(2).all(|w| w[0] < w[1]), "{in_order:?}");
+    reached.sort_by_key(|id| id.to_storage());
+    parked.sort_by_key(|id| id.to_storage());
+    assert_eq!(reached, parked);
+    assert_eq!(
+        repo.parked_for_owner_bot_lifecycle(None, 16).unwrap(),
+        first
     );
 }
 

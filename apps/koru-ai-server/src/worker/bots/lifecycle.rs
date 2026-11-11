@@ -55,7 +55,9 @@
 //! applied in one transaction with no owner call; the Bot comes back paused
 //! and nothing starts. Purge refuses until its slice.
 use super::*;
-use koru_ai_sqlite::{BotHold, LifecycleCapture, LifecycleMemberDraft, LifecycleOperation};
+use koru_ai_sqlite::{
+    BotHold, LifecycleCapture, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
+};
 use koru_ai_wire::bot_lifecycle_codes;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use koru_delegate_core::{
@@ -87,6 +89,9 @@ pub(in crate::worker) struct LifecycleDriver {
     /// being asked, once, whether it answers again (see
     /// [`WorkerState::probe_parked_bot_lifecycle`]).
     probing: HashSet<OperationKey>,
+    /// Where the next probe pass starts: just past the last parked operation
+    /// the previous pass reached, `None` to start (again) from the first.
+    probe_after: Option<ParkedCursor>,
 }
 impl Default for LifecycleDriver {
     fn default() -> Self {
@@ -94,9 +99,12 @@ impl Default for LifecycleDriver {
             driving: HashMap::new(),
             recovery: Some(None),
             probing: HashSet::new(),
+            probe_after: None,
         }
     }
 }
+/// Parked operations one probe pass asks about at most.
+const PROBE_PAGE: u16 = 16;
 
 /// One operation's scheduling. It holds no fact about the work itself.
 #[derive(Default)]
@@ -185,7 +193,19 @@ enum Outcome {
     /// The Stops went out; their answers are read again next round.
     Stopped,
     /// The owner of a parked operation answered (or not).
-    Probe(Result<(), koru_delegate_api::Failure>),
+    Probe(Probed),
+}
+/// What one probe of a parked operation's owner found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Probed {
+    /// The execution owner answered: the operation takes up its work again.
+    Answered,
+    /// The execution owner did not answer: the recovery pass asks again.
+    OwnerAway,
+    /// Nothing was asked: the owner no longer has authority over the Bot's
+    /// workspace. Asking again sooner would not change that, so this keeps
+    /// nothing armed; any later pass still reaches the operation in turn.
+    NotAsked,
 }
 /// The delegate's answer for one conversation's settling round, for the
 /// whole Bot: the writer keeps what belongs to the conversation.
@@ -219,7 +239,7 @@ impl LifecycleJob {
             Step::Settle { .. } => Outcome::Settle(Err(unavailable())),
             Step::ChatRead { .. } => Outcome::ChatRead(Err(unavailable())),
             Step::Stop { .. } => Outcome::Stopped,
-            Step::Probe { .. } => Outcome::Probe(Err(unavailable())),
+            Step::Probe { .. } => Outcome::Probe(Probed::OwnerAway),
         };
         let outcome = catch_unwind(AssertUnwindSafe(|| self.execute())).unwrap_or(failed);
         LifecycleResult { key, outcome }
@@ -373,16 +393,21 @@ impl LifecycleJob {
             }
             Step::Probe { bot } => {
                 let owner = delegate_owner(self.owner);
-                Outcome::Probe(checked.ok_or_else(unavailable).and_then(|_| {
+                // Without the owner's authority over its workspace nothing is
+                // asked: that is not the execution owner being away.
+                if checked.is_none() {
+                    return Outcome::Probe(Probed::NotAsked);
+                }
+                Outcome::Probe(
                     match self.delegate.execute(DelegateCommand::UnsettledWork {
                         owner,
                         bot,
                         limit: 1,
-                    })? {
-                        BotReply::UnsettledWork { .. } => Ok(()),
-                        _ => Err(unavailable()),
-                    }
-                }))
+                    }) {
+                        Ok(BotReply::UnsettledWork { .. }) => Probed::Answered,
+                        _ => Probed::OwnerAway,
+                    },
+                )
             }
         }
     }
@@ -846,15 +871,39 @@ impl WorkerState {
     /// backed-off receipt recovery pass and once after a restart's resume
     /// pages, never on a timer of its own: an operation with nothing else owed
     /// to its owner (its pause already acknowledged) would otherwise never
-    /// learn that the owner is back. A failed probe arms that pass again.
+    /// learn that the owner is back. A probe its owner did not answer arms
+    /// that pass again, and so does a page that ends with more parked
+    /// operations past it; one refused before asking (the owner's authority
+    /// over the workspace lost) or a Bot that is gone arms nothing.
     pub(in crate::worker) fn probe_parked_bot_lifecycle(&mut self) {
         if self.bot_delegate.is_none() || self.provider_admin.is_none() {
             return;
         }
-        let Ok(parked) = self.repository.parked_for_owner_bot_lifecycle(16) else {
+        // One page per pass, resuming after the last operation the previous
+        // pass reached and wrapping round at the end, so every parked
+        // operation is asked in turn however many of the first ones keep
+        // failing (the fourth lifecycle review's F2).
+        let after = self.bot_lifecycle.probe_after.take();
+        let page = match self
+            .repository
+            .parked_for_owner_bot_lifecycle(after.as_ref(), PROBE_PAGE)
+        {
+            Ok(page) if page.is_empty() && after.is_some() => self
+                .repository
+                .parked_for_owner_bot_lifecycle(None, PROBE_PAGE),
+            read => read,
+        };
+        let Ok(parked) = page else {
             return self.bot_recovery_retry.owner_away(Instant::now());
         };
-        for (scope, operation, bot) in parked {
+        if parked.len() >= usize::from(PROBE_PAGE) {
+            // More are parked past this page: the next pass starts after it,
+            // and there must be a next pass even if none of these is asked.
+            self.bot_lifecycle.probe_after = parked.last().map(|p| p.cursor.clone());
+            self.bot_recovery_retry.owner_away(Instant::now());
+        }
+        for parked in parked {
+            let (scope, operation, bot) = (parked.scope, parked.operation, parked.bot);
             let key = (scope, operation);
             if self.bot_lifecycle.probing.contains(&key) {
                 continue;
@@ -866,6 +915,7 @@ impl WorkerState {
             ) else {
                 return;
             };
+            // A Bot that is gone asks nothing and keeps nothing armed.
             let Ok(Some((subject, _))) = self.repository.bot_any_lifecycle(bot) else {
                 continue;
             };
@@ -884,7 +934,8 @@ impl WorkerState {
                 .try_submit(ProviderAdminJob::BotLifecycle(job))
                 .is_err()
             {
-                // The pool is full: the next pass asks again.
+                // The pool is full: the next pass asks again, from this one.
+                self.bot_lifecycle.probe_after = after;
                 return self.bot_recovery_retry.owner_away(Instant::now());
             }
             self.bot_lifecycle.probing.insert(key);
@@ -893,20 +944,17 @@ impl WorkerState {
 
     /// A probe's answer: an owner that answered takes its parked operation
     /// up again; one that did not arms the recovery pass, which asks again.
-    fn complete_bot_lifecycle_probe(
-        &mut self,
-        key: OperationKey,
-        answer: Result<(), koru_delegate_api::Failure>,
-    ) {
+    fn complete_bot_lifecycle_probe(&mut self, key: OperationKey, answer: Probed) {
         self.bot_lifecycle.probing.remove(&key);
         match answer {
-            Ok(()) => {
+            Probed::Answered => {
                 self.bot_recovery_retry.answered(Instant::now());
                 if let Ok(Some(op)) = self.repository.bot_lifecycle_operation(key.0, key.1) {
                     self.owner_answered_bot_lifecycle(op.bot);
                 }
             }
-            Err(_) => self.bot_recovery_retry.owner_away(Instant::now()),
+            Probed::OwnerAway => self.bot_recovery_retry.owner_away(Instant::now()),
+            Probed::NotAsked => {}
         }
     }
 
