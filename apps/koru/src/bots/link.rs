@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 
-use koru_ai_core::bots::{Bot, BotCommand, BotId, BotResponse};
+use koru_ai_core::bots::{Bot, BotCommand, BotId, BotRequestId, BotResponse};
 use koru_store_core::ids::WorkspaceId;
 
 /// Commands waiting for the thread. A roster asks one list at a time, so
@@ -37,6 +37,16 @@ pub(crate) enum Command {
     List { seq: u64, workspace: WorkspaceId },
     /// One Bot, as the service holds it now: what a Bot tab's header says.
     Read { seq: u64, bot: BotId },
+    /// **A change a person asked for in a Bot's settings** (Bots P1.8 S5):
+    /// an `Update`, `UpdateAccess`, `Pause` or `Resume` carrying the
+    /// revision it read, or the `ReadOperation` that follows one until the
+    /// owner says it is effective. Answered by its request's id, so a reply
+    /// can only settle the change it is about.
+    Write {
+        bot: BotId,
+        request: BotRequestId,
+        command: Box<BotCommand>,
+    },
 }
 
 #[derive(Debug)]
@@ -50,6 +60,12 @@ pub(crate) enum Answer {
         seq: u64,
         bot: BotId,
         result: Result<Bot, Failure>,
+    },
+    /// What the owner said to a [`Command::Write`].
+    Wrote {
+        bot: BotId,
+        request: BotRequestId,
+        result: Result<BotResponse, Failure>,
     },
 }
 
@@ -177,7 +193,53 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::Write {
+                bot,
+                request,
+                command,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => wrote(
+                        connected
+                            .ai()
+                            .bots(&command)
+                            .map_err(|failure| failure.code),
+                    ),
+                    None => Err(Failure::Unreachable),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A Bot's settings change was not answered"
+                    );
+                    client = None;
+                }
+                if answers
+                    .send(Answer::Wrote {
+                        bot,
+                        request,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
         }
+    }
+}
+
+/// A settings change's reply, the refusal reduced to its stable code. What
+/// the reply means is the settings' to read ([`super::settings`]).
+pub(crate) fn wrote(reply: Result<BotResponse, String>) -> Result<BotResponse, Failure> {
+    match reply {
+        Ok(response) => Ok(response),
+        Err(code) if code.is_empty() => Err(Failure::Unreachable),
+        Err(code) => Err(Failure::Refused(code)),
     }
 }
 

@@ -15,10 +15,16 @@
 //! and a conversation that cannot be read says so instead of becoming an
 //! ordinary chat.
 //!
-//! **What it does not show, deliberately.** No settings, no lifecycle menu,
-//! no *New conversation* and no conversation list: each is a later slice with
-//! its own dependency, and a control that leads nowhere is a promise the tab
-//! cannot keep.
+//! **Its settings** (S5): the header's one control, *Settings*, opens the
+//! Bot's settings in the conversation's place ([`region`]) — the name, the
+//! Role page, access, the working folder, pause and resume, and what Koru's
+//! access does not cover. Each change is the owner's to apply and is shown
+//! as pending until it answers ([`crate::bots::settings`]).
+//!
+//! **What it does not show, deliberately.** No agent or model settings, no
+//! lifecycle menu, no *New conversation* and no conversation list: each is a
+//! later slice with its own dependency, and a control that leads nowhere is a
+//! promise the tab cannot keep.
 //!
 //! ## One conversation, one container
 //!
@@ -36,9 +42,16 @@
 //! tab behind another sends nothing and lays nothing out; its conversation is
 //! not started until the tab is first shown. Only the latest request's answer
 //! about this Bot is taken, and a failed read keeps what was shown.
+//!
+//! **Hidden, then shown again, it reads its Bot once.** The window tells a
+//! tab that is no longer the one in front of its group ([`BotView::hidden`]);
+//! the next showing asks the Bot service once, so a name, a pause or access
+//! changed elsewhere meanwhile is what the header and the settings show.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use koru_ai_core::bots::{Bot, BotId};
 use koru_ai_core::{AiProviderId, ChatId};
@@ -60,7 +73,13 @@ use winit::window::CursorIcon;
 
 use super::link::{Answer, BotsLink, Command, Failure};
 use super::roster::RosterBot;
+use super::settings::Settings;
 use crate::ai_chat_view::AiChatView;
+
+mod controls;
+mod picker;
+pub(crate) mod region;
+pub(crate) use region::{Control, ControlRole};
 
 /// The surface every key below belongs to.
 pub(crate) const SURFACE: &str = "bot-tab";
@@ -179,6 +198,37 @@ pub(crate) struct BotView {
     lang: Lang,
     work: Cell<Work>,
     cache: RefCell<TextCache>,
+    /// The tab was hidden after it had been shown: the next showing reads
+    /// the Bot once.
+    stale: bool,
+    /// The header's bottom edge as last drawn, so the pointer over the
+    /// conversation costs no layout of the tab's own.
+    header_bottom: Cell<f32>,
+    // -------------------------------------------- the settings (S5)
+    settings: Box<Settings>,
+    settings_open: bool,
+    /// The control the keyboard is on: the header's *Settings*, or one of
+    /// the region's. `None` gives the keyboard to the conversation.
+    focus: Option<Key>,
+    /// The control under the pointer, and the access segment it is over.
+    hot: Option<Key>,
+    hot_segment: Option<usize>,
+    pressed: Option<Key>,
+    /// The name field, made the first time the region shows it.
+    name_field: RefCell<Option<Rc<RefCell<koru_ui::text_input::TextInput>>>>,
+    /// The region's scroll offset; layout clamps it.
+    scroll: f32,
+    /// What the person asked the window for: the Role page, the folder
+    /// dialog (where it starts), the page picker.
+    role_request: Option<koru_ai_core::bots::BotPage>,
+    folder_request: Option<Option<PathBuf>>,
+    /// *Add a page…*'s picker while it is up, and the row under the pointer.
+    /// Boxed, as the settings are: a tab is moved by value on the window
+    /// thread and stays small (`a_tab_stays_small_enough_to_move_on_the_window_thread`).
+    picker: Option<Box<koru_editor::components::entity_picker::EntityPicker>>,
+    picker_hover: Option<usize>,
+    /// Selected pages' titles, as the window knows them.
+    page_titles: HashMap<koru_ai_core::DocumentId, String>,
 }
 
 impl BotView {
@@ -200,6 +250,21 @@ impl BotView {
             lang: crate::format::lang(),
             work: Cell::new(Work::default()),
             cache: RefCell::new(TextCache::default()),
+            stale: false,
+            header_bottom: Cell::new(f32::INFINITY),
+            settings: Box::default(),
+            settings_open: false,
+            focus: None,
+            hot: None,
+            hot_segment: None,
+            pressed: None,
+            name_field: RefCell::new(None),
+            scroll: 0.0,
+            role_request: None,
+            folder_request: None,
+            picker: None,
+            picker_hover: None,
+            page_titles: HashMap::new(),
         }
     }
 
@@ -230,6 +295,15 @@ impl BotView {
         view
     }
 
+    /// The Bot as its owner holds it, handed in by a test where a read
+    /// would have answered.
+    #[cfg(test)]
+    pub(crate) fn know_bot_for_test(&mut self, bot: Bot) {
+        self.settings.know(bot.clone());
+        self.know(BotFacts::from(bot));
+        self.sync_name_field();
+    }
+
     pub(crate) fn bot(&self) -> BotId {
         self.bot
     }
@@ -249,6 +323,22 @@ impl BotView {
 
     pub(crate) fn work(&self) -> Work {
         self.work.get()
+    }
+
+    /// The settings as they stand: what the owner holds, the person's
+    /// edits and the changes on their way.
+    pub(crate) fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// **The window's word that this tab is no longer in front of its
+    /// group.** A tab that has been shown reads its Bot once when it is
+    /// shown again; one never shown has nothing stale to refresh. Nothing is
+    /// sent now: a hidden tab sends nothing.
+    pub(crate) fn hidden(&mut self) {
+        if self.started_link && self.asked {
+            self.stale = true;
+        }
     }
 
     /// The embedded chat, once bound: the window's chat passes reach it
@@ -322,15 +412,49 @@ impl BotView {
             self.started_link = true;
             self.link = BotsLink::start(root);
         }
-        let asked = !self.asked && self.ask();
+        if self.stale && !self.in_flight {
+            self.stale = false;
+            self.asked = false;
+        }
+        if self.settings.take_read_owed() {
+            self.asked = false;
+        }
+        let asked = !self.asked && !self.in_flight && self.ask();
         let answered = self.poll();
+        let polled = self.send_polls();
         if !self.started_chat
             && let Some(conversation) = &mut self.conversation
         {
             self.started_chat = true;
             conversation.activate();
         }
-        asked || answered
+        asked || answered || polled
+    }
+
+    /// The `ReadOperation`s the settings owe now. `true` when any went.
+    fn send_polls(&mut self) -> bool {
+        let polls = self.settings.polls(std::time::Instant::now());
+        let any = !polls.is_empty();
+        for poll in polls {
+            self.send_write(poll);
+        }
+        any
+    }
+
+    /// Hand a settings change to the link; one it will not take is shown as
+    /// not sent, never as on its way.
+    fn send_write(&mut self, command: Command) {
+        let Command::Write { request, .. } = &command else {
+            return;
+        };
+        let request = *request;
+        let sent = self.link.as_ref().is_some_and(|link| link.send(command));
+        let mut work = self.work.get();
+        work.commands += usize::from(sent);
+        self.work.set(work);
+        if !sent {
+            self.settings.unsent(request);
+        }
     }
 
     /// Ask for the Bot. A full queue leaves it unasked, for a later pass.
@@ -361,27 +485,47 @@ impl BotView {
             return false;
         };
         let mut taken = None;
+        let mut wrote = Vec::new();
         for answer in link.drain() {
-            let Answer::Read { seq, bot, result } = answer else {
-                continue;
-            };
-            if seq != self.seq || bot != self.bot {
-                continue;
+            match answer {
+                Answer::Read { seq, bot, result } if seq == self.seq && bot == self.bot => {
+                    taken = Some(result);
+                }
+                Answer::Wrote {
+                    bot,
+                    request,
+                    result,
+                } if bot == self.bot => wrote.push((request, result)),
+                _ => {}
             }
-            taken = Some(result);
         }
-        let Some(result) = taken else {
-            return false;
-        };
-        self.in_flight = false;
-        self.take(result);
-        true
+        let mut changed = false;
+        let now = std::time::Instant::now();
+        for (request, result) in wrote {
+            let settled = self.settings.answer(request, result, now);
+            changed |= settled.matched;
+            if let Some(bot) = settled.bot {
+                self.know(BotFacts::from(bot));
+            }
+        }
+        if let Some(result) = taken {
+            self.in_flight = false;
+            self.take(result);
+            changed = true;
+        }
+        if changed {
+            self.sync_name_field();
+        }
+        changed
     }
 
     fn take(&mut self, result: Result<Bot, Failure>) {
         match result {
             // A Bot that says it is another is not this tab's.
-            Ok(bot) if bot.id == self.bot => self.know(BotFacts::from(bot)),
+            Ok(bot) if bot.id == self.bot => {
+                self.settings.know(bot.clone());
+                self.know(BotFacts::from(bot));
+            }
             Ok(_) | Err(_) => self.load = Load::Unavailable,
         }
     }
@@ -415,7 +559,7 @@ impl BotView {
     /// The header as elements: the Bot's name and its pause, where its work
     /// goes and the first version's limit, a notice while the Bot is read
     /// or could not be, and the divider that closes it.
-    fn header(&self) -> El {
+    fn header(&self, engine: &mut koru_draw::text::TextEngine) -> El {
         let mut header = col("Bot header")
             .id(HEADER)
             .pad_x(alias::NAV_PAD)
@@ -444,6 +588,7 @@ impl BotView {
                         .ink(Ink::Hint),
                 );
             }
+            title = title.child(self.settings_button(engine));
             header = header.child(title);
             if let Some(saves) = self.saves_in() {
                 header = header.child(
@@ -483,24 +628,35 @@ impl BotView {
 
     /// The tab as elements: the header, then the conversation's place,
     /// which takes what is left.
-    pub(crate) fn tree(&self) -> El {
-        col("Bot tab")
-            .id(ROOT)
-            .child(self.header())
-            .child(boxed("Bot conversation").id(CONVERSATION).fill())
+    pub(crate) fn tree(&self, engine: &mut koru_draw::text::TextEngine) -> El {
+        let tab = col("Bot tab").id(ROOT).child(self.header(engine));
+        if self.settings_open {
+            tab.child(self.region(engine))
+        } else {
+            tab.child(boxed("Bot conversation").id(CONVERSATION).fill())
+        }
     }
 
     fn area(&self) -> Rect {
         Rect::new(0.0, 0.0, self.size.0.max(0.0), self.size.1.max(0.0))
     }
 
+    /// The pointer's and the keyboard's state, for the states recipes.
+    fn interaction(&self) -> koru_draw::el::Interaction {
+        koru_draw::el::Interaction {
+            hot: self.hot,
+            pressed: self.pressed,
+            focused: self.focus,
+        }
+    }
+
     fn layout_with(&self, engine: &mut koru_draw::text::TextEngine) -> (El, Frame) {
-        let tree = self.tree();
+        let tree = self.tree(engine);
         let frame = tree.layout(
             engine,
             &mut self.cache.borrow_mut(),
             self.area(),
-            FrameCx::root(),
+            FrameCx::root().with_interaction(self.interaction()),
         );
         let mut work = self.work.get();
         work.layouts += 1;
@@ -610,35 +766,69 @@ impl View for BotView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
-        // The header has no control: every key is the conversation's.
+        // The page picker's while it is up; the region's while it is open,
+        // or *Settings*'s while it has the keyboard; every other key is the
+        // conversation's.
+        if self.picker.is_some() {
+            return self.picker_key(key, text, mods);
+        }
+        if let Some(handled) = self.region_key(key, text, mods) {
+            return handled;
+        }
         self.conversation
             .as_mut()
             .is_some_and(|conversation| View::key(conversation, ws, key, text, mods))
     }
 
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        if self.picker.is_some() {
+            return self.picker_press(x, y);
+        }
+        if let Some(handled) = self.region_press(x, y) {
+            return handled;
+        }
         if !self.on_conversation(y) {
             return false;
         }
+        self.focus = None;
         self.conversation
             .as_mut()
             .is_some_and(|conversation| View::mouse_down(conversation, ws, x, y, ctrl))
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
-        self.conversation
+        if self.picker.is_some() {
+            return self.picker_move(x, y);
+        }
+        // Over the conversation with nothing lit there is nothing of the
+        // tab's to light: no layout.
+        let over_tab = self.settings_open || y <= self.header_bottom.get() || self.hot.is_some();
+        let lit = self.facts.is_some() && over_tab && self.region_move(x, y);
+        if self.settings_open {
+            return lit;
+        }
+        let chat = self
+            .conversation
             .as_mut()
-            .is_some_and(|conversation| View::mouse_move(conversation, x, y))
+            .is_some_and(|conversation| View::mouse_move(conversation, x, y));
+        lit || chat
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if self.picker.is_some() {
+            return self.picker_release();
+        }
+        self.region_release();
+        if self.settings_open {
+            return false;
+        }
         self.conversation
             .as_mut()
             .is_some_and(|conversation| View::mouse_up(conversation, ws))
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
-        if !self.on_conversation(y) {
+        if self.settings_open || !self.on_conversation(y) {
             return false;
         }
         self.conversation
@@ -647,6 +837,21 @@ impl View for BotView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        // The wheel over the picker scrolls its list, and nothing under it.
+        if self.picker.is_some() {
+            self.picker_scroll(delta);
+            return;
+        }
+        if self.settings_open {
+            let dy = match delta {
+                MouseScrollDelta::LineDelta(_, lines) => {
+                    -lines * koru_draw::theme::metrics::ROW_MIN.value
+                }
+                MouseScrollDelta::PixelDelta(position) => -(position.y as f32),
+            };
+            self.scroll_region(dy);
+            return;
+        }
         if let Some(conversation) = &mut self.conversation {
             View::scroll_by(conversation, delta);
         }
@@ -659,6 +864,12 @@ impl View for BotView {
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        if self.hot == Some(region::NAME_FIELD) {
+            return CursorIcon::Text;
+        }
+        if self.settings_open {
+            return CursorIcon::Default;
+        }
         self.conversation
             .as_ref()
             .map_or(CursorIcon::Default, View::cursor_icon)
@@ -687,26 +898,34 @@ impl View for BotView {
         let bounds = self.area();
         // **One frame for the tab**: the header's place and the
         // conversation's come from it, as input and accessibility read them.
-        let (header, header_frame, conversation_area) = crate::input_engine::with(|engine| {
-            let (_, frame) = self.layout_with(engine);
-            let header_rect = frame
-                .node(HEADER)
-                .map_or(Rect::new(0.0, 0.0, 0.0, 0.0), |node| node.rect);
-            let conversation_area = self.conversation_area(&frame);
-            // The header painted from a frame of its own at its own rect, so
-            // its inspector record is the header's size, inside the tab's.
-            let header = self.header();
-            let header_frame = header.layout(
-                engine,
-                &mut self.cache.borrow_mut(),
-                header_rect,
-                FrameCx::root(),
-            );
-            let mut work = self.work.get();
-            work.layouts += 1;
-            self.work.set(work);
-            (header, header_frame, conversation_area)
-        });
+        let (header, header_frame, region, conversation_area) =
+            crate::input_engine::with(|engine| {
+                let (_, frame) = self.layout_with(engine);
+                let header_rect = frame
+                    .node(HEADER)
+                    .map_or(Rect::new(0.0, 0.0, 0.0, 0.0), |node| node.rect);
+                self.header_bottom.set(header_rect.y + header_rect.h);
+                let conversation_area = self.conversation_area(&frame);
+                let cx = FrameCx::root().with_interaction(self.interaction());
+                // The header painted from a frame of its own at its own rect,
+                // so its inspector record is the header's size, inside the
+                // tab's; the region likewise, at the conversation's place.
+                let header = self.header(engine);
+                let header_frame =
+                    header.layout(engine, &mut self.cache.borrow_mut(), header_rect, cx);
+                let region = self.settings_open.then(|| {
+                    let area = frame
+                        .node(region::SETTINGS)
+                        .map_or(conversation_area, |node| node.rect);
+                    let tree = self.region(engine);
+                    let laid = tree.layout(engine, &mut self.cache.borrow_mut(), area, cx);
+                    (tree, laid)
+                });
+                let mut work = self.work.get();
+                work.layouts += 1;
+                self.work.set(work);
+                (header, header_frame, region, conversation_area)
+            });
         self.place_conversation(conversation_area);
         let p = koru_draw::theme::p();
         scene::fill(
@@ -731,6 +950,11 @@ impl View for BotView {
             },
         );
         crate::input_engine::with(|engine| header_frame.paint(&header, scene_out, root, engine));
+        if let Some((tree, frame)) = &region {
+            crate::input_engine::with(|engine| frame.paint(tree, scene_out, root, engine));
+            self.paint_picker(scene_out, root);
+            return;
+        }
         if let Some(conversation) = &mut self.conversation {
             let a = conversation_area;
             let _conversation = koru_draw::inspect::scope(
@@ -763,11 +987,18 @@ impl View for BotView {
     }
 
     fn maintenance_deadline(&self) -> Option<std::time::Instant> {
-        let mine = self.in_flight.then(|| {
-            std::time::Instant::now()
-                .checked_add(std::time::Duration::from_millis(50))
-                .unwrap_or_else(std::time::Instant::now)
+        let now = std::time::Instant::now();
+        let read = self.in_flight.then(|| {
+            now.checked_add(std::time::Duration::from_millis(50))
+                .unwrap_or(now)
         });
+        // A change on its way, or an operation the owner holds as pending:
+        // asked about only while the tab is shown, which is the only time the
+        // window asks this.
+        let mine = match (read, self.settings.deadline(now)) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
         let chat = self
             .conversation
             .as_ref()
@@ -779,7 +1010,10 @@ impl View for BotView {
     }
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: std::time::Instant) -> bool {
-        let folded = self.in_flight && self.poll();
+        let folded = self.poll();
+        // Never from a tab the window has said is hidden.
+        let polled = !self.stale && self.send_polls();
+        let folded = folded || polled;
         let chat = self
             .conversation
             .as_mut()

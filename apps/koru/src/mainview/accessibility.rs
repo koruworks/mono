@@ -612,6 +612,11 @@ impl MainView {
         if self.canvas_action(target, action) {
             return true;
         }
+        // A Bot tab's controls (Bots P1.8 S5): its *Settings* and the
+        // region's, scoped by the tab's surface and by selected pages' ids.
+        if self.bot_action(target, action) {
+            return true;
+        }
         // The Manage tab's nav, which answers `Model` targets for its Profile
         // rows — scoped by parts no other surface uses.
         if self.manage_action(target, action, data) {
@@ -792,7 +797,7 @@ impl MainView {
             .view_rect_for(self.content(), self.panes.focused_path())
             .unwrap_or_else(|| self.content());
         let moved = |rect: Rect| Rect::new(area.x + rect.x, area.y + rect.y, rect.w, rect.h);
-        let children = view
+        let mut children: Vec<SemanticNode> = view
             .header_lines()
             .into_iter()
             .map(|(key, rect, words)| {
@@ -809,6 +814,13 @@ impl MainView {
                 .with_bounds(moved(rect))
             })
             .collect();
+        // *Settings*, and while it is open the region — its cards, their
+        // lines and controls — in the keyboard's order (S5).
+        children.extend(
+            view.controls()
+                .iter()
+                .map(|control| bot_control_node(cx, control, &moved)),
+        );
         Some(
             SemanticNode::new(
                 Occurrence::surface(
@@ -823,6 +835,22 @@ impl MainView {
             .with_bounds(moved(view.header_rect()))
             .with_children(children),
         )
+    }
+
+    /// Do what a client asked of a Bot tab's control.
+    fn bot_action(&mut self, target: Occurrence, action: Action) -> bool {
+        let click = match action {
+            Action::Click => true,
+            Action::Focus => false,
+            _ => return false,
+        };
+        let Some(key) = bot_key(target) else {
+            return false;
+        };
+        let TabView::Bot(view) = self.active_view() else {
+            return false;
+        };
+        view.accessibility_action(key, click)
     }
 
     /// Fold the Bot tab into the chrome's fingerprint, only while it is in
@@ -941,6 +969,73 @@ impl MainView {
             }
         }
         node
+    }
+}
+
+/// A Bot tab's control as a node, its children under it. A selected
+/// page's *Remove* is the page's own model object; every other control is
+/// the tab's surface, by its element's part.
+fn bot_control_node(
+    cx: &Shell,
+    control: &crate::bots::view::Control,
+    moved: &dyn Fn(Rect) -> Rect,
+) -> SemanticNode {
+    use crate::bots::view::ControlRole;
+    use koru_draw::el::Object;
+    use koru_workspace_host::accessibility::ControlPart;
+    let part = ControlPart::new(control.key.part);
+    let occurrence = match control.key.object {
+        Object::Model(id) => Occurrence::model(cx.window, cx.view, uuid::Uuid::from_u128(id), part),
+        _ => Occurrence::surface(cx.window, cx.view, crate::bots::view::SURFACE, part),
+    };
+    let role = match control.role {
+        ControlRole::Group => Role::Group,
+        ControlRole::Button => Role::Button,
+        ControlRole::TextInput => Role::TextInput,
+        ControlRole::Radio => Role::RadioButton,
+        ControlRole::Label => Role::Label,
+    };
+    let mut node = SemanticNode::new(occurrence, role)
+        .with_label(control.label.clone())
+        .with_bounds(moved(control.rect));
+    if let Some(value) = &control.value {
+        node = node.with_value(value.clone());
+    }
+    if let Some(selected) = control.selected {
+        node = node.with_selected(selected);
+    }
+    if matches!(
+        control.role,
+        ControlRole::Button | ControlRole::TextInput | ControlRole::Radio
+    ) && !control.disabled
+    {
+        node = node.with_actions([Action::Click, Action::Focus]);
+    }
+    node.with_children(
+        control
+            .children
+            .iter()
+            .map(|child| bot_control_node(cx, child, moved))
+            .collect(),
+    )
+}
+
+/// The element a client's target names on a Bot tab: the inverse of
+/// [`bot_control_node`]'s occurrence.
+fn bot_key(target: Occurrence) -> Option<koru_draw::el::Key> {
+    use koru_workspace_host::accessibility::ObjectKey;
+    let part = target.part.name();
+    match target.object {
+        ObjectKey::Surface(name) if name == crate::bots::view::SURFACE => Some(
+            koru_draw::el::Key::surface(crate::bots::view::SURFACE, part),
+        ),
+        ObjectKey::Model(id)
+            if part == crate::bots::view::region::REMOVE_PART
+                || part == crate::bots::view::region::PAGE_PART =>
+        {
+            Some(koru_draw::el::Key::model(id.as_u128(), part))
+        }
+        _ => None,
     }
 }
 

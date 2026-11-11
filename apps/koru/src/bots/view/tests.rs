@@ -34,7 +34,9 @@ impl Fixture {
                 assert_eq!(bot, self.bot.id, "about this tab's Bot");
                 seq
             }
-            Command::List { .. } => panic!("a Bot tab only reads its Bot"),
+            Command::List { .. } | Command::Write { .. } => {
+                panic!("a Bot tab only reads its Bot here")
+            }
         }
     }
 
@@ -120,10 +122,11 @@ fn a_stale_bot_read_is_ignored_and_a_failed_one_keeps_what_was_shown() {
     assert!(f.view.conversation().is_some(), "and the conversation");
 }
 
-/// **The header says what the service said and offers nothing to press**:
-/// the name, *Paused*, where the work goes and the home-only limit, in that
-/// nesting under the tab; no element in it is a pointer target. While the
-/// Bot is being read it says so, and claims no Bot.
+/// **The header says what the service said, and its one control is
+/// *Settings***: the name, *Paused*, where the work goes and the home-only
+/// limit, in that nesting under the tab; no line in it is a pointer target.
+/// While the Bot is being read it says so, claims no Bot and offers no
+/// *Settings*.
 #[test]
 fn the_header_is_words_in_its_tree_and_no_control() {
     let mut f = fixture();
@@ -167,6 +170,21 @@ fn the_header_is_words_in_its_tree_and_no_control() {
                 "no control under {key:?}"
             );
         }
+        let targets: Vec<Key> = frame
+            .hits()
+            .into_iter()
+            .map(|hit| hit.key)
+            .filter(|key| {
+                frame
+                    .node(*key)
+                    .is_some_and(|node| node.rect.y + node.rect.h <= header.y + header.h + 0.5)
+            })
+            .collect();
+        assert_eq!(
+            targets,
+            [region::SETTINGS_BUTTON],
+            "the header's one control"
+        );
         assert!(
             frame.named("Bot tab").next().is_some()
                 && frame.named("Bot header").next().is_some()
@@ -241,4 +259,491 @@ fn the_header_words_exist_in_every_language() {
         }
         assert!(t(lang, Words::BotsSavesTo).contains("{}"), "{lang:?}");
     }
+}
+
+// ------------------------------------------------------------ settings (S5)
+
+use super::region::*;
+use koru_ai_core::bots::{BotAccess, BotCommand, BotOperation, BotOperationKind};
+use koru_ai_core::bots::{BotOperationStatus, BotPage, BotRequestId, BotResponse};
+
+impl Fixture {
+    /// Shown, answered with the Bot, and its settings open.
+    fn opened(bot: Bot) -> Self {
+        let mut f = fixture();
+        f.bot = bot;
+        f.view.bot = f.bot.id;
+        f.view.chat = f.bot.main_chat;
+        f.view.shown_pass(None);
+        let seq = f.asked();
+        f.answer(seq, f.bot.id, Ok(f.bot.clone()));
+        f.view.set_home_name(Some("Research".into()));
+        // Tall enough that every card shows without scrolling: a press is
+        // only a press where the region's viewport shows the control.
+        f.view.set_viewport(800.0, 1600.0);
+        f.view.set_settings_open(true);
+        f
+    }
+
+    /// The one settings change the tab just sent.
+    fn wrote(&self) -> (BotRequestId, BotCommand) {
+        match self.commands.try_recv().expect("a change was sent") {
+            Command::Write {
+                bot,
+                request,
+                command,
+            } => {
+                assert_eq!(bot, self.bot.id);
+                (request, *command)
+            }
+            Command::Read { .. } | Command::List { .. } => panic!("not a write"),
+        }
+    }
+
+    fn reply(&mut self, request: BotRequestId, result: Result<BotResponse, Failure>) {
+        self.answers
+            .send(Answer::Wrote {
+                bot: self.bot.id,
+                request,
+                result,
+            })
+            .expect("the tab's end is open");
+        self.view.poll();
+    }
+
+    fn keys(&self) -> Vec<Key> {
+        self.view
+            .with_frame(|_, frame| frame.nodes.iter().filter_map(|node| node.key).collect())
+    }
+
+    fn press(&mut self, key: Key) -> bool {
+        let rect = self
+            .view
+            .with_frame(|_, frame| frame.node(key).map(|node| node.rect))
+            .expect("the control is shown");
+        let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+            .expect("a document");
+        View::mouse_down(
+            &mut self.view,
+            &mut ws,
+            rect.x + rect.w * 0.5,
+            rect.y + rect.h * 0.5,
+            false,
+        )
+    }
+}
+
+fn unpaused() -> Bot {
+    bot(BotId::mint(), WorkspaceId::new(), "Scout", false)
+}
+
+fn pending(
+    request: BotRequestId,
+    bot: &Bot,
+    kind: BotOperationKind,
+    status: BotOperationStatus,
+) -> BotResponse {
+    BotResponse::Operation {
+        operation: BotOperation {
+            request_id: request,
+            bot_id: bot.id,
+            kind,
+            run_id: None,
+            status,
+        },
+    }
+}
+
+/// **The settings region is an element tree whose rows nest under their
+/// card**: every row's element has a card among its ancestors and lies
+/// inside it, every card lies inside the region, and the region sits below
+/// the header in the conversation's place.
+#[test]
+fn the_settings_region_is_an_element_tree_whose_rows_nest_under_their_card() {
+    let f = Fixture::opened(unpaused());
+    f.view.with_frame(|_, frame| {
+        let region = frame.node(SETTINGS).expect("the region").rect;
+        let header = frame.node(HEADER).expect("the header").rect;
+        assert!(region.y >= header.y + header.h - 0.5, "below the header");
+        assert!(
+            frame.node(CONVERSATION).is_none(),
+            "in the conversation's place"
+        );
+        let cards: Vec<usize> = frame
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.name == "Bot settings card")
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(cards.len(), 4, "about, access, folder, pause");
+        for &card in &cards {
+            let rect = frame.nodes[card].rect;
+            assert!(rect.x >= region.x - 0.5 && rect.x + rect.w <= region.x + region.w + 0.5);
+        }
+        for row in [
+            "Bot name row",
+            "Bot role row",
+            "Bot access row",
+            "Bot access actions",
+            "Bot folder actions",
+            "Bot pause row",
+        ] {
+            let (index, node) = frame
+                .nodes
+                .iter()
+                .enumerate()
+                .find(|(_, node)| node.name == row)
+                .unwrap_or_else(|| panic!("{row} is laid out"));
+            let mut parent = frame.nodes[index].parent;
+            let mut card = None;
+            while let Some(at) = parent {
+                if cards.contains(&at) {
+                    card = Some(at);
+                    break;
+                }
+                parent = frame.nodes[at].parent;
+            }
+            let card = frame.nodes[card.unwrap_or_else(|| panic!("{row} is under a card"))].rect;
+            assert!(
+                node.rect.x >= card.x - 0.5
+                    && node.rect.y >= card.y - 0.5
+                    && node.rect.x + node.rect.w <= card.x + card.w + 0.5
+                    && node.rect.y + node.rect.h <= card.y + card.h + 0.5,
+                "{row} lies inside its card"
+            );
+        }
+        assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+    });
+}
+
+/// **Exactly the two approved access choices**, and a press on a segment
+/// chooses it — as an unsaved choice: nothing is sent until *Save*.
+#[test]
+fn the_access_choice_has_exactly_two_segments_and_a_press_drafts_it() {
+    let mut f = Fixture::opened(unpaused());
+    let choice = f
+        .view
+        .controls()
+        .into_iter()
+        .flat_map(|control| control.children)
+        .find(|control| control.key == ACCESS_CARD)
+        .and_then(|card| card.children.into_iter().find(|c| c.key == ACCESS_CHOICE))
+        .expect("the choice is published in the access card");
+    assert_eq!(choice.children.len(), 2, "exactly two choices");
+    assert!(choice.children.iter().all(|c| c.role == ControlRole::Radio));
+    assert_eq!(
+        choice
+            .children
+            .iter()
+            .map(|c| c.selected)
+            .collect::<Vec<_>>(),
+        [Some(true), Some(false)]
+    );
+    let workspace = choice.children[1].rect;
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    assert!(View::mouse_down(
+        &mut f.view,
+        &mut ws,
+        workspace.x + workspace.w * 0.5,
+        workspace.y + workspace.h * 0.5,
+        false
+    ));
+    assert_eq!(f.view.settings().access_shown(), BotAccess::Workspace);
+    assert!(f.commands.try_recv().is_err(), "nothing sent until Save");
+}
+
+/// **Pending states**: access, pause and the folder each show their pending
+/// line in place of their control until the owner answers, and nothing is
+/// shown as done before it does.
+#[test]
+fn access_pause_and_folder_show_pending_until_the_owner_answers() {
+    let mut f = Fixture::opened(unpaused());
+    f.view.perform(Act::Choose(BotAccess::Workspace));
+    assert!(f.press(SAVE_ACCESS));
+    let (access, _) = f.wrote();
+    assert!(f.keys().contains(&ACCESS_PENDING));
+    assert!(!f.keys().contains(&SAVE_ACCESS));
+
+    assert!(f.press(PAUSE));
+    let (pause, sent) = f.wrote();
+    assert!(matches!(sent, BotCommand::Pause { .. }));
+    assert!(f.keys().contains(&PAUSE_PENDING) && !f.keys().contains(&PAUSE));
+    let bot = f.bot.clone();
+    f.reply(
+        pause,
+        Ok(pending(
+            pause,
+            &bot,
+            BotOperationKind::Pause,
+            BotOperationStatus::Pending,
+        )),
+    );
+    assert!(f.keys().contains(&PAUSE_PENDING), "still pending");
+    assert!(
+        f.view.facts().is_some_and(|facts| !facts.paused),
+        "the header follows the owner, not the press"
+    );
+
+    let folder = if cfg!(windows) {
+        "D:\\bots\\scout"
+    } else {
+        "/bots/scout"
+    };
+    assert!(f.view.folder_chosen(std::path::Path::new(folder)));
+    let (moved, _) = f.wrote();
+    assert!(f.keys().contains(&FOLDER_PENDING) && !f.keys().contains(&CHANGE_FOLDER));
+
+    f.reply(
+        access,
+        Ok(pending(
+            access,
+            &bot,
+            BotOperationKind::UpdateAccess,
+            BotOperationStatus::Accepted,
+        )),
+    );
+    assert!(!f.keys().contains(&ACCESS_PENDING));
+    let mut answered = bot.clone();
+    answered.config.working_folder = folder.to_owned();
+    answered.revision += 1;
+    f.reply(moved, Ok(BotResponse::Bot { bot: answered }));
+    assert!(f.keys().contains(&CHANGE_FOLDER), "changeable again");
+}
+
+/// **Change… is absent while the folder is locked** — a first task's lock
+/// begun, or the folder frozen — and the sentence that it is fixed is said
+/// in its place.
+#[test]
+fn change_folder_is_absent_while_the_folder_is_locked() {
+    for (lock, frozen) in [(Some(BotRequestId::mint()), None), (None, Some(1))] {
+        let mut locked = unpaused();
+        locked.folder_lock_request = lock;
+        locked.folder_frozen_at_ms = frozen;
+        let mut f = Fixture::opened(locked);
+        let keys = f.keys();
+        assert!(!keys.contains(&CHANGE_FOLDER));
+        assert!(keys.contains(&FOLDER_FIXED));
+        assert!(!f.view.perform(Act::ChangeFolder));
+        assert!(f.view.take_folder_request().is_none());
+    }
+    let mut f = Fixture::opened(unpaused());
+    assert!(f.keys().contains(&CHANGE_FOLDER));
+    assert!(!f.keys().contains(&FOLDER_FIXED));
+    assert!(f.view.take_folder_request().is_none());
+}
+
+/// **The keyboard comes back where it was after the folder dialog**: Enter
+/// on *Change…* asks the window for its dialog, and when the dialog answers
+/// the keyboard is still on *Change…* — which shows *Saving…* in its place
+/// while the owner applies it, and comes back when it has.
+#[test]
+fn focus_returns_to_change_after_the_folder_dialog() {
+    let mut f = Fixture::opened(unpaused());
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    while f.view.focus() != Some(CHANGE_FOLDER) {
+        assert!(View::key(
+            &mut f.view,
+            &mut ws,
+            &WinitKey::Named(winit::keyboard::NamedKey::Tab),
+            None,
+            ModifiersState::empty()
+        ));
+    }
+    assert!(View::key(
+        &mut f.view,
+        &mut ws,
+        &WinitKey::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    let start = f
+        .view
+        .take_folder_request()
+        .expect("the dialog is asked for");
+    assert_eq!(start, Some(PathBuf::from(&f.bot.config.working_folder)));
+    let folder = if cfg!(windows) {
+        "D:\\bots\\scout"
+    } else {
+        "/bots/scout"
+    };
+    assert!(f.view.folder_chosen(std::path::Path::new(folder)));
+    assert_eq!(f.view.focus(), Some(CHANGE_FOLDER), "the keyboard stayed");
+    let (request, _) = f.wrote();
+    let mut answered = f.bot.clone();
+    answered.config.working_folder = folder.to_owned();
+    f.reply(request, Ok(BotResponse::Bot { bot: answered }));
+    assert!(f.view.focus_order().contains(&CHANGE_FOLDER));
+    assert_eq!(f.view.focus(), Some(CHANGE_FOLDER));
+}
+
+/// **Accessibility names and order**: *Settings* first, then the region as
+/// a group named *Settings* holding its cards in reading order, each card
+/// named and holding its controls; every control has a name, and the
+/// controls a client can press come in the keyboard's order.
+#[test]
+fn the_controls_publish_names_in_the_keyboards_order() {
+    let f = Fixture::opened(unpaused());
+    let lang = f.view.lang;
+    let roots = f.view.controls();
+    assert_eq!(roots.len(), 2, "Settings, then the region");
+    assert_eq!(roots[0].key, SETTINGS_BUTTON);
+    assert_eq!(roots[0].label, t(lang, Words::BotsSettings));
+    assert_eq!(roots[0].selected, Some(true), "the region is open");
+    assert_eq!(roots[1].key, SETTINGS);
+    assert_eq!(roots[1].label, t(lang, Words::BotsSettings));
+    let cards: Vec<Key> = roots[1]
+        .children
+        .iter()
+        .filter(|c| c.role == ControlRole::Group)
+        .map(|c| c.key)
+        .collect();
+    assert_eq!(cards, [ABOUT_CARD, ACCESS_CARD, FOLDER_CARD, PAUSE_CARD]);
+
+    fn walk(controls: &[Control], out: &mut Vec<Control>) {
+        for control in controls {
+            out.push(control.clone());
+            walk(&control.children, out);
+        }
+    }
+    let mut all = Vec::new();
+    walk(&roots, &mut all);
+    assert!(
+        all.iter().all(|c| !c.label.trim().is_empty()),
+        "every node is named"
+    );
+    let field = all
+        .iter()
+        .find(|c| c.key == NAME_FIELD)
+        .expect("the name field");
+    assert_eq!(field.role, ControlRole::TextInput);
+    assert_eq!(field.value.as_deref(), Some("Scout"));
+    let pressable: Vec<Key> = all
+        .iter()
+        .filter(|c| matches!(c.role, ControlRole::Button | ControlRole::TextInput) && !c.disabled)
+        .map(|c| c.key)
+        .collect();
+    let order: Vec<Key> = f
+        .view
+        .focus_order()
+        .into_iter()
+        .filter(|key| *key != ACCESS_CHOICE)
+        .collect();
+    assert_eq!(pressable, order, "the tree reads in the keyboard's order");
+    for key in [RUNS_ON, RUNTIME_LIMITS, CODEX_ONLY] {
+        let line = all
+            .iter()
+            .find(|c| c.key == key)
+            .expect("the disclosure is published");
+        assert_eq!(line.role, ControlRole::Label);
+        if key != CODEX_ONLY {
+            assert!(
+                line.label.contains("Codex"),
+                "names the agent: {}",
+                line.label
+            );
+        }
+    }
+}
+
+/// **A hidden tab sends nothing, and reads its Bot exactly once when it is
+/// shown again** — even with an operation pending whose poll falls due while
+/// it is hidden.
+#[test]
+fn a_hidden_tab_sends_nothing_and_reads_once_when_shown_again() {
+    let mut f = Fixture::opened(unpaused());
+    assert!(f.view.perform(Act::TogglePause));
+    let (pause, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        pause,
+        Ok(pending(
+            pause,
+            &bot,
+            BotOperationKind::Pause,
+            BotOperationStatus::Pending,
+        )),
+    );
+    f.view.hidden();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    View::maintain(&mut f.view, &mut ws, std::time::Instant::now());
+    assert!(f.commands.try_recv().is_err(), "a hidden tab sends nothing");
+
+    assert!(f.view.shown_pass(None));
+    let mut reads = 0;
+    let mut polls = 0;
+    while let Ok(command) = f.commands.try_recv() {
+        match command {
+            Command::Read { .. } => reads += 1,
+            Command::Write { command, .. } => {
+                assert!(matches!(*command, BotCommand::ReadOperation { .. }));
+                polls += 1;
+            }
+            Command::List { .. } => panic!("a tab lists nothing"),
+        }
+    }
+    assert_eq!(reads, 1, "one read on showing");
+    assert_eq!(polls, 1, "and the poll it owed");
+    f.view.shown_pass(None);
+    assert!(f.commands.try_recv().is_err(), "and only once");
+}
+
+/// **Selected pages are added through the shared entity picker and removed
+/// by their row's *Remove***: *Add a page…* opens the picker over the home
+/// workspace alone, a page picked joins the unsaved access choice and the
+/// keyboard comes back to *Add a page…*; *Remove* takes it out again. Neither
+/// sends anything before *Save*.
+#[test]
+fn selected_pages_are_added_through_the_picker_and_removed_by_their_row() {
+    use koru_editor::components::entity_picker::{DocumentChoice, WorkspaceChoice};
+    let mut f = Fixture::opened(unpaused());
+    assert!(f.view.perform(Act::AddPage));
+    assert!(f.view.page_picker_open());
+    let home = koru_core::WorkspaceId::from_uuid(f.bot.home_workspace.as_uuid());
+    let elsewhere = koru_core::WorkspaceId::new();
+    let choice = |id| WorkspaceChoice {
+        profile: koru_core::ProfileId::new(),
+        profile_name: "Me".into(),
+        id,
+        name: "W".into(),
+    };
+    f.view
+        .set_picker_context(vec![choice(home), choice(elsewhere)]);
+    let document = koru_core::DocumentId::new();
+    f.view.set_picker_results(
+        vec![DocumentChoice {
+            target: koru_editor::trigger::DocumentTarget {
+                document,
+                node: None,
+            },
+            title: "Sources".into(),
+            breadcrumb: String::new(),
+            is_file: false,
+        }],
+        false,
+    );
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    assert!(View::key(
+        &mut f.view,
+        &mut ws,
+        &WinitKey::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(!f.view.page_picker_open(), "a pick closes the picker");
+    assert_eq!(f.view.focus(), Some(ADD_PAGE), "the keyboard came back");
+    let page = BotPage {
+        workspace: f.bot.home_workspace,
+        document: koru_ai_core::DocumentId::from_uuid(document.as_uuid()),
+    };
+    assert_eq!(f.view.settings().pages_shown(), &[page.clone()]);
+    assert!(f.keys().contains(&remove_key(&page)));
+    assert!(f.press(remove_key(&page)));
+    assert!(f.view.settings().pages_shown().is_empty());
+    assert!(f.commands.try_recv().is_err(), "nothing sent before Save");
 }

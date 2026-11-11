@@ -4,10 +4,12 @@
 //! person's own Bots in the window's workspace.
 //!
 //! The roster, and a Bot's tab ([`BotView`]): pressing a Bot opens or
-//! focuses its tab, its header over its main conversation. Its settings, its
-//! other conversations and creating one land in later increments
-//! (`docs/features/bots/P1.8.PLAN.final.md`); until they do, neither offers
-//! a control that would lead nowhere — no *Create a bot*, no menu.
+//! focuses its tab, its header over its main conversation, and the header's
+//! *Settings* opens the Bot's settings ([`settings`], S5). Its other
+//! conversations, its agent and model settings and creating one land in
+//! later increments (`docs/features/bots/P1.8.PLAN.final.md`); until they
+//! do, nothing offers a control that would lead nowhere — no *Create a
+//! bot*, no menu.
 //!
 //! Two rules it is built under, the Chats view's:
 //!
@@ -19,6 +21,7 @@
 
 pub(crate) mod link;
 pub(crate) mod roster;
+pub(crate) mod settings;
 pub(crate) mod view;
 
 pub(crate) use roster::BotsRoster;

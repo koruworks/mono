@@ -48,7 +48,7 @@ impl Fixture {
                 assert_eq!(workspace, self.home, "about the window's workspace");
                 seq
             }
-            Command::Read { .. } => panic!("a roster only lists"),
+            Command::Read { .. } | Command::Write { .. } => panic!("a roster only lists"),
         }
     }
 
@@ -421,7 +421,7 @@ fn a_workspace_change_clears_the_rows_and_asks_again_when_shown() {
     f.roster.maintain();
     match f.commands.try_recv().expect("asked once shown") {
         Command::List { workspace, .. } => assert_eq!(workspace, other),
-        Command::Read { .. } => panic!("a roster only lists"),
+        Command::Read { .. } | Command::Write { .. } => panic!("a roster only lists"),
     }
 }
 

@@ -226,3 +226,56 @@ fn a_bot_tab_behind_another_does_no_work() {
         .expect("the Bot tab is there");
     assert_eq!(work, crate::bots::view::Work::default());
 }
+
+/// **A Bot's settings reach a screen reader through the window**, and a
+/// client's press reaches the Bot tab: the window publishes the region's
+/// access choice as two radio buttons under the tab, and a click on the
+/// broader one drafts it — nothing is sent, nothing is applied.
+#[test]
+fn a_bot_tabs_settings_are_published_and_answer_a_clients_press() {
+    use accesskit::{Action, Role};
+    use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot};
+    let (mut v, mut w) = container();
+    let bot = crate::bots::tests::bot(
+        koru_ai_core::bots::BotId::mint(),
+        WorkspaceId::new(),
+        "Scout",
+        false,
+    );
+    assert!(v.open_bot_tab(RosterBot::from(bot.clone())));
+    let TabView::Bot(view) = v.active_view() else {
+        panic!("the Bot tab is in front");
+    };
+    view.know_bot_for_test(bot);
+    assert!(view.perform(crate::bots::view::region::Act::ToggleSettings));
+
+    fn flatten(nodes: &[SemanticNode], out: &mut Vec<SemanticNode>) {
+        for node in nodes {
+            out.push(node.clone());
+            flatten(&node.children, out);
+        }
+    }
+    let mut all = Vec::new();
+    flatten(&v.semantics(ViewSlot::from_raw(1), Scope::Whole), &mut all);
+    let radios: Vec<&SemanticNode> = all.iter().filter(|n| n.role == Role::RadioButton).collect();
+    assert_eq!(radios.len(), 2, "exactly the two access choices");
+    assert!(
+        all.iter().any(|n| n.role == Role::TextInput
+            && n.label.as_deref()
+                == Some(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsName
+                ))),
+        "the name field is published by its name"
+    );
+    let broader = radios[1].occurrence;
+    assert!(v.accessibility_action(&mut w.ws, broader, Action::Click, None));
+    let TabView::Bot(view) = v.active_view() else {
+        panic!("the Bot tab is still in front");
+    };
+    assert_eq!(
+        view.settings().access_shown(),
+        koru_ai_core::bots::BotAccess::Workspace
+    );
+    assert!(view.settings().access_edited(), "drafted, not applied");
+}

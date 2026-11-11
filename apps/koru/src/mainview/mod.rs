@@ -629,6 +629,9 @@ impl AttrPickerKind {
 enum AiChatFolderSource {
     Pane,
     AiChatTab,
+    /// A Bot tab's *Change…* (Bots P1.8 S5): the folder goes to the Bot
+    /// owner, never to the chat. Found again by its conversation's id.
+    BotTab,
 }
 
 pub struct MainView {
@@ -12345,6 +12348,7 @@ impl View for MainView {
                     false
                 }
             }
+            AiChatFolderSource::BotTab => self.bot_folder_chosen(chat, &chosen),
         }
     }
 
@@ -12354,7 +12358,8 @@ impl View for MainView {
         };
         match source {
             AiChatFolderSource::Pane => self.ai_chat.computer_path_chosen(kind, chosen),
-            AiChatFolderSource::AiChatTab => {
+            // A Bot tab's embedded chat answers as an agent chat tab's does.
+            AiChatFolderSource::AiChatTab | AiChatFolderSource::BotTab => {
                 if let Some(view) = self.tabs_mut().active_view().chat_view_mut() {
                     view.computer_path_chosen(kind, chosen)
                 } else {
@@ -12375,7 +12380,7 @@ impl View for MainView {
         let result = result.map(|document| koru_ai_ui::DocumentId::from_uuid(document.as_uuid()));
         match source {
             AiChatFolderSource::Pane => self.ai_chat.workspace_file_imported(op, result),
-            AiChatFolderSource::AiChatTab => {
+            AiChatFolderSource::AiChatTab | AiChatFolderSource::BotTab => {
                 for (_, group) in self.panes.iter_groups_mut() {
                     for tab in group.tabs_mut().iter_mut() {
                         if let Some(view) = tab.view.chat_view_mut()
@@ -15300,7 +15305,7 @@ impl View for MainView {
         let chats_changed = self.maintain_chats();
         let bots_changed = self.maintain_bots();
         let socials_changed = self.maintain_socials_navigation(now);
-        let ai_document_opened = self.open_pending_ai_document();
+        let ai_document_opened = self.open_pending_ai_document() | self.open_pending_bot_role();
         let ai_attachment_opened = self.open_pending_ai_attachment();
         let file_preview_changed = self
             .file_preview
@@ -16852,6 +16857,7 @@ impl MainView {
             (None, AiChatFolderSource::Pane)
         };
         let Some(request) = request else {
+            self.ask_pending_bot_folder();
             return;
         };
         self.ai_chat_folder_ask = Some((source, request.chat));
@@ -17126,7 +17132,7 @@ impl MainView {
     }
 
     fn sync_entity_picker(&mut self) -> bool {
-        let link = self.sync_link_picker();
+        let link = self.sync_link_picker() | self.sync_bot_page_picker();
         let Some((_, _, _, current)) = self.pane_context.as_ref() else {
             return link;
         };
@@ -17405,6 +17411,32 @@ impl MainView {
                 document.kind == "file" || document.kind == koru_core::explore::KIND_FILE,
             );
             self.entity_trashed.remove(&key);
+        }
+        // A Bot tab's *Add a page…* asked: it takes the documents (S5).
+        if matches!(&self.tabs().active_tab().view, TabView::Bot(b) if b.page_picker_open()) {
+            let hits = update
+                .documents
+                .iter()
+                .filter(|document| {
+                    document.kind != "file" && document.kind != koru_core::explore::KIND_FILE
+                })
+                .map(
+                    |document| koru_editor::components::entity_picker::DocumentChoice {
+                        target: koru_editor::trigger::DocumentTarget {
+                            document: koru_core::DocumentId::from_uuid(document.document.as_uuid()),
+                            node: None,
+                        },
+                        title: document.title.clone(),
+                        breadcrumb: document.breadcrumb.clone(),
+                        is_file: false,
+                    },
+                )
+                .collect();
+            if let TabView::Bot(view) = self.active_view() {
+                view.set_picker_results(hits, update.unavailable);
+            }
+            self.sync_bot_page_picker();
+            return true;
         }
         // The Tasks page's *Add existing* picker asked: it takes the answer,
         // documents and files together.
