@@ -5715,8 +5715,7 @@ enum ProviderAdminJob {
     /// A public Run read (P1.8 B1), on its own lane; it answers its caller
     /// itself.
     BotRunRead(bots::BotRunReadJob),
-    /// A task's Stop (P1.8), on the Stop lane's interactive queue; it
-    /// answers its caller itself.
+    /// A task's Stop (P1.8), on its own lane; it answers its caller itself.
     BotTaskStop(bots::BotTaskStopJob),
     Validate {
         provider: AiProviderId,
@@ -5763,6 +5762,12 @@ struct ProviderAdminPool {
     /// branch, policy, provider validation, model download) runs here.
     prepare_sender: Option<SyncSender<ProviderAdminJob>>,
     prepare_thread: Option<JoinHandle<()>>,
+    /// `stop_task`'s own lane (P1.8): each job makes at most a few bounded
+    /// execution-owner calls and no Store call, so neither the Stop lane a
+    /// person's conversation Stop, approvals and steers use, nor any other
+    /// lane, waits on it. A small queue; a full one is answered at once.
+    task_stop_sender: Option<SyncSender<bots::BotTaskStopJob>>,
+    task_stop_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -6068,6 +6073,33 @@ impl ProviderAdminPool {
                 return Err(error.to_string());
             }
         };
+        let (task_stop_sender, task_stop_receiver) =
+            sync_channel::<bots::BotTaskStopJob>(bots::TASK_STOP_QUEUE_CAPACITY);
+        let task_stop_shutdown = Arc::clone(&shutdown);
+        let task_stop_thread = match std::thread::Builder::new()
+            .name("koru-ai-provider-task-stop".into())
+            .spawn(move || {
+                while !task_stop_shutdown.load(Ordering::Acquire) {
+                    match task_stop_receiver.recv_timeout(LOOP_INTERVAL) {
+                        Ok(job) => job.run(),
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                drop(sender);
+                drop(creation_sender);
+                drop(run_read_sender);
+                drop(prepare_sender);
+                let _ = thread.join();
+                let _ = creation_thread.join();
+                let _ = run_read_thread.join();
+                let _ = prepare_thread.join();
+                return Err(error.to_string());
+            }
+        };
         let control_shutdown = Arc::clone(&shutdown);
         let control_thread = match std::thread::Builder::new()
             .name("koru-ai-provider-control".into())
@@ -6090,10 +6122,6 @@ impl ProviderAdminPool {
                                 Envelope::BotInteraction(job.run())
                             }
                             ProviderAdminJob::BotSteer(job) => Envelope::BotSteer(job.run()),
-                            ProviderAdminJob::BotTaskStop(job) => {
-                                job.run();
-                                continue;
-                            }
                             _ => unreachable!("interactive queue dispatch"),
                         };
                         send_admin_envelope(&control_output, event, &control_shutdown);
@@ -6120,10 +6148,12 @@ impl ProviderAdminPool {
                 drop(creation_sender);
                 drop(run_read_sender);
                 drop(prepare_sender);
+                drop(task_stop_sender);
                 let _ = thread.join();
                 let _ = creation_thread.join();
                 let _ = run_read_thread.join();
                 let _ = prepare_thread.join();
+                let _ = task_stop_thread.join();
                 return Err(error.to_string());
             }
         };
@@ -6139,6 +6169,8 @@ impl ProviderAdminPool {
             run_read_thread: Some(run_read_thread),
             prepare_sender: Some(prepare_sender),
             prepare_thread: Some(prepare_thread),
+            task_stop_sender: Some(task_stop_sender),
+            task_stop_thread: Some(task_stop_thread),
             shutdown,
         })
     }
@@ -6166,11 +6198,31 @@ impl ProviderAdminPool {
                 },
             });
         }
+        if let ProviderAdminJob::BotTaskStop(stop) = job {
+            let Some(sender) = &self.task_stop_sender else {
+                return Err(AdminSubmitError {
+                    job: ProviderAdminJob::BotTaskStop(stop),
+                    failure: unavailable_failure(),
+                });
+            };
+            return sender.try_send(stop).map_err(|error| match error {
+                TrySendError::Full(stop) => AdminSubmitError {
+                    job: ProviderAdminJob::BotTaskStop(stop),
+                    failure: failure(
+                        "ai_worker_saturated",
+                        "The Bot task Stop lane is busy. Try again.",
+                        true,
+                    ),
+                },
+                TrySendError::Disconnected(stop) => AdminSubmitError {
+                    job: ProviderAdminJob::BotTaskStop(stop),
+                    failure: unavailable_failure(),
+                },
+            });
+        }
         if matches!(
             &job,
-            ProviderAdminJob::BotInteraction(_)
-                | ProviderAdminJob::BotSteer(_)
-                | ProviderAdminJob::BotTaskStop(_)
+            ProviderAdminJob::BotInteraction(_) | ProviderAdminJob::BotSteer(_)
         ) {
             let Some(sender) = &self.interactive_sender else {
                 return Err(AdminSubmitError {
@@ -6289,10 +6341,14 @@ impl ProviderAdminPool {
         self.creation_sender.take();
         self.run_read_sender.take();
         self.prepare_sender.take();
+        self.task_stop_sender.take();
         if let Some(thread) = self.control_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.prepare_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.task_stop_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.creation_thread.take() {

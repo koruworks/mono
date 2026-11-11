@@ -32,7 +32,7 @@ pub(super) use lifecycle::{LifecycleDriver, LifecycleJob, LifecycleResult};
 pub(super) use policy::{BotPolicyJob, BotPolicyResult};
 pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotCommand};
 pub(super) use reads::{BotRunReadJob, RUN_READ_QUEUE_CAPACITY};
-pub(super) use stop::BotTaskStopJob;
+pub(super) use stop::{BotTaskStopJob, TASK_STOP_QUEUE_CAPACITY};
 mod creation;
 pub(super) use creation::{
     BotFolderSystem, CreationDriver, CreationJob, CreationPreparationJob, CreationPrepared,

@@ -674,6 +674,34 @@ fn retained_card_bound_closes_excess_as_unavailable_without_fabricating_user_ski
     let _ = f.worker.join();
 }
 
+/// The previous task's owner does not answer within the preparation's bound
+/// (`LocalBotDelegate::execute_within` fails retryable, as `LocalDelegate`
+/// does when its socket times out): the answer says the owner did not
+/// answer, not that the task has not settled.
+#[test]
+fn an_owner_that_does_not_answer_the_settled_check_is_named_as_such() {
+    struct Silent;
+    impl BotDelegatePort for Silent {
+        fn execute(&self, _: D) -> Result<BotReply, koru_delegate_api::Failure> {
+            Err(koru_delegate_api::Failure::unavailable())
+        }
+    }
+    let f = start(false);
+    let question = answer_context(&f)
+        .prepared
+        .as_ref()
+        .unwrap()
+        .terminal_question
+        .clone()
+        .unwrap();
+    let port: Arc<dyn BotDelegatePort> = Arc::new(Silent);
+    let refused = question.verify(Some(&port)).unwrap_err();
+    assert_eq!(refused.code, "bot_unavailable");
+    assert!(refused.retryable);
+    f.worker.shutdown();
+    let _ = f.worker.join();
+}
+
 #[test]
 fn pending_prior_settlement_and_revoked_preparation_authority_refuse_new_answer_task() {
     let f = start(false);

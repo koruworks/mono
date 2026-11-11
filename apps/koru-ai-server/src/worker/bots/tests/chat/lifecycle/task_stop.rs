@@ -112,27 +112,208 @@ fn a_running_task_a_person_holds_is_ended_as_the_persons_stop() {
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
+fn cancelled(port: &Archiving, run: d::RunId) -> bool {
+    port.api
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|task| task.view.run == run)
+        .unwrap()
+        .cancelled
+}
+
 /// A running task whose Stop its owner applies but cannot confirm at once
-/// (`bot_stop_unconfirmed`, as `Orchestrator::bot_stop` answers while the
-/// Run's record is not yet durably settled; the real owner did so in the
-/// scripted native journey): the Stop is read and sent again until it is
-/// confirmed, and answers `stopped`.
+/// (`bot_stop_unconfirmed`: `Orchestrator::cancel` recorded the person's
+/// cancellation, the process's end is not proven yet; the real owner did so
+/// in the scripted native journey). One Stop is sent and the answer is
+/// `stopping`; nothing is sent again by itself. The task is still unsettled
+/// at its owner. The same `stop_task` again sends the Stop again, which the
+/// owner now confirms: `stopped`.
 #[test]
-fn an_unconfirmed_stop_is_sent_again_until_its_owner_confirms_it() {
+fn an_unconfirmed_stop_answers_stopping_and_the_caller_asks_again() {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let mut task = admitted(&mut repository, &bot, d::BotAdmissionState::Executing);
-    task.pending = 2;
+    task.pending = 1;
+    let (request, run) = (task.view.key.request, task.view.run);
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().push(task);
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    assert_eq!(
+        stop(&client, bot.id, request).unwrap().outcome,
+        BotTaskStopOutcome::Stopping
+    );
+    assert_eq!(port.stops_of(run), 1, "one Stop, no resend loop");
+    assert!(cancelled(&port, run));
+    assert_eq!(state_of(&port, run), d::BotAdmissionState::Executing);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(port.stops_of(run), 1, "nothing sent again by itself");
+    assert_eq!(
+        stop(&client, bot.id, request).unwrap().outcome,
+        BotTaskStopOutcome::Stopped
+    );
+    assert_eq!(port.stops_of(run), 2);
+    assert_eq!(state_of(&port, run), d::BotAdmissionState::Settled);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// The process exits between the unconfirmed Stop and the caller's next
+/// `stop_task`: the exit proved the end and the owner settled the task, so
+/// the next one finds it settled and sends nothing.
+#[test]
+fn a_process_that_exits_after_an_unconfirmed_stop_is_found_settled() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let mut task = admitted(&mut repository, &bot, d::BotAdmissionState::Executing);
+    task.pending = 1;
+    task.exits_after_unconfirmed = true;
+    let (request, run) = (task.view.key.request, task.view.run);
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().push(task);
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    assert_eq!(
+        stop(&client, bot.id, request).unwrap().outcome,
+        BotTaskStopOutcome::Stopping
+    );
+    assert_eq!(
+        stop(&client, bot.id, request).unwrap().outcome,
+        BotTaskStopOutcome::AlreadySettled
+    );
+    assert_eq!(port.stops_of(run), 1);
+    assert!(
+        cancelled(&port, run),
+        "recorded as the person's cancellation"
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// A task that ends by itself between the admission read and the Stop: the
+/// owner's Stop of an ended Run only retires it, and the Run's status (an
+/// end by itself, not the person's cancellation) answers `already_settled`.
+#[test]
+fn a_task_that_ends_by_itself_before_the_stop_arrives_is_already_settled() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let mut task = admitted(&mut repository, &bot, d::BotAdmissionState::Executing);
+    task.finishes_after_read = true;
     let (request, run) = (task.view.key.request, task.view.run);
     let port = Arc::new(Archiving::default());
     port.api.lock().unwrap().push(task);
     let (worker, _returned) = spawn(repository, authority, port.clone());
     assert_eq!(
         stop(&worker.client(), bot.id, request).unwrap().outcome,
+        BotTaskStopOutcome::AlreadySettled
+    );
+    assert_eq!(port.stops_of(run), 1);
+    assert!(!cancelled(&port, run));
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// Which thread each authority inspection runs on.
+struct ThreadSpy {
+    inner: Arc<Authority>,
+    threads: Mutex<Vec<String>>,
+}
+impl BotAuthority for ThreadSpy {
+    fn owner(&self) -> Result<BotOwner, BotError> {
+        self.inner.owner()
+    }
+    fn workspace(&self, id: WorkspaceId) -> Result<koru_ai_core::ProfileId, BotError> {
+        self.inner.workspace(id)
+    }
+    fn page(&self, page: &BotPage) -> Result<(), BotError> {
+        self.inner.page(page)
+    }
+    fn inspect(
+        &self,
+        workspaces: &[WorkspaceId],
+        pages: &[BotPage],
+    ) -> Result<koru_ai_core::bots::BotAuthoritySnapshot, BotError> {
+        self.threads
+            .lock()
+            .unwrap()
+            .push(std::thread::current().name().unwrap_or_default().to_owned());
+        self.inner.inspect(workspaces, pages)
+    }
+}
+
+/// A task Stop makes no Store call off the writer: its one authority
+/// inspection is preparation's, on the preparation lane, and none runs on
+/// the Stop lane or the task Stops' own (the lane review's probe, inverted:
+/// it found one on the Stop lane).
+#[test]
+fn a_task_stop_inspects_authority_only_in_preparation() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let task = admitted(&mut repository, &bot, d::BotAdmissionState::Executing);
+    let request = task.view.key.request;
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().push(task);
+    let spy = Arc::new(ThreadSpy {
+        inner: authority,
+        threads: Mutex::new(Vec::new()),
+    });
+    let (return_tx, _returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-memory-lifecycle"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(spy.clone())
+    .with_bot_delegate(port);
+    config.test_repository = Some(repository);
+    config.test_repository_return = Some(return_tx);
+    let worker = AiWorker::new(config).spawn().unwrap();
+    let before = spy.threads.lock().unwrap().len();
+    assert_eq!(
+        stop(&worker.client(), bot.id, request).unwrap().outcome,
         BotTaskStopOutcome::Stopped
     );
-    assert_eq!(state_of(&port, run), d::BotAdmissionState::Settled);
-    assert_eq!(port.stops_of(run), 3);
+    let threads = spy.threads.lock().unwrap()[before..].to_vec();
+    assert_eq!(threads, ["koru-ai-provider-prepare"], "{threads:?}");
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+/// A task Stop its owner keeps answering unconfirmed holds nothing: it is
+/// answered `stopping` at once with one Stop sent, and another task's Stop
+/// right after it is answered promptly (the lane review's probe, inverted:
+/// it found the first resending for its whole deadline, thirty Stops, and
+/// the second waiting behind it).
+#[test]
+fn an_unconfirmed_task_stop_delays_no_other_stop() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let mut stuck = admitted(&mut repository, &bot, d::BotAdmissionState::Executing);
+    stuck.pending = 100_000;
+    let other = admitted(&mut repository, &bot, d::BotAdmissionState::Queued);
+    let (stuck_request, stuck_run) = (stuck.view.key.request, stuck.view.run);
+    let other_request = other.view.key.request;
+    let port = Arc::new(Archiving::default());
+    port.api.lock().unwrap().push(stuck);
+    port.api.lock().unwrap().push(other);
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    let started = Instant::now();
+    assert_eq!(
+        stop(&client, bot.id, stuck_request).unwrap().outcome,
+        BotTaskStopOutcome::Stopping
+    );
+    assert_eq!(port.stops_of(stuck_run), 1);
+    assert_eq!(
+        stop(&client, bot.id, other_request).unwrap().outcome,
+        BotTaskStopOutcome::Stopped
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "the two Stops took {:?}",
+        started.elapsed()
+    );
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }

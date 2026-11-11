@@ -439,6 +439,12 @@ pub enum BotResponse {
 pub enum BotTaskStopOutcome {
     /// The task was queued or running, and this Stop ended it.
     Stopped,
+    /// The Stop was delivered and its execution owner recorded the person's
+    /// cancellation, but the Run's end is not proven yet (its process may
+    /// still be exiting, or effects are still being drained). Ask again: a
+    /// later `stop_task` answers `already_settled` once it has settled, or
+    /// sends the Stop again.
+    Stopping,
     /// It had already ended (finished, failed, or stopped before): nothing
     /// was sent.
     AlreadySettled,

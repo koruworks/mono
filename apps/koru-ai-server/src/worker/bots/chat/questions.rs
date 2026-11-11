@@ -70,6 +70,13 @@ impl TerminalQuestionProof {
             {
                 Ok(())
             }
+            // The owner did not answer in time (or answered retryably): say
+            // so, rather than that the task has not settled.
+            Err(refused) if refused.retryable => Err(failure(
+                "bot_unavailable",
+                "The Bot's execution owner did not answer. Try again.",
+                true,
+            )),
             _ => Err(failure(
                 "chat_busy",
                 "The previous Bot task has not settled yet.",

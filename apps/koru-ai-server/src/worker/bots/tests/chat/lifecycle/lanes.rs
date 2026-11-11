@@ -376,9 +376,12 @@ fn a_full_preparation_lane_answers_at_once_and_shares_no_queue_with_background_w
     admin.stop();
 }
 
-/// At shutdown every caller waiting on preparation is answered: the one
-/// being prepared and every one queued behind it, none left to its own
-/// 30 s timeout.
+/// At shutdown every caller waiting on preparation is answered once the job
+/// being prepared returns: that one, and every one queued behind it (their
+/// jobs are dropped with the lane, so each reply is dropped and the caller
+/// told `ai_unavailable`), well inside 2 s of the lane freeing and never
+/// left to its own 30 s timeout. The job being prepared is not cut short:
+/// shutdown waits for it, as for every lane.
 #[test]
 fn shutdown_answers_every_caller_waiting_on_preparation() {
     let (mut repository, authority, create) = fixture();
@@ -414,7 +417,7 @@ fn shutdown_answers_every_caller_waiting_on_preparation() {
     for reader in readers {
         let (read, at) = reader.join().unwrap();
         assert!(
-            at.saturating_duration_since(released) < Duration::from_secs(5),
+            at.saturating_duration_since(released) < Duration::from_secs(2),
             "a caller was left waiting: {read:?}"
         );
         assert_ne!(read, Err("ai_worker_timeout".to_owned()));

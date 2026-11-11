@@ -519,38 +519,82 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
             .map(|bot| (bot.submission, bot.ai_attempt_id)),
         Some((started, None))
     );
-    // A client retries a retryable answer (the owner not yet confirming).
-    let stop = |client: &koru_api_client::Client| {
-        let mut answer = None;
-        wait_until("the API task's Stop is answered", PROMPT, || {
-            match client.ai().bots(&BotCommand::StopTask {
-                request_id: started,
-                bot_id: bot.id,
-            }) {
-                Ok(BotResponse::TaskStop { stop }) => answer = Some(stop),
-                Ok(other) => panic!("a task stop, not {other:?}"),
-                Err(failure) if failure.retryable => {
-                    eprintln!("API task stop retryable: {}", failure.code)
-                }
-                Err(failure) => panic!("the API task's Stop: {failure:?}"),
-            }
-            answer.is_some()
-        });
-        answer.unwrap()
+    use koru_ai_core::bots::BotTaskStopOutcome as Outcome;
+    let stop = || match stack
+        .client
+        .ai()
+        .bots(&BotCommand::StopTask {
+            request_id: started,
+            bot_id: bot.id,
+        })
+        .unwrap()
+    {
+        BotResponse::TaskStop { stop } => stop,
+        other => panic!("a task stop, not {other:?}"),
     };
-    let first = stop(&stack.client);
+    // The task was just accepted, and the scripted provider takes longer to
+    // start and run its turn than this takes: the task is queued or running,
+    // so the first Stop either ends it or is delivered with its end not yet
+    // proven (what the real owner answered on the first run of this step).
+    // Never "already settled".
+    let first = stop();
     assert_eq!(first.run_id, task_run);
-    // Stopped while queued or running, or already ended by itself.
-    assert!(matches!(
-        first.outcome,
-        koru_ai_core::bots::BotTaskStopOutcome::Stopped
-            | koru_ai_core::bots::BotTaskStopOutcome::AlreadySettled
-    ));
     eprintln!("API task first stop: {:?}", first.outcome);
-    assert_eq!(
-        stop(&stack.client).outcome,
-        koru_ai_core::bots::BotTaskStopOutcome::AlreadySettled
+    assert!(
+        matches!(first.outcome, Outcome::Stopped | Outcome::Stopping),
+        "{:?}",
+        first.outcome
     );
+    // A client asks again, a bounded number of times, while it is stopping.
+    let mut last = first.outcome;
+    for _ in 0..50 {
+        if last != Outcome::Stopping {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        last = stop().outcome;
+        eprintln!("API task stop again: {last:?}");
+    }
+    assert!(
+        matches!(last, Outcome::Stopped | Outcome::AlreadySettled),
+        "{last:?}"
+    );
+    // Settled now: one more answers so, and the Run reads as the person's
+    // cancellation, never an automatic interruption.
+    assert_eq!(stop().outcome, Outcome::AlreadySettled);
+    let BotResponse::Run { view } = stack
+        .client
+        .ai()
+        .bots(&BotCommand::ReadRun {
+            bot_id: bot.id,
+            chat_id: bot.main_chat,
+            message_id: None,
+            run_id: task_run,
+            from: 0,
+            len: koru_ai_core::bots::BOT_RUN_WINDOW_LIMIT,
+        })
+        .unwrap()
+    else {
+        panic!("the API task's Run view")
+    };
+    assert_eq!(view.header.status, RunStatus::Cancelled);
+    // Its operation still reads as the admitted task it was.
+    let BotResponse::Operation { operation } = stack
+        .client
+        .ai()
+        .bots(&BotCommand::ReadOperation {
+            request_id: started,
+            bot_id: bot.id,
+        })
+        .unwrap()
+    else {
+        panic!("the API task's operation")
+    };
+    assert_eq!(
+        operation.status,
+        koru_ai_core::bots::BotOperationStatus::Accepted
+    );
+    assert_eq!(operation.run_id, Some(task_run));
     eprintln!(
         "scripted native Bot verified: four-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
     );

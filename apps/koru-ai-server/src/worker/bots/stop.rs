@@ -3,20 +3,25 @@
 //! (`start`/`continue`), named by that operation's request.
 //!
 //! Such a task has no reply, so a conversation's Stop never reaches it. The
-//! writer checks the caller owns the Bot and that the request names one of
-//! its API tasks; a job on the interactive queue of the Stop lane
-//! (`koru-ai-provider-control`) asks the execution owner for the task's
-//! admission and sends the delegate's `Stop` with the fence the owner
-//! reported: the same lease-free Stop the conversation's Stop and Archive
-//! send, which cancels a queued Run before it starts and ends a running one
-//! even while a person holds its session. Never the automatic `Interrupt`.
-//! Nothing is stored on the AI side: the owner's ledger is what settles.
+//! writer checks the caller owns the Bot, that its prepared proof reaches the
+//! workspace the task's Run is recorded in, and that the request names one of
+//! its API tasks. A job on the task Stops' own lane
+//! (`koru-ai-provider-task-stop`) then makes one attempt, every call bounded
+//! by one deadline and none a Store call: the owner's `Reconcile` (the task's
+//! state and current fence), its `Stop` with that fence (the same lease-free
+//! Stop a conversation's Stop and Archive send, never the automatic
+//! `Interrupt`), and, once the Stop is applied, a one-entry `Read` of the
+//! Run's status to tell the person's cancellation from a Run that ended by
+//! itself in between. It never waits or sends again by itself: a Stop the
+//! owner has not confirmed yet is answered `stopping`, and the caller asks
+//! again. Nothing is stored on the AI side; the owner's ledger settles.
 use super::*;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
-use koru_delegate_core::{BotAdmissionState, BotRunKey, BotSubmissionKey, RunId};
+use koru_delegate_api::wire::TimelineQuery;
+use koru_delegate_core::{BotAdmissionState, BotRunKey, BotSubmissionKey, RunId, RunStatus};
 
-/// How long a Stop may take from the writer's dispatch to its answer, both
-/// owner calls included; as `read_run`'s deadline, at most half the caller's
+/// How long a Stop may take from the writer's dispatch to its answer, every
+/// owner call included; as `read_run`'s deadline, at most half the caller's
 /// own `RESPONSE_TIMEOUT`, so an owner that does not answer is answered
 /// `bot_unavailable` (retryable), not a worker timeout. Shorter under test.
 #[cfg(not(test))]
@@ -25,23 +30,26 @@ pub(in crate::worker) const TASK_STOP_DEADLINE: Duration = Duration::from_secs(1
 pub(in crate::worker) const TASK_STOP_DEADLINE: Duration = Duration::from_secs(3);
 const _: () = assert!(TASK_STOP_DEADLINE.as_millis() * 2 <= RESPONSE_TIMEOUT.as_millis());
 
+/// The least of the deadline a Stop is sent with. With less left it is not
+/// sent at all: an owner call cut off by the deadline after the owner applied
+/// it would be answered as if nothing had been sent.
+#[cfg(not(test))]
+pub(in crate::worker) const STOP_SEND_MARGIN: Duration = Duration::from_secs(2);
+#[cfg(test)]
+pub(in crate::worker) const STOP_SEND_MARGIN: Duration = Duration::from_millis(500);
+
+/// Task Stops waiting for their lane beside the one it is running; one more
+/// is answered `ai_worker_saturated` at once.
+pub(in crate::worker) const TASK_STOP_QUEUE_CAPACITY: usize = 4;
+
 /// How many times a Stop the owner refused for its fence (the Run started,
 /// or moved to a new attempt, between the admission read and the Stop) reads
-/// the admission again and retries.
+/// the admission again, at once, before answering retryable.
 const FENCE_ROUNDS: usize = 3;
 
-/// The pause before a Stop its owner applied but could not yet confirm
-/// (`bot_stop_unconfirmed`: the Run is cancelled, its record not yet durably
-/// settled) is read and sent again, until the deadline. Seen against the
-/// real owner in the scripted native journey: a running Run's first Stop is
-/// usually unconfirmed.
-const UNCONFIRMED_PAUSE: Duration = Duration::from_millis(100);
-
-/// A `stop_task` the writer has checked: what the job needs to check
-/// authority again and ask the execution owner.
+/// A `stop_task` the writer has checked: what the job needs to ask the
+/// execution owner. The writer's prepared proof already reached `workspace`.
 struct CheckedStop {
-    authority: Arc<dyn BotAuthority>,
-    owner: BotOwner,
     /// The workspace the task's submission names, where its Run's record is.
     workspace: WorkspaceId,
     key: BotSubmissionKey,
@@ -49,8 +57,8 @@ struct CheckedStop {
     delegate: Arc<dyn BotDelegatePort>,
 }
 
-/// One `stop_task`, off the writer on the Stop lane's interactive queue,
-/// answered to its caller directly. Holds no writer state.
+/// One `stop_task`, off the writer on its own lane, answered to its caller
+/// directly. Holds no writer state.
 pub(in crate::worker) struct BotTaskStopJob {
     stop: CheckedStop,
     deadline: Instant,
@@ -97,20 +105,16 @@ impl CheckedStop {
         Ok(within)
     }
 
-    fn stop(&self, deadline: Instant) -> ApiResult<BotResponse> {
-        let checked = self
-            .authority
-            .inspect(&[self.workspace], &[])
-            .map_err(bot_failure)?;
-        if checked.owner != self.owner {
-            return Err(bot_failure(BotError::Forbidden));
+    fn run_key(&self) -> BotRunKey {
+        BotRunKey {
+            owner: self.key.owner,
+            bot: self.key.bot,
+            run: self.run,
         }
-        checked.workspace(self.workspace).map_err(bot_failure)?;
-        // A Stop the owner applied but has not confirmed: once the task
-        // reads settled, it is this Stop that ended it.
-        let mut sent = false;
-        let mut fenced = 0;
-        loop {
+    }
+
+    fn stop(&self, deadline: Instant) -> ApiResult<BotResponse> {
+        for _ in 0..FENCE_ROUNDS {
             // The owner's own record of the task, now: its state and the
             // fence its Stop must name (none while it is queued).
             let admission = match self.delegate.execute_within(
@@ -134,53 +138,88 @@ impl CheckedStop {
                 admission.state,
                 BotAdmissionState::Settled | BotAdmissionState::Refused
             ) {
-                return Ok(self.answer(if sent {
-                    BotTaskStopOutcome::Stopped
-                } else {
-                    BotTaskStopOutcome::AlreadySettled
-                }));
+                return Ok(self.answer(BotTaskStopOutcome::AlreadySettled));
+            }
+            let within = Self::within(deadline)?;
+            if within < STOP_SEND_MARGIN {
+                return Err(unavailable());
             }
             match self.delegate.execute_within(
                 DelegateCommand::Stop {
-                    key: BotRunKey {
-                        owner: self.key.owner,
-                        bot: self.key.bot,
-                        run: self.run,
-                    },
+                    key: self.run_key(),
                     fence: admission.fence,
                 },
-                Self::within(deadline)?,
+                within,
             ) {
-                Ok(BotReply::Applied) => return Ok(self.answer(BotTaskStopOutcome::Stopped)),
+                Ok(BotReply::Applied) => return Ok(self.answer(self.applied(deadline))),
                 Ok(_) => return Err(unavailable()),
                 // The Run started, or moved on, since the read: read again.
                 Err(refused)
-                    if matches!(refused.code.as_str(), "bot_fenced" | "bot_fence_required") =>
-                {
-                    fenced += 1;
-                    if fenced >= FENCE_ROUNDS {
-                        return Err(unavailable());
-                    }
-                }
-                // Applied, not yet confirmed: read and send again shortly.
-                // Past the deadline the caller is answered retryable.
-                Err(refused) if refused.code == "bot_stop_unconfirmed" => {
-                    sent = true;
-                    std::thread::sleep(UNCONFIRMED_PAUSE.min(Self::within(deadline)?));
+                    if matches!(refused.code.as_str(), "bot_fenced" | "bot_fence_required") => {}
+                // Delivered: the owner recorded the person's cancellation
+                // and has not yet settled the Run. The caller asks again.
+                Err(refused) if settling(&refused) => {
+                    return Ok(self.answer(BotTaskStopOutcome::Stopping));
                 }
                 Err(refused) => return Err(owner_failure(&refused)),
             }
         }
+        Err(unavailable())
+    }
+
+    /// What an applied Stop did: the Run's status says whether it is the
+    /// person's cancellation (`stopped`) or a Run that ended by itself
+    /// between the admission read and the Stop (`already_settled`: the
+    /// owner's Stop of an ended Run only retires it). A status that cannot be
+    /// read in time leaves `stopped`: the Stop was applied either way.
+    fn applied(&self, deadline: Instant) -> BotTaskStopOutcome {
+        let Ok(within) = Self::within(deadline) else {
+            return BotTaskStopOutcome::Stopped;
+        };
+        match self.delegate.execute_within(
+            DelegateCommand::Read {
+                key: self.run_key(),
+                window: TimelineQuery {
+                    from: 0,
+                    len: 1,
+                    workspace: Some(self.workspace),
+                },
+            },
+            within,
+        ) {
+            Ok(BotReply::Run { view })
+                if view.header.run == self.run
+                    && view.header.status.is_terminal()
+                    && view.header.status != RunStatus::Cancelled =>
+            {
+                BotTaskStopOutcome::AlreadySettled
+            }
+            _ => BotTaskStopOutcome::Stopped,
+        }
     }
 }
 
-/// The execution owner's refusal, in the Bots API's codes. The AI owner has
-/// already checked the caller owns this Bot and that the request is this
-/// Bot's API task, so a Run the owner does not hold (`unknown_run`) or binds
-/// differently (`bot_owner_mismatch`) is `not_found`; anything else is
-/// `bot_unavailable`, retryable: the same Stop sent again reads the owner's
-/// state afresh and answers what it finds. (An unconfirmed Stop is sent
-/// again within the deadline before it comes to that.)
+/// The owner's answers that mean the Stop was delivered and the Run is
+/// recorded as the person's cancellation, its settling still owed:
+/// `bot_stop_unconfirmed` (the process's end not yet proven) and
+/// `bot_native_effects_pending` (native effects to drain before it
+/// retires), both from `Orchestrator::bot_stop` after the Cancel is applied;
+/// and `bot_delivery_pending`, which the owner's Stop does not answer today
+/// (only `AcknowledgeDelivery` does), listed so it would never read as
+/// silence.
+fn settling(refused: &koru_delegate_api::Failure) -> bool {
+    matches!(
+        refused.code.as_str(),
+        "bot_stop_unconfirmed" | "bot_native_effects_pending" | "bot_delivery_pending"
+    )
+}
+
+/// The execution owner's other refusals, in the Bots API's codes. The AI
+/// owner has already checked the caller owns this Bot and that the request
+/// is this Bot's API task, so a Run the owner does not hold (`unknown_run`)
+/// or binds differently (`bot_owner_mismatch`) is `not_found`; anything else
+/// is `bot_unavailable`, retryable: the same Stop sent again reads the
+/// owner's state afresh and answers what it finds.
 fn owner_failure(refused: &koru_delegate_api::Failure) -> Failure {
     match refused.code.as_str() {
         "unknown_run" | "bot_owner_mismatch" => not_found(),
@@ -231,7 +270,11 @@ impl WorkerState {
 
     /// The owner first (another owner's Bot is `wrong_owner`), then the
     /// Bot's workspace, then the task: one of this Bot's `start`/`continue`
-    /// operations with no conversation attempt, or `not_found`. A Stop only
+    /// operations with no conversation attempt, or `not_found`; then the
+    /// workspace its Run is recorded in, from the same prepared proof
+    /// (`start` requires the Bot's home, which never changes, so it is the
+    /// workspace preparation inspected; any other is `wrong_owner`). No
+    /// Store call is made off the writer for a Stop. A Stop only
     /// reduces work, so no hold refuses it: a paused, archived or trashed
     /// Bot, one mid-operation and a conversation in Trash are all answered.
     /// `Ok(Err(answer))` when no owner call is needed.
@@ -291,19 +334,17 @@ impl WorkerState {
             }
             _ => {}
         }
-        let unavailable = || {
+        let workspace = receipt.intent.submission.workspace;
+        proof.authority.workspace(workspace).map_err(bot_failure)?;
+        let delegate = self.bot_delegate.clone().ok_or_else(|| {
             failure(
                 "bot_unavailable",
                 "The Bot's execution owner is not available.",
                 true,
             )
-        };
-        let authority = self.bot_authority.clone().ok_or_else(unavailable)?;
-        let delegate = self.bot_delegate.clone().ok_or_else(unavailable)?;
+        })?;
         Ok(Ok(CheckedStop {
-            authority,
-            owner,
-            workspace: receipt.intent.submission.workspace,
+            workspace,
             key: BotSubmissionKey {
                 owner: koru_delegate_core::BotOwner {
                     user_scope: owner.user_scope,
@@ -315,5 +356,33 @@ impl WorkerState {
             run,
             delegate,
         }))
+    }
+}
+
+#[cfg(test)]
+impl BotTaskStopJob {
+    /// A Stop of a task of nobody in particular, for the lane tests.
+    pub(in crate::worker) fn fixture(
+        delegate: Arc<dyn BotDelegatePort>,
+        deadline: Instant,
+        reply: SyncSender<ApiResult<BotResponse>>,
+    ) -> Self {
+        Self {
+            stop: CheckedStop {
+                workspace: WorkspaceId::new(),
+                key: BotSubmissionKey {
+                    owner: koru_delegate_core::BotOwner {
+                        user_scope: UserScopeId::new(),
+                        device: DeviceId::from_uuid(Uuid::new_v4()),
+                    },
+                    bot: BotId::mint(),
+                    request: BotRequestId::mint(),
+                },
+                run: RunId::mint(),
+                delegate,
+            },
+            deadline,
+            reply,
+        }
     }
 }

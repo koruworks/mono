@@ -494,6 +494,7 @@ fn a_task_stop_names_only_the_operation_and_its_bot_and_answers_what_it_did() {
     assert_eq!(wire["stop"]["outcome"], "already_settled");
     for (outcome, token) in [
         (BotTaskStopOutcome::Stopped, "stopped"),
+        (BotTaskStopOutcome::Stopping, "stopping"),
         (BotTaskStopOutcome::NeverAdmitted, "never_admitted"),
     ] {
         assert_eq!(serde_json::to_value(outcome).unwrap(), token);
