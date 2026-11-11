@@ -71,9 +71,11 @@ const PARK_AFTER: u32 = 12;
 /// The most queued admissions one delegate read returns. A Bot holds at
 /// most 50 queued (`BOT_PENDING_LIMIT`), so one page is normally all of them.
 const UNSETTLED_PAGE: u16 = 64;
-/// The most pages of a Bot's held native effects one conversation's
-/// settling read asks for; past them the conversation counts as unsettled.
-const EFFECT_PAGES: usize = 4;
+/// A safety stop for one conversation's settling read of the Bot's held
+/// native effects, which otherwise follows the delegate's pages to the end:
+/// at 64 a page this is 65,536 effects. Past it, or on a cursor that does not
+/// advance, the conversation counts as unsettled rather than loop forever.
+const EFFECT_PAGE_STOP: usize = 1024;
 
 /// What the writer drives. Nothing here is durable: the journal is, and the
 /// delegate is the authority on what still runs.
@@ -179,10 +181,11 @@ struct ChatWork {
     admissions: Vec<BotAdmissionView>,
     /// More queued work exists past the page.
     more: bool,
-    /// The Run of every native effect the delegate still holds for the Bot.
-    effects: Vec<RunId>,
-    /// More held effects exist past the pages read.
-    effects_more: bool,
+    /// Each Run with a native effect the delegate still holds for the Bot,
+    /// once.
+    effects: HashSet<RunId>,
+    /// The pages could not be read to their end (see [`EFFECT_PAGE_STOP`]).
+    effects_cut: bool,
 }
 /// The delegate's answer for one settling round.
 struct Unsettled {
@@ -297,18 +300,19 @@ impl LifecycleJob {
                     {
                         return Err(unavailable());
                     }
-                    // Held native effects of the Bot, a bounded number of
-                    // pages. Any of the conversation's keeps it unsettled.
-                    let mut effects = Vec::new();
+                    // Every held native effect of the Bot, page after page
+                    // to the end, so the conversation's own are found however
+                    // many its siblings hold; the writer keeps only its own.
+                    let mut effects = HashSet::new();
                     let mut after = None;
-                    let mut effects_more = false;
-                    for page in 0..EFFECT_PAGES {
+                    let mut effects_cut = true;
+                    for _ in 0..EFFECT_PAGE_STOP {
                         let BotReply::NativePendingEffects { page: found } = self
                             .delegate
                             .execute(DelegateCommand::PendingNativeEffects {
                                 owner,
                                 bot: Some(bot),
-                                after: after.take(),
+                                after: after.clone(),
                                 limit: UNSETTLED_PAGE,
                             })?
                         else {
@@ -323,16 +327,20 @@ impl LifecycleJob {
                         }
                         effects.extend(found.targets.iter().map(|t| t.key.run));
                         match found.next {
-                            Some(next) if page + 1 < EFFECT_PAGES => after = Some(next),
-                            Some(_) => effects_more = true,
-                            None => break,
+                            None => {
+                                effects_cut = false;
+                                break;
+                            }
+                            // A cursor that does not advance would loop.
+                            Some(next) if after.as_ref() == Some(&next) => break,
+                            Some(next) => after = Some(next),
                         }
                     }
                     Ok(ChatWork {
                         admissions: work.admissions.into_iter().map(|a| a.admission).collect(),
                         more: work.more,
                         effects,
-                        effects_more,
+                        effects_cut,
                     })
                 }))
             }
@@ -1735,7 +1743,7 @@ impl WorkerState {
             + live.len()
             + effects.len()
             + usize::from(work.more)
-            + usize::from(work.effects_more);
+            + usize::from(work.effects_cut);
         if remaining > 0 {
             let progressed = self
                 .bot_lifecycle
