@@ -46,9 +46,12 @@ impl WorkerState {
         Ok(BotResponse::Activity { activity })
     }
 
-    /// The owner's view of one active Bot's conversations. A Bot of another
-    /// owner or device, or one out of the caller's current reach, reads as
-    /// refused before any conversation is looked at.
+    /// The owner's view of one Bot's conversations. An archived Bot's stay
+    /// listable by name (its history is kept in the Archived filter, as
+    /// `provable_bot` admits for reads); a trashed Bot is refused as `read`
+    /// refuses it. A Bot of another owner or device, or one out of the
+    /// caller's current reach, reads as refused before any conversation is
+    /// looked at.
     fn list_bot_chats(
         &self,
         context: &CommandContext,
@@ -61,11 +64,15 @@ impl WorkerState {
             .prepared
             .as_ref()
             .ok_or_else(|| bot_failure(BotError::Unavailable))?;
-        let bot = self
-            .repository
-            .bot(bot_id)
-            .map_err(bot_failure)?
-            .ok_or_else(not_found)?;
+        let bot =
+            match super::lifecycle::readable_bot(&self.repository, bot_id).map_err(bot_failure)? {
+                Some(bot) => bot,
+                None => self
+                    .repository
+                    .bot(bot_id)
+                    .map_err(bot_failure)?
+                    .ok_or_else(not_found)?,
+            };
         validate_owner(&proof.authority, &bot)?;
         let page = self
             .repository

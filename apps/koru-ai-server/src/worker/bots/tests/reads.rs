@@ -154,3 +154,55 @@ fn workspace_activity_is_the_owners_alone_and_a_restart_leaves_nothing_running()
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+#[test]
+fn an_archived_bots_conversations_stay_listable_but_it_has_no_activity() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    repo.fixture_set_bot_lifecycle(bot.id, BotLifecycle::Archived)
+        .unwrap();
+    let workspace = authority.workspace;
+    let (worker, client) = worker(repo, authority.clone());
+
+    let BotResponse::Chats {
+        page: BotChatPage { chats, next_cursor },
+    } = client.bots(context(true), list(bot.id, None, 10)).unwrap()
+    else {
+        panic!("a page")
+    };
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].chat.id, bot.main_chat);
+    assert_eq!(next_cursor, None);
+    // The roster's activity read stays with active Bots.
+    let BotResponse::Activity { activity } = client
+        .bots(context(true), BotCommand::ListActivity { workspace })
+        .unwrap()
+    else {
+        panic!("activity")
+    };
+    assert!(activity.entries.is_empty());
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+#[test]
+fn a_trashed_bots_conversations_are_refused_as_read_refuses_it() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    repo.fixture_set_bot_lifecycle(bot.id, BotLifecycle::Trashed)
+        .unwrap();
+    let (worker, client) = worker(repo, authority.clone());
+    let read = client
+        .bots(context(true), BotCommand::Read { bot_id: bot.id })
+        .unwrap_err()
+        .code;
+    assert_eq!(
+        client
+            .bots(context(true), list(bot.id, None, 10))
+            .unwrap_err()
+            .code,
+        read
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
