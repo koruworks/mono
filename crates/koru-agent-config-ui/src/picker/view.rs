@@ -1521,6 +1521,89 @@ impl<'v, 'a, P: AgentId> ModelPicker<'v, 'a, P> {
         }
     }
 
+    /// **Act on one published control by its key** — what an assistive
+    /// technology's click on it means — through that control's own path,
+    /// never a press at its centre: a rail mark selects its entry, a page
+    /// arrow pages the rail, a level's segment chooses its level (or says
+    /// why it cannot), Fast and the context window toggle, ↻ refreshes, the
+    /// search takes the keyboard, a ☆ stars its row and a row is chosen —
+    /// wherever it is drawn, a row below the list's visible part included.
+    /// A control drawn inert does nothing. `None` for a key the picker does
+    /// not publish, or while it is closed.
+    pub fn act(&mut self, key: ElKey) -> Option<bool> {
+        let (_, spec, frame) = self.read().frame()?;
+        if frame.node(key).is_some_and(|node| node.disabled) {
+            return Some(false);
+        }
+        if key == elements::RAIL_PREVIOUS_KEY || key == elements::RAIL_NEXT_KEY {
+            self.page_rail(key == elements::RAIL_NEXT_KEY);
+            return Some(true);
+        }
+        if key == elements::MANAGE_KEY {
+            self.ask_for_setup();
+            return Some(true);
+        }
+        if key == elements::REFRESH_KEY {
+            return Some(self.refresh());
+        }
+        if key == elements::SEARCH_KEY {
+            self.state.focus = PickerFocus::Search;
+            return Some(true);
+        }
+        if key == elements::FAST_KEY {
+            self.state.focus = PickerFocus::Fast;
+            return Some(self.toggle_fast());
+        }
+        if key == elements::CONTEXT_KEY {
+            self.state.focus = PickerFocus::Context;
+            return Some(self.toggle_context());
+        }
+        if let Some(entry) = self
+            .read()
+            .marks()
+            .into_iter()
+            .find(|entry| elements::mark_key(entry) == key)
+        {
+            self.state.focus = PickerFocus::Rail;
+            self.select_rail_entry(entry);
+            return Some(true);
+        }
+        if let Some(segment) = spec
+            .footer
+            .as_ref()
+            .and_then(|footer| footer.segments.iter().find(|segment| segment.key == key))
+        {
+            self.state.focus = PickerFocus::Effort;
+            self.emit(if self.inputs.applies.effort_locked() {
+                Outcome::EffortLocked
+            } else {
+                Outcome::Level(segment.choice)
+            });
+            return Some(true);
+        }
+        if let Some(index) = spec
+            .list
+            .iter()
+            .position(|row| row.star.as_ref().is_some_and(|star| star.key == key))
+        {
+            let read = self.read();
+            let favorite = read
+                .entry()
+                .and_then(|entry| read.row_favorite(&entry, read.rows().get(index)?));
+            self.state.focus = PickerFocus::List;
+            self.state.highlight = Some(index);
+            return Some(match favorite {
+                Some((agent, model)) => self.toggle_favorite(&agent, &model),
+                None => false,
+            });
+        }
+        if let Some(index) = spec.list.iter().position(|row| row.key == Some(key)) {
+            self.state.focus = PickerFocus::List;
+            return Some(self.choose_row(index));
+        }
+        None
+    }
+
     /// The pointer moved with the picker open: a scrollbar drag, and the
     /// tooltip under it. `Some` when the picker claimed the move.
     pub fn mouse_move(&mut self, x: f32, y: f32, now: std::time::Instant) -> Option<bool> {
