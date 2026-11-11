@@ -398,6 +398,66 @@ fn competing_requests_for_one_bot_id_conflict_before_any_effect_even_after_a_res
     h.stop();
 }
 
+#[test]
+fn a_retry_is_checked_for_authority_before_its_input_is_compared() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    owner.fail_store(Fail::Before);
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, _) = request_of(&command);
+    h.creation(command.clone()).unwrap();
+    assert_eq!(h.settle(request).stage, BotCreationStage::Incomplete);
+    let BotCommand::CreateBotWithRole {
+        request_id,
+        bot_id,
+        home_workspace,
+        role,
+        folder,
+        mut config,
+        access,
+        selected_pages,
+    } = command
+    else {
+        unreachable!()
+    };
+    config.name = "Changed".into();
+    let changed = BotCommand::CreateBotWithRole {
+        request_id,
+        bot_id,
+        home_workspace,
+        role,
+        folder,
+        config,
+        access,
+        selected_pages,
+    };
+    // Its own home workspace out of reach: refused as the owner's, never as
+    // "your input differs", which would confirm what the request holds.
+    owner.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(h.creation(changed.clone()).unwrap_err().code, "wrong_owner");
+    owner.allowed.store(true, Ordering::SeqCst);
+    let repo = h.stop();
+    // The same person on another device: the request is not this device's.
+    let other = Arc::new(FakeOwner {
+        owner: BotOwner {
+            user_scope: owner.owner.user_scope,
+            device: DeviceId::from_uuid(Uuid::new_v4()),
+        },
+        workspace: owner.workspace,
+        profile: owner.profile,
+        allowed: AtomicBool::new(true),
+        pages: Mutex::new(BTreeSet::new()),
+        store: Mutex::new(StoreState::default()),
+        inspections: AtomicUsize::new(0),
+        denied: AtomicUsize::new(0),
+    });
+    let h = start(repo, &other, &fs);
+    assert_eq!(h.creation(changed).unwrap_err().code, "wrong_owner");
+    assert_eq!(other.store_calls(), 0);
+    h.stop();
+}
+
 /// The intent exactly as preparation builds it, for seeding a database
 /// state a crash would leave.
 fn prepared(owner: &Arc<FakeOwner>, fs: &Arc<FakeFs>, command: &BotCommand) -> BotCreationRecord {

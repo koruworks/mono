@@ -668,15 +668,18 @@ impl WorkerState {
             .bot_creation(owner.user_scope, *request_id)
             .map_err(bot_failure)?
         {
-            if existing.fingerprint != fingerprint || existing.record.bot != *bot_id {
-                return Err(bot_failure(BotError::Conflict));
-            }
+            // Authority first: another device's request, or one whose home
+            // workspace this owner cannot reach now, learns nothing more,
+            // not even that its input differs.
             if existing.record.owner_device != owner.device {
                 return Err(bot_failure(BotError::Forbidden));
             }
             snapshot
                 .workspace(existing.record.home_workspace)
                 .map_err(bot_failure)?;
+            if existing.fingerprint != fingerprint || existing.record.bot != *bot_id {
+                return Err(bot_failure(BotError::Conflict));
+            }
             let existing = self.retry_creation(existing)?;
             return Ok(BotResponse::Creation {
                 creation: self.creation_view(&existing),

@@ -40,10 +40,15 @@ pub(crate) fn reserve_bot_id(
     scope: UserScopeId,
     bot: BotId,
 ) -> Result<(), BotError> {
-    // Production always opens ai18. Migration fixtures write Bots with this
-    // code at ai16/ai17: purge tombstones arrived with ai18 (nothing could be
-    // purged before it) and `bot_command_guard` with ai17.
+    // Production always opens the current schema, so it always checks both.
+    // Only this crate's migration fixtures write Bots with this code at
+    // ai16/ai17 (purge tombstones arrived with ai18, when nothing could have
+    // been purged yet, and `bot_command_guard` with ai17); the older form
+    // exists for them alone and is not compiled outside tests.
+    #[cfg(test)]
     let version = crate::db::user_version(conn).map_err(bad)?;
+    #[cfg(not(test))]
+    let version = crate::db::SCHEMA_VERSION;
     let tombstones = if version >= 18 {
         "EXISTS(SELECT 1 FROM bot_purge_tombstones WHERE user_scope_id=?2 AND subject_kind='bot' AND subject_id=?1)"
     } else {
