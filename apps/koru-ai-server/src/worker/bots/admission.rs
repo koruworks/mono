@@ -388,8 +388,15 @@ impl WorkerState {
             Err(error) if error.retryable => self.bot_recovery_retry.away = true,
             Err(_) => {}
         }
+        let answered = result.result.is_ok();
         self.apply_bot_coordination(result);
         self.note_bot_coordination(owner, bot, request);
+        // The owner answered for this Bot (its owed pause acknowledged, among
+        // others): an operation of it parked for the owner's silence takes up
+        // its work again (P1.7).
+        if answered {
+            self.owner_answered_bot_lifecycle(bot);
+        }
         self.recover_bot_operations();
     }
     /// A receipt its owner did not settle this time (unreachable, refusing,
@@ -418,6 +425,8 @@ impl WorkerState {
         self.bot_recovery_retry.last = Some(Instant::now());
         self.bot_recovery_after.get_or_insert(0);
         self.recover_bot_operations();
+        // Operations parked because their owner did not answer ask it again.
+        self.probe_parked_bot_lifecycle();
     }
     fn apply_bot_coordination(&mut self, result: BotCoordinationResult) {
         let Ok(Some(bot)) = self.repository.bot(result.bot) else {
@@ -715,6 +724,13 @@ impl AdmissionRetry {
         if self.at.is_none() {
             self.round = 0;
         }
+    }
+    /// Something is owed to an owner that did not answer (an operation
+    /// parked for its silence): the pass runs again after the backoff, and
+    /// sooner once the owner answers anything.
+    pub(in crate::worker) fn owner_away(&mut self, now: Instant) {
+        self.away = true;
+        self.failed(now);
     }
     /// Bring the next pass forward to now, but never sooner than a second
     /// after the last one began, so a client's retries or a busy owner

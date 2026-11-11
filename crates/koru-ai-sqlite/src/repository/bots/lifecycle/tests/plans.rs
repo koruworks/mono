@@ -122,6 +122,36 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
     assert_eq!(open.stage, BotLifecycleStage::Captured);
 }
 
+/// The recovery pass's page of operations parked for an owner that did not
+/// answer walks the unfinished operations' partial index, never the 3,000
+/// completed ones, and finds exactly those parked for that reason.
+#[test]
+fn the_page_of_operations_parked_for_their_owner_reads_only_unfinished_ones() {
+    let (mut repo, bot, owner) = populated();
+    let found = plan(
+        &repo.connection,
+        &super::super::parked_for_owner_sql(),
+        &[&16i64],
+    );
+    assert!(found.contains("bot_lifecycle_open"), "{found}");
+    assert!(!found.contains("TEMP B-TREE"), "{found}");
+    assert!(repo.parked_for_owner_bot_lifecycle(16).unwrap().is_empty());
+    let open = repo.bot_open_lifecycle(bot.id).unwrap().unwrap();
+    assert!(
+        repo.park_bot_lifecycle(
+            owner.user_scope,
+            open.request_id,
+            BotLifecycleRefusal::OwnerUnavailable,
+            9
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        repo.parked_for_owner_bot_lifecycle(16).unwrap(),
+        vec![(owner.user_scope, open.request_id, bot.id)]
+    );
+}
+
 #[test]
 fn recovery_pages_reach_open_rows_past_settled_history() {
     let (repo, _, owner) = populated();

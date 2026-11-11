@@ -20,6 +20,7 @@ use super::*;
 use koru_ai_core::bots::replay::BotReplayStop;
 use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, BOT_TRASHED, PENDING, TRASHED};
 use std::sync::atomic::AtomicUsize;
+mod answered;
 mod context_window;
 mod defaults;
 mod listing;
@@ -1230,6 +1231,9 @@ fn a_parked_archive_found_through_the_bot_read_is_reversed_by_its_id() {
         )
         .unwrap();
     let port = Arc::new(Archiving::default());
+    // The owner is still away: one that answers would take the Archive up
+    // again (`answered.rs`) before the person could reverse it.
+    port.unavailable.store(true, Ordering::SeqCst);
     let (worker, _returned) = spawn(repository, authority, port.clone());
     let client = worker.client();
     // The roster and the read both name it.
@@ -1378,13 +1382,11 @@ fn a_progress_read_prepared_before_the_revision_moves_still_answers() {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let request = captured_archive(&mut repository, &bot);
+    // Parked for work that keeps running, so the owner's answer to the pause
+    // below leaves it parked for the person (one parked for the owner's
+    // silence would be taken up again, `answered.rs`).
     repository
-        .park_bot_lifecycle(
-            bot.user_scope,
-            request,
-            BotLifecycleRefusal::OwnerUnavailable,
-            2,
-        )
+        .park_bot_lifecycle(bot.user_scope, request, BotLifecycleRefusal::WorkRunning, 2)
         .unwrap();
     let current = repository.bot_any_lifecycle(bot.id).unwrap().unwrap().0;
     let pause = repository

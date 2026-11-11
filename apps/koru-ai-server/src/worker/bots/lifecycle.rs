@@ -83,12 +83,17 @@ pub(in crate::worker) struct LifecycleDriver {
     driving: HashMap<OperationKey, Drive>,
     /// Restart resume: the next journal page, `None` once every page is read.
     recovery: Option<Option<(i64, BotRequestId)>>,
+    /// Operations parked for an owner that did not answer whose owner is
+    /// being asked, once, whether it answers again (see
+    /// [`WorkerState::probe_parked_bot_lifecycle`]).
+    probing: HashSet<OperationKey>,
 }
 impl Default for LifecycleDriver {
     fn default() -> Self {
         Self {
             driving: HashMap::new(),
             recovery: Some(None),
+            probing: HashSet::new(),
         }
     }
 }
@@ -163,6 +168,11 @@ enum Step {
         bot: BotId,
         runs: Vec<(RunId, Option<BotExecutionFence>)>,
     },
+    /// Whether the owner of an operation parked for its silence answers
+    /// again: the read every settling round makes (`UnsettledWork`), and
+    /// nothing else. An answer resumes the operation as a person's Continue
+    /// would, and its own rounds then stop what is unsettled.
+    Probe { bot: BotId },
 }
 pub(in crate::worker) struct LifecycleResult {
     key: OperationKey,
@@ -174,6 +184,8 @@ enum Outcome {
     ChatRead(Result<ChatWork, koru_delegate_api::Failure>),
     /// The Stops went out; their answers are read again next round.
     Stopped,
+    /// The owner of a parked operation answered (or not).
+    Probe(Result<(), koru_delegate_api::Failure>),
 }
 /// The delegate's answer for one conversation's settling round, for the
 /// whole Bot: the writer keeps what belongs to the conversation.
@@ -207,6 +219,7 @@ impl LifecycleJob {
             Step::Settle { .. } => Outcome::Settle(Err(unavailable())),
             Step::ChatRead { .. } => Outcome::ChatRead(Err(unavailable())),
             Step::Stop { .. } => Outcome::Stopped,
+            Step::Probe { .. } => Outcome::Probe(Err(unavailable())),
         };
         let outcome = catch_unwind(AssertUnwindSafe(|| self.execute())).unwrap_or(failed);
         LifecycleResult { key, outcome }
@@ -357,6 +370,19 @@ impl LifecycleJob {
                     }
                 }
                 Outcome::Stopped
+            }
+            Step::Probe { bot } => {
+                let owner = delegate_owner(self.owner);
+                Outcome::Probe(checked.ok_or_else(unavailable).and_then(|_| {
+                    match self.delegate.execute(DelegateCommand::UnsettledWork {
+                        owner,
+                        bot,
+                        limit: 1,
+                    })? {
+                        BotReply::UnsettledWork { .. } => Ok(()),
+                        _ => Err(unavailable()),
+                    }
+                }))
             }
         }
     }
@@ -765,14 +791,123 @@ impl WorkerState {
             return Err(bot_failure(BotError::Conflict));
         }
         if parked {
-            self.repository
-                .resume_bot_lifecycle(op.owner.user_scope, op.operation, Timestamp::now().millis())
+            self.resume_parked_bot_lifecycle((op.owner.user_scope, op.operation))
                 .map_err(bot_failure)?;
         }
         self.repository
             .bot_lifecycle_operation(op.owner.user_scope, op.operation)
             .map_err(bot_failure)?
             .ok_or_else(not_found)
+    }
+
+    /// Take a parked operation up again from `captured`, which re-asks every
+    /// owner idempotently, and drive it: a person's Continue, and an owner
+    /// answering again after the operation parked for its silence, are this
+    /// one path. A reversed operation stays parked (`false`).
+    fn resume_parked_bot_lifecycle(&mut self, key: OperationKey) -> Result<bool, BotError> {
+        let resumed =
+            self.repository
+                .resume_bot_lifecycle(key.0, key.1, Timestamp::now().millis())?;
+        if resumed {
+            self.bot_lifecycle.driving.entry(key).or_default();
+        }
+        Ok(resumed)
+    }
+
+    /// The owner answered a call about this Bot. An operation of it parked
+    /// because the owner did not answer takes up its work again, exactly as
+    /// a person's Continue would, so its rounds stop whatever the owner ran
+    /// meanwhile (a restarted owner starts the Runs it had queued before the
+    /// AI side reaches it). One parked for another reason, or reversed,
+    /// stays as it is; a person's Restore of it still wins.
+    pub(in crate::worker) fn owner_answered_bot_lifecycle(&mut self, bot: BotId) {
+        let Ok(Some(open)) = self.repository.bot_open_lifecycle(bot) else {
+            return;
+        };
+        if open.stage != BotLifecycleStage::Incomplete
+            || open.refusal != Some(BotLifecycleRefusal::OwnerUnavailable)
+            || !matches!(
+                open.kind,
+                BotLifecycleKind::Archive | BotLifecycleKind::Trash | BotLifecycleKind::TrashChat
+            )
+        {
+            return;
+        }
+        let Ok(Some(owner)) = self.repository.bot_owner(bot) else {
+            return;
+        };
+        if let Ok(true) = self.resume_parked_bot_lifecycle((owner.user_scope, open.request_id)) {
+            tracing::info!(target: "koru_ai::bots", operation = %open.request_id, "Bot lifecycle operation taken up again: its owner answered");
+        }
+    }
+
+    /// Ask, once per operation, the owner of each operation parked for its
+    /// silence whether it answers again (one bounded page). Run by the
+    /// backed-off receipt recovery pass and once after a restart's resume
+    /// pages, never on a timer of its own: an operation with nothing else owed
+    /// to its owner (its pause already acknowledged) would otherwise never
+    /// learn that the owner is back. A failed probe arms that pass again.
+    pub(in crate::worker) fn probe_parked_bot_lifecycle(&mut self) {
+        if self.bot_delegate.is_none() || self.provider_admin.is_none() {
+            return;
+        }
+        let Ok(parked) = self.repository.parked_for_owner_bot_lifecycle(16) else {
+            return self.bot_recovery_retry.owner_away(Instant::now());
+        };
+        for (scope, operation, bot) in parked {
+            let key = (scope, operation);
+            if self.bot_lifecycle.probing.contains(&key) {
+                continue;
+            }
+            let (Some(authority), Some(delegate), Some(pool)) = (
+                self.bot_authority.clone(),
+                self.bot_delegate.clone(),
+                self.provider_admin.as_ref(),
+            ) else {
+                return;
+            };
+            let Ok(Some((subject, _))) = self.repository.bot_any_lifecycle(bot) else {
+                continue;
+            };
+            let job = LifecycleJob {
+                key,
+                owner: BotOwner {
+                    user_scope: subject.user_scope,
+                    device: subject.owner_device,
+                },
+                workspace: subject.home_workspace,
+                authority,
+                delegate,
+                step: Step::Probe { bot },
+            };
+            if pool
+                .try_submit(ProviderAdminJob::BotLifecycle(job))
+                .is_err()
+            {
+                // The pool is full: the next pass asks again.
+                return self.bot_recovery_retry.owner_away(Instant::now());
+            }
+            self.bot_lifecycle.probing.insert(key);
+        }
+    }
+
+    /// A probe's answer: an owner that answered takes its parked operation
+    /// up again; one that did not arms the recovery pass, which asks again.
+    fn complete_bot_lifecycle_probe(
+        &mut self,
+        key: OperationKey,
+        answer: Result<(), koru_delegate_api::Failure>,
+    ) {
+        self.bot_lifecycle.probing.remove(&key);
+        match answer {
+            Ok(()) => {
+                self.bot_recovery_retry.answered(Instant::now());
+                if let Ok(Some(op)) = self.repository.bot_lifecycle_operation(key.0, key.1) {
+                    self.owner_answered_bot_lifecycle(op.bot);
+                }
+            }
+            Err(_) => self.bot_recovery_retry.owner_away(Instant::now()),
+        }
     }
 
     /// One lifecycle operation is open per Bot (M1). A new one while another
@@ -1216,7 +1351,12 @@ impl WorkerState {
         }
         if let Some(after) = self.bot_lifecycle.recovery {
             match self.repository.resumable_bot_lifecycle(after, 16) {
-                Ok(rows) if rows.is_empty() => self.bot_lifecycle.recovery = None,
+                // Every moving operation is driven again; those parked for
+                // an owner that did not answer ask it once whether it does now.
+                Ok(rows) if rows.is_empty() => {
+                    self.bot_lifecycle.recovery = None;
+                    self.probe_parked_bot_lifecycle();
+                }
                 Ok(rows) => {
                     for (at, scope, operation) in rows {
                         self.bot_lifecycle.recovery = Some(Some((at, operation)));
@@ -1275,6 +1415,11 @@ impl WorkerState {
                 self.bot_lifecycle.driving.remove(&key);
                 if parked {
                     tracing::info!(target: "koru_ai::bots", operation = %key.1, refusal = refusal.token(), "Bot lifecycle operation parked incomplete");
+                    // Its owner is asked again on the recovery pass, and the
+                    // operation is taken up once it answers.
+                    if refusal == BotLifecycleRefusal::OwnerUnavailable {
+                        self.bot_recovery_retry.owner_away(Instant::now());
+                    }
                 }
             }
             Err(error) => {
@@ -1616,6 +1761,9 @@ impl WorkerState {
     /// An owner step's answer, applied on the writer.
     pub(in crate::worker) fn complete_bot_lifecycle(&mut self, result: LifecycleResult) {
         let key = result.key;
+        if let Outcome::Probe(answer) = result.outcome {
+            return self.complete_bot_lifecycle_probe(key, answer);
+        }
         let Some(drive) = self.bot_lifecycle.driving.get_mut(&key) else {
             return;
         };
@@ -1692,6 +1840,7 @@ impl WorkerState {
             // The round was already counted when its read was applied; the
             // next read says what the Stops ended.
             Outcome::Stopped => {}
+            Outcome::Probe(_) => {}
         }
     }
 

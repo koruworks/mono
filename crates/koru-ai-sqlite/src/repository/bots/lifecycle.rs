@@ -341,6 +341,49 @@ impl Repository {
         })
         .collect()
     }
+
+    /// Up to `limit` driven operations (Archive, Trash, a conversation's
+    /// Trash) parked because their owner did not answer, unreversed, by Bot:
+    /// the ones that take up their work again once it answers. Read through
+    /// `bot_lifecycle_open`, which holds only unfinished operations, never
+    /// completed history.
+    pub fn parked_for_owner_bot_lifecycle(
+        &self,
+        limit: u16,
+    ) -> Result<Vec<(UserScopeId, BotRequestId, BotId)>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(&parked_for_owner_sql())
+            .map_err(bad)?;
+        let rows = query
+            .query_map([limit.clamp(1, 64)], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(bad)?;
+        rows.map(|row| {
+            let (scope, operation, bot) = row.map_err(bad)?;
+            Ok((
+                UserScopeId::parse(&scope).ok_or(BotError::Storage)?,
+                operation.parse().map_err(bad)?,
+                bot.parse().map_err(bad)?,
+            ))
+        })
+        .collect()
+    }
+}
+
+/// [`Repository::parked_for_owner_bot_lifecycle`]'s statement.
+pub(crate) fn parked_for_owner_sql() -> String {
+    format!(
+        "SELECT user_scope_id,operation_id,bot_id FROM bot_lifecycle_intents i INDEXED BY bot_lifecycle_open
+         WHERE i.stage='incomplete' AND i.refusal='owner_unavailable'
+           AND i.kind IN ('archive','trash','trash_chat') AND {OPEN}
+         ORDER BY bot_id LIMIT ?1"
+    )
 }
 
 /// An unfinished operation, unless a completed Restore reversed it. An

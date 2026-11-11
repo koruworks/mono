@@ -74,8 +74,12 @@ fn a_pause_the_owner_answers_stale_is_offered_again_newer_and_never_wedges_the_b
             paused: false,
         },
     );
+    // Away until the person reverses it: an owner that answers takes a
+    // parked Archive up again (`answered.rs`).
+    port.unavailable.store(true, Ordering::SeqCst);
     let (worker, client, returned) = start(repository, authority, port.clone());
     super::trash::restore_at(&client, &bot, operation, read_bot(&client, bot.id).revision).unwrap();
+    port.unavailable.store(false, Ordering::SeqCst);
     until("the owner holds the Bot paused", || {
         port.barrier
             .lock()
