@@ -518,6 +518,7 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
         }
     }
 

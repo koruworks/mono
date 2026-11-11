@@ -49,6 +49,7 @@ mod fuzzy;
 pub mod model;
 mod normalize;
 mod query;
+pub mod readings;
 pub mod storage;
 pub mod tags;
 pub mod worker;
@@ -61,9 +62,10 @@ use koru_store_core::ids::WorkspaceId;
 
 pub use model::{
     Fragment, FuzzyIndexState, FuzzyIndexStats, IndexStats, Lifecycle, LifecycleFilter, MatchSpan,
-    PreviewBlock, RecentQuery, SearchError, SearchFacet, SearchFacets, SearchHit, SearchPage,
-    SearchPreview, SearchQuery, SearchResult, SearchSort, field,
+    PreviewBlock, ReadingCounts, RecentQuery, SearchError, SearchFacet, SearchFacets, SearchHit,
+    SearchPage, SearchPreview, SearchQuery, SearchResult, SearchSort, field,
 };
+pub use readings::{NoReadings, ReadingText, Readings};
 pub use storage::{Listed, SEARCH_SCHEMA_VERSION, SearchIndex};
 pub use tags::{KIND_SYSTEM, TAG_ROLE, TagNames, TagTable};
 pub use worker::{Feed, Indexer, Queue};

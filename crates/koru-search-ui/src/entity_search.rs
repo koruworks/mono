@@ -640,6 +640,7 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
         }
     }
 
@@ -729,6 +730,7 @@ mod tests {
                     updating_workspaces: Vec::new(),
                     request_seq: seq,
                     corrected_query: None,
+                    reading: None,
                 },
                 facets: None,
                 recent_queries: None,

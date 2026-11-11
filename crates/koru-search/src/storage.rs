@@ -818,6 +818,7 @@ impl SearchIndex {
                 score: 0.0,
                 observed_modified_at_ms: None,
                 workspace_last_used_at_ms: None,
+                page: None,
             });
         }
         let has_more = hits.len() > page_size;
@@ -828,6 +829,7 @@ impl SearchIndex {
             updating_workspaces: updating.to_vec(),
             request_seq: query.request_seq,
             corrected_query: None,
+            reading: None,
         })
     }
 

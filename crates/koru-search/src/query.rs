@@ -314,6 +314,7 @@ pub(crate) fn search(
             next_offset: None,
             updating_workspaces: updating.to_vec(),
             corrected_query: None,
+            reading: None,
             request_seq: query.request_seq,
         });
     }
@@ -611,6 +612,7 @@ pub(crate) fn search(
             score: row.score,
             observed_modified_at_ms: row.observed_modified_at_ms,
             workspace_last_used_at_ms: row.workspace_last_used_at_ms,
+            page: None,
         });
     }
     let has_more = hits.len() > page_size;
@@ -620,6 +622,7 @@ pub(crate) fn search(
         next_offset: has_more.then_some(query.offset + page_size),
         updating_workspaces: updating.to_vec(),
         corrected_query: has_correction.then(|| corrected.join(" ")),
+        reading: None,
         request_seq: query.request_seq,
     })
 }

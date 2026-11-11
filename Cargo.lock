@@ -6578,6 +6578,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-read"
+version = "0.0.3"
+dependencies = [
+ "koru-store-core",
+ "loro",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "koru-recording"
 version = "0.0.3"
 dependencies = [

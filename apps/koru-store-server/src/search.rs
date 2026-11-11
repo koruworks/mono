@@ -187,6 +187,7 @@ fn empty_response(request: &SearchRequest) -> SearchResponse {
             updating_workspaces: Vec::new(),
             request_seq: request.query.request_seq,
             corrected_query: None,
+            reading: None,
         },
         facets: request.include_facets.then(SearchFacets::default),
         recent_queries: None,

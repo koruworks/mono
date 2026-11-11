@@ -28,8 +28,8 @@ use std::fmt;
 // link an FTS engine to do so.
 pub use koru_store_wire::search::{
     AttrFilter, AttrOp, DEFAULT_PAGE_SIZE, Lifecycle, LifecycleFilter, MAX_PAGE_SIZE, MatchSpan,
-    Navigation, RecentQuery, SearchFacet, SearchFacets, SearchHit, SearchPage, SearchQuery,
-    SearchRequest, SearchResponse, SearchSort, field,
+    Navigation, ReadingCounts, RecentQuery, SearchFacet, SearchFacets, SearchHit, SearchPage,
+    SearchQuery, SearchRequest, SearchResponse, SearchSort, field,
 };
 
 /// One independently explainable piece of matchable text.

@@ -589,6 +589,7 @@ impl SearchSurface {
                 next_offset: None,
                 updating_workspaces: Vec::new(),
                 corrected_query: None,
+                reading: None,
                 request_seq: 0,
             },
             next_cursor: None,
@@ -4243,6 +4244,7 @@ fn ai_display_hit(hit: &koru_ai_core::AiSearchHit) -> SearchHit {
         score: f64::from(hit.score),
         observed_modified_at_ms: None,
         workspace_last_used_at_ms: None,
+        page: None,
     }
 }
 
@@ -4957,6 +4959,7 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
         }
     }
 
@@ -7068,6 +7071,7 @@ mod tests {
                             next_offset: None,
                             updating_workspaces: Vec::new(),
                             corrected_query: None,
+                            reading: None,
                             request_seq: 1,
                         },
                         facets: None,
@@ -7111,6 +7115,7 @@ mod tests {
                             next_offset: None,
                             updating_workspaces: Vec::new(),
                             corrected_query: None,
+                            reading: None,
                             request_seq: 2,
                         },
                         facets: None,
@@ -7158,6 +7163,7 @@ mod tests {
                                 next_offset: None,
                                 updating_workspaces: Vec::new(),
                                 corrected_query: None,
+                                reading: None,
                                 request_seq: 3,
                             },
                             facets: None,
