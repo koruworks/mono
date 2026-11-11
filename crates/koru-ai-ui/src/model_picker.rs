@@ -682,6 +682,15 @@ impl crate::ChatSurface {
         handled.map(|handled| answer.unwrap_or(handled))
     }
 
+    /// Where a screen reader's focus is in the open picker, and what its
+    /// search field holds: what a host that publishes the picker publishes.
+    /// The chat publishes no accessibility tree of its own, so only its
+    /// pins read them.
+    #[cfg(test)]
+    pub(crate) fn picker_accessibility(&self) -> (Option<koru_draw::el::Key>, String) {
+        self.picker_read(|picker| (picker.accessibility_focus(), picker.search_text()))
+    }
+
     /// What the open picker's tree declares.
     #[cfg(test)]
     pub(super) fn picker_spec(&self) -> elements::Spec {

@@ -5,4 +5,11 @@ row Key { object: Model(11954888832644785330), part: "approval-mode" } icon 0xea
 row Key { object: Model(6757501175350325814), part: "approval-mode" } icon 0xe6a2 title "Auto" help Some("Claude decides which actions need you.") full=false current=false lit=false
 row Key { object: Model(16767174850261089227), part: "approval-mode" } icon 0xe4e0 title "Full access" help Some("Runs everything without asking.") full=true current=false lit=false
 row Key { object: Model(15478865525090752595), part: "approval-mode" } icon 0xe228 title "Don't ask" help Some("Never asks; refuses instead") full=false current=false lit=false
-(none)
+List Some(Key(AiAgentAsks)) key=Some(Key { object: Surface("approval-modes"), part: "list" }) b[490.00 60.50 340.00 322.00] selected=None disabled=false focusable=false actions=[]
+  ListItem Some(Text("Ask first, Asks before every change.")) key=Some(Key { object: Model(16982411286042166782), part: "approval-mode" }) b[494.00 64.50 332.00 46.00] selected=Some(true) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Accept edits, Edits files without asking; still asks before commands.")) key=Some(Key { object: Model(16890590346210960122), part: "approval-mode" }) b[494.00 110.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Plan, Reads and plans; changes nothing until you approve the plan.")) key=Some(Key { object: Model(11954888832644785330), part: "approval-mode" }) b[494.00 156.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Auto, Claude decides which actions need you.")) key=Some(Key { object: Model(6757501175350325814), part: "approval-mode" }) b[494.00 202.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Full access, Runs everything without asking.")) key=Some(Key { object: Model(16767174850261089227), part: "approval-mode" }) b[494.00 248.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Don't ask, Never asks; refuses instead")) key=Some(Key { object: Model(15478865525090752595), part: "approval-mode" }) b[494.00 294.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+focus Some(Key { object: Model(11954888832644785330), part: "approval-mode" })

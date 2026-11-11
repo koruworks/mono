@@ -348,6 +348,13 @@ impl crate::ChatSurface {
         self.with_mode_list(|list| list.frame())
     }
 
+    /// Where a screen reader's focus is in the open list: what a host that
+    /// publishes it publishes. The chat publishes no tree of its own.
+    #[cfg(test)]
+    fn approval_mode_accessibility_focus(&self) -> Option<koru_draw::el::Key> {
+        self.with_mode_list(|list| list.focused_key()).flatten()
+    }
+
     /// Row `index` where it is drawn.
     #[cfg(test)]
     pub(crate) fn approval_mode_row_rect(&self, index: usize) -> Option<Rect> {

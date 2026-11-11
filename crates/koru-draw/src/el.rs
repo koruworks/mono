@@ -89,6 +89,9 @@ pub enum Role {
     List,
     ListItem,
     Image,
+    /// A field a person types into: the host publishes its text as the
+    /// node's value, which the element does not hold.
+    TextInput,
 }
 
 /// A request a node advertises and the host implements for its key.

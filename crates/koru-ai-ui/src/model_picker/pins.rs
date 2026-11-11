@@ -401,9 +401,11 @@ fn pin_state(pins: &mut Pins, name: &str, mut surface: ChatSurface, golden: [&st
     pins.check(
         &format!("{name}.semantics"),
         &format!(
-            "diagnostics {:?}\n{}",
+            "diagnostics {:?}\n{}focus {:?} search {:?}\n",
             frame.diagnostics,
-            semantics(&frame.semantics())
+            semantics(&frame.semantics()),
+            surface.picker_accessibility().0,
+            surface.picker_accessibility().1,
         ),
         golden[1],
     );

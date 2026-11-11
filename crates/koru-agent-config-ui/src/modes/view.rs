@@ -89,8 +89,24 @@ impl ModeList<'_> {
                 full_access: row.full_access,
                 title: row.title.clone(),
                 help: row.help.clone(),
+                spoken: match &row.help {
+                    Some(help) => koru_i18n::fill(
+                        t(self.lang, Words::AiPickerRowWith),
+                        &[row.title.as_str(), help.as_str()],
+                    ),
+                    None => row.title.clone(),
+                },
             })
             .collect()
+    }
+
+    /// **Where a screen reader's focus is** while the list is open: the
+    /// row the keyboard is on. The footer's *Change default* is painted,
+    /// not an element, so it is not published (P1.8.PICKER.notes.md R10).
+    pub fn focused_key(&self) -> Option<koru_draw::el::Key> {
+        self.rows
+            .get(self.focus?)
+            .map(|row| elements::row_key(&row.id))
     }
 
     /// **The open list's frame** (D105): where a press lands and which row

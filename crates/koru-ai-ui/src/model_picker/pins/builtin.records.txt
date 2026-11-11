@@ -67,7 +67,8 @@ records 31 truncated false
     contrast = "standard" (FrameCx::contrast)
     fill = "Fill(1)" (El::fill)
     state = "rest" (Interaction)
-    semantics = "none: transparent to semantic parenting" (El::semantics)
+    semantics = "TextInput: delegated to the leaf's own node" (El::semantics)
+    name = "Key::AiModelSearch" (El::name)
     input = "neutral" (El::hit / El::action)
 10 ^9 component "KoruTextInput" b[442.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z10
     implementation = "koru_ui::text_input" (shared implementation)
@@ -118,7 +119,8 @@ records 31 truncated false
     state = "rest" (Interaction)
     scroll = "content 60, offset 0" (runtime: host scroll offset)
     row step = "metrics::PICKER_ROW_H -> 30" (El::row_step)
-    semantics = "none: transparent to semantic parenting" (El::semantics)
+    semantics = "List" (El::semantics)
+    name = "model content" (El::name_text)
     input = "neutral" (El::hit / El::action)
 18 ^17 element "Model row" b[442.00 111.50 794.00 141.50] c[442.00 111.50 794.00 351.50] z18
     element = "row" (El constructor)
@@ -134,9 +136,10 @@ records 31 truncated false
     state rule = "model row: hover" (El::states)
     state = "hovered" (Interaction)
     fill colour = "Surface::Hover -> #191919 / alpha 0.078" (state rule)
-    semantics = "none: transparent to semantic parenting" (El::semantics)
+    semantics = "ListItem" (El::semantics)
+    name = "model content" (El::name_text)
     selected = "false" (El::selected)
-    input = "pointer target" (El::hit / El::action)
+    input = "pointer target; Click" (El::hit / El::action)
 19 ^18 primitive "fill" b[442.00 111.50 794.00 141.50] c[442.00 111.50 794.00 351.50] z19
     color = "#191919 / alpha 0.078" (resolved paint; token origin not exposed)
 20 ^18 element "Model name" b[450.00 117.50 786.00 135.50] c[442.00 111.50 794.00 351.50] z20
@@ -184,9 +187,10 @@ records 31 truncated false
     state rule = "model row, the keyboard's: selected" (El::states)
     state = "selected" (Interaction)
     fill colour = "Surface::Selected -> #F2F2F2 / alpha 1.000" (state rule)
-    semantics = "none: transparent to semantic parenting" (El::semantics)
+    semantics = "ListItem" (El::semantics)
+    name = "model content" (El::name_text)
     selected = "true" (El::selected)
-    input = "pointer target" (El::hit / El::action)
+    input = "pointer target; Click" (El::hit / El::action)
 24 ^23 primitive "fill" b[442.00 141.50 794.00 171.50] c[442.00 111.50 794.00 351.50] z24
     color = "#F2F2F2 / alpha 1.000" (resolved paint; token origin not exposed)
 25 ^23 element "Model name" b[450.00 147.50 763.00 165.50] c[442.00 111.50 794.00 351.50] z25

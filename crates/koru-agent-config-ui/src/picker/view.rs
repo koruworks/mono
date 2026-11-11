@@ -27,7 +27,9 @@
 //! list settles against the chosen model's footer only once the host has
 //! made it the current one.
 
-use koru_draw::el::{Frame, FrameCx, Interaction, Key as ElKey};
+use std::collections::HashMap;
+
+use koru_draw::el::{Frame, FrameCx, Interaction, Key as ElKey, Name};
 use koru_draw::text::TextEngine;
 use koru_draw::theme;
 use koru_i18n::{Key, t};
@@ -51,7 +53,7 @@ use super::{
     FavoriteModel, Geometry, LIST_ROWS, PickerFocus, PickerState, RAIL_PAGE, ROW_H, RailEntry, Row,
     TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED, TOOLTIP_RAIL, TOOLTIP_REFRESH, context, geometry_with,
     matches, rail_dividers, rail_height, rail_rects, readout, row_id, scroll_into_view, size,
-    step_highlight, toggled,
+    step_highlight, toggled, words_id,
 };
 use crate::effort::{self, Effort};
 
@@ -847,7 +849,49 @@ impl<'v, 'a, P: AgentId> Picker<'v, 'a, P> {
             footer: self.footer(),
             list: self.list_rows(),
             offset: self.state.offset,
+            list_name: match &selected {
+                _ if searching && !hide_rail => Some(Name::Key(Key::AiPickerModels)),
+                Some(RailEntry::Favorites) => Some(Name::Key(Key::AiPickerFavorites)),
+                Some(entry) => Some(Name::Text(self.entry_name(entry))),
+                None => None,
+            },
         }
+    }
+
+    /// **Where a screen reader's focus is** while the picker is open: the
+    /// search field while the keyboard is in it; the highlighted row while
+    /// it is in the list (the list itself while no row is); the selected
+    /// rail mark, the strip's level or a pill. A host that publishes the
+    /// picker publishes this as its focus. `None` while closed.
+    ///
+    /// The search field keeps the focus while Up and Down move the lit
+    /// row under it, as a combo box's field does; saying that row needs an
+    /// active descendant, which the element tree does not carry.
+    pub fn accessibility_focus(&self) -> Option<ElKey> {
+        if !self.open {
+            return None;
+        }
+        match self.state.focus {
+            PickerFocus::Search => Some(elements::SEARCH_KEY),
+            PickerFocus::List => {
+                let entry = self.entry();
+                let rows = self.rows();
+                Some(
+                    self.state
+                        .highlight
+                        .and_then(|index| rows.get(index))
+                        .and_then(|row| row_id(entry.as_ref()?, row))
+                        .map_or(elements::LIST_KEY, |id| elements::row_key(&id)),
+                )
+            }
+            _ => self.focused_key(&self.spec()),
+        }
+    }
+
+    /// What is typed in the search field: the value a host publishes for
+    /// it.
+    pub fn search_text(&self) -> String {
+        self.state.query.raw_text()
     }
 
     /// The mark an entry wears: an agent's or the built-in provider's, as
@@ -934,13 +978,48 @@ impl<'v, 'a, P: AgentId> Picker<'v, 'a, P> {
         let choosable = self.choosable(&rows);
         let keyboard = matches!(self.state.focus, PickerFocus::Search | PickerFocus::List);
         let searching = !self.query().is_empty();
+        // A heading's or a note's key is its words: two alike in one list
+        // (a search's notes under two agents differ by entry already) take
+        // their order among the alike, so no key is used twice.
+        let mut words_seen: HashMap<String, usize> = HashMap::new();
         rows.iter()
             .enumerate()
             .map(|(index, row)| {
                 let id = row_id(&entry, row);
+                let label = self.row_label(&entry, row);
+                // What the row is, under a search's wrapping.
+                let shown = match row {
+                    Row::Found(_, found) => &**found,
+                    row => row,
+                };
+                let words_key = words_id(&entry, row).map(|words| {
+                    let seen = words_seen.entry(words.clone()).or_insert(0);
+                    *seen += 1;
+                    match *seen {
+                        1 => elements::words_key(&words),
+                        n => elements::words_key(&format!("{words}\u{1f}{n}")),
+                    }
+                });
+                let spoken = match shown {
+                    Row::Favorite(agent, _) => koru_i18n::fill(
+                        t(self.lang(), Key::AiPickerRowWith),
+                        &[
+                            label.as_str(),
+                            &self.entry_name(&RailEntry::Agent(agent.clone())),
+                        ],
+                    ),
+                    _ if self.row_is_legacy(&entry, row) => koru_i18n::fill(
+                        t(self.lang(), Key::AiPickerRowWith),
+                        &[label.as_str(), t(self.lang(), Key::AiModelsLegacyTag)],
+                    ),
+                    _ => label.clone(),
+                };
                 ListRow {
                     key: id.as_deref().map(elements::row_key),
-                    label: self.row_label(&entry, row),
+                    spoken,
+                    words_key,
+                    heading: matches!(shown, Row::Heading(_) | Row::EntryHeading(_)),
+                    label,
                     words: matches!(row, Row::Heading(_) | Row::Note(_) | Row::EntryHeading(_)),
                     mark: match row {
                         Row::Favorite(agent, _) => self.agent_mark(agent),

@@ -6,6 +6,9 @@ Button Some(Text("Antigravity")) key=Some(Key { object: Model(985407826832147613
 Button Some(Text("Muse")) key=Some(Key { object: Model(7624799680433389823), part: "agent" }) b[444.00 227.50 32.00 32.00] selected=Some(false) disabled=false focusable=false actions=[Click]
 Button Some(Text("Devin")) key=Some(Key { object: Model(397366458103374327), part: "agent" }) b[444.00 265.50 32.00 32.00] selected=Some(false) disabled=false focusable=false actions=[Click]
 Button Some(Key(AiPickerManageAgents)) key=Some(Key { object: Surface("model-picker"), part: "manage-agents" }) b[444.00 303.50 32.00 32.00] selected=None disabled=false focusable=false actions=[Click]
+TextInput Some(Key(AiModelSearch)) key=Some(Key { object: Surface("model-picker"), part: "search" }) b[490.00 75.50 274.00 32.00] selected=None disabled=false focusable=false actions=[]
+List Some(Key(AiPickerFavorites)) key=Some(Key { object: Surface("model-picker"), part: "list" }) b[490.00 111.50 304.00 180.00] selected=None disabled=false focusable=false actions=[]
+  ListItem Some(Text("Sonnet 4.6, Claude")) key=Some(Key { object: Model(896047065542412961), part: "row" }) b[490.00 111.50 304.00 30.00] selected=Some(false) disabled=false focusable=false actions=[Click]
 Group Some(Key(AiEffortGroup)) key=Some(Key { object: Surface("model-picker"), part: "effort" }) b[498.00 302.50 288.00 32.00] selected=None disabled=false focusable=false actions=[]
   Button Some(Key(AiEffortOff)) key=Some(Key { object: Surface("model-picker"), part: "effort-off" }) b[500.00 304.50 69.50 28.00] selected=Some(false) disabled=false focusable=false actions=[Click]
   Button Some(Key(AiEffortLow)) key=Some(Key { object: Surface("model-picker"), part: "effort-low" }) b[571.50 304.50 69.50 28.00] selected=Some(false) disabled=false focusable=false actions=[Click]
@@ -13,3 +16,4 @@ Group Some(Key(AiEffortGroup)) key=Some(Key { object: Surface("model-picker"), p
   Button Some(Key(AiEffortHigh)) key=Some(Key { object: Surface("model-picker"), part: "effort-high" }) b[714.50 304.50 69.50 28.00] selected=Some(false) disabled=false focusable=false actions=[Click]
 Button Some(Key(AiModelFast)) key=Some(Key { object: Surface("model-picker"), part: "fast" }) b[498.00 342.50 60.17 28.00] selected=Some(false) disabled=false focusable=false actions=[Click]
 Button Some(Text("1M context")) key=Some(Key { object: Surface("model-picker"), part: "context" }) b[564.17 342.50 82.26 28.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+focus None search ""

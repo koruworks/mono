@@ -22,7 +22,9 @@
 //! Every value is a token or a tagged metric ([`super::tokens`]); this file
 //! is on the source scan's migrated list (`koru_draw::theme::ui_scan`).
 
-use koru_draw::el::{El, Frame, FrameCx, Key, Look, StateRecipe, col, icon, row, text};
+use koru_draw::el::{
+    Action, El, Frame, FrameCx, Key, Look, Role, StateRecipe, col, icon, row, text,
+};
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::theme::{IconSize, Ink, Radius, Surface, metrics, roles};
@@ -45,12 +47,17 @@ pub fn row_key(id: &str) -> Key {
     Key::model(crate::picker::elements::stable_id(id), "approval-mode")
 }
 
+/// The list itself, as a screen reader finds it.
+pub const LIST_KEY: Key = Key::surface("approval-modes", "list");
+
 /// One mode as the list draws it.
 pub struct ModeSpec {
     pub key: Key,
     pub icon: char,
     pub title: String,
     pub help: Option<String>,
+    /// What a screen reader calls it: its title and the line under it.
+    pub spoken: String,
     /// *Full access*: the icon and the title in the notice ink.
     pub full_access: bool,
     /// The chat's mode: the ✓.
@@ -134,6 +141,12 @@ fn mode_row(spec: &ModeSpec) -> El {
         })
         .id(spec.key)
         .hit()
+        // A list item to a screen reader, the current mode selected. The
+        // row's states paint nothing for selected, so this moves nothing.
+        .action(Action::Click)
+        .semantics(Role::ListItem)
+        .name_text(spec.spoken.clone())
+        .selected(spec.current)
         .child(
             icon(spec.icon, IconSize::XS)
                 .decorative()
@@ -150,6 +163,9 @@ fn mode_row(spec: &ModeSpec) -> El {
 pub fn tree(modes: &[ModeSpec]) -> El {
     col(PANEL)
         .pad(PANEL_INSET)
+        .id(LIST_KEY)
+        .semantics(Role::List)
+        .name(koru_i18n::Key::AiAgentAsks)
         .children(modes.iter().map(mode_row))
 }
 

@@ -565,11 +565,6 @@ pub fn rail_dividers<P>(rail: &[RailEntry<P>]) -> Vec<usize> {
 /// row keeps its key as the list scrolls, filters and reorders. `None` for
 /// a heading or a note, which choose nothing.
 pub fn row_id<P: Display>(entry: &RailEntry<P>, row: &Row<P>) -> Option<String> {
-    let entry_id = |entry: &RailEntry<P>| match entry {
-        RailEntry::Favorites => "favorites".to_owned(),
-        RailEntry::Provider(provider) => format!("provider:{provider}"),
-        RailEntry::Agent(agent) => format!("agent:{agent}"),
-    };
     Some(match row {
         Row::Found(entry, row) => return row_id(entry, row),
         Row::Heading(_) | Row::Note(_) | Row::EntryHeading(_) => return None,
@@ -581,4 +576,26 @@ pub fn row_id<P: Display>(entry: &RailEntry<P>, row: &Row<P>) -> Option<String> 
         Row::LegacyToggle => format!("{}\u{1f}legacy", entry_id(entry)),
         Row::ManageAgents => format!("{}\u{1f}manage", entry_id(entry)),
     })
+}
+
+/// An entry as a row's identity names it.
+fn entry_id<P: Display>(entry: &RailEntry<P>) -> String {
+    match entry {
+        RailEntry::Favorites => "favorites".to_owned(),
+        RailEntry::Provider(provider) => format!("provider:{provider}"),
+        RailEntry::Agent(agent) => format!("agent:{agent}"),
+    }
+}
+
+/// **A heading's or a note's identity**, for the accessibility tree alone:
+/// its entry and its words, so it keeps its key as the list scrolls and
+/// filters. It is never pressed. `None` for a row [`row_id`] names.
+pub fn words_id<P: Display>(entry: &RailEntry<P>, row: &Row<P>) -> Option<String> {
+    match row {
+        Row::Found(entry, row) => words_id(entry, row),
+        Row::Heading(words) => Some(format!("{}\u{1f}heading\u{1f}{words}", entry_id(entry))),
+        Row::Note(words) => Some(format!("{}\u{1f}note\u{1f}{words}", entry_id(entry))),
+        Row::EntryHeading(heading) => Some(format!("{}\u{1f}entry", entry_id(heading))),
+        _ => None,
+    }
 }

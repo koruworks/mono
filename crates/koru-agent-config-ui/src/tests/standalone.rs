@@ -604,3 +604,161 @@ fn both_controls_draw_inside_their_shells_and_declare_their_buttons() {
         "everything inside the panel"
     );
 }
+
+/// Every node of a semantics tree, depth first.
+fn every(nodes: &[koru_draw::el::SemNode]) -> Vec<&koru_draw::el::SemNode> {
+    let mut all = Vec::new();
+    for node in nodes {
+        all.push(node);
+        all.extend(every(&node.children));
+    }
+    all
+}
+
+/// **A screen reader hears the models and the modes** (P1.8.PICKER.notes.md
+/// §1.6 item 8): the search field is a field, the list a list named by what
+/// it lists, each row an item named as it reads — a favorite with its
+/// agent, an older model with its tag — the current one selected and one
+/// that cannot be chosen disabled; a heading a heading; the keyboard's row
+/// the focus. The mode list likewise.
+#[test]
+fn both_controls_publish_their_rows_to_assistive_technology() {
+    use koru_draw::el::Name;
+    let (mut host, mut lent) = (Host::new(), Lent::new());
+    open(&mut host, &mut lent);
+    // On *Favorites*: a list named so, its row naming its agent.
+    let (nodes, focus) = read(&host, &lent, |picker| {
+        let (_, _, frame) = picker.frame().unwrap();
+        assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
+        (frame.semantics(), picker.accessibility_focus())
+    });
+    let all = every(&nodes);
+    let field = all
+        .iter()
+        .find(|node| node.role == Role::TextInput)
+        .expect("the search field");
+    assert_eq!(field.name, Some(Name::Key(koru_i18n::Key::AiModelSearch)));
+    assert_eq!(focus, field.key, "the keyboard opens in the field");
+    let list = all
+        .iter()
+        .find(|node| node.role == Role::List)
+        .expect("the list");
+    assert_eq!(
+        list.name,
+        Some(Name::Key(koru_i18n::Key::AiPickerFavorites))
+    );
+    assert_eq!(
+        list.children
+            .iter()
+            .map(|item| (item.role, item.name.clone()))
+            .collect::<Vec<_>>(),
+        [(Role::ListItem, Some(Name::Text("Sonnet, Claude".into())))]
+    );
+
+    // On the agent: its name on the list, its groups' headings, the
+    // current model selected, the older one tagged once expanded.
+    press(
+        &mut host,
+        &mut lent,
+        elements::mark_key(&RailEntry::Agent("claude".to_owned())),
+    );
+    let legacy = read(&host, &lent, |picker| {
+        picker
+            .rows()
+            .iter()
+            .position(|row| *row == Row::LegacyToggle)
+            .unwrap()
+    });
+    run(&mut host, &mut lent, |view| view.choose_row(legacy));
+    // The keyboard in the list, on a row.
+    lent.state.focus = crate::picker::PickerFocus::List;
+    key(&mut host, &mut lent, Key::Named(NamedKey::ArrowUp));
+    let (nodes, focus, highlighted) = read(&host, &lent, |picker| {
+        let (_, spec, frame) = picker.frame().unwrap();
+        assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
+        let highlighted = picker
+            .state
+            .highlight
+            .and_then(|index| spec.list[index].key);
+        (frame.semantics(), picker.accessibility_focus(), highlighted)
+    });
+    let all = every(&nodes);
+    let list = all.iter().find(|node| node.role == Role::List).unwrap();
+    assert_eq!(list.name, Some(Name::Text("Claude".into())));
+    let item = |name: &str| {
+        list.children
+            .iter()
+            .find(|item| item.name == Some(Name::Text(name.into())))
+            .unwrap_or_else(|| panic!("{name}: {:?}", list.children))
+    };
+    assert_eq!(item("Opus").selected, Some(true), "the current model");
+    assert_eq!(item("Opus").role, Role::ListItem);
+    assert!(!item("Opus").disabled);
+    assert_eq!(item("Claude 2, Legacy").role, Role::ListItem);
+    assert!(
+        list.children
+            .iter()
+            .any(|node| node.role == Role::Heading && node.name == Some(Name::Text("Small".into()))),
+        "the group's heading: {:?}",
+        list.children
+    );
+    assert!(highlighted.is_some());
+    assert_eq!(focus, highlighted, "the focus is the keyboard's row");
+
+    // A begun conversation's locked rows are disabled, the current one
+    // still selected.
+    host.applies = Applies::Conversation {
+        begun: true,
+        agent_begun: true,
+        model_locked: true,
+        effort_locked: true,
+    };
+    let nodes = read(&host, &lent, |picker| picker.frame().unwrap().2.semantics());
+    let all = every(&nodes);
+    let opus = all
+        .iter()
+        .find(|node| node.name == Some(Name::Text("Opus".into())))
+        .unwrap();
+    assert!(opus.disabled && opus.selected == Some(true), "{opus:?}");
+
+    // The mode list: a list of its modes, each named with its line, the
+    // current one selected, the keyboard's row the focus.
+    let offers = [
+        ModeOffer {
+            id: "default",
+            name: None,
+            description: None,
+        },
+        ModeOffer {
+            id: "auto",
+            name: None,
+            description: None,
+        },
+    ];
+    let rows = modes::rows(Lang::En, "agent-claude", &offers);
+    let list = ModeList {
+        lang: Lang::En,
+        rows: &rows,
+        current: Some("auto"),
+        focus: Some(0),
+        anchor: Rect::new(780.0, 640.0, 40.0, 28.0),
+        viewport: Rect::new(0.0, 0.0, 900.0, 700.0),
+        width: 360.0,
+        pointer: (0.0, 0.0),
+    };
+    let (_, frame) = list.frame();
+    assert_eq!(frame.diagnostics, [], "{:?}", frame.diagnostics);
+    let nodes = frame.semantics();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].role, Role::List);
+    assert_eq!(nodes[0].name, Some(Name::Key(koru_i18n::Key::AiAgentAsks)));
+    let ask = format!(
+        "{}, {}",
+        words(koru_i18n::Key::AiAgentModeAskFirst),
+        words(koru_i18n::Key::AiAgentModeAskFirstHelp)
+    );
+    assert_eq!(nodes[0].children[0].name, Some(Name::Text(ask)));
+    assert_eq!(nodes[0].children[0].selected, Some(false));
+    assert_eq!(nodes[0].children[1].selected, Some(true));
+    assert_eq!(list.focused_key(), nodes[0].children[0].key);
+}

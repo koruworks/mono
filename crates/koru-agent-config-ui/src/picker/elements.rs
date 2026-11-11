@@ -55,8 +55,8 @@ use std::fmt::Display;
 
 use koru_draw::brand::ProfileMark;
 use koru_draw::el::{
-    Action, Align, El, Frame, FrameCx, Key, Look, Ring, Role, StateRecipe, TextCache, boxed, col,
-    divider, icon, leaf, row, scroll_y, text,
+    Action, Align, El, Frame, FrameCx, Key, Look, Name, Ring, Role, StateRecipe, TextCache, boxed,
+    col, divider, icon, leaf, row, scroll_y, text,
 };
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
@@ -204,8 +204,16 @@ pub struct ListRow {
     /// which press nothing.
     pub key: Option<Key>,
     pub label: String,
+    /// What a screen reader calls it: the label, and what the eye reads
+    /// beside it — a favorite's agent, an older model's tag.
+    pub spoken: String,
     /// A heading or a note: words, not a model.
     pub words: bool,
+    /// A heading's or a note's own key ([`super::words_id`]): it is
+    /// published, never pressed.
+    pub words_key: Option<Key>,
+    /// A group's or a search's heading, not a note.
+    pub heading: bool,
     /// The mark that leads the row: a favorite's agent's (D46), or a
     /// search's heading's entry's (D67).
     pub mark: Option<ProfileMark>,
@@ -243,6 +251,10 @@ pub struct Spec {
     /// Every row of the list, and the first one shown.
     pub list: Vec<ListRow>,
     pub offset: usize,
+    /// What a screen reader calls the list: the entry whose models it
+    /// shows, or *Models* for a search across every entry. `None` (a tree
+    /// laid out for its geometry alone) publishes no list.
+    pub list_name: Option<Name>,
 }
 
 impl Spec {
@@ -445,6 +457,12 @@ pub fn star_key(id: &str) -> Key {
     Key::model(stable_id(id), "star")
 }
 
+/// A heading's or a note's key, from its words ([`super::words_id`]):
+/// published, never pressed.
+pub fn words_key(id: &str) -> Key {
+    Key::model(stable_id(id), "words")
+}
+
 /// **What the adapters draw** beyond the spec: the search field's input,
 /// handed to its leaf. None of it when the tree is laid out only for its
 /// geometry, where nothing is painted. The footer's leaves draw from the
@@ -544,6 +562,16 @@ pub static ROW_STILL_STATES: StateRecipe = StateRecipe {
     name: "model row, not choosable",
     hover: Look::NONE,
     ..ROW_STATES
+};
+
+/// **The current model's row while it cannot be chosen** (a begun
+/// conversation's locked model): it is published disabled, and a disabled
+/// state shows its `disabled` look alone — so that look is the selected
+/// plate it has always had.
+pub static ROW_CURRENT_STILL_STATES: StateRecipe = StateRecipe {
+    name: "model row, the current one, not choosable",
+    disabled: Look::bg(Surface::Selected),
+    ..ROW_STILL_STATES
 };
 
 /// The ☆'s ink: dim, brighter under the pointer, the accent once starred.
@@ -650,7 +678,13 @@ fn mark_glyph(spec: &MarkSpec) -> El {
 /// model's ✓ and the ☆, whose room is kept whether or not it shows, so a
 /// name does not shorten under the pointer.
 fn list_row(spec: &ListRow) -> El {
-    let states = if spec.lit {
+    // A row that chooses something and cannot now is published disabled.
+    // Disabled changes no look a person sees: a lit or still row's look is
+    // its base either way, and the current one keeps its plate.
+    let disabled = spec.key.is_some() && !spec.can;
+    let states = if disabled && spec.current {
+        &ROW_CURRENT_STILL_STATES
+    } else if spec.lit {
         &ROW_LIT_STATES
     } else if spec.can && spec.key.is_some() {
         &ROW_STATES
@@ -662,10 +696,29 @@ fn list_row(spec: &ListRow) -> El {
         .radius(Radius::S)
         .pad_start(ROW_INSET)
         .items_center()
-        .states(states)
-        .selected(spec.current);
+        .states(states);
+    // **What a screen reader hears**: a row that chooses something is a
+    // list item with its name, whether it is the current one and whether
+    // it can be chosen now; a group's heading is a heading, a note an item
+    // of words.
     if let Some(key) = spec.key {
-        el = el.id(key).hit();
+        el = el
+            .id(key)
+            .hit()
+            .action(Action::Click)
+            .semantics(Role::ListItem)
+            .name_text(spec.spoken.clone())
+            .selected(spec.current)
+            .disabled(disabled);
+    } else if let Some(key) = spec.words_key {
+        el = el
+            .id(key)
+            .semantics(if spec.heading {
+                Role::Heading
+            } else {
+                Role::ListItem
+            })
+            .name_text(spec.spoken.clone());
     }
     let ink = if spec.can || spec.current {
         Ink::Primary
@@ -772,13 +825,19 @@ fn star_button(star: &StarSpec) -> El {
 /// **The list** (M1): the rows in the one scroll element, a whole row at a
 /// time from `offset`, with the shared scrollbar.
 fn list(spec: &Spec) -> El {
-    scroll_y(LIST)
+    let list = scroll_y(LIST)
         .id(LIST_KEY)
         .fill()
         .row_step(ROW_HEIGHT)
         .scrollbar()
         .offset(spec.offset as f32 * ROW_H)
-        .children(spec.list.iter().map(list_row))
+        .children(spec.list.iter().map(list_row));
+    // A list to a screen reader, named by what it lists.
+    match &spec.list_name {
+        Some(Name::Key(key)) => list.semantics(Role::List).name(*key),
+        Some(Name::Text(words)) => list.semantics(Role::List).name_text(words.clone()),
+        None => list,
+    }
 }
 
 /// **The picker as one tree.** `painted` is what its adapters draw; a tree
@@ -864,6 +923,10 @@ pub fn tree(spec: &Spec, painted: Painted) -> El {
                 leaf(SEARCH_FIELD, SearchLeaf(painted.search))
                     .semantic()
                     .id(SEARCH_KEY)
+                    // A field to a screen reader: its text is the host's
+                    // to publish ([`super::view::Picker::search_text`]).
+                    .semantics(Role::TextInput)
+                    .name(koru_i18n::Key::AiModelSearch)
                     .fill(),
             )
             .child(refresh),

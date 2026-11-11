@@ -1002,6 +1002,7 @@ fn element_node(cx: &Context, node: &koru_draw::el::SemNode) -> SemanticNode {
         el::Role::List => Role::List,
         el::Role::ListItem => Role::ListItem,
         el::Role::Image => Role::Image,
+        el::Role::TextInput => Role::TextInput,
     };
     let occurrence = match node.key {
         Some(key) => element_occurrence(cx, key),

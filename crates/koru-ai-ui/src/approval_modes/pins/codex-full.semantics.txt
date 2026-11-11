@@ -2,4 +2,8 @@ diagnostics []
 row Key { object: Model(16670533724037894034), part: "approval-mode" } icon 0xe3e8 title "Ask for approval" help Some("Codex reads; it asks before editing files or running commands.") full=false current=false lit=false
 row Key { object: Model(3403940223859569117), part: "approval-mode" } icon 0xe762 title "Approve for me" help Some("Codex edits in this folder; its reviewer decides anything that needs more.") full=false current=false lit=false
 row Key { object: Model(18024449775046465593), part: "approval-mode" } icon 0xe4e0 title "Full access" help Some("No sandbox: Codex runs everything without asking, with full access to your computer.") full=true current=true lit=false
-(none)
+List Some(Key(AiAgentAsks)) key=Some(Key { object: Surface("approval-modes"), part: "list" }) b[490.00 420.50 340.00 184.00] selected=None disabled=false focusable=false actions=[]
+  ListItem Some(Text("Ask for approval, Codex reads; it asks before editing files or running commands.")) key=Some(Key { object: Model(16670533724037894034), part: "approval-mode" }) b[494.00 424.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Approve for me, Codex edits in this folder; its reviewer decides anything that needs more.")) key=Some(Key { object: Model(3403940223859569117), part: "approval-mode" }) b[494.00 470.50 332.00 46.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("Full access, No sandbox: Codex runs everything without asking, with full access to your computer.")) key=Some(Key { object: Model(18024449775046465593), part: "approval-mode" }) b[494.00 516.50 332.00 46.00] selected=Some(true) disabled=false focusable=false actions=[Click]
+focus None
