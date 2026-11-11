@@ -29,6 +29,12 @@ pub(in crate::worker) struct BotCoordinationJob {
     action: Action,
     receipt: BotAdmissionReceipt,
     previous: Option<BotSubmissionKey>,
+    /// The task a continuation continues was refused by its owner behind
+    /// its fence (its receipt is `rejected`): the AI side's own durable
+    /// proof that it never ran, so its owner is not asked whether it
+    /// settled. A Retry of a reply whose task the owner refused as stale is
+    /// such a continuation.
+    previous_never_admitted: bool,
     ai_live: bool,
 }
 pub(in crate::worker) struct BotCoordinationResult {
@@ -60,7 +66,8 @@ impl BotCoordinationJob {
                 (Action::Submit, BotAdmissionReceipt::Submission(r)) => {
                     if (r.intent.submission.provenance.ai_attempt_id.is_some() && !self.ai_live)
                         || (r.intent.submission.provenance.continued_from.is_some()
-                            && self.previous.is_none())
+                            && self.previous.is_none()
+                            && !self.previous_never_admitted)
                     {
                         return Err(delegate_unavailable());
                     }
@@ -333,7 +340,7 @@ impl WorkerState {
                 _ => Action::Reconcile,
             },
         });
-        let previous = match &receipt {
+        let prior = match &receipt {
             BotAdmissionReceipt::Submission(r) => r
                 .intent
                 .submission
@@ -344,10 +351,15 @@ impl WorkerState {
                         .bot_submission_for_run(owner(bot), bot.id, run)
                         .ok()
                         .flatten()
-                })
-                .map(|r| key(&r)),
+                }),
             _ => None,
         };
+        // A prior task its owner refused behind its fence never ran: the
+        // owner holds nothing of it to ask about (it would answer Missing).
+        let previous_never_admitted = prior
+            .as_ref()
+            .is_some_and(|r| r.stage == koru_ai_core::bots::BotReceiptStage::Rejected);
+        let previous = prior.filter(|_| !previous_never_admitted).map(|r| key(&r));
         let ai_live = match &receipt {
             BotAdmissionReceipt::Submission(r) => ai_submission_live(&self.repository, r),
             _ => false,
@@ -362,6 +374,7 @@ impl WorkerState {
             action,
             receipt,
             previous,
+            previous_never_admitted,
             ai_live,
         };
         if pool
@@ -561,6 +574,10 @@ fn apply_result(
         }
         _ => None,
     };
+    let stale = matches!(
+        (&result.action, &result.result),
+        (Action::Submit, Err(error)) if error.code == "bot_stale"
+    );
     match (&result.action, result.result, receipt) {
         (
             Action::Pause(expected),
@@ -646,7 +663,17 @@ fn apply_result(
                 result.owner,
                 result.bot,
                 result.request,
-                BotAdmissionRefusal::Rejected,
+                // A Submit the owner refused because the Bot's revision
+                // moved after the task was prepared (`bot_stale`) keeps that
+                // reason: nothing ran, and nothing about the task itself is
+                // wrong, so it may be sent again once at the current
+                // revision (`chat/resend.rs`). Every other refusal is
+                // `rejected`.
+                if stale {
+                    BotAdmissionRefusal::Stale
+                } else {
+                    BotAdmissionRefusal::Rejected
+                },
                 false,
                 now,
             )?;

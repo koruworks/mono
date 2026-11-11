@@ -778,17 +778,25 @@ impl Repository {
         if r.stage != BotReceiptStage::Prepared {
             return Ok(r);
         }
-        let round = match &r.outcome {
-            Some(BotExecutionOutcome::RefusalFence { round, barrier, .. }) if renew => {
+        // A renewed fence keeps the reason its first round recorded: why the
+        // submission was refused, not why its fence had to be renewed, so a
+        // `stale` refusal can be told from one that only met a stale fence.
+        let (round, reason) = match &r.outcome {
+            Some(BotExecutionOutcome::RefusalFence {
+                round,
+                barrier,
+                reason: first,
+                ..
+            }) if renew => {
                 if g.revision <= barrier.epoch {
                     return Err(BotError::Conflict);
                 }
-                round.checked_add(1).ok_or(BotError::Conflict)?
+                (round.checked_add(1).ok_or(BotError::Conflict)?, *first)
             }
             // Already refused: the stored fence stands, whatever else of the
             // Bot is still settling.
             Some(BotExecutionOutcome::RefusalFence { .. }) => return Ok(r),
-            _ => 1,
+            _ => (1, reason),
         };
         require_pause_settled(&tx, owner.user_scope, bot)?;
         super::policy::require_policy_settled(&tx, bot)?;

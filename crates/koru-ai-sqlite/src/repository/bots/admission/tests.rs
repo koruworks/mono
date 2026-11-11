@@ -249,8 +249,17 @@ fn exact_ordered_refusal_fence_is_the_only_unlock_and_stale_rounds_refuse() {
     );
     repo.acknowledge_bot_refusal_fence(owner, bot.id, request, next, &new_barrier, 6)
         .unwrap();
-    repo.reject_bot_submission_after_fence(owner, bot.id, request, next, &new_barrier, 7)
+    let rejected = repo
+        .reject_bot_submission_after_fence(owner, bot.id, request, next, &new_barrier, 7)
         .unwrap();
+    // The renewal was for a stale fence; the refusal keeps its own reason.
+    assert!(matches!(
+        rejected.outcome,
+        Some(BotExecutionOutcome::Rejected {
+            reason: BotAdmissionRefusal::Capacity,
+            ..
+        })
+    ));
     let current = repo.bot(bot.id).unwrap().unwrap();
     assert_eq!(current.folder_lock_request, None);
     assert_eq!(current.folder_frozen_at_ms, None);

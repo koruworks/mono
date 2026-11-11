@@ -27,6 +27,7 @@ mod listing;
 mod owed;
 mod pending;
 mod reverse;
+mod sibling;
 mod trash;
 mod unadmitted;
 
@@ -120,6 +121,10 @@ struct Archiving {
     calls: Mutex<Vec<(Instant, &'static str, Option<BotRequestId>)>>,
     /// The one device this host serves: the first one a command names.
     device: Mutex<Option<d::DeviceId>>,
+    /// The authority captures page history (as `attachments::resend`'s
+    /// `Capturing` does), so a Retry the AI side prepares by itself can be
+    /// prepared. Lifecycle never needs it; each capture is still counted.
+    capture_history: AtomicBool,
 }
 /// The owner a command names, where it names one, for the device check
 /// every Bot command passes at the host (`owner_device`).
@@ -615,10 +620,20 @@ impl BotAuthority for StoreSpy {
         _owner: BotOwner,
         _workspace: WorkspaceId,
         _profile: koru_ai_core::ProfileId,
-        _pages: &[BotPage],
+        pages: &[BotPage],
     ) -> Result<Vec<d::RunContextItem>, BotError> {
         self.port.store_calls.fetch_add(1, Ordering::SeqCst);
-        Err(BotError::Unavailable)
+        if !self.port.capture_history.load(Ordering::SeqCst) {
+            return Err(BotError::Unavailable);
+        }
+        Ok(pages
+            .iter()
+            .map(|page| d::RunContextItem::Document {
+                workspace: page.workspace,
+                document: page.document,
+                version: d::DocumentVersionId::new(),
+            })
+            .collect())
     }
     fn inspect(
         &self,
@@ -645,6 +660,10 @@ fn spawn_with(
     store_context: Option<Arc<dyn StoreContextPort>>,
 ) -> (WorkerHandle, Receiver<Repository>) {
     let (return_tx, returned) = sync_channel(1);
+    // A worker that prepares Bot commands itself (a re-send's Retry) gets
+    // the test seam that answers model discovery ready, as `attachments`'
+    // harness does.
+    let prepares = port.capture_history.load(Ordering::SeqCst);
     let mut config = WorkerConfig::new(
         PathBuf::from("unused-memory-lifecycle"),
         "internal-debug",
@@ -660,6 +679,7 @@ fn spawn_with(
     }
     config.test_repository = Some(repository);
     config.test_repository_return = Some(return_tx);
+    config.test_bot_runtime_ready = prepares;
     (AiWorker::new(config).spawn().unwrap(), returned)
 }
 

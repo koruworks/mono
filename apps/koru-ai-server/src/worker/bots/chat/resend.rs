@@ -33,6 +33,23 @@
 //! Known limit, the O25 gap: a Stop pressed on an already refused task is
 //! not durable, so if only the AI worker restarts after that Stop and before
 //! the re-send, the re-send happens.
+//!
+//! The same mechanism, once, for a task its owner refused as stale (P1.7,
+//! the third lifecycle review's F4): its Submit arrived after the Bot's
+//! revision moved, typically because another conversation's Trash fenced
+//! what it refused at that moment, so the owner answered `bot_stale` and the
+//! refusal fence kept that reason (`rejected` with `stale`). Nothing of it
+//! ran and nothing about it is wrong, so it is sent again at the current
+//! revision as a Retry. What says it is owed is durable: the attempt ended
+//! interrupted, its receipt is rejected as stale, its reply is still the
+//! conversation's last message, and it is not itself a Retry of a reply
+//! refused as stale, so a message is sent again at most once however often
+//! the revision moves under it. The owner never admitted it, so the settled
+//! probe's Missing is the expected answer, and the Retry's continuation
+//! needs no owner proof that the Run settled (`previous_never_admitted`).
+//! The Retry's guard and preparation decide everything else: a Bot paused,
+//! archived, trashed or mid-operation, or a conversation in Trash or held,
+//! refuses it, and then nothing is sent.
 use super::*;
 use koru_ai_api::AiResponseStream;
 use koru_delegate_core::BotInputRefusal;
@@ -70,11 +87,25 @@ enum Stage {
     Dispatched(Receiver<ApiResult<AiResponseStream>>),
 }
 
+/// Why a task is sent again by itself, once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// The runtime refused its pictures: sent again with them as files.
+    Pictures,
+    /// The owner refused its Submit because the Bot's revision moved after
+    /// the task was prepared (`bot_stale`, kept as the receipt's `stale`
+    /// refusal), for example a sibling conversation's Trash fencing what it
+    /// refused at the same moment. Nothing ran and nothing about the task is
+    /// wrong: sent again at the current revision.
+    Stale,
+}
+
 /// What the re-send of one refused attempt sends, read from durable state.
 struct Plan {
     chat: ChatId,
     request: RetryTurnRequest,
     key: BotSubmissionKey,
+    kind: Kind,
 }
 
 /// One finite owner call: whether the refused task's admission is settled.
@@ -260,11 +291,20 @@ impl WorkerState {
 
     pub(in crate::worker) fn complete_bot_resend_probe(&mut self, probed: ResendProbed) {
         let id = probed.attempt;
+        if !self.bot_resends.owed.contains_key(&id) {
+            return;
+        }
+        let stale = self
+            .bot_resend_plan(id)
+            .is_some_and(|plan| plan.kind == Kind::Stale);
         let Some(resend) = self.bot_resends.owed.get_mut(&id) else {
             return;
         };
         match probed.settled {
             Settledness::Settled => {}
+            // A task refused behind its fence was never admitted: the owner
+            // not knowing it is the proof nothing of it runs.
+            Settledness::Never if stale => {}
             Settledness::NotYet if resend.rounds < ROUNDS => {
                 resend.rounds += 1;
                 resend.due = Instant::now() + backoff(resend.rounds);
@@ -302,28 +342,42 @@ impl WorkerState {
     /// durable state only, and the Retry that sends it again.
     fn bot_resend_plan(&self, id: InferenceAttemptId) -> Option<Plan> {
         let attempt = self.repository.attempt(id).ok()??;
-        let refused = attempt
-            .stop_reason
-            .as_deref()
-            .and_then(BotInputRefusal::from_code)?;
-        if attempt.status != AttemptStatus::Failed || !refused.concerns_pictures() {
-            return None;
-        }
         let (chat, reply) = (attempt.chat_id?, attempt.assistant_message_id?);
-        // Exactly once: a re-send that already went as paths is not re-sent.
-        if self.retries_refused_pictures(id) {
-            return None;
-        }
+        let receipt = self.repository.bot_submission_for_attempt(id).ok()??;
+        let kind = if attempt.status == AttemptStatus::Interrupted && refused_as_stale(&receipt) {
+            // Exactly once: a Retry of a reply that was itself refused as
+            // stale is never sent again by itself, however often the
+            // revision moves under it.
+            if self.retries_stale_refusal(id) {
+                return None;
+            }
+            Kind::Stale
+        } else {
+            let refused = attempt
+                .stop_reason
+                .as_deref()
+                .and_then(BotInputRefusal::from_code)?;
+            if attempt.status != AttemptStatus::Failed || !refused.concerns_pictures() {
+                return None;
+            }
+            // Exactly once: a re-send that already went as paths is not re-sent.
+            if self.retries_refused_pictures(id) {
+                return None;
+            }
+            Kind::Pictures
+        };
         let messages = self.repository.messages(chat).ok()?;
         let failed = messages.last().filter(|last| last.id == reply)?;
-        // Paths can get past the refusal only if the task carried a picture.
-        let user = messages
-            .iter()
-            .rev()
-            .find(|m| m.ordinal < failed.ordinal && m.role == ChatRole::User)?;
-        let attachments = self.attachment_inputs_by_message(chat).ok()?;
-        koru_ai_provider_agent::native_pictures(attachments.get(&user.id)?.as_slice()).next()?;
-        let receipt = self.repository.bot_submission_for_attempt(id).ok()??;
+        if kind == Kind::Pictures {
+            // Paths can get past the refusal only if the task carried a picture.
+            let user = messages
+                .iter()
+                .rev()
+                .find(|m| m.ordinal < failed.ordinal && m.role == ChatRole::User)?;
+            let attachments = self.attachment_inputs_by_message(chat).ok()?;
+            koru_ai_provider_agent::native_pictures(attachments.get(&user.id)?.as_slice())
+                .next()?;
+        }
         let submission = &receipt.intent.submission;
         let bot = self
             .repository
@@ -365,6 +419,52 @@ impl WorkerState {
                 web_search: false,
                 replace_pinned_documents: true,
             },
+            kind,
         })
     }
+
+    /// Whether this attempt is a Retry of a reply whose task the owner
+    /// refused as stale: the bound that keeps a re-send from being sent
+    /// again. Only a Retry's reply names the reply it replaces.
+    fn retries_stale_refusal(&self, id: InferenceAttemptId) -> bool {
+        let Ok(Some(attempt)) = self.repository.attempt(id) else {
+            return true;
+        };
+        let (Some(chat), Some(reply)) = (attempt.chat_id, attempt.assistant_message_id) else {
+            return true;
+        };
+        let origin = match self.repository.message(reply) {
+            Ok(Some(message)) => message.origin_message_id,
+            // Unreadable: never guess that it may be sent again.
+            _ => return true,
+        };
+        let Some(origin) = origin else {
+            return false;
+        };
+        let Ok(attempts) = self.repository.attempts_for_chat(chat) else {
+            return true;
+        };
+        attempts
+            .into_iter()
+            .find(|prior| prior.assistant_message_id == Some(origin))
+            .is_none_or(|prior| {
+                !matches!(
+                    self.repository.bot_submission_for_attempt(prior.id),
+                    Ok(Some(receipt)) if !refused_as_stale(&receipt)
+                )
+            })
+    }
+}
+
+/// The owner refused this task's Submit as stale, behind its fence: never
+/// admitted, nothing of it ran, and nothing about it is at fault.
+fn refused_as_stale(receipt: &BotSubmissionReceipt) -> bool {
+    receipt.stage == BotReceiptStage::Rejected
+        && matches!(
+            receipt.outcome,
+            Some(BotExecutionOutcome::Rejected {
+                reason: BotAdmissionRefusal::Stale,
+                ..
+            })
+        )
 }

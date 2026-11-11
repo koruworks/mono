@@ -145,7 +145,7 @@ fn an_api_start_prepared_at_capture_is_refused_never_admitted_and_each_operation
 /// inside its context window: its receipt, its Pending attempt and its Run
 /// binding are committed, and no live conversation task exists for it yet.
 #[derive(Default)]
-struct HeldContext {
+pub(super) struct HeldContext {
     gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
 }
 impl StoreContextPort for HeldContext {
@@ -177,7 +177,7 @@ impl StoreContextPort for HeldContext {
 
 /// Hold the context thread: an ordinary chat's Send naming a document, whose
 /// read waits until the returned sender releases it.
-fn hold_context_thread(client: &AiWorkerClient, reader: &HeldContext) -> SyncSender<()> {
+pub(super) fn hold_context_thread(client: &AiWorkerClient, reader: &HeldContext) -> SyncSender<()> {
     let (entered_tx, entered) = sync_channel(1);
     let (release_tx, release) = sync_channel(1);
     *reader.gate.lock().unwrap() = Some((entered_tx, release));
@@ -246,7 +246,7 @@ pub(super) fn send_in(
 
 /// The Bot task is where its context job would hand it on: its receipt is
 /// prepared and its attempt still Pending behind the held thread.
-fn wait_context_window(client: &AiWorkerClient, attempt: InferenceAttemptId) {
+pub(super) fn wait_context_window(client: &AiWorkerClient, attempt: InferenceAttemptId) {
     until("the attempt is pending", || {
         attempt_status(client, attempt) == AttemptStatus::Pending
     });

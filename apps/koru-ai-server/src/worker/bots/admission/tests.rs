@@ -323,6 +323,7 @@ fn submit_job_checks_fresh_authority_and_previous_task_settlement_before_ipc() {
         action: Action::Submit,
         receipt: receipt.clone(),
         previous: Some(prior),
+        previous_never_admitted: false,
         ai_live: false,
     };
     assert_eq!(job.run().result.unwrap_err().code, "bot_previous_active");
@@ -349,6 +350,7 @@ fn submit_job_checks_fresh_authority_and_previous_task_settlement_before_ipc() {
         action: Action::Submit,
         receipt,
         previous: None,
+        previous_never_admitted: false,
         ai_live: false,
     };
     assert!(job.run().result.is_err());
