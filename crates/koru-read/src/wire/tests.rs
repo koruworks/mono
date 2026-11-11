@@ -224,3 +224,22 @@ fn the_protocol_and_frame_versions_are_two_numbers() {
     assert_eq!(PROTOCOL_VERSION, 1);
     assert_eq!(FRAME_VERSION, 1);
 }
+
+/// **The bootstrap line, pinned.** The Store writes it and the worker reads
+/// it; both sides compile against this one shape, and it is one line, so it
+/// must never serialize with a newline in it.
+#[test]
+fn the_bootstrap_has_a_pinned_one_line_shape() {
+    let bootstrap = WorkerBootstrap {
+        bootstrap_version: BOOTSTRAP_VERSION,
+        launch_id: "launch-1".into(),
+        channel: "nightly".into(),
+    };
+    round_trip(
+        &bootstrap,
+        json!({ "bootstrap_version": 1, "launch_id": "launch-1", "channel": "nightly" }),
+    );
+    let line = serde_json::to_string(&bootstrap).unwrap();
+    assert!(!line.contains('\n'));
+    assert_eq!(BOOTSTRAP_VERSION, 1);
+}

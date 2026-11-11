@@ -902,6 +902,12 @@ pub const VARS: &[EnvVar] = &[
         "koru-voice-worker",
     ),
     value_var(
+        name::KORU_READ_IDLE_EXIT,
+        "whole seconds; 0 never exits",
+        "How long the read worker stays running with no file to read. It parses untrusted PDFs, so ending the process is what gives back whatever a hostile file made it hold; the Store starts a new worker for the next file. A status question does not count as work.",
+        "koru-read-worker",
+    ),
+    value_var(
         name::KORU_DICTIONARIES,
         "a directory path",
         "Where the spell-check dictionaries live, overriding both `--root` and the local-data default. One directory per language tag (`en-US/dictionary.aff` + `dictionary.dic`), written by `scripts/setup/fetch-dictionaries`. The corpus and benchmark tests read *only* this variable and skip when it is unset - they never perform the default-directory resolution, so a machine with dictionaries installed runs the same suite CI does.",
@@ -1103,6 +1109,7 @@ pub mod name {
     pub const KORU_DICTIONARIES: &str = "KORU_DICTIONARIES";
     pub const KORU_SPELL_DEBUG: &str = "KORU_SPELL_DEBUG";
     pub const KORU_VOICE_IDLE_EXIT: &str = "KORU_VOICE_IDLE_EXIT";
+    pub const KORU_READ_IDLE_EXIT: &str = "KORU_READ_IDLE_EXIT";
     pub const KORU_VERSION: &str = "KORU_VERSION";
     pub const KORU_BUILD_NUMBER: &str = "KORU_BUILD_NUMBER";
     pub const KORU_RELEASE_CHANNEL: &str = "KORU_RELEASE_CHANNEL";

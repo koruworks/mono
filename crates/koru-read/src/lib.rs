@@ -83,5 +83,6 @@ pub use reading::{
     Source, TEXT_PAGE_CAP,
 };
 pub use wire::{
-    Event, FRAME_VERSION, FailureCode, JobId, PROTOCOL_VERSION, Request, Want, WorkerStatus,
+    BOOTSTRAP_VERSION, Event, FRAME_VERSION, FailureCode, JobId, PROTOCOL_VERSION, Request, Want,
+    WorkerBootstrap, WorkerStatus,
 };

@@ -205,6 +205,37 @@ impl Event {
     }
 }
 
+/// The version of [`WorkerBootstrap`]. A mismatch is refused, not interpreted:
+/// the Store and the worker ship in one package and are never mixed, so a
+/// disagreement means the wrong executable was started.
+pub const BOOTSTRAP_VERSION: u32 = 1;
+
+/// **What the supervising Store writes on the worker's stdin**, as one line of
+/// JSON, before anything else (TECHNICAL §10 "Worker launch").
+///
+/// The worker is started as `koru-read-worker --root <store dir> --supervised`
+/// through `koru-agent-worker`, which puts it in its memory-limited job and
+/// only then writes this line; the worker reads it with
+/// `koru_agent_worker::read_bootstrap_line` before it allocates anything worth
+/// counting, and the pipe left open behind it is the parent-death signal.
+///
+/// Here, in the contract, so the coordinator can write one without linking the
+/// worker. Only ids cross: no path, no credential (the root is on the command
+/// line, and the endpoint is derived from it).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerBootstrap {
+    /// [`BOOTSTRAP_VERSION`] as the Store writes it.
+    pub bootstrap_version: u32,
+    /// Which launch this is. Echoed as [`WorkerStatus::supervisor_launch_id`]
+    /// in the answer to the connection's first `Status`, which is how the
+    /// coordinator tells the process it launched from any other.
+    pub launch_id: String,
+    /// The channel segment (`stable`, `nightly`, …). Every endpoint name
+    /// carries it, so a worker of another channel would bind a name the Store
+    /// never dials; refused at start instead.
+    pub channel: String,
+}
+
 /// **What the worker says about itself.**
 ///
 /// Every field is an id, a count, a version or a flag — no path, no file's

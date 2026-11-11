@@ -242,7 +242,9 @@ try {
     $packages = @(
         "-p", "koru-agent",
         "-p", "koru",
-        "-p", "koru-voice-worker"
+        "-p", "koru-voice-worker",
+        # The Store's sibling, resolved beside koru-agent like the voice worker.
+        "-p", "koru-read-worker"
     )
     if ($Mcp) {
         $packages += @("-p", "koru-mcp")

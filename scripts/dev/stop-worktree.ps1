@@ -34,6 +34,7 @@ $images = @(
     (Join-Path $bin "koru-ai-chat.exe"),
     (Join-Path $bin "koru-mcp.exe"),
     (Join-Path $bin "koru-voice-worker.exe"),
+    (Join-Path $bin "koru-read-worker.exe"),
     (Join-Path $bin "koru-store-server.exe")
 )
 

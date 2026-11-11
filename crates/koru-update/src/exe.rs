@@ -137,16 +137,15 @@ pub const VOICE: &str = if cfg!(windows) {
 /// Store that supervises it ends, and the quiesce probe is what proves its
 /// image free.
 ///
-/// **Named here before it is built, and not yet in [`ALL`].** `apps/koru-read`
-/// does not exist yet; [`ALL`] is read in both directions — package
-/// validation requires every name in it, and `koru-release` builds, signs and
-/// stages every package its table pairs with one — so listing it now would
-/// refuse every package. The plan that creates the binary adds it to [`ALL`]
-/// and to `koru-release`'s `CHANNEL_BINARIES` (and the macOS notices list) in
-/// the same change. Keep this constant synchronized with the package and
-/// `[[bin]]` name `koru-read-worker`, the release/signing inventories, the
-/// Store's sibling resolution, launchers, stop scripts, logs and docs, as
-/// [`VOICE`]'s comment says for its worker.
+/// **In [`ALL`] on every platform, Linux included.** It reads text-layer PDFs
+/// and plain-text files with pure Rust, so it builds and ships wherever Koru
+/// does; only recognition is absent where no ONNX Runtime archive is pinned,
+/// and the worker says so itself. `apps/koru-read` builds it (OCR roadmap Plan
+/// 1.3), and `koru-release`'s `CHANNEL_BINARIES` and macOS notices list pair
+/// it. Keep this constant synchronized with the package and `[[bin]]` name
+/// `koru-read-worker`, the release/signing inventories, the Store's sibling
+/// resolution, launchers, stop scripts, logs and docs, as [`VOICE`]'s comment
+/// says for its worker.
 pub const READ: &str = if cfg!(windows) {
     "koru-read-worker.exe"
 } else {
@@ -306,13 +305,14 @@ pub const INVENTORY_VERSION: u32 = 10;
 /// **Linux carries no [`VOICE`] yet**: the worker is not built there until
 /// Linux rung 3 (`docs/features/linux/`), and requiring it would refuse every
 /// Linux package. That arm is deleted when voice lands on Linux, together with
-/// the Linux arm of `koru-release`'s `CHANNEL_BINARIES`.
+/// the Linux arm of `koru-release`'s `CHANNEL_BINARIES`. [`READ`] is in every
+/// arm: see its comment.
 #[cfg(windows)]
-pub const ALL: &[&str] = &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, READ, UPDATER];
 #[cfg(target_os = "linux")]
-pub const ALL: &[&str] = &[APP, AGENT, MCP, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, MCP, READ, UPDATER];
 #[cfg(not(any(windows, target_os = "linux")))]
-pub const ALL: &[&str] = &[APP, AGENT, MCP, VOICE, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, MCP, VOICE, READ, UPDATER];
 
 pub const NOTIFICATION_OWNER_INFO_PLIST: &str =
     "Koru.app/Contents/Library/LoginItems/Koru Agent.app/Contents/Info.plist";
@@ -427,23 +427,24 @@ mod tests {
     #[test]
     fn every_executable_is_in_the_list_exactly_once() {
         let expected: &[&str] = if cfg!(windows) {
-            &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER]
+            &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, READ, UPDATER]
         } else if cfg!(target_os = "linux") {
-            &[APP, AGENT, MCP, UPDATER]
+            &[APP, AGENT, MCP, READ, UPDATER]
         } else {
-            &[APP, AGENT, MCP, VOICE, UPDATER]
+            &[APP, AGENT, MCP, VOICE, READ, UPDATER]
         };
         assert_eq!(ALL, expected);
         assert_eq!(
             ALL.len(),
             if cfg!(windows) {
-                6
+                7
             } else if cfg!(target_os = "linux") {
-                4
-            } else {
                 5
+            } else {
+                6
             }
         );
+        assert_ne!(READ, VOICE);
         assert_eq!(
             ALL.iter().collect::<std::collections::HashSet<_>>().len(),
             ALL.len()
@@ -484,17 +485,6 @@ mod tests {
         } else {
             assert!(!ALL.contains(&COM_NOTIFICATION));
         }
-    }
-
-    /// **The read worker is named and not yet required.** No package can carry
-    /// it until `apps/koru-read` builds it, and requiring it would refuse every
-    /// package — see [`READ`]. The plan that builds it deletes this test, adds
-    /// [`READ`] to [`ALL`] and to `every_executable_is_in_the_list_exactly_once`,
-    /// and pairs it in `koru-release`'s `CHANNEL_BINARIES`.
-    #[test]
-    fn the_read_worker_is_named_but_not_yet_required_of_a_package() {
-        assert!(!ALL.contains(&READ));
-        assert_ne!(READ, VOICE);
     }
 
     /// The auxiliary set is macOS's login-item bundle and nothing else, with

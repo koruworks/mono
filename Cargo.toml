@@ -65,6 +65,18 @@ peniko = "0.6.1"
 # kurbo. `serde` is on so a scene is comparable as JSON in the tests; nothing
 # persists one.
 kurbo = { version = "0.13.1", features = ["serde"] }
+# **The PDF library, and only in `apps/koru-read`** (OCR TECHNICAL D7): pure
+# Rust, Apache-2.0 OR MIT, the library the planned in-app viewer uses, so the
+# reader and the viewer count pages identically. The interpreter re-exports
+# `hayro-syntax` (the parser) and `kurbo`, which is why neither is named here
+# a second time. Its default features stay on: `embed-fonts` carries
+# substitutes for the fourteen standard PDF fonts, without which a page set in
+# an unembedded Helvetica yields no glyphs and therefore no text, and
+# `embed-cmaps` carries Adobe's predefined CMaps for CJK text. Both are BSD-3
+# data compiled in; their notices are in `crates/koru-release/licences/bundled/`.
+# The renderer (`hayro`, which brings `vello_cpu`) arrives with recognition
+# (OCR Plan 2.3), not before.
+hayro-interpret = "0.9.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # Cron expression parsing and candidate exploration. Contained in
 # `koru-recurrence`: the stored language and public types remain Koru-owned,

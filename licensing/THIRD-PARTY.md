@@ -187,6 +187,26 @@ notices are `font-inter-android.txt` and `font-manrope-android.txt`, marked
 manifest pins an Android face that no such notice names ✅. The APK carries
 them in its generated `THIRD-PARTY-NOTICES.txt` ([§ Mobile](#mobile-3)) ✅.
 
+## The PDF library and the data it compiles in (2026-11-11)
+
+`koru-read-worker` reads PDFs with `hayro-interpret` 0.9.0 and the
+`hayro-syntax`, `hayro-font`, `hayro-cmap` and image-codec crates it brings,
+all Apache-2.0 OR MIT with their own license files, plus `brotli`,
+`brotli-decompressor`, `alloc-no-stdlib` (BSD-3-Clause, MIT), and
+`skrifa`/`read-fonts`/`fearless_simd` (MIT OR Apache-2.0). Every one ships its
+license file except **`alloc-stdlib` 0.2.4**, whose record holds its
+repository's BSD-3-Clause `LICENSE` at the published revision ✅. No new
+license kind; `cargo deny` passes unchanged.
+
+Two of those crates carry **data under a license of its own**, in an `assets/`
+folder the generator does not read (it copies only a crate's top-level
+license files): `hayro-font`'s fourteen Foxit Type 1 fonts from PDFium, the
+substitutes for the PDF standard fonts, and `hayro-cmap`'s Adobe CMap
+resources. Both are BSD-3-Clause, which asks a binary to carry the notice, so
+each has a bundled file — `pdf-standard-fonts.txt` and `adobe-cmaps.txt`, for
+Windows, macOS and Linux ✅. The renderer (`hayro`, which brings `vello_cpu`)
+is not in the tree yet; it arrives with recognition (OCR Plan 2.3).
+
 ## Spell dictionaries (⚑2, not shipped yet)
 
 `scripts/setup/fetch-dictionaries.*` fetches seven Hunspell dictionaries from

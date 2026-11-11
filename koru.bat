@@ -928,7 +928,7 @@ echo To open at a size: koru.bat --window-size 1024x768
 echo.
 echo "dist-local" builds exactly what a published release carries - koru.exe,
 echo koru-agent.exe, koru-com-notification.exe, koru-mcp.exe,
-echo koru-voice-worker.exe, koru-updater.exe and all thirty
+echo koru-voice-worker.exe, koru-read-worker.exe, koru-updater.exe and all thirty
 echo fonts - and
 echo stops. It takes a channel and an optional version. Internal is local-only:
 echo   stable ^| beta ^| nightly ^| internal
