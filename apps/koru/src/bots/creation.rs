@@ -606,19 +606,14 @@ impl CreateForm {
                     }
                 }
             }
-            // An answer that is not about this creation: the owner
-            // misbehaved, which is not progress either.
-            Ok(_) => {
-                self.notice = Some(Words::BotsErrNotApplied);
-                self.read_owed = self.sent;
-            }
-            Err(Failure::Unreachable) => match sent {
+            // **The outcome is unknown**: no answer, or one about something
+            // else, which is no answer either — a lost connection, a worker
+            // that timed out. The owner may hold the creation, so nothing
+            // is said to be not applied: what it holds is read.
+            Ok(_) | Err(Failure::Unanswered) => match sent {
                 // Only the question about it went unanswered: ask again on
                 // the clock.
-                Some(Sent::Read) => {
-                    self.backoff = (self.backoff * 2).min(READ_MAX);
-                    self.next_read = Some(now.checked_add(self.backoff).unwrap_or(now));
-                }
+                Some(Sent::Read) => self.read_again(now),
                 // A Create unanswered: the owner may hold it. Read what it
                 // holds before the person can change anything.
                 Some(Sent::Create) => {
@@ -626,14 +621,32 @@ impl CreateForm {
                     self.uncertain = true;
                     self.read_owed = true;
                 }
-                _ => self.notice = Some(Words::BotsErrUnreachable),
+                // A Retry or an Abandon unanswered: the creation's stage
+                // says what happened.
+                _ => {
+                    self.notice = Some(Words::BotsErrUnreachable);
+                    self.read_owed = self.sent || self.live.is_some();
+                }
             },
             Err(Failure::Refused(code)) => {
+                let again = Failure::Refused(code.clone()).again();
                 match (sent, code.as_str()) {
                     // A read of a creation the owner never accepted: there
                     // is none, and the draft is the person's to send.
                     (Some(Sent::Read), "not_found") if self.live.is_none() => {
                         self.uncertain = false;
+                    }
+                    // A read the owner turned away for now — busy, or what
+                    // the Bot needs not reachable: asked again on the clock.
+                    (Some(Sent::Read), _) if again => self.read_again(now),
+                    // **A read refused for good while the form does not know
+                    // whether the owner took the Create**: said, and the
+                    // person given a way forward — the draft is theirs
+                    // again, under new identities. A creation the owner did
+                    // hold is listed in the roster's Unfinished group.
+                    (Some(Sent::Read), _) if self.uncertain => {
+                        self.notice = Some(super::settings::general_refusal_words(&code));
+                        self.renew();
                     }
                     // The same request with other inputs: show what the
                     // owner holds.
@@ -644,11 +657,18 @@ impl CreateForm {
                     (Some(Sent::Create), "invalid_request") if self.draft.folder.is_some() => {
                         self.notice = Some(Words::BotsFolderRefused);
                     }
-                    _ => self.notice = Some(super::settings::refusal_words(&code)),
+                    _ => self.notice = Some(super::settings::general_refusal_words(&code)),
                 }
             }
         }
         settled
+    }
+
+    /// The read went unanswered, or was turned away for now: asked again
+    /// on the bounded clock (doubling to two seconds), never while hidden.
+    fn read_again(&mut self, now: Instant) {
+        self.backoff = (self.backoff * 2).min(READ_MAX);
+        self.next_read = Some(now.checked_add(self.backoff).unwrap_or(now));
     }
 
     /// New identities for the next attempt, after the owner ended the last.

@@ -367,8 +367,11 @@ fn refusals_read_as_sentences_and_a_competing_operation_is_shown() {
         ("bot_conversation_trashed", Words::BotsErrTrashed),
         ("bot_trashed", Words::BotsErrBotTrashed),
         ("bot_archived", Words::BotsErrArchived),
-        ("revision_conflict", Words::BotsChangedElsewhere),
-        ("something_new", Words::BotsErrNotApplied),
+        // A tab shows no settings to point at: the general sentences.
+        ("revision_conflict", Words::BotsErrRevisionConflict),
+        ("something_new", Words::BotsErrNotDone),
+        // `ai_worker_saturated`: never queued, so a refusal.
+        ("ai_worker_saturated", Words::BotsErrBusy),
     ] {
         let (mut model, mut bot) = fixture();
         let (request, _) = sent(model.begin(Ask::Trash, &bot).unwrap());
@@ -403,7 +406,7 @@ fn an_unanswered_command_is_asked_about_not_claimed() {
     let (mut model, bot) = fixture();
     let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
     let now = Instant::now();
-    model.answer(request, Err(Failure::Unreachable), now);
+    model.answer(request, Err(Failure::lost()), now);
     assert!(model.busy(), "still on its way, as far as anyone knows");
     model.read_now(now);
     model.read(now).expect("asked about");
@@ -542,10 +545,16 @@ fn a_restore_of_a_source_already_used_says_it_was_restored_already() {
         restore_refusal_words("request_conflict"),
         Words::BotsErrRestoreConflict
     );
-    // A code no build knows yet is the general sentence, never blank.
+    // A revision moved elsewhere reads the same: the read speaks.
+    assert_eq!(
+        restore_refusal_words("revision_conflict"),
+        Words::BotsErrRestoreConflict
+    );
+    // A code no build knows yet is the general sentence — true where no
+    // settings are shown — never blank.
     assert_eq!(
         restore_refusal_words("bot_new_in_a_later_build"),
-        Words::BotsErrNotApplied
+        Words::BotsErrNotDone
     );
 }
 
@@ -596,7 +605,7 @@ fn an_unanswered_archive_says_koru_ai_is_not_answering() {
     let (request, _) = sent(model.begin(Ask::Archive, &bot).unwrap());
     assert!(!model.op().unwrap().unanswered);
     let now = Instant::now();
-    model.answer(request, Err(Failure::Unreachable), now);
+    model.answer(request, Err(Failure::lost()), now);
     assert!(model.op().unwrap().unanswered);
     assert!(model.busy(), "still on its way, as far as anyone knows");
     let later = now + Duration::from_secs(5);
@@ -612,4 +621,133 @@ fn an_unanswered_archive_says_koru_ai_is_not_answering() {
         later,
     );
     assert!(!model.op().unwrap().unanswered, "it answered");
+}
+
+/// **A moving Archive whose read is lost in transport keeps moving** — the
+/// second review's proof, turned round. The answer goes through the real
+/// link's reading of what `koru_api_client` reports (`gateway_unavailable`
+/// for a lost connection, `ai_worker_timeout` when the AI worker did not
+/// answer in time): the operation is still followed on the clock and said
+/// as unanswered, never dropped as not applied; and a Trash whose own
+/// answer is lost the same way is asked about, not claimed either way.
+#[test]
+fn a_lost_answer_keeps_an_operation_followed_never_dropped() {
+    use crate::bots::link::{Said, wrote};
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Archive, &bot).expect("archive"));
+    let now = Instant::now();
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Settling,
+        ),
+        now,
+    );
+    let later = now + Duration::from_secs(1);
+    assert!(model.read(later).is_some(), "read on the clock");
+    model.answer(
+        request,
+        wrote(Err(Said::new("gateway_unavailable", true))),
+        later,
+    );
+    assert!(model.busy(), "still followed");
+    assert_eq!(model.outcome(), None, "nothing claimed");
+    assert!(model.op().unwrap().unanswered, "said as unanswered");
+    assert!(model.deadline(later).is_some(), "read again on the clock");
+    let again = later + Duration::from_secs(5);
+    assert!(model.read(again).is_some(), "and read");
+    // The command's own answer lost the same way.
+    let (mut model, bot) = fixture();
+    let (request, _) = sent(model.begin(Ask::Trash, &bot).expect("trash"));
+    model.answer(
+        request,
+        wrote(Err(Said::new("ai_worker_timeout", true))),
+        now,
+    );
+    assert!(model.busy(), "asked about, not claimed");
+    assert_eq!(model.outcome(), None);
+    assert!(
+        model.read(later).is_some(),
+        "the owner is asked what it holds"
+    );
+}
+
+/// **A parked operation the owner took up again by itself is followed** —
+/// the engine resumes a parked Archive or Trash (`owner_unavailable`) once
+/// its execution owner answers, so the Bot's next read names the same
+/// operation moving: the tab follows it on the clock without the person
+/// pressing Continue, and a later read that parks it again is shown parked.
+#[test]
+fn a_read_that_names_the_same_operation_at_a_new_stage_updates_it() {
+    let (mut model, mut bot) = fixture();
+    let request = BotRequestId::mint();
+    let open = |stage| BotOpenLifecycle {
+        request_id: request,
+        kind: BotLifecycleKind::Archive,
+        chat_id: None,
+        stage,
+        refusal: (stage == BotLifecycleStage::Incomplete)
+            .then_some(BotLifecycleRefusal::OwnerUnavailable),
+    };
+    bot.open_operation = Some(open(BotLifecycleStage::Incomplete));
+    model.know(&bot);
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    assert_eq!(model.deadline(Instant::now()), None, "waits for the person");
+    bot.open_operation = Some(open(BotLifecycleStage::Settling));
+    model.know(&bot);
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Moving));
+    let later = Instant::now() + Duration::from_millis(1);
+    let (asked, _) = sent(model.read(later).expect("read on the clock"));
+    assert_eq!(asked, request, "the same operation");
+    model.answer(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+        later,
+    );
+    assert_eq!(model.outcome(), Some(&Outcome::Archived));
+    // And one parked again by a read is shown parked.
+    let (mut model, mut bot) = fixture();
+    bot.open_operation = Some(open(BotLifecycleStage::Settling));
+    model.know(&bot);
+    bot.open_operation = Some(open(BotLifecycleStage::Incomplete));
+    model.know(&bot);
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+}
+
+/// **A write's answer never drops or replaces an operation** — only a read
+/// does. A settings save is answered with the Bot the owner wrote
+/// (`execute_bot_command`'s `BotResponse::Bot`), which reports no open
+/// operation; a conversation's parked Trash the tab follows is still
+/// followed after it, with its Continue and Cancel.
+#[test]
+fn a_writes_answer_never_drops_an_operation() {
+    let (mut model, mut bot) = fixture();
+    let parked = BotRequestId::mint();
+    bot.open_operation = Some(BotOpenLifecycle {
+        request_id: parked,
+        kind: BotLifecycleKind::TrashChat,
+        chat_id: Some(ChatId::new()),
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::WorkRunning),
+    });
+    model.know(&bot);
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    let mut saved = bot.clone();
+    saved.config.name = "Scout two".into();
+    saved.revision += 1;
+    saved.open_operation = None;
+    model.know_written(&saved);
+    assert_eq!(model.op().map(|op| op.request), Some(parked), "kept");
+    assert_eq!(model.op().map(|op| op.stage), Some(Stage::Parked));
+    // A read that no longer names it is what drops it.
+    model.know(&saved);
+    assert!(model.op().is_none(), "the read's word");
 }

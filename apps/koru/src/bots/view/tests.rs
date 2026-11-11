@@ -135,7 +135,7 @@ fn a_stale_bot_read_is_ignored_and_a_failed_one_keeps_what_was_shown() {
     // Asked again; the answer is a failure.
     assert!(f.view.ask());
     let again = f.asked();
-    assert!(f.answer(again, f.bot.id, Err(Failure::Unreachable)));
+    assert!(f.answer(again, f.bot.id, Err(Failure::lost())));
     assert_eq!(f.view.load(), Load::Unavailable);
     assert_eq!(
         f.view.facts().map(|facts| facts.name.as_str()),
@@ -1280,7 +1280,7 @@ fn a_hidden_tabs_list_reads_once_when_shown_again() {
         .send(Answer::Chats {
             seq,
             bot: f.bot.id,
-            result: Err(Failure::Unreachable),
+            result: Err(Failure::lost()),
         })
         .unwrap();
     f.view.poll();

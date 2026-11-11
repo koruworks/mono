@@ -345,6 +345,11 @@ pub(crate) struct BotView {
     /// only the read says which, so the ⋯ and the rows' Trash offer nothing
     /// until it answers rather than something the owner would refuse.
     lifecycle_awaits_read: bool,
+    /// **When the Bot's read is asked again** after one that did not answer
+    /// while [`Self::lifecycle_awaits_read`] holds, on the bounded clock
+    /// (250 ms doubling to 2 s), only while shown.
+    bot_read_next: Option<std::time::Instant>,
+    bot_read_backoff: std::time::Duration,
     /// A Trash filter read is owed: the Bot went to Trash, or its read said
     /// it is not found.
     trash_read_owed: bool,
@@ -435,6 +440,8 @@ impl BotView {
             lifecycle: Box::default(),
             trashed_bot: None,
             lifecycle_awaits_read: false,
+            bot_read_next: None,
+            bot_read_backoff: BOT_READ_FIRST,
             trash_read_owed: false,
             trash_in_flight: false,
             trash_seq: 0,
@@ -465,10 +472,12 @@ impl BotView {
         true
     }
 
-    /// **A Bot opened from the roster**: the roster's answer is fresh, so
-    /// the tab knows its Bot and binds its conversation at once; it asks
-    /// the Bot service nothing more until it is opened again. Test only:
-    /// the window opens a Bot on a chosen conversation ([`Self::opened_on`]).
+    /// **A Bot opened from the roster**: the roster's row is fresh, so the
+    /// tab knows its Bot and binds its conversation at once; the first time
+    /// it is shown it reads the Bot once, as every tab does — the row does
+    /// not carry the Bot's open operation, its holders or its settings.
+    /// Test only: the window opens a Bot on a chosen conversation
+    /// ([`Self::opened_on`]).
     #[cfg(test)]
     pub(crate) fn opened(bot: &RosterBot) -> Self {
         Self::opened_on(bot, bot.main_chat, None)
@@ -484,7 +493,9 @@ impl BotView {
     ) -> Self {
         let mut view = Self::blank(Some(bot.id), chat);
         view.pending_block = block;
-        view.asked = true;
+        // Not `asked`: the first showing reads the Bot, so a parked or
+        // moving operation, an archived Bot's holder and the settings are
+        // the owner's from the start, not from the roster's row.
         view.know(BotFacts::from(bot));
         view
     }
@@ -630,6 +641,9 @@ impl BotView {
         if (self.started_link && self.asked) || self.opening() == Some(Opening::Failed) {
             self.stale = true;
         }
+        // No clock while hidden: shown again, it reads once.
+        self.bot_read_next = None;
+        self.bot_read_backoff = BOT_READ_FIRST;
     }
 
     /// **Shown again after a read of whose the conversation is failed**:
@@ -646,12 +660,17 @@ impl BotView {
 
     /// The embedded chat, once bound: the window's chat passes reach it
     /// through `TabView::chat_view`.
+    /// `None` while the conversation is let go (its Bot in Trash): the
+    /// window's passes never reach a chat kept only for its draft.
     pub(crate) fn conversation(&self) -> Option<&AiChatView> {
-        self.conversation.as_ref()
+        self.conversation
+            .as_ref()
+            .filter(|_| self.conversation_live())
     }
 
     pub(crate) fn conversation_mut(&mut self) -> Option<&mut AiChatView> {
-        self.conversation.as_mut()
+        let live = self.conversation_live();
+        self.conversation.as_mut().filter(|_| live)
     }
 
     /// What the tab strip calls it: the Bot's name, or *Bot* until the Bot
@@ -738,14 +757,25 @@ impl BotView {
         self.load = Load::Ready;
     }
 
-    /// **A trashed Bot's conversation is let go**: the owner refuses every
-    /// read of it (`bot_trashed`), so the embedded chat — its reader, its
-    /// maintenance — is dropped rather than left bound and maintained
-    /// behind a header that no longer shows it. A Restore's read binds a
-    /// new one ([`Self::know`]).
+    /// **A trashed Bot's conversation is let go, and its draft kept**: the
+    /// owner refuses every read of it (`bot_trashed`), so the embedded
+    /// chat's client is stopped ([`AiChatView::deactivate`]) and it is
+    /// neither maintained nor drawn behind a header that no longer shows it
+    /// ([`Self::conversation_live`]). The view itself — the person's unsent
+    /// draft and staged attachments, which live only in memory — is kept,
+    /// whoever did the Trash: a Restore's read binds it again and starts
+    /// its client ([`Self::know`]).
     pub(super) fn release_conversation(&mut self) {
-        self.conversation = None;
+        if let Some(conversation) = &mut self.conversation {
+            conversation.deactivate();
+        }
         self.started_chat = false;
+    }
+
+    /// Whether the embedded chat is in use: bound, and its Bot not in
+    /// Trash. A let-go conversation is kept for its draft and nothing else.
+    fn conversation_live(&self) -> bool {
+        !self.facts.as_ref().is_some_and(|facts| facts.trashed)
     }
 
     /// **The pass a shown tab runs** — from its draw and its maintenance,
@@ -782,10 +812,12 @@ impl BotView {
         if self.settings.take_read_owed() {
             self.asked = false;
         }
+        self.bot_read_due(std::time::Instant::now());
         let asked = !self.asked && !self.in_flight && self.ask();
         let answered = self.poll();
         let polled = self.send_polls();
         if !self.started_chat
+            && self.conversation_live()
             && let Some(conversation) = &mut self.conversation
         {
             self.started_chat = true;
@@ -920,7 +952,9 @@ impl BotView {
             let settled = self.settings.answer(request, result, now);
             changed |= settled.matched;
             if let Some(bot) = settled.bot {
-                self.lifecycle.know(&bot);
+                // A write's answer: it never drops or replaces the
+                // operation the tab follows — only a read does.
+                self.lifecycle.know_written(&bot);
                 self.know(BotFacts::from(bot));
             }
         }
@@ -939,20 +973,58 @@ impl BotView {
         match result {
             // A Bot that says it is another is not this tab's.
             Ok(bot) if Some(bot.id) == self.bot => {
+                self.bot_read_answered();
                 self.settings.know(bot.clone());
-                self.lifecycle.know(&bot);
                 if bot.lifecycle != BotLifecycle::Trashed {
                     self.trashed_bot = None;
                 }
-                self.know(BotFacts::from(bot));
+                // **The lifecycle knows its Bot before it reads the open
+                // operation**: `know` gives it the Bot, so the first read of
+                // a tab restored at startup or opened from a link adopts a
+                // parked or moving operation rather than finding no Bot.
+                self.know(BotFacts::from(bot.clone()));
+                self.lifecycle.know(&bot);
             }
             // A trashed Bot's read answers *not found* (P1.7): its home's
             // Trash filter says whether that is where it is.
             Err(Failure::Refused(code)) if code == "not_found" && self.facts.is_some() => {
+                self.bot_read_answered();
                 self.trash_read_owed = true;
             }
-            Ok(_) | Err(_) => self.load = Load::Unavailable,
+            Ok(_) => self.load = Load::Unavailable,
+            Err(failure) => {
+                self.load = Load::Unavailable;
+                // **A read a Restore left owed is asked again** on the
+                // bounded clock while the tab is shown — until it answers,
+                // nothing else is offered — when asking again may help.
+                if self.lifecycle_awaits_read && failure.again() {
+                    self.bot_read_again(std::time::Instant::now());
+                }
+            }
         }
+    }
+
+    /// The Bot's read answered: no retry of it is owed.
+    fn bot_read_answered(&mut self) {
+        self.bot_read_next = None;
+        self.bot_read_backoff = BOT_READ_FIRST;
+    }
+
+    /// The Bot's read is owed again at the next step of the bounded clock.
+    fn bot_read_again(&mut self, now: std::time::Instant) {
+        let wait = self.bot_read_backoff;
+        self.bot_read_next = Some(now.checked_add(wait).unwrap_or(now));
+        self.bot_read_backoff = (wait * 2).min(BOT_READ_MAX);
+    }
+
+    /// The Bot's read is due again: asked on the next shown pass.
+    fn bot_read_due(&mut self, now: std::time::Instant) -> bool {
+        if self.in_flight || !self.bot_read_next.is_some_and(|at| at <= now) {
+            return false;
+        }
+        self.bot_read_next = None;
+        self.asked = false;
+        true
     }
 
     // ------------------------------------------------------------ frame
@@ -1198,8 +1270,7 @@ impl BotView {
     /// Lay the conversation out where the tab's frame puts it. `true` when
     /// it moved.
     fn place_conversation(&mut self, area: Rect) -> bool {
-        self.conversation
-            .as_mut()
+        self.conversation_mut()
             .is_some_and(|conversation| conversation.set_area(area))
     }
 
@@ -1423,7 +1494,7 @@ impl BotView {
 
 impl View for BotView {
     fn set_mods(&mut self, mods: ModifiersState) {
-        if let Some(conversation) = &mut self.conversation {
+        if let Some(conversation) = self.conversation_mut() {
             View::set_mods(conversation, mods);
         }
     }
@@ -1453,8 +1524,7 @@ impl View for BotView {
         if !self.shows_conversation() {
             return false;
         }
-        self.conversation
-            .as_mut()
+        self.conversation_mut()
             .is_some_and(|conversation| View::key(conversation, ws, key, text, mods))
     }
 
@@ -1477,8 +1547,7 @@ impl View for BotView {
             return false;
         }
         self.focus = None;
-        self.conversation
-            .as_mut()
+        self.conversation_mut()
             .is_some_and(|conversation| View::mouse_down(conversation, ws, x, y, ctrl))
     }
 
@@ -1524,8 +1593,7 @@ impl View for BotView {
         if self.form_open() {
             return false;
         }
-        self.conversation
-            .as_mut()
+        self.conversation_mut()
             .is_some_and(|conversation| View::mouse_up(conversation, ws))
     }
 
@@ -1533,8 +1601,7 @@ impl View for BotView {
         if self.form_open() || !self.shows_conversation() || !self.on_conversation(x, y) {
             return false;
         }
-        self.conversation
-            .as_mut()
+        self.conversation_mut()
             .is_some_and(|conversation| View::mouse_double_click(conversation, ws, x, y))
     }
 
@@ -1573,7 +1640,7 @@ impl View for BotView {
         if !self.shows_conversation() {
             return;
         }
-        if let Some(conversation) = &mut self.conversation {
+        if let Some(conversation) = self.conversation_mut() {
             View::scroll_by(conversation, delta);
         }
     }
@@ -1600,8 +1667,7 @@ impl View for BotView {
         if self.form_open() {
             return CursorIcon::Default;
         }
-        self.conversation
-            .as_ref()
+        self.conversation()
             .map_or(CursorIcon::Default, View::cursor_icon)
     }
 
@@ -1610,7 +1676,7 @@ impl View for BotView {
     fn reseat(&mut self, _ws: &WorkspaceDoc) {}
 
     fn invalidate(&mut self) {
-        if let Some(conversation) = &mut self.conversation {
+        if let Some(conversation) = self.conversation_mut() {
             View::invalidate(conversation);
         }
     }
@@ -1740,7 +1806,7 @@ impl View for BotView {
     }
 
     fn animating(&self) -> bool {
-        self.conversation.as_ref().is_some_and(View::animating)
+        self.conversation().is_some_and(View::animating)
     }
 
     fn maintenance_deadline(&self) -> Option<std::time::Instant> {
@@ -1763,19 +1829,19 @@ impl View for BotView {
         });
         // A create tab's creation, moving and shown (S8).
         let creating = (!self.stale).then(|| self.create_deadline(now)).flatten();
+        // A Bot read owed again on its clock, shown only.
+        let reread = self.bot_read_next.filter(|_| !self.stale);
         let mine = [
             read,
             self.settings.deadline(now),
             self.lifecycle_deadline(now),
             creating,
+            reread,
         ]
         .into_iter()
         .flatten()
         .min();
-        let chat = self
-            .conversation
-            .as_ref()
-            .and_then(View::maintenance_deadline);
+        let chat = self.conversation().and_then(View::maintenance_deadline);
         match (mine, chat) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -1797,10 +1863,11 @@ impl View for BotView {
             !self.stale && self.form_open() && self.catalog.pass(crate::search::gateway_root());
         // A create tab's read on its clock, never while hidden (S8).
         let read = !self.stale && self.send_create_read(now);
-        let folded = folded || polled || listed || lifecycle || catalog || read;
+        // The Bot's read owed again: asked on the pass this repaint runs.
+        let reread = !self.stale && self.bot_read_due(now);
+        let folded = folded || polled || listed || lifecycle || catalog || read || reread;
         let chat = self
-            .conversation
-            .as_mut()
+            .conversation_mut()
             .is_some_and(|conversation| View::maintain(conversation, ws, now));
         folded || chat
     }

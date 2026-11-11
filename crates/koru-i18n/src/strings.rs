@@ -2091,8 +2091,6 @@ pub enum Key {
     TrashBotRestored,
     /// A trashed Bot conversation restored from the Trash: `{}` is its title.
     TrashBotChatRestored,
-    /// A Restore from the Trash the owner refused or did not answer: the first `{}` is the row's name, the second the refusal's own sentence — one template, so each language places and spaces it.
-    TrashBotRestoreFailed,
     /// The heading over a Bot's conversation list in its tab, and the list's accessible name (Bots P1.8 S8). Non-English columns machine-written, awaiting a native read.
     BotsConversations,
     /// The conversation column's accessible name: `{}` is the Bot's name.
@@ -3558,13 +3556,39 @@ pub enum Key {
     TrashSubtitleMore,
     /// The owner's `folder_reserved`: the folder chosen for a Bot, on creation or a change of folder, is Koru's own data or inside it. A folder that does not exist stays `BotsFolderRefused`.
     BotsErrFolderReserved,
+    /// A refusal by a code this build does not know, said where no Bot settings are shown (the create form, the roster, a tab's lifecycle). A refusal is a change the owner did not commit. Non-English columns machine-written, awaiting a native read.
+    BotsErrNotDone,
+    /// The owner's `revision_conflict`, said where no Bot settings are shown: the Bot changed elsewhere since it was read, and nothing changed here.
+    BotsErrRevisionConflict,
+    /// The AI worker's `ai_worker_saturated`: its queue was full and the command was never queued. Retryable.
+    BotsErrBusy,
+    /// A Restore from the Trash the owner refused, by a code with no sentence of its own: `{}` is the row's name.
+    TrashBotRestoreRefused,
+    /// A Restore from the Trash Koru AI did not answer: it may have happened, and the Trash is read again. `{}` is the row's name.
+    TrashBotRestoreUnconfirmed,
+    /// A Restore from the Trash the owner refused as `request_conflict` or `revision_conflict`: restored already, or the Bot changed elsewhere. Never said as not restored; the Trash is read again. `{}` is the row's name.
+    TrashBotRestoreChanged,
+    /// A conversation's Restore while its Bot is in the Trash (`bot_trashed`): the Bot comes back first. `{}` is the conversation's title.
+    TrashBotRestoreBotFirst,
+    /// A conversation's Restore while its Bot is archived (`bot_archived`): the Bot is unarchived first. `{}` is the conversation's title.
+    TrashBotRestoreUnarchiveFirst,
+    /// A Restore from the Trash the owner turned away for now (busy, or what the Bot needs not reachable). `{}` is the row's name.
+    TrashBotRestoreLater,
+    /// A Restore from the Trash refused because another operation of the Bot is moving or parked (`bot_lifecycle_pending`). `{}` is the row's name.
+    TrashBotRestoreBusy,
+    /// A Restore from the Trash that was never sent: the link would not take it, or the read its revision needed did not answer. `{}` is the row's name.
+    TrashBotRestoreNotSent,
+    /// The roster's word when the owner's read of an unfinished creation says it was rejected before it made anything.
+    BotsUnfinishedRejected,
+    /// A Bot's menu or question was answered after the tab that asked closed or moved to another Bot: nothing was sent.
+    BotsAskingTabGone,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2411] = [
+    pub const ALL: [Key; 2423] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4984,7 +5008,6 @@ impl Key {
         Key::TrashEmptyBotsNote,
         Key::TrashBotRestored,
         Key::TrashBotChatRestored,
-        Key::TrashBotRestoreFailed,
         Key::BotsConversations,
         Key::BotsConversationsA11y,
         Key::BotsNewConversation,
@@ -5976,6 +5999,19 @@ impl Key {
         Key::BotsUnfinishedMore,
         Key::TrashSubtitleMore,
         Key::BotsErrFolderReserved,
+        Key::BotsErrNotDone,
+        Key::BotsErrRevisionConflict,
+        Key::BotsErrBusy,
+        Key::TrashBotRestoreRefused,
+        Key::TrashBotRestoreUnconfirmed,
+        Key::TrashBotRestoreChanged,
+        Key::TrashBotRestoreBotFirst,
+        Key::TrashBotRestoreUnarchiveFirst,
+        Key::TrashBotRestoreLater,
+        Key::TrashBotRestoreBusy,
+        Key::TrashBotRestoreNotSent,
+        Key::BotsUnfinishedRejected,
+        Key::BotsAskingTabGone,
     ];
 }
 
@@ -16929,17 +16965,6 @@ pub const ROWS: &[Row] = &[
         ja: "「{}」を復元しました。",
     },
     Row {
-        key: Key::TrashBotRestoreFailed,
-        en: "“{}” wasn't restored. {}",
-        es: "«{}» no se restauró. {}",
-        pt_br: "“{}” não foi restaurado. {}",
-        de: "„{}“ wurde nicht wiederhergestellt. {}",
-        fr: "« {} » n'a pas été restauré. {}",
-        ar: "لم تتم استعادة «{}». {}",
-        zh_hans: "“{}”未恢复。{}",
-        ja: "「{}」は復元されませんでした。{}",
-    },
-    Row {
         key: Key::BotsConversations,
         en: "Conversations",
         es: "Conversaciones",
@@ -19303,7 +19328,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ProfileLeaveRemovedFailed, en: "Couldn't leave the removed workspace", es: "No se pudo salir del espacio de trabajo eliminado", pt_br: "Não foi possível sair do espaço de trabalho removido", de: "Der entfernte Arbeitsbereich konnte nicht verlassen werden", fr: "Impossible de quitter l’espace de travail supprimé", ar: "تعذّر مغادرة مساحة العمل المُزالة", zh_hans: "无法离开已移除的工作区", ja: "削除されたワークスペースから移動できませんでした" },
     // ------------------------------------------- Bots P1.8: the review's fix round
     Row { key: Key::BotsErrRestoreConflict, en: "This was already restored, or the bot changed somewhere else.", es: "Esto ya se restauró, o el bot cambió en otro lugar.", pt_br: "Isso já foi restaurado, ou o bot mudou em outro lugar.", de: "Das wurde bereits wiederhergestellt, oder der Bot wurde an anderer Stelle geändert.", fr: "Cet élément a déjà été restauré, ou le bot a été modifié ailleurs.", ar: "تمت استعادة هذا بالفعل، أو تغيّر البوت في مكان آخر.", zh_hans: "它已被恢复，或者 Bot 已在别处更改。", ja: "これはすでに復元されたか、Bot が別の場所で変更されました。" },
-    Row { key: Key::BotsErrNotReady, en: "What runs this bot isn't ready yet. Try again in a moment.", es: "Lo que ejecuta este bot aún no está listo. Inténtalo de nuevo en un momento.", pt_br: "O que executa este bot ainda não está pronto. Tente de novo em instantes.", de: "Was diesen Bot ausführt, ist noch nicht bereit. Versuchen Sie es gleich noch einmal.", fr: "Ce qui exécute ce bot n'est pas encore prêt. Réessayez dans un instant.", ar: "ما يشغّل هذا البوت ليس جاهزًا بعد. حاول مجددًا بعد لحظة.", zh_hans: "运行此 Bot 的程序尚未就绪。请稍后再试。", ja: "この Bot を実行するものの準備がまだできていません。少し待ってからもう一度お試しください。" },
+    Row { key: Key::BotsErrNotReady, en: "Koru couldn't reach what this bot needs. Try again in a moment.", es: "Koru no pudo acceder a lo que necesita este bot. Inténtalo de nuevo en un momento.", pt_br: "O Koru não conseguiu acessar o que este bot precisa. Tente de novo em instantes.", de: "Koru konnte nicht erreichen, was dieser Bot braucht. Versuchen Sie es gleich noch einmal.", fr: "Koru n'a pas pu joindre ce dont ce bot a besoin. Réessayez dans un instant.", ar: "تعذّر على Koru الوصول إلى ما يحتاجه هذا البوت. حاول مجددًا بعد لحظة.", zh_hans: "Koru 无法连接到此 Bot 所需的内容。请稍后再试。", ja: "Koru はこの Bot に必要なものに接続できませんでした。少し待ってからもう一度お試しください。" },
     Row { key: Key::BotsErrOperationPending, en: "An earlier change to this bot is still being delivered. Try again in a moment.", es: "Un cambio anterior en este bot todavía se está entregando. Inténtalo de nuevo en un momento.", pt_br: "Uma alteração anterior neste bot ainda está sendo entregue. Tente de novo em instantes.", de: "Eine frühere Änderung an diesem Bot wird noch übermittelt. Versuchen Sie es gleich noch einmal.", fr: "Une modification précédente de ce bot est encore en cours de transmission. Réessayez dans un instant.", ar: "لا يزال تغيير سابق على هذا البوت قيد التسليم. حاول مجددًا بعد لحظة.", zh_hans: "此 Bot 之前的一项更改仍在传达中。请稍后再试。", ja: "この Bot への以前の変更をまだ届けています。少し待ってからもう一度お試しください。" },
     Row { key: Key::BotsLifecycleUnanswered, en: "Koru AI isn't answering. Koru keeps checking whether this change finished.", es: "Koru AI no responde. Koru sigue comprobando si este cambio terminó.", pt_br: "O Koru AI não está respondendo. O Koru continua verificando se esta alteração terminou.", de: "Koru AI antwortet nicht. Koru prüft weiter, ob diese Änderung abgeschlossen ist.", fr: "Koru AI ne répond pas. Koru continue de vérifier si cette modification est terminée.", ar: "لا يستجيب Koru AI. يواصل Koru التحقق مما إذا كان هذا التغيير قد انتهى.", zh_hans: "Koru AI 没有响应。Koru 会继续检查这项更改是否已完成。", ja: "Koru AI が応答していません。Koru はこの変更が完了したかどうかを確認し続けます。" },
     Row { key: Key::BotsLinkInTrashWithBot, en: "That conversation went to the Trash with its bot. Restoring the bot brings it back.", es: "Esa conversación fue a la papelera con su bot. Restaurar el bot la recupera.", pt_br: "Essa conversa foi para a lixeira com o bot. Restaurar o bot a traz de volta.", de: "Diese Unterhaltung kam mit ihrem Bot in den Papierkorb. Wenn Sie den Bot wiederherstellen, kommt sie zurück.", fr: "Cette conversation est partie dans la corbeille avec son bot. Restaurer le bot la ramène.", ar: "ذهبت تلك المحادثة إلى سلة المهملات مع البوت الخاص بها. استعادة البوت تعيدها.", zh_hans: "该对话与它的 Bot 一起进入了回收站。恢复 Bot 即可将其找回。", ja: "その会話は Bot と一緒にごみ箱に移動しました。Bot を復元すると会話も戻ります。" },
@@ -19313,4 +19338,18 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsUnfinishedMore, en: "There are more unfinished bots than can be listed here. Retry or abandon some to see the rest.", es: "Hay más bots sin terminar de los que se pueden mostrar aquí. Reintenta o abandona algunos para ver el resto.", pt_br: "Há mais bots inacabados do que é possível listar aqui. Tente de novo ou abandone alguns para ver o restante.", de: "Es gibt mehr unfertige Bots, als hier aufgeführt werden können. Wiederholen oder verwerfen Sie einige, um den Rest zu sehen.", fr: "Il y a plus de bots inachevés qu'il n'est possible d'en afficher ici. Réessayez ou abandonnez-en quelques-uns pour voir les autres.", ar: "هناك بوتات غير مكتملة أكثر مما يمكن عرضه هنا. أعد محاولة بعضها أو تخلَّ عنه لرؤية البقية.", zh_hans: "未完成的 Bot 多于这里能列出的数量。重试或放弃其中一些即可看到其余的。", ja: "ここに表示できる数より多くの未完成の Bot があります。いくつかを再試行するか破棄すると、残りが表示されます。" },
     Row { key: Key::TrashSubtitleMore, en: "Items remain here until they are permanently deleted. Not every bot conversation in the Trash is listed.", es: "Los elementos permanecen aquí hasta que se eliminan de forma permanente. No se muestran todas las conversaciones de bots de la papelera.", pt_br: "Os itens ficam aqui até serem excluídos permanentemente. Nem todas as conversas de bots na lixeira estão listadas.", de: "Elemente bleiben hier, bis sie endgültig gelöscht werden. Nicht alle Bot-Unterhaltungen im Papierkorb sind aufgeführt.", fr: "Les éléments restent ici jusqu'à leur suppression définitive. Toutes les conversations de bots de la corbeille ne sont pas affichées.", ar: "تبقى العناصر هنا إلى أن تُحذف نهائيًا. لا تظهر كل محادثات البوتات الموجودة في سلة المهملات.", zh_hans: "项目会保留在这里，直到被永久删除。并未列出回收站中的所有 Bot 对话。", ja: "完全に削除されるまで、項目はここに残ります。ごみ箱内の Bot の会話がすべて表示されているわけではありません。" },
     Row { key: Key::BotsErrFolderReserved, en: "That folder is part of Koru's own data. Choose another folder.", es: "Esa carpeta forma parte de los datos propios de Koru. Elige otra carpeta.", pt_br: "Essa pasta faz parte dos dados do próprio Koru. Escolha outra pasta.", de: "Dieser Ordner gehört zu Korus eigenen Daten. Wählen Sie einen anderen Ordner.", fr: "Ce dossier fait partie des données propres à Koru. Choisissez un autre dossier.", ar: "هذا المجلد جزء من بيانات Koru الخاصة. اختر مجلدًا آخر.", zh_hans: "该文件夹属于 Koru 自身的数据。请选择其他文件夹。", ja: "このフォルダーは Koru 自身のデータの一部です。別のフォルダーを選んでください。" },
+    // ------------------------------------------- Bots P1.8: the second review's fix round
+    Row { key: Key::BotsErrNotDone, en: "That wasn't done, and nothing changed.", es: "Eso no se hizo y nada cambió.", pt_br: "Isso não foi feito, e nada mudou.", de: "Das wurde nicht ausgeführt; nichts wurde geändert.", fr: "Cela n'a pas été fait, et rien n'a changé.", ar: "لم يتم ذلك، ولم يتغيّر شيء.", zh_hans: "未完成该操作，没有任何更改。", ja: "その操作は行われず、何も変更されていません。" },
+    Row { key: Key::BotsErrRevisionConflict, en: "This bot changed somewhere else, so nothing changed here. Try again.", es: "Este bot cambió en otro lugar, así que aquí no cambió nada. Inténtalo de nuevo.", pt_br: "Este bot mudou em outro lugar, então nada mudou aqui. Tente de novo.", de: "Dieser Bot wurde an anderer Stelle geändert, daher wurde hier nichts geändert. Versuchen Sie es noch einmal.", fr: "Ce bot a été modifié ailleurs, donc rien n'a changé ici. Réessayez.", ar: "تغيّر هذا البوت في مكان آخر، لذا لم يتغيّر شيء هنا. حاول مجددًا.", zh_hans: "此 Bot 已在别处更改，因此这里没有任何更改。请再试一次。", ja: "この Bot は別の場所で変更されたため、ここでは何も変更されていません。もう一度お試しください。" },
+    Row { key: Key::BotsErrBusy, en: "Koru AI is busy, so nothing changed. Try again in a moment.", es: "Koru AI está ocupado, así que nada cambió. Inténtalo de nuevo en un momento.", pt_br: "O Koru AI está ocupado, então nada mudou. Tente de novo em instantes.", de: "Koru AI ist ausgelastet, daher wurde nichts geändert. Versuchen Sie es gleich noch einmal.", fr: "Koru AI est occupé, donc rien n'a changé. Réessayez dans un instant.", ar: "Koru AI مشغول، لذا لم يتغيّر شيء. حاول مجددًا بعد لحظة.", zh_hans: "Koru AI 正忙，因此没有任何更改。请稍后再试。", ja: "Koru AI が混み合っているため、何も変更されていません。少し待ってからもう一度お試しください。" },
+    Row { key: Key::TrashBotRestoreRefused, en: "“{}” wasn't restored. Nothing changed.", es: "«{}» no se restauró. Nada cambió.", pt_br: "“{}” não foi restaurado. Nada mudou.", de: "„{}“ wurde nicht wiederhergestellt. Nichts wurde geändert.", fr: "« {} » n'a pas été restauré. Rien n'a changé.", ar: "لم تتم استعادة «{}». لم يتغيّر شيء.", zh_hans: "“{}”未恢复。没有任何更改。", ja: "「{}」は復元されませんでした。何も変更されていません。" },
+    Row { key: Key::TrashBotRestoreUnconfirmed, en: "Koru AI didn't answer, so restoring “{}” isn't confirmed. The Trash shows whether it came back.", es: "Koru AI no respondió, así que la restauración de «{}» no está confirmada. La papelera muestra si volvió.", pt_br: "O Koru AI não respondeu, então a restauração de “{}” não está confirmada. A Lixeira mostra se ele voltou.", de: "Koru AI hat nicht geantwortet, daher ist die Wiederherstellung von „{}“ nicht bestätigt. Der Papierkorb zeigt, ob es zurück ist.", fr: "Koru AI n'a pas répondu, la restauration de « {} » n'est donc pas confirmée. La corbeille indique s'il est revenu.", ar: "لم يستجب Koru AI، لذا لم تتأكد استعادة «{}». تُظهر سلة المهملات ما إذا كان قد عاد.", zh_hans: "Koru AI 没有响应，因此恢复“{}”尚未确认。回收站会显示它是否已恢复。", ja: "Koru AI が応答しなかったため、「{}」の復元は確認されていません。復元されたかどうかはゴミ箱に表示されます。" },
+    Row { key: Key::TrashBotRestoreChanged, en: "“{}” was already restored, or changed somewhere else. The Trash shows it as it is now.", es: "«{}» ya se restauró o cambió en otro lugar. La papelera lo muestra tal como está ahora.", pt_br: "“{}” já foi restaurado ou mudou em outro lugar. A Lixeira mostra como ele está agora.", de: "„{}“ wurde bereits wiederhergestellt oder an anderer Stelle geändert. Der Papierkorb zeigt den aktuellen Stand.", fr: "« {} » a déjà été restauré ou modifié ailleurs. La corbeille l'affiche tel qu'il est maintenant.", ar: "تمت استعادة «{}» بالفعل، أو تغيّر في مكان آخر. تعرضه سلة المهملات كما هو الآن.", zh_hans: "“{}”已被恢复，或已在别处更改。回收站显示它现在的状态。", ja: "「{}」はすでに復元されたか、別の場所で変更されました。ゴミ箱には現在の状態が表示されます。" },
+    Row { key: Key::TrashBotRestoreBotFirst, en: "“{}” can be restored once its bot is restored from the Trash.", es: "«{}» se podrá restaurar cuando su bot se restaure de la papelera.", pt_br: "“{}” poderá ser restaurado quando o bot dele for restaurado da Lixeira.", de: "„{}“ kann wiederhergestellt werden, sobald sein Bot aus dem Papierkorb wiederhergestellt ist.", fr: "« {} » pourra être restauré une fois son bot restauré depuis la corbeille.", ar: "يمكن استعادة «{}» بعد استعادة البوت الخاص به من سلة المهملات.", zh_hans: "从回收站恢复其 Bot 后，才能恢复“{}”。", ja: "「{}」は、その Bot をゴミ箱から復元した後に復元できます。" },
+    Row { key: Key::TrashBotRestoreUnarchiveFirst, en: "“{}” can be restored once its bot is unarchived.", es: "«{}» se podrá restaurar cuando su bot se desarchive.", pt_br: "“{}” poderá ser restaurado quando o bot dele for desarquivado.", de: "„{}“ kann wiederhergestellt werden, sobald sein Bot nicht mehr archiviert ist.", fr: "« {} » pourra être restauré une fois son bot désarchivé.", ar: "يمكن استعادة «{}» بعد إلغاء أرشفة البوت الخاص به.", zh_hans: "取消归档其 Bot 后，才能恢复“{}”。", ja: "「{}」は、その Bot のアーカイブを解除した後に復元できます。" },
+    Row { key: Key::TrashBotRestoreLater, en: "“{}” wasn't restored this time. Try again in a moment.", es: "«{}» no se restauró esta vez. Inténtalo de nuevo en un momento.", pt_br: "“{}” não foi restaurado desta vez. Tente de novo em instantes.", de: "„{}“ wurde diesmal nicht wiederhergestellt. Versuchen Sie es gleich noch einmal.", fr: "« {} » n'a pas été restauré cette fois. Réessayez dans un instant.", ar: "لم تتم استعادة «{}» هذه المرة. حاول مجددًا بعد لحظة.", zh_hans: "这次未能恢复“{}”。请稍后再试。", ja: "今回は「{}」を復元できませんでした。少し待ってからもう一度お試しください。" },
+    Row { key: Key::TrashBotRestoreBusy, en: "“{}” wasn't restored: another change to its bot is still finishing or waiting for you.", es: "«{}» no se restauró: otro cambio en su bot aún está terminando o esperándote.", pt_br: "“{}” não foi restaurado: outra alteração no bot dele ainda está terminando ou esperando por você.", de: "„{}“ wurde nicht wiederhergestellt: Eine andere Änderung an seinem Bot wird noch abgeschlossen oder wartet auf Sie.", fr: "« {} » n'a pas été restauré : une autre modification de son bot est encore en cours ou vous attend.", ar: "لم تتم استعادة «{}»: لا يزال تغيير آخر على البوت الخاص به قيد الإنهاء أو في انتظارك.", zh_hans: "“{}”未恢复：其 Bot 的另一项更改仍在完成中或正在等待你处理。", ja: "「{}」は復元されませんでした。その Bot への別の変更がまだ完了していないか、操作を待っています。" },
+    Row { key: Key::TrashBotRestoreNotSent, en: "“{}” wasn't restored: Koru AI isn't answering. Try again.", es: "«{}» no se restauró: Koru AI no responde. Inténtalo de nuevo.", pt_br: "“{}” não foi restaurado: o Koru AI não está respondendo. Tente de novo.", de: "„{}“ wurde nicht wiederhergestellt: Koru AI antwortet nicht. Versuchen Sie es noch einmal.", fr: "« {} » n'a pas été restauré : Koru AI ne répond pas. Réessayez.", ar: "لم تتم استعادة «{}»: لا يستجيب Koru AI. حاول مجددًا.", zh_hans: "“{}”未恢复：Koru AI 没有响应。请再试一次。", ja: "「{}」は復元されませんでした。Koru AI が応答していません。もう一度お試しください。" },
+    Row { key: Key::BotsUnfinishedRejected, en: "Nothing was made for that bot. Create it again to try once more.", es: "No se creó nada para ese bot. Créalo de nuevo para volver a intentarlo.", pt_br: "Nada foi criado para esse bot. Crie-o de novo para tentar outra vez.", de: "Für diesen Bot wurde nichts erstellt. Erstellen Sie ihn erneut, um es noch einmal zu versuchen.", fr: "Rien n'a été créé pour ce bot. Créez-le à nouveau pour réessayer.", ar: "لم يُنشأ شيء لهذا البوت. أنشئه مجددًا للمحاولة مرة أخرى.", zh_hans: "该 Bot 没有创建任何内容。请重新创建以再试一次。", ja: "その Bot には何も作成されませんでした。もう一度作成して再試行してください。" },
+    Row { key: Key::BotsAskingTabGone, en: "That bot's tab was closed before you answered, so nothing was sent.", es: "La pestaña de ese bot se cerró antes de que respondieras, así que no se envió nada.", pt_br: "A aba desse bot foi fechada antes de você responder, então nada foi enviado.", de: "Der Tab dieses Bots wurde geschlossen, bevor Sie geantwortet haben, daher wurde nichts gesendet.", fr: "L'onglet de ce bot a été fermé avant votre réponse, donc rien n'a été envoyé.", ar: "أُغلق تبويب هذا البوت قبل أن تجيب، لذا لم يُرسل شيء.", zh_hans: "在你回答之前，该 Bot 的标签页已关闭，因此没有发送任何内容。", ja: "回答する前にその Bot のタブが閉じられたため、何も送信されていません。" },
 ];

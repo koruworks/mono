@@ -1238,6 +1238,25 @@ impl ChatSurface {
         }
     }
 
+    /// **Stop the background API client, keeping everything in hand** — the
+    /// person's unsent draft, its staged attachments, the transcript shown.
+    /// A host whose conversation is refused for now (a Bot in Trash) calls
+    /// it so nothing is read or sent; [`Self::activate`] starts a client
+    /// again and boots the conversation the surface was on. Nothing is
+    /// cleared: dropping the client is the whole of it. `true` when one was
+    /// running.
+    pub fn deactivate(&mut self) -> bool {
+        if self.pending_link_chat.is_none() {
+            self.pending_link_chat = self
+                .owned
+                .as_ref()
+                .map(|owned| owned.chat)
+                .or_else(|| self.shown_chat_id());
+        }
+        self.waiting = false;
+        self.reader.take().is_some()
+    }
+
     /// Start a brand-new chat, suppressing the active document context for this
     /// chat so it begins empty (workspace context still applies).
     pub fn start_new_chat(&mut self) -> bool {

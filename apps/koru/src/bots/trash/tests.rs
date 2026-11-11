@@ -316,7 +316,7 @@ fn a_conversations_restore_names_what_hid_it_after_a_restart() {
         .send(Answer::Wrote {
             bot: live.id,
             request,
-            result: Err(Failure::Unreachable),
+            result: Err(Failure::lost()),
         })
         .unwrap();
     trash.maintain();
@@ -338,7 +338,7 @@ fn a_conversations_restore_names_what_hid_it_after_a_restart() {
     let receipt = trash.take_receipts().pop().unwrap();
     assert_eq!(
         receipt.words,
-        "“Notes” wasn't restored. This bot is in the Trash. Restore the bot first."
+        "“Notes” can be restored once its bot is restored from the Trash."
     );
 }
 
@@ -433,16 +433,19 @@ fn a_link_restore_of_a_conversation_hidden_by_its_bots_trash_says_why() {
     let receipt = trash.take_receipts().pop().expect("said");
     assert_eq!(
         receipt.words,
-        "“Notes” wasn't restored. This bot is in the Trash. Restore the bot first."
+        "“Notes” can be restored once its bot is restored from the Trash."
     );
 }
 
-/// **A Restore of a Trash another surface restored first** is refused as
-/// the owner refuses it — `require_source`
+/// **A Restore of a Trash another surface restored first, or of a Bot
+/// another tab changed since the Trash listed it,** is refused as the
+/// owner refuses it — `require_source`
 /// (`crates/koru-ai-sqlite/src/repository/bots/lifecycle.rs`) answers
-/// `request_conflict` for a source an intent already names — and the
-/// receipt says it was restored already or the Bot changed, in one
-/// template each language places and spaces; the Trash reads again.
+/// `request_conflict` for a source an intent already names, and
+/// `capture_on` answers `revision_conflict` when the revision moved — and
+/// the receipt never says it was not restored: it was restored already or
+/// it changed elsewhere, in one whole template per language; the Trash
+/// reads again and says which.
 #[test]
 fn a_restore_of_a_used_source_says_it_was_restored_already() {
     let (mut trash, commands, answers, home) = feed();
@@ -456,14 +459,21 @@ fn a_restore_of_a_used_source_says_it_was_restored_already() {
         vec![bot.clone()],
         Vec::new(),
     );
-    for (lang, said) in [
+    for (lang, code, said) in [
         (
             Lang::En,
-            "“Scout” wasn't restored. This was already restored, or the bot changed somewhere else.",
+            "request_conflict",
+            "“Scout” was already restored, or changed somewhere else. The Trash shows it as it is now.",
         ),
         (
             Lang::Ja,
-            "「Scout」は復元されませんでした。これはすでに復元されたか、Bot が別の場所で変更されました。",
+            "request_conflict",
+            "「Scout」はすでに復元されたか、別の場所で変更されました。ゴミ箱には現在の状態が表示されます。",
+        ),
+        (
+            Lang::En,
+            "revision_conflict",
+            "“Scout” was already restored, or changed somewhere else. The Trash shows it as it is now.",
         ),
     ] {
         trash.set_lang(lang);
@@ -479,11 +489,13 @@ fn a_restore_of_a_used_source_says_it_was_restored_already() {
             .send(Answer::Wrote {
                 bot: bot.id,
                 request,
-                result: Err(Failure::Refused("request_conflict".into())),
+                result: Err(Failure::Refused(code.into())),
             })
             .unwrap();
         trash.maintain();
-        assert_eq!(trash.take_receipts().pop().unwrap().words, said);
+        let receipt = trash.take_receipts().pop().unwrap().words;
+        assert_eq!(receipt, said, "{code}");
+        assert!(!receipt.contains("wasn't restored"), "{code}: {receipt}");
         // It reads again, to show what the owner holds now.
         trash.maintain();
         assert!(
@@ -492,5 +504,153 @@ fn a_restore_of_a_used_source_says_it_was_restored_already() {
                 .any(|command| matches!(command, Command::Lifecycle { .. })),
             "read again"
         );
+    }
+}
+
+/// The one Restore the feed just sent, by its request.
+fn restore_sent(commands: &Receiver<Command>) -> BotRequestId {
+    commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::Write { request, .. } => Some(request),
+            _ => None,
+        })
+        .expect("a Restore went")
+}
+
+/// A Restore's answer as `restore_trashed_bot` gives it: completed in one
+/// transaction.
+fn restore_completed(bot: &Bot, request: BotRequestId, source: BotRequestId) -> Answer {
+    Answer::Wrote {
+        bot: bot.id,
+        request,
+        result: Ok(BotResponse::Lifecycle {
+            operation: BotLifecycleProgress {
+                request_id: request,
+                bot_id: bot.id,
+                kind: BotLifecycleKind::Restore,
+                chat_id: None,
+                source_request_id: Some(source),
+                stage: BotLifecycleStage::Completed,
+                refusal: None,
+                members: Vec::new(),
+                left_in_place: Vec::new(),
+            },
+        }),
+    }
+}
+
+/// **A Restore that answered takes its row with it at once** — the second
+/// review's proof, turned round. Before, the row stayed listed until the
+/// re-list answered, so a late second press sent a second Restore that the
+/// owner refused (`require_source`) and the last receipt said the Bot was
+/// not restored. Now the row is gone the moment the first answers, and a
+/// second press sends nothing.
+#[test]
+fn a_second_press_after_a_restore_answered_sends_nothing() {
+    let (mut trash, commands, answers, home) = feed();
+    trash.set_shown(true, None);
+    let source = BotRequestId::mint();
+    let bot = trashed(home, "Scout", Some(source));
+    listed(
+        &mut trash,
+        &commands,
+        &answers,
+        vec![bot.clone()],
+        Vec::new(),
+    );
+    assert!(trash.restore(BotSubject::Bot(bot.id)));
+    let first = restore_sent(&commands);
+    answers
+        .send(restore_completed(&bot, first, source))
+        .unwrap();
+    trash.maintain();
+    let said = trash.take_receipts();
+    assert_eq!(said.len(), 1);
+    assert!(said[0].words.starts_with("Restored"), "{}", said[0].words);
+    assert!(
+        trash
+            .rows()
+            .iter()
+            .all(|row| row.subject != BotSubject::Bot(bot.id)),
+        "its row is gone before the re-list answers"
+    );
+    assert!(
+        !trash.restore(BotSubject::Bot(bot.id)),
+        "a late second press"
+    );
+    assert!(
+        !commands
+            .try_iter()
+            .any(|command| matches!(command, Command::Write { .. })),
+        "no second Restore"
+    );
+}
+
+/// **A Restore Koru AI did not answer is not said as not restored** — the
+/// real link reads a lost connection as unanswered (`Failure::of`): the
+/// Restore may well have happened, so the receipt says it is not
+/// confirmed, and the Trash reads again to show which.
+#[test]
+fn an_unanswered_restore_is_said_as_unconfirmed_and_read_again() {
+    use crate::bots::link::{Said, wrote};
+    let (mut trash, commands, answers, home) = feed();
+    trash.set_shown(true, None);
+    let source = BotRequestId::mint();
+    let bot = trashed(home, "Scout", Some(source));
+    listed(
+        &mut trash,
+        &commands,
+        &answers,
+        vec![bot.clone()],
+        Vec::new(),
+    );
+    for code in ["gateway_unavailable", "ai_worker_timeout"] {
+        assert!(trash.restore(BotSubject::Bot(bot.id)));
+        let request = restore_sent(&commands);
+        answers
+            .send(Answer::Wrote {
+                bot: bot.id,
+                request,
+                result: wrote(Err(Said::new(code, true))),
+            })
+            .unwrap();
+        trash.maintain();
+        let receipt = trash.take_receipts().pop().expect("said").words;
+        assert_eq!(
+            receipt,
+            "Koru AI didn't answer, so restoring “Scout” isn't confirmed. The Trash shows whether it came back.",
+            "{code}"
+        );
+        assert!(!receipt.contains("wasn't restored"), "{code}");
+        trash.maintain();
+        assert!(
+            commands
+                .try_iter()
+                .any(|command| matches!(command, Command::Lifecycle { .. })),
+            "{code}: read again"
+        );
+    }
+}
+
+/// **No receipt puts one sentence inside another** (the second review's
+/// item 6): every Restore receipt is one whole template with the row's
+/// name as its only slot, in every language.
+#[test]
+fn every_restore_receipt_is_one_template_with_the_name_alone() {
+    for key in [
+        Words::TrashBotRestoreRefused,
+        Words::TrashBotRestoreUnconfirmed,
+        Words::TrashBotRestoreChanged,
+        Words::TrashBotRestoreBotFirst,
+        Words::TrashBotRestoreUnarchiveFirst,
+        Words::TrashBotRestoreLater,
+        Words::TrashBotRestoreBusy,
+        Words::TrashBotRestoreNotSent,
+    ] {
+        for lang in Lang::ALL {
+            let words = t(lang, key);
+            assert_eq!(words.matches("{}").count(), 1, "{key:?} {lang:?}: {words}");
+        }
     }
 }

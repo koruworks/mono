@@ -231,7 +231,7 @@ fn unavailable_keeps_the_last_snapshot_and_never_reads_as_empty() {
     f.roster.set_shown(true);
     f.roster.maintain();
     let seq = f.asked();
-    f.answer(seq, Err(Failure::Unreachable));
+    f.answer(seq, Err(Failure::lost()));
     assert_eq!(f.roster.load(), Load::Unavailable);
     let frame = frame_of(&f.roster);
     assert!(frame.contains(NOTICE), "it says why");
@@ -637,7 +637,7 @@ fn running_and_needs_you_conversations_sit_under_their_bot() {
         .send(Answer::Activity {
             seq: again,
             workspace: f.home,
-            result: Err(Failure::Unreachable),
+            result: Err(Failure::lost()),
         })
         .unwrap();
     f.roster.maintain();
@@ -955,7 +955,7 @@ fn a_stale_or_failed_creations_answer_keeps_what_was_listed() {
         .unwrap();
     f.roster.maintain();
     for (seq, workspace, result) in [
-        (seq, f.home, Err(Failure::Unreachable)),
+        (seq, f.home, Err(Failure::lost())),
         (seq.wrapping_add(7), f.home, Ok(Listing::all(Vec::new()))),
         (seq, WorkspaceId::new(), Ok(Listing::all(Vec::new()))),
     ] {
@@ -1068,39 +1068,280 @@ fn a_retried_creation_is_followed_until_it_finishes() {
     let _ = f.commands.try_iter().count();
     f.roster.set_shown(false);
     assert!(!f.roster.awaiting(), "no clock once nothing moves");
+}
 
-    // An Abandon of a creation that finished meanwhile.
-    let mut g = fixture();
-    g.roster.set_shown(true);
-    g.roster.maintain();
-    let seq = g.asked();
-    let other = unfinished(g.home, "CFO", false);
-    g.answers
-        .send(Answer::Listed {
+/// **An Abandon or a Retry answered `request_conflict` reads the creation,
+/// and its stage speaks** (the second review's item 5). The owner answers
+/// it for more than a creation that was made: `abandon_creation` for one
+/// that finished either way — made, or rejected before it made anything —
+/// and `abandon_bot_creation` and `advance_bot_creation` when the record
+/// moved between their read and their write. The roster says *Created* only
+/// when the owner's read says it was made.
+#[test]
+fn a_creation_conflict_reads_the_creation_and_its_stage_speaks() {
+    for (stage, said) in [
+        (BotCreationStage::Completed, Some(Words::BotsCreateCreated)),
+        (
+            BotCreationStage::Rejected,
+            Some(Words::BotsUnfinishedRejected),
+        ),
+        (BotCreationStage::Incomplete, None),
+    ] {
+        let mut g = fixture();
+        g.roster.set_shown(true);
+        g.roster.maintain();
+        let seq = g.asked();
+        let other = unfinished(g.home, "CFO", true);
+        g.answers
+            .send(Answer::Listed {
+                seq,
+                workspace: g.home,
+                result: Ok(Vec::new()),
+            })
+            .unwrap();
+        g.answers
+            .send(Answer::Creations {
+                seq,
+                workspace: g.home,
+                result: Ok(Listing::all(vec![other.clone()])),
+            })
+            .unwrap();
+        g.roster.maintain();
+        let _ = g.commands.try_iter().count();
+        assert!(g.roster.abandon(other.request_id));
+        let _ = g.commands.try_iter().count();
+        g.answers
+            .send(Answer::Wrote {
+                bot: other.bot_id,
+                request: other.request_id,
+                result: Err(Failure::Refused("request_conflict".into())),
+            })
+            .unwrap();
+        g.roster.maintain();
+        assert_ne!(
+            g.roster.creation_refused(),
+            Some(Words::BotsCreateCreated),
+            "{stage:?}: nothing claimed before the read"
+        );
+        let read = g
+            .commands
+            .try_iter()
+            .find_map(|command| match command {
+                Command::Write {
+                    request, command, ..
+                } => Some((request, *command)),
+                _ => None,
+            })
+            .expect("the creation is read");
+        assert_eq!(
+            read,
+            (
+                other.request_id,
+                BotCommand::ReadBotCreation {
+                    request_id: other.request_id
+                }
+            )
+        );
+        assert!(g.roster.creation_acting(other.request_id), "{stage:?}");
+        let mut now = other.clone();
+        now.stage = stage;
+        g.answers
+            .send(Answer::Wrote {
+                bot: other.bot_id,
+                request: other.request_id,
+                result: Ok(BotResponse::Creation { creation: now }),
+            })
+            .unwrap();
+        g.roster.maintain();
+        assert_eq!(g.roster.creation_refused(), said, "{stage:?}");
+        assert_eq!(
+            g.roster.creations().is_empty(),
+            stage != BotCreationStage::Incomplete,
+            "{stage:?}"
+        );
+    }
+}
+
+/// **An Unarchive that answered takes its row with it at once**, as the
+/// Trash's Restore does: a late second press sends nothing the owner would
+/// refuse (`require_source`).
+#[test]
+fn an_unarchive_that_answered_leaves_the_archived_filter_at_once() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    assert!(f.roster.press_archived(ARCHIVED_TOGGLE));
+    f.roster.maintain();
+    let seq = archived_asked(&f);
+    let mut known = f.bot("Scout");
+    known.lifecycle = BotLifecycle::Archived;
+    let archive = BotRequestId::mint();
+    known.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: archive,
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 7,
+    });
+    f.answers
+        .send(Answer::Lifecycle {
             seq,
-            workspace: g.home,
-            result: Ok(Vec::new()),
+            workspace: f.home,
+            lifecycle: BotLifecycle::Archived,
+            result: Ok(vec![known.clone()]),
         })
         .unwrap();
-    g.answers
-        .send(Answer::Creations {
-            seq,
-            workspace: g.home,
-            result: Ok(Listing::all(vec![other.clone()])),
+    f.roster.maintain();
+    assert!(f.roster.unarchive(known.id));
+    let request = f
+        .commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::Write { request, .. } => Some(request),
+            _ => None,
         })
-        .unwrap();
-    g.roster.maintain();
-    assert!(g.roster.abandon(other.request_id));
-    g.answers
+        .expect("a Restore");
+    f.answers
         .send(Answer::Wrote {
-            bot: other.bot_id,
-            request: other.request_id,
-            result: Err(Failure::Refused("request_conflict".into())),
+            bot: known.id,
+            request,
+            result: Ok(BotResponse::Lifecycle {
+                operation: koru_ai_core::bots::BotLifecycleProgress {
+                    request_id: request,
+                    bot_id: known.id,
+                    kind: BotLifecycleKind::Restore,
+                    chat_id: None,
+                    source_request_id: Some(archive),
+                    stage: BotLifecycleStage::Completed,
+                    refusal: None,
+                    members: Vec::new(),
+                    left_in_place: Vec::new(),
+                },
+            }),
         })
         .unwrap();
-    g.roster.maintain();
-    assert_eq!(g.roster.creation_refused(), Some(Words::BotsCreateCreated));
-    assert!(g.roster.creations().is_empty());
+    f.roster.maintain();
+    assert!(f.roster.archived().is_empty(), "its row is gone at once");
+    assert!(!f.roster.unarchive(known.id), "a late second press");
+    assert!(
+        !f.commands
+            .try_iter()
+            .any(|command| matches!(command, Command::Write { .. })),
+        "no second Restore"
+    );
+}
+
+/// **An Unarchive Koru AI did not answer, or refused because it was done
+/// already**, is never said as not unarchived: the real link reads a lost
+/// connection as unanswered, and `request_conflict` and `revision_conflict`
+/// say it was restored already or moved; the lists read again say which.
+#[test]
+fn an_unarchive_whose_outcome_is_unknown_is_never_said_as_refused() {
+    use crate::bots::link::{Said, wrote};
+    for (result, words) in [
+        (
+            wrote(Err(Said::new("gateway_unavailable", true))),
+            Words::BotsErrUnreachable,
+        ),
+        (
+            Err(Failure::Refused("request_conflict".into())),
+            Words::BotsErrRestoreConflict,
+        ),
+        (
+            Err(Failure::Refused("revision_conflict".into())),
+            Words::BotsErrRestoreConflict,
+        ),
+    ] {
+        let mut f = fixture();
+        f.shown_with(Vec::new());
+        assert!(f.roster.press_archived(ARCHIVED_TOGGLE));
+        f.roster.maintain();
+        let seq = archived_asked(&f);
+        let mut known = f.bot("Scout");
+        known.lifecycle = BotLifecycle::Archived;
+        known.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+            request_id: BotRequestId::mint(),
+            kind: BotLifecycleKind::Archive,
+            completed_at_ms: 7,
+        });
+        f.answers
+            .send(Answer::Lifecycle {
+                seq,
+                workspace: f.home,
+                lifecycle: BotLifecycle::Archived,
+                result: Ok(vec![known.clone()]),
+            })
+            .unwrap();
+        f.roster.maintain();
+        assert!(f.roster.unarchive(known.id));
+        let request = f
+            .commands
+            .try_iter()
+            .find_map(|command| match command {
+                Command::Write { request, .. } => Some(request),
+                _ => None,
+            })
+            .expect("a Restore");
+        f.answers
+            .send(Answer::Wrote {
+                bot: known.id,
+                request,
+                result,
+            })
+            .unwrap();
+        f.roster.maintain();
+        assert_eq!(f.roster.unarchive_refused, Some(words));
+        f.roster.maintain();
+        assert!(
+            f.commands
+                .try_iter()
+                .any(|command| matches!(command, Command::Lifecycle { .. })),
+            "the lists are read again"
+        );
+    }
+}
+
+/// **The keyboard walks a Bot's running and Needs-you sub-rows too**, as
+/// the pointer and an assistive technology press them (the second
+/// review's item 10): under their Bot's row, in the order drawn, and Enter
+/// opens that conversation.
+#[test]
+fn the_keyboard_walks_the_activity_sub_rows_and_enter_opens_one() {
+    let mut f = fixture();
+    let (scout, quiet) = (f.bot("Scout"), f.bot("Quiet"));
+    f.shown_with(vec![scout.clone(), quiet.clone()]);
+    let seq = f.activity_asked();
+    let other = koru_ai_core::ChatId::new();
+    f.answers
+        .send(Answer::Activity {
+            seq,
+            workspace: f.home,
+            result: Ok(activity_page(
+                vec![
+                    (scout.id, scout.main_chat, BotActivityState::NeedsYou),
+                    (scout.id, other, BotActivityState::Running),
+                ],
+                false,
+            )),
+        })
+        .unwrap();
+    f.roster.maintain();
+    let stops = f.roster.keyboard_stops();
+    let at = |key| stops.iter().position(|stop| *stop == key).expect("a stop");
+    let (first, main, running, second) = (
+        at(row_key(scout.id)),
+        at(activity_key(scout.main_chat)),
+        at(activity_key(other)),
+        at(row_key(quiet.id)),
+    );
+    assert!(
+        first < main && main < running && running < second,
+        "{stops:?}"
+    );
+    assert!(f.roster.set_focus(scout.id));
+    assert!(f.roster.key(Press::Down));
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(activity_key(other)));
+    assert!(f.roster.key(Press::Open));
+    let (bot, chat) = f.roster.take_wants_open_chat().expect("asked");
+    assert_eq!((bot.id, chat), (scout.id, other));
 }
 
 /// **No Unarchive while another operation of the Bot is open**: the owner

@@ -203,10 +203,64 @@ impl Lifecycle {
     /// finished operation can still hold it, and its open operation — moving
     /// or parked, perhaps begun before Koru last started — is shown and
     /// followed when the tab holds none of its own.
+    ///
+    /// **Only a read may say this** — a `Read`, or a lifecycle filter's
+    /// entry. A write's answer does not report the open operation, so it
+    /// goes to [`Self::know_written`], which never drops or replaces one.
     pub(crate) fn know(&mut self, bot: &Bot) {
         if Some(bot.id) != self.bot {
             return;
         }
+        self.know_holders(bot);
+        // **The owner's open operation is the one shown.** One this tab
+        // has on its way stands until it is answered; otherwise an
+        // operation the owner no longer names — finished, cancelled or
+        // continued from another tab — is dropped, and the one it names is
+        // followed in its place.
+        let named = bot.open_operation.as_ref();
+        if self.op.as_ref().is_some_and(|op| op.in_flight) {
+            return;
+        }
+        match (named, self.op.as_mut()) {
+            // **The same operation, at the stage the owner says now**: a
+            // parked Archive or Trash the owner took up again by itself
+            // (its execution owner answered) is moving and read on the
+            // clock; a moving one the owner parked waits for the person.
+            (Some(open), Some(op)) if op.request == open.request_id => {
+                let parked = open.stage == BotLifecycleStage::Incomplete;
+                match (op.stage, parked) {
+                    (Stage::Parked, false) => {
+                        op.stage = Stage::Moving;
+                        op.next_read = Some(Instant::now());
+                        op.backoff = READ_FIRST;
+                        op.unanswered = false;
+                        self.outcome = None;
+                    }
+                    (Stage::Moving, true) => {
+                        op.stage = Stage::Parked;
+                        op.next_read = None;
+                        op.backoff = READ_FIRST;
+                    }
+                    _ => {}
+                }
+            }
+            _ => self.op = named.map(|open| adopted(open, bot, Instant::now())),
+        }
+    }
+
+    /// **The Bot a write answered with** — a settings save's `Bot`. It says
+    /// what lifecycle the Bot is in, but nothing of its open operation (the
+    /// owner's write answer leaves `open_operation` out, and a
+    /// conversation's Trash does not block a save), so the operation this
+    /// model follows stays as it is until a read says otherwise.
+    pub(crate) fn know_written(&mut self, bot: &Bot) {
+        if Some(bot.id) == self.bot {
+            self.know_holders(bot);
+        }
+    }
+
+    /// Which finished operation can still hold the Bot, from its lifecycle.
+    fn know_holders(&mut self, bot: &Bot) {
         // The holder the owner names wins; an operation this model finished
         // stands until a read names one (`held_by` came with the read).
         let held = |kind: BotLifecycleKind| {
@@ -227,18 +281,6 @@ impl Lifecycle {
             BotLifecycle::Trashed => {
                 self.trash = held(BotLifecycleKind::Trash).or(self.trash);
             }
-        }
-        // **The owner's open operation is the one shown.** One this tab
-        // has on its way stands until it is answered; otherwise an
-        // operation the owner no longer names — finished, cancelled or
-        // continued from another tab — is dropped, and the one it names is
-        // followed in its place.
-        let named = bot.open_operation.as_ref();
-        let ours_in_flight = self.op.as_ref().is_some_and(|op| op.in_flight);
-        if !ours_in_flight
-            && named.map(|open| open.request_id) != self.op.as_ref().map(|op| op.request)
-        {
-            self.op = named.map(|open| adopted(open, bot, Instant::now()));
         }
     }
 
@@ -505,18 +547,27 @@ impl Lifecycle {
             return false;
         };
         op.in_flight = false;
-        op.unanswered = matches!(result, Err(Failure::Unreachable));
         let kind = op.kind;
-        match result {
+        // An answer about something else is no answer: what happened is
+        // as unknown as after a lost connection.
+        let result = match result {
             Ok(BotResponse::Lifecycle { operation }) if operation.request_id == request => {
+                Ok(operation)
+            }
+            Ok(_) => Err(Failure::Unanswered),
+            Err(failure) => Err(failure),
+        };
+        op.unanswered = matches!(result, Err(Failure::Unanswered));
+        match result {
+            Ok(operation) => {
                 op.answered = true;
                 self.fold(&operation, now);
             }
-            Ok(_) => self.refuse(Words::BotsErrNotApplied),
-            Err(Failure::Unreachable) => {
-                // The command may or may not have reached the owner; a
-                // repeat is progress, so ask about it rather than claim
-                // either.
+            Err(Failure::Unanswered) => {
+                // **The outcome is unknown** — a lost connection, a worker
+                // that timed out, a reply that did not parse: the command
+                // may well have run. A repeat of the read is progress, so
+                // ask about it on the clock rather than claim either.
                 op.next_read = Some(now.checked_add(op.backoff).unwrap_or(now));
                 op.backoff = (op.backoff * 2).min(READ_MAX);
             }
@@ -581,7 +632,7 @@ impl Lifecycle {
             }
             (BotLifecycleKind::TrashChat, _, Some(chat)) => Outcome::ChatTrashed { chat },
             (BotLifecycleKind::RestoreChat, _, Some(chat)) => Outcome::ChatKept { chat },
-            _ => Outcome::Refused(Words::BotsErrNotApplied),
+            _ => Outcome::Refused(Words::BotsErrNotDone),
         };
         if let Some(bot) = self.bot {
             self.finished.push(Finished {
@@ -685,27 +736,38 @@ fn now_ms() -> i64 {
 /// a Trash's or a conversation's Trash's `request_conflict`, which means
 /// another operation of the Bot is unfinished (a fresh request is minted
 /// for every new command, so it is never this request's own repeat).
-/// Everything else as the settings say it
-/// ([`super::settings::refusal_words`]). A Restore's is
-/// [`restore_refusal_words`].
+/// Everything else in the general sentences — no settings are shown where
+/// a lifecycle refusal is said ([`super::settings::general_refusal_words`]).
+/// A Restore's is [`restore_refusal_words`].
 pub(crate) fn refusal_words(code: &str) -> Words {
     match code {
         "request_conflict" => Words::BotsErrPending,
-        _ => super::settings::refusal_words(code),
+        _ => super::settings::general_refusal_words(code),
     }
 }
 
 /// **A Restore's refusal** — an Unarchive, a Restore from the Trash, a
 /// conversation's, or the Cancel of a parked operation. Its
 /// `request_conflict` is the owner's `require_source` (or the lifecycle's
-/// prior state): the operation it names was restored already, or the Bot
-/// moved since — another tab, another window, the Trash. The tab reads the
-/// Bot again either way, so what holds it now is shown.
+/// prior state) and its `revision_conflict` is `capture_on`'s revision
+/// check: the operation it names was restored already, or the Bot moved
+/// since — another tab, another window, the Trash. Neither says it *was
+/// not* restored: whoever asked reads the Bot again, and that read says
+/// what holds it now.
 pub(crate) fn restore_refusal_words(code: &str) -> Words {
-    match code {
-        "request_conflict" => Words::BotsErrRestoreConflict,
-        _ => refusal_words(code),
+    if restored_or_moved(code) {
+        Words::BotsErrRestoreConflict
+    } else {
+        refusal_words(code)
     }
+}
+
+/// **A Restore refused because it was done already, or the Bot moved**
+/// (`require_source`'s and `allowed_prior`'s `request_conflict`, and
+/// `capture_on`'s `revision_conflict`): not a Restore that failed. Whoever
+/// asked reads again and lets the read say what the Bot is.
+pub(crate) fn restored_or_moved(code: &str) -> bool {
+    matches!(code, "request_conflict" | "revision_conflict")
 }
 
 /// The refusal's sentence for an operation of `kind`.

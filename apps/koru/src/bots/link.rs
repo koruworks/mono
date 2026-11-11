@@ -144,16 +144,120 @@ pub(crate) enum Answer {
     },
 }
 
-/// Why a read did not answer. Neither is *no Bots*: the roster keeps what it
-/// showed and says the service is not answering.
+/// Why the owner's answer is not what was asked for. Neither is *no Bots*:
+/// the roster keeps what it showed and says the service is not answering.
+///
+/// **One classification, here** ([`Failure::of`]): every consumer reads a
+/// lost answer the same way, so no write whose outcome is unknown can be
+/// shown as not applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Failure {
-    /// Nothing answered: no gateway, a lost connection, a reply that did not
-    /// parse.
-    Unreachable,
-    /// The service answered with a refusal, by its stable code. Kept for a
-    /// diagnostic; the sentence a person reads does not depend on it.
+    /// **No answer says what happened**: nothing connected, the connection
+    /// was lost, the service timed out waiting for its worker, a reply did
+    /// not parse. A command may well have run; a read says which.
+    Unanswered,
+    /// The owner answered with a refusal, by its stable code: it did not do
+    /// what was asked (a refusal is a transaction that did not commit).
     Refused(String),
+}
+
+/// **What the client said instead of an answer**: the stable code and
+/// whether the client or the service marked it retryable
+/// (`koru_ai_wire::Failure`, which this crate does not name).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Said {
+    pub code: String,
+    pub retryable: bool,
+}
+
+impl Said {
+    #[cfg(test)]
+    pub(crate) fn new(code: &str, retryable: bool) -> Self {
+        Self {
+            code: code.to_owned(),
+            retryable,
+        }
+    }
+}
+
+/// **Codes that leave the outcome unknown**, whatever their flag, from the
+/// client (`koru_api_client`: `gateway_unavailable` for a lost connection or
+/// discovery, `ai_unavailable` with no gateway session, `invalid_response`
+/// for a reply that did not parse), the gateway (`ai_unavailable` with no AI
+/// client or a lost task) and the AI worker (`ai_worker_timeout` when the
+/// writer did not answer in time, `ai_unavailable` when it went away after
+/// the command was queued, `deadline_exceeded`).
+const UNANSWERED: &[&str] = &[
+    "gateway_unavailable",
+    "ai_unavailable",
+    "ai_worker_timeout",
+    "deadline_exceeded",
+    "invalid_response",
+];
+
+/// The client's code for an error status whose body did not parse
+/// (`koru_api_client::checked`): retryable for a 5xx, which says nothing of
+/// what ran; not for a 4xx, which is a refusal.
+const BODYLESS: &str = "gateway_failure";
+
+/// **Refusals the owner marks retryable**: asking again soon may succeed,
+/// so a surface waiting on a read keeps asking rather than stopping. From
+/// the AI worker (`ai_worker_saturated`: its queue was full and the command
+/// was never queued; `bot_failure`'s `workspace_unavailable`,
+/// `storage_error` and `bot_operation_pending`; `folder_unavailable`) and
+/// the Bot's execution owner (`bot_unavailable`).
+const AGAIN: &[&str] = &[
+    "ai_worker_saturated",
+    "workspace_unavailable",
+    "storage_error",
+    "bot_operation_pending",
+    "bot_unavailable",
+    "folder_unavailable",
+];
+
+impl Failure {
+    /// **The one classification** of what the client said: an answer that
+    /// leaves the outcome unknown is [`Failure::Unanswered`]; a named
+    /// refusal keeps its code.
+    pub(crate) fn of(said: Said) -> Self {
+        let unknown = said.code.is_empty()
+            || UNANSWERED.contains(&said.code.as_str())
+            || (said.code == BODYLESS && said.retryable);
+        if unknown {
+            Self::Unanswered
+        } else {
+            Self::Refused(said.code)
+        }
+    }
+
+    /// Whether asking again may get another answer: an unanswered one, or
+    /// a refusal the owner marks retryable. A surface waiting on a read
+    /// asks again on its clock; any other refusal is final.
+    pub(crate) fn again(&self) -> bool {
+        match self {
+            Self::Unanswered => true,
+            Self::Refused(code) => AGAIN.contains(&code.as_str()),
+        }
+    }
+
+    /// The failure as the real link gives it for a lost connection, for a
+    /// test standing in for the link.
+    #[cfg(test)]
+    pub(crate) fn lost() -> Self {
+        Self::of(Said::new("gateway_unavailable", true))
+    }
+
+    /// The failure as the real link gives it for a worker that did not
+    /// answer in time.
+    #[cfg(test)]
+    pub(crate) fn timed_out() -> Self {
+        Self::of(Said::new("ai_worker_timeout", true))
+    }
+}
+
+/// What the client said, as [`Said`].
+fn said(code: String, retryable: bool) -> Said {
+    Said { code, retryable }
 }
 
 pub(crate) struct BotsLink {
@@ -220,9 +324,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                         connected
                             .ai()
                             .bots(&BotCommand::List { workspace })
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -257,9 +361,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                                 cursor,
                                 limit: BOT_CREATION_PAGE_LIMIT,
                             })
-                            .map_err(|failure| failure.code)
+                            .map_err(|failure| said(failure.code, failure.retryable))
                     }),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -289,9 +393,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                         connected
                             .ai()
                             .bots(&BotCommand::Read { bot_id: bot })
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -318,9 +422,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                         connected
                             .ai()
                             .bots(&command)
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -353,9 +457,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                             .ai()
                             .read_chat(chat)
                             .map(|transcript| transcript.chat.bot)
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -391,9 +495,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                                 cursor,
                                 limit,
                             })
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -416,9 +520,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                         connected
                             .ai()
                             .bots(&BotCommand::ListActivity { workspace })
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -456,9 +560,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                                 workspace,
                                 lifecycle,
                             })
-                            .map_err(|failure| failure.code),
+                            .map_err(|failure| said(failure.code, failure.retryable)),
                     ),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -493,9 +597,9 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                                 cursor,
                                 limit: BOT_CHAT_PAGE_LIMIT,
                             })
-                            .map_err(|failure| failure.code)
+                            .map_err(|failure| said(failure.code, failure.retryable))
                     }),
-                    None => Err(Failure::Unreachable),
+                    None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
                     tracing::info!(
@@ -522,12 +626,11 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
 
 /// A `ListBotChats` reply: the page, or why not — never a page made up from
 /// an answer to some other question.
-pub(crate) fn chats(reply: Result<BotResponse, String>) -> Result<BotChatPage, Failure> {
+pub(crate) fn chats(reply: Result<BotResponse, Said>) -> Result<BotChatPage, Failure> {
     match reply {
         Ok(BotResponse::Chats { page }) => Ok(page),
-        Ok(_) => Err(Failure::Unreachable),
-        Err(code) if code.is_empty() => Err(Failure::Unreachable),
-        Err(code) => Err(Failure::Refused(code)),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
     }
 }
 
@@ -556,7 +659,7 @@ impl<T> Listing<T> {
 /// whether pages were left unread, or why not — never a list made up from
 /// an answer to some other question.
 pub(crate) fn unfinished(
-    mut ask: impl FnMut(Option<BotCreationCursor>) -> Result<BotResponse, String>,
+    mut ask: impl FnMut(Option<BotCreationCursor>) -> Result<BotResponse, Said>,
 ) -> Result<Listing<BotCreation>, Failure> {
     let mut listing = Listing::all(Vec::new());
     let mut cursor = None;
@@ -570,9 +673,8 @@ pub(crate) fn unfinished(
                     None => break,
                 }
             }
-            Ok(_) => return Err(Failure::Unreachable),
-            Err(code) if code.is_empty() => return Err(Failure::Unreachable),
-            Err(code) => return Err(Failure::Refused(code)),
+            Ok(_) => return Err(Failure::Unanswered),
+            Err(said) => return Err(Failure::of(said)),
         }
     }
     Ok(listing)
@@ -582,7 +684,7 @@ pub(crate) fn unfinished(
 /// through `ask`, at most [`CREATION_PAGES`] of them: the list and whether
 /// pages were left unread, or why not.
 pub(crate) fn trashed_chats(
-    mut ask: impl FnMut(Option<BotTrashedChatCursor>) -> Result<BotResponse, String>,
+    mut ask: impl FnMut(Option<BotTrashedChatCursor>) -> Result<BotResponse, Said>,
 ) -> Result<Listing<BotTrashedChat>, Failure> {
     let mut listing = Listing::all(Vec::new());
     let mut cursor = None;
@@ -596,53 +698,42 @@ pub(crate) fn trashed_chats(
                     None => break,
                 }
             }
-            Ok(_) => return Err(Failure::Unreachable),
-            Err(code) if code.is_empty() => return Err(Failure::Unreachable),
-            Err(code) => return Err(Failure::Refused(code)),
+            Ok(_) => return Err(Failure::Unanswered),
+            Err(said) => return Err(Failure::of(said)),
         }
     }
     Ok(listing)
 }
 
 /// A `ListActivity` reply: the page, or why not.
-pub(crate) fn activity(reply: Result<BotResponse, String>) -> Result<BotActivityPage, Failure> {
+pub(crate) fn activity(reply: Result<BotResponse, Said>) -> Result<BotActivityPage, Failure> {
     match reply {
         Ok(BotResponse::Activity { activity }) => Ok(activity),
-        Ok(_) => Err(Failure::Unreachable),
-        Err(code) if code.is_empty() => Err(Failure::Unreachable),
-        Err(code) => Err(Failure::Refused(code)),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
     }
 }
 
 /// A `Label` reply: the label, `None` for an ordinary chat, or why not.
 pub(crate) fn labelled(
-    reply: Result<Option<BotChatLabel>, String>,
+    reply: Result<Option<BotChatLabel>, Said>,
 ) -> Result<Option<BotChatLabel>, Failure> {
-    match reply {
-        Ok(label) => Ok(label),
-        Err(code) if code.is_empty() => Err(Failure::Unreachable),
-        Err(code) => Err(Failure::Refused(code)),
-    }
+    reply.map_err(Failure::of)
 }
 
-/// A settings change's reply, the refusal reduced to its stable code. What
-/// the reply means is the settings' to read ([`super::settings`]).
-pub(crate) fn wrote(reply: Result<BotResponse, String>) -> Result<BotResponse, Failure> {
-    match reply {
-        Ok(response) => Ok(response),
-        Err(code) if code.is_empty() => Err(Failure::Unreachable),
-        Err(code) => Err(Failure::Refused(code)),
-    }
+/// A settings change's reply, classified ([`Failure::of`]). What the reply
+/// means is the settings' to read ([`super::settings`]).
+pub(crate) fn wrote(reply: Result<BotResponse, Said>) -> Result<BotResponse, Failure> {
+    reply.map_err(Failure::of)
 }
 
 /// A `Read` reply as a Bot tab reads it: the Bot, or why not — never a Bot
 /// made up from an answer to some other question.
-pub(crate) fn read(reply: Result<BotResponse, String>) -> Result<Bot, Failure> {
+pub(crate) fn read(reply: Result<BotResponse, Said>) -> Result<Bot, Failure> {
     match reply {
         Ok(BotResponse::Bot { bot }) => Ok(bot),
-        Ok(_) => Err(Failure::Unreachable),
-        Err(code) if code.is_empty() => Err(Failure::Unreachable),
-        Err(code) => Err(Failure::Refused(code)),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
     }
 }
 
@@ -658,19 +749,18 @@ fn connect(root: Option<&std::path::Path>) -> Option<koru_api_client::Client> {
 /// A `List` reply as the roster reads it, the refusal reduced to its
 /// stable code. Any other answer to a `List` is the service misbehaving,
 /// which is not an empty roster either; nor is a refusal with no code.
-pub(crate) fn listed(reply: Result<BotResponse, String>) -> Result<Vec<Bot>, Failure> {
+pub(crate) fn listed(reply: Result<BotResponse, Said>) -> Result<Vec<Bot>, Failure> {
     match reply {
         Ok(BotResponse::List { bots }) => Ok(bots),
-        Ok(_) => Err(Failure::Unreachable),
-        Err(code) if code.is_empty() => Err(Failure::Unreachable),
-        Err(code) => Err(Failure::Refused(code)),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
     }
 }
 
 /// A content-free word for the log: the code, never the message.
 fn failure_code(failure: &Failure) -> &str {
     match failure {
-        Failure::Unreachable => "unreachable",
+        Failure::Unanswered => "unanswered",
         Failure::Refused(code) => code,
     }
 }

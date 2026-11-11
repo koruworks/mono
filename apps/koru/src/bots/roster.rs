@@ -650,6 +650,10 @@ impl BotsRoster {
                 if operation.request_id == request
                     && operation.stage == BotLifecycleStage::Completed =>
             {
+                // **Out of the Archived filter the moment it answered**, not
+                // when the re-list does, so a late second press sends
+                // nothing.
+                self.archived.retain(|row| row.id != bot);
                 self.finished.push(super::lifecycle::Finished {
                     bot,
                     name,
@@ -661,8 +665,13 @@ impl BotsRoster {
                     at_ms: 0,
                 });
             }
-            Ok(_) => self.unarchive_refused = Some(Words::BotsErrNotApplied),
-            Err(Failure::Unreachable) => self.unarchive_refused = Some(Words::BotsErrUnreachable),
+            // The outcome is unknown: never said as not unarchived. The
+            // lists read again show which.
+            Ok(_) | Err(Failure::Unanswered) => {
+                self.unarchive_refused = Some(Words::BotsErrUnreachable);
+            }
+            // Unarchived already, or the Bot moved since: the re-list says
+            // what it is now (`restore_refusal_words`).
             Err(Failure::Refused(code)) => {
                 self.unarchive_refused = Some(super::lifecycle::restore_refusal_words(&code));
             }
@@ -1728,6 +1737,31 @@ impl BotsRoster {
         true
     }
 
+    /// **Read one creation** (`ReadBotCreation`, by its request alone), its
+    /// answer folded as a Retry's is. `false` when nothing was sent.
+    fn read_creation(&mut self, request: BotRequestId) -> bool {
+        let (Some(creation), Some(link)) = (
+            self.creations.iter().find(|c| c.request_id == request),
+            &self.link,
+        ) else {
+            return false;
+        };
+        if !link.send(Command::Write {
+            bot: creation.bot_id,
+            request,
+            command: Box::new(BotCommand::ReadBotCreation {
+                request_id: request,
+            }),
+        }) {
+            return false;
+        }
+        let mut work = self.work.get();
+        work.commands += 1;
+        self.work.set(work);
+        self.creations_acting.insert(request);
+        true
+    }
+
     /// **Retry** an unfinished creation, when Retry can resolve it.
     pub(crate) fn retry(&mut self, request: BotRequestId) -> bool {
         if !self
@@ -1801,21 +1835,36 @@ impl BotsRoster {
                         self.creations.retain(|row| row.request_id != request);
                         self.abandoned = Some(creation);
                     }
-                    BotCreationStage::Completed | BotCreationStage::Rejected => {
+                    // The owner's stage speaks: made, or refused before it
+                    // made anything.
+                    BotCreationStage::Completed => {
                         self.creations.retain(|row| row.request_id != request);
+                        self.creation_refused = Some(Words::BotsCreateCreated);
+                    }
+                    BotCreationStage::Rejected => {
+                        self.creations.retain(|row| row.request_id != request);
+                        self.creation_refused = Some(Words::BotsUnfinishedRejected);
                     }
                 }
             }
-            Ok(_) => self.creation_refused = Some(Words::BotsErrNotApplied),
-            Err(Failure::Unreachable) => self.creation_refused = Some(Words::BotsErrUnreachable),
-            // A finished creation answers Abandon `request_conflict`
-            // (`abandon_bot_creation`): it was made, not refused.
+            // The outcome is unknown: never said as refused. The listing
+            // read again shows whether it is still unfinished.
+            Ok(_) | Err(Failure::Unanswered) => {
+                self.creation_refused = Some(Words::BotsErrUnreachable);
+            }
+            // **`request_conflict` says the creation is not where the
+            // command found it**: Abandon met one that finished — made, or
+            // rejected (`abandon_creation`) — or the record moved between
+            // its read and its write (`abandon_bot_creation`,
+            // `advance_bot_creation`). Which one is the owner's to say: the
+            // creation is read, and its stage speaks.
             Err(Failure::Refused(code)) if code == "request_conflict" => {
-                self.creations.retain(|row| row.request_id != request);
-                self.creation_refused = Some(Words::BotsCreateCreated);
+                if !self.read_creation(request) {
+                    self.creation_refused = Some(Words::BotsErrUnreachable);
+                }
             }
             Err(Failure::Refused(code)) => {
-                self.creation_refused = Some(super::settings::refusal_words(&code));
+                self.creation_refused = Some(super::settings::general_refusal_words(&code));
             }
         }
         // Either way the lists are the owner's to say again: a finished

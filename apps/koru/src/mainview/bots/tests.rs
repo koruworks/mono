@@ -426,7 +426,7 @@ fn an_unanswered_read_says_so_and_asks_again_when_shown() {
     answers
         .send(crate::bots::link::Answer::Labelled {
             chat,
-            result: Err(crate::bots::link::Failure::Unreachable),
+            result: Err(crate::bots::link::Failure::lost()),
         })
         .unwrap();
     let now = std::time::Instant::now();
@@ -648,7 +648,7 @@ fn with_koru_ai_off_an_unanswered_link_is_kept_and_asked_again_on_activation() {
             let bot = scout();
             let unanswered = |chat| crate::bots::link::Answer::Labelled {
                 chat,
-                result: Err(crate::bots::link::Failure::Unreachable),
+                result: Err(crate::bots::link::Failure::lost()),
             };
 
             // A Bot's conversation: unanswered, kept, asked again on activation.

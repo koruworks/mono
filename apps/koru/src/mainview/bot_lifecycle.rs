@@ -137,7 +137,7 @@ impl MainView {
             _ => return false,
         };
         let Some(view) = self.asking_bot_tab_mut(tab, bot) else {
-            return false;
+            return self.say_asking_tab_gone();
         };
         let Some((title, body, verb)) = view.confirm_words(ask) else {
             let sent = view.begin_lifecycle(ask);
@@ -165,7 +165,7 @@ impl MainView {
         chat: koru_ai_ui::ChatId,
     ) -> bool {
         let Some(view) = self.asking_bot_tab(tab, bot) else {
-            return false;
+            return self.say_asking_tab_gone();
         };
         if view.lifecycle_busy() {
             return false;
@@ -190,17 +190,43 @@ impl MainView {
         }
         match subject {
             ConfirmSubject::BotLifecycle { bot, tab, ask } => {
-                if let Some(view) = self.asking_bot_tab_mut(*tab, *bot) {
-                    view.begin_lifecycle(*ask);
+                match self.asking_bot_tab_mut(*tab, *bot) {
+                    Some(view) => {
+                        view.begin_lifecycle(*ask);
+                    }
+                    None => {
+                        self.say_asking_tab_gone();
+                    }
                 }
             }
             ConfirmSubject::TrashBotConversation { bot, tab, chat } => {
-                if let Some(view) = self.asking_bot_tab_mut(*tab, *bot) {
-                    view.trash_conversation(*chat);
+                match self.asking_bot_tab_mut(*tab, *bot) {
+                    Some(view) => {
+                        view.trash_conversation(*chat);
+                    }
+                    None => {
+                        self.say_asking_tab_gone();
+                    }
                 }
             }
             _ => {}
         }
+    }
+
+    /// **The tab a question was asked for is gone** — closed, or moved to
+    /// another Bot — before the person answered it: nothing is sent, and
+    /// that is said, never dropped in silence. `true`: the toast changed.
+    pub(super) fn say_asking_tab_gone(&mut self) -> bool {
+        let lang = crate::format::lang();
+        self.toast = Some((
+            koru_ui::Toast::new(
+                t(lang, Words::BotsAskingTabGone).to_owned(),
+                None,
+                std::time::Instant::now(),
+            ),
+            super::ToastPayload::None,
+        ));
+        true
     }
 
     /// **The Trash's Bot rows** (S14): the feed reads the Bot owner's Trash

@@ -132,7 +132,7 @@ fn a_stale_or_failed_answer_never_replaces_what_is_shown() {
     list.owe_read();
     let (again, cursor, limit) = read_seq(list.read());
     assert_eq!((cursor, limit), (None, PAGE));
-    list.answer(again, bot, Err(Failure::Unreachable));
+    list.answer(again, bot, Err(Failure::lost()));
     assert_eq!(list.listed().len(), 1, "kept");
     assert_eq!(list.notice(), Some(Words::BotsConversationsUnavailable));
 }
@@ -197,7 +197,7 @@ fn new_conversation_asks_the_owner_and_names_what_it_made() {
     assert!(list.creating());
     assert!(list.create().is_none(), "one at a time");
     assert!(
-        !list.wrote(BotRequestId::mint(), &Err(Failure::Unreachable)),
+        !list.wrote(BotRequestId::mint(), &Err(Failure::lost())),
         "not its"
     );
     let made = ChatId::new();
@@ -223,4 +223,33 @@ fn new_conversation_asks_the_owner_and_names_what_it_made() {
     // The conversation's hold, in its own words (S14).
     assert_eq!(list.create_refused(), Some(Words::BotsErrTrashed));
     assert_eq!(list.take_made(), None);
+}
+
+/// ***New conversation* Koru AI did not answer is never said as not made**:
+/// the real link reads a lost connection as unanswered, the owner may have
+/// made it, so the list is read again and the next press asks under the
+/// same request — `create_bot_chat` replays its receipt — never a second
+/// conversation.
+#[test]
+fn an_unanswered_new_conversation_is_asked_again_under_the_same_request() {
+    use crate::bots::link::{Said, wrote};
+    let mut list = Conversations::default();
+    let bot = BotId::mint();
+    list.set_bot(bot);
+    let (seq, _, _) = read_seq(list.read());
+    list.answer(
+        seq,
+        bot,
+        Ok(page(bot, &[(ChatId::new(), BotChatPurpose::Main)], false)),
+    );
+    let Some(Command::Write { request, .. }) = list.create() else {
+        panic!("a write");
+    };
+    assert!(list.wrote(request, &wrote(Err(Said::new("gateway_unavailable", true)))));
+    assert_eq!(list.create_refused(), Some(Words::BotsErrUnreachable));
+    assert!(list.read().is_some(), "the list is read again");
+    let Some(Command::Write { request: again, .. }) = list.create() else {
+        panic!("a write");
+    };
+    assert_eq!(again, request, "the same request");
 }

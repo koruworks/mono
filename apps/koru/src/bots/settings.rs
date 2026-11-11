@@ -153,6 +153,16 @@ impl Settings {
         if self.model_draft.as_ref() == Some(&ModelDraft::held(&bot)) {
             self.model_draft = None;
         }
+        // **A save Koru AI did not answer, now read as made**: the read
+        // says which, so it is no longer unconfirmed.
+        if let Some((_, BotCommand::Update { config, .. })) = &self.unanswered
+            && *config == bot.config
+        {
+            self.unanswered = None;
+            if self.notice == Some(Notice::Refused(Words::BotsErrUnreachable)) {
+                self.notice = None;
+            }
+        }
         self.bot = Some(bot);
     }
 
@@ -589,14 +599,10 @@ impl Settings {
                     }
                 }
             }
-            // An answer that is not about this change: the owner
-            // misbehaved, which is not a success either.
-            Ok(_) => {
-                self.pending.remove(index);
-                self.notice = Some(Notice::Refused(Words::BotsErrNotApplied));
-                self.read_owed = true;
-            }
-            Err(Failure::Unreachable) => {
+            // **The outcome is unknown**: no answer, or one about something
+            // else, which is no answer either. The change may well have
+            // been made, so it is never said to be not applied.
+            Ok(_) | Err(Failure::Unanswered) => {
                 let pending = &mut self.pending[index];
                 if pending.operation {
                     // The owner holds the operation; only the question about
@@ -605,9 +611,13 @@ impl Settings {
                     pending.backoff = (pending.backoff * 2).min(POLL_MAX);
                     pending.next_poll = Some(now.checked_add(pending.backoff).unwrap_or(now));
                 } else {
+                    // Not confirmed: the same change asked again is the same
+                    // request (the owner replays it), and the Bot is read
+                    // again, so a change that was made shows as made.
                     let pending = self.pending.remove(index);
                     self.unanswered = Some((pending.request, pending.command));
                     self.notice = Some(Notice::Refused(Words::BotsErrUnreachable));
+                    self.read_owed = true;
                 }
             }
             Err(Failure::Refused(code)) => {
@@ -678,17 +688,44 @@ pub(crate) const BOT_OPERATION_PENDING: &str = "bot_operation_pending";
 /// not exist stays `invalid_request`.
 pub(crate) const FOLDER_RESERVED: &str = "folder_reserved";
 
-/// **A refusal's sentence, by its stable code** (`BotError::code`, and the
-/// lifecycle's `bot_archived`, `bot_conversation_trashed` and
-/// `bot_lifecycle_pending`). The server's message is English developer
-/// text and is never shown; a code this build does not know reads as a
-/// change that was not applied.
+/// **A refusal's sentence in the settings, by its stable code**
+/// (`BotError::code`, and the lifecycle's `bot_archived`,
+/// `bot_conversation_trashed` and `bot_lifecycle_pending`). The server's
+/// message is English developer text and is never shown. Said where the
+/// Bot's settings are shown: a revision conflict says the current
+/// settings are shown with the edit kept, and a code this build does not
+/// know reads as a change that was not applied, its current settings shown.
+/// Everywhere else is [`general_refusal_words`].
 ///
 /// `workspace_unavailable` is `BotError::Unavailable`, which the owner
-/// answers when the agent or Koru Agent that runs the Bot is not ready
-/// (no delegate port, an agent not started): never the workspace itself.
+/// answers for more than one cause: the Bot's delegate or the Koru Agent
+/// that runs it is not ready (no delegate port, an agent not started), and
+/// the server's Store authority maps every Store failure to it too
+/// (`apps/koru-ai-server/src/bots.rs`, each `map_err` there). So
+/// its sentence names no cause: Koru could not reach what the Bot needs,
+/// and asking again may succeed.
 pub(crate) fn refusal_words(code: &str) -> Words {
     match code {
+        "revision_conflict" => Words::BotsChangedElsewhere,
+        _ => known_refusal(code).unwrap_or(Words::BotsErrNotApplied),
+    }
+}
+
+/// **A refusal's sentence anywhere the settings are not shown** — the
+/// create form, the roster, a tab's lifecycle, the Trash: the same
+/// sentences, but none that points at settings on screen. A revision
+/// conflict says the Bot changed somewhere else; a code this build does
+/// not know says it was not done.
+pub(crate) fn general_refusal_words(code: &str) -> Words {
+    match code {
+        "revision_conflict" => Words::BotsErrRevisionConflict,
+        _ => known_refusal(code).unwrap_or(Words::BotsErrNotDone),
+    }
+}
+
+/// The sentences true wherever they are said, by code.
+fn known_refusal(code: &str) -> Option<Words> {
+    Some(match code {
         BOT_ARCHIVED => Words::BotsErrArchived,
         BOT_TRASHED => Words::BotsErrTrashed,
         BOT_TRASHED_BOT => Words::BotsErrBotTrashed,
@@ -700,11 +737,13 @@ pub(crate) fn refusal_words(code: &str) -> Words {
         "wrong_owner" => Words::BotsErrWrongOwner,
         "workspace_unavailable" => Words::BotsErrNotReady,
         "request_conflict" => Words::BotsErrRequestConflict,
-        "revision_conflict" => Words::BotsChangedElsewhere,
         "folder_locked" => Words::BotsErrFolderLocked,
         "storage_error" => Words::BotsErrStorage,
-        _ => Words::BotsErrNotApplied,
-    }
+        // `queue_failure`: the AI worker's queue was full, and the command
+        // was never queued.
+        "ai_worker_saturated" => Words::BotsErrBusy,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

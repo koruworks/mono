@@ -300,6 +300,13 @@ impl AiChatView {
         self.surface.activate()
     }
 
+    /// Stop the surface's client while keeping its draft and staged
+    /// attachments ([`ChatSurface::deactivate`]): a Bot in Trash reads
+    /// nothing, and its unsent words are there again on Restore.
+    pub fn deactivate(&mut self) -> bool {
+        self.surface.deactivate()
+    }
+
     /// Bind the owned surface to `conversation` again — the Bot's newer
     /// answer, or a retry after it was unavailable.
     pub fn bind_owned(&mut self, conversation: koru_ai_ui::OwnedConversation) -> bool {

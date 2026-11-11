@@ -290,7 +290,7 @@ impl BotView {
     /// first-hand. `true` when a mark changed.
     pub(crate) fn set_activity(&mut self, activity: &HashMap<ChatId, ChatStatus>) -> bool {
         let mut statuses = activity.clone();
-        if let Some(view) = &self.conversation {
+        if let Some(view) = self.conversation() {
             match view.status() {
                 ChatStatus::Idle => {}
                 status => {
@@ -305,7 +305,7 @@ impl BotView {
     /// asked — a reply started or ended, or it stopped to ask the person —
     /// so the roster reads its activity again (S10). Unread is not work.
     pub(crate) fn take_status_moved(&mut self) -> bool {
-        let now = match self.conversation.as_ref().map(|view| view.status()) {
+        let now = match self.conversation().map(|view| view.status()) {
             Some(ChatStatus::Unread) | None => ChatStatus::Idle,
             Some(status) => status,
         };

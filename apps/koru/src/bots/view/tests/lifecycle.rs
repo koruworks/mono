@@ -656,7 +656,7 @@ fn an_unanswered_archive_says_koru_ai_is_not_answering() {
     let mut f = listed(&[]);
     f.view.begin_lifecycle(Ask::Archive);
     let (request, _) = f.wrote();
-    f.reply(request, Err(Failure::Unreachable));
+    f.reply(request, Err(Failure::lost()));
     assert_eq!(
         f.view.lifecycle_said().map(|said| said.words),
         Some(Words::BotsLifecycleUnanswered)
@@ -673,4 +673,225 @@ fn bot_read(f: &Fixture) -> u64 {
             _ => continue,
         }
     }
+}
+
+/// A Bot whose conversation's Trash is parked, as the owner's `read_bot`
+/// answers it (`Bot.open_operation`, the operation waiting for the person).
+fn parked_conversation_trash() -> (Bot, BotRequestId) {
+    let mut held = unpaused();
+    let parked = BotRequestId::mint();
+    held.open_operation = Some(koru_ai_core::bots::BotOpenLifecycle {
+        request_id: parked,
+        kind: BotLifecycleKind::TrashChat,
+        chat_id: Some(ChatId::new()),
+        stage: BotLifecycleStage::Incomplete,
+        refusal: Some(BotLifecycleRefusal::WorkRunning),
+    });
+    (held, parked)
+}
+
+/// Whether the tab offers a parked operation's two answers.
+fn offers_continue_and_cancel(f: &Fixture) -> bool {
+    let keys = f.keys();
+    keys.contains(&super::super::actions::CONTINUE)
+        && keys.contains(&super::super::actions::CANCEL_OPERATION)
+}
+
+/// **A tab's first read of its Bot adopts the open operation** — the second
+/// review's fault 2. A tab restored at startup, one opened from a link and
+/// one opened from the roster each read the Bot once when first shown, and
+/// that first read shows the parked conversation Trash with Continue and
+/// Cancel and offers no Archive or Trash, which the owner would refuse.
+#[test]
+fn a_tabs_first_read_adopts_the_open_operation_however_it_was_opened() {
+    let (held, _) = parked_conversation_trash();
+    // Restored at startup (`BotView::restored`, here with the test's link).
+    let f = Fixture::opened(held.clone());
+    assert!(
+        f.view.lifecycle_busy(),
+        "restored: adopted from the first read"
+    );
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsChatTrashIncomplete)
+    );
+    assert!(offers_continue_and_cancel(&f), "restored");
+    assert!(f.view.lifecycle_rows().is_empty(), "no Archive or Trash");
+    // Opened from a link, before the roster listed it.
+    for opened in ["link", "roster"] {
+        let mut f = fixture();
+        f.bot = held.clone();
+        let (link, commands, answers) = BotsLink::test_pair();
+        f.view = match opened {
+            "link" => BotView::labelled(held.id, held.main_chat, "Scout", None),
+            _ => BotView::opened(&RosterBot::from(held.clone())),
+        };
+        f.view.link = Some(link);
+        f.view.started_link = true;
+        f.commands = commands;
+        f.answers = answers;
+        f.view.set_viewport(800.0, 1600.0);
+        // Its first showing reads the Bot once — the roster's row carries no
+        // open operation.
+        f.view.shown_pass(None);
+        let seq = bot_read(&f);
+        f.answer(seq, held.id, Ok(held.clone()));
+        assert!(f.view.lifecycle_busy(), "{opened}: adopted");
+        assert!(offers_continue_and_cancel(&f), "{opened}");
+        assert!(f.view.lifecycle_rows().is_empty(), "{opened}");
+    }
+}
+
+/// **A settings save keeps a conversation's parked Trash** — the second
+/// review's fault 3, turned round. The owner answers an `Update` with the
+/// Bot it wrote (`execute_bot_command`), which leaves `open_operation` out,
+/// and a conversation's Trash does not block a save (`bot_hold`): that
+/// answer is a write's, so the parked Trash and its Continue and Cancel
+/// stay until a read says otherwise.
+#[test]
+fn a_settings_save_keeps_a_conversations_parked_trash() {
+    use winit::keyboard::NamedKey;
+    let (held, parked) = parked_conversation_trash();
+    let mut f = Fixture::opened(held.clone());
+    assert!(f.view.lifecycle_busy());
+    while f.view.focus() != Some(NAME_FIELD) {
+        assert!(key(&mut f.view, named(NamedKey::Tab), None));
+    }
+    let input = f.view.name_input();
+    crate::input_engine::with(|engine| input.borrow_mut().select_all(engine));
+    assert!(key(
+        &mut f.view,
+        WinitKey::Character("Scout two".into()),
+        Some("Scout two")
+    ));
+    assert!(key(&mut f.view, named(NamedKey::Enter), None));
+    let (request, sent) = f.wrote();
+    assert!(matches!(sent, BotCommand::Update { .. }));
+    let mut saved = held.clone();
+    saved.config.name = "Scout two".into();
+    saved.revision += 1;
+    saved.open_operation = None;
+    f.reply(request, Ok(BotResponse::Bot { bot: saved.clone() }));
+    assert_eq!(f.view.label(), "Scout two", "the save is shown");
+    assert!(
+        f.view.lifecycle_busy(),
+        "the parked Trash is still followed"
+    );
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsChatTrashIncomplete)
+    );
+    assert!(offers_continue_and_cancel(&f));
+    // Continue sends the parked operation again, by its own request.
+    assert!(f.view.continue_lifecycle());
+    let (again, _) = f.wrote();
+    assert_eq!(again, parked);
+}
+
+/// **A Restore's read that fails is asked again on the bounded clock**
+/// while the tab is shown (the second review's item 9): until it answers,
+/// nothing is offered, and a lost answer must not leave the tab offering
+/// nothing for ever.
+#[test]
+fn a_failed_read_after_a_restore_is_asked_again_on_the_clock() {
+    let mut f = listed(&[]);
+    f.view.begin_lifecycle(Ask::Trash);
+    let (trash, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        trash,
+        progress(
+            &bot,
+            trash,
+            BotLifecycleKind::Trash,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    let mut trashed = f.bot.clone();
+    trashed.lifecycle = BotLifecycle::Trashed;
+    f.view.take_trash_listing(Ok(vec![trashed.clone()]));
+    assert!(f.view.perform(region::Act::Restore));
+    let (undo, _) = f.wrote();
+    f.reply(
+        undo,
+        progress(
+            &trashed,
+            undo,
+            BotLifecycleKind::Restore,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    f.answer(seq, f.bot.id, Err(Failure::lost()));
+    assert!(f.view.lifecycle_rows().is_empty(), "still nothing claimed");
+    assert!(
+        f.view.maintenance_deadline().is_some(),
+        "a wake is owed for the read"
+    );
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    assert!(f.view.bot_read_due(later), "the read is due again");
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    let active = f.bot.clone();
+    f.answer(seq, active.id, Ok(active));
+    assert_eq!(f.view.lifecycle_rows(), [Ask::Archive, Ask::Trash]);
+}
+
+/// **The unsent draft survives a Trash and its Restore** (the second
+/// review's item 7): a trashed Bot's conversation reads nothing — its
+/// client stopped, the window's passes not reaching it — but the view, and
+/// the words the person had typed and not sent, are kept and shown again
+/// when the Restore's read binds it.
+#[test]
+fn an_unsent_draft_survives_a_trash_and_its_restore() {
+    let mut f = listed(&[]);
+    for letter in ["h", "i"] {
+        assert!(key(
+            &mut f.view,
+            WinitKey::Character(letter.into()),
+            Some(letter)
+        ));
+    }
+    assert_eq!(
+        f.view.conversation_mut().expect("bound").composer_text(),
+        "hi"
+    );
+    // Trashed elsewhere: the Trash filter names it, and its Trash
+    // (`with_lifecycle_holders`).
+    let mut trashed = f.bot.clone();
+    trashed.lifecycle = BotLifecycle::Trashed;
+    trashed.held_by = Some(koru_ai_core::bots::BotLifecycleHolder {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Trash,
+        completed_at_ms: 1,
+    });
+    f.view.take_trash_listing(Ok(vec![trashed.clone()]));
+    assert!(
+        f.view.conversation().is_none(),
+        "let go: nothing reaches it"
+    );
+    assert!(f.view.perform(region::Act::Restore));
+    let (undo, _) = f.wrote();
+    f.reply(
+        undo,
+        progress(
+            &trashed,
+            undo,
+            BotLifecycleKind::Restore,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    f.view.shown_pass(None);
+    let seq = bot_read(&f);
+    let active = f.bot.clone();
+    f.answer(seq, active.id, Ok(active));
+    assert_eq!(
+        f.view
+            .conversation_mut()
+            .expect("bound again")
+            .composer_text(),
+        "hi",
+        "the draft is the person's still"
+    );
 }

@@ -390,7 +390,7 @@ fn an_unanswered_change_asked_again_reuses_its_request() {
     let (mut settings, _) = known();
     settings.edit_name("Other");
     let (first, _) = write(settings.save_name().unwrap());
-    settings.answer(first, Err(Failure::Unreachable), Instant::now());
+    settings.answer(first, Err(Failure::lost()), Instant::now());
     assert_eq!(
         settings.notice(),
         Some(Notice::Refused(Words::BotsErrUnreachable))
@@ -398,7 +398,7 @@ fn an_unanswered_change_asked_again_reuses_its_request() {
     assert!(!settings.is_pending(Change::Name));
     let (again, _) = write(settings.save_name().unwrap());
     assert_eq!(again, first, "the same change, the same request");
-    settings.answer(again, Err(Failure::Unreachable), Instant::now());
+    settings.answer(again, Err(Failure::lost()), Instant::now());
     settings.edit_name("Different");
     let (different, _) = write(settings.save_name().unwrap());
     assert_ne!(different, first);

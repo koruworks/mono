@@ -8,6 +8,7 @@
 use std::sync::mpsc::Receiver;
 
 use koru_ai_core::bots::{Bot, BotCommand, BotId, BotLifecycleKind, BotRequestId};
+use koru_i18n::{Key as Words, t};
 use koru_store_core::ids::WorkspaceId;
 
 use crate::bots::BotView;
@@ -214,8 +215,31 @@ fn a_question_is_answered_to_the_tab_that_asked() {
         matches!(sent.as_slice(), [BotCommand::Archive { bot_id, .. }] if *bot_id == bot.id),
         "{sent:?}"
     );
-    // A tab that closed meanwhile is asked nothing, and nothing is sent.
-    assert!(!v.choose_bot_lifecycle(bot.id, u64::MAX, MenuAction::TrashBot));
+    // A tab that closed meanwhile is asked nothing, and nothing is sent —
+    // but that is said, never dropped in silence (the second review's
+    // item 12).
+    v.toast = None;
+    assert!(v.choose_bot_lifecycle(bot.id, u64::MAX, MenuAction::TrashBot));
+    assert!(writes(&first).is_empty() && writes(&second).is_empty());
+    let said = |v: &MainView| {
+        v.toast
+            .as_ref()
+            .map(|(toast, _)| toast.message().to_owned())
+    };
+    let gone = t(crate::format::lang(), Words::BotsAskingTabGone).to_owned();
+    assert_eq!(said(&v), Some(gone.clone()));
+    // A question answered after its tab closed: the same.
+    v.toast = None;
+    v.settle_bot_confirm(
+        &ConfirmSubject::BotLifecycle {
+            bot: bot.id,
+            tab: u64::MAX,
+            ask: Ask::Trash,
+        },
+        true,
+    );
+    assert_eq!(said(&v), Some(gone));
+    assert!(writes(&first).is_empty() && writes(&second).is_empty());
 }
 
 /// **A Restore from the Trash tells every tab of the Bot**, not only one:

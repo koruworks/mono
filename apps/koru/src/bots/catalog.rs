@@ -90,18 +90,23 @@ pub(crate) enum Answer {
     },
 }
 
-/// Why a read did not answer: nothing answered, or a refusal by its code.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Failure {
-    Unreachable,
-    Refused(String),
+/// Why a read did not answer: the Bot link's one classification
+/// ([`Failure::of`]), so a lost connection reads the same here as there.
+pub(crate) use super::link::Failure;
+
+fn failure(code: String, retryable: bool) -> Failure {
+    Failure::of(super::link::Said { code, retryable })
 }
 
-fn failure(code: String) -> Failure {
-    if code.is_empty() {
-        Failure::Unreachable
-    } else {
-        Failure::Refused(code)
+/// **A listing's failure as the control reads it**: the shared crate's
+/// reading of its code, except that an answer the link classifies as
+/// unanswered is *nothing answered* — the client is dropped and dialled
+/// again — whatever its code.
+fn listing_failed(code: String, retryable: bool, shared: ListingFailure) -> ListingFailure {
+    match (failure(code, retryable), shared) {
+        (_, ListingFailure::StillListing) => ListingFailure::StillListing,
+        (Failure::Unanswered, _) => ListingFailure::Unreachable,
+        (Failure::Refused(_), shared) => shared,
     }
 }
 
@@ -166,7 +171,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     .ai()
                     .provider_settings()
                     .map(|settings| agent_catalog::agents_from(&settings))
-                    .map_err(|refused| failure(refused.code)),
+                    .map_err(|refused| failure(refused.code, refused.retryable)),
             },
             (Some(connected), Command::Readiness { seq, agent }) => Answer::Readiness {
                 seq,
@@ -174,7 +179,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     .ai()
                     .validate_provider(&agent)
                     .map(|validation| agent_catalog::readiness_from(&validation))
-                    .map_err(|refused| failure(refused.code)),
+                    .map_err(|refused| failure(refused.code, refused.retryable)),
                 agent,
             },
             (
@@ -191,12 +196,12 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
             },
             (None, Command::Agents { seq }) => Answer::Agents {
                 seq,
-                result: Err(Failure::Unreachable),
+                result: Err(Failure::Unanswered),
             },
             (None, Command::Readiness { seq, agent }) => Answer::Readiness {
                 seq,
                 agent,
-                result: Err(Failure::Unreachable),
+                result: Err(Failure::Unanswered),
             },
             (None, Command::Listing { seq, agent, .. }) => Answer::Listing {
                 seq,
@@ -243,7 +248,10 @@ fn listing(
             Err(refused)
                 if agent_catalog::is_still_listing(&refused)
                     && asks < agent_catalog::LISTING_ASKS => {}
-            Err(refused) => return Err(agent_catalog::listing_failure(&refused)),
+            Err(refused) => {
+                let shared = agent_catalog::listing_failure(&refused);
+                return Err(listing_failed(refused.code, refused.retryable, shared));
+            }
         }
     }
 }

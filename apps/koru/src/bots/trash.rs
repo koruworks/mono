@@ -35,7 +35,7 @@ use koru_ai_core::bots::{
 use koru_i18n::{Key as Words, Lang, t};
 use koru_store_core::ids::WorkspaceId;
 
-use super::lifecycle::{Finished, refusal_words, restore_refusal_words};
+use super::lifecycle::{Finished, restored_or_moved};
 use super::link::{Answer, BotsLink, Command, Failure};
 
 /// What a Bot row of the Trash is.
@@ -578,10 +578,10 @@ impl BotTrash {
                     return self.restore(BotSubject::Bot(bot));
                 }
                 let why = match plan {
-                    LinkRestore::UnarchiveFirst => Words::BotsErrArchived,
-                    _ => Words::BotsErrBotTrashed,
+                    LinkRestore::UnarchiveFirst => Words::TrashBotRestoreUnarchiveFirst,
+                    _ => Words::TrashBotRestoreBotFirst,
                 };
-                self.fail(&entry.conversation.chat.title, why);
+                self.say(&entry.conversation.chat.title, why);
                 return true;
             }
         }
@@ -647,16 +647,17 @@ impl BotTrash {
                 };
                 let name = restoring.name.clone();
                 if !self.send_restore(bot, request, command, restoring) {
-                    self.fail(&name, Words::BotsErrUnreachable);
+                    self.say(&name, Words::TrashBotRestoreNotSent);
                 }
             }
             // A trashed Bot reads as not found: its conversation comes back
             // with the Bot, or by its own Restore once the Bot is back.
             Err(Failure::Refused(code)) if code == "not_found" => {
-                self.fail(&restoring.name, Words::BotsErrBotTrashed);
+                self.say(&restoring.name, Words::TrashBotRestoreBotFirst);
             }
-            Err(Failure::Refused(code)) => self.fail(&restoring.name, refusal_words(&code)),
-            _ => self.fail(&restoring.name, Words::BotsErrUnreachable),
+            Err(Failure::Refused(code)) => self.fail(&restoring.name, &code),
+            // The Bot's read did not answer: no Restore was sent.
+            _ => self.say(&restoring.name, Words::TrashBotRestoreNotSent),
         }
     }
 
@@ -671,6 +672,15 @@ impl BotTrash {
                 if operation.request_id == request
                     && operation.stage == BotLifecycleStage::Completed =>
             {
+                // **Out of the Trash the moment it answered**: its row goes
+                // now, not when the re-list answers, so a late second press
+                // finds nothing to restore.
+                match restoring.subject {
+                    BotSubject::Bot(bot) => self.listed.retain(|listed| listed.id != bot),
+                    BotSubject::Chat { chat, .. } => self
+                        .chats
+                        .retain(|entry| entry.conversation.chat.id != chat),
+                }
                 let (bot, kind, reverses, chat) = match restoring.subject {
                     BotSubject::Bot(bot) => (
                         bot,
@@ -704,26 +714,42 @@ impl BotTrash {
                 });
                 self.fresh = false;
             }
-            // A Restore is one transaction: anything but *completed* did
-            // not happen as asked.
-            Ok(_) => self.fail(&restoring.name, Words::BotsErrNotApplied),
-            Err(Failure::Unreachable) => self.fail(&restoring.name, Words::BotsErrUnreachable),
-            // `require_source`'s `request_conflict`: what it names was
-            // restored already, or the Bot moved since.
-            Err(Failure::Refused(code)) => {
-                self.fail(&restoring.name, restore_refusal_words(&code));
+            // **The outcome is unknown** — no answer, or one about something
+            // else: the Restore may well have happened. Never said as not
+            // restored; the listing is read again and shows which.
+            Ok(_) | Err(Failure::Unanswered) => {
+                self.say(&restoring.name, Words::TrashBotRestoreUnconfirmed);
             }
+            // `require_source`'s or `allowed_prior`'s `request_conflict`,
+            // `capture_on`'s `revision_conflict`: restored already, or the
+            // Bot moved since. Not a failure: the listing read again says
+            // what it is now.
+            Err(Failure::Refused(code)) if restored_or_moved(&code) => {
+                self.say(&restoring.name, Words::TrashBotRestoreChanged);
+            }
+            Err(Failure::Refused(code)) => self.fail(&restoring.name, &code),
         }
     }
 
-    /// A Restore that did not happen, said in one sentence: the row's name
-    /// and why, through one template each language places and spaces.
-    fn fail(&mut self, name: &str, why: Words) {
+    /// **A Restore the owner refused**, in one sentence by its code: each
+    /// a whole template with the row's name in it — no sentence is put
+    /// inside another, and nothing is joined.
+    fn fail(&mut self, name: &str, code: &str) {
+        let failure = Failure::Refused(code.to_owned());
+        let words = match code {
+            super::settings::BOT_TRASHED_BOT => Words::TrashBotRestoreBotFirst,
+            super::settings::BOT_ARCHIVED => Words::TrashBotRestoreUnarchiveFirst,
+            super::settings::BOT_PENDING => Words::TrashBotRestoreBusy,
+            _ if failure.again() => Words::TrashBotRestoreLater,
+            _ => Words::TrashBotRestoreRefused,
+        };
+        self.say(name, words);
+    }
+
+    /// Say `words` about the row named `name`, and read the Trash again.
+    fn say(&mut self, name: &str, words: Words) {
         self.receipts.push(Receipt {
-            words: koru_i18n::fill(
-                t(self.lang, Words::TrashBotRestoreFailed),
-                &[name, t(self.lang, why)],
-            ),
+            words: koru_i18n::fill(t(self.lang, words), &[name]),
         });
         self.fresh = false;
     }

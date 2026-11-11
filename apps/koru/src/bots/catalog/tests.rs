@@ -103,7 +103,7 @@ fn a_stale_or_failed_answer_keeps_what_was_shown() {
     answers
         .send(Answer::Agents {
             seq,
-            result: Err(Failure::Unreachable),
+            result: Err(Failure::lost()),
         })
         .unwrap();
     catalog.pass(None);

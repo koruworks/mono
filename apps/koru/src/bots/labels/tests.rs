@@ -81,7 +81,7 @@ fn not_found_reads_as_ordinary_and_a_failure_is_asked_again() {
     answers
         .send(Answer::Labelled {
             chat: unreachable,
-            result: Err(Failure::Unreachable),
+            result: Err(Failure::lost()),
         })
         .unwrap();
     let found = labels.poll();

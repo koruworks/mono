@@ -94,7 +94,7 @@ fn one_request_and_one_bot_id_carry_the_draft_through_its_retries() {
     form.shown();
     let read = form.read(now).expect("read once shown");
     assert_eq!(request_of(&read), request);
-    form.answer(request, Err(Failure::Unreachable), now);
+    form.answer(request, Err(Failure::lost()), now);
     assert_eq!(form.request(), request);
     assert_eq!(form.bot(), bot);
     assert_eq!(request_of(&form.abandon().expect("Abandon")), request);
@@ -127,7 +127,7 @@ fn an_unanswered_create_locks_the_draft_until_a_read_answers() {
     let mut form = ready();
     let first = form.create(None).expect("sent");
     let request = form.request();
-    form.answer(request, Err(Failure::Unreachable), Instant::now());
+    form.answer(request, Err(Failure::lost()), Instant::now());
     assert_eq!(form.notice(), Some(Words::BotsErrUnreachable));
     assert!(!form.editable(), "acceptance is unknown");
     form.edit_name("Other");
@@ -148,7 +148,7 @@ fn an_unanswered_create_locks_the_draft_until_a_read_answers() {
     let mut taken = ready();
     taken.create(None).expect("sent");
     let request = taken.request();
-    taken.answer(request, Err(Failure::Unreachable), Instant::now());
+    taken.answer(request, Err(Failure::lost()), Instant::now());
     let _ = taken.read(Instant::now()).expect("read");
     let moving = creation(&taken, BotCreationStage::Pending);
     answer(&mut taken, moving, Instant::now());
@@ -459,7 +459,7 @@ fn a_completed_creation_hands_over_the_owners_bot() {
     assert_eq!(stage_words(&done), [Words::BotsCreateCreated]);
     let other = BotRequestId::mint();
     assert_eq!(
-        form.answer(other, Err(Failure::Unreachable), Instant::now()),
+        form.answer(other, Err(Failure::lost()), Instant::now()),
         Settled::default(),
         "another request's answer settles nothing"
     );
@@ -552,4 +552,101 @@ fn a_reserved_folder_and_a_missing_one_read_as_different_sentences() {
             "{lang:?}"
         );
     }
+}
+
+/// **A Create lost in transport stays locked until a read says what the
+/// owner holds** — the second review's proof, turned round. The answer goes
+/// through the real link's reading of what `koru_api_client` reports for a
+/// lost connection (`gateway_unavailable`) and an AI worker that did not
+/// answer in time (`ai_worker_timeout`): the owner may hold the Create, so
+/// the draft is not editable, nothing is said to be not applied, no second
+/// Create goes under the same request, and a read is owed.
+#[test]
+fn a_create_lost_in_transport_stays_locked_until_a_read_answers() {
+    use crate::bots::link::{Said, wrote};
+    for code in ["gateway_unavailable", "ai_worker_timeout"] {
+        let mut form = ready();
+        form.create(None).expect("sent");
+        let request = form.request();
+        form.answer(request, wrote(Err(Said::new(code, true))), Instant::now());
+        assert!(!form.editable(), "{code}: locked");
+        assert_eq!(form.notice(), Some(Words::BotsErrUnreachable), "{code}");
+        assert_ne!(
+            form.notice().map(|words| t(Lang::En, words)),
+            Some(t(Lang::En, Words::BotsErrNotApplied)),
+            "{code}: never 'not applied'"
+        );
+        form.edit_name("Other");
+        assert!(form.create(None).is_none(), "{code}: nothing under it");
+        let read = form.read(Instant::now()).expect("a read is owed");
+        assert_eq!(request_of(&read), request, "{code}");
+    }
+}
+
+/// **A Retry or an Abandon lost in transport** is not said to be refused:
+/// the creation's stage is read again, and that read is what speaks. The
+/// fake answers as the worker's `retry_creation` does when the creation
+/// finished meanwhile: the read reports it completed.
+#[test]
+fn a_retry_lost_in_transport_reads_the_creation_again() {
+    use crate::bots::link::{Said, wrote};
+    let mut form = ready();
+    form.create(None).expect("sent");
+    let now = Instant::now();
+    let mut stopped = creation(&form, BotCreationStage::Incomplete);
+    stopped.reason = Some(BotCreationReason::StoreUnavailable);
+    stopped.retryable = true;
+    answer(&mut form, stopped, now);
+    let request = form.request();
+    form.retry().expect("Retry");
+    form.answer(
+        request,
+        wrote(Err(Said::new("gateway_unavailable", true))),
+        now,
+    );
+    assert_eq!(form.notice(), Some(Words::BotsErrUnreachable));
+    let read = form.read(now).expect("the stage is read");
+    assert_eq!(request_of(&read), request);
+    let mut done = creation(&form, BotCreationStage::Completed);
+    done.bot = Some(crate::bots::tests::bot(
+        form.bot(),
+        form.home(),
+        "Scout",
+        false,
+    ));
+    let settled = answer(&mut form, done, now);
+    assert!(settled.created.is_some(), "the read says it was made");
+}
+
+/// **The uncertain read is asked again while the owner turns it away for
+/// now**, and a final refusal gives the person a way forward (the second
+/// review's item 8). The fakes answer as the AI worker does: a full queue
+/// is `ai_worker_saturated` (`queue_failure`), a Store that does not answer
+/// is `workspace_unavailable` (`bot_failure`), each retryable; `wrong_owner`
+/// (`read_bot_creation` for another device's request) is final.
+#[test]
+fn an_uncertain_create_is_read_again_until_the_owner_says_and_never_stays_locked() {
+    use crate::bots::link::{Said, wrote};
+    let mut form = ready();
+    form.create(None).expect("sent");
+    let request = form.request();
+    let mut now = Instant::now();
+    form.answer(
+        request,
+        wrote(Err(Said::new("ai_worker_timeout", true))),
+        now,
+    );
+    form.read(now).expect("the read owed");
+    for code in ["ai_worker_saturated", "workspace_unavailable"] {
+        form.answer(request, wrote(Err(Said::new(code, true))), now);
+        assert!(!form.editable(), "{code}: still unknown");
+        assert!(form.deadline(now).is_some(), "{code}: a read on the clock");
+        now += Duration::from_secs(3);
+        assert!(form.read(now).is_some(), "{code}: asked again");
+    }
+    // A final refusal: its own words, and the draft the person's again.
+    form.answer(request, wrote(Err(Said::new("wrong_owner", false))), now);
+    assert_eq!(form.notice(), Some(Words::BotsErrWrongOwner));
+    assert!(form.editable(), "a way forward");
+    assert_ne!(form.request(), request, "under new identities");
 }

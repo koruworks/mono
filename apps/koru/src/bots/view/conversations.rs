@@ -85,6 +85,10 @@ pub(crate) struct Conversations {
     create_refused: Option<Words>,
     /// The conversation a *New conversation* made, for the tab to show.
     made: Option<ChatId>,
+    /// **A *New conversation* Koru AI did not answer**, by its request: the
+    /// owner may have made it, so the next press is the same request
+    /// (`create_bot_chat` replays its receipt) rather than a second one.
+    unanswered: Option<BotRequestId>,
 }
 
 impl Default for Conversations {
@@ -104,6 +108,7 @@ impl Default for Conversations {
             creating: None,
             create_refused: None,
             made: None,
+            unanswered: None,
         }
     }
 }
@@ -316,7 +321,7 @@ impl Conversations {
         if self.creating.is_some() {
             return None;
         }
-        let request = BotRequestId::mint();
+        let request = self.unanswered.unwrap_or_else(BotRequestId::mint);
         self.creating = Some(request);
         self.create_refused = None;
         Some(Command::Write {
@@ -349,16 +354,24 @@ impl Conversations {
         self.creating = None;
         match result {
             Ok(BotResponse::Chat { reference }) if Some(reference.bot_id) == self.bot => {
+                self.unanswered = None;
                 self.made = Some(reference.chat_id);
                 self.owe_read();
                 if self.load == Load::Cold {
                     self.dirty = true;
                 }
             }
-            Ok(_) => self.create_refused = Some(Words::BotsErrNotApplied),
-            Err(Failure::Unreachable) => self.create_refused = Some(Words::BotsErrUnreachable),
+            // **The outcome is unknown**: never said as not made. The list
+            // is read again, which shows one that was, and the next press
+            // asks under the same request.
+            Ok(_) | Err(Failure::Unanswered) => {
+                self.unanswered = Some(request);
+                self.create_refused = Some(Words::BotsErrUnreachable);
+                self.owe_read();
+            }
             Err(Failure::Refused(code)) => {
-                self.create_refused = Some(crate::bots::settings::refusal_words(code));
+                self.unanswered = None;
+                self.create_refused = Some(crate::bots::settings::general_refusal_words(code));
             }
         }
         true
