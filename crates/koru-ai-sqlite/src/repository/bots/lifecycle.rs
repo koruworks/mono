@@ -332,6 +332,20 @@ const OPEN: &str = "i.stage<>'completed' AND NOT EXISTS(SELECT 1 FROM bot_lifecy
 /// (`prepare_bot_refusal_fence`) and its own transactions: a configuration,
 /// access, pause or resume change is refused here as well as by the hold.
 pub(super) fn whole_bot_operation_open(conn: &Connection, bot: BotId) -> Result<bool, BotError> {
+    // A database is always migrated before it is written, so the journal is
+    // there; only the populated ai17 fixture (`Repository::at_schema(17)`)
+    // runs these writers on a schema that predates it, and nothing can be
+    // open there.
+    let journal: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='bot_lifecycle_intents')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(bad)?;
+    if !journal {
+        return Ok(false);
+    }
     conn.query_row(
         &format!(
             "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_intents i WHERE bot_id=?1 AND chat_id IS NULL AND {OPEN})"
@@ -912,13 +926,23 @@ fn complete_operation(
 /// Why lifecycle holds a Bot or one of its conversations still.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotHold {
-    /// In Trash, or its Bot is: nothing but Stop may touch it until restored.
+    /// The Bot is in Trash, and so is everything of it: nothing but Stop may
+    /// touch it until the Bot is restored.
+    BotTrashed,
+    /// This conversation is in Trash on its own: nothing but Stop may touch
+    /// it until it is restored.
     Trashed,
     /// An Archive, Trash, Restore or Purge is moving.
     Pending,
     /// One stopped before it finished and is parked incomplete: it waits for
     /// the person to resume or reverse it, and holds the subject meanwhile.
     Parked,
+}
+impl BotHold {
+    /// In Trash, by its own operation or its Bot's: hidden from every read.
+    pub fn hides(self) -> bool {
+        matches!(self, Self::BotTrashed | Self::Trashed)
+    }
 }
 
 impl Repository {
@@ -963,7 +987,11 @@ impl Repository {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(bad)?;
-        Ok(hold(trashed, moving, parked))
+        Ok(hold(trashed, moving, parked).map(|hold| match hold {
+            // The Bot itself is in Trash.
+            BotHold::Trashed => BotHold::BotTrashed,
+            other => other,
+        }))
     }
 
     /// A Bot's unfinished lifecycle operation, moving or parked and not
@@ -1016,14 +1044,17 @@ impl Repository {
             )
             .map_err(bad)?;
         let whole = self.bot_hold(bot)?;
-        // The strongest hold wins: Trash, then a moving operation, then a parked one.
+        // The strongest hold wins: the Bot's Trash (restoring the Bot is
+        // what is needed), the conversation's own Trash, then a moving
+        // operation, then a parked one.
         Ok([hold(trashed, moving, parked), whole]
             .into_iter()
             .flatten()
             .min_by_key(|hold| match hold {
-                BotHold::Trashed => 0,
-                BotHold::Pending => 1,
-                BotHold::Parked => 2,
+                BotHold::BotTrashed => 0,
+                BotHold::Trashed => 1,
+                BotHold::Pending => 2,
+                BotHold::Parked => 3,
             }))
     }
 

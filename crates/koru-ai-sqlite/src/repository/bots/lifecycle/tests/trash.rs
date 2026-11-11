@@ -228,7 +228,13 @@ fn bot_trash_hides_the_bot_and_restore_returns_only_what_it_took() {
     assert_eq!(trashed_under(&repo, bot.main_chat), trash);
     assert_eq!(trashed_under(&repo, other), trash);
     assert_eq!(trashed_under(&repo, alone), Some(alone_op.to_storage()));
-    assert_eq!(repo.bot_hold(bot.id).unwrap(), Some(BotHold::Trashed));
+    assert_eq!(repo.bot_hold(bot.id).unwrap(), Some(BotHold::BotTrashed));
+    // A conversation of a trashed Bot reads the Bot's hold, the one trashed
+    // on its own too: restoring the Bot comes first.
+    assert_eq!(
+        repo.bot_chat_hold(alone).unwrap(),
+        Some(BotHold::BotTrashed)
+    );
     assert!(
         repo.visible_bot_chats()
             .unwrap()

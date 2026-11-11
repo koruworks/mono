@@ -48,8 +48,11 @@ impl WorkerState {
                 && self.repository.bot_for_chat(*chat).map_err(bot_failure)? == Some(*id)
                 && validate_owner(&proof.authority, &bot).is_ok()
                 // A conversation in Trash is out of every read, history and context.
-                && self.repository.bot_chat_hold(*chat).map_err(bot_failure)?
-                    != Some(koru_ai_sqlite::BotHold::Trashed)
+                && !self
+                    .repository
+                    .bot_chat_hold(*chat)
+                    .map_err(bot_failure)?
+                    .is_some_and(koru_ai_sqlite::BotHold::hides)
             {
                 allowed.push(*chat);
             }
@@ -548,10 +551,12 @@ pub(super) fn refusing_hold(
             && let Some((bot, source)) = repository
                 .bot_chat_for_block(*block_id)
                 .map_err(bot_failure)?
-            && repository.bot_chat_hold(source).map_err(bot_failure)?
-                == Some(koru_ai_sqlite::BotHold::Trashed)
+            && let Some(hold) = repository
+                .bot_chat_hold(source)
+                .map_err(bot_failure)?
+                .filter(|hold| hold.hides())
         {
-            holds.push((bot, koru_ai_sqlite::BotHold::Trashed));
+            holds.push((bot, hold));
         }
     }
     Ok(holds

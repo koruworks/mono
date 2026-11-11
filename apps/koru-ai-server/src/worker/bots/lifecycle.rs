@@ -760,6 +760,28 @@ impl WorkerState {
             .ok_or_else(not_found)
     }
 
+    /// One lifecycle operation is open per Bot (M1). A new one while another
+    /// is moving or parked answers that one's hold (`bot_lifecycle_pending`),
+    /// never `request_conflict`, which means a reused request id; the Bot's
+    /// read names the open operation, to resume it or reverse it. Only the
+    /// Restore of that very operation (`reverses`) may start beside it.
+    fn refuse_competing(&self, bot: BotId, reverses: Option<BotRequestId>) -> ApiResult<()> {
+        match self
+            .repository
+            .bot_open_lifecycle(bot)
+            .map_err(bot_failure)?
+        {
+            Some(open) if Some(open.request_id) != reverses => Err(hold_failure(
+                if open.stage == BotLifecycleStage::Incomplete {
+                    BotHold::Parked
+                } else {
+                    BotHold::Pending
+                },
+            )),
+            _ => Ok(()),
+        }
+    }
+
     /// Archive or Trash of a whole Bot: capture, or answer a repeat with its
     /// progress (see [`Self::repeat_bot_lifecycle`]). Nothing is captured
     /// twice. Both pause an active Bot and stop its work as the person's
@@ -802,7 +824,7 @@ impl WorkerState {
         if existing.is_none() {
             match (kind, bot.lifecycle) {
                 // Nothing changes a trashed Bot but the Restore of its Trash.
-                (_, BotLifecycle::Trashed) => return Err(hold_failure(BotHold::Trashed)),
+                (_, BotLifecycle::Trashed) => return Err(hold_failure(BotHold::BotTrashed)),
                 (BotLifecycleKind::Archive, BotLifecycle::Archived) => {
                     return Err(archived_failure());
                 }
@@ -811,6 +833,9 @@ impl WorkerState {
         }
         if self.bot_delegate.is_none() || self.provider_admin.is_none() {
             return Err(bot_failure(BotError::Unavailable));
+        }
+        if existing.is_none() {
+            self.refuse_competing(*bot_id, None)?;
         }
         let key = (owner.user_scope, *request_id);
         let now = Timestamp::now().millis();
@@ -926,7 +951,7 @@ impl WorkerState {
         if !replay {
             // A trashed Bot comes back only through its Trash's Restore.
             if bot.lifecycle == BotLifecycle::Trashed && source.kind != BotLifecycleKind::Trash {
-                return Err(hold_failure(BotHold::Trashed));
+                return Err(hold_failure(BotHold::BotTrashed));
             }
             if !matches!(
                 source.stage,
@@ -934,6 +959,7 @@ impl WorkerState {
             ) {
                 return Err(hold_failure(BotHold::Pending));
             }
+            self.refuse_competing(*bot_id, Some(*source_request_id))?;
         }
         let operation = restore(
             &mut self.repository,
@@ -994,7 +1020,7 @@ impl WorkerState {
             .map_err(bot_failure)?;
         if existing.is_none() {
             match bot.lifecycle {
-                BotLifecycle::Trashed => return Err(hold_failure(BotHold::Trashed)),
+                BotLifecycle::Trashed => return Err(hold_failure(BotHold::BotTrashed)),
                 BotLifecycle::Archived => return Err(archived_failure()),
                 BotLifecycle::Active => {}
             }
@@ -1008,6 +1034,9 @@ impl WorkerState {
         }
         if self.bot_delegate.is_none() || self.provider_admin.is_none() {
             return Err(bot_failure(BotError::Unavailable));
+        }
+        if existing.is_none() {
+            self.refuse_competing(*bot_id, None)?;
         }
         let operation = match existing {
             Some(op) => self.repeat_bot_lifecycle(
@@ -1090,7 +1119,7 @@ impl WorkerState {
             .is_some();
         if !replay {
             match bot.lifecycle {
-                BotLifecycle::Trashed => return Err(hold_failure(BotHold::Trashed)),
+                BotLifecycle::Trashed => return Err(hold_failure(BotHold::BotTrashed)),
                 BotLifecycle::Archived => return Err(archived_failure()),
                 BotLifecycle::Active => {}
             }
@@ -1101,6 +1130,7 @@ impl WorkerState {
             ) {
                 return Err(hold_failure(BotHold::Pending));
             }
+            self.refuse_competing(*bot_id, Some(*source_request_id))?;
         }
         let operation = self
             .repository
@@ -1787,7 +1817,7 @@ impl WorkerState {
             _ => self.repository.bot_hold(bot),
         }
         .map_err(bot_failure)?;
-        let Some(hold) = hold.filter(|hold| !trash_only || *hold == BotHold::Trashed) else {
+        let Some(hold) = hold.filter(|hold| !trash_only || hold.hides()) else {
             return Ok(());
         };
         // Ownership first: someone else's Bot never learns its lifecycle.
@@ -1850,7 +1880,9 @@ fn prepared_owner(context: &CommandContext) -> ApiResult<BotOwner> {
 /// attachment (`ResolveAttachments`) is a read: a pending hold keeps it.
 pub(super) fn hold_refuses(command: &WorkerCommand, hold: BotHold) -> bool {
     match hold {
-        BotHold::Trashed => !matches!(command, WorkerCommand::CancelAttempt { .. }),
+        BotHold::BotTrashed | BotHold::Trashed => {
+            !matches!(command, WorkerCommand::CancelAttempt { .. })
+        }
         BotHold::Pending | BotHold::Parked => matches!(
             command,
             WorkerCommand::SendTurn { .. }
@@ -1870,9 +1902,14 @@ pub(super) fn hold_refuses(command: &WorkerCommand, hold: BotHold) -> bool {
 
 pub(super) fn hold_failure(hold: BotHold) -> Failure {
     match hold {
+        BotHold::BotTrashed => failure(
+            bot_lifecycle_codes::BOT_TRASHED,
+            "This Bot is in Trash. Restore the Bot to use it or its conversations again.",
+            false,
+        ),
         BotHold::Trashed => failure(
             bot_lifecycle_codes::TRASHED,
-            "This Bot, or this conversation of it, is in Trash. Restore it to use it again.",
+            "This Bot conversation is in Trash. Restore it to use it again.",
             false,
         ),
         BotHold::Pending => failure(

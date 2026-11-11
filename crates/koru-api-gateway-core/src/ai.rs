@@ -2116,6 +2116,7 @@ fn status_for(failure: &Failure) -> StatusCode {
         | "model_pull_active"
         | "steer_unavailable"
         | koru_ai_wire::bot_lifecycle_codes::TRASHED
+        | koru_ai_wire::bot_lifecycle_codes::BOT_TRASHED
         | koru_ai_wire::bot_lifecycle_codes::PENDING
         | koru_ai_wire::bot_lifecycle_codes::ARCHIVED => StatusCode::CONFLICT,
         "deadline_exceeded" | "ai_worker_timeout" => StatusCode::GATEWAY_TIMEOUT,

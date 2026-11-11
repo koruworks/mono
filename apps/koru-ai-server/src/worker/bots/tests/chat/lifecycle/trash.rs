@@ -307,14 +307,17 @@ fn trash_ends_a_held_running_task_and_restore_brings_back_a_paused_bot_that_star
     );
     assert_eq!(listed[0].lifecycle, BotLifecycle::Trashed);
     assert_eq!(listed[0].revision, bot.revision + 2);
-    assert_eq!(read_code(&client, bot.main_chat).as_deref(), Some(TRASHED));
+    assert_eq!(
+        read_code(&client, bot.main_chat).as_deref(),
+        Some(BOT_TRASHED)
+    );
     assert_eq!(
         client
             .send_turn(context(true), request_for(&bot, bot.main_chat))
             .map(|_| ())
             .unwrap_err()
             .code,
-        TRASHED
+        BOT_TRASHED
     );
     // Restore: paused, nothing starts, the same conversation comes back.
     let begins = port.native.state.lock().unwrap().begin;
@@ -422,7 +425,7 @@ fn a_conversation_trashed_on_its_own_stays_in_trash_through_the_bots_trash_and_r
         restore_chat_at(&client, &bot, alone, chat_trash, revision)
             .unwrap_err()
             .code,
-        TRASHED
+        BOT_TRASHED
     );
     restore_at(&client, &bot, trash, revision).unwrap();
     // Back: the main conversation; the one trashed on its own stays.
@@ -808,7 +811,7 @@ fn begin_chat_trash(
 
 /// A Trash whose work has not ended keeps settling across an AI-only
 /// restart, and every competing or changed command conflicts meanwhile.
-fn unfinished_trash_keeps_settling(begin: Begin) {
+fn unfinished_trash_keeps_settling(begin: Begin, trashed: &str) {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let other = another_chat(&mut repository, &authority, &bot);
@@ -881,7 +884,7 @@ fn unfinished_trash_keeps_settling(begin: Begin) {
         begin(&client, &bot, other, request, bot.revision).unwrap(),
         done
     );
-    assert_eq!(read_code(&client, other).as_deref(), Some(TRASHED));
+    assert_eq!(read_code(&client, other).as_deref(), Some(trashed));
     assert_eq!(port.interrupts_of(run), 0);
     no_owner_effects(&port);
     worker.shutdown();
@@ -890,12 +893,12 @@ fn unfinished_trash_keeps_settling(begin: Begin) {
 
 #[test]
 fn an_unfinished_bot_trash_keeps_settling_across_a_restart() {
-    unfinished_trash_keeps_settling(begin_bot_trash);
+    unfinished_trash_keeps_settling(begin_bot_trash, BOT_TRASHED);
 }
 
 #[test]
 fn an_unfinished_conversation_trash_keeps_settling_across_a_restart() {
-    unfinished_trash_keeps_settling(begin_chat_trash);
+    unfinished_trash_keeps_settling(begin_chat_trash, TRASHED);
 }
 
 #[test]
@@ -986,7 +989,7 @@ fn every_change_to_a_trashed_bot_or_its_conversation_answers_its_code() {
     for change in changes {
         assert_eq!(
             client.bots(context(true), change.clone()).unwrap_err().code,
-            TRASHED,
+            BOT_TRASHED,
             "{change:?}"
         );
     }
@@ -997,9 +1000,12 @@ fn every_change_to_a_trashed_bot_or_its_conversation_answers_its_code() {
             .map(|_| ())
             .unwrap_err()
             .code,
-        TRASHED
+        BOT_TRASHED
     );
-    assert_eq!(read_code(&client, bot.main_chat).as_deref(), Some(TRASHED));
+    assert_eq!(
+        read_code(&client, bot.main_chat).as_deref(),
+        Some(BOT_TRASHED)
+    );
     // Reads of the Bot answer as missing; its operation's progress reads.
     for read in [
         BotCommand::Read { bot_id: bot.id },

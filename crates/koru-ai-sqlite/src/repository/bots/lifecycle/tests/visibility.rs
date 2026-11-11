@@ -101,10 +101,10 @@ fn open_operations_and_trashed_bots_hold_their_conversations() {
             [bot.id.to_storage()],
         )
         .unwrap();
-    assert_eq!(repo.bot_hold(bot.id).unwrap(), Some(BotHold::Trashed));
+    assert_eq!(repo.bot_hold(bot.id).unwrap(), Some(BotHold::BotTrashed));
     assert_eq!(
         repo.bot_chat_hold(bot.main_chat).unwrap(),
-        Some(BotHold::Trashed)
+        Some(BotHold::BotTrashed)
     );
     assert!(repo.visible_bot_chats().unwrap().is_empty());
     // Ordinary reads still refuse it; lifecycle reads see it and its lifecycle.

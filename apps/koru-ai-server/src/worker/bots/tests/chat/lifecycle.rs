@@ -18,7 +18,7 @@
 //! (`check_native_effect_drain`).
 use super::*;
 use koru_ai_core::bots::replay::BotReplayStop;
-use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, PENDING, TRASHED};
+use koru_ai_wire::bot_lifecycle_codes::{ARCHIVED, BOT_TRASHED, PENDING, TRASHED};
 use std::sync::atomic::AtomicUsize;
 mod trash;
 mod unadmitted;
@@ -1326,7 +1326,7 @@ fn start_on_a_trashed_bot_reads_its_stable_trash_code() {
         )
         .unwrap_err()
         .code;
-    assert_eq!(code, TRASHED);
+    assert_eq!(code, BOT_TRASHED);
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }

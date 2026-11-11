@@ -55,11 +55,16 @@ pub mod attachment_codes {
     pub const WORKSPACE_FILE_UNAVAILABLE: &str = "workspace_file_unavailable";
 }
 
-/// Refusals of a Bot conversation that lifecycle holds still (P1.7). Both are
-/// returned before any mutation; neither is an ordinary-chat fallback.
+/// Refusals of a Bot or a Bot conversation that lifecycle holds still
+/// (P1.7). Each is returned before any mutation; none is an ordinary-chat
+/// fallback.
 pub mod bot_lifecycle_codes {
-    /// The conversation, or its whole Bot, is in Trash: restore it first.
+    /// The conversation is in Trash on its own (its Bot is not): restore the
+    /// conversation first.
     pub const TRASHED: &str = "bot_conversation_trashed";
+    /// The Bot is in Trash, and with it every conversation of it: restore the
+    /// Bot first (additive).
+    pub const BOT_TRASHED: &str = "bot_trashed";
     /// An Archive, Trash, Restore or Purge of this conversation or its Bot is
     /// still in progress or parked incomplete.
     pub const PENDING: &str = "bot_lifecycle_pending";

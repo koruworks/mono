@@ -767,3 +767,47 @@ fn a_parked_revision_change_made_only_by_its_own_refusal_resumes_to_completion()
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+#[test]
+fn restore_of_a_conversation_on_a_trashed_bot_answers_the_bots_trash_code() {
+    let (mut repository, authority, create) = fixture();
+    let bot = created(&mut repository, authority.clone(), create);
+    let other = another_chat(&mut repository, &authority, &bot);
+    let port = Arc::new(Archiving::default());
+    let (worker, _returned) = spawn(repository, authority, port.clone());
+    let client = worker.client();
+    let chat_trash = BotRequestId::mint();
+    trash_chat_at(&client, &bot, other, chat_trash, bot.revision).unwrap();
+    assert_eq!(
+        settled(&client, bot.id, chat_trash).stage,
+        BotLifecycleStage::Completed
+    );
+    let trash = BotRequestId::mint();
+    trash_at(&client, &bot, trash, bot.revision).unwrap();
+    assert_eq!(
+        settled(&client, bot.id, trash).stage,
+        BotLifecycleStage::Completed
+    );
+    let revision = super::trash::trashed_revision(&client, &bot);
+    // The Bot is in Trash: restoring the Bot is what is needed.
+    assert_eq!(
+        restore_chat_at(&client, &bot, other, chat_trash, revision)
+            .unwrap_err()
+            .code,
+        BOT_TRASHED
+    );
+    // A conversation of a trashed Bot reads the Bot's code; one in Trash on
+    // its own, once the Bot is back, reads the conversation's.
+    assert_eq!(
+        super::trash::read_code(&client, bot.main_chat).as_deref(),
+        Some(BOT_TRASHED)
+    );
+    restore_at(&client, &bot, trash, revision).unwrap();
+    assert_eq!(
+        super::trash::read_code(&client, other).as_deref(),
+        Some(TRASHED)
+    );
+    assert_eq!(super::trash::read_code(&client, bot.main_chat), None);
+    no_owner_effects(&port);
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
