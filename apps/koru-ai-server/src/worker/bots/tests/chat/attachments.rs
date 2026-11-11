@@ -20,16 +20,22 @@ struct Pictures {
     lists: AtomicUsize,
     order: Mutex<Vec<&'static str>>,
     ingest_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
+    /// Every ingest's session and picture identity, in order.
+    ingested: Mutex<Vec<(s::SessionId, s::AttachmentId)>>,
 }
 impl Pictures {
     fn new(script: Script) -> Self {
+        Self::with_native(script, Native::default())
+    }
+    fn with_native(script: Script, native: Native) -> Self {
         Self {
-            native: Native::default(),
+            native,
             script,
             ingests: AtomicUsize::new(0),
             lists: AtomicUsize::new(0),
             order: Mutex::new(Vec::new()),
             ingest_gate: Mutex::new(None),
+            ingested: Mutex::new(Vec::new()),
         }
     }
 }
@@ -48,6 +54,10 @@ impl BotDelegatePort for Pictures {
                 assert_eq!(*source, s::AttachmentSource::PublicUpload);
                 self.order.lock().unwrap().push("ingest");
                 self.ingests.fetch_add(1, Ordering::SeqCst);
+                self.ingested
+                    .lock()
+                    .unwrap()
+                    .push((fence.session, *attachment_id));
                 if let Some((entered, release)) = self.ingest_gate.lock().unwrap().take() {
                     let _ = entered.send(());
                     let _ = release.recv();
@@ -110,16 +120,84 @@ fn png() -> Vec<u8> {
 }
 
 struct Running {
-    _root: tempfile::TempDir,
+    root: tempfile::TempDir,
     worker: WorkerHandle,
     port: Arc<Pictures>,
     context: CommandContext,
     request: SendTurnRequest,
+    authority: Arc<Authority>,
+    returned: Receiver<Repository>,
+}
+
+fn spawn_on(
+    root: &std::path::Path,
+    repository: Repository,
+    authority: Arc<Authority>,
+    port: Arc<Pictures>,
+) -> (WorkerHandle, Receiver<Repository>) {
+    let (return_tx, returned) = sync_channel(1);
+    let mut config = WorkerConfig::new(
+        root.to_owned(),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(authority)
+    .with_bot_delegate(port);
+    config.test_repository = Some(repository);
+    config.test_repository_return = Some(return_tx);
+    (AiWorker::new(config).spawn().unwrap(), returned)
+}
+
+impl Running {
+    /// Only the AI worker stops and starts again, on the same repository,
+    /// attachment folder and owner: the delegate and its session stay.
+    /// `before_join` runs once the stopped writer has let go of the stream.
+    fn restart(self, stream: &AiResponseStream, before_join: impl FnOnce()) -> Self {
+        let Self {
+            root,
+            worker,
+            port,
+            context,
+            request,
+            authority,
+            returned,
+        } = self;
+        worker.shutdown();
+        // The writer drops every response stream once its loop has ended;
+        // only then can a late provider reply no longer reach it.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match stream.events.recv_timeout(Duration::from_secs(10)) {
+                Ok(_) => assert!(Instant::now() < deadline, "the writer never stopped"),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("the stopped writer kept its response stream")
+                }
+            }
+        }
+        before_join();
+        let _ = worker.join();
+        let repository = returned.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (worker, returned) = spawn_on(root.path(), repository, authority.clone(), port.clone());
+        Self {
+            root,
+            worker,
+            port,
+            context,
+            request,
+            authority,
+            returned,
+        }
+    }
 }
 
 /// One Bot with one stored picture, its Send prepared but not yet sent.
 fn start(script: Script) -> Running {
-    let mut running = boot(script);
+    start_with(Pictures::new(script))
+}
+
+fn start_with(port: Pictures) -> Running {
+    let mut running = boot_with(port);
     let id = koru_ai_core::ChatAttachmentId::new();
     // The same prepared Bot command context a Send carries.
     crate::worker::attachments::put_attachment(
@@ -140,6 +218,10 @@ fn start(script: Script) -> Running {
 
 /// One Bot and its Send, with nothing attached yet.
 fn boot(script: Script) -> Running {
+    boot_with(Pictures::new(script))
+}
+
+fn boot_with(port: Pictures) -> Running {
     let root = tempfile::tempdir().unwrap();
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
@@ -151,22 +233,16 @@ fn boot(script: Script) -> Running {
         .unwrap()
         .unwrap();
     let context = proof(authority.clone(), &bot, chat);
-    let port = Arc::new(Pictures::new(script));
-    let mut config = WorkerConfig::new(
-        root.path().to_owned(),
-        "internal-debug",
-        ProviderRegistry::default(),
-    )
-    .with_bot_authority(authority)
-    .with_bot_delegate(port.clone());
-    config.test_repository = Some(repository);
-    let worker = AiWorker::new(config).spawn().unwrap();
+    let port = Arc::new(port);
+    let (worker, returned) = spawn_on(root.path(), repository, authority.clone(), port.clone());
     let request = request(&bot);
     Running {
-        _root: root,
+        root,
         worker,
         port,
         context,
+        authority,
+        returned,
         request,
     }
 }
@@ -487,4 +563,83 @@ fn local_path_references_go_as_the_ordinary_route_sends_them_and_are_never_stage
     let replay = send(&running);
     assert!(replay.accepted.replayed);
     assert_eq!(port.native.state.lock().unwrap().begin, 1);
+}
+
+#[test]
+fn an_ai_restart_mid_staging_selects_the_automatic_interrupt_and_never_begins() {
+    let running = start(Script::Native);
+    let (entered_tx, entered) = sync_channel(1);
+    let (release, release_rx) = sync_channel(1);
+    *running.port.ingest_gate.lock().unwrap() = Some((entered_tx, release_rx));
+    let (reports, interrupted) = sync_channel(64);
+    *running.port.native.interrupt_reports.lock().unwrap() = Some(reports);
+    let stream = send(&running);
+    // The picture's one ingest is in flight on the provider pool...
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    // ...when only the AI worker stops. Its reply arrives after the writer
+    // has gone, and the restarted writer never resumes staging.
+    let running = running.restart(&stream, || release.send(()).unwrap());
+    assert!(interrupted.recv_timeout(Duration::from_secs(10)).unwrap());
+    let state = running.port.native.state.lock().unwrap();
+    assert_eq!(
+        state.begin, 0,
+        "a task whose staging was cut short never begins"
+    );
+    assert_eq!(state.stop_calls, 0, "an AI restart is not a person's Stop");
+    assert!(state.interrupt_calls > 0);
+    drop(state);
+    assert_eq!(
+        running.port.ingests.load(Ordering::SeqCst),
+        1,
+        "never resent"
+    );
+    assert_eq!(running.port.lists.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_retry_stages_fresh_identities_into_the_new_runs_session_never_the_old_one() {
+    let (reports, interrupted) = sync_channel(4);
+    let running = start_with(Pictures::with_native(
+        Script::Native,
+        Native {
+            // The first native turn fails: an automatic end a Retry follows.
+            fail_first: true,
+            interrupt_reports: Mutex::new(Some(reports)),
+            ..Native::default()
+        },
+    ));
+    let first = send(&running);
+    assert!(matches!(terminal(&first), PublicAiEvent::Failed { .. }));
+    assert!(interrupted.recv_timeout(Duration::from_secs(10)).unwrap());
+    let old_session = running
+        .port
+        .native
+        .state
+        .lock()
+        .unwrap()
+        .fence
+        .as_ref()
+        .unwrap()
+        .session;
+    let second = retry(&running, first.accepted.assistant_message_id);
+    let (event, notice) = terminal_with_notice(&second);
+    assert!(
+        matches!(event, PublicAiEvent::Completed { .. }),
+        "{event:?}"
+    );
+    assert!(!notice, "the Retry's picture went natively");
+    let ingested = running.port.ingested.lock().unwrap().clone();
+    let state = running.port.native.state.lock().unwrap();
+    let new_session = state.fence.as_ref().unwrap().session;
+    assert_ne!(old_session, new_session, "a Retry is a new Run and Session");
+    // One upload into each Run's own session, each under its own identity.
+    assert_eq!(ingested.len(), 2);
+    assert_eq!(ingested[0].0, old_session);
+    assert_eq!(ingested[1].0, new_session);
+    assert_ne!(ingested[0].1, ingested[1].1);
+    assert_eq!(
+        state.input.as_ref().unwrap().attachment_ids,
+        [ingested[1].1]
+    );
+    assert_eq!(state.begin, 2);
 }
