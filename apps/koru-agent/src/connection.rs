@@ -87,25 +87,65 @@ impl Connection {
     }
 }
 
-/// Take over an accepted socket: split it, and start both threads.
+/// Take over an accepted socket: split it, start the writer, and hand back
+/// the reading half for [`Reading::start`].
 ///
 /// The handshake has already happened on the caller's thread — see
 /// [`crate::rendezvous`] — because a peer that will not be talked to should
 /// never have had two threads spawned for it.
-pub fn adopt(id: ConnectionId, stream: Stream, waker: Waker) -> std::io::Result<Connection> {
+pub fn adopt(
+    id: ConnectionId,
+    stream: Stream,
+    waker: Waker,
+) -> std::io::Result<(Connection, Reading<impl std::io::Read + Send + 'static>)> {
     // `Stream::split` hands back halves that are both `Send`, which is what
     // makes a reader thread and a writer thread over one socket possible.
     let (recv, send) = koru_ipc::split(stream);
-    let (outbound, queue) = channel::<FromAgent>();
+    adopt_halves(id, recv, send, waker)
+}
 
-    std::thread::Builder::new()
-        .name(format!("koru-agent shell {} reader", id.0))
-        .spawn(move || read_until_eof(id, recv, waker))?;
+/// [`adopt`] over any two halves, so the order of what a connection raises
+/// can be asserted without a socket.
+pub(crate) fn adopt_halves<R, W>(
+    id: ConnectionId,
+    recv: R,
+    send: W,
+    waker: Waker,
+) -> std::io::Result<(Connection, Reading<R>)>
+where
+    R: std::io::Read + Send + 'static,
+    W: Write + Send + 'static,
+{
+    let (outbound, queue) = channel::<FromAgent>();
     std::thread::Builder::new()
         .name(format!("koru-agent shell {} writer", id.0))
         .spawn(move || write_until_closed(send, queue))?;
+    Ok((Connection { id, outbound }, Reading { id, recv, waker }))
+}
 
-    Ok(Connection { id, outbound })
+/// A connection's reading half, not read yet.
+///
+/// **Nothing the peer sends is raised until [`Reading::start`].** The first
+/// request on a connection is judged by facts the accept thread raises about
+/// it (`ShellArrived` carries the pid the operating system reported, and a
+/// first-party grant is minted only to that pid), so the reader must not exist
+/// until they are queued: a request already waiting in the pipe would
+/// otherwise overtake them and be judged with none.
+pub struct Reading<R> {
+    id: ConnectionId,
+    recv: R,
+    waker: Waker,
+}
+
+impl<R: std::io::Read + Send + 'static> Reading<R> {
+    /// Start the reader thread.
+    pub fn start(self) -> std::io::Result<()> {
+        let Self { id, recv, waker } = self;
+        std::thread::Builder::new()
+            .name(format!("koru-agent shell {} reader", id.0))
+            .spawn(move || read_until_eof(id, recv, waker))
+            .map(drop)
+    }
 }
 
 /// Read frames until the socket ends, raising each one.

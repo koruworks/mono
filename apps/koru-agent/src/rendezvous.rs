@@ -93,17 +93,46 @@ pub fn serve(
         koru_ipc::set_timeouts(&stream, None);
 
         match connection::adopt(id, stream, waker.clone()) {
-            Ok(connection) => {
-                hand_over(connection);
-                waker.wake(AgentEvent::ShellArrived {
-                    connection: id,
-                    pid,
-                });
-            }
+            Ok((connection, reading)) => welcome(connection, reading, pid, &waker, &hand_over),
             Err(e) => koru_ipc::ipc_debug!("shell {}: could not start its threads: {e}", id.0),
         }
     }
 }
+
+/// Hand a welcomed connection to the loop, say where it came from, and only
+/// then start reading it.
+///
+/// **The order is the point.** A peer may send its first request the moment
+/// it is welcomed, so it can already be waiting in the pipe. The loop judges
+/// that request by the pid `ShellArrived` carries (a first-party grant is
+/// minted only to the transport's pid), and events reach the loop in the
+/// order they are raised, so the reader starts only once the arrival is
+/// queued. Started first, as it once was, its first request was raised while
+/// the hand-over waited for the Agent's lock, and the app's first grant after
+/// a restart was refused `Unverified` (window run 2).
+fn welcome<R: std::io::Read + Send + 'static>(
+    connection: Connection,
+    reading: connection::Reading<R>,
+    pid: Option<u32>,
+    waker: &Waker,
+    hand_over: &impl Fn(Connection),
+) {
+    let id = connection.id();
+    hand_over(connection);
+    waker.wake(AgentEvent::ShellArrived {
+        connection: id,
+        pid,
+    });
+    if let Err(e) = reading.start() {
+        // The loop holds a connection nobody will read: end it as the reader
+        // ending would have.
+        koru_ipc::ipc_debug!("shell {}: could not start its reader: {e}", id.0);
+        waker.wake(AgentEvent::ShellGone { connection: id });
+    }
+}
+
+#[cfg(test)]
+mod tests;
 
 enum Greeted {
     Welcomed,
