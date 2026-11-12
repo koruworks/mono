@@ -1457,3 +1457,50 @@ fn the_tabs_own_idle_conversation_is_asked_about_as_idle_without_the_roster() {
         assert!(v.confirm.is_none());
     }
 }
+
+/// **A message typed in one of a Bot's conversations stays with that
+/// conversation** (the fourth window run: one composer draft followed the
+/// tab across the Bot's conversations, as text typed in one appeared in the
+/// others). Entered as a person does it: a click on a row moves the tab to
+/// that conversation, Escape gives the keyboard to the composer, and the
+/// words are typed through `MainView::key`. Moving away and back gives
+/// each conversation its own unsent words.
+#[test]
+fn an_unsent_message_stays_with_the_conversation_it_was_typed_in() {
+    use winit::keyboard::NamedKey;
+    let (mut v, mut workspace, bot, other, _tab) = renaming_window();
+    let typed = |v: &mut MainView| {
+        front_bot(v)
+            .conversation_mut()
+            .expect("bound")
+            .composer_text()
+    };
+    let go_to = |v: &mut MainView, workspace: &mut koru_workspace::Workspace, chat| {
+        lay_out(v, workspace);
+        let (x, y) = row_centre(v, chat);
+        let ws = &mut workspace.ws;
+        koru_workspace_host::View::mouse_down(v, ws, x, y, false);
+        koru_workspace_host::View::mouse_up(v, ws);
+        lay_out(v, workspace);
+        assert_eq!(front_bot(v).chat_id(), chat);
+        // The click gave the list the keyboard; Escape gives it back.
+        press(v, &mut workspace.ws, NamedKey::Escape);
+        assert_eq!(front_bot(v).focus(), None);
+    };
+    go_to(&mut v, &mut workspace, bot.main_chat);
+    type_text(&mut v, &mut workspace.ws, "For the main one");
+    assert_eq!(typed(&mut v), "For the main one");
+
+    go_to(&mut v, &mut workspace, other);
+    assert_eq!(
+        typed(&mut v),
+        "",
+        "another conversation's composer is its own"
+    );
+    type_text(&mut v, &mut workspace.ws, "Launch notes");
+
+    go_to(&mut v, &mut workspace, bot.main_chat);
+    assert_eq!(typed(&mut v), "For the main one", "given back");
+    go_to(&mut v, &mut workspace, other);
+    assert_eq!(typed(&mut v), "Launch notes");
+}

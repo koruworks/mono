@@ -133,9 +133,12 @@ impl ChatSurface {
         if self.owned.as_ref() == Some(&conversation) && self.unavailable.is_none() {
             return false;
         }
-        let reread = self.unavailable.is_some()
-            || self.owned.as_ref().map(|owned| owned.chat) != Some(conversation.chat);
+        let previous = self.owned.as_ref().map(|owned| owned.chat);
+        let reread = self.unavailable.is_some() || previous != Some(conversation.chat);
         let chat = conversation.chat;
+        if previous.is_some() && previous != Some(chat) {
+            self.move_composer(previous, chat);
+        }
         self.context_workspace = Some(conversation.destination);
         self.prioritize_context_workspace();
         self.fresh_chat_wanted = false;
@@ -152,6 +155,26 @@ impl ChatSurface {
             return self.send_command(Command::Boot(Some(chat), self.profile));
         }
         self.open_link(chat, None)
+    }
+
+    /// **The unsent message stays with the chat it was written in** when
+    /// the surface moves from `from` to `to` (the fourth window run of Bots:
+    /// one draft followed a Bot's tab across its conversations). What was
+    /// being typed — chips, quotes, caret and undo — is set aside for `from`,
+    /// and `to`'s own unsent message, if it has one, comes back. A walk back
+    /// through earlier messages is left first, so what is set aside is what
+    /// was typed, not a recalled message.
+    fn move_composer(&mut self, from: Option<ChatId>, to: ChatId) {
+        if self.history_cursor.is_some() {
+            self.leave_input_walk();
+        }
+        let typed = self.composer.stash();
+        if let Some(from) = from {
+            self.composer_drafts.insert(from, typed);
+        }
+        if let Some(draft) = self.composer_drafts.remove(&to) {
+            self.composer.unstash(draft);
+        }
     }
 
     /// The conversation this surface is bound to, if a host owns it.

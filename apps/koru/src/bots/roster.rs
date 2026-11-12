@@ -1521,6 +1521,12 @@ impl BotsRoster {
         self.hover.take().is_some() || activity || archived
     }
 
+    /// The list's offset, as the last layout clamped it: what the published
+    /// rows' clipped bounds move with.
+    pub(crate) fn scroll_offset(&self) -> f32 {
+        self.scroll
+    }
+
     pub(crate) fn scroll_by(&mut self, dy: f32) {
         // Clamped at the next layout, which knows the content's extent.
         self.scroll = (self.scroll - dy).max(0.0);

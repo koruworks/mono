@@ -99,7 +99,13 @@ pub(crate) fn roster_tree(roster: &BotsRoster) -> Vec<SemanticNode> {
 /// the empty sentence.
 pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<SemanticNode> {
     roster.with_input_frame(cx.area, top, |_, frame| {
-        let rect_of = |key| frame.node(key).map(|node| node.rect);
+        // **Where it shows, inside the list's viewport**: a row scrolled
+        // out of view was published at the place it would be, over the
+        // column's title or under the Trash row, and found there by a point
+        // (the fourth window run). Clipped as its pointer region is
+        // (`Node::hit_region`); a row wholly out of view keeps an empty box
+        // at the viewport's edge, and Scroll into view still reveals it.
+        let rect_of = |key| frame.node(key).map(|node| shown_part(node.rect, node.clip));
         let mut out = Vec::new();
         if let Some(rect) = rect_of(NOTICE) {
             // What the roster draws there, from the one place that says it.
@@ -399,6 +405,20 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
     })
 }
 
+/// **The part of `rect` its viewport shows**: all of it outside a scroll,
+/// else what lies inside `clip` — an empty box at the viewport's nearer edge
+/// when none does, never a box over what is drawn beside the list.
+fn shown_part(rect: Rect, clip: Option<Rect>) -> Rect {
+    let Some(clip) = clip else {
+        return rect;
+    };
+    let x0 = rect.x.max(clip.x);
+    let x1 = (rect.x + rect.w).min(clip.x + clip.w).max(x0);
+    let y0 = rect.y.clamp(clip.y, clip.y + clip.h);
+    let y1 = (rect.y + rect.h).clamp(clip.y, clip.y + clip.h).max(y0);
+    Rect::new(x0, y0, x1 - x0, y1 - y0)
+}
+
 /// Where the keyboard is, read off the same focus the ring is drawn from:
 /// a Bot row or one of its running and Needs-you sub-rows, *Create a bot*,
 /// *Open role page*, an Unfinished row's Retry or
@@ -442,6 +462,8 @@ pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occu
 /// Everything the published tree is built from.
 pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     rev.byte(roster.load() as u8);
+    // A scroll moves every row's clipped bounds and nothing else.
+    rev.f32(roster.scroll_offset());
     match roster.focus() {
         Some(key) => rev.byte(2).str(&format!("{key:?}")),
         None => rev.byte(0),

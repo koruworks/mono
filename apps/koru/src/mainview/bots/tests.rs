@@ -1108,3 +1108,106 @@ fn an_archived_row_opens_a_tab_that_is_archived_from_the_start() {
     view.know_bot_for_test(bot);
     assert_eq!(view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
 }
+
+/// **Roster rows scrolled out of view are published inside the list's
+/// viewport** (the fourth window run, at 940 × 240: after the wheel a row
+/// scrolled away was still published over the column's title, and unscrolled
+/// the *Archived* heading under the Trash row, each found there by a point).
+/// Scrolled as a person scrolls it — the pointer over the list, the wheel
+/// through `View::scroll_by` — every Bot row the window publishes lies
+/// within the list's own bounds; one scrolled wholly away keeps an empty box
+/// at its edge.
+#[test]
+fn roster_rows_scrolled_out_of_view_are_published_inside_the_list() {
+    use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot};
+    fn flatten(nodes: &[SemanticNode], out: &mut Vec<SemanticNode>) {
+        for node in nodes {
+            out.push(node.clone());
+            flatten(&node.children, out);
+        }
+    }
+    let features = koru_features::Features {
+        agents: true,
+        ai: true,
+        ..koru_features::Features::ALL_OFF
+    };
+    koru_features::testing::with(features, || {
+        let (mut v, w) = on_document();
+        View::set_viewport(&mut v, 940.0, 240.0);
+        let home = WorkspaceId::new();
+        let bots: Vec<RosterBot> = (0..8)
+            .map(|i| {
+                RosterBot::from(crate::bots::tests::bot(
+                    koru_ai_core::bots::BotId::mint(),
+                    home,
+                    &format!("Bot {i}"),
+                    false,
+                ))
+            })
+            .collect();
+        v.explore.bots_mut().listed_for_test(bots);
+        v.show_navigator(crate::panes::explore::NavigatorMode::Bots);
+        if !v.sidebar.is_open() {
+            assert!(v.toggle_sidebar());
+        }
+        v.sidebar
+            .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
+        let frame = |v: &mut MainView| {
+            v.relayout();
+            v.draw_frame(
+                &mut vello::Scene::new(),
+                &w,
+                &koru_draw::ImageCache::new(),
+                vello::kurbo::Affine::IDENTITY,
+                false,
+                (-1.0, -1.0),
+            );
+            let mut published = Vec::new();
+            flatten(
+                &v.semantics(ViewSlot::from_raw(1), Scope::Whole),
+                &mut published,
+            );
+            published
+        };
+        let title = koru_i18n::t(crate::format::lang(), koru_i18n::Key::BotsTitle);
+        let list = |published: &[SemanticNode]| {
+            published
+                .iter()
+                .find(|node| {
+                    node.role == accesskit::Role::List && node.label.as_deref() == Some(title)
+                })
+                .cloned()
+                .expect("the roster's list is published")
+        };
+        let published = frame(&mut v);
+        let band = list(&published).bounds.expect("with bounds");
+        View::mouse_move(&mut v, band.x + band.w * 0.5, band.y + band.h * 0.5);
+        View::scroll_by(&mut v, winit::event::MouseScrollDelta::LineDelta(0.0, -6.0));
+        let published = frame(&mut v);
+        assert!(
+            v.explore.bots().scroll_offset() > 0.0,
+            "the wheel scrolled the roster"
+        );
+        let list = list(&published);
+        let band = list.bounds.expect("with bounds");
+        let rows: Vec<_> = list
+            .children
+            .iter()
+            .filter(|node| node.role == accesskit::Role::ListItem)
+            .collect();
+        assert_eq!(rows.len(), 8, "every Bot is published");
+        for row in &rows {
+            let r = row.bounds.expect("with bounds");
+            assert!(
+                r.y >= band.y - 0.5 && r.y + r.h <= band.y + band.h + 0.5,
+                "{:?} at {r:?} outside the list {band:?}",
+                row.label
+            );
+        }
+        assert!(
+            rows.iter()
+                .any(|row| row.bounds.is_some_and(|r| r.h <= 0.0)),
+            "a row scrolled wholly away keeps an empty box"
+        );
+    });
+}

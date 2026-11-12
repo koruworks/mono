@@ -810,6 +810,12 @@ pub struct ChatSurface {
     /// The message being typed when Up first left it, whole, for Down to
     /// give back past the newest.
     history_draft: Option<composer::Draft>,
+    /// **Each other chat's unsent message**, set aside whole when a host
+    /// moves this surface to another chat ([`ChatSurface::bind_owned`]) and
+    /// given back when it comes back: a message belongs to the chat it was
+    /// written in, as it does in a tab of its own. The attachments beside
+    /// it are kept per chat already (`attachments::Strips`).
+    composer_drafts: HashMap<ChatId, composer::Draft>,
     history_attachment_draft: Option<Vec<attachments::Draft>>,
     history_chat: Option<ChatId>,
     /// Active staged copies, by new id. Late completions after leaving the
@@ -1199,6 +1205,7 @@ impl ChatSurface {
             history_cursor: None,
             history_entries: None,
             history_draft: None,
+            composer_drafts: HashMap::new(),
             history_attachment_draft: None,
             history_chat: None,
             recall_restages: HashMap::new(),
