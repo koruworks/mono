@@ -4010,7 +4010,7 @@
               }
             ],
             "default": null,
-            "description": "For an `abandoned` creation, what it may have made and left in place."
+            "description": "For an `abandoned` creation, what it made and left in place."
           },
           "name": {
             "type": "string"
@@ -4116,10 +4116,10 @@
         "type": "object"
       },
       "BotCreationLeftovers": {
-        "description": "What an abandoned creation leaves in place for the person: a Role page\nit may have created, and the managed folder it may have made. Nothing is\nremoved; ordinary page and file actions deal with them.",
+        "description": "What an abandoned creation leaves in place for the person: a Role page\nit created, and the managed folder it made. Nothing is removed; ordinary\npage and file actions deal with them. Something the creation never got\nto make is not named.",
         "properties": {
           "folder": {
-            "description": "The managed folder, when it may have been made. A selected folder\nwas the person's own and is never named here.",
+            "description": "The managed folder, when it is there: the abandon and every later\nread look at the disk. Also named, as possibly there, when the look\nfailed or a step of the creation was still under way when it was\nabandoned. A selected folder was the person's own and is never named\nhere.",
             "nullable": true,
             "type": "string"
           },
@@ -4135,7 +4135,7 @@
                 "nullable": true
               }
             ],
-            "description": "The authored Role page, when the Store may have been asked for it."
+            "description": "The authored Role page, when the Store holds it or may: asked and\nits answer not seen (then `role_page_unconfirmed` is true on the\ncreation). Not named when the Store refused it, so nothing was\nwritten, or when it is gone for good."
           }
         },
         "type": "object"
@@ -4329,7 +4329,7 @@
             "type": "string"
           },
           {
-            "description": "The person ended it ([`BotCommand::AbandonBotCreation`]). No Bot is\nmade, the BotId stays reserved forever, and whatever it may already\nhave made is named in `left_behind`, never removed.",
+            "description": "The person ended it ([`BotCommand::AbandonBotCreation`]). No Bot is\nmade, the BotId stays reserved forever, and what it made is named in\n`left_behind`, never removed.",
             "enum": [
               "abandoned"
             ],
