@@ -189,7 +189,7 @@ pub(crate) enum Found {
 
 /// Every word a widget on the showing page carries, with where pressing it
 /// lands and whether it reads as chosen.
-fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
+pub(crate) fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
     fn walk(widget: &Widget, laid: &Laid, out: &mut Vec<(String, Found, bool)>) {
         match widget {
             Widget::Segmented {

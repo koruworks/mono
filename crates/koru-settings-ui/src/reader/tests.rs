@@ -13,7 +13,30 @@ fn row(status: ReaderStatus) -> ReaderRow {
         languages: vec!["und-Latn".into(), "zh".into(), "ja".into()],
         items: Vec::new(),
         more: 0,
+        partly: Vec::new(),
+        partly_more: 0,
         not_here: 0,
+    }
+}
+
+/// How many pressable controls on the Editor page carry `word`.
+fn buttons(surface: &mut crate::SettingsSurface, word: &str) -> usize {
+    surface.show_page(crate::PageId::Editor);
+    surface.relayout();
+    crate::tests::words(surface)
+        .iter()
+        .filter(|(w, ..)| w == word)
+        .count()
+}
+
+fn partly(key: &str, name: &str, pages_done: u32, read_all: bool) -> ReaderPartlyRow {
+    ReaderPartlyRow {
+        key: key.into(),
+        name: Some(name.into()),
+        picture: false,
+        pages_done,
+        reading: false,
+        read_all,
     }
 }
 
@@ -39,6 +62,7 @@ fn item(key: &str, name: Option<&str>, picture: bool, reason: &str) -> ReaderIte
         name: name.map(str::to_owned),
         picture,
         reason: reason.into(),
+        read_again: false,
     }
 }
 
@@ -192,6 +216,7 @@ fn every_state_is_worded_in_every_language() {
             offline: false,
             ended: Some(ReaderDownloadEnd::Stopped),
         },
+        ReaderStatus::Off { megabytes: 24 },
     ];
     let blocked = [
         ReaderBlocked::NoTrustRoot,
@@ -216,6 +241,28 @@ fn every_state_is_worded_in_every_language() {
             &["und-Latn".into(), "zh".into(), "ja".into()],
         ));
         sentences.push(item_name(lang, &item("p", Some("Page"), true, "damaged")));
+        // The partly read list (OCR Plan 3.5): how far it got, one page,
+        // and a Read all pages under way.
+        let capped = partly("k", "Scan.pdf", 1_200, true);
+        sentences.push(how_far(lang, &capped));
+        sentences.push(how_far(lang, &partly("k", "Scan.pdf", 1, true)));
+        sentences.push(how_far(
+            lang,
+            &ReaderPartlyRow {
+                reading: true,
+                ..capped.clone()
+            },
+        ));
+        for far in [
+            how_far(lang, &capped),
+            sentences[sentences.len() - 1].clone(),
+        ] {
+            assert!(
+                far.contains(&number::decimal(lang, 1_200)),
+                "{}: {far}",
+                lang.tag()
+            );
+        }
         for sentence in &sentences {
             assert!(!sentence.trim().is_empty(), "{}", lang.tag());
             assert!(!sentence.contains("{}"), "{}: {sentence}", lang.tag());
@@ -329,6 +376,122 @@ fn files_on_another_device_have_a_row_of_their_own() {
             lang.tag()
         );
     }
+}
+
+/// **Off and still downloaded** (OCR Plan 3.5): the row says so, offers
+/// **Turn on** with no size (nothing to download), and keeps **Remove**.
+#[test]
+fn off_says_so_offers_turn_on_without_a_size_and_keeps_remove() {
+    let (line, button) = status_line(Lang::En, &ReaderStatus::Off { megabytes: 24 });
+    assert_eq!(line, "Off. What was already read can still be found.");
+    assert!(!line.contains("MB"), "nothing to download");
+    assert!(matches!(button, Some((Action::ReaderTurnOn, "Turn on"))));
+
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.set_voice_facts(crate::VoiceFacts::default());
+    surface.set_reader(Some(row(ReaderStatus::Off { megabytes: 24 })));
+    let all = lines(&surface);
+    assert!(all.iter().any(|l| l == "24 MB on this computer"), "{all:?}");
+    assert!(press(&mut surface, "Turn on"));
+    assert_eq!(surface.take_requests(), vec![Request::TurnOnReader]);
+    assert!(press(&mut surface, "Remove"));
+    assert_eq!(surface.take_requests(), vec![Request::RemoveReader]);
+}
+
+/// **Read again beside Show** on an item where a menu would offer it, and
+/// only there (OCR Plan 3.5).
+#[test]
+fn read_again_sits_beside_show_where_it_is_offered() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    let mut with_items = row(on(2));
+    with_items.items = vec![
+        item("ws/odd/b3:01", Some("Odd.pdf"), false, "unsupported"),
+        ReaderItemRow {
+            read_again: true,
+            ..item("ws/bad/b3:02", Some("Bad.pdf"), false, "crashed")
+        },
+    ];
+    surface.set_reader(Some(with_items));
+    assert_eq!(buttons(&mut surface, "Read again"), 1);
+    assert_eq!(buttons(&mut surface, "Show"), 2);
+    assert!(press(&mut surface, "Read again"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::ReadReaderItemAgain("ws/bad/b3:02".into())]
+    );
+}
+
+/// **The partly read list** (OCR Plan 3.5; EXPERIENCE §4): under the could
+/// not be read list, each item with its name, how far it got, **Show**, and
+/// **Read all pages** where offered; the button asks the host for that item.
+#[test]
+fn the_partly_read_list_offers_read_all_pages_beside_the_file() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    let mut card = row(on(1));
+    card.items = vec![item(
+        "ws/locked/b3:03",
+        Some("Locked.pdf"),
+        false,
+        "password",
+    )];
+    card.partly = vec![
+        partly("ws/scan/b3:04", "Scan.pdf", 200, true),
+        partly("ws/away/b3:05", "Away.pdf", 200, false),
+        ReaderPartlyRow {
+            reading: true,
+            ..partly("ws/going/b3:06", "Going.pdf", 230, false)
+        },
+    ];
+    surface.set_reader(Some(card));
+    let all = lines(&surface);
+    let at = |text: &str| all.iter().position(|l| l == text).expect(text);
+    assert!(
+        at("Could not be read") < at("Partly read"),
+        "under the could-not-be-read list: {all:?}"
+    );
+    assert!(at("Partly read") < at("Scan.pdf"));
+    assert_eq!(
+        all.iter().filter(|l| *l == "First 200 pages read").count(),
+        2
+    );
+    assert!(
+        all.iter()
+            .any(|l| l == "Reading all pages: 230 read so far")
+    );
+    assert_eq!(
+        buttons(&mut surface, "Read all pages"),
+        1,
+        "only where offered"
+    );
+    assert_eq!(buttons(&mut surface, "Show"), 4, "every item, both lists");
+    assert!(press(&mut surface, "Read all pages"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::ReadAllReaderPages("ws/scan/b3:04".into())]
+    );
+}
+
+/// The partly read list is cut as the other is, and counts the rest.
+#[test]
+fn a_long_partly_read_list_counts_the_rest() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    let mut long = row(on(0));
+    long.partly = (0..READER_ITEMS_SHOWN + 2)
+        .map(|i| partly(&i.to_string(), &format!("Scan {i}.pdf"), 200, true))
+        .collect();
+    long.partly_more = 3;
+    surface.set_reader(Some(long));
+    let all = lines(&surface);
+    assert!(all.iter().any(|l| l == "Scan 0.pdf"));
+    assert!(
+        !all.iter()
+            .any(|l| l == &format!("Scan {}.pdf", READER_ITEMS_SHOWN))
+    );
+    assert!(all.iter().any(|l| l == "Not listed here: 5"), "{all:?}");
 }
 
 /// A long list shows its first ones and says how many more.

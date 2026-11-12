@@ -172,6 +172,12 @@ fn reading_vocabulary_exists_in_every_language_and_never_says_ocr() {
         Key::ReaderResultsAppear,
         Key::ReaderNotHere,
         Key::ReaderNotHereOne,
+        // OCR Plan 3.5: off that keeps the download, and the partly read list.
+        Key::SettingsReaderOff,
+        Key::SettingsReaderPartlyRead,
+        Key::SettingsReaderPagesRead,
+        Key::SettingsReaderPagesReadOne,
+        Key::SettingsReaderReadingRest,
     ];
     for key in keys {
         for lang in Lang::ALL {

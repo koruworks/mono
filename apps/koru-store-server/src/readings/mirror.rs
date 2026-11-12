@@ -804,7 +804,12 @@ impl Mirror {
     /// `pages_done` is the mirror's `page_count` for the row: the larger of
     /// the entry's `pages_done` and its highest page, which for a capped
     /// reading is where it stopped.
-    // Plan 2.5 wires this into the Settings row's list (see PARTLY_READ_SQL).
+    // The Settings row's *partly read* list does not read this (OCR Plan
+    // 3.5): it is classified with the could-not-be-read list in one pass over
+    // the live references (`items::classify`), so a binned or purged entry is
+    // on neither and both lists come in the listing's order. This stays the
+    // mirror's own view of the same rows, which the long-files tests check
+    // the coordinator against.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn partly_read(&self) -> Result<Vec<PartlyRead>> {
         let mut q = self.db.prepare(PARTLY_READ_SQL)?;

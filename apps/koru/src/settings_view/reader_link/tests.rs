@@ -153,6 +153,9 @@ fn items_are_named_from_the_listing_and_lead_to_their_document() {
         hash: "b3:00".into(),
         kind: ReaderItemKind::CouldNotBeRead,
         reason: reason.into(),
+        pages_done: None,
+        offers: Default::default(),
+        requested: false,
     };
     let mut state = ReaderState::default();
     state.counts.could_not_be_read = 5;
@@ -196,6 +199,149 @@ fn items_are_named_from_the_listing_and_lead_to_their_document() {
         }
     );
     assert_eq!(item_target("not a key"), None);
+    // A token from before the hash rode along still goes where it went.
+    assert_eq!(
+        item_target(&format!("{}/{}", workspace.to_storage(), file.to_storage())),
+        Some(target)
+    );
+}
+
+fn installed() -> InstalledReader {
+    InstalledReader {
+        model: "m".into(),
+        version: "1".into(),
+        download_bytes: 24 * 1024 * 1024,
+        licence: "Apache-2.0".into(),
+        attribution: "PaddleOCR".into(),
+    }
+}
+
+/// **Downloaded and off** is its own status (OCR Plan 3.5), with what the
+/// download takes; a reader on is still on.
+#[test]
+fn off_and_downloaded_is_its_own_status() {
+    let off = row(&answer(ReaderState {
+        installed: Some(installed()),
+        turned_off: true,
+        ..ReaderState::default()
+    }))
+    .unwrap();
+    assert_eq!(off.status, ReaderStatus::Off { megabytes: 24 });
+    let on = row(&answer(ReaderState {
+        installed: Some(installed()),
+        ..ReaderState::default()
+    }))
+    .unwrap();
+    assert!(matches!(on.status, ReaderStatus::On { .. }));
+    // A download running, or a reader this computer cannot use, says that.
+    let removing = row(&answer(ReaderState {
+        installed: Some(installed()),
+        turned_off: true,
+        install: Some(InstallProgress {
+            stage: InstallStage::Removing,
+            received: 0,
+            total: 0,
+            code: None,
+        }),
+        ..ReaderState::default()
+    }))
+    .unwrap();
+    assert!(matches!(removing.status, ReaderStatus::Downloading { .. }));
+}
+
+/// **The partly read list** (OCR Plan 3.5): partly read items become the
+/// card's second list with how far they got, whether *Read all pages* is
+/// offered, and whether one is under way; *Read again* rides on the other
+/// list's items; each token names the bytes a request asks about.
+#[test]
+fn partly_read_items_are_their_own_list_with_their_offers() {
+    use koru_store_wire::readings::ReadingOffers;
+    let workspace = WorkspaceId::new();
+    let (scan, going, odd) = (DocumentId::new(), DocumentId::new(), DocumentId::new());
+    let base = ReaderItem {
+        workspace,
+        document: scan,
+        hash: "b3:5c".into(),
+        kind: ReaderItemKind::PartlyRead,
+        reason: "page-cap".into(),
+        pages_done: Some(200),
+        offers: ReadingOffers {
+            read_all: true,
+            read_again: false,
+        },
+        requested: false,
+    };
+    let mut state = ReaderState::default();
+    state.counts.partly_read = 3;
+    state.counts.could_not_be_read = 1;
+    let found = Answer {
+        state: Some(state),
+        items: ReaderItems {
+            items: vec![
+                base.clone(),
+                ReaderItem {
+                    document: going,
+                    hash: "b3:60".into(),
+                    reason: String::new(),
+                    pages_done: Some(230),
+                    offers: ReadingOffers::default(),
+                    requested: true,
+                    ..base.clone()
+                },
+                ReaderItem {
+                    document: odd,
+                    hash: "b3:0d".into(),
+                    kind: ReaderItemKind::CouldNotBeRead,
+                    reason: "unsupported".into(),
+                    pages_done: None,
+                    offers: ReadingOffers {
+                        read_all: false,
+                        read_again: true,
+                    },
+                    ..base.clone()
+                },
+            ],
+            truncated: false,
+        },
+        names: HashMap::from([(
+            (workspace, scan),
+            ("Scan.pdf".to_owned(), "file".to_owned()),
+        )]),
+    };
+    let card = row(&found).unwrap();
+    assert_eq!(card.items.len(), 1);
+    assert!(card.items[0].read_again);
+    assert_eq!(card.partly.len(), 2);
+    let first = &card.partly[0];
+    assert_eq!(first.name.as_deref(), Some("Scan.pdf"));
+    assert_eq!(
+        (first.pages_done, first.read_all, first.reading),
+        (200, true, false)
+    );
+    let second = &card.partly[1];
+    assert_eq!(
+        (second.pages_done, second.read_all, second.reading),
+        (230, false, true)
+    );
+    assert_eq!(
+        card.partly_more, 2,
+        "three partly read, one listed; the one under way is counted unread"
+    );
+    assert_eq!(
+        item_request(&first.key),
+        Some((workspace, "b3:5c".to_owned())),
+        "Read all pages asks about these bytes"
+    );
+    assert_eq!(
+        item_request(&card.items[0].key),
+        Some((workspace, "b3:0d".to_owned()))
+    );
+    assert_eq!(item_request("nonsense"), None);
+    assert!(
+        reading_requested(&found.items),
+        "asked again while one runs"
+    );
+    assert!(!reading_requested(&ReaderItems::default()));
 }
 
 /// The card asks again only while the catalog is being read and the size is
@@ -235,4 +381,13 @@ fn queued_refreshes_collapse_and_presses_are_kept() {
         [Command::TurnOn, Command::Refresh]
     );
     assert_eq!(dedup_refreshes(vec![Command::Stop]), [Command::Stop]);
+    let asked = Command::ReadAll {
+        workspace: WorkspaceId::new(),
+        hash: "b3:5c".into(),
+    };
+    assert_eq!(
+        dedup_refreshes(vec![Command::Refresh, asked.clone(), Command::TurnOff]),
+        [asked, Command::TurnOff, Command::Refresh],
+        "a press on a list item is never dropped"
+    );
 }

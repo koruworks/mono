@@ -26,6 +26,7 @@ fn answer() -> ReadingAnswer {
             },
         ],
         offers: Default::default(),
+        failed_here: None,
     }
 }
 

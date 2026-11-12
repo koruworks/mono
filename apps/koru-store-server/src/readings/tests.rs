@@ -1369,6 +1369,107 @@ fn removing_the_model_stops_recognition_and_keeps_the_readings() {
     assert!(counts.offer, "not installed any more, and a picture waits");
 }
 
+/// **Turning the reader off stops recognition and silences every offer; what
+/// was read stays findable; turning it on again needs no download and reads
+/// what waited** (OCR Plan 3.5; TECHNICAL §9 "The reader is turned off").
+///
+/// While off, a picture added waits as `needs_reader`, exactly as with no
+/// reader — and the search answer's `offer` stays `false`, because one is
+/// downloaded. On again, the coordinator takes the model back by the path an
+/// install takes, and nothing at all is asked of the installer: no catalog,
+/// no download.
+#[test]
+fn turning_the_reader_off_keeps_the_readings_and_on_reads_what_waited() {
+    let first = hash(48);
+    let later = hash(49);
+    let pdf = hash(50);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let page = a_page_with_picture(&mut store, ws, &first);
+    land(&mut store, ws, &first, 10, "image/png");
+    let hub = desktop_hub();
+    hub.set_installed(Some(installed_model()));
+    let launcher = recognizer(
+        &[
+            (&first, vec![(1, "kept gannetword", true)]),
+            (&later, vec![(1, "waited cormorantword", true)]),
+            (&pdf, vec![(1, "typed petrelword", false)]),
+        ],
+        true,
+        false,
+    );
+    let model = Arc::clone(&launcher.model);
+    let mut device = Device::with_hub(store, launcher, Some(Arc::clone(&hub)));
+    device.here(&first);
+    device.settle();
+    assert!(device.found("gannetword", page));
+    assert!(hub.state().recognizing);
+
+    // Turn off: the worker lets the model go; the download is still there.
+    assert!(hub.set_turned_off(true));
+    device.settle();
+    assert_eq!(
+        *model.lock().unwrap(),
+        None,
+        "the worker restarted without --model"
+    );
+    let state = hub.state();
+    assert!(state.turned_off && state.installed.is_some(), "off, kept");
+    assert!(!state.recognizing);
+
+    // A picture and a PDF with a text layer arrive while it is off.
+    let (second, file) = {
+        let mut store = device.store();
+        let second = a_page_with_picture(&mut store, ws, &later);
+        land(&mut store, ws, &later, 10, "image/png");
+        let file = a_file(&mut store, ws, "Typed.pdf", &pdf, "application/pdf");
+        land(&mut store, ws, &pdf, 10, "application/pdf");
+        (second, file)
+    };
+    device.here(&later);
+    device.here(&pdf);
+    device.settle();
+    assert!(
+        requests_for(&device, &later).is_empty(),
+        "off: the picture waits"
+    );
+    assert!(
+        requests_for(&device, &pdf)
+            .iter()
+            .all(|r| want_of(r) == koru_read::Want::Text),
+        "a text layer is still read, never recognized"
+    );
+    assert!(device.found("petrelword", file));
+    assert!(device.found("gannetword", page), "what was read stays");
+    assert!(!device.found("cormorantword", second));
+    let counts = hub.reading_counts(Some(&[ws]), &[]).unwrap();
+    assert_eq!((counts.unread, counts.needs_reader), (1, 1));
+    assert!(
+        !counts.offer,
+        "off is an answer: no offer, though a picture waits"
+    );
+    assert!(
+        hub.next_command(std::time::Duration::ZERO).is_none(),
+        "nothing asked of the installer while off: no catalog read"
+    );
+
+    // Turn on again: the model comes back and what waited is read.
+    assert!(hub.set_turned_off(false));
+    device.settle();
+    assert_eq!(*model.lock().unwrap(), Some(installed_model().root));
+    let waited = requests_for(&device, &later);
+    assert_eq!(waited.len(), 1);
+    assert_eq!(want_of(&waited[0]), koru_read::Want::Recognize);
+    assert!(device.found("cormorantword", second));
+    assert!(
+        hub.next_command(std::time::Duration::ZERO).is_none(),
+        "on again needs no download"
+    );
+    let counts = hub.reading_counts(Some(&[ws]), &[]).unwrap();
+    assert_eq!((counts.unread, counts.needs_reader), (0, 0));
+    assert!(!hub.state().turned_off);
+}
+
 /// **A worker that reports `recognition: false` is never sent
 /// `Want::Recognize`** — a build without recognition, even with a model
 /// installed — and the Store says so instead of offering a download.

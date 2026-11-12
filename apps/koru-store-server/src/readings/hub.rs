@@ -24,6 +24,15 @@
 //! (ADR-251's rule: a flag beside the consent record would answer *installed*
 //! for a cache another channel had pruned). It is re-asked at start, after an
 //! install and after a removal.
+//!
+//! ## Off is a person's word, kept beside the consent
+//!
+//! [`ReaderHub::turned_off`] is the one stored fact about the reader that is
+//! not the consent or *Not now* (OCR Plan 3.5; TECHNICAL §7 "Whether the
+//! reader is on is machine-local"). It matters only while a model is
+//! installed: then the coordinator is handed no model
+//! ([`ReaderHub::wanted_model`]), exactly as with none installed, and nothing
+//! is offered, because one is installed.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -92,6 +101,9 @@ pub enum Command {
     Remove,
     /// Write the *Not now* flag as it now stands.
     SaveDeclined(bool),
+    /// Write whether the reader is turned off, as it now stands, and say so
+    /// in the log when that changed what is on the disk (OCR Plan 3.5).
+    SaveTurnedOff(bool),
 }
 
 #[derive(Default)]
@@ -108,6 +120,9 @@ struct State {
     offer: Option<CatalogEntry>,
     install: Option<InstallProgress>,
     declined: bool,
+    /// **Turn off** was pressed and not undone (OCR Plan 3.5). Meaningful
+    /// only while `installed` is set; Remove and an install clear it.
+    turned_off: bool,
     /// This build may install no model (a stable build with no key).
     no_trust_root: bool,
     /// The installer runs at all.
@@ -275,6 +290,29 @@ impl ReaderHub {
         self.lock().declined
     }
 
+    /// **Turn off, or on again** (OCR Plan 3.5). Moves the model revision
+    /// when it changes what the worker should have, so the coordinator lets
+    /// the model go — or takes it back and queues what waited for it — by the
+    /// same path an install or a removal takes. Returns whether it changed.
+    pub fn set_turned_off(&self, turned_off: bool) -> bool {
+        let mut state = self.lock();
+        if state.turned_off == turned_off {
+            return false;
+        }
+        state.turned_off = turned_off;
+        if state.installed.is_some() {
+            state.model_revision += 1;
+        }
+        true
+    }
+
+    /// **A reader is installed and on**: what recognition, and a request
+    /// that needs it, wait for. Off reads as not installed here.
+    pub fn reading_on(&self) -> bool {
+        let state = self.lock();
+        state.installed.is_some() && !state.turned_off
+    }
+
     /// Ask for the catalog if nothing has been read, or the last read failed
     /// long enough ago, and nothing says it would be pointless. Returns
     /// whether it asked. Called from a request; only pushes a command.
@@ -288,8 +326,11 @@ impl ReaderHub {
                     .is_none_or(|at| now.saturating_sub(at) >= CATALOG_RETRY_MILLIS),
                 CatalogStage::Reading | CatalogStage::Ready => false,
             };
+            // Off and downloaded: nothing is offered, so nothing needs the
+            // catalog — no request leaves this computer for a reader somebody
+            // turned off (OCR Plan 3.5).
             let pointless = state.installing_here
-                && matches!(
+                && (matches!(
                     unavailable(&state),
                     Some(
                         ReaderUnavailable::NoTrustRoot
@@ -297,7 +338,7 @@ impl ReaderHub {
                             | ReaderUnavailable::WorkerMissing
                             | ReaderUnavailable::NotBuilt
                     )
-                );
+                ) || (state.installed.is_some() && state.turned_off));
             let go = state.installing_here && stale && !pointless;
             if go {
                 state.catalog = CatalogState {
@@ -338,7 +379,9 @@ impl ReaderHub {
         self.lock().coordinated = true;
     }
 
-    /// The model the worker should be launched with, and its revision.
+    /// The model the worker should be launched with, and its revision. **None
+    /// while the reader is turned off**: the worker then runs as it does with
+    /// no model installed (OCR Plan 3.5).
     pub fn wanted_model(&self) -> (u64, Option<ModelInUse>) {
         let state = self.lock();
         (
@@ -346,6 +389,7 @@ impl ReaderHub {
             state
                 .installed
                 .clone()
+                .filter(|_| !state.turned_off)
                 .map(|installed| ModelInUse { installed }),
         )
     }
@@ -446,8 +490,9 @@ impl ReaderHub {
             offer: state.offer.as_ref().map(terms_of),
             catalog: state.catalog.clone(),
             install: state.install.clone(),
-            recognizing: state.installed.is_some() && state.worker.recognizing,
+            recognizing: state.installed.is_some() && !state.turned_off && state.worker.recognizing,
             offer_declined: state.declined,
+            turned_off: state.installed.is_some() && state.turned_off,
             counts: state.machine.clone(),
         }
     }
@@ -511,7 +556,9 @@ fn unavailable(state: &State) -> Option<ReaderUnavailable> {
 }
 
 /// **Whether a surface should offer the reader now** (TECHNICAL §10): it is
-/// not installed, something in scope waits for it on this computer, the
+/// not installed — a reader downloaded and turned off is installed, and a
+/// person who turned it off was not undecided (OCR Plan 3.5) — something in
+/// scope waits for it on this computer, the
 /// person has not said *Not now* since the last import that brought a
 /// picture, and nothing says this computer could not use it.
 fn offer(state: &State, needs_reader: u64) -> bool {

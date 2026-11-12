@@ -824,6 +824,34 @@ impl<'a> Builder<'a> {
         );
     }
 
+    /// Two quiet text buttons — *Read again* and *Show* — side by side: the
+    /// existing [`Spec::Pair`] of the button [`row_text_button`](Self::row_text_button)
+    /// draws, so no control is new.
+    pub(crate) fn row_text_buttons(
+        &mut self,
+        label: &str,
+        hint: Option<&str>,
+        (first, first_action): (&str, Action),
+        (second, second_action): (&str, Action),
+    ) {
+        self.row(
+            label,
+            hint,
+            Spec::Pair(
+                Box::new(Spec::Button(
+                    first_action,
+                    first.to_owned(),
+                    koru_ui::ActionStyle::Ghost,
+                )),
+                Box::new(Spec::Button(
+                    second_action,
+                    second.to_owned(),
+                    koru_ui::ActionStyle::Ghost,
+                )),
+            ),
+        );
+    }
+
     /// **A row of choice chips**, wrapping across the card's width — the
     /// shared [`Chip`], each optionally led by a brand mark (by profile key).
     /// The row has no name; the card's title says what the chips choose.

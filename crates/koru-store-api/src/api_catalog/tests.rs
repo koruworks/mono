@@ -351,9 +351,11 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // paths: its state and Remove share `/v1/readings/reader`. The items
     // behind the Settings row's could-not-be-read count (Plan 2.5) one more.
     // A person's two requests on one item (OCR Plan 3.2, `…/read-all` and
-    // `…/read-again`) add two internal rows over two paths.
-    assert_eq!(ROUTES.len(), 124, "a row was added or removed");
-    assert_eq!(paths.len(), 101, "a path was added or removed");
+    // `…/read-again`) add two internal rows over two paths. Turning the
+    // reader off and on again (OCR Plan 3.5, `…/reader/off` and `…/on`) two
+    // more.
+    assert_eq!(ROUTES.len(), 126, "a row was added or removed");
+    assert_eq!(paths.len(), 103, "a path was added or removed");
 }
 
 #[test]
@@ -539,6 +541,9 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/readings/reader",
             "/v1/readings/reader/install",
             "/v1/readings/reader/stop",
+            // Ours: whether the reader is on is machine-local (OCR Plan 3.5).
+            "/v1/readings/reader/off",
+            "/v1/readings/reader/on",
             "/v1/readings/reader/decline",
             "/v1/readings/reader/imported",
             // Ours: this computer's could-not-be-read items (OCR Plan 2.5).

@@ -1447,6 +1447,35 @@ pub const ROUTES: &[Route] = &[
         returns: "the reader's state, stopping. The partial download is kept, so turning \
                   the reader on again carries on from where it stopped",
     },
+    // Off and on (OCR Plan 3.5): whether the reader is on is machine-local,
+    // like the consent it follows — internal for the reason the rest are.
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/off",
+        handler: || post(routes::reader::turn_off),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Turn the reader off on this computer, keeping the download",
+        returns: "the reader's state, turned_off. Nothing more is recognized and nothing is \
+                  offered; text layers and plain-text files are still read, and readings \
+                  already made stay, synced and findable. Kept across a restart. Nothing \
+                  installed: nothing to turn off, and the state as it was",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/on",
+        handler: || post(routes::reader::turn_on),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Turn a downloaded reader on again",
+        returns: "the reader's state, on. No download: what waited for the reader is queued \
+                  as after an install. Already on, or not downloaded (use install): the state \
+                  as it was",
+    },
     Route {
         method: "POST",
         audience: Audience::Internal,
@@ -1482,12 +1511,15 @@ pub const ROUTES: &[Route] = &[
         request: None,
         response: Some(|g| g.subschema_for::<ReaderItems>()),
         scope: Some(Scope::ReadDocuments),
-        summary: "What could not be read on this computer, item by item",
-        returns: "each item behind the Settings row's could-not-be-read count: its workspace, \
-                  the entry it belongs to (the file, or the page holding the picture), the blob's \
-                  hash and the reason token. Ids and tokens only — a surface names each item from \
-                  the workspace listing. At most 1,000, with `truncated` when there are more; \
-                  `projection_unavailable` when this store runs no readings mirror",
+        summary: "What could not be read, and what was partly read, on this computer",
+        returns: "each item behind the Settings row's could-not-be-read and partly-read lists: \
+                  its workspace, the entry it belongs to (the file, or the page holding the \
+                  picture), the blob's hash, its kind and reason token, how far a partly read \
+                  item got, whether a request for it is waiting, and what a person may ask of it \
+                  here now (offers: read_all, read_again — the decision a menu gets). Ids, \
+                  tokens and counts only — a surface names each item from the workspace listing. \
+                  At most 1,000, with `truncated` when there are more; `projection_unavailable` \
+                  when this store runs no readings mirror",
     },
     Route {
         method: "GET",
@@ -1502,11 +1534,13 @@ pub const ROUTES: &[Route] = &[
         scope: Some(Scope::ReadDocuments),
         summary: "The words read out of one file or picture in a workspace",
         returns: "the winning reading of those bytes there — reader, generation, status, \
-                  reason, source, confidence, how far it got, and each page's words — or \
-                  null when nothing has been read of them yet, with what a person may ask \
-                  of it on this computer now (offers: read_all, read_again). A file's \
-                  words, so one item at a time; `projection_unavailable` when this store \
-                  runs no readings mirror",
+                  reason, source, confidence, how far it got, and each page's words — with \
+                  what a person may ask of it on this computer now (offers: read_all, \
+                  read_again). When reading it failed on this computer only, `failed_here` \
+                  names the local failure, and an item with no reading at all is still \
+                  answered, with no status and no pages, so it can be read again. Null when \
+                  nothing has been read of them yet. A file's words, so one item at a time; \
+                  `projection_unavailable` when this store runs no readings mirror",
     },
     // ---- a person's requests on one item (OCR Plan 3.2). Internal, like the
     // reading they act on: a request is a fact about this computer, and the

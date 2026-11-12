@@ -2,8 +2,9 @@
 
 //! `/v1/readings/reader` — **the reader that finds words in pictures, on this
 //! computer**: whether it is here, what downloading it would mean, the
-//! download's progress, and the five things a person can say about it
-//! (OCR TECHNICAL D16, §10).
+//! download's progress, and the things a person can say about it — turn it
+//! on, stop, turn it off and on again, remove it, not now (OCR TECHNICAL D16,
+//! §10; OCR Plan 3.5 for off and on).
 //!
 //! ## Why the daemon answers through a trait
 //!
@@ -57,6 +58,15 @@ pub trait ReaderService: Send + Sync + 'static {
     fn stop(&self) -> ReaderState;
     /// **Remove** the model from disk. Readings already made stay.
     fn remove(&self) -> Result<ReaderState, Error>;
+    /// **Turn off** (OCR Plan 3.5): reading stops and the download stays.
+    /// Nothing is recognized, nothing is offered, and readings already made
+    /// stay findable. Machine-local. Answering with nothing installed is not
+    /// an error: there is nothing to turn off.
+    fn turn_off(&self) -> Result<ReaderState, Error>;
+    /// **Turn on** a reader that is downloaded and off: no download, and what
+    /// waited for it is queued as after an install. Answering when it is
+    /// already on, or not downloaded, is not an error.
+    fn turn_on(&self) -> Result<ReaderState, Error>;
     /// **Not now.** Search answers carry no offer until an import brings a
     /// picture or a scanned PDF.
     fn decline(&self) -> Result<ReaderState, Error>;
@@ -108,6 +118,22 @@ pub async fn remove(
 ) -> ApiResult<Json<ReaderState>> {
     caller.require(Scope::EditDocuments)?;
     Ok(Json(service(&state)?.remove()?))
+}
+
+pub async fn turn_off(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+) -> ApiResult<Json<ReaderState>> {
+    caller.require(Scope::EditDocuments)?;
+    Ok(Json(service(&state)?.turn_off()?))
+}
+
+pub async fn turn_on(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+) -> ApiResult<Json<ReaderState>> {
+    caller.require(Scope::EditDocuments)?;
+    Ok(Json(service(&state)?.turn_on()?))
 }
 
 pub async fn decline(

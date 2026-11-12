@@ -1605,6 +1605,33 @@ fn import_error_key(code: koru_import::ImportErrorCode) -> koru_i18n::Key {
     }
 }
 
+/// **What an import's summary notice says**, in the person's language (OCR
+/// Plan 3.5: the notice no longer mixes an English sentence with the
+/// localized reading line under it). Whole sentences, never assembled around
+/// a number; `FAILED` is the title of the page the import writes.
+pub(crate) fn import_notice_message(
+    lang: koru_i18n::Lang,
+    imported: usize,
+    already_known: usize,
+    had_failures: bool,
+) -> String {
+    use koru_i18n::{Key, fill, number, t};
+    let count = |n: usize| number::decimal(lang, n as u64);
+    match (imported, already_known, had_failures) {
+        (0, 1, false) => t(lang, Key::ImportNoticeKnownOne).to_owned(),
+        (0, known, false) if known > 1 => fill(t(lang, Key::ImportNoticeKnown), &[&count(known)]),
+        (_, 0, false) => t(lang, Key::ImportNoticeSucceeded).to_owned(),
+        (_, 1, false) => t(lang, Key::ImportNoticeSucceededKnownOne).to_owned(),
+        (_, known, false) => fill(t(lang, Key::ImportNoticeSucceededKnown), &[&count(known)]),
+        (_, 0, true) => t(lang, Key::ImportNoticeSucceededFailed).to_owned(),
+        (_, 1, true) => t(lang, Key::ImportNoticeSucceededKnownOneFailed).to_owned(),
+        (_, known, true) => fill(
+            t(lang, Key::ImportNoticeSucceededKnownFailed),
+            &[&count(known)],
+        ),
+    }
+}
+
 fn rendered_import_warning(lang: koru_i18n::Lang, warning: &koru_import::ImportWarning) -> String {
     let Some(key) = warning.code.and_then(crate::formats::import_warning_key) else {
         return warning.message.clone();
@@ -10686,18 +10713,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         crate::events_host::ImportOutcome::Failed,
                     );
                 }
-                let body = error
-                    .code()
-                    .map(import_error_key)
-                    .map(|key| {
-                        let lang = koru_i18n::Lang::for_system(
-                            koru_window::system_locale::system_locale().as_deref(),
-                        );
-                        koru_i18n::t(lang, key)
-                    })
-                    .unwrap_or("No empty documents were left behind.");
+                let lang = koru_i18n::Lang::for_system(
+                    koru_window::system_locale::system_locale().as_deref(),
+                );
+                let body = koru_i18n::t(
+                    lang,
+                    error
+                        .code()
+                        .map(import_error_key)
+                        .unwrap_or(koru_i18n::Key::ImportContentFailedBody),
+                );
                 self.report(
-                    ErrorReport::new("The content could not be imported", body)
+                    ErrorReport::new(
+                        koru_i18n::t(lang, koru_i18n::Key::ImportContentFailedTitle),
+                        body,
+                    )
                         .with_details(error),
                 );
             }
@@ -10792,24 +10822,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     }
                 }
                 self.invalidate_everywhere();
-                let message = match (imported, already_known, had_failures) {
-                    (0, 1, false) => "File is already known.".into(),
-                    (0, known, false) if known > 1 => {
-                        format!("{known} files are already known.")
-                    }
-                    (_, 0, false) => "Import succeeded.".into(),
-                    (_, known, false) => format!(
-                        "Import succeeded. {known} {} already known.",
-                        if known == 1 { "file was" } else { "files were" }
-                    ),
-                    (_, 0, true) => {
-                        "Import succeeded. See FAILED for items that need attention.".into()
-                    }
-                    (_, known, true) => format!(
-                        "Import succeeded. {known} {} already known. See FAILED for items that need attention.",
-                        if known == 1 { "file was" } else { "files were" }
-                    ),
-                };
+                let message =
+                    import_notice_message(koru_i18n::current(), imported, already_known, had_failures);
                 match reading {
                     // The summary gains its line when the reader's state
                     // says to offer; the window decides from the state.
@@ -21243,6 +21257,64 @@ mod tests {
         for lang in koru_i18n::Lang::ALL {
             assert!(!koru_i18n::t(lang, import_error_key(error.code().unwrap())).is_empty());
         }
+    }
+
+    /// **An import's summary is in the person's language** (OCR Plan 3.5):
+    /// every form of it, with the count written the language's way and the
+    /// page `FAILED` named as it is titled.
+    #[test]
+    fn the_import_summary_is_worded_in_every_language() {
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 3, 0, false),
+            "Import succeeded."
+        );
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 0, 1, false),
+            "File is already known."
+        );
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 2, 1, true),
+            "Import succeeded. One file was already known. See FAILED for items that need attention."
+        );
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 2, 1_204, false),
+            "Import succeeded. 1,204 files were already known."
+        );
+        for lang in koru_i18n::Lang::ALL {
+            let forms = [
+                (3, 0, false),
+                (0, 1, false),
+                (0, 1_204, false),
+                (3, 1, false),
+                (3, 1_204, false),
+                (3, 0, true),
+                (3, 1, true),
+                (3, 1_204, true),
+            ];
+            for (imported, known, failed) in forms {
+                let message = import_notice_message(lang, imported, known, failed);
+                assert!(!message.contains("{}"), "{}: {message}", lang.tag());
+                if known > 1 {
+                    assert!(
+                        message.contains(&koru_i18n::number::decimal(lang, 1_204)),
+                        "{}: {message}",
+                        lang.tag()
+                    );
+                }
+                if failed {
+                    assert!(message.contains("FAILED"), "{}: {message}", lang.tag());
+                }
+            }
+            assert_ne!(
+                import_notice_message(lang, 3, 0, false),
+                import_notice_message(lang, 3, 0, true)
+            );
+        }
+        assert_ne!(
+            import_notice_message(koru_i18n::Lang::De, 3, 0, false),
+            "Import succeeded.",
+            "not English under a German line"
+        );
     }
 
     #[test]

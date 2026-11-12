@@ -676,6 +676,203 @@ fn a_request_for_an_item_that_is_gone_is_dropped() {
     assert!(!requested(&device, ws, &gone), "no item holds these bytes");
 }
 
+// ------------------------------- Read again after a local failure (Plan 3.5)
+
+/// The reading route's port over a device: its mirror, its objects, its
+/// projection — what `GET /v1/readings/{workspace}/{hash}`, the requests and
+/// the Settings list are answered from in the daemon.
+fn port(device: &Device, hub: Arc<ReaderHub>) -> ReadingPort {
+    ReadingPort {
+        state: Arc::downgrade(&device.state),
+        mirror: Mutex::new(device.derived.mirror().unwrap()),
+        hub,
+        inbox: Arc::clone(&device.inbox),
+        objects: Some(Arc::new(Present(Arc::clone(&device.present)))),
+        items: items::ItemsSource::new(device.derived.clone()),
+    }
+}
+
+/// **A file that failed only on this computer is offered *Read again***
+/// (EXPERIENCE §7: "always shown once the item has been read or has failed"):
+/// it has no synced reading, yet the Store answers for it; accepting clears
+/// its local attempt record so it is tried once more; failing again drops the
+/// request as met — no loop — and it is offered again; and once the worker
+/// can read it, it is read and leaves the list.
+#[test]
+fn read_again_on_a_file_that_failed_only_here_tries_once_more_and_never_loops() {
+    use koru_store_api::routes::readings::ReadingService;
+    use koru_store_wire::readings::ReadRequestKind;
+    let odd = hash(72);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let file = a_file(&mut store, ws, "Odd.pdf", &odd, "application/pdf");
+    land(&mut store, ws, &odd, 10, "application/pdf");
+    let library = library(&[(&odd, Script::Fail(FailureCode::Unsupported))]);
+    let mut device = Device::new(store, stub(Arc::clone(&library)));
+    device.here(&odd);
+    device.settle();
+    assert_eq!(device.reads(), 1);
+    assert!(device.reading(ws, file, &odd).is_none(), "nothing synced");
+    let reading_port = port(&device, ReaderHub::new());
+    let blob = BlobHash::parse(&odd).unwrap();
+
+    // Answered although nothing was read, and *Read again* is offered.
+    let answer = reading_port.reading(ws, &blob).unwrap().expect("answered");
+    assert_eq!(answer.failed_here.as_deref(), Some("unsupported"));
+    assert_eq!(answer.document, file, "the entry that holds it");
+    assert!(answer.status.is_none() && answer.pages.is_empty());
+    assert!(answer.offers.read_again && !answer.offers.read_all);
+    // The Settings list offers the same, beside Show.
+    let items = koru_store_api::routes::readings::ReadingService::items(&reading_port).unwrap();
+    assert_eq!(items.items.len(), 1);
+    assert_eq!(items.items[0].reason, "unsupported");
+    assert!(items.items[0].offers.read_again);
+
+    // Accepted: the attempt is cleared and the request recorded, so it is
+    // not offered twice.
+    reading_port
+        .request(ws, &blob, ReadRequestKind::ReadAgain)
+        .unwrap();
+    assert!(
+        device
+            .derived
+            .mirror()
+            .unwrap()
+            .attempts(koru_read::READER_TEXT)
+            .unwrap()
+            .is_empty(),
+        "the local attempt record is cleared"
+    );
+    assert!(requested(&device, ws, &odd));
+    let pending = reading_port.reading(ws, &blob).unwrap();
+    assert!(
+        pending.is_none_or(|a| !a.offers.read_again),
+        "not offered while it waits"
+    );
+
+    // Tried once more, and it fails the same way: met, dropped, offered again.
+    device.settle();
+    assert_eq!(device.reads(), 2, "tried once more");
+    for _ in 0..3 {
+        device.coordinator.recompute(device.now);
+        device.settle();
+    }
+    assert_eq!(device.reads(), 2, "and no more: never a loop");
+    assert!(!requested(&device, ws, &odd), "a failure for good meets it");
+    let again = reading_port.reading(ws, &blob).unwrap().expect("answered");
+    assert_eq!(again.failed_here.as_deref(), Some("unsupported"));
+    assert!(again.offers.read_again, "offered again");
+
+    // The worker can read it now (a newer build, a fixed decoder).
+    library.lock().unwrap().insert(
+        odd.clone(),
+        Script::Pages(
+            vec![(1, "finally ptarmiganword")],
+            ReadingStatus::Read,
+            None,
+        ),
+    );
+    reading_port
+        .request(ws, &blob, ReadRequestKind::ReadAgain)
+        .unwrap();
+    device.settle();
+    assert_eq!(device.reads(), 3);
+    assert!(device.found("ptarmiganword", file));
+    let read = reading_port.reading(ws, &blob).unwrap().expect("read");
+    assert_eq!(read.status.as_deref(), Some("read"));
+    assert_eq!(read.failed_here, None);
+    assert!(
+        koru_store_api::routes::readings::ReadingService::items(&reading_port)
+            .unwrap()
+            .items
+            .is_empty(),
+        "it leaves the could-not-be-read list"
+    );
+}
+
+/// **A crash past its one retry** is a local failure too: offered *Read
+/// again*, which grants the first time's retry once more and then stops.
+#[test]
+fn read_again_after_a_crash_grants_the_first_retry_and_stops() {
+    use koru_store_api::routes::readings::ReadingService;
+    use koru_store_wire::readings::ReadRequestKind;
+    let bad = hash(73);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    a_file(&mut store, ws, "Bad.pdf", &bad, "application/pdf");
+    land(&mut store, ws, &bad, 10, "application/pdf");
+    let mut device = Device::new(store, stub(library(&[(&bad, Script::Crash(vec![]))])));
+    device.here(&bad);
+    device.settle();
+    for _ in 0..3 {
+        device.coordinator.recompute(device.now);
+        device.settle();
+    }
+    assert_eq!(device.reads(), 2, "one retry, then left");
+    let reading_port = port(&device, ReaderHub::new());
+    let blob = BlobHash::parse(&bad).unwrap();
+    let answer = reading_port.reading(ws, &blob).unwrap().expect("answered");
+    assert_eq!(answer.failed_here.as_deref(), Some("crashed"));
+    assert!(answer.offers.read_again);
+    reading_port
+        .request(ws, &blob, ReadRequestKind::ReadAgain)
+        .unwrap();
+    for _ in 0..4 {
+        device.settle();
+        device.coordinator.recompute(device.now);
+    }
+    device.settle();
+    assert_eq!(device.reads(), 4, "the first time's two tries, once more");
+    assert!(!requested(&device, ws, &bad));
+    assert!(
+        reading_port
+            .reading(ws, &blob)
+            .unwrap()
+            .is_some_and(|a| a.offers.read_again)
+    );
+}
+
+/// **Off silences Read again where it needs the reader**: a picture that
+/// failed here is not offered while the reader is off, and is when it is on.
+#[test]
+fn read_again_on_a_picture_follows_whether_the_reader_is_on() {
+    use koru_store_api::routes::readings::ReadingService;
+    let picture = hash(74);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    a_page_with_picture(&mut store, ws, &picture);
+    land(&mut store, ws, &picture, 10, "image/png");
+    let hub = desktop_hub();
+    hub.set_installed(Some(installed_model()));
+    let mut launcher = stub(library(&[(
+        &picture,
+        Script::Fail(FailureCode::Unsupported),
+    )]));
+    launcher.recognition_built = true;
+    let mut device = Device::with_hub(store, launcher, Some(Arc::clone(&hub)));
+    device.here(&picture);
+    device.settle();
+    assert_eq!(
+        device.reads(),
+        1,
+        "sent to the reader, which could not open it"
+    );
+    let reading_port = port(&device, Arc::clone(&hub));
+    let blob = BlobHash::parse(&picture).unwrap();
+    let ready = |port: &ReadingPort| {
+        port.reading(ws, &blob)
+            .unwrap()
+            .expect("answered")
+            .offers
+            .read_again
+    };
+    assert!(ready(&reading_port), "on: offered");
+    hub.set_turned_off(true);
+    assert!(!ready(&reading_port), "off: a picture needs the reader");
+    hub.set_turned_off(false);
+    assert!(ready(&reading_port));
+}
+
 // ------------------------------------------------- offers and refusals
 
 fn facts(status: &str, reason: Option<&str>, source: &str, reader: &str, mime: &str) -> Facts {
@@ -688,6 +885,7 @@ fn facts(status: &str, reason: Option<&str>, source: &str, reader: &str, mime: &
         here: true,
         reader_ready: true,
         pending: false,
+        failed_here: false,
     }
 }
 

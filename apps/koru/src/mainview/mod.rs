@@ -9757,7 +9757,9 @@ impl MainView {
             Request::TurnOnReader
             | Request::StopReaderInstall
             | Request::TurnOffReader
-            | Request::RemoveReader => {}
+            | Request::RemoveReader
+            | Request::ReadReaderItemAgain(_)
+            | Request::ReadAllReaderPages(_) => {}
             // **The same navigation a search result takes** (OCR Plan 2.5):
             // the document route, which the shell resolves through the Store
             // to wherever the entry lives — Explore → Files with a file

@@ -3320,13 +3320,47 @@ pub enum Key {
     /// The right-click entry of a file, and of a picture in a page: read it
     /// again.
     ReadingReadAgain,
+    // ---- Text in pictures and PDFs: off, and the partly read list (OCR
+    // Plan 3.5). EXPERIENCE §4 gives no words for these; each is the
+    // plainest sentence, listed for the maintainer to read.
+    /// The Settings row's status while the reader is downloaded and off.
+    SettingsReaderOff,
+    /// The heading of the Settings row's *partly read* list.
+    SettingsReaderPartlyRead,
+    /// How far a partly read item got: `{}` pages.
+    SettingsReaderPagesRead,
+    /// How far a partly read item got, for one page.
+    SettingsReaderPagesReadOne,
+    /// A partly read item whose *Read all pages* is under way: `{}` pages
+    /// read so far.
+    SettingsReaderReadingRest,
+    // ---- An import's summary notice, and its failure (OCR Plan 3.5: the
+    // notice no longer mixes languages under its localized reading line).
+    ImportNoticeSucceeded,
+    ImportNoticeKnownOne,
+    /// `{}` files.
+    ImportNoticeKnown,
+    ImportNoticeSucceededKnownOne,
+    /// `{}` files.
+    ImportNoticeSucceededKnown,
+    /// `FAILED` is the name of the page the import writes, and stays as it is.
+    ImportNoticeSucceededFailed,
+    ImportNoticeSucceededKnownOneFailed,
+    /// `{}` files.
+    ImportNoticeSucceededKnownFailed,
+    /// The summary's action when the import made a notebook.
+    ImportNoticeViewNotebook,
+    /// The summary's action when the import made a file or one document.
+    ImportNoticeViewFile,
+    ImportContentFailedTitle,
+    ImportContentFailedBody,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2308] = [
+    pub const ALL: [Key; 2325] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5635,6 +5669,23 @@ impl Key {
         Key::ProfileLeaveRemovedFailed,
         Key::ReadingReadAllPages,
         Key::ReadingReadAgain,
+        Key::SettingsReaderOff,
+        Key::SettingsReaderPartlyRead,
+        Key::SettingsReaderPagesRead,
+        Key::SettingsReaderPagesReadOne,
+        Key::SettingsReaderReadingRest,
+        Key::ImportNoticeSucceeded,
+        Key::ImportNoticeKnownOne,
+        Key::ImportNoticeKnown,
+        Key::ImportNoticeSucceededKnownOne,
+        Key::ImportNoticeSucceededKnown,
+        Key::ImportNoticeSucceededFailed,
+        Key::ImportNoticeSucceededKnownOneFailed,
+        Key::ImportNoticeSucceededKnownFailed,
+        Key::ImportNoticeViewNotebook,
+        Key::ImportNoticeViewFile,
+        Key::ImportContentFailedTitle,
+        Key::ImportContentFailedBody,
     ];
 }
 
@@ -17113,4 +17164,25 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     // EXPERIENCE §4's own.
     Row { key: Key::ReadingReadAllPages, en: "Read all pages", es: "Leer todas las páginas", pt_br: "Ler todas as páginas", de: "Alle Seiten lesen", fr: "Lire toutes les pages", ar: "قراءة كل الصفحات", zh_hans: "读取所有页面", ja: "すべてのページを読み取る" },
     Row { key: Key::ReadingReadAgain, en: "Read again", es: "Volver a leer", pt_br: "Ler novamente", de: "Erneut lesen", fr: "Relire", ar: "القراءة مرة أخرى", zh_hans: "重新读取", ja: "もう一度読み取る" },
+    // Text in pictures and PDFs: off, and the partly read list (OCR Plan
+    // 3.5). EXPERIENCE §4 gives no words for these; written plainly.
+    Row { key: Key::SettingsReaderOff, en: "Off. What was already read can still be found.", es: "Desactivado. Lo que ya se leyó se puede seguir encontrando.", pt_br: "Desativado. O que já foi lido ainda pode ser encontrado.", de: "Aus. Was bereits gelesen wurde, ist weiterhin auffindbar.", fr: "Désactivé. Ce qui a déjà été lu reste trouvable.", ar: "متوقف. ما تمت قراءته من قبل لا يزال يمكن العثور عليه.", zh_hans: "已关闭。已读取的内容仍可找到。", ja: "オフ。すでに読み取ったものは引き続き見つけられます。" },
+    Row { key: Key::SettingsReaderPartlyRead, en: "Partly read", es: "Leídos en parte", pt_br: "Lidos em parte", de: "Teilweise gelesen", fr: "Lus en partie", ar: "مقروءة جزئيًا", zh_hans: "部分读取", ja: "一部のみ読み取り済み" },
+    Row { key: Key::SettingsReaderPagesRead, en: "First {} pages read", es: "Primeras {} páginas leídas", pt_br: "Primeiras {} páginas lidas", de: "Erste {} Seiten gelesen", fr: "{} premières pages lues", ar: "تمت قراءة أول {} صفحة", zh_hans: "已读取前 {} 页", ja: "最初の {} ページを読み取り済み" },
+    Row { key: Key::SettingsReaderPagesReadOne, en: "First page read", es: "Primera página leída", pt_br: "Primeira página lida", de: "Erste Seite gelesen", fr: "Première page lue", ar: "تمت قراءة الصفحة الأولى", zh_hans: "已读取第一页", ja: "最初のページを読み取り済み" },
+    Row { key: Key::SettingsReaderReadingRest, en: "Reading all pages: {} read so far", es: "Leyendo todas las páginas: {} leídas hasta ahora", pt_br: "Lendo todas as páginas: {} lidas até agora", de: "Alle Seiten werden gelesen: bisher {}", fr: "Lecture de toutes les pages : {} lues pour l’instant", ar: "تجري قراءة كل الصفحات: تمت قراءة {} حتى الآن", zh_hans: "正在读取所有页面：目前已读取 {} 页", ja: "すべてのページを読み取り中: これまでに {} ページ" },
+    // An import's summary notice and its failure (OCR Plan 3.5). FAILED is
+    // the title of the page the import writes, and is not translated.
+    Row { key: Key::ImportNoticeSucceeded, en: "Import succeeded.", es: "La importación se completó.", pt_br: "A importação foi concluída.", de: "Import abgeschlossen.", fr: "Importation réussie.", ar: "تم الاستيراد بنجاح.", zh_hans: "导入成功。", ja: "インポートが完了しました。" },
+    Row { key: Key::ImportNoticeKnownOne, en: "File is already known.", es: "El archivo ya se conocía.", pt_br: "O arquivo já era conhecido.", de: "Die Datei ist bereits bekannt.", fr: "Le fichier est déjà connu.", ar: "الملف معروف بالفعل.", zh_hans: "该文件已存在。", ja: "このファイルはすでにあります。" },
+    Row { key: Key::ImportNoticeKnown, en: "{} files are already known.", es: "{} archivos ya se conocían.", pt_br: "{} arquivos já eram conhecidos.", de: "{} Dateien sind bereits bekannt.", fr: "{} fichiers sont déjà connus.", ar: "{} من الملفات معروفة بالفعل.", zh_hans: "{} 个文件已存在。", ja: "{} 件のファイルはすでにあります。" },
+    Row { key: Key::ImportNoticeSucceededKnownOne, en: "Import succeeded. One file was already known.", es: "La importación se completó. Un archivo ya se conocía.", pt_br: "A importação foi concluída. Um arquivo já era conhecido.", de: "Import abgeschlossen. Eine Datei war bereits bekannt.", fr: "Importation réussie. Un fichier était déjà connu.", ar: "تم الاستيراد بنجاح. كان ملف واحد معروفًا بالفعل.", zh_hans: "导入成功。有 1 个文件已存在。", ja: "インポートが完了しました。1 件のファイルはすでにありました。" },
+    Row { key: Key::ImportNoticeSucceededKnown, en: "Import succeeded. {} files were already known.", es: "La importación se completó. {} archivos ya se conocían.", pt_br: "A importação foi concluída. {} arquivos já eram conhecidos.", de: "Import abgeschlossen. {} Dateien waren bereits bekannt.", fr: "Importation réussie. {} fichiers étaient déjà connus.", ar: "تم الاستيراد بنجاح. كان {} من الملفات معروفًا بالفعل.", zh_hans: "导入成功。有 {} 个文件已存在。", ja: "インポートが完了しました。{} 件のファイルはすでにありました。" },
+    Row { key: Key::ImportNoticeSucceededFailed, en: "Import succeeded. See FAILED for items that need attention.", es: "La importación se completó. Consulta FAILED para ver los elementos que requieren atención.", pt_br: "A importação foi concluída. Veja FAILED para os itens que precisam de atenção.", de: "Import abgeschlossen. Elemente, die Aufmerksamkeit brauchen, stehen in FAILED.", fr: "Importation réussie. Consultez FAILED pour les éléments qui demandent votre attention.", ar: "تم الاستيراد بنجاح. راجع FAILED للعناصر التي تحتاج إلى انتباه.", zh_hans: "导入成功。需要处理的项目见 FAILED。", ja: "インポートが完了しました。対応が必要な項目は FAILED を参照してください。" },
+    Row { key: Key::ImportNoticeSucceededKnownOneFailed, en: "Import succeeded. One file was already known. See FAILED for items that need attention.", es: "La importación se completó. Un archivo ya se conocía. Consulta FAILED para ver los elementos que requieren atención.", pt_br: "A importação foi concluída. Um arquivo já era conhecido. Veja FAILED para os itens que precisam de atenção.", de: "Import abgeschlossen. Eine Datei war bereits bekannt. Elemente, die Aufmerksamkeit brauchen, stehen in FAILED.", fr: "Importation réussie. Un fichier était déjà connu. Consultez FAILED pour les éléments qui demandent votre attention.", ar: "تم الاستيراد بنجاح. كان ملف واحد معروفًا بالفعل. راجع FAILED للعناصر التي تحتاج إلى انتباه.", zh_hans: "导入成功。有 1 个文件已存在。需要处理的项目见 FAILED。", ja: "インポートが完了しました。1 件のファイルはすでにありました。対応が必要な項目は FAILED を参照してください。" },
+    Row { key: Key::ImportNoticeSucceededKnownFailed, en: "Import succeeded. {} files were already known. See FAILED for items that need attention.", es: "La importación se completó. {} archivos ya se conocían. Consulta FAILED para ver los elementos que requieren atención.", pt_br: "A importação foi concluída. {} arquivos já eram conhecidos. Veja FAILED para os itens que precisam de atenção.", de: "Import abgeschlossen. {} Dateien waren bereits bekannt. Elemente, die Aufmerksamkeit brauchen, stehen in FAILED.", fr: "Importation réussie. {} fichiers étaient déjà connus. Consultez FAILED pour les éléments qui demandent votre attention.", ar: "تم الاستيراد بنجاح. كان {} من الملفات معروفًا بالفعل. راجع FAILED للعناصر التي تحتاج إلى انتباه.", zh_hans: "导入成功。有 {} 个文件已存在。需要处理的项目见 FAILED。", ja: "インポートが完了しました。{} 件のファイルはすでにありました。対応が必要な項目は FAILED を参照してください。" },
+    Row { key: Key::ImportNoticeViewNotebook, en: "View Notebook", es: "Ver cuaderno", pt_br: "Ver caderno", de: "Notizbuch anzeigen", fr: "Voir le carnet", ar: "عرض الدفتر", zh_hans: "查看笔记本", ja: "ノートブックを表示" },
+    Row { key: Key::ImportNoticeViewFile, en: "View file", es: "Ver archivo", pt_br: "Ver arquivo", de: "Datei anzeigen", fr: "Voir le fichier", ar: "عرض الملف", zh_hans: "查看文件", ja: "ファイルを表示" },
+    Row { key: Key::ImportContentFailedTitle, en: "The content could not be imported", es: "No se pudo importar el contenido", pt_br: "Não foi possível importar o conteúdo", de: "Der Inhalt konnte nicht importiert werden", fr: "Le contenu n’a pas pu être importé", ar: "تعذّر استيراد المحتوى", zh_hans: "无法导入内容", ja: "内容をインポートできませんでした" },
+    Row { key: Key::ImportContentFailedBody, en: "No empty documents were left behind.", es: "No quedaron documentos vacíos.", pt_br: "Nenhum documento vazio foi deixado para trás.", de: "Es wurden keine leeren Dokumente zurückgelassen.", fr: "Aucun document vide n’a été laissé.", ar: "لم تُترك أي مستندات فارغة.", zh_hans: "没有留下空文档。", ja: "空のドキュメントは残っていません。" },
 ];

@@ -13160,6 +13160,11 @@
             "nullable": true,
             "type": "integer"
           },
+          "picture_name": {
+            "description": "The name a person gave the picture the words were read from, when the\nhit is a [`field::READ`] fragment of a picture inside a document and\nsomebody named it (OCR EXPERIENCE §3: the picture mark, then its name\nonly when a person gave it one).\n\n**Absent for a picture nobody named**, for a file, for every other\nfield, and from an answer written before this field existed.",
+            "nullable": true,
+            "type": "string"
+          },
           "score": {
             "format": "double",
             "type": "number"

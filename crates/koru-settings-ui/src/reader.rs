@@ -18,10 +18,17 @@
 //! | not downloaded | *Not downloaded · 24 MB* | **Turn on** (from Settings, whatever *Not now* said) |
 //! | downloading | how far it has got | **Stop** |
 //! | on | *On · 8,297 read · 3 could not be read* | **Turn off**; the download's own row, **Remove** |
+//! | off (downloaded) | *Off. What was already read can still be found.* | **Turn on** (no size: nothing to download); the download's own row, **Remove** |
 //!
 //! In any state, files nobody has read whose contents are on another device
 //! get a row of their own — *38 files are not on this computer* — so they are
 //! never counted as waiting (OCR Plan 3.3).
+//!
+//! Under the card, two lists (OCR Plan 3.5; EXPERIENCE §4): *could not be
+//! read*, each item with **Show** and, where a right-click menu on it would
+//! offer it, **Read again**; and *partly read*, each with how far it got,
+//! **Show**, and **Read all pages** where it can be finished here. Each shows
+//! [`READER_ITEMS_SHOWN`] and says how many more there are.
 
 use koru_i18n::{Key, Lang, fill, number, t};
 
@@ -45,6 +52,10 @@ pub struct ReaderRow {
     pub items: Vec<ReaderItemRow>,
     /// Items the host knows of beyond `items`.
     pub more: u64,
+    /// The *partly read* list, in the host's order (OCR Plan 3.5).
+    pub partly: Vec<ReaderPartlyRow>,
+    /// Partly read items the host knows of beyond `partly`.
+    pub partly_more: u64,
     /// Items on this computer's workspaces that nobody has read and whose
     /// contents are on another device: nothing here can read them, so the
     /// card says so rather than counting them as waiting (EXPERIENCE "On a
@@ -79,6 +90,10 @@ pub enum ReaderStatus {
         could_not_be_read: u64,
         megabytes: u64,
     },
+    /// Downloaded and turned off (OCR Plan 3.5): nothing is read with it, and
+    /// what was read stays findable. `megabytes` is what the download takes
+    /// on this computer.
+    Off { megabytes: u64 },
 }
 
 /// Why the reader cannot be used here — the Store's
@@ -124,6 +139,27 @@ pub struct ReaderItemRow {
     /// The Store's reason token: `password`, `damaged`, `unsupported`, or a
     /// failure on this computer.
     pub reason: String,
+    /// **Read again** is offered: the Store would accept it now (OCR Plan
+    /// 3.5).
+    pub read_again: bool,
+}
+
+/// One item of the *partly read* list (OCR Plan 3.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReaderPartlyRow {
+    /// The host's own token for the item, handed back in
+    /// [`Request::ShowReaderItem`](crate::Request::ShowReaderItem) and
+    /// [`Request::ReadAllReaderPages`](crate::Request::ReadAllReaderPages).
+    pub key: String,
+    /// The file's name; `None` when the host could not resolve it.
+    pub name: Option<String>,
+    pub picture: bool,
+    /// How far it got.
+    pub pages_done: u32,
+    /// A person's *Read all pages* is under way.
+    pub reading: bool,
+    /// **Read all pages** is offered: the Store would accept it now.
+    pub read_all: bool,
 }
 
 /// The card. Absent when the host says nothing about the reader — Koru
@@ -139,7 +175,7 @@ pub(crate) fn lay_out(b: &mut Builder<'_>, lang: Lang, row: &ReaderRow) {
         (line, None) => b.row_text(status, Some(&line)),
     }
     match &row.status {
-        ReaderStatus::On { megabytes, .. } => b.row_text_button(
+        ReaderStatus::On { megabytes, .. } | ReaderStatus::Off { megabytes } => b.row_text_button(
             t(lang, Key::SettingsReaderDownloadRow),
             Some(&fill(
                 t(lang, Key::SettingsReaderOnDisk),
@@ -163,19 +199,57 @@ pub(crate) fn lay_out(b: &mut Builder<'_>, lang: Lang, row: &ReaderRow) {
         t(lang, Key::SettingsReaderWhatIsRead),
         Some(&what_is_read(lang, &row.languages)),
     );
-    if row.items.is_empty() {
-        return;
+    if !row.items.is_empty() {
+        b.card(Some(t(lang, Key::SettingsReaderCouldNotRead)));
+        for item in row.items.iter().take(READER_ITEMS_SHOWN) {
+            let name = item_name(lang, item);
+            let why = Some(reason(lang, &item.reason));
+            let show = Action::ShowReaderItem(item.key.clone());
+            let show_label = t(lang, Key::SettingsReaderShow);
+            if item.read_again {
+                b.row_text_buttons(
+                    &name,
+                    why,
+                    (
+                        t(lang, Key::ReadingReadAgain),
+                        Action::ReaderReadAgain(item.key.clone()),
+                    ),
+                    (show_label, show),
+                );
+            } else {
+                b.row_text_button(&name, why, show, show_label);
+            }
+        }
+        more_row(b, lang, row.more, row.items.len());
     }
-    b.card(Some(t(lang, Key::SettingsReaderCouldNotRead)));
-    for item in row.items.iter().take(READER_ITEMS_SHOWN) {
-        b.row_text_button(
-            &item_name(lang, item),
-            Some(reason(lang, &item.reason)),
-            Action::ShowReaderItem(item.key.clone()),
-            t(lang, Key::SettingsReaderShow),
-        );
+    if !row.partly.is_empty() {
+        b.card(Some(t(lang, Key::SettingsReaderPartlyRead)));
+        for item in row.partly.iter().take(READER_ITEMS_SHOWN) {
+            let name = partly_name(lang, item);
+            let far = how_far(lang, item);
+            let show = Action::ShowReaderItem(item.key.clone());
+            let show_label = t(lang, Key::SettingsReaderShow);
+            if item.read_all {
+                b.row_text_buttons(
+                    &name,
+                    Some(&far),
+                    (
+                        t(lang, Key::ReadingReadAllPages),
+                        Action::ReaderReadAll(item.key.clone()),
+                    ),
+                    (show_label, show),
+                );
+            } else {
+                b.row_text_button(&name, Some(&far), show, show_label);
+            }
+        }
+        more_row(b, lang, row.partly_more, row.partly.len());
     }
-    let more = row.more + row.items.len().saturating_sub(READER_ITEMS_SHOWN) as u64;
+}
+
+/// *Not listed here: N* under a list cut at [`READER_ITEMS_SHOWN`].
+fn more_row(b: &mut Builder<'_>, lang: Lang, beyond: u64, listed: usize) {
+    let more = beyond + listed.saturating_sub(READER_ITEMS_SHOWN) as u64;
     if more > 0 {
         b.row_text(
             &fill(
@@ -184,6 +258,27 @@ pub(crate) fn lay_out(b: &mut Builder<'_>, lang: Lang, row: &ReaderRow) {
             ),
             None,
         );
+    }
+}
+
+/// What the *partly read* list calls an item: as the other list does.
+pub(crate) fn partly_name(lang: Lang, item: &ReaderPartlyRow) -> String {
+    match (&item.name, item.picture) {
+        (Some(name), false) => name.clone(),
+        (Some(page), true) => fill(t(lang, Key::ReaderItemPictureIn), &[page]),
+        (None, _) => t(lang, Key::ReaderItemElsewhere).to_owned(),
+    }
+}
+
+/// How far a partly read item got: *First 200 pages read*, or, while a
+/// person's *Read all pages* is under way, *Reading all pages: 230 read so
+/// far*.
+pub(crate) fn how_far(lang: Lang, item: &ReaderPartlyRow) -> String {
+    let pages = number::decimal(lang, u64::from(item.pages_done));
+    match (item.reading, item.pages_done) {
+        (true, _) => fill(t(lang, Key::SettingsReaderReadingRest), &[&pages]),
+        (false, 1) => t(lang, Key::SettingsReaderPagesReadOne).to_owned(),
+        (false, _) => fill(t(lang, Key::SettingsReaderPagesRead), &[&pages]),
     }
 }
 
@@ -289,6 +384,12 @@ pub(crate) fn status_line(
                 Some((Action::ReaderTurnOff, t(lang, Key::SettingsReaderTurnOff))),
             )
         }
+        // **Turn on** with no size: it is downloaded, so there is nothing to
+        // agree to a size of; the host turns it on rather than installing.
+        ReaderStatus::Off { .. } => (
+            t(lang, Key::SettingsReaderOff).to_owned(),
+            Some((Action::ReaderTurnOn, t(lang, Key::ReaderTurnOn))),
+        ),
     }
 }
 

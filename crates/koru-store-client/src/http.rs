@@ -571,6 +571,17 @@ impl Client {
         self.delete_query("/v1/readings/reader")
     }
 
+    /// **Turn off** (OCR Plan 3.5): reading stops on this computer and the
+    /// download stays. Readings already made stay findable.
+    pub fn turn_reader_off(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/off", &serde_json::json!({}))
+    }
+
+    /// **Turn on** a reader that is downloaded and off: no download.
+    pub fn turn_reader_on(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/on", &serde_json::json!({}))
+    }
+
     /// **Not now**: search stops offering the reader until an import brings
     /// a picture or a scanned PDF.
     pub fn decline_reader(&self) -> Result<koru_store_wire::reader::ReaderState> {

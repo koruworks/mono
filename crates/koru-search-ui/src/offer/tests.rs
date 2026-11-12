@@ -970,3 +970,38 @@ mod on_the_surface {
         assert_eq!(reader_commands(&background), [ReaderCommand::Read]);
     }
 }
+
+/// **While the reader is downloaded and off, search says nothing about what
+/// waits for it** (OCR Plan 3.5): the Store's answer carries `offer: false`
+/// (it is downloaded) and the items waiting for the reader in
+/// `needs_reader`, which *Still reading* never counts — so no line below
+/// results, the ordinary *No results*, and no line in an import's summary. A
+/// person who turned it off was not undecided.
+#[test]
+fn a_reader_turned_off_quiets_the_line_and_the_summary() {
+    let off = ReaderState {
+        installed: Some(koru_store_wire::reader::InstalledReader {
+            model: "pp-ocrv6-small".into(),
+            version: "1".into(),
+            download_bytes: 24_536_678,
+            licence: "Apache-2.0".into(),
+            attribution: "PaddleOCR".into(),
+        }),
+        turned_off: true,
+        ..offered()
+    };
+    // Three pictures wait for the reader; nothing else is left to read.
+    let waiting = counts(3, 3, 10, false);
+    for with_results in [true, false] {
+        assert_eq!(
+            view(Lang::En, Some(&waiting), Some(&off), with_results),
+            None,
+            "with results: {with_results}"
+        );
+    }
+    assert_eq!(empty_progress(Lang::En, Some(&waiting), Some(&off)), None);
+    assert_eq!(import_summary(Lang::En, 3, &off), None);
+    // What is still being read is still reported: a text-layer PDF.
+    let reading = counts(3, 5, 10, false);
+    assert!(view(Lang::En, Some(&reading), Some(&off), true).is_some());
+}

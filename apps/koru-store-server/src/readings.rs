@@ -42,7 +42,8 @@ pub(crate) mod supervised;
 // installer, the coordinator, search and the routes share (OCR Plan 2.4).
 pub(crate) mod hub;
 pub(crate) mod installer;
-// The items behind the Settings row's could-not-be-read count (OCR Plan 2.5).
+// The items behind the Settings row's could-not-be-read and partly-read lists
+// (OCR Plans 2.5 and 3.5).
 pub(crate) mod items;
 
 use std::path::{Path, PathBuf};
@@ -374,10 +375,11 @@ impl ReadingPort {
             Option<koru_read::Reading>,
             Vec<(i64, String)>,
             Facts,
+            Option<String>,
         )>,
         String,
     > {
-        let (row, words, pending) = {
+        let (row, words, pending, failed_here) = {
             let mirror = self
                 .mirror
                 .lock()
@@ -387,7 +389,10 @@ impl ReadingPort {
             };
             let words = mirror.pages_of(&row.workspace, hash).map_err(|e| e.0)?;
             let pending = mirror.requested(workspace, hash).map_err(|e| e.0)?;
-            (row, words, pending)
+            // A crash can leave a partial reading behind as well as a local
+            // failure: both are true, and the failure is what offers again.
+            let failed_here = Self::local_failure(&mirror, hash)?;
+            (row, words, pending, failed_here)
         };
         let parent = koru_store_core::ids::DocumentId::parse(&row.parent)
             .ok_or_else(|| "the readings mirror holds a malformed document id".to_owned())?;
@@ -432,10 +437,76 @@ impl ReadingPort {
                 .and_then(|e| e.reader.as_ref().map(|r| r.as_str().to_owned())),
             mime,
             here,
-            reader_ready: self.hub.installed().is_some() && self.hub.unavailable().is_none(),
+            reader_ready: self.reader_ready(),
             pending,
+            failed_here: failed_here.is_some(),
         };
-        Ok(Some((parent, row, entry, words, facts)))
+        Ok(Some((parent, row, entry, words, facts, failed_here)))
+    }
+
+    /// A reader installed and on, that this computer can use.
+    fn reader_ready(&self) -> bool {
+        self.hub.reading_on() && self.hub.unavailable().is_none()
+    }
+
+    /// **The local failure that ended reading `hash` here**, if this computer
+    /// gave up on it (OCR Plan 3.5): the attempts table's verdict, by the
+    /// coordinator's own [`coordinator::verdict`], so the menus and the
+    /// Settings list say *failed* exactly where the counts do.
+    fn local_failure(mirror: &mirror::Mirror, hash: &str) -> Result<Option<String>, String> {
+        let attempts = mirror.attempts(koru_read::READER_TEXT).map_err(|e| e.0)?;
+        let now = koru_store_core::model::Timestamp::now().millis();
+        Ok(attempts
+            .get(hash)
+            .filter(|attempt| coordinator::verdict(attempt, now) == coordinator::Verdict::Failed)
+            .map(|attempt| attempt.code.as_str().to_owned()))
+    }
+
+    /// **An item with no synced reading that failed here** (OCR Plan 3.5):
+    /// the entry that holds it — a live one, from the projection the
+    /// coordinator queues from — and the facts its offers are made from. A
+    /// failure only this computer knows is written nowhere a menu could read,
+    /// so without this the item could never be read again.
+    fn failed_only_here(
+        &self,
+        workspace: WorkspaceId,
+        hash: &str,
+    ) -> Result<Option<(koru_store_core::ids::DocumentId, Facts, String)>, String> {
+        let (code, pending) = {
+            let mirror = self
+                .mirror
+                .lock()
+                .map_err(|_| "the readings mirror's lock is poisoned".to_owned())?;
+            let Some(code) = Self::local_failure(&mirror, hash)? else {
+                return Ok(None);
+            };
+            (code, mirror.requested(workspace, hash).map_err(|e| e.0)?)
+        };
+        let Some(document) = self.items.holder(workspace, hash)? else {
+            return Ok(None);
+        };
+        let mime = self.state.upgrade().and_then(|state| {
+            let mut store = state.store.lock().ok()?;
+            let blob = koru_store_core::model::BlobHash::parse(hash).ok()?;
+            store.blob(workspace, &blob).ok().map(|blob| blob.mime)
+        });
+        let here = mime.is_some()
+            && self
+                .objects
+                .as_ref()
+                .is_some_and(|objects| objects.here(hash));
+        let facts = Facts {
+            status: None,
+            reason: None,
+            source: None,
+            reader: None,
+            mime,
+            here,
+            reader_ready: self.reader_ready(),
+            pending,
+            failed_here: true,
+        };
+        Ok(Some((document, facts, code)))
     }
 }
 
@@ -446,16 +517,32 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
         hash: &koru_store_core::model::BlobHash,
     ) -> Result<Option<koru_store_wire::readings::ReadingAnswer>, String> {
         let hash = hash.as_str();
-        let Some((parent, row, entry, words, facts)) = self.winner(workspace, hash)? else {
-            return Ok(None);
-        };
-        let mut answer = answer(workspace, parent, &row, entry, words);
-        answer.offers = facts.offers();
-        Ok(Some(answer))
+        if let Some((parent, row, entry, words, facts, failed_here)) =
+            self.winner(workspace, hash)?
+        {
+            let mut answer = answer(workspace, parent, &row, entry, words);
+            answer.offers = facts.offers();
+            answer.failed_here = failed_here;
+            return Ok(Some(answer));
+        }
+        // **No synced reading, and this computer gave up on it** (OCR Plan
+        // 3.5): answered, with nothing read, so *Read again* can be offered.
+        Ok(self
+            .failed_only_here(workspace, hash)?
+            .map(|(document, facts, code)| {
+                local_answer(workspace, hash, document, code, facts.offers())
+            }))
     }
 
     /// **Record a request** (OCR Plan 3.2): the same facts the offers are
     /// made from, so a request is refused exactly where it was not offered.
+    ///
+    /// *Read again* on an item this computer gave up on (OCR Plan 3.5) also
+    /// clears its local attempt record, so the coordinator tries it once
+    /// more as if for the first time — with the first time's retries, and no
+    /// more: when it fails for good again the request is met and dropped, as
+    /// any request whose item fails for good at this generation is
+    /// (`Coordinator::classify`), and the item is listed and offered again.
     fn request(
         &self,
         workspace: WorkspaceId,
@@ -464,23 +551,38 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
     ) -> Result<koru_store_wire::readings::ReadRequested, koru_store_core::errors::Error> {
         use koru_store_core::errors::{Code, Error};
         let storage = |error: String| Error::new(Code::StorageFailed, error);
-        let found = self.winner(workspace, hash.as_str()).map_err(storage)?;
-        let facts = match found {
-            Some((.., facts)) => facts,
-            None => Facts::default(),
+        let facts = match self.winner(workspace, hash.as_str()).map_err(storage)? {
+            Some((.., facts, _)) => facts,
+            None => self
+                .failed_only_here(workspace, hash.as_str())
+                .map_err(storage)?
+                .map(|(_, facts, _)| facts)
+                .unwrap_or_default(),
         };
         if let Some(refused) = facts.refusal(kind) {
             return Err(refused);
         }
-        self.mirror
-            .lock()
-            .map_err(|_| storage("the readings mirror's lock is poisoned".to_owned()))?
-            .request(
-                workspace,
-                hash.as_str(),
-                koru_store_core::model::Timestamp::now().millis(),
-            )
-            .map_err(|e| storage(e.0))?;
+        {
+            let mut mirror = self
+                .mirror
+                .lock()
+                .map_err(|_| storage("the readings mirror's lock is poisoned".to_owned()))?;
+            // The attempt goes first: a coordinator that recomputed between
+            // the two writes would otherwise see a request for an item that
+            // failed for good, and drop it as met.
+            if kind == koru_store_wire::readings::ReadRequestKind::ReadAgain && facts.failed_here {
+                mirror
+                    .clear_attempts(hash.as_str())
+                    .map_err(|e| storage(e.0))?;
+            }
+            mirror
+                .request(
+                    workspace,
+                    hash.as_str(),
+                    koru_store_core::model::Timestamp::now().millis(),
+                )
+                .map_err(|e| storage(e.0))?;
+        }
         self.inbox.read_requested(workspace, hash.as_str());
         Ok(koru_store_wire::readings::ReadRequested {
             workspace,
@@ -489,9 +591,73 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
         })
     }
 
+    /// The Settings row's two lists, each item with the offers a menu on it
+    /// would get (OCR Plan 3.5): the same [`Facts`], gathered for the item's
+    /// own entry from the read models — its mirror row, the attempts table,
+    /// the requests — and, only for the items listed, the Workspace's blob
+    /// rows (one Store lock per workspace) and the disk.
     fn items(&self) -> Result<koru_store_wire::reader::ReaderItems, String> {
-        self.items
-            .items(koru_store_core::model::Timestamp::now().millis())
+        let reader_ready = self.reader_ready();
+        let mut rows: std::collections::HashMap<
+            WorkspaceId,
+            std::collections::HashMap<String, String>,
+        > = std::collections::HashMap::new();
+        let mut place = |workspace: WorkspaceId, hash: &str| -> (Option<String>, bool) {
+            let blobs = rows.entry(workspace).or_insert_with(|| {
+                self.state
+                    .upgrade()
+                    .and_then(|state| {
+                        let mut store = state.store.lock().ok()?;
+                        store.blobs(workspace).ok()
+                    })
+                    .map(|blobs| {
+                        blobs
+                            .into_iter()
+                            .map(|b| (b.hash.as_str().to_owned(), b.mime))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+            let mime = blobs.get(hash).cloned();
+            let here = mime.is_some()
+                && self
+                    .objects
+                    .as_ref()
+                    .is_some_and(|objects| objects.here(hash));
+            (mime, here)
+        };
+        self.items.items(
+            koru_store_core::model::Timestamp::now().millis(),
+            reader_ready,
+            &mut place,
+        )
+    }
+}
+
+/// **The answer for an item this computer gave up on and nobody has a
+/// reading of** (OCR Plan 3.5): nothing read, the local failure named, and
+/// the offers — *Read again*, where it would be accepted.
+fn local_answer(
+    workspace: WorkspaceId,
+    hash: &str,
+    document: koru_store_core::ids::DocumentId,
+    code: String,
+    offers: koru_store_wire::readings::ReadingOffers,
+) -> koru_store_wire::readings::ReadingAnswer {
+    koru_store_wire::readings::ReadingAnswer {
+        workspace,
+        hash: hash.to_owned(),
+        document,
+        reader: None,
+        generation: koru_read::GENERATION,
+        status: None,
+        reason: None,
+        source: None,
+        confidence: None,
+        pages_done: None,
+        pages: Vec::new(),
+        offers,
+        failed_here: Some(code),
     }
 }
 
@@ -508,10 +674,16 @@ struct Facts {
     mime: Option<String>,
     /// The Workspace may read the bytes **and** they are on this computer.
     here: bool,
-    /// A reader is installed and nothing says this computer cannot use it.
+    /// A reader is installed **and on**, and nothing says this computer
+    /// cannot use it. Off reads as not installed (OCR Plan 3.5).
     reader_ready: bool,
     /// A request for this item is already waiting.
     pending: bool,
+    /// **This computer gave up reading it** (OCR Plan 3.5): the local
+    /// attempts table's verdict is *failed* — a format it cannot open, a file
+    /// that crashed the reader twice, the memory limit. Never synced, so it
+    /// may be all there is to go by.
+    failed_here: bool,
 }
 
 impl Facts {
@@ -555,7 +727,11 @@ impl Facts {
                     && self.reason.as_deref() == Some("page-cap")
                     && self.mime.as_deref().is_some_and(coordinator::is_pdf)
             }
-            ReadRequestKind::ReadAgain => matches!(status, Some("read" | "empty" | "failed")),
+            // *Read again* is shown once an item has been read or has failed
+            // (EXPERIENCE §7) — on this computer only, too.
+            ReadRequestKind::ReadAgain => {
+                matches!(status, Some("read" | "empty" | "failed")) || self.failed_here
+            }
         };
         if !applies {
             return Some(Error::new(
@@ -631,6 +807,7 @@ fn answer(
                 })
                 .collect(),
             offers: Default::default(),
+            failed_here: None,
         },
         None => ReadingAnswer {
             workspace,
@@ -653,6 +830,7 @@ fn answer(
                 })
                 .collect(),
             offers: Default::default(),
+            failed_here: None,
         },
     }
 }

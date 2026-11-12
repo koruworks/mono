@@ -28,10 +28,22 @@
 //! | the model cache | `KORU_READ_MODELS`, else `<store root>/read-models` for a rooted Store, else `<local data>/Koru/read-models` (channel-independent, as voice's cache is) |
 //! | the consent record | `<store root>/reader/read-consent.conf` (`koru_voice_consent::READ`) |
 //! | *Not now* | `<store root>/reader/offer.conf` |
+//! | **Turn off** | `<store root>/reader/switch.conf` (OCR Plan 3.5) |
 //!
-//! The consent and the flag are **machine-local**, beside each other, under
-//! the Store's own directory. Installed state is asked of the disk, never
-//! stored (ADR-251).
+//! The consent and the two flags are **machine-local**, beside each other,
+//! under the Store's own directory. Installed state is asked of the disk,
+//! never stored (ADR-251); whether a person turned the installed reader off
+//! is their word, and is stored.
+//!
+//! ## Off keeps the download (TECHNICAL §9 "The reader is turned off")
+//!
+//! **Turn off** sets the flag; the coordinator is then handed no model, as if
+//! none were installed, and nothing is offered, because one is. **Turn on**
+//! clears it, and the coordinator takes the model back and queues what waited
+//! — the path an install takes, with no download. **Remove** deletes the
+//! download whether the reader was on or off, and clears the flag with it, so
+//! a reader installed later (here, or into the shared cache by another
+//! channel) starts on. An install clears it too: the person said yes.
 //!
 //! ## Trust
 //!
@@ -71,6 +83,10 @@ pub const READER_TIER: &str = "standard";
 /// What the *Not now* flag's file says it is.
 const OFFER_FORMAT: &str = "koru-reader-offer";
 const OFFER_FILE: &str = "offer.conf";
+
+/// What the *Turn off* flag's file says it is (OCR Plan 3.5).
+const SWITCH_FORMAT: &str = "koru-reader-switch";
+const SWITCH_FILE: &str = "switch.conf";
 
 /// How long a removal waits for the coordinator to let the model go — the
 /// worker stopped, its lease dropped — before it tries anyway. A job in
@@ -226,15 +242,58 @@ pub fn read_declined(dir: &Path) -> bool {
 
 /// Write it, atomically: a sibling temporary file, then a rename.
 pub fn write_declined(dir: &Path, declined: bool) -> std::io::Result<()> {
+    write_record(
+        dir,
+        OFFER_FILE,
+        &OfferRecord {
+            format: OFFER_FORMAT.to_owned(),
+            schema_version: 1,
+            declined,
+        },
+    )
+}
+
+// ------------------------------------------------------- the Turn off flag
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SwitchRecord {
+    format: String,
+    schema_version: u32,
+    off: bool,
+}
+
+/// Read whether the reader is turned off (OCR Plan 3.5). **Total**: anything
+/// that is not a well-formed record of ours reads as "on". The consent is
+/// what governs whether reading may happen at all, and it stands; a damaged
+/// switch cannot make Koru download, offer or send anything anywhere — at
+/// worst it reads on this computer what the person already agreed it may.
+pub fn read_turned_off(dir: &Path) -> bool {
+    std::fs::read(dir.join(SWITCH_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SwitchRecord>(&bytes).ok())
+        .is_some_and(|record| record.format == SWITCH_FORMAT && record.off)
+}
+
+/// Write it, atomically, as the *Not now* flag is written.
+pub fn write_turned_off(dir: &Path, off: bool) -> std::io::Result<()> {
+    write_record(
+        dir,
+        SWITCH_FILE,
+        &SwitchRecord {
+            format: SWITCH_FORMAT.to_owned(),
+            schema_version: 1,
+            off,
+        },
+    )
+}
+
+/// One small record of ours, atomically: a sibling temporary file, then a
+/// rename. Written on the installer's thread, never on a request's.
+fn write_record(dir: &Path, name: &str, record: &impl serde::Serialize) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let bytes = serde_json::to_vec(&OfferRecord {
-        format: OFFER_FORMAT.to_owned(),
-        schema_version: 1,
-        declined,
-    })
-    .map_err(std::io::Error::other)?;
-    let path = dir.join(OFFER_FILE);
-    let temporary = dir.join(format!("{OFFER_FILE}.tmp"));
+    let bytes = serde_json::to_vec(record).map_err(std::io::Error::other)?;
+    let path = dir.join(name);
+    let temporary = dir.join(format!("{name}.tmp"));
     {
         use std::io::Write;
         let mut file = std::fs::File::create(&temporary)?;
@@ -323,9 +382,13 @@ impl Worker {
         }
     }
 
-    /// At start: what the person last said, and what is on the disk.
+    /// At start: what the person last said, and what is on the disk. **Off
+    /// is read before the disk is asked**, so a coordinator that follows the
+    /// first model it hears of never starts a worker with one somebody turned
+    /// off.
     pub(crate) fn open(&mut self) {
         self.hub.set_declined(read_declined(&self.state_dir));
+        self.hub.set_turned_off(read_turned_off(&self.state_dir));
         self.rescan();
     }
 
@@ -346,7 +409,32 @@ impl Worker {
                     tracing::warn!(target: "koru_readings", %error, "the reader's Not now could not be written");
                 }
             }
+            Command::SaveTurnedOff(off) => self.save_turned_off(off),
         }
+    }
+
+    /// **Write Turn off / Turn on**, and wake the coordinator so it follows
+    /// at once. News, not activity (TECHNICAL §14): a line only when what is
+    /// on the disk changed — the reader was turned off, or on again — never
+    /// for a press that changed nothing. Counts and states only.
+    fn save_turned_off(&mut self, off: bool) {
+        let was = read_turned_off(&self.state_dir);
+        match write_turned_off(&self.state_dir, off) {
+            Ok(()) if was != off => {
+                if off {
+                    tracing::info!(target: "koru_readings", "the reader was turned off; the download stays");
+                } else {
+                    tracing::info!(target: "koru_readings", "the reader was turned on again");
+                }
+            }
+            Ok(()) => {}
+            // The person's word holds for this session, as a consent that
+            // will not write does (the hub already has it).
+            Err(error) => {
+                tracing::warn!(target: "koru_readings", %error, "the reader's on or off could not be written");
+            }
+        }
+        self.inbox.queue_dirty();
     }
 
     fn fetch_catalog(&mut self) {
@@ -417,6 +505,8 @@ impl Worker {
         if let Err(error) = write_declined(&self.state_dir, false) {
             tracing::warn!(target: "koru_readings", %error, "the reader's Not now could not be cleared");
         }
+        // Yes is yes: whatever a Turn off said, the reader this installs is on.
+        self.forget_turned_off();
         let hub = Arc::clone(&self.hub);
         let mut report = |p: koru_models::InstallProgress| {
             let stage = if cancel.load(Ordering::Acquire) {
@@ -475,6 +565,7 @@ impl Worker {
     /// Readings already made are documents and stay.
     fn remove(&mut self) {
         let Some(model) = self.hub.installed() else {
+            self.forget_turned_off();
             self.hub
                 .set_progress(Some(progress(InstallStage::Removed, None)));
             return;
@@ -495,6 +586,7 @@ impl Worker {
                     version = model.descriptor.version.as_str(),
                     "the reader was removed"
                 );
+                self.forget_turned_off();
                 self.announce(koru_events::ReadingReaderRemoved);
                 self.hub
                     .set_progress(Some(progress(InstallStage::Removed, None)));
@@ -508,6 +600,18 @@ impl Worker {
             }
         }
         self.rescan();
+    }
+
+    /// **The download is gone, and Turn off goes with it**: the row reads
+    /// *not downloaded*, and a reader installed later starts on. Written
+    /// without a line of its own — the removal is the news.
+    fn forget_turned_off(&mut self) {
+        self.hub.set_turned_off(false);
+        if read_turned_off(&self.state_dir)
+            && let Err(error) = write_turned_off(&self.state_dir, false)
+        {
+            tracing::warn!(target: "koru_readings", %error, "the reader's on or off could not be written");
+        }
     }
 
     #[cfg(test)]
@@ -611,6 +715,28 @@ impl koru_store_api::routes::reader::ReaderService for Installer {
         self.hub
             .set_progress(Some(progress(InstallStage::Removing, None)));
         self.hub.send(Command::Remove);
+        Ok(self.hub.state())
+    }
+
+    /// **Turn off**: the hub at once — the coordinator lets the model go at
+    /// its next step and nothing is offered from this answer on — and the
+    /// flag on the installer's thread. A download running is not touched
+    /// (Stop is for that), and with nothing installed there is nothing to
+    /// turn off.
+    fn turn_off(&self) -> Result<ReaderState, Error> {
+        if self.hub.installed().is_some() && self.hub.set_turned_off(true) {
+            self.hub.send(Command::SaveTurnedOff(true));
+        }
+        Ok(self.hub.state())
+    }
+
+    /// **Turn on again**: no download. The model revision moves, so the
+    /// coordinator takes the model back and queues what waited for it, as
+    /// after an install.
+    fn turn_on(&self) -> Result<ReaderState, Error> {
+        if self.hub.set_turned_off(false) {
+            self.hub.send(Command::SaveTurnedOff(false));
+        }
         Ok(self.hub.state())
     }
 

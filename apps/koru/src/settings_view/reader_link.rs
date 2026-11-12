@@ -20,25 +20,39 @@ use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use koru_settings_ui::{
-    ReaderBlocked, ReaderDownloadEnd, ReaderDownloadStage, ReaderItemRow, ReaderRow, ReaderStatus,
+    ReaderBlocked, ReaderDownloadEnd, ReaderDownloadStage, ReaderItemRow, ReaderPartlyRow,
+    ReaderRow, ReaderStatus,
 };
 use koru_store_core::ids::{DocumentId, WorkspaceId};
 use koru_store_wire::reader::{
-    CatalogStage, InstallFrom, InstallReader, InstallStage, ReaderItems, ReaderState,
-    ReaderUnavailable,
+    CatalogStage, InstallFrom, InstallReader, InstallStage, ReaderItem, ReaderItemKind,
+    ReaderItems, ReaderState, ReaderUnavailable,
 };
 
 /// What the page asks the thread to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     /// Read the state, and the items when there are any.
     Refresh,
-    /// **Turn on** from Settings, which installs whatever *Not now* said.
+    /// **Turn on** from Settings: a reader downloaded and off is turned on
+    /// with no download (OCR Plan 3.5); otherwise it installs, whatever *Not
+    /// now* said. Which, the Store's state says at the moment of the press.
     TurnOn,
     Stop,
-    /// **Turn off** and **Remove** are one call: the Store removes the model
-    /// and keeps every reading made.
+    /// **Turn off**: reading stops and the download stays (OCR Plan 3.5).
+    TurnOff,
+    /// **Remove** the download, whether the reader was on or off.
     Remove,
+    /// **Read again** an item that could not be read (OCR Plan 3.5).
+    ReadAgain {
+        workspace: WorkspaceId,
+        hash: String,
+    },
+    /// **Read all pages** of a partly read item (OCR Plan 3.5).
+    ReadAll {
+        workspace: WorkspaceId,
+        hash: String,
+    },
 }
 
 /// What came back: the state, the items, and the names the listing gave
@@ -67,13 +81,16 @@ impl ReaderLink {
             .name("koru-settings-reader".into())
             .spawn(move || {
                 let mut client: Option<koru_api_client::Client> = None;
+                // A request was waiting or under way at the last answer: the
+                // list is read again even if the counts no longer name it.
+                let mut asked = false;
                 while let Ok(command) = command_rx.recv() {
                     // Only the newest refresh matters; a press is never
                     // dropped.
                     let mut queue = vec![command];
                     queue.extend(command_rx.try_iter());
                     for command in dedup_refreshes(queue) {
-                        let answer = perform(&mut client, root.as_deref(), command);
+                        let answer = perform(&mut client, root.as_deref(), command, &mut asked);
                         if answer_tx.send(answer).is_err() {
                             return;
                         }
@@ -111,6 +128,7 @@ fn perform(
     client: &mut Option<koru_api_client::Client>,
     root: Option<&std::path::Path>,
     command: Command,
+    asked: &mut bool,
 ) -> Answer {
     if client.is_none() {
         let opened = match root {
@@ -123,17 +141,38 @@ fn perform(
         return Answer::default();
     };
     let store = open.store();
+    let requested = matches!(command, Command::ReadAgain { .. } | Command::ReadAll { .. });
     let state = match command {
         Command::Refresh => store.reader(),
-        Command::TurnOn => store.reader().and_then(|state| match state.offer.clone() {
-            Some(terms) => store.install_reader(&InstallReader {
-                terms,
-                from: InstallFrom::Settings,
-            }),
-            None => Ok(state),
+        Command::TurnOn => store.reader().and_then(|state| {
+            if state.turned_off {
+                return store.turn_reader_on();
+            }
+            match state.offer.clone() {
+                Some(terms) => store.install_reader(&InstallReader {
+                    terms,
+                    from: InstallFrom::Settings,
+                }),
+                None => Ok(state),
+            }
         }),
         Command::Stop => store.stop_reader_install(),
+        Command::TurnOff => store.turn_reader_off(),
         Command::Remove => store.remove_reader(),
+        // A refusal (the item changed since the list was drawn) is not the
+        // Store going away: the list read below shows what is true now.
+        Command::ReadAgain { workspace, hash } => {
+            if let Ok(blob) = koru_store_core::model::BlobHash::parse(&hash) {
+                let _ = store.read_again(workspace, &blob);
+            }
+            store.reader()
+        }
+        Command::ReadAll { workspace, hash } => {
+            if let Ok(blob) = koru_store_core::model::BlobHash::parse(&hash) {
+                let _ = store.read_all(workspace, &blob);
+            }
+            store.reader()
+        }
     };
     let Ok(state) = state else {
         // A Store that went away is found again on the next command.
@@ -144,11 +183,14 @@ fn perform(
         state: Some(state),
         ..Answer::default()
     };
-    let wants_items = answer
-        .state
-        .as_ref()
-        .is_some_and(|state| state.counts.could_not_be_read > 0);
+    let wants_items = requested
+        || *asked
+        || answer.state.as_ref().is_some_and(|state| {
+            state.counts.could_not_be_read > 0 || state.counts.partly_read > 0
+        });
+    *asked = false;
     if wants_items && let Ok(items) = store.reader_items() {
+        *asked = items.items.iter().any(|item| item.requested);
         let mut workspaces: Vec<WorkspaceId> = items.items.iter().map(|i| i.workspace).collect();
         workspaces.sort_by_key(|id| id.to_storage());
         workspaces.dedup();
@@ -166,20 +208,35 @@ fn perform(
     answer
 }
 
-/// A *could not be read* item's token: where picking it goes.
-pub(crate) fn item_key(workspace: WorkspaceId, document: DocumentId) -> String {
-    format!("{}/{}", workspace.to_storage(), document.to_storage())
+/// An item's token on the card: `<workspace>/<document>/<hash>` — where
+/// **Show** goes, and what **Read again** and **Read all pages** ask the
+/// Store about (OCR Plan 3.5). Ids only.
+pub(crate) fn item_key(workspace: WorkspaceId, document: DocumentId, hash: &str) -> String {
+    format!(
+        "{}/{}/{hash}",
+        workspace.to_storage(),
+        document.to_storage()
+    )
 }
 
 /// The token back into a navigation target: the document route, which the
-/// shell resolves through the Store to wherever the entry lives.
+/// shell resolves through the Store to wherever the entry lives. A token of
+/// two segments (before Plan 3.5) still goes where it went.
 pub(crate) fn item_target(key: &str) -> Option<koru_workspace_host::NavigationTarget> {
-    let (_, document) = key.split_once('/')?;
-    let document = DocumentId::parse(document)?;
+    let document = DocumentId::parse(key.split('/').nth(1)?)?;
     Some(koru_workspace_host::NavigationTarget::Document {
         document: koru_core::DocumentId::from_uuid(document.as_uuid()),
         node: None,
     })
+}
+
+/// The token back into what a request names: the workspace and the bytes.
+pub(crate) fn item_request(key: &str) -> Option<(WorkspaceId, String)> {
+    let mut parts = key.split('/');
+    let workspace = WorkspaceId::parse(parts.next()?)?;
+    let _document = parts.next()?;
+    let hash = parts.next().filter(|hash| !hash.is_empty())?;
+    Some((workspace, hash.to_owned()))
 }
 
 /// **The card, from what the Store said.** Pure, so every state is tested
@@ -208,6 +265,10 @@ pub(crate) fn row(answer: &Answer) -> Option<ReaderRow> {
             ReaderUnavailable::NoModel => ReaderBlocked::NoModel,
             ReaderUnavailable::WillNotLoad => ReaderBlocked::WillNotLoad,
         })
+    } else if let Some(installed) = state.installed.as_ref().filter(|_| state.turned_off) {
+        ReaderStatus::Off {
+            megabytes: koru_voice_consent::megabytes(installed.download_bytes),
+        }
     } else if let Some(installed) = state.installed.as_ref() {
         ReaderStatus::On {
             read: state.counts.read,
@@ -229,26 +290,48 @@ pub(crate) fn row(answer: &Answer) -> Option<ReaderRow> {
             },
         }
     };
+    let named = |item: &ReaderItem| answer.names.get(&(item.workspace, item.document));
+    // An entry that is not a file holds the picture.
+    let picture = |item: &ReaderItem| {
+        named(item).is_some_and(|(_, kind)| kind != koru_core::explore::KIND_FILE)
+    };
     let items = answer
         .items
         .items
         .iter()
-        .map(|item| {
-            let named = answer.names.get(&(item.workspace, item.document));
-            ReaderItemRow {
-                key: item_key(item.workspace, item.document),
-                name: named.map(|(title, _)| title.clone()),
-                // An entry that is not a file holds the picture.
-                picture: named.is_some_and(|(_, kind)| kind != koru_core::explore::KIND_FILE),
-                reason: item.reason.clone(),
-            }
+        .filter(|item| item.kind == ReaderItemKind::CouldNotBeRead)
+        .map(|item| ReaderItemRow {
+            key: item_key(item.workspace, item.document, &item.hash),
+            name: named(item).map(|(title, _)| title.clone()),
+            picture: picture(item),
+            reason: item.reason.clone(),
+            read_again: item.offers.read_again,
         })
         .collect::<Vec<_>>();
-    // The count is the whole number; what the list does not hold is "more".
+    let partly = answer
+        .items
+        .items
+        .iter()
+        .filter(|item| item.kind == ReaderItemKind::PartlyRead)
+        .map(|item| ReaderPartlyRow {
+            key: item_key(item.workspace, item.document, &item.hash),
+            name: named(item).map(|(title, _)| title.clone()),
+            picture: picture(item),
+            pages_done: item.pages_done.unwrap_or(0),
+            reading: item.requested,
+            read_all: item.offers.read_all,
+        })
+        .collect::<Vec<_>>();
+    // The counts are the whole numbers; what a list does not hold is "more".
+    // An item being read in full is in the list and counted unread, not
+    // partly read, so only the settled ones are taken off the count.
     let more = state
         .counts
         .could_not_be_read
         .saturating_sub(items.len() as u64);
+    let settled_partly = partly.iter().filter(|item| !item.reading).count() as u64;
+    let partly_more = state.counts.partly_read.saturating_sub(settled_partly);
+    let listed = !answer.items.items.is_empty();
     Some(ReaderRow {
         status,
         languages: state
@@ -257,11 +340,9 @@ pub(crate) fn row(answer: &Answer) -> Option<ReaderRow> {
             .map(|terms| terms.languages.clone())
             .unwrap_or_default(),
         items,
-        more: if answer.items.items.is_empty() {
-            0
-        } else {
-            more
-        },
+        more: if listed { more } else { 0 },
+        partly,
+        partly_more: if listed { partly_more } else { 0 },
         not_here: state.counts.not_here,
     })
 }
@@ -271,6 +352,13 @@ pub(crate) fn running(answer_state: Option<&ReaderState>) -> bool {
     answer_state
         .and_then(|state| state.install.as_ref())
         .is_some_and(|install| install.stage.is_running())
+}
+
+/// Whether a person's *Read again* or *Read all pages* is waiting or under
+/// way, so the list is asked about again to show how far it got and to let
+/// the item go when it finishes (OCR Plan 3.5).
+pub(crate) fn reading_requested(items: &ReaderItems) -> bool {
+    items.items.iter().any(|item| item.requested)
 }
 
 /// Whether the Store is still reading the reader's catalog, so the size the

@@ -8,19 +8,30 @@
 //! places (an import's summary, `Ctrl+P`, the Agent-hosted `Ctrl+Shift+K`
 //! window) and in Settings, and a download has to outlive a closed window. So
 //! every surface asks the Store one question — [`ReaderState`] — and sends it
-//! one of five answers:
+//! one of these answers:
 //!
 //! | a person… | route | body |
 //! | --- | --- | --- |
 //! | looks | `GET /v1/readings/reader` | — |
-//! | presses **Turn on** | `POST /v1/readings/reader/install` | [`InstallReader`] |
+//! | presses **Turn on** (not downloaded) | `POST /v1/readings/reader/install` | [`InstallReader`] |
 //! | presses **Stop** | `POST /v1/readings/reader/stop` | — |
+//! | presses **Turn off** | `POST /v1/readings/reader/off` | — |
+//! | presses **Turn on** (downloaded, off) | `POST /v1/readings/reader/on` | — |
 //! | presses **Remove** | `DELETE /v1/readings/reader` | — |
 //! | presses **Not now** | `POST /v1/readings/reader/decline` | — |
 //!
 //! and an import that finished calls `POST /v1/readings/reader/imported` with
 //! [`ImportFinished`], which is what lets Koru offer once more after a *Not
 //! now*.
+//!
+//! ## Off is not removed (OCR TECHNICAL §7, §9 "The reader is turned off")
+//!
+//! **Turn off** stops reading and keeps the download; [`ReaderState::turned_off`]
+//! says so. Whether the reader is on is machine-local, like the consent it
+//! follows. While it is off, nothing is recognized (text layers and plain
+//! files are still read), nothing is offered, and what was read stays
+//! findable; **Turn on** needs no download. **Remove** deletes the download,
+//! whether the reader was on or off.
 //!
 //! ## Tokens, never sentences
 //!
@@ -69,8 +80,20 @@ pub struct ReaderState {
     /// scanned PDF since. Search answers carry no offer while it is set; the
     /// Settings row ignores it.
     pub offer_declined: bool,
+    /// **The reader is downloaded and turned off** on this computer: only
+    /// ever `true` with [`Self::installed`] set. Nothing is recognized and no
+    /// surface offers it; **Turn on** (`POST /v1/readings/reader/on`) needs
+    /// no download. Absent from an older Store, which had no off but removal.
+    #[serde(default)]
+    pub turned_off: bool,
     /// The totals for **this computer**, every workspace on it: what the
     /// Settings row shows.
+    ///
+    /// While the reader is off, what waits for it is counted as it is with no
+    /// reader at all: in `unread` and `needs_reader`. A search answer's
+    /// `offer` is `false` (it is downloaded), so the line in search says
+    /// nothing about those items — *Still reading* counts only what is being
+    /// read, and nothing waiting for the reader is.
     pub counts: MachineReadingCounts,
 }
 
@@ -280,8 +303,9 @@ pub struct ImportFinished {
 
 // ------------------------------------------------- the items behind the counts
 
-/// **The items behind the Settings row's *could not be read* count**: the
-/// answer to `GET /v1/readings/reader/items` (OCR Plan 2.5).
+/// **The items behind the Settings row's *could not be read* and *partly
+/// read* lists**: the answer to `GET /v1/readings/reader/items` (OCR Plans 2.5
+/// and 3.5).
 ///
 /// **Ids and tokens only.** No file name, no title, no path crosses from the
 /// Store's reading code: a surface names each item from the workspace listing
@@ -312,21 +336,39 @@ pub struct ReaderItem {
     /// The blob's address (`b3:<hex>`).
     pub hash: String,
     pub kind: ReaderItemKind,
-    /// Why, as a token: `password`, `damaged` (true on every device), or a
-    /// failure true on this computer only — `unsupported`, `crashed`,
-    /// `memory-limit`, `hostile`, `internal`, `unreadable`. A surface words
-    /// the tokens it knows and says something general for one it does not.
+    /// Why, as a token. *Could not be read*: `password`, `damaged` (true on
+    /// every device), or a failure true on this computer only —
+    /// `unsupported`, `crashed`, `memory-limit`, `hostile`, `internal`,
+    /// `unreadable`. *Partly read*: `page-cap`, or empty while a person's
+    /// *Read all pages* is under way. A surface words the tokens it knows and
+    /// says something general for one it does not.
     pub reason: String,
+    /// *Partly read*: how far it got — the pages read so far. Absent for an
+    /// item that could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages_done: Option<u32>,
+    /// What a person may ask of this item on this computer now, decided as
+    /// `GET /v1/readings/{workspace}/{hash}` decides it for a menu: *Read all
+    /// pages* beside a partly read item, *Read again* beside one that could
+    /// not be read. Absent from an older Store: nothing offered.
+    #[serde(default)]
+    pub offers: crate::readings::ReadingOffers,
+    /// A person's request for this item is waiting or under way here. A
+    /// surface asks again while one is, to show how far it got.
+    #[serde(default)]
+    pub requested: bool,
 }
 
-/// How an item ended. **Room for more**: *partly read* (a long scan stopped at
-/// its page limit) joins in OCR Plan 3.2, with its own list and *Read all
-/// pages*; a surface ignores a kind it does not know.
+/// How an item ended. **A surface ignores a kind it does not know.**
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReaderItemKind {
     /// Found by name only.
     CouldNotBeRead,
+    /// Stopped at a page limit, found by the pages read — or being read to
+    /// its end because a person asked (OCR Plan 3.5). It leaves the list when
+    /// it finishes.
+    PartlyRead,
 }
 
 #[cfg(test)]

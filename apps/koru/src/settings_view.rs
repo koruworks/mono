@@ -109,10 +109,16 @@ pub struct SettingsView {
     /// short wake, as it does for the app-menu read.
     reader_pending: usize,
     reader_catalog_polls: u32,
+    /// The last answer listed an item a person asked to have read (OCR Plan
+    /// 3.5): the page asks again, slowly, until none is.
+    reader_requested: bool,
 }
 
 /// How often a running download of the reader is asked about.
 const READER_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+/// How often the lists are asked about while a person's *Read again* or *Read
+/// all pages* is waiting or under way. A page takes about a second to read.
+const READER_REQUEST_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 /// While the Store is still reading the reader's catalog: how often, and how
 /// many times, the card asks again for the size it would offer.
 const READER_CATALOG_POLL: std::time::Duration = std::time::Duration::from_secs(1);
@@ -178,6 +184,7 @@ impl SettingsView {
             reader_asked_at: None,
             reader_pending: 0,
             reader_catalog_polls: 0,
+            reader_requested: false,
         };
         // **The world, asked once.** The kill switch and a walk of the model
         // cache — neither may happen on a frame, and neither may happen under
@@ -206,17 +213,27 @@ impl SettingsView {
 
     /// What only the host can do. Drained by the container.
     ///
-    /// **The reader's four buttons are carried out here**, by this page's own
+    /// **The reader's buttons are carried out here**, by this page's own
     /// thread to the Store, and never reach the container: they touch nothing
-    /// the container owns. *Show* on a *could not be read* item does, because
-    /// it navigates.
+    /// the container owns — *Turn on*, *Stop*, *Turn off*, *Remove*, and *Read
+    /// again* and *Read all pages* on a listed item (OCR Plan 3.5). *Show* on
+    /// an item does reach it, because it navigates.
     pub fn take_requests(&mut self) -> Vec<Request> {
         let mut rest = Vec::new();
         for request in self.surface.take_requests() {
             let command = match request {
                 Request::TurnOnReader => reader_link::Command::TurnOn,
                 Request::StopReaderInstall => reader_link::Command::Stop,
-                Request::TurnOffReader | Request::RemoveReader => reader_link::Command::Remove,
+                Request::TurnOffReader => reader_link::Command::TurnOff,
+                Request::RemoveReader => reader_link::Command::Remove,
+                Request::ReadReaderItemAgain(key) => match reader_link::item_request(&key) {
+                    Some((workspace, hash)) => reader_link::Command::ReadAgain { workspace, hash },
+                    None => continue,
+                },
+                Request::ReadAllReaderPages(key) => match reader_link::item_request(&key) {
+                    Some((workspace, hash)) => reader_link::Command::ReadAll { workspace, hash },
+                    None => continue,
+                },
                 other => {
                     rest.push(other);
                     continue;
@@ -247,6 +264,7 @@ impl SettingsView {
             return false;
         }
         let row = reader_link::row(&answer);
+        self.reader_requested = reader_link::reading_requested(&answer.items);
         self.reader_state = answer.state;
         self.surface.set_reader(row)
     }
@@ -258,6 +276,11 @@ impl SettingsView {
         let at = self.reader_asked_at?;
         if reader_link::running(self.reader_state.as_ref()) {
             return Some(at + READER_POLL);
+        }
+        // A person's request on a listed item: how far it got, and the row
+        // going when it finishes (OCR Plan 3.5). Never while none waits.
+        if self.reader_requested {
+            return Some(at + READER_REQUEST_POLL);
         }
         // A few more reads while the catalog is fetched, then none: a
         // settled card is never polled.

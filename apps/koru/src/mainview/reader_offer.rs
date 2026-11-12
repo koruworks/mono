@@ -37,20 +37,25 @@ use koru_workspace_host::reader_offer::{ImportReading, ReaderAnswer};
 use super::chrome_focus::ChromeStop;
 use super::{MainView, ToastPayload};
 
-/// The summary's own action and where it goes, by what the import made.
+/// The summary's own action and where it goes, by what the import made — in
+/// the person's language, like the line under it (OCR Plan 3.5).
 pub(super) fn import_notice_action(
     target: koru_workspace_host::ImportNoticeTarget,
 ) -> (&'static str, ToastPayload) {
+    let lang = crate::format::lang();
     match target {
-        koru_workspace_host::ImportNoticeTarget::Notebook(document) => {
-            ("View Notebook", ToastPayload::Open(document))
-        }
-        koru_workspace_host::ImportNoticeTarget::Document(document) => {
-            ("View file", ToastPayload::Open(document))
-        }
-        koru_workspace_host::ImportNoticeTarget::File(file) => {
-            ("View file", ToastPayload::ShowFile(file))
-        }
+        koru_workspace_host::ImportNoticeTarget::Notebook(document) => (
+            t(lang, Key::ImportNoticeViewNotebook),
+            ToastPayload::Open(document),
+        ),
+        koru_workspace_host::ImportNoticeTarget::Document(document) => (
+            t(lang, Key::ImportNoticeViewFile),
+            ToastPayload::Open(document),
+        ),
+        koru_workspace_host::ImportNoticeTarget::File(file) => (
+            t(lang, Key::ImportNoticeViewFile),
+            ToastPayload::ShowFile(file),
+        ),
     }
 }
 

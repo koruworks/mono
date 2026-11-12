@@ -66,6 +66,14 @@ pub struct ReadingAnswer {
     /// from an older Store, which reads as nothing offered.
     #[serde(default)]
     pub offers: ReadingOffers,
+    /// **Reading it failed on this computer only** (OCR Plan 3.5): the local
+    /// failure's token — `unsupported`, `crashed`, `memory-limit`, `hostile`,
+    /// `internal`, `unreadable` — once this computer has given up on it. Such
+    /// a failure is never synced, so the item may have no reading at all:
+    /// then `status` is absent and `pages` empty, and the answer is here
+    /// only so a surface can offer *Read again* by [`Self::offers`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_here: Option<String>,
 }
 
 /// Which of the two requests the Store would accept for one item here.
@@ -81,7 +89,8 @@ pub struct ReadingOffers {
     #[serde(default)]
     pub read_all: bool,
     /// *Read again*: an item that has been read (`read`, `empty`) or whose
-    /// reading failed (`failed`).
+    /// reading failed (`failed`), or that this computer gave up reading
+    /// ([`ReadingAnswer::failed_here`]).
     #[serde(default)]
     pub read_again: bool,
 }

@@ -159,6 +159,10 @@ pub(crate) enum Action {
     ReaderRemove,
     /// **Show** beside a *could not be read* item: the host's token for it.
     ShowReaderItem(String),
+    /// **Read again** beside a *could not be read* item (OCR Plan 3.5).
+    ReaderReadAgain(String),
+    /// **Read all pages** beside a *partly read* item (OCR Plan 3.5).
+    ReaderReadAll(String),
 
     // ----------------------------------------------------------- Terminal
     TerminalTheme(ThemeChoice),
@@ -294,8 +298,10 @@ pub enum Request {
     TurnOnReader,
     /// **Stop** its download. A partial download resumes next time.
     StopReaderInstall,
-    /// **Turn off**. There is no separate switch: the Store removes the model
-    /// and keeps every reading made, exactly as **Remove** does.
+    /// **Turn off**: reading stops on this computer and the download stays
+    /// (OCR Plan 3.5). **Turn on** while the row says off turns it on again
+    /// with no download; the host tells the two **Turn on**s apart from the
+    /// Store's state.
     TurnOffReader,
     /// **Remove** the download from this computer. Readings already made stay.
     RemoveReader,
@@ -303,4 +309,9 @@ pub enum Request {
     /// gave it: Explore → Files with the file selected, or the page holding
     /// the picture — the same navigation a search result takes.
     ShowReaderItem(String),
+    /// **Read again** an item that could not be read, by the host's token —
+    /// offered where a right-click menu on it would offer it (OCR Plan 3.5).
+    ReadReaderItemAgain(String),
+    /// **Read all pages** of a partly read item, by the host's token.
+    ReadAllReaderPages(String),
 }

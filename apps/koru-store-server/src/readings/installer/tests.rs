@@ -486,6 +486,138 @@ fn remove_takes_the_model_off_the_disk() {
     );
 }
 
+/// Install from the staged catalog, through the installer, as Settings would.
+fn installed(staged: &Staged) -> (Arc<ReaderHub>, Worker, Installer) {
+    let (hub, mut worker, installer) = desktop(staged);
+    let terms = offer_terms(&installer, &hub, &mut worker);
+    installer
+        .install(&InstallReader {
+            terms,
+            from: InstallFrom::Settings,
+        })
+        .unwrap();
+    drain(&hub, &mut worker);
+    assert!(installer.state().installed.is_some());
+    (hub, worker, installer)
+}
+
+/// **Turn off keeps the download and survives a restart; Turn on needs no
+/// download** (OCR Plan 3.5; TECHNICAL §7 "Whether the reader is on is
+/// machine-local", §9 "The reader is turned off").
+#[test]
+fn turning_off_keeps_the_download_and_is_kept_across_a_restart() {
+    let staged = stage();
+    let (hub, mut worker, installer) = installed(&staged);
+    let root = hub.installed().unwrap().root;
+    let reader_dir = staged.dir.path().join("reader");
+    let (before, _) = hub.wanted_model();
+
+    let off = installer.turn_off().unwrap();
+    assert!(off.turned_off, "the answer says off at once");
+    assert!(off.installed.is_some(), "and still downloaded");
+    let (revision, wanted) = hub.wanted_model();
+    assert!(wanted.is_none(), "the worker is handed no model");
+    assert!(revision > before, "the coordinator follows the change");
+    drain(&hub, &mut worker);
+    assert!(read_turned_off(&reader_dir), "on disk, beside the consent");
+    assert!(root.join("det.onnx").is_file(), "the download stays");
+
+    // Nothing is offered while off, though pictures wait for the reader.
+    let ws = WorkspaceId::new();
+    hub.publish_counts(
+        [(
+            ws,
+            super::super::hub::ScopeCounts {
+                total: 3,
+                unread: 3,
+                needs_reader: 3,
+                not_here: 0,
+            },
+        )]
+        .into(),
+        Default::default(),
+    );
+    assert!(!hub.reading_counts(Some(&[ws]), &[]).unwrap().offer);
+
+    // A restart: the flag is read back before the model is found. Its
+    // catalog is unread, and reading the state while off asks for none.
+    let (again, mut again_worker, again_installer) = desktop(&staged);
+    assert!(
+        again_installer.state().turned_off,
+        "still off after a restart"
+    );
+    assert_eq!(again_installer.state().catalog.state, CatalogStage::Unread);
+    assert!(again.wanted_model().1.is_none());
+
+    // Turn on: the model is handed back, and the only work is the flag.
+    let on = again_installer.turn_on().unwrap();
+    assert!(!on.turned_off);
+    assert!(again.wanted_model().1.is_some());
+    let mut commands = Vec::new();
+    while let Some(command) = again.next_command(Duration::ZERO) {
+        commands.push(command);
+    }
+    assert!(
+        matches!(commands.as_slice(), [Command::SaveTurnedOff(false)]),
+        "no download, no catalog: {commands:?}"
+    );
+    for command in commands {
+        again_worker.run(command);
+    }
+    assert!(!read_turned_off(&reader_dir));
+    // Pressed again, nothing changes and nothing is written.
+    again_installer.turn_on().unwrap();
+    assert!(again.next_command(Duration::ZERO).is_none());
+}
+
+/// **Remove while off deletes the download and leaves "not downloaded"**:
+/// the flag goes with it, so a reader installed later starts on.
+#[test]
+fn remove_while_off_deletes_the_download_and_reads_not_downloaded() {
+    let staged = stage();
+    let (hub, mut worker, installer) = installed(&staged);
+    let root = hub.installed().unwrap().root;
+    installer.turn_off().unwrap();
+    drain(&hub, &mut worker);
+    let (revision, _) = hub.wanted_model();
+    hub.ack_model(revision + 1);
+    installer.remove().unwrap();
+    drain(&hub, &mut worker);
+    let state = installer.state();
+    assert!(state.installed.is_none(), "not downloaded");
+    assert!(
+        !state.turned_off,
+        "nothing downloaded is neither on nor off"
+    );
+    assert_eq!(state.install.unwrap().stage, InstallStage::Removed);
+    assert!(!root.exists(), "the download is gone");
+    assert!(!read_turned_off(&staged.dir.path().join("reader")));
+
+    // Turn off with nothing downloaded is nothing to do.
+    assert!(!installer.turn_off().unwrap().turned_off);
+    assert!(hub.next_command(Duration::ZERO).is_none());
+}
+
+/// The switch reads total: a damaged file means "on" — the consent stands,
+/// and a damaged switch can only read on this computer what was agreed to.
+#[test]
+fn a_damaged_switch_reads_as_on() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(!read_turned_off(dir.path()));
+    write_turned_off(dir.path(), true).unwrap();
+    assert!(read_turned_off(dir.path()));
+    std::fs::write(
+        dir.path().join(SWITCH_FILE),
+        b"{\"format\":\"other\",\"off\":true}",
+    )
+    .unwrap();
+    assert!(!read_turned_off(dir.path()));
+    write_turned_off(dir.path(), false).unwrap();
+    assert!(!read_turned_off(dir.path()));
+    // The Not now flag beside it is its own file.
+    assert!(!read_declined(dir.path()));
+}
+
 /// **The reader installed and removed reach the event bus**, once each, as
 /// registered events carrying counts only (OCR TECHNICAL §10); reading the
 /// catalog is not news.

@@ -96,7 +96,7 @@ pub use links::SettingsLinks;
 pub use page::{PageGroup, PageId};
 pub use reader::{
     READER_ITEMS_SHOWN, ReaderBlocked, ReaderDownloadEnd, ReaderDownloadStage, ReaderItemRow,
-    ReaderRow, ReaderStatus,
+    ReaderPartlyRow, ReaderRow, ReaderStatus,
 };
 pub use state::{
     AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AgentUpdate, AiSlot,
@@ -2284,6 +2284,8 @@ impl SettingsSurface {
             Action::ReaderTurnOff => self.requests.push(Request::TurnOffReader),
             Action::ReaderRemove => self.requests.push(Request::RemoveReader),
             Action::ShowReaderItem(key) => self.requests.push(Request::ShowReaderItem(key)),
+            Action::ReaderReadAgain(key) => self.requests.push(Request::ReadReaderItemAgain(key)),
+            Action::ReaderReadAll(key) => self.requests.push(Request::ReadAllReaderPages(key)),
             Action::VoiceModels => self.requests.push(if self.voice.model_removes {
                 Request::RemoveVoiceModels
             } else {
@@ -2542,6 +2544,8 @@ fn clone_action(action: &Action) -> Action {
         Action::ReaderTurnOff => Action::ReaderTurnOff,
         Action::ReaderRemove => Action::ReaderRemove,
         Action::ShowReaderItem(key) => Action::ShowReaderItem(key.clone()),
+        Action::ReaderReadAgain(key) => Action::ReaderReadAgain(key.clone()),
+        Action::ReaderReadAll(key) => Action::ReaderReadAll(key.clone()),
         Action::VoiceModels => Action::VoiceModels,
         Action::RevokeVoiceConsent => Action::RevokeVoiceConsent,
         Action::Renderer(v) => Action::Renderer(v.clone()),

@@ -1372,7 +1372,7 @@ fn a_bundle_that_is_not_a_bundle_is_refused() {
 }
 
 /// **`/v1/readings/reader…` and `/v1/readings/{workspace}/{hash}` do not
-/// shadow each other** (OCR Plans 1.8 and 2.4 meet here): each request
+/// shadow each other** (OCR Plans 1.8, 2.4 and 3.5 meet here): each request
 /// reaches its own handler, told apart by what answers.
 #[test]
 fn the_reader_routes_and_one_reading_reach_their_own_handlers() {
@@ -1423,6 +1423,22 @@ fn the_reader_routes_and_one_reading_reach_their_own_handlers() {
             .get("counts")
             .is_some()
     );
+
+    // Off and on (OCR Plan 3.5) reach the reader too — never the reading
+    // route taking `reader` for a workspace and `off` for a hash. With nothing
+    // installed there is nothing to turn off, and the answer says so.
+    for verb in ["off", "on"] {
+        let answered = daemon.post(
+            &format!("/v1/readings/reader/{verb}"),
+            &serde_json::json!({}),
+        );
+        assert_eq!(answered.status().as_u16(), 200, "{verb}");
+        let answered: serde_json::Value = answered.json().unwrap();
+        assert!(answered.get("counts").is_some(), "{verb}: {answered}");
+        assert_eq!(answered["turned_off"], false, "{verb}: {answered}");
+        let got = daemon.get(&format!("/v1/readings/reader/{verb}"));
+        assert_eq!(got.status().as_u16(), 405, "{verb}");
+    }
 
     // The reader's static paths own their segments: a GET on a reader verb
     // is that verb's route refusing the method, never the reading route

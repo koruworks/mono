@@ -77,6 +77,12 @@ fn an_item_carries_ids_and_tokens_only() {
         hash: "b3:00ff".into(),
         kind: ReaderItemKind::CouldNotBeRead,
         reason: "password".into(),
+        pages_done: None,
+        offers: crate::readings::ReadingOffers {
+            read_all: false,
+            read_again: true,
+        },
+        requested: false,
     };
     let value = serde_json::to_value(&item).unwrap();
     let mut fields: Vec<&str> = value
@@ -86,10 +92,31 @@ fn an_item_carries_ids_and_tokens_only() {
         .map(String::as_str)
         .collect();
     fields.sort_unstable();
-    assert_eq!(fields, ["document", "hash", "kind", "reason", "workspace"]);
+    assert_eq!(
+        fields,
+        [
+            "document",
+            "hash",
+            "kind",
+            "offers",
+            "reason",
+            "requested",
+            "workspace"
+        ]
+    );
     assert_eq!(value["kind"], "could_not_be_read");
+    // A partly read item says how far it got, as a count.
+    let partly = ReaderItem {
+        kind: ReaderItemKind::PartlyRead,
+        reason: "page-cap".into(),
+        pages_done: Some(200),
+        ..item.clone()
+    };
+    let partly_value = serde_json::to_value(&partly).unwrap();
+    assert_eq!(partly_value["kind"], "partly_read");
+    assert_eq!(partly_value["pages_done"], 200);
     let items = ReaderItems {
-        items: vec![item],
+        items: vec![item, partly],
         truncated: false,
     };
     let back: ReaderItems = serde_json::from_str(&serde_json::to_string(&items).unwrap()).unwrap();
@@ -97,6 +124,38 @@ fn an_item_carries_ids_and_tokens_only() {
     // An answer from before `truncated` existed still reads.
     let old: ReaderItems = serde_json::from_str(r#"{"items":[]}"#).unwrap();
     assert!(!old.truncated);
+    // So does an item from before the offers, with nothing offered.
+    let older: ReaderItem = serde_json::from_value(serde_json::json!({
+        "workspace": WorkspaceId::new(),
+        "document": DocumentId::new(),
+        "hash": "b3:00",
+        "kind": "could_not_be_read",
+        "reason": "damaged",
+    }))
+    .unwrap();
+    assert_eq!(older.offers, Default::default());
+    assert!(!older.requested && older.pages_done.is_none());
+}
+
+/// **Off is its own field, and an older Store's answer reads as on**: a Store
+/// from before Plan 3.5 had no off but removal.
+#[test]
+fn turned_off_defaults_to_on() {
+    let old = serde_json::to_value(ReaderState::default())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone()
+        .into_iter()
+        .filter(|(key, _)| key != "turned_off")
+        .collect::<serde_json::Map<_, _>>();
+    let back: ReaderState = serde_json::from_value(serde_json::Value::Object(old)).unwrap();
+    assert!(!back.turned_off);
+    let off = ReaderState {
+        turned_off: true,
+        ..ReaderState::default()
+    };
+    assert_eq!(serde_json::to_value(&off).unwrap()["turned_off"], true);
 }
 
 mod erased {

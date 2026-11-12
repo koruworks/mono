@@ -427,6 +427,9 @@ fn a_read_leaves_no_word_in_any_log(loudness: Loudness) {
         from: InstallFrom::Offer,
     });
     client.stop_reader_install().expect("stop");
+    // Off and on answer whether or not a reader is installed (OCR Plan 3.5).
+    let _ = client.turn_reader_off();
+    let _ = client.turn_reader_on();
     client.decline_reader().expect("decline");
     client
         .reader_import_finished(&ImportFinished {
