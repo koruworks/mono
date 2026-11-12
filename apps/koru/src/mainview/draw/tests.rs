@@ -365,3 +365,104 @@ fn the_document_corner_beside_the_pane_is_masked_in_the_pane_and_keeps_the_hairl
         "only the mask is a fill; the arc is a stroke"
     );
 }
+
+/// **The navigator's Trash row is drawn, hit and published alike in every
+/// mode that lists it** (the third window run of Bots: in Chats and Bots it
+/// was published — UI Automation's Invoke opened the Trash — but nothing was
+/// drawn and a click did nothing, because those modes' own surfaces were
+/// handed the whole column and the column drew and hit its pinned rows only
+/// where the library rows stood). For each mode this build shows, through
+/// the window: the row is in the painted frame at the column's foot and not
+/// clipped, a click at its centre (`View::mouse_down`) opens the Trash, and
+/// its published bounds are its drawn bounds.
+#[test]
+fn the_trash_row_is_drawn_clicked_and_published_alike_in_every_mode() {
+    use crate::panes::explore::NavigatorMode;
+    use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot};
+    fn flatten(nodes: &[SemanticNode], out: &mut Vec<SemanticNode>) {
+        for node in nodes {
+            out.push(node.clone());
+            flatten(&node.children, out);
+        }
+    }
+
+    let (mut view, mut workspace) = crate::mainview::harness::on_document();
+    view.set_viewport(940.0, 620.0);
+    let page = crate::mainview::harness::a_document(&mut workspace.ws, "In front");
+    let trash = koru_i18n::t(crate::format::lang(), koru_i18n::Key::WorkspacesTrash);
+    let modes: Vec<NavigatorMode> = NavigatorMode::ALL
+        .into_iter()
+        .filter(|mode| mode.shown_in_product() && *mode != NavigatorMode::Socials)
+        .collect();
+    assert!(modes.contains(&NavigatorMode::Chats) && modes.contains(&NavigatorMode::Bots));
+    for mode in modes {
+        view.open_node(&workspace.ws, page);
+        view.show_navigator(mode);
+        view.sidebar
+            .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
+        view.relayout();
+        assert_eq!(view.explore.navigator_mode(), mode);
+
+        let root = Affine::IDENTITY;
+        let frame = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 940.0, 620.0));
+        view.draw_frame(
+            &mut Scene::new(),
+            &workspace,
+            &ImageCache::new(),
+            root,
+            false,
+            (-1.0, -1.0),
+        );
+        let records = frame.finish().records;
+        let drawn = records
+            .iter()
+            .find(|r| {
+                r.name == "ExploreRow"
+                    && r.properties
+                        .iter()
+                        .any(|p| p.name == "row" && p.value == "Trash")
+            })
+            .unwrap_or_else(|| panic!("{mode:?}: the Trash row is painted"));
+        let rect = drawn.rect();
+        assert_eq!(drawn.visible(), rect, "{mode:?}: inside the column's clip");
+        let column = records
+            .iter()
+            .find(|r| r.name == "Explore sidebar")
+            .expect("the column is drawn")
+            .rect();
+        assert!(
+            rect.x0 >= column.x0
+                && rect.x1 <= column.x1
+                && rect.y1 <= column.y1
+                && column.y1 - rect.y1 < 2.0 * theme::NAV_ROW_H as f64,
+            "{mode:?}: at the column's foot: {rect:?} in {column:?}"
+        );
+
+        let mut published = Vec::new();
+        flatten(
+            &view.semantics(ViewSlot::from_raw(1), Scope::Whole),
+            &mut published,
+        );
+        let node = published
+            .iter()
+            .find(|n| n.role == accesskit::Role::Button && n.label.as_deref() == Some(trash))
+            .unwrap_or_else(|| panic!("{mode:?}: the Trash row is published"));
+        let bounds = node.bounds.expect("with bounds");
+        assert_eq!(
+            scene::rect(bounds.x, bounds.y, bounds.w, bounds.h),
+            rect,
+            "{mode:?}: published where it is drawn"
+        );
+
+        let (x, y) = (
+            (rect.x0 + rect.x1) as f32 * 0.5,
+            (rect.y0 + rect.y1) as f32 * 0.5,
+        );
+        View::mouse_down(&mut view, &mut workspace.ws, x, y, false);
+        View::mouse_up(&mut view, &mut workspace.ws);
+        assert!(
+            matches!(view.tabs().active_tab().view, TabView::Trash(_)),
+            "{mode:?}: a click on the row opens the Trash"
+        );
+    }
+}

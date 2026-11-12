@@ -147,18 +147,26 @@ impl ExploreView {
             );
         }
         children.extend(self.heading_semantics(cx));
+        // A mode's own surface is published in the band it is drawn and hit
+        // in — the column above the pinned rows — so the rows it publishes
+        // and the Trash row below them never overlap.
+        let top = self.rows_top(cx.area);
+        let band = &Context {
+            area: self.above_footer(cx.area),
+            ..*cx
+        };
         if self.showing_home() {
-            children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
+            children.push(self.home_nav.semantics(band, top));
         } else if self.showing_tasks() {
-            children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
+            children.push(self.rail.queue_semantics(band, top));
         } else if self.showing_chats() {
             // The Chats view replaces the tree, on the rail's model: a list
             // of rows that are chats, each with Open and Delete.
-            children.push(chats::semantics(&self.chats, cx, self.rows_top(cx.area)));
+            children.push(chats::semantics(&self.chats, band, top));
         } else if self.showing_bots() && self.current.is_some() {
             // The roster replaces the tree the same way, while there is a
             // workspace it is about.
-            children.extend(bots::semantics(&self.bots, cx, self.rows_top(cx.area)));
+            children.extend(bots::semantics(&self.bots, band, top));
         } else if !self.showing_socials() {
             children.push(self.tree_semantics(cx));
         }
@@ -349,7 +357,9 @@ impl ExploreView {
         // must not fall through to hidden library content in this mode.
         if self.showing_tasks() {
             let top = self.rows_top(area);
-            return self.rail.queue_action(area, top, target, action);
+            return self
+                .rail
+                .queue_action(self.above_footer(area), top, target, action);
         }
         // Home's nav replaces the tree the same way; a press is the row's.
         if self.showing_home() {
@@ -363,10 +373,12 @@ impl ExploreView {
         // document row must not reach the library behind it either.
         if self.showing_chats() {
             let top = self.rows_top(area);
-            return chats::action(&mut self.chats, area, top, target, action);
+            let band = self.above_footer(area);
+            return chats::action(&mut self.chats, band, top, target, action);
         }
         if self.showing_bots() && self.current.is_some() {
-            return bots::action(&mut self.bots, area, target, action);
+            let band = self.above_footer(area);
+            return bots::action(&mut self.bots, band, target, action);
         }
         // A row. Everything below reaches `nav_key`, so there is exactly one
         // implementation of open, fold and step.

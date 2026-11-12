@@ -6630,12 +6630,12 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
             }
             false
         };
+        // **The pinned Trash row in every one of these modes**, as it is
+        // published and hit: the rail, the artifacts column and the Chats
+        // list are drawn above it (the third window run of Bots found it
+        // drawn only in Documents).
         let footer = records.iter().position(|r| r.name == "ExploreFooter");
-        if mode == NavigatorMode::Documents {
-            assert!(footer.is_some(), "the pinned footer shows in {mode:?}");
-        } else {
-            assert!(footer.is_none(), "the rail has no footer rows in {mode:?}");
-        }
+        assert!(footer.is_some(), "the pinned footer shows in {mode:?}");
         let row_indices: Vec<usize> = records
             .iter()
             .enumerate()
@@ -6644,7 +6644,7 @@ fn the_shell_captures_its_three_sections_around_the_nodes_band() {
         let min_rows = match mode {
             // The library's rows and the Trash row.
             NavigatorMode::Documents => 2,
-            // The rail's and the artifacts column's own rows, no Trash.
+            // The Trash row, and whatever rows the mode's own surface draws.
             _ => 1,
         };
         assert!(
