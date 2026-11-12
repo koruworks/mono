@@ -36,6 +36,17 @@ fn additional_chat_is_atomic_idempotent_hidden_and_has_no_execution() {
         )
         .unwrap()
         .unwrap();
+    // Titled as an ordinary new chat is (window run 2: both rows read the
+    // Bot's name); the main conversation keeps the name it was made with.
+    assert_eq!(chat.title, koru_ai_core::NEW_CHAT_TITLE);
+    let main = repo
+        .chat_with_access(
+            bot.main_chat,
+            &ChatReadAccess::authorized(vec![bot.main_chat]),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(main.title, bot.config.name);
     assert_eq!(chat.current_model, bot.config.model);
     assert_eq!(
         chat.agent_working_folder.as_deref(),

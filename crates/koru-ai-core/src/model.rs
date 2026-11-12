@@ -11,6 +11,15 @@ use crate::{
     ReasoningChoice, RequestMeasurements, Timestamp, ToolInvocationId, WorkspaceId,
 };
 
+/// **The title a chat is made with, until its first message names it.**
+/// Stored, never shown as a name: a client shows a new chat for it in the
+/// reader's language and renames the chat from its first message. The chat
+/// surface (`koru-ai-ui`'s `DEFAULT_CHAT_TITLE`) makes ordinary chats with
+/// it, and a Bot's additional conversation is made with it too, so the
+/// Bot's name stays on the Bot label (`Chat::bot`) rather than in every
+/// conversation's title.
+pub const NEW_CHAT_TITLE: &str = "New chat";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Chat {

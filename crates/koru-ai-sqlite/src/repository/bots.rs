@@ -122,9 +122,13 @@ impl Repository {
             return Ok(reference);
         }
         validate_config(&bot.config, bot.home_workspace)?;
+        // Titled as an ordinary new chat is, until its first message names
+        // it: the Bot's name is on the Bot label, and two conversations of
+        // one Bot named alike could not be told apart. The main
+        // conversation keeps the Bot's name it was made with.
         let chat = Chat {
             id: ChatId::new(),
-            title: bot.config.name.clone(),
+            title: koru_ai_core::NEW_CHAT_TITLE.to_owned(),
             private: false,
             current_model: bot.config.model.clone(),
             branched_from: None,

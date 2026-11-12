@@ -97,7 +97,9 @@ fn editing_a_bot_rewrites_no_conversation_and_only_new_ones_take_the_defaults() 
         panic!("Chat reference")
     };
     let (title, model, mode, fast, folder, _) = settings(&repo, fresh.chat_id);
-    assert_eq!(title, "Renamed");
+    // Titled as an ordinary new chat is, never with the Bot's name (window
+    // run 2); the Bot's name is on its label.
+    assert_eq!(title, koru_ai_core::NEW_CHAT_TITLE);
     assert_eq!(model, bot.config.model);
     assert_eq!(model.requested_model, "fixture-next");
     assert_eq!(model.default_reasoning, ReasoningChoice::On);
