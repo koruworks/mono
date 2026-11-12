@@ -726,7 +726,6 @@ fn a_creation_draft_leaves_with_its_owner_scope() {
         owner_display_name: Some("Steven".into()),
         profile_name: "Work".into(),
         workspace_name: "Notes".into(),
-        template: Default::default(),
         workspace_icon: None,
         workspace_color: None,
         profile_icon: None,

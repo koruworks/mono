@@ -67,7 +67,6 @@ fn everything_set() -> ProfilesController {
         owner_display_name: None,
         profile_name: String::new(),
         workspace_name: String::new(),
-        template: String::new(),
         workspace_icon: None,
         workspace_color: None,
         profile_icon: None,

@@ -114,7 +114,6 @@ pub enum Action {
         owner_display_name: Option<String>,
         name: String,
         workspace_name: String,
-        template: String,
         workspace_icon: Option<String>,
         workspace_color: Option<String>,
         profile_icon: Option<String>,
@@ -3110,7 +3109,6 @@ mod tests {
                     koru_i18n::Key::SetupWorkspaceDefaultName
                 )
                 .into(),
-                template: "empty".into(),
                 workspace_icon: Some("🌱".into()),
                 workspace_color: Some("green".into()),
                 profile_icon: None,
@@ -3550,7 +3548,6 @@ mod tests {
                     koru_i18n::Key::SetupWorkspaceDefaultName
                 )
                 .into(),
-                template: "empty".into(),
                 workspace_icon: Some("🌱".into()),
                 workspace_color: Some("green".into()),
                 profile_icon: None,

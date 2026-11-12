@@ -2377,7 +2377,6 @@ pub struct ConnectedProfileDraft {
     pub owner_display_name: Option<String>,
     pub profile_name: String,
     pub workspace_name: String,
-    pub template: String,
     pub workspace_icon: Option<String>,
     pub workspace_color: Option<String>,
     pub profile_icon: Option<String>,

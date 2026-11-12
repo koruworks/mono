@@ -67,11 +67,6 @@ pub enum SetupOwnerLabel {
 pub(super) const SETUP_DEFAULT_EMOJI: &str = "🌱";
 pub(super) const SETUP_DEFAULT_COLOR: &str = "green";
 
-/// What the action still names: the template choice is gone from the card,
-/// and the one packaged starting point is the untitled document (D4). The
-/// field itself leaves the action in a later increment (welcome PLAN I2).
-const SETUP_TEMPLATE: &str = "empty";
-
 /// The object every key on the card belongs to.
 const SURFACE: &str = "setup";
 
@@ -332,7 +327,6 @@ impl OnboardingView {
                     owner_display_name: self.setup_owner_display_name(),
                     name: self.owner_name.borrow().value(),
                     workspace_name: self.workspace_name.borrow().value(),
-                    template: SETUP_TEMPLATE.to_owned(),
                     workspace_icon: self.workspace_icon.clone(),
                     workspace_color: self.workspace_color.clone(),
                     profile_icon: None,

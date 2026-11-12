@@ -236,34 +236,6 @@ payload!(
 );
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ProfilePurpose {
-    Work,
-    School,
-    Personal,
-}
-
-impl ProfilePurpose {
-    pub fn token(self) -> &'static str {
-        match self {
-            Self::Work => "work",
-            Self::School => "school",
-            Self::Personal => "personal",
-        }
-    }
-}
-
-pub struct OnboardingProfilePurposeSelected {
-    pub purpose: ProfilePurpose,
-}
-
-payload!(
-    OnboardingProfilePurposeSelected,
-    "app.onboarding.profile_purpose_selected",
-    |self| Draft::new(EventName::from_static(Self::NAME))
-        .attr("purpose", AttrValue::Token(self.purpose.token().to_owned()),)
-);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WorkspaceSource {
     Onboarding,
     Manual,

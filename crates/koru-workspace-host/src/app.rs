@@ -3225,11 +3225,26 @@ fn roadmap_template_files(slug: &str) -> koru_store_core::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn retryable_template_failure(template: &str, error: impl std::fmt::Display) -> OnboardingCreation {
+/// The packaged files a first workspace starts from: the one untitled
+/// document. There is no template choice (welcome D4); the folder stays the
+/// way the document is made until it can be made without a packaged file.
+const FIRST_WORKSPACE_TEMPLATE: &str = "empty";
+
+/// **The packaged untitled document could not be read**: this installation
+/// is missing a file it needs. There is no other template to choose, so the
+/// person is told, in their language, to repair Koru (welcome Q-D); the
+/// technical cause goes to the log once and is not shown.
+fn installation_needs_repair(error: impl std::fmt::Display) -> OnboardingCreation {
+    tracing::warn!(
+        target: "koru::onboarding",
+        "the packaged first-workspace document could not be read: {error}"
+    );
     OnboardingCreation::Retryable {
-        message: format!(
-            "This Workspace template isn't available\nKoru couldn't read the packaged files for {template}. Choose another template or repair this Koru installation. ({error})"
-        ),
+        message: koru_i18n::t(
+            koru_i18n::current(),
+            koru_i18n::Key::SetupInstallationNeedsRepair,
+        )
+        .to_owned(),
     }
 }
 
@@ -3290,7 +3305,6 @@ fn create_onboarding_profile(
     id: koru_core::ProfileId,
     profile_name: &str,
     workspace_name: &str,
-    template: &str,
     profile_icon: Option<&str>,
     profile_color: Option<&str>,
     workspace_icon: Option<&str>,
@@ -3301,19 +3315,19 @@ fn create_onboarding_profile(
 ) -> OnboardingCreation {
     use koru_import::Importer;
 
-    let files = match roadmap_template_files(template) {
+    let files = match roadmap_template_files(FIRST_WORKSPACE_TEMPLATE) {
         Ok(files) => files,
-        Err(error) => return retryable_template_failure(template, error),
+        Err(error) => return installation_needs_repair(error),
     };
     // `inspect` reads and parses every packaged file before the first durable
-    // write. A malformed template disables only that choice and cannot leave a
-    // half-created Profile.
+    // write. A missing or malformed file stops creation before anything is
+    // saved and cannot leave a half-created Profile.
     let prepared = match koru_import_markdown::MarkdownImporter.inspect(
         koru_import::ImportSource::Files(files),
         &koru_import::NoProgress,
     ) {
         Ok(prepared) => prepared,
-        Err(error) => return retryable_template_failure(template, error),
+        Err(error) => return installation_needs_repair(error),
     };
 
     let segment = koru_workspace::fromstore::segment();
@@ -3967,7 +3981,6 @@ impl<H: Host> OnboardingApp<H> {
                     owner_display_name,
                     name,
                     workspace_name,
-                    template,
                     workspace_icon,
                     workspace_color,
                     profile_icon,
@@ -3989,7 +4002,6 @@ impl<H: Host> OnboardingApp<H> {
                                 id,
                                 &name,
                                 &workspace_name,
-                                &template,
                                 profile_icon.as_deref(),
                                 profile_color.as_deref(),
                                 workspace_icon.as_deref(),
@@ -9310,7 +9322,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             draft.id,
                             &draft.profile_name,
                             &draft.workspace_name,
-                            &draft.template,
                             draft.profile_icon.as_deref(),
                             draft.profile_color.as_deref(),
                             draft.workspace_icon.as_deref(),

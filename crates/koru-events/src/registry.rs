@@ -2098,18 +2098,6 @@ pub const REGISTRY: &[EventSpec] = &[
         doc: "The person chose the first-run path on the desktop Welcome screen. Emitted once per explicit choice, before Profile creation; carries only the closed path category.",
     },
     EventSpec {
-        name: "app.onboarding.profile_purpose_selected",
-        version: 1,
-        class: EventClass::Instrumentation,
-        telemetry: TelemetryPolicy::AnonymousUsage,
-        attrs: &[token_attr(
-            "purpose",
-            &["work", "school", "personal"],
-            "The selected Profile purpose card.",
-        )],
-        doc: "The person selected a Profile purpose during first-run onboarding. Emitted for each explicit card selection so changed choices remain observable; carries no name, Profile id, or content.",
-    },
-    EventSpec {
         name: "app.installed",
         version: 1,
         class: EventClass::Domain,
