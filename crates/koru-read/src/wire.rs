@@ -255,6 +255,14 @@ pub struct WorkerStatus {
     /// Whether this worker can recognize pictures now: built with recognition,
     /// and the reader installed and verified. `false` throughout M1.
     pub recognition: bool,
+    /// **Whether this worker was built with recognition at all** — whether,
+    /// given a model, it could recognize. The Store asks this before it
+    /// offers a download (OCR Plan 2.4): a worker built without it (Linux,
+    /// Windows on ARM, a build made without the feature) would make the
+    /// download useless, so the offer is not made there. Absent from an older
+    /// worker, which reads as `false`.
+    #[serde(default)]
+    pub recognition_built: bool,
     /// The job running now, if any.
     pub job: Option<JobId>,
     /// Pages finished since this process started.

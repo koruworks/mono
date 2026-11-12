@@ -391,3 +391,45 @@ fn the_mirror_queries_use_their_indexes() {
         assert!(plan.contains("USING"), "{name} uses no index: {plan}");
     }
 }
+
+// ------------------------------------------------- outcomes (OCR Plan 2.4)
+
+/// **How each entry ended, for the counts a person reads**: read and empty
+/// are read, a capped partial is partly read, a failure carries its reason,
+/// and a partial still being read is not settled at all.
+#[test]
+fn outcomes_say_how_each_entry_ended() {
+    let (mut mirror, _name, _keeper) = memory();
+    let ws = WorkspaceId::new();
+    let (read, empty, capped, locked, going) = (
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+    );
+    let h = "b3:aa".to_owned();
+    let mut cap = reading(ReadingStatus::Partial, &[(1, "words")]);
+    cap.reason = Some(Reason::PageCap);
+    let mut password = reading(ReadingStatus::Failed, &[]);
+    password.reason = Some(Reason::Password);
+    for (parent, entry) in [
+        (read, reading(ReadingStatus::Read, &[(1, "words")])),
+        (empty, reading(ReadingStatus::Empty, &[])),
+        (capped, cap),
+        (locked, password),
+        (going, reading(ReadingStatus::Partial, &[(1, "words")])),
+    ] {
+        mirror
+            .apply(&applied(ws, parent, vec![(h.clone(), entry)]))
+            .unwrap();
+    }
+    let outcomes = mirror.outcomes_in(ws).unwrap();
+    let of = |parent| outcomes.get(&(parent, h.clone())).unwrap().settled();
+    assert_eq!(of(read), Some(Settled::Read));
+    assert_eq!(of(empty), Some(Settled::Read), "no words is not a failure");
+    assert_eq!(of(capped), Some(Settled::PartlyRead));
+    assert_eq!(of(locked), Some(Settled::Failed("password".into())));
+    assert_eq!(of(going), None);
+    assert!(mirror.outcomes_in(WorkspaceId::new()).unwrap().is_empty());
+}

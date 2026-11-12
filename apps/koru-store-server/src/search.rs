@@ -96,7 +96,7 @@ pub fn prepare(derived: &crate::derived::Derived) -> Option<(Box<dyn Consumer>, 
 /// A newtype rather than an impl on `Search` itself, because the trait belongs
 /// to the HTTP crate and `Search` belongs to `koru-search` — neither should
 /// have to name the other, and this file is where they already meet.
-struct Port(Arc<Search>);
+struct Port(Arc<Search>, Option<Arc<crate::readings::ReaderHub>>);
 
 impl koru_store_api::routes::search::SearchService for Port {
     fn search(
@@ -107,7 +107,18 @@ impl koru_store_api::routes::search::SearchService for Port {
         let Some(query) = scoped_query(scope, &request.query) else {
             return Ok(empty_response(request));
         };
-        let page = self.0.query(&query).map_err(failed)?;
+        let mut page = self.0.query(&query).map_err(failed)?;
+        // **How far reading has got in this query's workspaces, and whether
+        // to offer the reader** (OCR Plan 2.4) — a read of the counts the
+        // coordinator last published, never a recompute and never the Store
+        // lock. Scoped as the query is: the workspaces it names, or every
+        // workspace when it names none, less the ones it excludes.
+        if let Some(hub) = self.1.as_ref() {
+            page.reading = hub.reading_counts(
+                (!query.workspaces.is_empty()).then_some(query.workspaces.as_slice()),
+                &query.excluded_workspaces,
+            );
+        }
         Ok(SearchResponse {
             page,
             facets: request
@@ -227,6 +238,7 @@ pub fn spawn(
     state: Arc<AppState>,
     sweeps: Sweeps,
     readings: Option<Box<dyn koru_search::Readings>>,
+    reader_hub: Option<Arc<crate::readings::ReaderHub>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<std::thread::JoinHandle<()>> {
     let Prepared {
@@ -253,7 +265,7 @@ pub fn spawn(
     // point, a query waiting for a cold workspace's sweep is not holding it
     // while it waits.
     let search = Arc::new(Search::new(reader, queue, sweeps));
-    state.set_search_service(Arc::new(Port(Arc::clone(&search))));
+    state.set_search_service(Arc::new(Port(Arc::clone(&search), reader_hub)));
 
     let published = state.search.clone();
     let handle = std::thread::Builder::new()

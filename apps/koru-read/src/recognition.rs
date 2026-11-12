@@ -111,6 +111,13 @@ impl Recognition {
         self.loader.is_some() && !self.slot().broken
     }
 
+    /// Whether this worker was built with recognition: given a model, it could
+    /// recognize. What `Status` reports as `recognition_built`, so the Store
+    /// offers no download a worker built without it could not use.
+    pub fn built(&self) -> bool {
+        self.built
+    }
+
     /// What a job that needs recognition is answered when it is not
     /// available.
     pub fn absent(&self) -> FailureCode {

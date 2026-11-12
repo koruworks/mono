@@ -37,6 +37,10 @@ pub(crate) mod feed;
 pub(crate) mod launcher;
 pub(crate) mod mirror;
 pub(crate) mod supervised;
+// The reader that finds words in pictures: its installer and the state the
+// installer, the coordinator, search and the routes share (OCR Plan 2.4).
+pub(crate) mod hub;
+pub(crate) mod installer;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +51,8 @@ use koru_store_api::state::AppState;
 use koru_store_core::ids::WorkspaceId;
 
 pub use feed::{Inbox, ReadingsFeed, Tee};
+pub use hub::ReaderHub;
+pub use installer::InstallerConfig;
 pub use launcher::Launcher;
 
 use crate::derived::Derived;
@@ -71,6 +77,7 @@ pub enum ReaderLaunch {
 pub struct Prepared {
     inbox: Arc<Inbox>,
     derived: Derived,
+    hub: Arc<ReaderHub>,
 }
 
 /// Open the mirror and build the inbox.
@@ -83,6 +90,7 @@ pub fn prepare(derived: &Derived) -> Option<Prepared> {
         Ok(_) => Some(Prepared {
             inbox: Inbox::new(),
             derived: derived.clone(),
+            hub: ReaderHub::new(),
         }),
         Err(error) => {
             tracing::error!("the readings mirror did not open: {error}");
@@ -117,20 +125,49 @@ impl Prepared {
         Arc::clone(&self.inbox)
     }
 
+    /// The reader's shared state: what the search answer reads its
+    /// `reading` counts from (OCR Plan 2.4). A read of memory.
+    pub fn hub(&self) -> Arc<ReaderHub> {
+        Arc::clone(&self.hub)
+    }
+
     /// Start the mirror's thread and, with a launcher, the coordinator's.
     ///
     /// `objects` is where the worker opens bytes from; a host with no file
     /// bytes (an in-memory composition) passes none and runs no coordinator.
+    /// `installer` is where the reader is installed (OCR Plan 2.4); a host
+    /// that passes none still answers `/v1/readings/reader`, saying plainly
+    /// that no reader can be used there.
     pub fn spawn(
         self,
         state: &Arc<AppState>,
         search: Option<koru_search::Queue>,
         launcher: Option<Box<dyn Launcher>>,
         objects: Option<Box<dyn coordinator::Objects>>,
+        installer: Option<InstallerConfig>,
         stop: Arc<AtomicBool>,
     ) -> Vec<std::thread::JoinHandle<()>> {
         let board = Arc::new(Board::new(state));
         let mut threads = Vec::new();
+
+        // The reader's installer, before the coordinator, so the model it
+        // finds on the disk is what the first worker is launched with.
+        let service: Arc<dyn koru_store_api::routes::reader::ReaderService> = match installer {
+            Some(config) if launcher.is_some() && objects.is_some() => {
+                let (service, handle) = installer::start(
+                    config,
+                    Arc::clone(&self.hub),
+                    Arc::clone(&self.inbox),
+                    stop.clone(),
+                );
+                if let Some(handle) = handle {
+                    threads.push(handle);
+                }
+                Arc::new(service)
+            }
+            _ => Arc::new(installer::Installer::idle(Arc::clone(&self.hub))),
+        };
+        let _ = state.set_reader_service(service);
 
         // `GET /v1/readings/{workspace}/{hash}`, on a mirror connection of its
         // own so a request never waits on the applier's transaction.
@@ -187,7 +224,8 @@ impl Prepared {
             launcher,
             objects,
             Arc::clone(&self.inbox),
-        );
+        )
+        .with_reader(Arc::clone(&self.hub));
         board.set_current(Arc::clone(&coordinator.current));
         let progress = Arc::clone(&board);
         coordinator.on_progress(move || progress.publish());

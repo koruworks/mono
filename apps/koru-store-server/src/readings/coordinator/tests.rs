@@ -60,17 +60,37 @@ fn the_attempts_policy() {
         Verdict::Go
     );
     assert_eq!(
-        verdict(&attempt(Internal, 2, 0), 4 * BACKOFF_MILLIS - 1),
+        verdict(&attempt(Unreadable, 2, 0), 4 * BACKOFF_MILLIS - 1),
         Verdict::Backoff
     );
     assert_eq!(
-        verdict(&attempt(Internal, 2, 0), 4 * BACKOFF_MILLIS),
+        verdict(&attempt(Unreadable, 2, 0), 4 * BACKOFF_MILLIS),
         Verdict::Go
     );
     assert_eq!(
-        verdict(&attempt(Internal, MAX_RETRIES, 0), i64::MAX),
+        verdict(&attempt(Unreadable, MAX_RETRIES, 0), i64::MAX),
         Verdict::Failed
     );
+    // **An internal failure — a picture the worker gave up on — is retried
+    // once, after a backoff, and then left** (OCR Plan 2.4).
+    assert_eq!(
+        verdict(&attempt(Internal, 1, 0), BACKOFF_MILLIS - 1),
+        Verdict::Backoff
+    );
+    assert_eq!(
+        verdict(&attempt(Internal, 1, 0), BACKOFF_MILLIS),
+        Verdict::Go
+    );
+    assert_eq!(verdict(&attempt(Internal, 2, 0), i64::MAX), Verdict::Failed);
+}
+
+/// A reading's confidence is the mean of its recognized pages', rounded.
+#[test]
+fn the_confidence_is_the_mean_of_the_recognized_pages() {
+    assert_eq!(mean(&[]), None);
+    assert_eq!(mean(&[90]), Some(90));
+    assert_eq!(mean(&[90, 81]), Some(86));
+    assert_eq!(mean(&[100, 100, 99]), Some(100));
 }
 
 /// The worker's codes the table remembers — and the two it must not, which

@@ -5803,6 +5803,7 @@ dependencies = [
  "koru-store-wire",
  "schemars 1.2.2",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7633,6 +7634,7 @@ dependencies = [
  "koru-ipc",
  "koru-log",
  "koru-mcp-server",
+ "koru-models",
  "koru-network-edge",
  "koru-network-iroh",
  "koru-pairing",
@@ -7649,6 +7651,7 @@ dependencies = [
  "koru-sync-control",
  "koru-time-zone",
  "koru-update",
+ "koru-voice-consent",
  "koru-winres",
  "koru-workspace",
  "loro",

@@ -77,7 +77,27 @@ fn status_reports_recognition_without_loading_the_model() {
         panic!("status answers with a status");
     };
     assert!(status.recognition);
+    assert!(status.recognition_built);
     assert_eq!(service.shared.engine.recognition.loads(), 0);
+}
+
+/// **`recognition_built` says what the build can do, model or not** — the
+/// question the Store asks before it offers a download. A worker given no
+/// model reports what its build is; one built without recognition says so.
+#[test]
+fn status_reports_whether_recognition_was_built() {
+    for built in [true, false] {
+        let engine = Engine::product(lenient())
+            .with_recognition(crate::recognition::Recognition::none(built));
+        let service = Service::new(engine, None);
+        let (sink, events) = mpsc::channel();
+        service.handle(1, Request::Status, &sink);
+        let Event::Status(status) = events.recv_timeout(WAIT).unwrap() else {
+            panic!("status answers with a status");
+        };
+        assert!(!status.recognition, "no model");
+        assert_eq!(status.recognition_built, built);
+    }
 }
 
 /// **A read streams its pages and ends with exactly one terminal event.**

@@ -536,6 +536,7 @@ impl Client {
                     updating_workspaces: response.page.updating_workspaces,
                     request_seq: response.page.request_seq,
                     corrected_query: response.page.corrected_query,
+                    reading: response.page.reading,
                 },
                 facets: response.facets,
                 recent_queries: response.recent_queries,

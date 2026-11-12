@@ -541,6 +541,51 @@ impl Client {
         self.post("/v1/search", request)
     }
 
+    // ------------------------------------- the reader (OCR Plan 2.4)
+
+    /// **The reader that finds words in pictures, on this computer**: whether
+    /// it is installed, why it cannot be (if it cannot), the offer's terms,
+    /// a download's progress, *Not now*, and this computer's reading counts.
+    /// Answered from memory; poll it while a download runs.
+    pub fn reader(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.get("/v1/readings/reader")
+    }
+
+    /// **Turn on**, with the terms the person was shown. Refused
+    /// `reader_terms_changed` when the Store would now install something
+    /// else, and `reader_unavailable` where no reader can be used.
+    pub fn install_reader(
+        &self,
+        request: &koru_store_wire::reader::InstallReader,
+    ) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/install", request)
+    }
+
+    /// **Stop** the download; the next install resumes it.
+    pub fn stop_reader_install(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/stop", &serde_json::json!({}))
+    }
+
+    /// **Remove** the model from disk. Readings already made stay.
+    pub fn remove_reader(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.delete_query("/v1/readings/reader")
+    }
+
+    /// **Not now**: search stops offering the reader until an import brings
+    /// a picture or a scanned PDF.
+    pub fn decline_reader(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/decline", &serde_json::json!({}))
+    }
+
+    /// An import through an importer finished, having brought this many
+    /// pictures and scanned PDFs. A non-zero count makes Koru offer once more.
+    pub fn reader_import_finished(
+        &self,
+        report: &koru_store_wire::reader::ImportFinished,
+    ) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/imported", report)
+    }
+
     /// Record that a search led somewhere.
     ///
     /// Machine-local and derived: it feeds the recent-query list and a

@@ -70,6 +70,13 @@ koru-store-wire = { path = "../../crates/koru-store-wire" }
 # serde only — no PDF library, no image decoder, no runtime; the worker that
 # parses files is a separate program this daemon supervises.
 koru-read = { path = "../../crates/koru-read" }
+# The reader's installer (OCR Plan 2.4, TECHNICAL D16): the model store the
+# daemon installs the text-recognition model through — catalog, trust policy,
+# resumable download, disk store and leases — and the per-feature consent
+# record (`read-consent.conf`) a download is gated on. In-tree crates; neither
+# links an inference runtime.
+koru-models = { path = "../../crates/koru-models" }
+koru-voice-consent = { path = "../../crates/koru-voice-consent" }
 # The supervised-child mechanism the read worker runs under (D15): a sibling
 # program, its kill-on-close Job Object with a memory ceiling, readiness and a
 # restart budget. Mechanism only; which program, and why, is `readings`'.

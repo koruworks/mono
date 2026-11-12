@@ -347,8 +347,10 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // installation-local progress (a query path and a per-row path). The
     // readings debug view (OCR TECHNICAL §14) is one more internal row, and
     // one reading's words (§10, `/v1/readings/{workspace}/{hash}`) another.
-    assert_eq!(ROUTES.len(), 115, "a row was added or removed");
-    assert_eq!(paths.len(), 93, "a path was added or removed");
+    // The reader's installer (OCR Plan 2.4) adds six internal rows over five
+    // paths: its state and Remove share `/v1/readings/reader`.
+    assert_eq!(ROUTES.len(), 121, "a row was added or removed");
+    assert_eq!(paths.len(), 98, "a path was added or removed");
 }
 
 #[test]
@@ -527,6 +529,15 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/workspaces/{id}/blobs/pause",
             "/v1/workspaces/{id}/blobs/release",
             "/v1/profiles/{id}/transport-mode",
+            // Ours: the reader that finds words in pictures, on this computer
+            // (OCR Plan 2.4) — a model on this machine and this machine's
+            // answer to an offer, which promise a third party nothing.
+            "/v1/readings/reader",
+            "/v1/readings/reader",
+            "/v1/readings/reader/install",
+            "/v1/readings/reader/stop",
+            "/v1/readings/reader/decline",
+            "/v1/readings/reader/imported",
             // Ours: one reading's words, asked only by the debug-only *Save
             // reading* entry until a rung that shows them to a person ships.
             "/v1/readings/{workspace}/{hash}",

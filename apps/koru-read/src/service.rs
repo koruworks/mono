@@ -86,6 +86,7 @@ impl Service {
             // Built with it, a model given that checks, and no failed load.
             // Nothing is loaded to answer this.
             recognition: self.shared.engine.recognition.available(),
+            recognition_built: self.shared.engine.recognition.built(),
             job: state.running.as_ref().map(|running| running.job),
             pages_read: state.pages_read,
         }

@@ -124,13 +124,21 @@ impl MemoryStore {
                     readings
                         .as_ref()
                         .and_then(crate::readings::Prepared::source),
+                    readings.as_ref().map(crate::readings::Prepared::hub),
                     Arc::clone(&stop),
                 )
             {
                 threads.push(handle);
             }
             if let Some(readings) = readings {
-                threads.extend(readings.spawn(&state, search_queue, None, None, Arc::clone(&stop)));
+                threads.extend(readings.spawn(
+                    &state,
+                    search_queue,
+                    None,
+                    None,
+                    None,
+                    Arc::clone(&stop),
+                ));
             }
             sweeps = Some(projected);
         }

@@ -235,6 +235,10 @@ struct Device {
 
 impl Device {
     fn new(store: KoruStore, launcher: StubLauncher) -> Device {
+        Device::with_hub(store, launcher, None)
+    }
+
+    fn with_hub(store: KoruStore, launcher: StubLauncher, hub: Option<Arc<ReaderHub>>) -> Device {
         let state = Arc::new(AppState::new(store, "memory".into(), "test".into(), 0));
         let derived = Derived::Memory(Arc::new(MemoryDerived::open().unwrap()));
         let prepared = prepare(&derived).expect("the mirror opens in memory");
@@ -259,14 +263,17 @@ impl Device {
         );
         let present = Arc::new(Mutex::new(HashSet::new()));
         let requests = Arc::clone(&launcher.requests);
-        let coordinator = Coordinator::new(
+        let mut coordinator = Coordinator::new(
             &state,
             derived.projections().unwrap(),
             derived.mirror().unwrap(),
             Box::new(launcher),
             Box::new(Present(Arc::clone(&present))),
-            inbox,
+            Arc::clone(&inbox),
         );
+        if let Some(hub) = hub {
+            coordinator = coordinator.with_reader(hub);
+        }
         Device {
             state,
             projector,
@@ -1038,6 +1045,403 @@ fn the_debug_board_carries_no_word_and_no_title() {
             "{expected} missing: {published}"
         );
     }
+}
+
+// ------------------------------------------------- the reader (OCR Plan 2.4)
+
+/// One page of a scripted file: its number, its words, and whether they are
+/// in pixels (only recognition finds them) or in a text layer.
+type ScriptedPage = (u32, &'static str, bool);
+
+/// **A stub worker that reads like the real one**: a text job finds only
+/// text-layer words and leaves pixel pages for the reader (a picture answers
+/// `needs-reader`); a recognition job finds everything, each recognized page
+/// with a confidence — unless its model "will not load", when it answers
+/// `needs-reader` as the real worker does.
+fn recognizer(
+    files: &[(&str, Vec<ScriptedPage>)],
+    built: bool,
+    will_not_load: bool,
+) -> StubLauncher {
+    let files: HashMap<PathBuf, Vec<ScriptedPage>> = files
+        .iter()
+        .map(|(hash, pages)| (object_path(hash), pages.clone()))
+        .collect();
+    let mut stub = StubLauncher::new(move |request: &Request| {
+        let Request::Read {
+            job,
+            path,
+            mime,
+            from_page,
+            want,
+            ..
+        } = request
+        else {
+            return Ok(Vec::new());
+        };
+        let pages = files.get(path).expect("a scripted file");
+        let recognize = *want == koru_read::Want::Recognize;
+        if recognize && will_not_load {
+            return Ok(vec![Event::Failed {
+                job: *job,
+                code: FailureCode::NeedsReader,
+            }]);
+        }
+        if mime.starts_with("image/") && !recognize {
+            return Ok(vec![Event::Failed {
+                job: *job,
+                code: FailureCode::NeedsReader,
+            }]);
+        }
+        let mut events = Vec::new();
+        let mut left_for_reader = false;
+        for (n, text, pixels) in pages.iter().filter(|(n, ..)| n >= from_page) {
+            let (text, source, confidence) = match (pixels, recognize) {
+                (true, true) => (*text, Source::Recognized, Some(80 + *n as u8)),
+                (true, false) => {
+                    left_for_reader = true;
+                    ("", Source::TextLayer, None)
+                }
+                (false, _) => (*text, Source::TextLayer, None),
+            };
+            events.push(Event::Page {
+                job: *job,
+                page: *n,
+                text: PageText::new(text),
+                source,
+                confidence,
+            });
+        }
+        events.push(Event::Done {
+            job: *job,
+            status: if left_for_reader {
+                ReadingStatus::Partial
+            } else {
+                ReadingStatus::Read
+            },
+            reason: None,
+            pages_done: pages.iter().map(|(n, ..)| *n).max().unwrap_or(0),
+        });
+        Ok(events)
+    });
+    stub.recognition_built = built;
+    stub
+}
+
+/// A model on this computer, as the installer would find it: the descriptor
+/// only — no file is opened, no model loaded.
+fn installed_model() -> koru_models::InstalledModel {
+    use koru_models::*;
+    koru_models::InstalledModel {
+        descriptor: ModelDescriptor {
+            schema_version: DESCRIPTOR_SCHEMA_VERSION,
+            id: ModelId::parse("pp-ocrv6-small").unwrap(),
+            version: ModelVersion::parse("onnx-2026-11-11").unwrap(),
+            engine: Token::parse("pp-ocr").unwrap(),
+            tier: Token::parse("standard").unwrap(),
+            languages: vec![LanguageTag::parse("und-Latn").unwrap()],
+            size: 26_567_146,
+            digest: Sha256Digest::parse("ab".repeat(32)).unwrap(),
+            working_set_bytes: 1 << 30,
+            licence: LicenceRef::parse("Apache-2.0").unwrap(),
+            attribution: "PaddleOCR".into(),
+        },
+        root: PathBuf::from("models").join("pp-ocrv6-small"),
+    }
+}
+
+/// A desktop's hub: an installer runs here (no key needed: a nightly).
+fn desktop_hub() -> Arc<ReaderHub> {
+    let hub = ReaderHub::new();
+    hub.set_installing_here(false);
+    hub
+}
+
+fn requests_for(device: &Device, hash: &str) -> Vec<Request> {
+    device
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| matches!(r, Request::Read { path, .. } if *path == object_path(hash)))
+        .cloned()
+        .collect()
+}
+
+fn want_of(request: &Request) -> koru_read::Want {
+    match request {
+        Request::Read { want, .. } => *want,
+        _ => unreachable!(),
+    }
+}
+
+/// **After install, what waited as `needs_reader` is read and becomes
+/// findable**: a picture in a page and a scan's pixel pages. Before it, the
+/// counts for the picture's workspace offer the reader, and never carry the
+/// other workspace's numbers.
+#[test]
+fn after_install_what_needed_the_reader_is_read_and_found() {
+    let picture = hash(40);
+    let scan = hash(41);
+    let elsewhere = hash(42);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let page = a_page_with_picture(&mut store, ws, &picture);
+    let file = a_file(&mut store, ws, "Scan.pdf", &scan, "application/pdf");
+    land(&mut store, ws, &picture, 10, "image/png");
+    land(&mut store, ws, &scan, 20, "application/pdf");
+    // Another workspace with a picture of its own.
+    let profile = store.workspace(ws).unwrap().owner;
+    let other = store.create_workspace(profile, "Other", at(0)).unwrap().id;
+    a_page_with_picture(&mut store, other, &elsewhere);
+    land(&mut store, other, &elsewhere, 10, "image/png");
+
+    let hub = desktop_hub();
+    let launcher = recognizer(
+        &[
+            (&picture, vec![(1, "a receipt for zebrafinch", true)]),
+            (
+                &scan,
+                vec![
+                    (1, "typed cover page", false),
+                    (2, "scanned ocelotword", true),
+                ],
+            ),
+            (&elsewhere, vec![(1, "somewhere else", true)]),
+        ],
+        true,
+        false,
+    );
+    let probes = Arc::clone(&launcher.probes);
+    let model = Arc::clone(&launcher.model);
+    let mut device = Device::with_hub(store, launcher, Some(Arc::clone(&hub)));
+    for h in [&picture, &scan, &elsewhere] {
+        device.here(h);
+    }
+    device.settle();
+
+    // No reader: the picture is never sent, the scan's text page is found.
+    assert!(requests_for(&device, &picture).is_empty());
+    assert!(device.found("cover", file));
+    assert!(!device.found("ocelotword", file));
+    assert_eq!(
+        probes.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "asked once what the worker can do"
+    );
+    let counts = hub.reading_counts(Some(&[ws]), &[]).unwrap();
+    assert_eq!(
+        (counts.total, counts.unread, counts.needs_reader),
+        (2, 2, 2)
+    );
+    assert!(counts.offer, "pictures wait, the worker could use a reader");
+    let other_counts = hub.reading_counts(Some(&[other]), &[]).unwrap();
+    assert_eq!(
+        (other_counts.total, other_counts.needs_reader),
+        (1, 1),
+        "its own number"
+    );
+
+    // The reader is installed.
+    hub.set_installed(Some(installed_model()));
+    device.settle();
+    assert_eq!(
+        model.lock().unwrap().clone(),
+        Some(installed_model().root),
+        "the worker restarted with --model"
+    );
+    let picture_reads = requests_for(&device, &picture);
+    assert_eq!(picture_reads.len(), 1);
+    assert_eq!(want_of(&picture_reads[0]), koru_read::Want::Recognize);
+    let reading = device.reading(ws, page, &picture).unwrap();
+    assert_eq!(reading.status, Some(ReadingStatus::Read));
+    assert_eq!(
+        reading.reader.as_ref().map(ReaderId::as_str),
+        Some("pp-ocr")
+    );
+    assert_eq!(reading.source, Some(Source::Recognized));
+    assert_eq!(reading.confidence, Some(81));
+    assert!(device.found("zebrafinch", page));
+
+    // The scan is read again from its first page, by the reader.
+    let scan_reads = requests_for(&device, &scan);
+    let last = scan_reads.last().unwrap();
+    assert!(matches!(
+        last,
+        Request::Read {
+            from_page: 1,
+            want: koru_read::Want::Recognize,
+            max_read_pages: Some(200),
+            ..
+        }
+    ));
+    let reading = device.reading(ws, file, &scan).unwrap();
+    assert_eq!(reading.status, Some(ReadingStatus::Read));
+    assert_eq!(reading.source, Some(Source::Mixed));
+    assert_eq!(
+        reading.confidence,
+        Some(82),
+        "the mean of its recognized pages"
+    );
+    assert!(device.found("ocelotword", file));
+
+    let counts = hub.reading_counts(Some(&[ws]), &[]).unwrap();
+    assert_eq!(
+        (counts.total, counts.unread, counts.needs_reader),
+        (2, 0, 0)
+    );
+    assert!(!counts.offer, "installed: no offer");
+    assert!(hub.state().recognizing);
+    assert_eq!(hub.state().counts.read, 3);
+}
+
+/// **Removing the model stops recognition and keeps the readings**: what was
+/// read stays findable; a picture added afterwards waits for the reader.
+#[test]
+fn removing_the_model_stops_recognition_and_keeps_the_readings() {
+    let first = hash(43);
+    let later = hash(44);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let page = a_page_with_picture(&mut store, ws, &first);
+    land(&mut store, ws, &first, 10, "image/png");
+    let hub = desktop_hub();
+    hub.set_installed(Some(installed_model()));
+    let launcher = recognizer(
+        &[
+            (&first, vec![(1, "kept puffinword", true)]),
+            (&later, vec![(1, "never read", true)]),
+        ],
+        true,
+        false,
+    );
+    let model = Arc::clone(&launcher.model);
+    let mut device = Device::with_hub(store, launcher, Some(Arc::clone(&hub)));
+    device.here(&first);
+    device.settle();
+    assert!(device.found("puffinword", page));
+
+    // Remove: the installer takes it off the disk; the worker lets it go.
+    hub.begin_removal();
+    device.settle();
+    assert_eq!(
+        *model.lock().unwrap(),
+        None,
+        "the worker restarted without --model"
+    );
+    assert!(
+        hub.wait_for_release(std::time::Duration::ZERO),
+        "the coordinator let the model go"
+    );
+
+    let second = {
+        let mut store = device.store();
+        let second = a_page_with_picture(&mut store, ws, &later);
+        land(&mut store, ws, &later, 10, "image/png");
+        second
+    };
+    device.here(&later);
+    device.settle();
+    assert!(
+        requests_for(&device, &later).is_empty(),
+        "no reader: not sent"
+    );
+    assert!(device.found("puffinword", page), "the reading stays");
+    assert!(!device.found("never", second));
+    assert!(!hub.state().recognizing);
+    let counts = hub.reading_counts(Some(&[ws]), &[]).unwrap();
+    assert_eq!((counts.unread, counts.needs_reader), (1, 1));
+    assert!(counts.offer, "not installed any more, and a picture waits");
+}
+
+/// **A worker that reports `recognition: false` is never sent
+/// `Want::Recognize`** — a build without recognition, even with a model
+/// installed — and the Store says so instead of offering a download.
+#[test]
+fn a_worker_without_recognition_is_never_sent_recognize() {
+    let picture = hash(45);
+    let pdf = hash(46);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    a_page_with_picture(&mut store, ws, &picture);
+    let file = a_file(&mut store, ws, "Plain.pdf", &pdf, "application/pdf");
+    land(&mut store, ws, &picture, 10, "image/png");
+    land(&mut store, ws, &pdf, 10, "application/pdf");
+    let hub = desktop_hub();
+    hub.set_installed(Some(installed_model()));
+    let launcher = recognizer(
+        &[
+            (&picture, vec![(1, "never", true)]),
+            (&pdf, vec![(1, "a typed lynxword", false)]),
+        ],
+        false,
+        false,
+    );
+    let mut device = Device::with_hub(store, launcher, Some(Arc::clone(&hub)));
+    device.here(&picture);
+    device.here(&pdf);
+    device.settle();
+    let sent = device.requests.lock().unwrap().clone();
+    assert!(
+        sent.iter().all(|r| want_of(r) == koru_read::Want::Text),
+        "{sent:?}"
+    );
+    assert!(requests_for(&device, &picture).is_empty());
+    assert!(device.found("lynxword", file), "text is read regardless");
+    assert_eq!(
+        hub.unavailable(),
+        Some(koru_store_wire::reader::ReaderUnavailable::NotBuilt)
+    );
+    assert!(!hub.reading_counts(Some(&[ws]), &[]).unwrap().offer);
+}
+
+/// **A model that will not load**: the worker answers `needs-reader`;
+/// recognition is off until the worker restarts, the picture waits, and
+/// after a second failure on a fresh worker the model is reported as one that
+/// will not load — no loop.
+#[test]
+fn a_model_that_will_not_load_waits_and_is_reported() {
+    let picture = hash(47);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    a_page_with_picture(&mut store, ws, &picture);
+    land(&mut store, ws, &picture, 10, "image/png");
+    let hub = desktop_hub();
+    hub.set_installed(Some(installed_model()));
+    let launcher = recognizer(&[(&picture, vec![(1, "x", true)])], true, true);
+    let mut device = Device::with_hub(store, launcher, Some(Arc::clone(&hub)));
+    device.here(&picture);
+    device.settle();
+    assert_eq!(
+        requests_for(&device, &picture).len(),
+        1,
+        "tried once on this worker"
+    );
+    assert!(!hub.state().recognizing);
+    let counts = hub.reading_counts(Some(&[ws]), &[]).unwrap();
+    assert_eq!(counts.needs_reader, 1);
+
+    // The worker restarts (a fresh launch) and tries once more.
+    device.coordinator.launcher().set_model(None);
+    device
+        .coordinator
+        .launcher()
+        .set_model(Some(installed_model().root));
+    device.coordinator.recompute(device.now);
+    device.settle();
+    assert_eq!(requests_for(&device, &picture).len(), 2);
+    device.coordinator.launcher().set_model(None);
+    device
+        .coordinator
+        .launcher()
+        .set_model(Some(installed_model().root));
+    device.coordinator.recompute(device.now);
+    device.settle();
+    assert_eq!(requests_for(&device, &picture).len(), 2, "and no more");
+    assert_eq!(
+        hub.unavailable(),
+        Some(koru_store_wire::reader::ReaderUnavailable::WillNotLoad)
+    );
 }
 
 /// **One reading's answer** carries what the reading document says when it

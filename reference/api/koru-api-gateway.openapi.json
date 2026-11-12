@@ -5638,6 +5638,20 @@
             "nullable": true,
             "type": "string"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**How far reading the pictures and files in this query's workspaces\nhas got, and whether to offer the reader** — the Store page's\n[`koru_store_wire::search::SearchPage::reading`], carried through the\ngateway unchanged (OCR Plan 2.4). `None` from a Store that predates\nreading or counts nothing, which a surface reads as \"say nothing\".\nAdditive: absent on the wire when `None`, so an older client parses a\nnewer answer and a newer client an older one."
+          },
           "request_seq": {
             "format": "uint64",
             "minimum": 0,

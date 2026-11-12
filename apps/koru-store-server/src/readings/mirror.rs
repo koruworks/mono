@@ -491,6 +491,9 @@ impl Mirror {
 
     /// Every `(parent, hash)` in a workspace whose entry this build has nothing
     /// left to do with ([`Reading::is_settled_for_this_build`]).
+    // The coordinator asks `outcomes_in` (the same statement) since OCR Plan
+    // 2.4; this stays for its own tests and the query-plan pin.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn settled_in(&self, workspace: WorkspaceId) -> Result<HashSet<(DocumentId, String)>> {
         let mut q = self.db.prepare(
             "SELECT parent_document_id, hash, generation, status, reason
@@ -512,6 +515,40 @@ impl Mirror {
                 && let Some(parent) = DocumentId::parse(&parent)
             {
                 out.insert((parent, hash));
+            }
+        }
+        Ok(out)
+    }
+
+    /// **How each `(parent, hash)` in a workspace ended**, for the counts a
+    /// person reads (OCR Plan 2.4): every row of the workspace with its
+    /// generation, status and reason. The same statement as
+    /// [`Self::settled_in`], answered whole, so the coordinator can tell *read*
+    /// from *partly read* from *could not be read* without a second query.
+    pub fn outcomes_in(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<HashMap<(DocumentId, String), Outcome>> {
+        let mut q = self.db.prepare(
+            "SELECT parent_document_id, hash, generation, status, reason
+               FROM readings WHERE workspace_id = ?1",
+        )?;
+        let rows = q.query_map(params![workspace.to_storage()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                Outcome {
+                    generation: r.get(2)?,
+                    status: r.get(3)?,
+                    reason: r.get(4)?,
+                },
+            ))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (parent, hash, outcome) = row?;
+            if let Some(parent) = DocumentId::parse(&parent) {
+                out.insert((parent, hash), outcome);
             }
         }
         Ok(out)
@@ -835,6 +872,45 @@ impl Mirror {
     #[cfg(test)]
     pub(crate) fn connection(&self) -> &Connection {
         &self.db
+    }
+}
+
+/// How one entry's reading stands, as `readings` holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    pub generation: i64,
+    pub status: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// What a settled reading counts as, for a person.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Settled {
+    /// Words found, or none to find.
+    Read,
+    /// Stopped at a page limit.
+    PartlyRead,
+    /// Found by name only, for a reason true on every device.
+    Failed(String),
+}
+
+impl Outcome {
+    /// `None` while this build still has work to do on it.
+    pub fn settled(&self) -> Option<Settled> {
+        if !settled(
+            self.generation,
+            self.status.as_deref(),
+            self.reason.as_deref(),
+        ) {
+            return None;
+        }
+        Some(match (self.status.as_deref(), self.reason.as_deref()) {
+            (Some("partial"), _) => Settled::PartlyRead,
+            (Some("failed"), reason) => Settled::Failed(reason.unwrap_or("damaged").to_owned()),
+            // `read`, `empty`, and a newer build's settled entry this build
+            // cannot name: done, as far as a person here is concerned.
+            _ => Settled::Read,
+        })
     }
 }
 

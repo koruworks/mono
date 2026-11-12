@@ -1330,6 +1330,7 @@ async fn run(
             readings
                 .as_ref()
                 .and_then(crate::readings::Prepared::source),
+            readings.as_ref().map(crate::readings::Prepared::hub),
             Arc::clone(&runs_forever),
         ),
         _ => None,
@@ -1345,6 +1346,8 @@ async fn run(
             crate::readings::launcher_for(reader, &root, &channel_name),
             (reader != crate::readings::ReaderLaunch::None)
                 .then(|| crate::readings::objects_under(&root)),
+            (reader != crate::readings::ReaderLaunch::None)
+                .then(|| crate::readings::InstallerConfig::product(&root, &channel_name)),
             Arc::clone(&runs_forever),
         )
     });

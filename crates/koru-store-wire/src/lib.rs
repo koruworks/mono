@@ -78,6 +78,10 @@ use serde::{Deserialize, Serialize};
 
 pub mod reminders;
 
+/// The reader that finds words in pictures: `/v1/readings/reader` (OCR Plan
+/// 2.4).
+pub mod reader;
+
 // ------------------------------------------------------------------ profiles
 
 /// `POST /v1/profiles`.

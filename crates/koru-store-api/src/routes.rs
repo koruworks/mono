@@ -11,6 +11,7 @@ pub mod bundles;
 pub mod catalog;
 pub mod debug;
 pub mod meta;
+pub mod reader;
 pub mod readings;
 pub mod reminders;
 pub mod search;

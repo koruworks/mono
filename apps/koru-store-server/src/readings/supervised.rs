@@ -128,6 +128,10 @@ pub struct SupervisedReader {
     handle: Option<WorkerHandle<ReadChild>>,
     observed: Arc<Observed>,
     respawns_before: u64,
+    /// The installed model's directory, passed as `--model`, or `None`.
+    model: Option<PathBuf>,
+    /// The current worker's answer to its last `Status`.
+    last_status: Option<WorkerStatus>,
 }
 
 impl SupervisedReader {
@@ -138,6 +142,8 @@ impl SupervisedReader {
             handle: None,
             observed: Arc::new(Observed::default()),
             respawns_before: 0,
+            model: None,
+            last_status: None,
         }
     }
 
@@ -163,6 +169,7 @@ impl SupervisedReader {
                 self.channel.clone(),
                 endpoint,
                 Arc::clone(&self.observed),
+                self.model.clone(),
             )));
         }
         Ok(self.handle.as_ref().expect("just started"))
@@ -170,6 +177,7 @@ impl SupervisedReader {
 
     /// Stop the supervision and let the child go.
     fn stop(&mut self) {
+        self.last_status = None;
         if let Some(handle) = self.handle.take() {
             self.respawns_before += handle.status().respawns;
             let _ = handle.stop();
@@ -282,14 +290,21 @@ impl Launcher for SupervisedReader {
             Ok(stream) => stream,
             Err(_) => return Err(self.ended(generation, false)),
         };
-        match patiently(
+        let mut learned: Option<WorkerStatus> = None;
+        let outcome = patiently_with(
             stream,
             launch_id,
-            request.clone(),
+            Some(request.clone()),
             HANDSHAKE_TIMEOUT,
             JOB_PATIENCE,
+            &mut |status| learned = Some(status),
             events,
-        ) {
+        );
+        if learned.is_some() {
+            // What this launch says it can do (OCR Plan 2.4).
+            self.last_status = learned;
+        }
+        match outcome {
             Ok(()) => Ok(()),
             Err(Broke::Handshake(Refusal::Wrong(why))) => {
                 // Not the process this supervision launched, or another
@@ -306,6 +321,59 @@ impl Launcher for SupervisedReader {
 
     fn idle(&mut self) {
         self.stop();
+    }
+
+    fn set_model(&mut self, model: Option<PathBuf>) {
+        if self.model != model {
+            self.model = model;
+            // The next job starts a worker with the new `--model`.
+            self.stop();
+        }
+    }
+
+    fn probe(&mut self) -> Result<WorkerStatus, Unavailable> {
+        if !Self::installed() {
+            return Err(Unavailable::NotInstalled);
+        }
+        let (generation, launch_id, endpoint) = self.ready_child()?;
+        // The handshake alone, through the same patient conversation as a job
+        // (`patiently_with`): a silent worker is given up on, never waited for.
+        let stream =
+            koru_ipc::connect(&endpoint).map_err(|e| Unavailable::NotReady(e.to_string()))?;
+        let mut learned: Option<WorkerStatus> = None;
+        let outcome = patiently_with(
+            stream,
+            launch_id,
+            None,
+            HANDSHAKE_TIMEOUT,
+            JOB_PATIENCE,
+            &mut |status| learned = Some(status),
+            &mut |_| {},
+        );
+        match (outcome, learned) {
+            (Ok(()), Some(status)) => {
+                self.last_status = Some(status.clone());
+                Ok(status)
+            }
+            (Err(Broke::Handshake(Refusal::Wrong(why))), _) => {
+                self.stop();
+                Err(Unavailable::NotReady(why))
+            }
+            (Err(Broke::Handshake(Refusal::Closed { hung: true })), _) => {
+                // Alive and silent: end it, so the next start is a fresh one.
+                let _ = self.ended(generation, true);
+                Err(Unavailable::NotReady(
+                    "the read worker did not answer its status in time".into(),
+                ))
+            }
+            _ => Err(Unavailable::NotReady(
+                "the read worker closed the connection".into(),
+            )),
+        }
+    }
+
+    fn status(&self) -> Option<WorkerStatus> {
+        self.last_status.clone()
     }
 
     fn report(&self) -> WorkerReport {
@@ -354,6 +422,7 @@ fn spec(
     channel: String,
     endpoint: koru_ipc::Endpoint,
     observed: Arc<Observed>,
+    model: Option<PathBuf>,
 ) -> WorkerSpec<ReadChild> {
     let probe_endpoint = endpoint.clone();
     let mut spec = WorkerSpec::new(
@@ -367,11 +436,7 @@ fn spec(
             })
             .map_err(|e| format!("could not encode the read bootstrap: {e}"))?;
             Ok(LaunchPlan {
-                args: vec![
-                    "--root".into(),
-                    root.clone().into_os_string(),
-                    "--supervised".into(),
-                ],
+                args: launch_args(&root, model.as_deref()),
                 bootstrap,
                 payload: ReadChild {
                     launch_id,
@@ -432,6 +497,22 @@ fn spec(
         _ => {}
     }));
     spec
+}
+
+/// **The worker's command line**: `--root <store dir> --supervised`, and
+/// `--model <dir>` when a reader is installed (OCR Plan 2.4). Without it the
+/// worker reads text layers and answers every recognition job `needs-reader`.
+pub fn launch_args(root: &Path, model: Option<&Path>) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "--root".into(),
+        root.as_os_str().to_owned(),
+        "--supervised".into(),
+    ];
+    if let Some(model) = model {
+        args.push("--model".into());
+        args.push(model.as_os_str().to_owned());
+    }
+    args
 }
 
 /// Why a conversation with the worker ended without its answer.
@@ -531,8 +612,9 @@ pub enum Broke {
 
 /// What the conversation's own thread hands back, in order.
 enum Heard {
-    /// The handshake passed; the job's patience applies from here.
-    Handshaken,
+    /// The handshake passed, with what the worker said about itself; the
+    /// job's patience applies from here.
+    Handshaken(WorkerStatus),
     Event(Event),
     End(Result<(), Broke>),
 }
@@ -555,12 +637,39 @@ enum Heard {
 /// `Refusal::Closed { hung: true }` — the caller ends the worker, which closes
 /// the pipe and lets the reading thread finish on its own. Events reach
 /// `events` on the calling thread, in the order they arrived.
+// The launcher calls `patiently_with` (it learns the worker's status on the
+// way); this, the plain form, is what the conversation's own tests drive.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn patiently<S: Read + Write + Send + 'static>(
-    mut stream: S,
+    stream: S,
     launch_id: String,
     request: Request,
     handshake_patience: Duration,
     job_patience: Duration,
+    events: &mut dyn FnMut(Event),
+) -> Result<(), Broke> {
+    patiently_with(
+        stream,
+        launch_id,
+        Some(request),
+        handshake_patience,
+        job_patience,
+        &mut |_| {},
+        events,
+    )
+}
+
+/// [`patiently`], also handing the worker's `Status` to `on_status` once the
+/// handshake passes (OCR Plan 2.4: what this launch can recognize). With no
+/// `request` it is the handshake alone — the coordinator's probe, under the
+/// same patience as a job.
+pub fn patiently_with<S: Read + Write + Send + 'static>(
+    mut stream: S,
+    launch_id: String,
+    request: Option<Request>,
+    handshake_patience: Duration,
+    job_patience: Duration,
+    on_status: &mut dyn FnMut(WorkerStatus),
     events: &mut dyn FnMut(Event),
 ) -> Result<(), Broke> {
     let (heard, hearing) = std::sync::mpsc::channel::<Heard>();
@@ -569,12 +678,15 @@ pub fn patiently<S: Read + Write + Send + 'static>(
         .spawn(move || {
             let ended = match handshake(&mut stream, &launch_id) {
                 Err(refusal) => Err(Broke::Handshake(refusal)),
-                Ok(_) => {
-                    let _ = heard.send(Heard::Handshaken);
-                    converse(&mut stream, &request, &mut |event| {
-                        let _ = heard.send(Heard::Event(event));
-                    })
-                    .map_err(Broke::Job)
+                Ok(status) => {
+                    let _ = heard.send(Heard::Handshaken(status));
+                    match &request {
+                        Some(request) => converse(&mut stream, request, &mut |event| {
+                            let _ = heard.send(Heard::Event(event));
+                        })
+                        .map_err(Broke::Job),
+                        None => Ok(()),
+                    }
                 }
             };
             let _ = heard.send(Heard::End(ended));
@@ -588,9 +700,10 @@ pub fn patiently<S: Read + Write + Send + 'static>(
     let mut handshaken = false;
     loop {
         match hearing.recv_timeout(patience) {
-            Ok(Heard::Handshaken) => {
+            Ok(Heard::Handshaken(status)) => {
                 handshaken = true;
                 patience = job_patience;
+                on_status(status);
             }
             Ok(Heard::Event(event)) => events(event),
             Ok(Heard::End(ended)) => return ended,

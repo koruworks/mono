@@ -58,6 +58,7 @@ fn status(launch: Option<&str>, protocol: u32) -> Event {
         process_id: 1,
         supervisor_launch_id: launch.map(str::to_owned),
         recognition: false,
+        recognition_built: false,
         job: None,
         pages_read: 0,
     })
@@ -163,6 +164,7 @@ fn a_launch_hands_the_worker_the_contracts_bootstrap() {
         "nightly".into(),
         endpoint,
         Arc::new(Observed::default()),
+        None,
     );
     let plan = (spec.launch)(Generation(1)).unwrap();
     assert_eq!(
@@ -347,8 +349,42 @@ fn the_spec_names_the_sibling_and_its_ceiling() {
         "nightly".into(),
         endpoint,
         Arc::new(Observed::default()),
+        None,
     );
     assert_eq!(spec.program, Program::Sibling(koru_update::READ_EXE.into()));
     assert_eq!(spec.memory_limit, Some(MEMORY_LIMIT_BYTES));
     assert!(spec.graceful_stop.is_none());
+}
+
+/// **`--model` is passed when a reader is installed, and only then** (OCR
+/// Plan 2.4): without it the worker reads text and never loads a model.
+#[test]
+fn the_model_is_a_launch_argument_only_when_installed() {
+    let root = PathBuf::from("root");
+    let model = PathBuf::from("models").join("pp-ocrv6-small");
+    assert_eq!(
+        launch_args(&root, None),
+        ["--root", "root", "--supervised"].map(std::ffi::OsString::from)
+    );
+    let with = launch_args(&root, Some(&model));
+    assert_eq!(&with[..3], &launch_args(&root, None)[..]);
+    assert_eq!(with[3], std::ffi::OsString::from("--model"));
+    assert_eq!(with[4], model.into_os_string());
+}
+
+/// A changed model lets the running supervision go, so the next worker
+/// starts with the new argument; the same model keeps it. Nothing is spawned:
+/// no supervision was running.
+#[test]
+fn setting_the_model_forgets_the_last_status_only_when_it_changes() {
+    let mut reader = SupervisedReader::new(Path::new("root"), "nightly");
+    reader.last_status = Some(match status(Some("l"), PROTOCOL_VERSION) {
+        Event::Status(status) => status,
+        _ => unreachable!(),
+    });
+    reader.set_model(None);
+    assert!(reader.status().is_some(), "unchanged: the worker is kept");
+    reader.set_model(Some(PathBuf::from("model")));
+    assert!(reader.status().is_none(), "changed: the worker is let go");
+    assert_eq!(reader.model, Some(PathBuf::from("model")));
 }

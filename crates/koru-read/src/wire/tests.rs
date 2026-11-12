@@ -102,13 +102,14 @@ fn every_message_has_a_pinned_shape() {
                 process_id: 4242,
                 supervisor_launch_id: Some("launch-1".into()),
                 recognition: false,
+                recognition_built: true,
                 job: Some(job),
                 pages_read: 12,
             }),
             json!({
                 "kind": "status", "worker_version": "0.0.3", "protocol_version": 1,
                 "process_id": 4242, "supervisor_launch_id": "launch-1",
-                "recognition": false, "job": 7, "pages_read": 12
+                "recognition": false, "recognition_built": true, "job": 7, "pages_read": 12
             }),
         ),
     ];
@@ -210,6 +211,7 @@ fn every_job_message_names_its_job_and_says_whether_it_ends_it() {
         process_id: 1,
         supervisor_launch_id: None,
         recognition: false,
+        recognition_built: false,
         job: None,
         pages_read: 0,
     });
@@ -242,4 +244,21 @@ fn the_bootstrap_has_a_pinned_one_line_shape() {
     let line = serde_json::to_string(&bootstrap).unwrap();
     assert!(!line.contains('\n'));
     assert_eq!(BOOTSTRAP_VERSION, 1);
+}
+
+/// **A status from a worker that predates `recognition_built` still parses**,
+/// and says the worker cannot recognize — the answer that makes the Store
+/// offer nothing it could not use.
+#[test]
+fn a_status_without_recognition_built_reads_as_not_built() {
+    let status: Event = serde_json::from_value(json!({
+        "kind": "status", "worker_version": "0.0.1", "protocol_version": 1,
+        "process_id": 1, "supervisor_launch_id": null,
+        "recognition": false, "job": null, "pages_read": 0
+    }))
+    .unwrap();
+    let Event::Status(status) = status else {
+        panic!("a status");
+    };
+    assert!(!status.recognition_built);
 }

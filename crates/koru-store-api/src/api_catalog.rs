@@ -62,6 +62,7 @@ use koru_store_wire::attributes::{AttributeQuery, AttributeQueryResponse};
 use koru_store_wire::internal::{
     CloudSyncStatus, DocumentReport, Metrics, StoreReport, WorkspaceReport,
 };
+use koru_store_wire::reader::{ImportFinished, InstallReader, ReaderState};
 use koru_store_wire::readings::ReadingAnswer;
 use koru_store_wire::reminders::{
     ActionRequest, ClearedHistory, ReminderQuery, ReminderQueryResponse, ReminderSnapshot,
@@ -1387,6 +1388,89 @@ pub const ROUTES: &[Route] = &[
                   workspace's recency, and reaches no document and no shared profile. \
                   A query earns a place in the history only by leading somewhere, which \
                   is why the text arrives here rather than on the search",
+    },
+    // ---- the reader that finds words in pictures (OCR Plan 2.4). Internal:
+    // a model on this computer and this computer's answer to an offer are
+    // facts about this installation, not a promise to a third party — the
+    // reasoning the blob pause and the transport mode are internal by.
+    Route {
+        method: "GET",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader",
+        handler: || get(routes::reader::get),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "The reader that finds words in pictures, on this computer",
+        returns: "whether a reader is installed, why this computer cannot use one (if it \
+                  cannot), the offer's terms from the reader's catalog (model, size, \
+                  licence, attribution, languages), how far a download has got, whether \
+                  the person said Not now, and this computer's reading counts: read, \
+                  partly read, could not be read by reason, unread, waiting for the reader, \
+                  not on this computer. Answered from memory",
+    },
+    Route {
+        method: "DELETE",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader",
+        handler: || delete(routes::reader::remove),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Remove the reader's model from this computer",
+        returns: "the reader's state, removing. Readings already made stay, synced and \
+                  findable; pictures added afterwards wait for the reader again",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/install",
+        handler: || post(routes::reader::install),
+        request: Some(|g| g.subschema_for::<InstallReader>()),
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Turn the reader on: record the consent and download it",
+        returns: "the reader's state, starting. Carries the terms the person was shown; \
+                  refused reader_terms_changed when the catalog now offers something else \
+                  and reader_unavailable where no reader can be used. Progress is polled \
+                  on GET; the download survives a closed window and resumes after Stop",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/stop",
+        handler: || post(routes::reader::stop),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Stop the reader's download",
+        returns: "the reader's state, stopping. The partial download is kept, so turning \
+                  the reader on again carries on from where it stopped",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/decline",
+        handler: || post(routes::reader::decline),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Not now: search stops offering the reader on this computer",
+        returns: "the reader's state, declined. Search answers carry no offer until an \
+                  import brings a picture or a scanned PDF; the Settings row can still \
+                  turn the reader on",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/imported",
+        handler: || post(routes::reader::imported),
+        request: Some(|g| g.subschema_for::<ImportFinished>()),
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "An import finished, and this is how many pictures and scanned PDFs it brought",
+        returns: "the reader's state. A non-zero count clears Not now, so Koru offers once \
+                  more; adding or pasting single files never calls this",
     },
     Route {
         method: "GET",

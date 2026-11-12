@@ -12,7 +12,9 @@
 //! The messages are the contract's own ([`koru_read::Request`],
 //! [`koru_read::Event`]), so a stub and the real worker are held to one shape.
 
-use koru_read::{Event, Request};
+use std::path::PathBuf;
+
+use koru_read::{Event, Request, WorkerStatus};
 
 /// Why no reader can be asked right now. Each is a stable token the debug
 /// route prints as "why not".
@@ -98,6 +100,27 @@ pub trait Launcher: Send {
 
     /// For the debug route.
     fn report(&self) -> WorkerReport;
+
+    /// **The installed model's directory the worker is launched with**, or
+    /// `None` when no reader is installed (OCR Plan 2.4). A change stops the
+    /// running worker, so the next one starts with the new argument: a
+    /// worker's reader never changes under a running job.
+    fn set_model(&mut self, _model: Option<PathBuf>) {}
+
+    /// **Start the worker if it is not running, and ask what it is**, with no
+    /// job. How the coordinator learns, before it offers a download or sends
+    /// a picture, whether this worker can recognize. On the coordinator's
+    /// thread, like every other call here.
+    fn probe(&mut self) -> Result<WorkerStatus, Unavailable> {
+        Err(Unavailable::NoLauncher)
+    }
+
+    /// What the current worker answered its last `Status` with — the probe's,
+    /// or the handshake before a job's — or `None` when no worker has been
+    /// asked since it was started.
+    fn status(&self) -> Option<WorkerStatus> {
+        None
+    }
 }
 
 /// The launcher of a host that runs no reader. The coordinator, given this,
@@ -133,6 +156,23 @@ pub struct StubLauncher {
     pub requests: std::sync::Arc<std::sync::Mutex<Vec<Request>>>,
     pub availability: Availability,
     pub idled: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Whether this stub worker was built with recognition. With a model set,
+    /// its status then says `recognition: true` — until a script answers a
+    /// recognition job `Failed needs-reader`, as a real worker whose model
+    /// would not load does; then `false` until it restarts.
+    pub recognition_built: bool,
+    /// The model the stub was last launched with, as `set_model` said.
+    pub model: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
+    /// Probes and restarts, counted.
+    pub probes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    pub restarts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Bumped on every restart, as a real launch id is new per launch.
+    launch: u64,
+    /// Asked since the last restart.
+    asked: bool,
+    /// The worker answered a recognition job `needs-reader`: its next status
+    /// says `recognition: false`, until it restarts.
+    lost: bool,
 }
 
 #[cfg(test)]
@@ -145,6 +185,31 @@ impl StubLauncher {
             requests: Default::default(),
             availability: Availability::Ready,
             idled: Default::default(),
+            recognition_built: false,
+            model: Default::default(),
+            probes: Default::default(),
+            restarts: Default::default(),
+            launch: 1,
+            asked: false,
+            lost: false,
+        }
+    }
+
+    fn current_status(&self) -> WorkerStatus {
+        let model = self
+            .model
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        WorkerStatus {
+            worker_version: "stub".into(),
+            protocol_version: koru_read::PROTOCOL_VERSION,
+            process_id: 1,
+            supervisor_launch_id: Some(format!("stub-{}", self.launch)),
+            recognition: self.recognition_built && model && !self.lost,
+            recognition_built: self.recognition_built,
+            job: None,
+            pages_read: 0,
         }
     }
 }
@@ -164,10 +229,26 @@ impl Launcher for StubLauncher {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(request.clone());
+        self.asked = true;
         let answered = (self.script)(request)?;
         let mut ended = false;
         for event in answered {
             ended |= event.is_terminal();
+            if matches!(
+                (&event, request),
+                (
+                    Event::Failed {
+                        code: koru_read::FailureCode::NeedsReader,
+                        ..
+                    },
+                    Request::Read {
+                        want: koru_read::Want::Recognize,
+                        ..
+                    }
+                )
+            ) {
+                self.lost = true;
+            }
             events(event);
         }
         if ended {
@@ -182,6 +263,32 @@ impl Launcher for StubLauncher {
     fn idle(&mut self) {
         self.idled
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn set_model(&mut self, model: Option<PathBuf>) {
+        let mut slot = self.model.lock().unwrap_or_else(|e| e.into_inner());
+        if *slot != model {
+            *slot = model;
+            self.launch += 1;
+            self.asked = false;
+            self.lost = false;
+            self.restarts
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn probe(&mut self) -> Result<WorkerStatus, Unavailable> {
+        if let Availability::Unavailable(why) = &self.availability {
+            return Err(why.clone());
+        }
+        self.probes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.asked = true;
+        Ok(self.current_status())
+    }
+
+    fn status(&self) -> Option<WorkerStatus> {
+        self.asked.then(|| self.current_status())
     }
 
     fn report(&self) -> WorkerReport {

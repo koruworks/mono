@@ -359,9 +359,27 @@ pub struct AppState {
     /// their next open rather than on an event. See
     /// [`crate::catalog_events`].
     catalog_events: std::sync::OnceLock<Arc<dyn crate::catalog_events::CatalogEventSink>>,
+    /// The installer of the reader that finds words in pictures (OCR Plan
+    /// 2.4), once the daemon has started one. A port for the reason
+    /// [`Self::search_service`] is one; **empty is a real state** — a phone
+    /// and the integration host run none, and `/v1/readings/reader` answers
+    /// `reader_unavailable` there.
+    reader_service: std::sync::OnceLock<Arc<dyn crate::routes::reader::ReaderService>>,
 }
 
 impl AppState {
+    /// Hand the reader's installer down, once, before anything is served.
+    pub fn set_reader_service(
+        &self,
+        service: Arc<dyn crate::routes::reader::ReaderService>,
+    ) -> bool {
+        self.reader_service.set(service).is_ok()
+    }
+
+    pub fn reader_service(&self) -> Option<Arc<dyn crate::routes::reader::ReaderService>> {
+        self.reader_service.get().cloned()
+    }
+
     pub fn new(store: KoruStore, root: String, channel: String, started_at: i64) -> Self {
         Self::with_session_ttl(store, root, channel, started_at, SessionTtl::DEFAULT)
     }
@@ -412,6 +430,7 @@ impl AppState {
             replication_notifier: std::sync::OnceLock::new(),
             catalog_changes: tokio::sync::watch::channel(0).0,
             catalog_events: std::sync::OnceLock::new(),
+            reader_service: std::sync::OnceLock::new(),
         }
     }
 
