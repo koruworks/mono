@@ -35,6 +35,14 @@
 //!
 //! Everything below `candidates` therefore sees exactly what it saw before, so
 //! ranking, dedup and `next_offset` are unchanged for a query with no tag in it.
+//!
+//! ## A file contributes one `read` hit, chosen before the page is cut
+//!
+//! Words read out of a file are one fragment per page, so a word on every page
+//! of a long PDF is hundreds of hits for one row. [`READ_BEST`] keeps each
+//! document's best `read` fragment and drops the rest of its `read` fragments
+//! before `LIMIT`, so paging counts what is left — the tag filter's rule.
+//! Nothing that is not a `read` fragment is touched.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
@@ -464,6 +472,7 @@ pub(crate) fn search(
     } else {
         COVERAGE
     };
+    let read_best = READ_BEST.as_str();
 
     let sql = format!(
         "WITH candidates AS (
@@ -476,39 +485,11 @@ pub(crate) fn search(
              {tags}
              {attrs}
          ),
-         {qualified}
+         {qualified},
+         {read_best}
          SELECT f.workspace_id, f.document_id, f.node_id, f.kind, f.field, f.text,
                 f.stable_key, d.observed_modified_at_ms, recent.last_used_at_ms,
-                (CASE
-                   WHEN q.max_distance=0 AND q.direct_count=?2 THEN 4000
-                   WHEN q.max_distance=0 THEN 3000
-                   WHEN q.direct_count=?2 THEN 2000
-                   ELSE 1000
-                 END)
-                + (CASE
-                   WHEN f.field IN ('workspace','title') THEN 700
-                   WHEN f.field='heading-1' THEN 600
-                   WHEN f.field='heading-2' THEN 580
-                   WHEN f.field='heading-3' THEN 560
-                   WHEN f.field='heading-4' THEN 540
-                   WHEN f.field IN ('heading-5','heading-6') THEN 520
-                   WHEN f.field IN ('name','list-name','contact','level-name') THEN 400
-                   WHEN f.field='task' THEN 300
-                   WHEN f.field='body' THEN 200
-                   -- Words read out of a picture or a file rank with tables
-                   -- and properties, below every kind of typed text: what
-                   -- somebody wrote is a better answer than what was read.
-                   WHEN f.field='read' THEN 100
-                   ELSE 100
-                 END)
-                + (CASE
-                   WHEN f.normalized=?3 THEN 30
-                   WHEN instr(f.normalized,?3)=1 THEN 20
-                   WHEN instr(f.normalized,?3)>0 THEN 10
-                   WHEN q.direct_count=?2 THEN 5
-                   ELSE 0
-                 END)
-                - q.total_distance*10 AS score,
+                {SCORE} AS score,
                 f.page
          FROM qualified q
          JOIN fragments f ON f.id=q.candidate_id
@@ -521,6 +502,7 @@ pub(crate) fn search(
            SELECT workspace_id, MAX(observed_modified_at_ms) AS observed_modified_at_ms
            FROM documents GROUP BY workspace_id
          ) ws_change ON ws_change.workspace_id=f.workspace_id
+         WHERE {READ_KEPT}
          ORDER BY
            CASE WHEN ?4=1
              THEN COALESCE(d.observed_modified_at_ms,
@@ -635,6 +617,109 @@ pub(crate) fn search(
     })
 }
 
+/// How good a hit is: the lexical tier, then the field, then how well the
+/// fragment's own text matches, less the fuzzy edits.
+///
+/// **One expression, read in two places** — the score a hit is ordered by and
+/// the score [`READ_BEST`] picks a file's best page with — so the page that
+/// survives is the one the ordering would have put first.
+const SCORE: &str = "(CASE
+                   WHEN q.max_distance=0 AND q.direct_count=?2 THEN 4000
+                   WHEN q.max_distance=0 THEN 3000
+                   WHEN q.direct_count=?2 THEN 2000
+                   ELSE 1000
+                 END)
+                + (CASE
+                   WHEN f.field IN ('workspace','title') THEN 700
+                   WHEN f.field='heading-1' THEN 600
+                   WHEN f.field='heading-2' THEN 580
+                   WHEN f.field='heading-3' THEN 560
+                   WHEN f.field='heading-4' THEN 540
+                   WHEN f.field IN ('heading-5','heading-6') THEN 520
+                   WHEN f.field IN ('name','list-name','contact','level-name') THEN 400
+                   WHEN f.field='task' THEN 300
+                   WHEN f.field='body' THEN 200
+                   -- Words read out of a picture or a file rank with tables
+                   -- and properties, below every kind of typed text: what
+                   -- somebody wrote is a better answer than what was read.
+                   WHEN f.field='read' THEN 100
+                   ELSE 100
+                 END)
+                + (CASE
+                   WHEN f.normalized=?3 THEN 30
+                   WHEN instr(f.normalized,?3)=1 THEN 20
+                   WHEN instr(f.normalized,?3)>0 THEN 10
+                   WHEN q.direct_count=?2 THEN 5
+                   ELSE 0
+                 END)
+                - q.total_distance*10";
+
+/// The SQL below spells the `read` field as a literal, like every other field
+/// in [`SCORE`]; this is what keeps the literal and the token one word.
+const _: () = assert!(matches!(field::READ.as_bytes(), b"read"));
+
+/// **One `read` hit per document**, chosen before the page is cut.
+///
+/// A file's words are one fragment per page, and every matching page is a
+/// hit. Without this, a word on every page of one 300-page PDF filled the
+/// whole page of 50, and the surface — one row per document — showed that file
+/// alone while five others held the word too. So among a document's `read`
+/// candidates only the best survives: the highest [`SCORE`], then the earliest
+/// node in the document, then the lowest page. It keeps its own page, text
+/// and evidence, so its snippet and highlight are that page's.
+///
+/// - **Per document, not per node.** The row is per document, so a page with
+///   three pictures that all hold the word would otherwise spend three slots
+///   of the page on one row the surface shows once — the same defect, smaller.
+/// - **Only `read` fragments.** A title, a heading, a picture's name or a
+///   typed line in the same document is a hit of its own, as before; the
+///   surface's own rule picks the row among them.
+/// - **After `candidates` and `qualified`**, so the trash filter, a `#tag`, a
+///   typed filter and the workspace scope have already narrowed what it picks
+///   from, and `next_offset` counts what is left after the collapse — the rule
+///   a tag filter follows.
+///
+/// **What it costs, and why it is shaped this way.** Search runs as a person
+/// types, so this was measured against the statement without it, on a
+/// 211,000-fragment index holding a 300-page file; the commit that added it
+/// records the plans and timings:
+///
+/// - It is read only through [`READ_KEPT`]'s `IN`, a non-correlated list
+///   subquery that SQLite builds once, the first time a `read` row reaches it.
+///   `f.field<>'read'` is tested first, so a query no `read` fragment matches
+///   never builds it.
+/// - It reads `qualified` rather than computing coverage again, which is why
+///   [`COVERAGE`] marks `qualified` `MATERIALIZED`: computed once, read by the
+///   page and by this. A second, inlined copy of the coverage was planned
+///   differently from the first — an automatic index over every title in the
+///   index, rebuilt per query — and made a `read` query seven to ten times
+///   slower than the statement without the collapse.
+/// - `CROSS JOIN` fixes the join order. Left to itself the planner walked
+///   `fragments_document` — every fragment in the index — to save sorting the
+///   partition, which is the wrong-plan trap `task_kind_sql` in
+///   `koru-projection` records. From `qualified` it touches only the
+///   candidates, by primary key, and sorts only the `read` ones.
+static READ_BEST: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "read_best AS (
+           SELECT id FROM (
+             SELECT f.id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY f.document_id
+                      ORDER BY {SCORE} DESC, f.seq, f.page, f.stable_key
+                    ) AS place
+             FROM qualified q
+             CROSS JOIN fragments f ON f.id=q.candidate_id
+             WHERE f.field='read'
+           ) WHERE place=1
+         )"
+    )
+});
+
+/// Which rows of the page survive [`READ_BEST`]: everything that is not a
+/// `read` fragment, untouched, and each document's best `read` fragment.
+const READ_KEPT: &str = "f.field<>'read' OR f.id IN (SELECT id FROM read_best)";
+
 /// A workspace fragment has no document and is therefore never in the trash;
 /// everything else follows its document's listing row.
 const LIFECYCLE: &str = "?1=2
@@ -646,7 +731,13 @@ const LIFECYCLE: &str = "?1=2
 /// A candidate qualifies only by covering **all** of them — `?2` is the count —
 /// from its own text, its workspace's name, or its document's title, in that
 /// order of preference.
-const COVERAGE: &str = "coverage_raw AS (
+///
+/// **The materialization hints are the plan, not decoration.** `qualified` is
+/// read twice — by the page and by [`READ_BEST`] — so it is `MATERIALIZED`:
+/// computed once. `coverage_raw` and `term_coverage` are `NOT MATERIALIZED` so
+/// that inside it they stay the co-routines they were when `qualified` had one
+/// reader; without the hint SQLite materializes them too.
+const COVERAGE: &str = "coverage_raw AS NOT MATERIALIZED (
            SELECT c.id AS candidate_id, e.term_ordinal, e.distance, 0 AS scope
            FROM candidates c
            JOIN search_query_evidence e ON e.fragment_id=c.id
@@ -665,12 +756,12 @@ const COVERAGE: &str = "coverage_raw AS (
              ON doc.document_id=target.document_id AND doc.field='title'
            JOIN search_query_evidence e ON e.fragment_id=doc.id
          ),
-         term_coverage AS (
+         term_coverage AS NOT MATERIALIZED (
            SELECT candidate_id, term_ordinal, MIN(distance) AS distance,
                   MAX(CASE WHEN scope=0 THEN 1 ELSE 0 END) AS direct
            FROM coverage_raw GROUP BY candidate_id, term_ordinal
          ),
-         qualified AS (
+         qualified AS MATERIALIZED (
            SELECT candidate_id, COUNT(*) AS covered, SUM(direct) AS direct_count,
                   MAX(distance) AS max_distance, SUM(distance) AS total_distance
            FROM term_coverage GROUP BY candidate_id HAVING covered=?2
@@ -681,7 +772,10 @@ const COVERAGE: &str = "coverage_raw AS (
 /// Nothing to cover, so `candidates` is already the answer. The zeros are what
 /// the scoring reads, and they are the values a fully, exactly covered
 /// candidate would have carried: nothing is fuzzy, nothing is missing.
-const UNCOVERED: &str = "qualified AS (
+///
+/// `NOT MATERIALIZED` because it is a plain projection of `candidates`, which
+/// is materialized once for both readers; copying it again would buy nothing.
+const UNCOVERED: &str = "qualified AS NOT MATERIALIZED (
            SELECT c.id AS candidate_id, 0 AS covered, 0 AS direct_count,
                   0 AS max_distance, 0 AS total_distance
            FROM candidates c
@@ -809,6 +903,9 @@ struct RawHit {
     score: f64,
     page: Option<u32>,
 }
+
+#[cfg(test)]
+mod read_collapse_tests;
 
 /// Keeps the tokens in [`field`] and the boosts above from drifting apart.
 #[cfg(test)]

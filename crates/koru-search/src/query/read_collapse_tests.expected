@@ -1,0 +1,174 @@
+## plan
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 4)] | Acme / Roadmap []
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 23)] | Beta / Meeting notes []
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 4)] | Beta / Plants []
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 14)] | Beta / Plants []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 4)] | Beta / Plants []
+next=None corrected=None
+## plan, observed
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 23)] | Beta / Meeting notes []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 4)] | Acme / Roadmap []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap []
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 4)] | Beta / Plants []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 14)] | Beta / Plants []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 4)] | Beta / Plants []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan []
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+next=None corrected=None
+## plan, workspace recency
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 23)] | Beta / Meeting notes []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 4)] | Beta / Plants []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 14)] | Beta / Plants []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 4)] | Beta / Plants []
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 4)] | Acme / Roadmap []
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap []
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+next=None corrected=None
+## quarterly plan
+Quarterly plan | title | - | None | 4730 | Quarterly plan [(0, 9), (10, 14)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4605 | Plan for the quarter [(0, 4), (13, 20)] | Acme / Quarterly plan []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(4, 13), (14, 18)] | Acme / Quarterly plan []
+Quarterly plan | task | t1 | None | 3300 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan [(7, 16)]
+next=None corrected=None
+## quartrly
+Quarterly plan | title | - | None | 2695 | Quarterly plan [(0, 9)] | Acme / Quarterly plan []
+Roadmap | body | b2 | None | 2195 | Ship the quarterly report [(9, 18)] | Acme / Roadmap []
+Quarterly plan | body | b1 | None | 2195 | The quarterly plan covers hiring [(4, 13)] | Acme / Quarterly plan []
+next=None corrected=Some("quarterly")
+## acme plan
+Meeting notes | body | b1 | None | 4205 | We discussed the plan with Acme [(17, 21), (27, 31)] | Beta / Meeting notes []
+Planets | title | - | None | 3700 | Planets [(0, 4)] | Acme / Roadmap / Planets [(0, 4)]
+Quarterly plan | title | - | None | 3700 | Quarterly plan [(10, 14)] | Acme / Quarterly plan [(0, 4)]
+Quarterly plan | heading-1 | h | None | 3600 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan [(0, 4)]
+Roadmap | heading-2 | h2 | None | 3580 | Planning notes [(0, 4)] | Acme / Roadmap [(0, 4)]
+Quarterly plan | task | t1 | None | 3300 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan [(0, 4)]
+Planets | body | b2 | None | 3200 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets [(0, 4)]
+Roadmap | body | b1 | None | 3200 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap [(0, 4)]
+Quarterly plan | body | b1 | None | 3200 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan [(0, 4)]
+next=None corrected=None
+## pla
+Planets | title | - | None | 4720 | Planets [(0, 3)] | Acme / Roadmap / Planets []
+Plants | title | - | None | 4720 | Plants [(0, 3)] | Beta / Plants []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 13)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 3)] | Acme / Quarterly plan []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 3)] | Acme / Roadmap []
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 22)] | Beta / Meeting notes []
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 13)] | Acme / Quarterly plan []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 3), (23, 26)] | Acme / Roadmap []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 3)] | Beta / Plants []
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 5)] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 17)] | Acme / Quarterly plan []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 13)] | Beta / Plants []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 20)] | Beta / Meeting notes []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 3)] | Beta / Plants []
+next=None corrected=None
+## plan #fun
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+next=None corrected=None
+## #fun
+Planets | body | b2 | None | 4220 | A planned trip to the observatory [] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4220 | The quarterly plan covers hiring [] | Acme / Quarterly plan []
+Meeting notes | body | b1 | None | 4220 | We discussed the plan with Acme [] | Beta / Meeting notes []
+Quarterly plan | attr:koru.tag | b1 | None | 4120 | fun [] | Acme / Quarterly plan []
+Meeting notes | attr:koru.tag | b1 | None | 4120 | fun [] | Beta / Meeting notes []
+Planets | attr:koru.tag | b2 | None | 4120 | fun/home [] | Acme / Roadmap / Planets []
+next=None corrected=None
+## nothing
+next=None corrected=None
+## plan, trash
+Old plan | title | - | None | 4710 | Old plan [(4, 8)] | Acme / Old plan []
+Old plan | body | b1 | None | 4210 | The abandoned plan for spring [(14, 18)] | Acme / Old plan []
+next=None corrected=None
+## plan, all
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Old plan | title | - | None | 4710 | Old plan [(4, 8)] | Acme / Old plan []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 4)] | Acme / Roadmap []
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 23)] | Beta / Meeting notes []
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 4)] | Beta / Plants []
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Old plan | body | b1 | None | 4210 | The abandoned plan for spring [(14, 18)] | Acme / Old plan []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 14)] | Beta / Plants []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 4)] | Beta / Plants []
+next=None corrected=None
+## plan, scoped
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 4)] | Acme / Roadmap []
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap []
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+next=None corrected=None
+## plan, excluded
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 23)] | Beta / Meeting notes []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 4)] | Beta / Plants []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 14)] | Beta / Plants []
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 4)] | Beta / Plants []
+next=None corrected=None
+## priority filter alone
+Quarterly plan | task | t1 | None | 4320 | Draft the plan outline [] | Acme / Quarterly plan []
+next=None corrected=None
+## picker
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+Draft the plan outline | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+next=None corrected=None
+## plan, page of 3 at 0
+Planets | title | - | None | 4720 | Planets [(0, 4)] | Acme / Roadmap / Planets []
+Plants | title | - | None | 4720 | Plants [(0, 4)] | Beta / Plants []
+Quarterly plan | title | - | None | 4710 | Quarterly plan [(10, 14)] | Acme / Quarterly plan []
+next=Some(3) corrected=None
+## plan, page of 3 at 3
+Quarterly plan | heading-1 | h | None | 4620 | Plan for the quarter [(0, 4)] | Acme / Quarterly plan []
+Roadmap | heading-2 | h2 | None | 4600 | Planning notes [(0, 4)] | Acme / Roadmap []
+Meeting notes | heading-3 | h3 | None | 4570 | Next steps for the plan [(19, 23)] | Beta / Meeting notes []
+next=Some(6) corrected=None
+## plan, page of 3 at 6
+Quarterly plan | task | t1 | None | 4310 | Draft the plan outline [(10, 14)] | Acme / Quarterly plan []
+Roadmap | body | b1 | None | 4220 | plan B is the fallback plan [(0, 4), (23, 27)] | Acme / Roadmap []
+Plants | body | b2 | None | 4220 | plan to repot the fern [(0, 4)] | Beta / Plants []
+next=Some(9) corrected=None
+## plan, page of 3 at 9
+Planets | body | b2 | None | 4210 | A planned trip to the observatory [(2, 6)] | Acme / Roadmap / Planets []
+Quarterly plan | body | b1 | None | 4210 | The quarterly plan covers hiring [(14, 18)] | Acme / Quarterly plan []
+Plants | body | b1 | None | 4210 | Water the plants daily [(10, 14)] | Beta / Plants []
+next=Some(12) corrected=None
+## plan, page of 3 at 12
+Meeting notes | body | b1 | None | 4210 | We discussed the plan with Acme [(17, 21)] | Beta / Meeting notes []
+Plants | attr:koru.status | b3 | None | 4120 | planned [(0, 4)] | Beta / Plants []
+next=None corrected=None
