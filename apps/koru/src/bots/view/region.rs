@@ -1491,6 +1491,7 @@ impl BotView {
                 };
                 if !self.form_open()
                     && key != SETTINGS_BUTTON
+                    && key != super::list::CONVERSATIONS_BUTTON
                     && key != super::list::NEW_CONVERSATION
                     && key != super::list::MORE_CONVERSATIONS
                     && key != super::list::TRASH_NOTICE
@@ -1502,6 +1503,13 @@ impl BotView {
                     ControlRole::TextInput
                 } else if key == ACCESS_CHOICE || key == super::create::ROLE_CHOICE {
                     ControlRole::Group
+                } else if key == super::list::CONVERSATIONS_BUTTON {
+                    // **The compact header's *Conversations***: on while the
+                    // list is in the conversation's place — a toggle button,
+                    // its state its pressed one, as the picker's Fast is
+                    // (the third window run: drawn and a keyboard stop, but
+                    // never published, so its focus fell on the window).
+                    ControlRole::Toggle
                 } else {
                     match node.role {
                         Some(Role::Button) => ControlRole::Button,

@@ -268,12 +268,16 @@ impl BotView {
             self.conversations.owe_read();
             changed = true;
         }
+        // **What *New conversation* made is shown**, at any width: compact,
+        // the list gives the conversation its place back, as choosing a row
+        // does (the third window run: the list stayed up over it).
         if let Some(made) = self.conversations.take_made() {
+            changed |= self.close_compact_list();
             changed |= self.show_conversation(made);
         }
         if let Some(chat) = self.conversations.surface.take_wants_open() {
             // A row chosen from the compact list: the conversation is back.
-            self.list_open = false;
+            changed |= self.close_compact_list();
             changed |= self.show_conversation(chat);
         }
         // A row's ⋯ or Delete asked for one conversation's Trash (S14).
@@ -301,6 +305,31 @@ impl BotView {
             }
         }
         changed
+    }
+
+    /// **The compact list leaves for the conversation** — a row chosen, or
+    /// one *New conversation* made — and the keyboard goes with it to the
+    /// conversation, never to a list no longer drawn (the third window run:
+    /// focus reported on the bare window, and Delete reaching nothing).
+    ///
+    /// **Compact and wide agree on what a row's keys act on**: the row the
+    /// keyboard is on in a list that is shown. Wide, a click leaves the list
+    /// shown with the keyboard on that row, so Delete asks for its Trash;
+    /// compact, the click is *open* and the list leaves, so the keyboard is
+    /// the conversation's and Delete is the composer's. A row's Trash at
+    /// either width is its ⋯ or right-click menu, or Delete on the row the
+    /// list's keyboard is on. `true` when the list was open.
+    fn close_compact_list(&mut self) -> bool {
+        let covering = self.list_covers();
+        self.list_open = false;
+        if !covering {
+            return false;
+        }
+        if self.focus == Some(CONVERSATION_LIST) {
+            self.conversations.surface.clear_focus();
+            self.focus = None;
+        }
+        true
     }
 
     /// Hand a list read to the link. `false` when it would not take it.

@@ -1898,3 +1898,131 @@ fn the_default_window_gives_the_chat_the_tab_and_a_way_to_the_list() {
     assert!(f.keys().contains(&list::CONVERSATIONS));
     assert!(!f.keys().contains(&list::CONVERSATIONS_BUTTON));
 }
+
+/// **The compact header's *Conversations* is published as its neighbours
+/// are**, with its focus on it (the third window run: drawn, and a stop of
+/// Tab in the header, but no node — UI Automation reported the keyboard on
+/// the bare window). A button with its name and Click, its state its
+/// pressed one: off while the conversation shows, on while the list is in
+/// its place. Tab from *Settings* lands on it through the tab's keys, and
+/// the node the window names as focused (`bot_occurrence` of the tab's
+/// focus) is published.
+#[test]
+fn the_compact_conversations_control_is_published_with_its_state_and_focus() {
+    use accesskit::{Action, Role, Toggled};
+    let other = ChatId::new();
+    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
+    f.view.set_viewport(628.0, 600.0);
+    f.view.shown_pass(None);
+    let part = list::CONVERSATIONS_BUTTON.part;
+    let node = node_of(&f.view, part).expect("Conversations is published");
+    assert_eq!(node.role, Role::Button);
+    assert_eq!(
+        node.label.as_deref(),
+        Some(t(Lang::En, Words::BotsConversations))
+    );
+    assert!(node.actions.contains(&Action::Click), "pressable");
+    assert_eq!(node.toggled, Some(Toggled::False), "the conversation shows");
+    assert!(f.press(list::CONVERSATIONS_BUTTON));
+    let node = node_of(&f.view, part).expect("still published");
+    assert_eq!(node.toggled, Some(Toggled::True), "the list in its place");
+    f.publishable("the compact list open");
+
+    // The keyboard reaches it from the header's first stop.
+    assert!(f.press(list::CONVERSATIONS_BUTTON), "closed again");
+    assert!(f.view.focus_header());
+    let mut reached = false;
+    for _ in 0..6 {
+        key(&mut f.view, named(winit::keyboard::NamedKey::Tab), None);
+        if f.view.focus() == Some(list::CONVERSATIONS_BUTTON) {
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached, "Tab reaches Conversations");
+    let focused = node_of(&f.view, part).expect("the focused control is a node");
+    assert_eq!(focused.occurrence.part.name(), part);
+}
+
+/// **Compact, the list leaves for the conversation it gives you, and the
+/// keyboard goes with it** (the third window run): *New conversation* shows
+/// what the owner made instead of leaving the list up, and a row chosen
+/// with a click opens it with the keyboard on the conversation — not on a
+/// list no longer drawn, where Delete reached nothing. Delete on a row the
+/// list's keyboard is on still asks for its Trash, as wide.
+#[test]
+fn compact_the_list_leaves_for_the_conversation_and_the_keyboard_goes_with_it() {
+    let other = ChatId::new();
+    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
+    f.view.set_viewport(628.0, 600.0);
+    f.view.shown_pass(None);
+
+    // New conversation from the open list.
+    assert!(f.press(list::CONVERSATIONS_BUTTON));
+    assert!(f.press(list::NEW_CONVERSATION));
+    let (request, _) = f.wrote();
+    let made = ChatId::new();
+    f.reply(
+        request,
+        Ok(BotResponse::Chat {
+            reference: koru_ai_core::bots::BotChatReference {
+                bot_id: f.bot.id,
+                chat_id: made,
+            },
+        }),
+    );
+    f.view.shown_pass(None);
+    assert_eq!(f.view.chat_id(), made, "what it made is shown");
+    assert!(
+        !f.keys().contains(&list::CONVERSATIONS),
+        "the list gave the conversation its place back"
+    );
+
+    // A row clicked in the open list.
+    assert!(f.press(list::CONVERSATIONS_BUTTON));
+    let row = f
+        .view
+        .with_frame(|_, frame| BotView::list_area(frame))
+        .and_then(|area| {
+            f.view
+                .conversations
+                .surface
+                .chat_rects(area, area.y)
+                .into_iter()
+                .find(|(chat, _)| *chat == other)
+                .map(|(_, rect)| rect)
+        })
+        .expect("the row is drawn");
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    View::mouse_down(
+        &mut f.view,
+        &mut ws,
+        row.x + 8.0,
+        row.y + row.h / 2.0,
+        false,
+    );
+    View::mouse_up(&mut f.view, &mut ws);
+    f.view.shown_pass(None);
+    assert_eq!(f.view.chat_id(), other);
+    assert_eq!(f.view.focus(), None, "the keyboard is the conversation's");
+    let _ = f.view.take_conversation_trash();
+    key(&mut f.view, named(winit::keyboard::NamedKey::Delete), None);
+    f.view.shown_pass(None);
+    assert_eq!(
+        f.view.take_conversation_trash(),
+        None,
+        "no hidden row's Trash"
+    );
+
+    // The list's own keys, while it is shown, are wide's.
+    assert!(f.press(list::CONVERSATIONS_BUTTON));
+    f.view.focus = Some(list::CONVERSATION_LIST);
+    f.view.focus_list();
+    key(&mut f.view, named(winit::keyboard::NamedKey::Delete), None);
+    f.view.shown_pass(None);
+    assert!(
+        f.view.take_conversation_trash().is_some(),
+        "Delete on the list's row asks for its Trash"
+    );
+}
