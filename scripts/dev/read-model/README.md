@@ -1,47 +1,63 @@
 # read-model — PP-OCRv6 small to ONNX, reproducibly
 
 The reader's model files are **our own `paddle2onnx` conversion** of
-PaddleOCR's official PP-OCRv6 small weights (OCR TECHNICAL D1). This folder is
-that conversion as a script, plus the generator of the synthetic fixtures the
-measurements use. Plan 2.2 of the OCR roadmap turns `convert.sh` into the
-release tool's command.
+PaddleOCR's official PP-OCRv6 small weights (OCR TECHNICAL D1). The conversion
+is a command of the release tool (OCR Plan 2.2), beside the one that prepares
+the speech models; this folder keeps the generator of the synthetic fixtures
+the measurements use, and a wrapper for the conversion.
 
 ## Convert
 
 ```bash
-bash scripts/dev/read-model/convert.sh --clean
+koru.bat release-tool read-model convert --clean     # or: cargo run -p koru-release -- read-model convert --clean
+bash scripts/dev/read-model/convert.sh --clean       # the same, into target/ocr-measure/
 ```
 
-Needs Python 3.12 (`py -3.12` on Windows, `python3.12` elsewhere; override
-with `PYTHON=...`), `curl`, and `sha256sum` or `shasum`. Everything lands
-under `target/ocr-measure/` (override with `READ_MODEL_OUT`), which git
-ignores:
+**Windows x64 only** (anywhere else the command says so and stops): the
+conversion's lock pins paddle2onnx 2.1.0 against the one PaddlePaddle nightly
+whose Windows build it loads with. It needs Python 3.12 (`py -3.12`, or
+`--python <python.exe>`). Everything lands under `--work` (default
+`<main checkout>/dist/read-model`, shared by every worktree; the wrapper uses
+`target/ocr-measure/`, override with `READ_MODEL_OUT`), which git ignores:
 
 | Path | What |
 | --- | --- |
-| `venv/` | Throwaway Python environment, installed only from `requirements.lock` (`--require-hashes --no-deps`) |
+| `venv/` | Throwaway Python environment, installed only from `crates/koru-release/read-model/requirements.lock` (`--require-hashes --no-deps`) |
 | `weights/{det,rec}/` | The official Paddle inference files, verified by size and SHA-256 |
 | `models/det.onnx`, `models/rec.onnx` | The converted detector and recognizer |
 | `models/rec_dict.txt` | The recognizer's 18,708 characters, one per line, from `inference.yml` |
 | `models/SHA256SUMS` | Digests of the three outputs, also printed at the end |
 
-`--clean` deletes the venv, weights and outputs first. Without it the script
-reuses what is there (weights are re-verified every time).
+`--clean` deletes the venv, weights and outputs first. Without it the command
+reuses the venv and the weights (re-verified every time).
+
+**Where the pins are.** The six upstream files and the three outputs, by size
+and SHA-256, are in `crates/koru-release/src/read_model/table.rs`; the tools
+are in `crates/koru-release/read-model/requirements.lock`. The command refuses
+an output whose digest differs from the table, and refuses to finish if any
+package outside the lock is in the environment afterwards. This wrapper holds
+no pin of its own.
+
+**Packaging and publishing** are `read-model package` (stages the zip, its
+descriptor and the reader's catalog on disk, and proves the catalog installs
+under the digest-only policy) and `read-model publish [--upload]`, which run
+on any platform and are what a nightly runs. See the module note in
+`crates/koru-release/src/read_model.rs`.
 
 **What it converts.** `PaddlePaddle/PP-OCRv6_small_det` and
 `PaddlePaddle/PP-OCRv6_small_rec` on Hugging Face (PaddlePaddle's own
 organisation), each at a pinned commit. The recognizer is the single
 multilingual one (50 languages, Latin, Chinese and Japanese among them;
 18,708 characters). The same files are in PaddleX's bundles on
-`paddle-model-ecology.bj.bcebos.com`, with identical digests. The pins are in
-`convert.sh`.
+`paddle-model-ecology.bj.bcebos.com`, with identical digests.
 
 **The tools.** paddle2onnx 2.1.0, paddlepaddle 3.0.0.dev20250426 (a nightly,
-from PaddlePaddle's own wheel host), onnx 1.17.0, onnxruntime 1.27.0 and
-polygraphy 0.53.6 for paddle2onnx's constant folding. `requirements.lock` says
-why paddlepaddle is that nightly: it is the one whose Windows build exports
-what paddle2onnx 2.1.0's Windows extension imports. The lock is for Windows
-x64.
+from PaddlePaddle's own wheel host), onnx 1.17.0, and for paddle2onnx's
+constant folding polygraphy 0.53.6 with onnxruntime 1.27.0, onnx_graphsurgeon
+0.6.1 and ml_dtypes 0.6.0. The lock says why paddlepaddle is that nightly, and
+why the last two are pinned: paddle2onnx switches polygraphy's auto-install on
+inside its own process, so before Plan 2.2 those two were installed unpinned
+on every run.
 
 **Determinism.** Two runs from `--clean` on the same machine produce
 byte-identical `det.onnx`, `rec.onnx` and `rec_dict.txt`.

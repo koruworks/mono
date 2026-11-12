@@ -13,6 +13,7 @@ mod notes;
 mod notices;
 mod package;
 mod page;
+mod read_model;
 mod source;
 mod version;
 mod voice;
@@ -154,6 +155,10 @@ fn run() -> Result<(), String> {
         // else's weights, repackages them, and publishes them beside the
         // releases. It writes to production only behind `--upload`.
         Some("voice-models") => voice::run(&root, args),
+        // The text-recognition model: converted from PaddlePaddle's weights
+        // when its version changes (Windows x64), published like the speech
+        // models before every nightly. Writes only behind `--upload`.
+        Some("read-model") => read_model::run(&root, args),
         Some("publish-assets") => assets::run(&root, args),
         // **Builds nothing either.** Gradle runs it while it builds the APK,
         // and the iOS app's Xcode build phase while it builds the app, for the
@@ -171,6 +176,7 @@ fn run() -> Result<(), String> {
              koru-release minisign-public-key --key <file> [--key-password-stdin]\n  \
              koru-release release-index [--keep-latest] [--dry-run <page.html>]\n  \
              koru-release voice-models plan|pin|fetch|publish|local [--only <id>] [--work <dir>] [--upload]\n  \
+             koru-release read-model convert|package|publish [--work <dir>] [--clean] [--out <dir>] [--upload]\n  \
              koru-release notices android --out <file> [--maven <libraries.json>] [--source <url>] [--debug]\n  \
              koru-release notices ios --dir <licenses dir> --source <url> [--debug]\n  \
              koru-release notices macos --out <file> [--triple <triple>]..."
@@ -783,9 +789,12 @@ fn publish(
     require_clean_tree(root, Some(&commit))?;
 
     // A nightly that exposes Voice input must also make both product models
-    // reachable from the catalog compiled into that build.
+    // reachable from the catalog compiled into that build — and the reader's
+    // model from its own catalog. The reader's is published from its pinned,
+    // already-converted archive; a nightly never converts.
     if matches!(channel, ReleaseChannel::Nightly) {
         voice::publish_for_nightly(root)?;
+        read_model::publish_for_nightly(root)?;
     }
 
     if !matches!(channel, ReleaseChannel::Nightly) {
