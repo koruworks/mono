@@ -418,7 +418,8 @@ pub(crate) struct BotView {
     /// said** — stopped unfinished, still being made, or ended — for the
     /// window to hand the roster's Unfinished group at once. Taken once
     /// (`take_creation_news`).
-    creation_news: Option<koru_ai_core::bots::BotCreation>,
+    /// Boxed: the tab is moved by value and kept small.
+    creation_news: Option<Box<koru_ai_core::bots::BotCreation>>,
 }
 
 impl BotView {
@@ -496,7 +497,7 @@ impl BotView {
     /// Unfinished group at once (the second window run's finding 3a).
     /// Taken once.
     pub(crate) fn take_creation_news(&mut self) -> Option<koru_ai_core::bots::BotCreation> {
-        self.creation_news.take()
+        self.creation_news.take().map(|news| *news)
     }
 
     /// **The Bot as one of this tab's answers left it, when what the roster

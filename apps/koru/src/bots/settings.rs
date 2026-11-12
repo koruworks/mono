@@ -233,7 +233,7 @@ impl Settings {
     /// been chosen since: it says *Saved* where *Save* stood, as a save
     /// whose result shows nowhere else should.
     pub(crate) fn model_saved(&self) -> bool {
-        self.model_saved && !self.model_edited()
+        self.model_saved && self.model_draft.is_none()
     }
 
     /// Whether `change` is on its way: shown as pending, its control inert.

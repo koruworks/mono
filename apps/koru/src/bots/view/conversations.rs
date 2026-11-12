@@ -162,6 +162,7 @@ impl Conversations {
     }
 
     /// The Bot's main conversation, as the list says.
+    #[cfg(test)]
     pub(crate) fn main(&self) -> Option<ChatId> {
         self.main
     }

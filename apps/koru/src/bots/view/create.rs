@@ -1428,9 +1428,9 @@ impl BotView {
         let live = create.form.live().cloned();
         let ended = create.form.ended().cloned();
         if live.is_some() && live != before.0 {
-            self.creation_news = live;
+            self.creation_news = live.map(Box::new);
         } else if ended.is_some() && ended != before.1 {
-            self.creation_news = ended;
+            self.creation_news = ended.map(Box::new);
         }
         let Some(create) = self.create.as_deref_mut() else {
             return settled.matched;
