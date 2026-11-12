@@ -25,6 +25,11 @@
 //! that links this crate reads its bootstrap and watches its parent with the
 //! same [`read_bootstrap_line`] and [`ParentPipe`] a role does.
 //!
+//! **And a child can be kept out of the person's way** (OCR roadmap Plan
+//! 3.1): [`supervisor::WorkerSpec::priority`] launches it below normal
+//! priority, and the child completes that with [`follow_launch_priority`],
+//! because background I/O is something only a process can ask for itself.
+//!
 //! Two sides, two entry points:
 //!
 //! - The **worker side** calls [`dispatch`] as the first thing in `main`.
@@ -229,6 +234,53 @@ impl ParentPipe {
                 on_parent_loss();
             })
             .map(|_| ())
+    }
+}
+
+/// **The child's half of [`supervisor::Priority::Background`]**: a child that
+/// finds itself launched below normal priority lowers its own I/O too.
+/// Returns whether it did.
+///
+/// On Windows a process can enter background mode
+/// (`PROCESS_MODE_BACKGROUND_BEGIN`: very low I/O priority and low memory
+/// priority) only for itself, so the parent's launch cannot do it; the
+/// priority class the launch gave is the signal, which needs no new argument
+/// or variable and leaves a child started by hand at normal priority alone.
+///
+/// **Entering background mode resets the priority class to normal**
+/// (measured on Windows 11 build 26300: a below-normal process reads
+/// `NORMAL_PRIORITY_CLASS`, base priority 8, straight afterwards, and is
+/// still in background mode — a second `BEGIN` fails with
+/// `ERROR_PROCESS_MODE_ALREADY_BACKGROUND`). So the class the launch gave is
+/// put back after it, and the child ends below normal with background I/O.
+///
+/// Elsewhere it does nothing and returns `false`
+/// ([`supervisor::PRIORITY_LOWERED`] says what the catch-up needs).
+pub fn follow_launch_priority() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{
+            BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, IDLE_PRIORITY_CLASS,
+            PROCESS_MODE_BACKGROUND_BEGIN, SetPriorityClass,
+        };
+        // SAFETY: the pseudo-handle of this process, and two calls that take
+        // it and a plain integer.
+        unsafe {
+            let me = GetCurrentProcess();
+            let launched = GetPriorityClass(me);
+            if launched != BELOW_NORMAL_PRIORITY_CLASS && launched != IDLE_PRIORITY_CLASS {
+                return false;
+            }
+            if SetPriorityClass(me, PROCESS_MODE_BACKGROUND_BEGIN) == 0 {
+                return false;
+            }
+            SetPriorityClass(me, launched);
+            true
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

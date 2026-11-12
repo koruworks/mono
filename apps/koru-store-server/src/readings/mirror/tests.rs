@@ -350,6 +350,13 @@ fn the_mirror_queries_use_their_indexes() {
             vec![ws.clone()],
         ),
         (
+            "outcomes_in (the queue, OCR Plan 3.1: with page_count)",
+            "SELECT parent_document_id, hash, generation, status, reason, page_count
+               FROM readings WHERE workspace_id = ?1"
+                .into(),
+            vec![ws.clone()],
+        ),
+        (
             "settled_anywhere",
             "SELECT workspace_id, parent_document_id, generation, status, reason, page_count
                FROM readings WHERE hash = ?1 AND parent_document_id <> ?2"
@@ -390,6 +397,119 @@ fn the_mirror_queries_use_their_indexes() {
         );
         assert!(plan.contains("USING"), "{name} uses no index: {plan}");
     }
+}
+
+/// **The siblings' query, pinned on a mirror of realistic size** (OCR Plan
+/// 3.1): 20,000 readings over 40 workspaces, a tenth of them the same bytes
+/// in a second workspace. Finding the hashes held twice has to visit every
+/// hash once — that is the question — so it walks the narrow covering index
+/// `readings_hash`, never the table, and builds no temporary B-tree; the rows
+/// of each shared hash are then looked up through the same index.
+#[test]
+fn the_siblings_query_walks_the_hash_index_and_never_the_table() {
+    let (mirror, _name, _keeper) = memory();
+    let workspaces: Vec<String> = (0..40).map(|_| WorkspaceId::new().to_storage()).collect();
+    {
+        let db = mirror.connection();
+        db.execute_batch("BEGIN").unwrap();
+        for i in 0..20_000_u32 {
+            let ws = &workspaces[(i % 40) as usize];
+            // Every tenth file's bytes are also in the next workspace.
+            let h = format!("b3:{:064x}", if i % 10 == 1 { i - 1 } else { i });
+            db.execute(
+                "INSERT INTO readings VALUES (?1, ?2, ?3, 1, 'read', NULL, 'text-layer', 3)",
+                params![ws, DocumentId::new().to_storage(), h],
+            )
+            .unwrap();
+        }
+        // No `ANALYZE`: `readings.db` never runs one, and a planner with no
+        // statistics is the one that chose wrong before (ROADMAP §3).
+        db.execute_batch("COMMIT").unwrap();
+    }
+    let rows: Vec<String> = mirror
+        .connection()
+        .prepare(&format!("EXPLAIN QUERY PLAN {FULLER_SQL}"))
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let plan = rows.join(" | ");
+    println!("best_shared: {plan}");
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "the siblings' query sorts: {plan}"
+    );
+    for step in &rows {
+        assert!(
+            !step.starts_with("SCAN readings") || step.contains("COVERING INDEX readings_hash"),
+            "the siblings' query scans the table: {plan}"
+        );
+    }
+    assert!(plan.contains("readings_hash"), "{plan}");
+    let started = std::time::Instant::now();
+    let shared = mirror.best_shared().unwrap();
+    println!(
+        "best_shared over 20,000 rows: {} shared hashes in {:?}",
+        shared.len(),
+        started.elapsed()
+    );
+    assert_eq!(shared.len(), 2_000);
+}
+
+/// **The best settled reading of each shared hash, across workspaces**: a
+/// read beats a capped partial, a higher generation beats both, a reading
+/// still going is not offered, and a hash held once is not listed.
+#[test]
+fn the_best_shared_reading_is_the_fullest_settled_one_on_the_root() {
+    let (mut mirror, _name, _keeper) = memory();
+    let (ws, other) = (WorkspaceId::new(), WorkspaceId::new());
+    let (shared, going, alone) = ("b3:aa".to_owned(), "b3:bb".to_owned(), "b3:cc".to_owned());
+    let mut capped = reading(ReadingStatus::Partial, &[(1, "first")]);
+    capped.reason = Some(Reason::PageCap);
+    capped.pages_done = Some(200);
+    let full = reading(ReadingStatus::Read, &[(1, "first"), (2, "second")]);
+    let still = reading(ReadingStatus::Partial, &[(1, "first")]);
+    let mut newer = full.clone();
+    newer.generation = GENERATION + 1;
+    for (workspace, entries) in [
+        (
+            ws,
+            vec![
+                (shared.clone(), capped.clone()),
+                (going.clone(), still.clone()),
+            ],
+        ),
+        (
+            other,
+            vec![(shared.clone(), full.clone()), (going.clone(), still)],
+        ),
+        (ws, vec![(alone.clone(), full.clone())]),
+    ] {
+        mirror
+            .apply(&applied(workspace, DocumentId::new(), entries))
+            .unwrap();
+    }
+    let best = mirror.best_shared().unwrap();
+    assert_eq!(best.get(&shared), Some(&rank_of(&full)));
+    assert!(
+        rank_of(&full) > rank_of(&capped),
+        "read beats a capped partial"
+    );
+    assert!(!best.contains_key(&going), "nothing settled to offer");
+    assert!(!best.contains_key(&alone), "held once: no sibling");
+
+    mirror
+        .apply(&applied(
+            ws,
+            DocumentId::new(),
+            vec![(shared.clone(), newer.clone())],
+        ))
+        .unwrap();
+    assert_eq!(
+        mirror.best_shared().unwrap().get(&shared),
+        Some(&rank_of(&newer))
+    );
 }
 
 // ------------------------------------------------- outcomes (OCR Plan 2.4)

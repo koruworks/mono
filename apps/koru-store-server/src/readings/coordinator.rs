@@ -25,6 +25,17 @@
 //! Smallest first, by the blob row's size, with a freshly added file ahead of
 //! everything. A restart computes the same queue from the same state.
 //!
+//! A settled entry is queued again for one reason only: another entry on this
+//! store root holds a **fuller** reading of the same bytes (a capped
+//! `partial` read to the end, a higher generation), which is copied to it —
+//! never read (TECHNICAL §18, the review's note; OCR Plan 3.1).
+//!
+//! ## Out of the way (TECHNICAL §14, OCR Plan 3.1)
+//!
+//! The backlog waits while the system saves energy ([`super::power`]); a
+//! fresh file does not. The worker is launched below normal priority with
+//! background I/O (`supervised.rs`).
+//!
 //! ## Told, not polling
 //!
 //! The two triggers (ROADMAP §3) arrive through the [`Inbox`]: a projected
@@ -66,15 +77,19 @@ use koru_store_wire::reader::MachineReadingCounts;
 use super::feed::{CoordinatorWork, Inbox};
 use super::hub::{ModelInUse, ReaderHub, ScopeCounts, WorkerKnowledge};
 use super::launcher::{Availability, Interrupted, Launcher, Unavailable};
-use super::mirror::{Attempt, AttemptCode, Mirror, Settled};
+use super::mirror::{Attempt, AttemptCode, Mirror, Rank, Settled, rank_of};
+use super::power::{NeverSaving, Power};
 
 /// While a queue is running, a listing change recomputes it at most this
 /// often. New files reach the fresh lane at once regardless; this only bounds
 /// how often the backlog's order and counts are redone during an import.
 pub const RECOMPUTE_EVERY_MILLIS: i64 = 2_000;
 
-/// A backlog registers at most this many reading documents in one manifest
-/// commit (TECHNICAL §9 "a few hundred at a time").
+/// At most this many reading documents are registered in one manifest commit
+/// (TECHNICAL §9 "a few hundred at a time"). **The boundary is a count and
+/// nothing else**: a batch is whatever the queue holds unregistered in the
+/// pair's workspace when the pair is reached, so a file on its own is a batch
+/// of one, registered at once, and nothing ever waits for a batch to fill.
 pub const REGISTER_BATCH: usize = 200;
 
 /// Pages written into a reading document per Store commit while a long file
@@ -266,9 +281,16 @@ pub struct CoordinatorStats {
     pub partial: u64,
     pub failed: u64,
     pub copied: u64,
+    /// Of `copied`: a settled entry given the fuller reading another entry
+    /// holds of the same bytes (TECHNICAL §18, the review's note).
+    pub refreshed: u64,
     pub skipped: u64,
     pub pages: u64,
     pub registered: u64,
+    /// Manifest commits made registering reading documents — what batching
+    /// keeps to a handful during a backlog (TECHNICAL §9).
+    pub manifest_commits: u64,
+    /// Commits to reading documents.
     pub commits: u64,
     pub failed_by_code: std::collections::BTreeMap<String, u64>,
     pub recomputes: u64,
@@ -310,10 +332,14 @@ pub struct Coordinator {
     /// Pairs whose commit failed (a full disk), not before this instant. In
     /// memory: a restart retries them, which is what a person would want.
     retry_after: HashMap<(DocumentId, String), i64>,
-    /// Readings this coordinator finished since its last recompute, by hash:
-    /// the copy rule's answer for bytes the mirror has not applied yet — a
+    /// Readings this coordinator finished while the queue ran, by hash: the
+    /// copy rule's answer for bytes the mirror has not applied yet — a
     /// backlog holding the same picture twice in a row would otherwise read it
-    /// twice. Cleared on every recompute, by when the mirror holds them.
+    /// twice. **Kept until the queue empties, not cleared by a recompute**:
+    /// the mirror applies on its own thread, and a recompute between two
+    /// pairs of the same bytes, before the mirror held the first, read the
+    /// second again (OCR Plan 3.1's real run: 2 of 46). An entry whose
+    /// document is gone simply does not fork, and the mirror is asked too.
     written: HashMap<String, (WorkspaceId, DocumentId)>,
     next_job: u64,
     backlog_seen: u64,
@@ -346,6 +372,15 @@ pub struct Coordinator {
     /// sooner**: a pair skipped because the mirror lags the document must
     /// not turn every step into a full recompute that queues it again.
     recount: bool,
+    // ---- staying out of the way (OCR Plan 3.1)
+    /// Whether the system is saving energy. [`NeverSaving`] unless the daemon
+    /// hands the real one in ([`Self::with_power`]).
+    power: Box<dyn Power>,
+    /// The backlog is waiting out battery saver; fresh files still go.
+    pub paused: bool,
+    /// The best settled reading of each hash more than one entry holds, as of
+    /// the last recompute: a settled entry ranked below it is given it.
+    fuller: HashMap<String, Rank>,
 }
 
 impl Coordinator {
@@ -391,7 +426,18 @@ impl Coordinator {
             machine: MachineReadingCounts::default(),
             settled_last: None,
             recount: false,
+            power: Box::new(NeverSaving),
+            paused: false,
+            fuller: HashMap::new(),
         }
+    }
+
+    /// **Pause the backlog while the system saves energy** (TECHNICAL §14):
+    /// the daemon hands in the operating system's answer; every other
+    /// composition, tests included, keeps [`NeverSaving`].
+    pub fn with_power(mut self, power: Box<dyn Power>) -> Self {
+        self.power = power;
+        self
     }
 
     /// **The reader**: publish counts and follow the installed model through
@@ -604,7 +650,25 @@ impl Coordinator {
             self.counts.waiting_for_reader = 0;
             self.worker_down = None;
         }
+        // **A backlog pauses under battery saver; a fresh file does not**
+        // (TECHNICAL §14). Fresh pairs are always at the front, so only a
+        // backlog pair at the head asks. Paused, this step does nothing and
+        // the thread waits as it does when idle: a trigger or the linger
+        // brings it back to ask again.
+        match self.plan.front() {
+            Some(next) if !next.fresh => {
+                let saving = self.power.saving();
+                self.set_paused(saving);
+                if saving {
+                    self.publish();
+                    return false;
+                }
+            }
+            Some(_) => {}
+            None => self.set_paused(false),
+        }
         let Some(pair) = self.plan.pop_front() else {
+            self.written.clear();
             self.finish_backlog();
             self.publish();
             return false;
@@ -634,6 +698,23 @@ impl Coordinator {
         }
         self.publish();
         true
+    }
+
+    /// The backlog's pause, said once each way: news, not activity.
+    fn set_paused(&mut self, paused: bool) {
+        if paused == self.paused {
+            return;
+        }
+        self.paused = paused;
+        if paused {
+            tracing::info!(
+                target: "koru_readings",
+                queued = self.plan.len(),
+                "battery saver is on: the reading backlog waits; new files are still read"
+            );
+        } else {
+            tracing::info!(target: "koru_readings", "the reading backlog goes on");
+        }
     }
 
     /// Say once when a backlog of any size drains (TECHNICAL §14).
@@ -667,6 +748,7 @@ impl Coordinator {
         let mut recognize: Option<bool> = None;
         let mut plan = Vec::new();
         let attempts = self.mirror.attempts(READER_TEXT).unwrap_or_default();
+        self.fuller = self.mirror.best_shared().unwrap_or_default();
         let workspaces = match self.projections.listings() {
             Ok(listings) => listings.into_iter().map(|(w, _)| w).collect::<Vec<_>>(),
             Err(error) => {
@@ -721,7 +803,6 @@ impl Coordinator {
         // What is waiting for a reader is in the plan again; it waits again
         // the moment it is reached if none is back.
         self.waiting.clear();
-        self.written.clear();
         self.plan = plan.into();
         self.counts = counts;
         self.stats.recomputes += 1;
@@ -845,6 +926,9 @@ impl Coordinator {
         let mut seen: HashSet<(DocumentId, String)> = HashSet::new();
         // (reference, needs the reader, read again from page 1)
         let mut candidates = Vec::new();
+        // Settled entries another entry holds a fuller reading of the same
+        // bytes for: copied, never read (TECHNICAL §18, the review's note).
+        let mut fuller_elsewhere = Vec::new();
         for reference in references {
             if reference.trashed {
                 tally.queue.trashed += 1;
@@ -858,11 +942,16 @@ impl Coordinator {
             if matches!(hinted, Some(None)) {
                 continue;
             }
-            if let Some(settled) = outcomes
-                .get(&(reference.document, reference.blob.clone()))
-                .and_then(super::mirror::Outcome::settled)
-            {
+            let outcome = outcomes.get(&(reference.document, reference.blob.clone()));
+            if let Some(settled) = outcome.and_then(super::mirror::Outcome::settled) {
                 tally.settled(workspace, &settled);
+                if outcome.is_some_and(|held| {
+                    self.fuller
+                        .get(&reference.blob)
+                        .is_some_and(|best| *best > held.rank())
+                }) {
+                    fuller_elsewhere.push(reference);
+                }
                 continue;
             }
             let mut needs_reader = matches!(hinted, Some(Some(Readable::Picture)));
@@ -899,7 +988,7 @@ impl Coordinator {
             }
             candidates.push((reference, needs_reader, restart));
         }
-        if candidates.is_empty() {
+        if candidates.is_empty() && fuller_elsewhere.is_empty() {
             return;
         }
         // **Permission first, then bytes.** One read of the Workspace's blob
@@ -919,6 +1008,26 @@ impl Coordinator {
             },
             None => HashMap::new(),
         };
+        // **A copy follows the bytes' permission, not their presence**: the
+        // Workspace's blob row is what lets it hold these words (TECHNICAL
+        // §13); nothing is read, so the object need not be on this device.
+        // Not counted: a settled entry is already in the counts as settled.
+        for reference in fuller_elsewhere {
+            let Some((size, row_mime)) = rows.get(&reference.blob) else {
+                continue;
+            };
+            out.push(Pair {
+                workspace,
+                parent: reference.document,
+                mime: reference.mime.clone().unwrap_or_else(|| row_mime.clone()),
+                hash: reference.blob,
+                size: *size,
+                fresh,
+                want: Want::Text,
+                restart: false,
+                counted: false,
+            });
+        }
         for (reference, needs_reader, restart) in candidates {
             let Some((size, row_mime)) = rows.get(&reference.blob) else {
                 tally.not_here(workspace);
@@ -997,38 +1106,31 @@ impl Coordinator {
             .ok()
             .map(ReadingDoc::from_doc);
         let prior = existing.as_ref().and_then(|doc| doc.reading(&pair.hash));
-        if prior
+        let held = prior
             .as_ref()
-            .is_some_and(Reading::is_settled_for_this_build)
-        {
-            self.stats.skipped += 1;
-            return Processed::Done;
-        }
+            .filter(|reading| reading.is_settled_for_this_build());
 
         // **Copy, don't read again**, when this store root already holds the
-        // words for these bytes (TECHNICAL §9).
-        let words_here = self
-            .written
-            .get(&pair.hash)
-            .copied()
-            .filter(|(_, parent)| *parent != pair.parent)
-            .or_else(|| {
-                self.mirror
-                    .settled_anywhere(&pair.hash, pair.parent)
-                    .ok()
-                    .flatten()
-            });
-        if let Some((workspace, parent)) = words_here
-            && let Ok(source) = fork(&state, workspace, reading_document_id(parent))
-            && let Some(reading) = ReadingDoc::from_doc(source).reading(&pair.hash)
-            && reading.is_settled_for_this_build()
+        // words for these bytes (TECHNICAL §9) — and give an entry that is
+        // already settled the reading another entry holds when that one is
+        // fuller (a capped `partial` read to the end, a higher generation),
+        // by the same comparison the mirror picks a winner with (§18).
+        if let Some(reading) = self.words_here(&state, pair)
+            && held.is_none_or(|held| rank_of(&reading) > rank_of(held))
         {
+            let refresh = held.is_some();
             self.set_stage(0, "copying", 1, 0);
             let outcome = self.copy(&state, pair, &reading);
             self.clear_stage();
-            if let Err(why) = outcome {
-                self.commit_failed(pair, now, why);
+            match outcome {
+                Ok(true) if refresh => self.stats.refreshed += 1,
+                Ok(_) => {}
+                Err(why) => self.commit_failed(pair, now, why),
             }
+            return Processed::Done;
+        }
+        if held.is_some() {
+            self.stats.skipped += 1;
             return Processed::Done;
         }
 
@@ -1054,14 +1156,42 @@ impl Coordinator {
         self.read(pair, base, prior, now)
     }
 
+    /// **The best words this store root holds for the pair's bytes**, in any
+    /// workspace, under any other entry: what this coordinator finished since
+    /// its last recompute (the mirror may not have applied it yet) and the
+    /// mirror's best settled row, each read back from its document, the
+    /// fuller by [`rank_of`]. `None` when no other entry holds a settled one.
+    fn words_here(&self, state: &Arc<AppState>, pair: &Pair) -> Option<Reading> {
+        let written = self
+            .written
+            .get(&pair.hash)
+            .copied()
+            .filter(|(_, parent)| *parent != pair.parent);
+        let mirrored = self
+            .mirror
+            .settled_anywhere(&pair.hash, pair.parent)
+            .ok()
+            .flatten()
+            .filter(|source| Some(*source) != written);
+        [written, mirrored]
+            .into_iter()
+            .flatten()
+            .filter_map(|(workspace, parent)| {
+                let source = fork(state, workspace, reading_document_id(parent)).ok()?;
+                ReadingDoc::from_doc(source).reading(&pair.hash)
+            })
+            .filter(Reading::is_settled_for_this_build)
+            .max_by_key(rank_of)
+    }
+
     /// Write a reading this store root already holds into this entry's
-    /// reading document, in one change.
+    /// reading document, in one change. Returns whether it was written.
     fn copy(
         &mut self,
         state: &Arc<AppState>,
         pair: &Pair,
         reading: &Reading,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         self.register(state, pair)?;
         let base = fork(state, pair.workspace, reading_document_id(pair.parent))
             .map_err(|_| "the reading document did not fork".to_owned())?;
@@ -1070,7 +1200,7 @@ impl Coordinator {
             Ok(Write::Applied) => {}
             Ok(Write::Superseded { .. }) => {
                 self.stats.skipped += 1;
-                return Ok(());
+                return Ok(false);
             }
             Err(error) => return Err(error.to_string()),
         }
@@ -1079,7 +1209,7 @@ impl Coordinator {
         self.stats.copied += 1;
         self.settled_last = settled_of(reading.status, reading.reason);
         self.debug_line(0, pair, "copied", reading.pages.len());
-        Ok(())
+        Ok(true)
     }
 
     /// Run the worker over one pair and write what it says.
@@ -1391,10 +1521,18 @@ impl Coordinator {
 
     /// Make sure the entry's reading document is registered and has storage.
     ///
-    /// **A fresh file registers alone and at once; a backlog registers in
-    /// batches** (TECHNICAL §9): the next unregistered parents of the backlog
-    /// in the same workspace are registered with this one, in one manifest
-    /// commit.
+    /// **Registered in batches** (TECHNICAL §9 "Registering during a
+    /// backlog"): when the pair's reading document is not registered yet,
+    /// every other pair the queue holds in the same workspace whose document
+    /// is not registered either goes with it — fresh or backlog, in queue
+    /// order, up to [`REGISTER_BATCH`] — in one manifest commit. A large
+    /// import's files reach the fresh lane together and a restart's backlog
+    /// is all queued at once, so either is a handful of manifest commits; a
+    /// file added on its own is a batch of one, registered at once.
+    ///
+    /// Each pair's first write is still its own document commit, carrying
+    /// its begin, pages and finish together: every reading document is its
+    /// own document (D9), and the Store commits one document at a time.
     fn register(&mut self, state: &Arc<AppState>, pair: &Pair) -> Result<(), String> {
         let mut store = state
             .store
@@ -1405,29 +1543,35 @@ impl Coordinator {
                 == Some(KIND_READING.to_owned())
         };
         let mut deltas = Vec::new();
-        if !pair.fresh && !registered(&store, pair.parent) {
+        if !registered(&store, pair.parent) {
             let mut parents = vec![pair.parent];
-            parents.extend(
-                self.plan
-                    .iter()
-                    .filter(|p| !p.fresh && p.workspace == pair.workspace)
-                    .map(|p| p.parent)
-                    .filter(|parent| !registered(&store, *parent))
-                    .take(REGISTER_BATCH - 1),
-            );
+            let mut taken: HashSet<DocumentId> = HashSet::from([pair.parent]);
+            for queued in self.plan.iter().filter(|p| p.workspace == pair.workspace) {
+                if parents.len() >= REGISTER_BATCH {
+                    break;
+                }
+                if taken.insert(queued.parent) && !registered(&store, queued.parent) {
+                    parents.push(queued.parent);
+                }
+            }
             let batch = store
                 .ensure_readings(pair.workspace, &parents, Timestamp::now())
                 .map_err(|e| format!("{:?}", e.code()))?;
             self.stats.registered += batch.created.len() as u64;
             if !batch.delta.is_empty() {
+                self.stats.manifest_commits += 1;
                 deltas.push(batch.delta);
             }
         }
+        // The idempotent door, for the storage: an entry that arrived by sync
+        // before its document's bytes is registered and has nothing to write
+        // into yet.
         let one = store
             .ensure_reading(pair.workspace, pair.parent, Timestamp::now())
             .map_err(|e| format!("{:?}", e.code()))?;
         if one.created {
             self.stats.registered += 1;
+            self.stats.manifest_commits += 1;
             deltas.push(one.delta);
         }
         drop(store);

@@ -155,6 +155,11 @@ fn main() {
     );
     #[cfg(windows)]
     check(
+        "a_background_sibling_runs_below_normal_with_background_io",
+        background_sibling(),
+    );
+    #[cfg(windows)]
+    check(
         "a_sibling_over_its_memory_limit_is_ended_and_reported_apart_from_a_crash",
         sibling_memory_limit(),
     );
@@ -183,10 +188,19 @@ fn fake_role(_args: Vec<String>) -> ! {
     let mut grand = false;
     let mut hoard = None;
     for word in text.split_whitespace() {
+        if word == BACKGROUND_WORD && !koru_agent_worker::follow_launch_priority() {
+            // **Readiness is the proof.** A child asked to follow its launch
+            // into background mode that could not answers with a token the
+            // parent refuses, so it is never ready.
+            token = "not-in-background".into();
+            continue;
+        }
         if let Some(value) = word.strip_prefix("port=") {
             port = value.parse().expect("port");
         } else if let Some(value) = word.strip_prefix("token=") {
-            token = value.to_owned();
+            if token.is_empty() {
+                token = value.to_owned();
+            }
         } else if let Some(value) = word.strip_prefix("grand=") {
             grand = value == "1";
         } else if let Some(value) = word.strip_prefix("hoard=") {
@@ -233,6 +247,10 @@ fn fake_role(_args: Vec<String>) -> ! {
         std::thread::park();
     }
 }
+
+/// The bootstrap word that asks the child to follow a below-normal launch
+/// into background mode ([`koru_agent_worker::follow_launch_priority`]).
+const BACKGROUND_WORD: &str = "background";
 
 /// The bootstrap word for a hoarder that **survives** its refused allocation.
 /// Asked for only where a ceiling is enforced.
@@ -1181,6 +1199,64 @@ fn sibling_launched_contained_stopped() -> Result<(), String> {
         !pid_alive(child.pid) && !pid_alive(grand)
     })
     .map_err(|_| "the sibling's tree survived stop — job containment failed".into())
+}
+
+/// **A background sibling stays out of the way** (OCR Plan 3.1): created
+/// below normal priority by the launch, and in background I/O mode by its
+/// own hand — readiness proves the second, since a child that could not
+/// enter it answers with a token the probe refuses — and still below normal
+/// afterwards, because entering background mode resets the class and
+/// `follow_launch_priority` puts it back. A normal child beside it keeps the
+/// class this process has.
+#[cfg(windows)]
+fn background_sibling() -> Result<(), String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, OpenProcess,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    fn class_of(pid: u32) -> Result<u32, String> {
+        // SAFETY: a query-only handle to a process this test started, closed
+        // before returning.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return Err(format!("the child {pid} could not be opened"));
+            }
+            let class = GetPriorityClass(handle);
+            CloseHandle(handle);
+            Ok(class)
+        }
+    }
+
+    let mut spec = sibling_spec(false, None, None);
+    spec.priority = supervisor::Priority::Background;
+    let mut inner = std::mem::replace(&mut spec.launch, Box::new(|_| Err("launch moved".into())));
+    spec.launch = Box::new(move |generation: Generation| {
+        let mut plan = inner(generation)?;
+        plan.bootstrap
+            .extend_from_slice(format!(" {BACKGROUND_WORD}").as_bytes());
+        Ok(plan)
+    });
+    let handle = supervisor::start(spec);
+    let child = ready_child(&handle, 1)
+        .map_err(|why| format!("the background child never entered background mode: {why}"))?;
+    let class = class_of(child.pid);
+    handle.stop();
+    if class? != BELOW_NORMAL_PRIORITY_CLASS {
+        return Err("the background child is not below normal priority".into());
+    }
+
+    let normal = supervisor::start(sibling_spec(false, None, None));
+    let child = ready_child(&normal, 1)?;
+    let class = class_of(child.pid);
+    normal.stop();
+    // SAFETY: the pseudo-handle of this process.
+    let ours = unsafe { GetPriorityClass(GetCurrentProcess()) };
+    if class? != ours {
+        return Err("a normal child did not keep its parent's priority class".into());
+    }
+    Ok(())
 }
 
 /// **Released for an update**: held, stopped for the swap — the image let go

@@ -239,6 +239,15 @@ impl Device {
     }
 
     fn with_hub(store: KoruStore, launcher: StubLauncher, hub: Option<Arc<ReaderHub>>) -> Device {
+        Device::built(store, launcher, hub, None)
+    }
+
+    fn built(
+        store: KoruStore,
+        launcher: StubLauncher,
+        hub: Option<Arc<ReaderHub>>,
+        power: Option<Box<dyn power::Power>>,
+    ) -> Device {
         let state = Arc::new(AppState::new(store, "memory".into(), "test".into(), 0));
         let derived = Derived::Memory(Arc::new(MemoryDerived::open().unwrap()));
         let prepared = prepare(&derived).expect("the mirror opens in memory");
@@ -273,6 +282,9 @@ impl Device {
         );
         if let Some(hub) = hub {
             coordinator = coordinator.with_reader(hub);
+        }
+        if let Some(power) = power {
+            coordinator = coordinator.with_power(power);
         }
         Device {
             state,
@@ -1511,3 +1523,7 @@ fn a_device_hands_the_worker_the_object_the_blob_store_wrote() {
     );
     assert_eq!(objects.path("not a hash"), None);
 }
+
+// --------------------------------------------- the backlog (OCR Plan 3.1)
+
+mod backlog;

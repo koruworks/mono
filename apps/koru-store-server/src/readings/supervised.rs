@@ -39,6 +39,14 @@
 //! locally, one retry, then left. `WorkerReport::memory_limit_enforced` says
 //! which applies on this host.
 //!
+//! ## Below the person's work
+//!
+//! The worker is launched with `Priority::Background`: below normal priority
+//! from its first instruction, and background I/O once it has read its
+//! bootstrap (`koru_agent_worker::follow_launch_priority`, OCR Plan 3.1).
+//! Windows only for now (`koru_agent_worker::supervisor::PRIORITY_LOWERED`);
+//! elsewhere it runs at the Store's priority.
+//!
 //! ## Provisional, from Plan 0.1's measurements
 //!
 //! [`MEMORY_LIMIT_BYTES`] is 1 GiB: a text-layer job peaked at 180 MiB over
@@ -62,8 +70,8 @@ use std::time::{Duration, Instant};
 
 use koru_agent_worker::machine::State;
 use koru_agent_worker::supervisor::{
-    self, Generation, LaunchPlan, MEMORY_LIMIT_ENFORCED, Program, WorkerEventKind, WorkerHandle,
-    WorkerSpec,
+    self, Generation, LaunchPlan, MEMORY_LIMIT_ENFORCED, Priority, Program, WorkerEventKind,
+    WorkerHandle, WorkerSpec,
 };
 use koru_read::{
     BOOTSTRAP_VERSION, Event, FRAME_VERSION, PROTOCOL_VERSION, Request, WorkerBootstrap,
@@ -460,6 +468,10 @@ fn spec(
     );
     spec.program = Program::Sibling(koru_update::READ_EXE.into());
     spec.memory_limit = Some(MEMORY_LIMIT_BYTES);
+    // **Out of the person's way** (TECHNICAL §14 "Staying out of the way"):
+    // created below normal priority; the worker puts its own I/O in
+    // background mode when it finds itself launched so (OCR Plan 3.1).
+    spec.priority = Priority::Background;
     spec.ready_deadline = READY_DEADLINE;
     // No graceful stop: an idle worker holds nothing worth saving, and a
     // working one is only ever stopped because it is hung.

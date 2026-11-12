@@ -65,6 +65,17 @@ const WINNER_IN_SQL: &str =
        FROM readings WHERE workspace_id = ?1 AND hash = ?2
       ORDER BY parent_document_id";
 
+/// Every row of a hash that more than one entry holds ([`Mirror::best_shared`]).
+/// The inner `GROUP BY` walks `readings_hash` alone; the outer read is one
+/// lookup per shared hash in the same index.
+pub(crate) const FULLER_SQL: &str =
+    "SELECT hash, generation, status, reason, page_count FROM readings
+      WHERE hash IN (SELECT hash FROM readings GROUP BY hash HAVING COUNT(*) > 1)";
+
+/// Which of two readings of the same bytes wins: generation, then status,
+/// then pages reached ([`Row::rank`]).
+pub type Rank = (i64, i64, i64);
+
 /// Why a mirror operation did not happen. Carries SQLite's message, which
 /// names tables and constraints and never a row's value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -530,7 +541,7 @@ impl Mirror {
         workspace: WorkspaceId,
     ) -> Result<HashMap<(DocumentId, String), Outcome>> {
         let mut q = self.db.prepare(
-            "SELECT parent_document_id, hash, generation, status, reason
+            "SELECT parent_document_id, hash, generation, status, reason, page_count
                FROM readings WHERE workspace_id = ?1",
         )?;
         let rows = q.query_map(params![workspace.to_storage()], |r| {
@@ -541,6 +552,7 @@ impl Mirror {
                     generation: r.get(2)?,
                     status: r.get(3)?,
                     reason: r.get(4)?,
+                    page_count: r.get(5)?,
                 },
             ))
         })?;
@@ -594,6 +606,42 @@ impl Mirror {
         Ok(best.and_then(|(_, workspace, parent)| {
             Some((WorkspaceId::parse(&workspace)?, DocumentId::parse(&parent)?))
         }))
+    }
+
+    /// **The best settled reading of every hash more than one entry holds**,
+    /// anywhere on this store root, by [`Row::rank`] — what a sibling entry
+    /// holding a lesser reading of the same bytes should receive (TECHNICAL
+    /// §18, the review's note: "a fuller reading should reach sibling
+    /// workspaces on the same store root", by the copy rule in §9).
+    ///
+    /// Only hashes held twice or more are read: a hash one entry holds has no
+    /// sibling to reach. One statement ([`FULLER_SQL`]); the rank is decided
+    /// here, as `apply` and [`Self::settled_anywhere`] decide it.
+    pub fn best_shared(&self) -> Result<HashMap<String, Rank>> {
+        let mut q = self.db.prepare(FULLER_SQL)?;
+        let rows = q.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                Row {
+                    generation: r.get(1)?,
+                    status: r.get(2)?,
+                    reason: r.get(3)?,
+                    source: None,
+                    page_count: r.get(4)?,
+                },
+            ))
+        })?;
+        let mut best: HashMap<String, Rank> = HashMap::new();
+        for row in rows {
+            let (hash, row) = row?;
+            if !settled(row.generation, row.status.as_deref(), row.reason.as_deref()) {
+                continue;
+            }
+            let rank = row.rank();
+            let held = best.entry(hash).or_insert(rank);
+            *held = (*held).max(rank);
+        }
+        Ok(best)
     }
 
     /// Every local attempt at this generation for the `text` reader, by hash.
@@ -881,6 +929,7 @@ pub struct Outcome {
     pub generation: i64,
     pub status: Option<String>,
     pub reason: Option<String>,
+    pub page_count: i64,
 }
 
 /// What a settled reading counts as, for a person.
@@ -912,6 +961,21 @@ impl Outcome {
             _ => Settled::Read,
         })
     }
+
+    /// Where this entry's reading stands against another of the same bytes.
+    pub fn rank(&self) -> Rank {
+        (
+            self.generation,
+            status_rank(self.status.as_deref(), self.reason.as_deref()),
+            self.page_count,
+        )
+    }
+}
+
+/// [`Row::rank`] of a reading as a document holds it — the same function the
+/// mirror ranks its rows by, for the coordinator comparing two documents.
+pub fn rank_of(reading: &Reading) -> Rank {
+    Row::of(reading).rank()
 }
 
 /// One `readings` row's values, compared to tell whether an application
@@ -939,7 +1003,7 @@ impl Row {
 
     /// Which of two readings of the same bytes wins: the higher generation,
     /// then the better status, then the one that reached more pages.
-    fn rank(&self) -> (i64, i64, i64) {
+    fn rank(&self) -> Rank {
         (
             self.generation,
             status_rank(self.status.as_deref(), self.reason.as_deref()),

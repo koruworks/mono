@@ -339,8 +339,8 @@ fn a_worker_silent_mid_job_is_hung_and_what_it_said_arrives() {
     ));
 }
 
-/// The launcher's spec names the sibling and its ceiling — and nothing is
-/// spawned to find that out.
+/// The launcher's spec names the sibling, its ceiling and its place below the
+/// person's work (OCR Plan 3.1) — and nothing is spawned to find that out.
 #[test]
 fn the_spec_names_the_sibling_and_its_ceiling() {
     let endpoint = koru_ipc::Endpoint::for_service("koru-read-test", "nightly").unwrap();
@@ -353,6 +353,7 @@ fn the_spec_names_the_sibling_and_its_ceiling() {
     );
     assert_eq!(spec.program, Program::Sibling(koru_update::READ_EXE.into()));
     assert_eq!(spec.memory_limit, Some(MEMORY_LIMIT_BYTES));
+    assert_eq!(spec.priority, Priority::Background);
     assert!(spec.graceful_stop.is_none());
 }
 

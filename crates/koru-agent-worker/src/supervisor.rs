@@ -87,6 +87,41 @@ pub enum Program {
     Sibling(OsString),
 }
 
+/// How much of the machine a supervised child may take while a person is
+/// using it.
+///
+/// **Chosen once per supervision**, beside [`Program`], for the reason given
+/// there. Which work deserves to stay out of the way is the caller's
+/// knowledge; this only says how a child is launched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Priority {
+    /// The parent's own priority, as every role has always had it.
+    #[default]
+    Normal,
+    /// Below the person's work: on Windows the child is created in
+    /// `BELOW_NORMAL_PRIORITY_CLASS`, so it is lowered from its first
+    /// instruction, before its bootstrap is written, and anything it starts
+    /// inherits the class. **Its I/O cannot be lowered from here**: Windows
+    /// lets a process enter background I/O mode only for itself, so a child
+    /// that links this crate calls [`crate::follow_launch_priority`], which
+    /// does it when it finds itself launched below normal. See
+    /// [`PRIORITY_LOWERED`] for the other platforms.
+    Background,
+}
+
+/// Whether [`Priority::Background`] lowers anything on this platform.
+///
+/// **Windows only, for now.** Elsewhere the child runs at its parent's
+/// priority, the supervision logs that once when it starts, and nothing
+/// pretends otherwise. What the catch-up needs: on Linux and macOS,
+/// `setpriority(PRIO_PROCESS, pid, 10)` on the spawned pid (a nice value
+/// inherited by the child's own children), and for I/O, Linux's
+/// `ioprio_set(IOPRIO_WHO_PROCESS, pid, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE,
+/// 0))` from the parent, or macOS's
+/// `setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_THROTTLE)`
+/// called by the child on itself in [`crate::follow_launch_priority`].
+pub const PRIORITY_LOWERED: bool = cfg!(windows);
+
 /// Whether [`WorkerSpec::memory_limit`] is enforced on this platform.
 ///
 /// **Windows only.** There the child's Job Object carries the ceiling, and a
@@ -154,6 +189,9 @@ pub struct WorkerSpec<P> {
     /// tree; `None` (the default) is no ceiling. See [`MEMORY_LIMIT_ENFORCED`]
     /// for where it applies. Zero is refused at spawn.
     pub memory_limit: Option<u64>,
+    /// How each child is scheduled against the person's work.
+    /// [`Priority::Normal`] by default.
+    pub priority: Priority,
     /// Mint one child's launch: argv, bootstrap, and the payload the other
     /// closures will be handed. Called once per spawn, with the generation
     /// the child will carry.
@@ -183,6 +221,7 @@ impl<P> WorkerSpec<P> {
             role,
             program: Program::OwnRole,
             memory_limit: None,
+            priority: Priority::Normal,
             launch: Box::new(launch),
             readiness: Box::new(readiness),
             health: None,
@@ -615,6 +654,18 @@ fn command_line(
     }
 }
 
+/// The process creation flags one Windows spawn carries: never a console
+/// window, and the priority class [`Priority`] asks for. Pure, so the class a
+/// background child is created in is tested without a process.
+#[cfg(windows)]
+fn creation_flags(priority: Priority) -> u32 {
+    use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, CREATE_NO_WINDOW};
+    match priority {
+        Priority::Normal => CREATE_NO_WINDOW,
+        Priority::Background => CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+    }
+}
+
 /// A ceiling of zero bytes could never start a child, so it is a mistake in
 /// the spec rather than a limit; refused on every platform alike.
 fn check_memory_limit(limit: Option<u64>) -> Result<(), String> {
@@ -759,6 +810,13 @@ pub fn start<P: Send + Sync + 'static>(spec: WorkerSpec<P>) -> WorkerHandle<P> {
             role = spec.role,
             limit_bytes,
             "this platform enforces no worker memory limit; the child runs unbounded"
+        );
+    }
+    if spec.priority == Priority::Background && !PRIORITY_LOWERED {
+        tracing::warn!(
+            target: "koru::worker",
+            role = spec.role,
+            "this platform does not lower a background worker's priority; it runs at the parent's"
         );
     }
     let (tx, rx) = channel::<Msg>();
@@ -1161,8 +1219,7 @@ impl<P: Send + Sync + 'static> Control<P> {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+            command.creation_flags(creation_flags(self.spec.priority));
         }
         let mut child = command
             .spawn()

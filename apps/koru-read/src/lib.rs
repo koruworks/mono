@@ -106,11 +106,18 @@ pub fn run() -> std::process::ExitCode {
         None
     };
 
+    // **Out of the person's way** (OCR TECHNICAL §14): launched below normal
+    // priority by the Store, this worker puts its own I/O in background mode
+    // too — something only a process may ask for itself. A worker started by
+    // hand at normal priority is left as it is.
+    let background = invocation.supervised && koru_agent_worker::follow_launch_priority();
+
     let Some(root) = invocation.root.clone().or_else(koru_channel::store_root) else {
         eprintln!("koru-read-worker: this build could not determine the channel's root");
         return std::process::ExitCode::FAILURE;
     };
     let _logging = log::init(&root, invocation.console);
+    tracing::debug!(background, "read worker priority");
 
     if let Some(bootstrap) = &bootstrap
         && let Err(why) = bootstrap::validate(bootstrap, koru_channel::segment())

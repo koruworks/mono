@@ -93,9 +93,29 @@ fn a_new_spec_is_an_unbounded_own_role_as_every_existing_role_expects() {
         WorkerSpec::new("fake", |_| Err("never launched".into()), |_: &()| Ok(()));
     assert_eq!(spec.program, Program::OwnRole);
     assert_eq!(spec.memory_limit, None);
+    assert_eq!(spec.priority, Priority::Normal);
 }
 
 #[test]
 fn the_memory_limit_is_enforced_exactly_where_there_is_a_job_object() {
     assert_eq!(MEMORY_LIMIT_ENFORCED, cfg!(windows));
+}
+
+#[test]
+fn a_lowered_priority_is_promised_only_where_it_is_applied() {
+    assert_eq!(PRIORITY_LOWERED, cfg!(windows));
+}
+
+/// **A background child is created below normal, and nothing else about its
+/// launch moves**: no console window either way, and a normal child carries
+/// no priority class at all, so it keeps its parent's as every role always has.
+#[cfg(windows)]
+#[test]
+fn a_background_child_is_created_below_normal_and_a_normal_one_as_before() {
+    use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, CREATE_NO_WINDOW};
+    assert_eq!(creation_flags(Priority::Normal), CREATE_NO_WINDOW);
+    assert_eq!(
+        creation_flags(Priority::Background),
+        CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+    );
 }

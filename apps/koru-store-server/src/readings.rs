@@ -36,6 +36,7 @@ pub(crate) mod coordinator;
 pub(crate) mod feed;
 pub(crate) mod launcher;
 pub(crate) mod mirror;
+pub(crate) mod power;
 pub(crate) mod supervised;
 // The reader that finds words in pictures: its installer and the state the
 // installer, the coordinator, search and the routes share (OCR Plan 2.4).
@@ -225,7 +226,8 @@ impl Prepared {
             objects,
             Arc::clone(&self.inbox),
         )
-        .with_reader(Arc::clone(&self.hub));
+        .with_reader(Arc::clone(&self.hub))
+        .with_power(Box::new(power::SystemPower));
         board.set_current(Arc::clone(&coordinator.current));
         let progress = Arc::clone(&board);
         coordinator.on_progress(move || progress.publish());
@@ -511,6 +513,7 @@ fn coordinator_report(coordinator: &coordinator::Coordinator) -> serde_json::Val
         "done": coordinator.stats,
         "worker": coordinator.launcher_report(),
         "waiting_because": coordinator.worker_down.as_ref().map(|why| why.code()),
+        "paused_because": coordinator.paused.then_some("battery-saver"),
     })
 }
 
