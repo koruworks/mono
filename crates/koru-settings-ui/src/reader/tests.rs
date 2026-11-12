@@ -13,6 +13,7 @@ fn row(status: ReaderStatus) -> ReaderRow {
         languages: vec!["und-Latn".into(), "zh".into(), "ja".into()],
         items: Vec::new(),
         more: 0,
+        not_here: 0,
     }
 }
 
@@ -292,6 +293,42 @@ fn the_card_is_on_the_editor_page_and_its_buttons_ask_the_host() {
         surface.take_requests(),
         vec![Request::ShowReaderItem("file-1".into())]
     );
+}
+
+/// **Files whose contents are on another device** get a row of their own in
+/// any state, in the words search uses, and no row when there are none (OCR
+/// Plan 3.3, EXPERIENCE "On a second device").
+#[test]
+fn files_on_another_device_have_a_row_of_their_own() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.set_reader(Some(row(on(0))));
+    assert!(
+        !lines(&surface)
+            .iter()
+            .any(|l| l.contains("not on this computer")),
+        "none, no row"
+    );
+    for status in [on(0), not_downloaded()] {
+        let mut elsewhere = row(status);
+        elsewhere.not_here = 38;
+        surface.set_reader(Some(elsewhere));
+        let all = lines(&surface);
+        assert!(
+            all.iter()
+                .any(|l| l == "38 files are not on this computer."),
+            "{all:?}"
+        );
+    }
+    assert_eq!(not_here(Lang::En, 1), "One file is not on this computer.");
+    for lang in Lang::ALL {
+        let sentence = not_here(lang, 1_240);
+        assert!(
+            sentence.contains(&number::decimal(lang, 1_240)) && !sentence.contains("{}"),
+            "{}: {sentence}",
+            lang.tag()
+        );
+    }
 }
 
 /// A long list shows its first ones and says how many more.

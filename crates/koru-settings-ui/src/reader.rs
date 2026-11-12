@@ -18,6 +18,10 @@
 //! | not downloaded | *Not downloaded · 24 MB* | **Turn on** (from Settings, whatever *Not now* said) |
 //! | downloading | how far it has got | **Stop** |
 //! | on | *On · 8,297 read · 3 could not be read* | **Turn off**; the download's own row, **Remove** |
+//!
+//! In any state, files nobody has read whose contents are on another device
+//! get a row of their own — *38 files are not on this computer* — so they are
+//! never counted as waiting (OCR Plan 3.3).
 
 use koru_i18n::{Key, Lang, fill, number, t};
 
@@ -41,6 +45,12 @@ pub struct ReaderRow {
     pub items: Vec<ReaderItemRow>,
     /// Items the host knows of beyond `items`.
     pub more: u64,
+    /// Items on this computer's workspaces that nobody has read and whose
+    /// contents are on another device: nothing here can read them, so the
+    /// card says so rather than counting them as waiting (EXPERIENCE "On a
+    /// second device"). The total for this computer, as the row's other
+    /// counts are.
+    pub not_here: u64,
 }
 
 /// Where the reader stands on this computer.
@@ -145,6 +155,9 @@ pub(crate) fn lay_out(b: &mut Builder<'_>, lang: Lang, row: &ReaderRow) {
             t(lang, Key::SettingsReaderRemove),
         ),
         _ => {}
+    }
+    if row.not_here > 0 {
+        b.row_text(&not_here(lang, row.not_here), None);
     }
     b.row_text(
         t(lang, Key::SettingsReaderWhatIsRead),
@@ -331,6 +344,18 @@ fn language_name<'a>(lang: Lang, tag: &'a str) -> &'a str {
         "zh" | "zh-Hans" | "zh-Hant" => t(lang, Key::SettingsReaderLanguageChinese),
         "ja" => t(lang, Key::SettingsReaderLanguageJapanese),
         other => other,
+    }
+}
+
+/// *38 files are not on this computer.* — the words search uses for the same
+/// files, a whole sentence for one.
+pub(crate) fn not_here(lang: Lang, count: u64) -> String {
+    match count {
+        1 => t(lang, Key::ReaderNotHereOne).to_owned(),
+        _ => fill(
+            t(lang, Key::ReaderNotHere),
+            &[&number::decimal(lang, count)],
+        ),
     }
 }
 

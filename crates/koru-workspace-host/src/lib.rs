@@ -69,6 +69,7 @@ mod profile_lifecycle_decision;
 mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
+pub mod reader_offer;
 pub mod reading_file;
 pub mod reading_requests;
 pub mod reveal;
@@ -1439,6 +1440,30 @@ pub trait View {
     /// A completed content import with an action that lands on the root result.
     fn show_import_notice(&mut self, message: String, _target: ImportNoticeTarget) -> bool {
         self.show_notice(message)
+    }
+
+    /// **A completed import through an importer**, with what it told the
+    /// reader: how many pictures and scanned PDFs it brought and the reader's
+    /// state as the Store answered (OCR Plan 3.3). A view that can, gives the
+    /// summary its line — *412 pictures and scanned PDFs can be found by the
+    /// words in them…* with **Turn on** and **Not now** — when the state
+    /// says to offer; the answers come back as
+    /// [`PaneRequest::ReaderAnswer`]. The default is the plain summary.
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: ImportNoticeTarget,
+        _reading: reader_offer::ImportReading,
+    ) -> bool {
+        self.show_import_notice(message, target)
+    }
+
+    /// **The Store answered something pressed on that line**, or a download
+    /// it started moved on: the reader's state, or `None` when the Store did
+    /// not answer. Every pane hears it; one carrying the line or the download
+    /// it started updates it and says so.
+    fn reader_answered(&mut self, _state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        false
     }
 
     /// **Ask whether voice input may be set up**, naming the download size and
@@ -2861,6 +2886,11 @@ pub enum PaneRequest {
     VoiceConsent(bool),
     /// Ask the running model download to stop at its next chunk boundary.
     CancelVoiceDownload,
+    /// **An answer on the line in an import's summary** — Turn on, Not now,
+    /// or Stop on the download it started (OCR Plan 3.3). The shell carries
+    /// it to the Store off the event loop and hands the reader's state back
+    /// through [`View::reader_answered`].
+    ReaderAnswer(reader_offer::ReaderAnswer),
     /// **Offer a speech model**, opening the consent step and then the
     /// download. What the Settings section's *Install* asks for, and the same
     /// work the tray row already asks the agent to hand a window.
@@ -3076,6 +3106,7 @@ impl PaneRequest {
             Self::CancelImport => "request.cancel_import",
             Self::VoiceConsent(..) => "request.voice_consent",
             Self::CancelVoiceDownload => "request.cancel_voice_download",
+            Self::ReaderAnswer(..) => "request.reader_answer",
             Self::SetUpVoice => "request.set_up_voice",
             Self::RemoveVoiceModels => "request.remove_voice_models",
             Self::AskVoiceDevices => "request.ask_voice_devices",

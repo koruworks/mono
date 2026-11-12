@@ -43,6 +43,11 @@ mod store;
 use catalog::Catalog;
 pub use entity_search::{EntityDocument, EntitySearch, EntitySearchUpdate, EntityWorkspace};
 pub use modal::SearchModal;
+/// **The line about pictures and scans, for a host that shows it elsewhere**:
+/// an import's summary words its line, and a download started there its
+/// progress, with the sentences and answers the line in search uses (OCR Plan
+/// 3.3). Pure wording over the Store's `ReaderState`; nothing here dials.
+pub use offer::{LineAction, LineView, import_summary, install_line};
 #[cfg(test)]
 use reader::SearchReadResponse;
 use reader::{SearchReadKind, SearchReadResult, SearchReader};
@@ -3177,7 +3182,14 @@ impl SearchSurface {
             self.paint_landing(canvas, root);
         } else if self.page.hits.is_empty() {
             if let Some(heading) = self.indexing_heading() {
-                self.paint_indexing(canvas, root, &heading);
+                self.paint_indexing(
+                    canvas,
+                    root,
+                    &heading,
+                    "No matches yet — results appear as the index catches up.",
+                );
+            } else if let Some((heading, detail)) = self.reading_heading() {
+                self.paint_indexing(canvas, root, &heading, &detail);
             } else {
                 self.paint_empty_results(canvas, root);
             }
@@ -3714,7 +3726,35 @@ impl SearchSurface {
         }
     }
 
-    fn paint_indexing(&mut self, canvas: &mut Scene, root: Affine, heading: &str) {
+    /// **The other empty page that is not an answer** (OCR Plan 3.3): while
+    /// pictures and PDFs in this query's scope are still being read on this
+    /// computer, no hits is *Still reading N of M pictures and PDFs. Results
+    /// appear as they are read.* — the same rule as
+    /// [`indexing_heading`](Self::indexing_heading), for the same reason. The
+    /// heading and the line under it, in the surface's language; `None` once
+    /// nothing in scope is left to read here, which is when the real verdict
+    /// takes over. What `N` counts is [`offer::left`].
+    fn reading_heading(&self) -> Option<(String, String)> {
+        if self.query.is_empty() || self.warning_message().is_some() {
+            return None;
+        }
+        offer::empty_progress(
+            koru_i18n::current(),
+            self.page.reading.as_ref(),
+            self.offer.reader.as_ref(),
+        )
+    }
+
+    /// Whether an empty page is the verdict, with its places left to look —
+    /// and so whether those links are there to be pressed. Not while a
+    /// workspace is indexing or something is still being read.
+    fn empty_page_is_verdict(&self) -> bool {
+        self.indexing_heading().is_none() && self.reading_heading().is_none()
+    }
+
+    /// One painter for both progress pages: the heading, and under it the
+    /// line saying the page will change on its own.
+    fn paint_indexing(&mut self, canvas: &mut Scene, root: Affine, heading: &str, detail: &str) {
         let p = theme::p();
         let title = self.engine.simple_layout(
             heading,
@@ -3730,10 +3770,7 @@ impl SearchSurface {
         );
         // Says the two things the single line did not: that nothing has matched
         // *yet*, and that the page will change on its own.
-        let detail = self.engine.simple_layout(
-            "No matches yet — results appear as the index catches up.",
-            theme::role::meta(),
-        );
+        let detail = self.engine.simple_layout(detail, theme::role::meta());
         scene::draw_layout_first_line(
             canvas,
             root,
@@ -5055,6 +5092,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .profile_workspaces_rect()
                 .is_some_and(|rect| rect.contains(x, y))
@@ -5103,6 +5141,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .archived_workspaces_rect()
                 .is_some_and(|rect| rect.contains(x, y))
@@ -5114,6 +5153,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self.deleted_pages_rect().contains(x, y)
         {
             self.toggle_deleted_pages();
@@ -5356,6 +5396,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .deleted_pages_rect()
                 .contains(self.pointer.0, self.pointer.1);
@@ -5363,6 +5404,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .profile_workspaces_rect()
                 .is_some_and(|rect| rect.contains(self.pointer.0, self.pointer.1));

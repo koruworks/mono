@@ -262,6 +262,7 @@ pub(crate) fn row(answer: &Answer) -> Option<ReaderRow> {
         } else {
             more
         },
+        not_here: state.counts.not_here,
     })
 }
 

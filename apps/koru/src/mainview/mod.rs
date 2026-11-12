@@ -102,6 +102,7 @@ mod place_chooser;
 mod profile_probe;
 mod profile_wait;
 mod rail_overflow;
+mod reader_offer;
 mod recording;
 mod reminder_creation;
 mod reminder_management;
@@ -571,6 +572,25 @@ pub(crate) enum ToastPayload {
         document: koru_core::DocumentId,
         node: NodeId,
         target: crate::panes::explore::rail::RailTarget,
+    },
+    /// **An import's summary that also offers to read the pictures and
+    /// scanned PDFs it brought** (OCR Plan 3.3): its action goes where `go`
+    /// does, its line's answers are `line` in the order drawn, and `terms`
+    /// are what **Turn on** agrees to — the terms the line showed the size
+    /// of.
+    ImportReading {
+        go: Box<ToastPayload>,
+        line: Vec<koru_search_ui::LineAction>,
+        terms: Option<koru_store_wire::reader::ReaderTerms>,
+    },
+    /// A download of the reader that Turn on started from that line. Its
+    /// action is **Stop**; like the voice download's, closing it hides the
+    /// progress and never changes the download.
+    ReaderDownload,
+    /// That download ended without installing: **Try again** (which resumes,
+    /// with these terms) and **Not now**.
+    ReaderEnded {
+        terms: Option<koru_store_wire::reader::ReaderTerms>,
     },
     /// Message only — no action button.
     None,
@@ -14101,22 +14121,25 @@ impl View for MainView {
         message: String,
         target: koru_workspace_host::ImportNoticeTarget,
     ) -> bool {
-        let (action, payload) = match target {
-            koru_workspace_host::ImportNoticeTarget::Notebook(document) => {
-                ("View Notebook", ToastPayload::Open(document))
-            }
-            koru_workspace_host::ImportNoticeTarget::Document(document) => {
-                ("View file", ToastPayload::Open(document))
-            }
-            koru_workspace_host::ImportNoticeTarget::File(file) => {
-                ("View file", ToastPayload::ShowFile(file))
-            }
-        };
+        let (action, payload) = reader_offer::import_notice_action(target);
         self.toast = Some((
             koru_ui::Toast::new(message, Some(action), Instant::now()),
             payload,
         ));
         true
+    }
+
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: koru_workspace_host::ImportNoticeTarget,
+        reading: koru_workspace_host::reader_offer::ImportReading,
+    ) -> bool {
+        self.show_import_reading(message, target, reading)
+    }
+
+    fn reader_answered(&mut self, state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        self.reader_answered_toast(state)
     }
 
     fn show_import_preview(&mut self, preview: koru_workspace_host::ImportPreview) -> bool {

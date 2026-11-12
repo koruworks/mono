@@ -1572,6 +1572,25 @@ impl View for ManagerView {
         }
     }
 
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: koru_workspace_host::ImportNoticeTarget,
+        reading: koru_workspace_host::reader_offer::ImportReading,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.show_import_notice_reading(message, target, reading),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn reader_answered(&mut self, state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        match self {
+            Self::Container(c) => c.reader_answered(state),
+            Self::Document(_) => false,
+        }
+    }
+
     fn show_import_preview(&mut self, preview: koru_workspace_host::ImportPreview) -> bool {
         match self {
             Self::Container(c) => c.show_import_preview(preview),

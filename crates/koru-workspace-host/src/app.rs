@@ -1155,6 +1155,10 @@ enum ImportMessage {
     Inspected(Result<InspectedImport, String>),
     Imported(Result<koru_store_core::model::Workspace, String>),
     ContentImported(Result<ContentImportSummary, koru_import::ImportError>),
+    /// The Store answered an answer on the line in an import's summary, or a
+    /// download it started moved on (OCR Plan 3.3). `Err` is the code of a
+    /// Store that did not answer.
+    ReaderAnswered(Result<koru_store_wire::reader::ReaderState, String>),
     Exported {
         id: WorkspaceId,
         name: String,
@@ -1361,6 +1365,10 @@ struct ContentImportSummary {
     had_failures: bool,
     /// Only populated when even the FAILED child could not be stored.
     warnings: Vec<String>,
+    /// What an import through an importer told the reader and what the Store
+    /// answered; `None` for added or pasted files, and when the Store did not
+    /// answer (OCR Plan 3.3).
+    reading: Option<crate::reader_offer::ImportReading>,
 }
 
 /// Report progress to the visible import toast and existing non-Evernote
@@ -2702,6 +2710,10 @@ struct App<H: Host> {
     /// may begin.
     import_cancel_hide_due: Option<Instant>,
     import_cancel_worker_done: bool,
+    /// Whether a thread is already watching a download Turn on started from
+    /// an import's summary, so a second press does not start a second watch
+    /// (OCR Plan 3.3).
+    reader_watch: Arc<std::sync::atomic::AtomicBool>,
     pending_import: Option<InspectedImport>,
     /// Workspaces with a durable soft-delete request running off the UI thread.
     /// Prevents a double click from issuing competing Store mutations.
@@ -5951,6 +5963,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             import_cancel: None,
             import_cancel_hide_due: None,
             import_cancel_worker_done: false,
+            reader_watch: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
@@ -9910,6 +9923,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::CancelImport => self.cancel_content_import(),
             PaneRequest::VoiceConsent(accepted) => self.answer_voice_consent(accepted),
             PaneRequest::CancelVoiceDownload => self.stop_voice_download(),
+            PaneRequest::ReaderAnswer(answer) => self.answer_reader(answer),
             PaneRequest::SetUpVoice => self.offer_voice_model(source),
             PaneRequest::RemoveVoiceModels => self.remove_voice_models(),
             PaneRequest::AskVoiceDevices => self.ask_voice_devices(),
@@ -10122,10 +10136,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .into_iter()
                         .map(|entry| entry.title)
                         .collect();
-                    let blobs = StoreBlobSink {
+                    let store_blobs = StoreBlobSink {
                         client: client.clone(),
                         workspace: store_workspace,
                     };
+                    // Every byte the importer keeps goes through here, so the
+                    // count of pictures and PDFs it brought is taken here
+                    // (OCR Plan 3.3) — a number, never a name.
+                    let blobs = crate::reader_offer::CountingBlobSink::new(&store_blobs);
                     let tags = StoreTagSink::new(
                         segment,
                         root.clone(),
@@ -10163,6 +10181,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         content.documents.len(),
                         content.warnings.len()
                     );
+                    // Every blob is stored by now. If any was a picture or a
+                    // PDF, ask the reader's state once so the Store reads its
+                    // catalog while the documents are written, and the
+                    // summary can say the real size.
+                    let pictures_and_scans = blobs.count();
+                    crate::reader_offer::prime(format, pictures_and_scans, &client);
                     let mut succeeded = 0usize;
                     let mut already_known = 0usize;
                     let mut files = Vec::new();
@@ -10330,6 +10354,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             }
                         }
                     }
+                    // **Once, at the end, with the count**: an import through
+                    // an importer tells the reader how many pictures and
+                    // scanned PDFs it brought, which is what lets Koru offer
+                    // once more after a *Not now*. Never for added or pasted
+                    // files (`reports_to_reader`).
+                    let reading = crate::reader_offer::report_import(
+                        format,
+                        pictures_and_scans,
+                        &client,
+                        &std::thread::sleep,
+                    );
                     Ok(ContentImportSummary {
                         root,
                         files,
@@ -10337,16 +10372,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         already_known,
                         had_failures,
                         warnings,
+                        reading,
                     })
                 })();
                 match &result {
                     Ok(summary) => println!(
-                        "[Koru][import] completed format={format} root={} files={} imported={} already_known={} partial_failures={}",
+                        "[Koru][import] completed format={format} root={} files={} imported={} already_known={} partial_failures={} pictures_and_scans={}",
                         summary.root.id().to_storage(),
                         summary.files.len(),
                         summary.imported,
                         summary.already_known,
-                        summary.had_failures
+                        summary.had_failures,
+                        summary
+                            .reading
+                            .as_ref()
+                            .map_or(0, |reading| reading.pictures_and_scans)
                     ),
                     Err(_) => println!("[Koru][import] failed format={format}"),
                 }
@@ -10565,6 +10605,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 );
             }
             ImportMessage::Inspected(Ok(inspected)) => self.confirm_import(inspected),
+            ImportMessage::ReaderAnswered(result) => self.reader_answered(result),
             ImportMessage::Imported(Err(error)) => {
                 self.import_busy = false;
                 self.import_source = None;
@@ -10693,6 +10734,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     already_known,
                     had_failures,
                     warnings,
+                    reading,
                 } = summary;
                 self.answer_ai_import(
                     files
@@ -10768,10 +10810,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         if known == 1 { "file was" } else { "files were" }
                     ),
                 };
-                self.notice_import(
-                    message,
-                    root.notice_target(),
-                );
+                match reading {
+                    // The summary gains its line when the reader's state
+                    // says to offer; the window decides from the state.
+                    Some(reading) => {
+                        self.notice_import_reading(message, root.notice_target(), reading)
+                    }
+                    None => self.notice_import(message, root.notice_target()),
+                }
                 if !warnings.is_empty() {
                     self.report(
                         ErrorReport::new(
@@ -12391,6 +12437,125 @@ Nothing was written. The store starts on demand, so this usually means it could 
             if pane.view.show_import_notice(message.clone(), target) {
                 pane.window.request_redraw();
                 return;
+            }
+        }
+    }
+
+    /// An importer's summary, with what it told the reader (OCR Plan 3.3).
+    fn notice_import_reading(
+        &mut self,
+        message: String,
+        target: crate::ImportNoticeTarget,
+        reading: crate::reader_offer::ImportReading,
+    ) {
+        for pane in self.panes.values_mut() {
+            if pane
+                .view
+                .show_import_notice_reading(message.clone(), target, reading.clone())
+            {
+                pane.window.request_redraw();
+                return;
+            }
+        }
+    }
+
+    /// **Carry out an answer on the line in an import's summary**, off the
+    /// event loop (OCR Plan 3.3). Every answer comes back as the reader's
+    /// state, through the import channel, and goes to every pane.
+    ///
+    /// **Turn on** installs with the terms the person was shown, then asks
+    /// about the download every [`INSTALL_POLL`] until it has ended — one
+    /// such watch at a time, however often Turn on or Try again is pressed.
+    /// **Stop** and **Not now** are one call each; a running watch reports
+    /// what Stop did.
+    ///
+    /// [`INSTALL_POLL`]: crate::reader_offer::INSTALL_POLL
+    fn answer_reader(&mut self, answer: crate::reader_offer::ReaderAnswer) {
+        use crate::reader_offer::{INSTALL_POLL, ReaderAnswer, installing};
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let watching = Arc::clone(&self.reader_watch);
+        let spawned = std::thread::Builder::new()
+            .name("koru-reader-answer".into())
+            .spawn(move || {
+                let send = |result: Result<koru_store_wire::reader::ReaderState, String>| {
+                    let _ = tx.send(ImportMessage::ReaderAnswered(result));
+                    let _ = proxy.send_event(Wake::Import);
+                };
+                let client = match client_at(root.as_deref()) {
+                    Ok(client) => client,
+                    Err(error) => {
+                        send(Err(error.code().as_str().to_owned()));
+                        return;
+                    }
+                };
+                let store = client.store();
+                let answered = match &answer {
+                    ReaderAnswer::TurnOn(request) => {
+                        store.install_reader(request).or_else(|error| {
+                            // The terms changed under the line, or the reader
+                            // cannot be used after all: the state says which.
+                            match error.code() {
+                                koru_store_core::errors::Code::ReaderTermsChanged
+                                | koru_store_core::errors::Code::ReaderUnavailable => {
+                                    store.reader()
+                                }
+                                _ => Err(error),
+                            }
+                        })
+                    }
+                    ReaderAnswer::Stop => store.stop_reader_install(),
+                    ReaderAnswer::NotNow => store.decline_reader(),
+                };
+                let mut state = match answered {
+                    Ok(state) => state,
+                    Err(error) => {
+                        send(Err(error.code().as_str().to_owned()));
+                        return;
+                    }
+                };
+                let watch = matches!(answer, ReaderAnswer::TurnOn(_))
+                    && installing(&state)
+                    && !watching.swap(true, std::sync::atomic::Ordering::AcqRel);
+                send(Ok(state.clone()));
+                if !watch {
+                    return;
+                }
+                while installing(&state) {
+                    std::thread::sleep(INSTALL_POLL);
+                    match store.reader() {
+                        Ok(next) => {
+                            state = next;
+                            send(Ok(state.clone()));
+                        }
+                        Err(error) => {
+                            send(Err(error.code().as_str().to_owned()));
+                            break;
+                        }
+                    }
+                }
+                watching.store(false, std::sync::atomic::Ordering::Release);
+            });
+        if let Err(error) = spawned {
+            println!("[Koru][reader] could not start the answer's thread: {error}");
+        }
+    }
+
+    /// The Store's answer, to every pane: the one carrying the line or the
+    /// download updates it.
+    fn reader_answered(&mut self, result: Result<koru_store_wire::reader::ReaderState, String>) {
+        let state = match result {
+            Ok(state) => Some(state),
+            Err(code) => {
+                // Rare and about the person's own answer: worth one line.
+                println!("[Koru][reader] the Store did not answer: {code}");
+                None
+            }
+        };
+        for pane in self.panes.values_mut() {
+            if pane.view.reader_answered(state.as_ref()) {
+                pane.window.request_redraw();
             }
         }
     }

@@ -165,6 +165,13 @@ fn reading_vocabulary_exists_in_every_language_and_never_says_ocr() {
         Key::SettingsReaderKinds,
         Key::SettingsReaderArabicNotRead,
         Key::SettingsReaderMore,
+        // OCR Plan 3.3: an import's summary, the empty page while reading,
+        // and files whose contents are on another device.
+        Key::ReaderOfferHere,
+        Key::ReaderOfferHereOne,
+        Key::ReaderResultsAppear,
+        Key::ReaderNotHere,
+        Key::ReaderNotHereOne,
     ];
     for key in keys {
         for lang in Lang::ALL {

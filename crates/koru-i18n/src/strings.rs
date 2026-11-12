@@ -2999,6 +2999,17 @@ pub enum Key {
     /// Below the *could not be read* list when it shows only the first ones:
     /// `{}` is how many more.
     SettingsReaderMore,
+    // ---- an import's summary, the empty page while reading, and files whose
+    // contents are not on this computer (OCR Plan 3.3).
+    /// After the import's count in its summary: where the reading happens.
+    ReaderOfferHere,
+    ReaderOfferHereOne,
+    /// Under *Still reading N of M* when a search found nothing: a progress
+    /// report, not a verdict.
+    ReaderResultsAppear,
+    /// `{}` files nobody has read whose contents are not on this computer.
+    ReaderNotHere,
+    ReaderNotHereOne,
     /// The lane's accessibility group.
     SidebarControls,
     /// The help popover's rows and foot (workspace foundation).
@@ -3315,7 +3326,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2303] = [
+    pub const ALL: [Key; 2308] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5414,6 +5425,11 @@ impl Key {
         Key::SettingsReaderKinds,
         Key::SettingsReaderArabicNotRead,
         Key::SettingsReaderMore,
+        Key::ReaderOfferHere,
+        Key::ReaderOfferHereOne,
+        Key::ReaderResultsAppear,
+        Key::ReaderNotHere,
+        Key::ReaderNotHereOne,
         Key::SidebarControls,
         Key::WhatsNew,
         Key::FullChangelog,
@@ -16508,6 +16524,11 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsReaderKinds, en: "Pictures (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs, and .txt, .md, .csv and .html files. iPhone photos (HEIC) are not read.", es: "Imágenes (PNG, JPEG, GIF, WebP, BMP, TIFF), PDF y archivos .txt, .md, .csv y .html. Las fotos de iPhone (HEIC) no se leen.", pt_br: "Imagens (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs e arquivos .txt, .md, .csv e .html. Fotos de iPhone (HEIC) não são lidas.", de: "Bilder (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs sowie .txt-, .md-, .csv- und .html-Dateien. iPhone-Fotos (HEIC) werden nicht gelesen.", fr: "Images (PNG, JPEG, GIF, WebP, BMP, TIFF), PDF, et fichiers .txt, .md, .csv et .html. Les photos d’iPhone (HEIC) ne sont pas lues.", ar: "الصور (PNG وJPEG وGIF وWebP وBMP وTIFF) وملفات PDF وملفات ‎.txt و‎.md و‎.csv و‎.html. لا تُقرأ صور iPhone ‏(HEIC).", zh_hans: "图片（PNG、JPEG、GIF、WebP、BMP、TIFF）、PDF，以及 .txt、.md、.csv 和 .html 文件。不读取 iPhone 照片（HEIC）。", ja: "画像（PNG、JPEG、GIF、WebP、BMP、TIFF）、PDF、および .txt、.md、.csv、.html ファイル。iPhone の写真（HEIC）は読み取りません。" },
     Row { key: Key::SettingsReaderArabicNotRead, en: "Arabic script is not read yet.", es: "La escritura árabe todavía no se lee.", pt_br: "A escrita árabe ainda não é lida.", de: "Arabische Schrift wird noch nicht gelesen.", fr: "L’écriture arabe n’est pas encore lue.", ar: "لا تُقرأ الكتابة العربية بعد.", zh_hans: "暂不读取阿拉伯文字。", ja: "アラビア文字はまだ読み取りません。" },
     Row { key: Key::SettingsReaderMore, en: "Not listed here: {}", es: "No se muestran aquí: {}", pt_br: "Não listados aqui: {}", de: "Hier nicht aufgeführt: {}", fr: "Non listés ici : {}", ar: "غير مدرجة هنا: {}", zh_hans: "此处未列出：{}", ja: "ここに表示されていないもの: {}" },
+    Row { key: Key::ReaderOfferHere, en: "Koru reads them on this computer.", es: "Koru los lee en este equipo.", pt_br: "O Koru os lê neste computador.", de: "Koru liest sie auf diesem Computer.", fr: "Koru les lit sur cet ordinateur.", ar: "يقرؤها Koru على هذا الكمبيوتر.", zh_hans: "Koru 在这台电脑上读取它们。", ja: "Koru がこのコンピューター上で読み取ります。" },
+    Row { key: Key::ReaderOfferHereOne, en: "Koru reads it on this computer.", es: "Koru lo lee en este equipo.", pt_br: "O Koru o lê neste computador.", de: "Koru liest es auf diesem Computer.", fr: "Koru le lit sur cet ordinateur.", ar: "يقرؤه Koru على هذا الكمبيوتر.", zh_hans: "Koru 在这台电脑上读取它。", ja: "Koru がこのコンピューター上で読み取ります。" },
+    Row { key: Key::ReaderResultsAppear, en: "Results appear as they are read.", es: "Los resultados aparecen a medida que se leen.", pt_br: "Os resultados aparecem conforme são lidos.", de: "Ergebnisse erscheinen, sobald sie gelesen sind.", fr: "Les résultats apparaissent au fil de la lecture.", ar: "تظهر النتائج فور قراءتها.", zh_hans: "读取后，结果会陆续出现。", ja: "読み取りが進むにつれて結果が表示されます。" },
+    Row { key: Key::ReaderNotHere, en: "{} files are not on this computer.", es: "{} archivos no están en este equipo.", pt_br: "{} arquivos não estão neste computador.", de: "{} Dateien sind nicht auf diesem Computer.", fr: "{} fichiers ne sont pas sur cet ordinateur.", ar: "{} من الملفات ليست على هذا الكمبيوتر.", zh_hans: "{} 个文件不在这台电脑上。", ja: "{} 件のファイルはこのコンピューターにありません。" },
+    Row { key: Key::ReaderNotHereOne, en: "One file is not on this computer.", es: "Un archivo no está en este equipo.", pt_br: "Um arquivo não está neste computador.", de: "Eine Datei ist nicht auf diesem Computer.", fr: "Un fichier n’est pas sur cet ordinateur.", ar: "ملف واحد ليس على هذا الكمبيوتر.", zh_hans: "1 个文件不在这台电脑上。", ja: "1 件のファイルはこのコンピューターにありません。" },
     Row { key: Key::SidebarControls, en: "Sidebar controls", es: "Controles de la barra lateral", pt_br: "Controles da barra lateral", de: "Steuerelemente der Seitenleiste", fr: "Commandes de la barre latérale", ar: "عناصر تحكم الشريط الجانبي", zh_hans: "侧边栏控件", ja: "サイドバーのコントロール" },
     Row { key: Key::WhatsNew, en: "What's new", es: "Novedades", pt_br: "Novidades", de: "Was ist neu", fr: "Nouveautés", ar: "ما الجديد", zh_hans: "新功能", ja: "新機能" },
     Row { key: Key::FullChangelog, en: "Full changelog", es: "Registro de cambios completo", pt_br: "Registro de alterações completo", de: "Vollständiges Änderungsprotokoll", fr: "Journal des modifications complet", ar: "سجل التغييرات الكامل", zh_hans: "完整更新日志", ja: "変更履歴をすべて表示" },

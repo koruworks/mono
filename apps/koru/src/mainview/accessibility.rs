@@ -458,6 +458,12 @@ impl MainView {
             Some(ChromeStop::Apps(index)) => {
                 rev.byte(4).u64(index as u64);
             }
+            // The toast's line (OCR Plan 3.3). The toast publishes no node of
+            // its own yet, so native focus stays where it was; the byte keeps
+            // the fingerprint honest about where the keyboard is.
+            Some(ChromeStop::Toast(index)) => {
+                rev.byte(5).u64(index as u64);
+            }
         }
         rev.u64(self.profile_wait.revision);
         rev.bool(self.sidebar.is_open());

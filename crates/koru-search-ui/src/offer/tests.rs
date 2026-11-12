@@ -355,6 +355,292 @@ fn the_state_is_fetched_only_when_the_line_needs_it() {
     assert!(offer.wants_state(Some(&waiting), now + STATE_FRESH));
 }
 
+// ================================================ the empty page (OCR Plan 3.3)
+
+/// **The three empty pages** of EXPERIENCE "Before there is anything", each
+/// decided from the counts alone.
+#[test]
+fn a_search_that_found_nothing_is_one_of_three_pages() {
+    // 1. The reader is not here and items wait for it: *No results*, and the
+    //    offer directly below it saying why.
+    let waiting = counts(412, 412, 500, true);
+    assert_eq!(
+        empty_progress(Lang::En, Some(&waiting), Some(&offered())),
+        None
+    );
+    let offer = view(Lang::En, Some(&waiting), Some(&offered()), false).unwrap();
+    assert!(
+        offer
+            .sentence
+            .starts_with("412 pictures and scanned PDFs have not been read"),
+        "{}",
+        offer.sentence
+    );
+
+    // 2. Reading is under way: a progress report in place of *No results*,
+    //    and no line under it.
+    let reading = counts(0, 1_240, 8_300, false);
+    assert_eq!(
+        empty_progress(Lang::En, Some(&reading), Some(&ReaderState::default())),
+        Some((
+            "Still reading 1,240 of 8,300 pictures and PDFs.".to_owned(),
+            "Results appear as they are read.".to_owned()
+        ))
+    );
+    assert_eq!(view(Lang::En, Some(&reading), None, false), None);
+
+    // 3. Everything in scope has been read: the ordinary page, nothing else.
+    let read = counts(0, 0, 8_300, false);
+    assert_eq!(empty_progress(Lang::En, Some(&read), None), None);
+    assert_eq!(view(Lang::En, Some(&read), None, false), None);
+
+    // A store that counts nothing says nothing either way.
+    assert_eq!(empty_progress(Lang::En, None, None), None);
+}
+
+/// **`N` is what is being read here**, so it falls to zero and the page
+/// becomes the verdict: items waiting for the reader (after a *Not now*) and
+/// items whose contents are elsewhere are never "still being read".
+#[test]
+fn the_number_counts_only_what_is_being_read_here_and_reaches_zero() {
+    let mut counts = counts(300, 340, 1_000, false);
+    counts.not_here = 30;
+    let (heading, _) = empty_progress(Lang::En, Some(&counts), None).unwrap();
+    assert_eq!(heading, "Still reading 10 of 1,000 pictures and PDFs.");
+    assert_eq!(left(&counts), 10);
+    // The last of them read: only the waiting and the absent remain.
+    counts.unread = 330;
+    assert_eq!(left(&counts), 0);
+    assert_eq!(empty_progress(Lang::En, Some(&counts), None), None);
+}
+
+/// A download running is the line (its progress), not the page: the counts
+/// predate it.
+#[test]
+fn a_running_download_keeps_the_page_a_verdict_with_its_progress_below() {
+    let reading = counts(0, 5, 5, false);
+    let running = installing(InstallStage::Downloading, 1, 4);
+    assert_eq!(
+        empty_progress(Lang::En, Some(&reading), Some(&running)),
+        None
+    );
+    assert!(view(Lang::En, Some(&reading), Some(&running), false).is_some());
+}
+
+/// The progress page in every language: the counts written the language's
+/// way, nothing left unfilled, and the second sentence there too.
+#[test]
+fn the_progress_page_writes_its_numbers_in_every_language() {
+    let reading = counts(0, 1_240, 8_300, false);
+    for lang in Lang::ALL {
+        let (heading, detail) = empty_progress(lang, Some(&reading), None).unwrap();
+        assert!(!heading.contains("{}"), "{}: {heading}", lang.tag());
+        assert!(
+            heading.contains(&number::decimal(lang, 1_240))
+                && heading.contains(&number::decimal(lang, 8_300)),
+            "{}: {heading}",
+            lang.tag()
+        );
+        assert!(!detail.trim().is_empty(), "{}", lang.tag());
+    }
+}
+
+// ======================================== not on this computer (OCR Plan 3.3)
+
+/// **Files whose contents are on another device are named as such**, never
+/// counted as unread (EXPERIENCE "On a second device"): below *No results*
+/// once nothing here is left to read, and not under every list of results.
+#[test]
+fn files_on_another_device_are_named_below_no_results() {
+    let mut elsewhere = counts(0, 38, 100, false);
+    elsewhere.not_here = 38;
+    let line = view(Lang::En, Some(&elsewhere), None, false).unwrap();
+    assert_eq!(line.sentence, "38 files are not on this computer.");
+    assert!(line.actions.is_empty());
+    assert_eq!(
+        empty_progress(Lang::En, Some(&elsewhere), None),
+        None,
+        "nothing here is being read, so the page is the verdict"
+    );
+    assert_eq!(
+        view(Lang::En, Some(&elsewhere), None, true),
+        None,
+        "quiet below results"
+    );
+
+    elsewhere.unread = 1;
+    elsewhere.not_here = 1;
+    assert_eq!(
+        view(Lang::En, Some(&elsewhere), None, false)
+            .unwrap()
+            .sentence,
+        "One file is not on this computer."
+    );
+
+    // Still reading here: the progress page comes first.
+    let mut both = counts(0, 50, 100, false);
+    both.not_here = 38;
+    assert_eq!(view(Lang::En, Some(&both), None, false), None);
+    assert!(empty_progress(Lang::En, Some(&both), None).is_some());
+}
+
+#[test]
+fn not_on_this_computer_writes_its_number_in_every_language() {
+    let mut elsewhere = counts(0, 1_240, 2_000, false);
+    elsewhere.not_here = 1_240;
+    for lang in Lang::ALL {
+        let line = view(lang, Some(&elsewhere), None, false).unwrap();
+        assert!(
+            line.sentence.contains(&number::decimal(lang, 1_240)) && !line.sentence.contains("{}"),
+            "{}: {}",
+            lang.tag(),
+            line.sentence
+        );
+        assert!(!not_here(lang, 1).trim().is_empty());
+    }
+}
+
+// ===================================== the import's summary (OCR Plan 3.3)
+
+/// **EXPERIENCE §3's sentence, word for word**, with the real size, **Turn
+/// on** and **Not now**.
+#[test]
+fn the_summary_says_the_designs_sentence() {
+    let line = import_summary(Lang::En, 412, &offered()).unwrap();
+    assert_eq!(
+        line.sentence,
+        "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer. One-time download, 24 MB."
+    );
+    assert_eq!(line.actions, [LineAction::TurnOn, LineAction::NotNow]);
+    let one = import_summary(Lang::En, 1, &offered()).unwrap();
+    assert_eq!(
+        one.sentence,
+        "One picture or scanned PDF can be found by the words in it. Koru reads it on this computer. One-time download, 24 MB."
+    );
+}
+
+/// **Only under its conditions**: the import brought some, no reader is
+/// installed, the reader can be used here, nothing already answered (a
+/// download running, a *Not now* the Store still holds), and a size to say.
+#[test]
+fn the_summary_carries_the_line_only_under_its_conditions() {
+    assert!(import_summary(Lang::En, 3, &offered()).is_some());
+    assert_eq!(
+        import_summary(Lang::En, 0, &offered()),
+        None,
+        "brought none"
+    );
+    let installed = ReaderState {
+        installed: Some(koru_store_wire::reader::InstalledReader {
+            model: "pp-ocrv6-small".into(),
+            version: "1".into(),
+            download_bytes: 24_536_678,
+            licence: "Apache-2.0".into(),
+            attribution: "PaddleOCR".into(),
+        }),
+        ..offered()
+    };
+    assert_eq!(
+        import_summary(Lang::En, 3, &installed),
+        None,
+        "already here"
+    );
+    let unavailable = ReaderState {
+        unavailable: Some(koru_store_wire::reader::ReaderUnavailable::NotBuilt),
+        ..offered()
+    };
+    assert_eq!(
+        import_summary(Lang::En, 3, &unavailable),
+        None,
+        "cannot be used here"
+    );
+    assert_eq!(
+        import_summary(Lang::En, 3, &installing(InstallStage::Downloading, 1, 4)),
+        None,
+        "somebody already pressed Turn on"
+    );
+    let declined = ReaderState {
+        offer_declined: true,
+        ..offered()
+    };
+    assert_eq!(
+        import_summary(Lang::En, 3, &declined),
+        None,
+        "Not now still stands"
+    );
+    let no_size = ReaderState {
+        catalog: CatalogState {
+            state: CatalogStage::Reading,
+            code: None,
+        },
+        ..ReaderState::default()
+    };
+    assert_eq!(
+        import_summary(Lang::En, 3, &no_size),
+        None,
+        "no size, no line"
+    );
+    // A download that failed before is offered again from the summary.
+    assert!(import_summary(Lang::En, 3, &installing(InstallStage::Failed, 0, 0)).is_some());
+}
+
+/// Offline: the sentence, and *needs a one-time download* in place of the
+/// actions (EXPERIENCE "Offline").
+#[test]
+fn offline_the_summary_says_so_and_offers_nothing_to_press() {
+    let offline = ReaderState {
+        catalog: CatalogState {
+            state: CatalogStage::Failed,
+            code: Some("offline".into()),
+        },
+        ..ReaderState::default()
+    };
+    let line = import_summary(Lang::En, 7, &offline).unwrap();
+    assert!(line.actions.is_empty());
+    assert_eq!(
+        line.sentence,
+        "7 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer. Needs a one-time download; Koru will offer it when you are online."
+    );
+}
+
+#[test]
+fn the_summary_writes_its_numbers_in_every_language() {
+    for lang in Lang::ALL {
+        let line = import_summary(lang, 1_240, &offered()).unwrap();
+        assert!(
+            line.sentence.contains(&number::decimal(lang, 1_240))
+                && line.sentence.contains(&number::decimal(lang, 24))
+                && !line.sentence.contains("{}"),
+            "{}: {}",
+            lang.tag(),
+            line.sentence
+        );
+    }
+}
+
+/// **Turn on shows progress with Stop**, as the line in search does; a
+/// download that ended says how, with **Try again** and **Not now**; one that
+/// installed has nothing more to say.
+#[test]
+fn a_download_started_from_the_summary_says_what_the_line_says() {
+    let mib = 1024 * 1024;
+    let running = install_line(
+        Lang::En,
+        &installing(InstallStage::Downloading, 6 * mib, 24 * mib),
+    )
+    .unwrap();
+    assert_eq!(running.sentence, "Downloading — 6 of 24 MB");
+    assert_eq!(running.actions, [LineAction::Stop]);
+    assert_eq!(running.fraction, Some(0.25));
+    let stopped = install_line(Lang::En, &installing(InstallStage::Stopped, 0, 0)).unwrap();
+    assert_eq!(stopped.actions, [LineAction::TryAgain, LineAction::NotNow]);
+    assert_eq!(
+        install_line(Lang::En, &installing(InstallStage::Installed, 0, 0)),
+        None
+    );
+    assert_eq!(install_line(Lang::En, &offered()), None);
+}
+
 // ============================================================ on the surface
 
 mod on_the_surface {
@@ -604,6 +890,61 @@ mod on_the_surface {
             at = records[index].parent;
         }
         assert_eq!(owner.map(|index| records[index].name), Some("SearchModal"));
+    }
+
+    /// **Nothing found while reading is a progress report** (OCR Plan 3.3):
+    /// the surface's empty page is *Still reading N of M…*, with no line
+    /// under it and none of the verdict's links pressable; once the reading
+    /// is done the ordinary page and its links are back.
+    #[test]
+    fn nothing_found_while_reading_is_the_progress_page_until_it_is_done() {
+        let (mut surface, _background) = offering(0);
+        surface.page.reading = Some(counts(0, 1_240, 8_300, false));
+        assert_eq!(
+            surface.reading_heading().map(|(heading, _)| heading),
+            Some(koru_i18n::fill(
+                koru_i18n::t(koru_i18n::current(), koru_i18n::Key::ReaderStillReading),
+                &[
+                    &number::decimal(koru_i18n::current(), 1_240),
+                    &number::decimal(koru_i18n::current(), 8_300),
+                ],
+            ))
+        );
+        assert_eq!(
+            surface.offer_view(),
+            None,
+            "the page is the report, not a line"
+        );
+        let link = surface.deleted_pages_rect();
+        let (x, y) = (link.x + 4.0, link.y + link.h * 0.5);
+        surface.mouse_down(x, y, false);
+        assert_eq!(
+            surface.lifecycle,
+            koru_store_wire::search::LifecycleFilter::Live,
+            "a link that is not drawn is not pressed"
+        );
+
+        surface.page.reading = Some(counts(0, 0, 8_300, false));
+        assert_eq!(
+            surface.reading_heading(),
+            None,
+            "everything read: the verdict"
+        );
+        assert!(surface.empty_page_is_verdict());
+        surface.mouse_down(x, y, false);
+        assert_eq!(
+            surface.lifecycle,
+            koru_store_wire::search::LifecycleFilter::Trash
+        );
+    }
+
+    /// The offer still owns the empty page while the reader is not here:
+    /// *No results*, and the offer directly below it.
+    #[test]
+    fn while_the_reader_is_offered_the_empty_page_is_the_verdict_with_the_offer() {
+        let (surface, _background) = offering(0);
+        assert_eq!(surface.reading_heading(), None);
+        assert!(surface.offer_view().is_some());
     }
 
     /// **The counts ask for the state, once**; a running download is polled

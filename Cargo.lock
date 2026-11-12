@@ -8104,6 +8104,7 @@ dependencies = [
  "koru-share-inbox",
  "koru-spell",
  "koru-store-core",
+ "koru-store-wire",
  "koru-ui",
  "koru-update",
  "koru-voice",

@@ -28,8 +28,36 @@
 //!      written into the text.
 //! 3. **Reading under way, below results**: *Still reading N of M pictures
 //!    and PDFs*, while something here is left to read. With no results that
-//!    sentence is the empty page's own progress report, which is OCR Plan
-//!    3.3's, so this module says nothing there.
+//!    sentence is not a line at all but the empty page itself
+//!    ([`empty_progress`], OCR Plan 3.3): a progress report in place of *No
+//!    results*, the rule search already follows while a workspace is still
+//!    being indexed.
+//! 4. **Below *No results*, nothing left to read here, and files whose
+//!    contents are on another device**: *38 files are not on this computer*
+//!    (EXPERIENCE "On a second device"), so the counts never call them unread.
+//!    Below results it says nothing: a device that never fetches those files
+//!    would carry the sentence under every list.
+//!
+//! ## The three empty pages
+//!
+//! When a search found nothing (EXPERIENCE "Before there is anything"):
+//!
+//! | the counts say | the page shows |
+//! | --- | --- |
+//! | the reader is not here and items wait for it (`offer`) | *No results*, and the offer directly below it |
+//! | something here is still being read (`left > 0`) | *Still reading N of M pictures and PDFs. Results appear as they are read.* in place of *No results* |
+//! | everything in scope has been read | *No results*, the ordinary page |
+//!
+//! `N` is [`left`]: the items in scope being read on this computer now —
+//! `unread` less those waiting for the reader and those whose contents are
+//! elsewhere, both of which nothing here is reading. It falls to zero as the
+//! reading finishes, and the page becomes the ordinary verdict.
+//!
+//! ## The same line in an import's summary
+//!
+//! [`import_summary`] is the line an import's own summary gains (EXPERIENCE
+//! §3 "The first time"): the same sentences and the same two answers, counted
+//! from what the import brought rather than from a search's scope.
 //!
 //! ## Keys
 //!
@@ -63,7 +91,7 @@ pub(crate) const STATE_FRESH: Duration = Duration::from_secs(30);
 
 /// What a person can press on the line.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum LineAction {
+pub enum LineAction {
     TurnOn,
     NotNow,
     Stop,
@@ -72,7 +100,7 @@ pub(crate) enum LineAction {
 
 impl LineAction {
     /// The button's words.
-    pub(crate) fn label(self, lang: Lang) -> &'static str {
+    pub fn label(self, lang: Lang) -> &'static str {
         match self {
             Self::TurnOn => t(lang, Key::ReaderTurnOn),
             Self::NotNow => t(lang, Key::ReaderNotNow),
@@ -91,11 +119,11 @@ impl LineAction {
 /// The line as it is drawn: one sentence, the actions beside it, and how far a
 /// download has got when it can say.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LineView {
-    pub(crate) sentence: String,
-    pub(crate) actions: Vec<LineAction>,
+pub struct LineView {
+    pub sentence: String,
+    pub actions: Vec<LineAction>,
     /// `Some` while a download with a known total runs.
-    pub(crate) fraction: Option<f32>,
+    pub fraction: Option<f32>,
 }
 
 /// **Which line, if any, and what it says.** Pure: the counts the surface's
@@ -123,25 +151,191 @@ pub(crate) fn view(
     if counts.offer {
         return offer(lang, counts, reader, with_results);
     }
+    let left = left(counts);
     if !with_results {
-        // The empty page's own progress report is OCR Plan 3.3's.
+        // Something still being read is the empty page itself
+        // ([`empty_progress`]), not a line under it. Once nothing here is
+        // left, the files whose contents are elsewhere are named as such.
+        return (left == 0 && counts.not_here > 0).then(|| quiet(not_here(lang, counts.not_here)));
+    }
+    (left > 0).then(|| quiet(still_reading(lang, left, counts.total)))
+}
+
+/// **What a search that found nothing shows in place of *No results*** while
+/// something in its scope is still being read here: *Still reading N of M
+/// pictures and PDFs.* and, under it, *Results appear as they are read.*
+/// (EXPERIENCE "Before there is anything"). A progress report, not a verdict —
+/// the rule the surface already follows while a workspace is being indexed.
+///
+/// `None` when the page is a verdict after all: nothing left to read here, a
+/// store that counts nothing, a download running (its progress is the line),
+/// or the offer standing (the reader is not here; the offer sits below *No
+/// results* and says why).
+pub(crate) fn empty_progress(
+    lang: Lang,
+    counts: Option<&ReadingCounts>,
+    reader: Option<&ReaderState>,
+) -> Option<(String, String)> {
+    let counts = counts?;
+    if reader
+        .and_then(|state| state.install.as_ref())
+        .is_some_and(|install| install.stage.is_running())
+        || counts.offer
+    {
         return None;
     }
-    let left = counts
+    let left = left(counts);
+    (left > 0).then(|| {
+        (
+            still_reading(lang, left, counts.total),
+            t(lang, Key::ReaderResultsAppear).to_owned(),
+        )
+    })
+}
+
+/// **The items in scope being read on this computer now**: `unread`, less
+/// those waiting for the reader (nothing reads them until it is installed)
+/// and those whose contents are on another device (nothing here ever will).
+/// The `N` of *Still reading N of M*, which falls to zero as reading
+/// finishes.
+pub(crate) fn left(counts: &ReadingCounts) -> u64 {
+    counts
         .unread
         .saturating_sub(counts.not_here)
-        .saturating_sub(counts.needs_reader);
-    (left > 0).then(|| LineView {
-        sentence: fill(
-            t(lang, Key::ReaderStillReading),
-            &[
-                &number::decimal(lang, left),
-                &number::decimal(lang, counts.total),
-            ],
+        .saturating_sub(counts.needs_reader)
+}
+
+fn still_reading(lang: Lang, left: u64, total: u64) -> String {
+    fill(
+        t(lang, Key::ReaderStillReading),
+        &[&number::decimal(lang, left), &number::decimal(lang, total)],
+    )
+}
+
+/// *38 files are not on this computer.* — a whole sentence for one.
+pub(crate) fn not_here(lang: Lang, count: u64) -> String {
+    match count {
+        1 => t(lang, Key::ReaderNotHereOne).to_owned(),
+        _ => fill(
+            t(lang, Key::ReaderNotHere),
+            &[&number::decimal(lang, count)],
         ),
+    }
+}
+
+/// A line that reports and offers nothing to press.
+fn quiet(sentence: String) -> LineView {
+    LineView {
+        sentence,
         actions: Vec::new(),
         fraction: None,
+    }
+}
+
+/// **The line an import's summary gains** (EXPERIENCE §3 "The first time"):
+/// *412 pictures and scanned PDFs can be found by the words in them. Koru
+/// reads them on this computer. One-time download, 24 MB.* with **Turn on**
+/// and **Not now**.
+///
+/// `pictures_and_scans` is the import's own count; `state` is the reader's
+/// state as the Store answered the import's report of that count — which is
+/// what cleared a *Not now*, so the state already says whether to offer.
+///
+/// Only when the import brought some, no reader is installed, the reader can
+/// be used on this computer, and no download is already running (whoever
+/// started it has answered). Offline, the sentence and *needs a one-time
+/// download* in place of the actions. No size known yet means no line: the
+/// size is never a number written into the text.
+pub fn import_summary(
+    lang: Lang,
+    pictures_and_scans: u64,
+    state: &ReaderState,
+) -> Option<LineView> {
+    // A *Not now* still standing means the Store did not take this import as
+    // the next one; the line stays quiet with it.
+    if pictures_and_scans == 0
+        || state.installed.is_some()
+        || state.unavailable.is_some()
+        || state.offer_declined
+    {
+        return None;
+    }
+    if state
+        .install
+        .as_ref()
+        .is_some_and(|install| install.stage.is_running())
+    {
+        return None;
+    }
+    let found = lead(lang, pictures_and_scans, true);
+    let here = t(
+        lang,
+        if pictures_and_scans == 1 {
+            Key::ReaderOfferHereOne
+        } else {
+            Key::ReaderOfferHere
+        },
+    );
+    let lead = sentences(lang, &found, here);
+    if offline(state) {
+        return Some(quiet(sentences(
+            lang,
+            &lead,
+            t(lang, Key::ReaderOfferOffline),
+        )));
+    }
+    let terms = state.offer.as_ref()?;
+    Some(LineView {
+        sentence: sentences(lang, &lead, &size(lang, terms.download_bytes)),
+        actions: vec![LineAction::TurnOn, LineAction::NotNow],
+        fraction: None,
     })
+}
+
+/// **What a download of the reader says once somebody pressed Turn on**: its
+/// progress with **Stop** while it runs; that it failed or was stopped, with
+/// **Try again** and **Not now**, once it ended that way. `None` for a state
+/// with nothing to say about a download — installed, removed, never started.
+/// The same words the line in search and the Settings row use.
+pub fn install_line(lang: Lang, state: &ReaderState) -> Option<LineView> {
+    let install = state.install.as_ref()?;
+    if install.stage.is_running() {
+        return Some(progress(
+            lang,
+            install.stage,
+            install.received,
+            install.total,
+        ));
+    }
+    ended(lang, install.stage)
+}
+
+/// A download that ended without installing: what happened, and **Try
+/// again** (which resumes) with **Not now**.
+fn ended(lang: Lang, stage: InstallStage) -> Option<LineView> {
+    let key = match stage {
+        InstallStage::Failed => Key::ReaderDownloadFailed,
+        InstallStage::Stopped => Key::ReaderDownloadStopped,
+        _ => return None,
+    };
+    Some(LineView {
+        sentence: t(lang, key).to_owned(),
+        actions: vec![LineAction::TryAgain, LineAction::NotNow],
+        fraction: None,
+    })
+}
+
+fn offline(state: &ReaderState) -> bool {
+    state.catalog.state == CatalogStage::Failed && state.catalog.code.as_deref() == Some("offline")
+}
+
+/// *One-time download, 24 MB.* — the real size, rounded the way voice's
+/// consent rounds it.
+fn size(lang: Lang, bytes: u64) -> String {
+    fill(
+        t(lang, Key::ReaderOfferSize),
+        &[&number::decimal(lang, koru_voice_consent::megabytes(bytes))],
+    )
 }
 
 fn offer(
@@ -156,42 +350,23 @@ fn offer(
         return None;
     }
     let lead = lead(lang, waiting, with_results);
-    match reader.install.as_ref().map(|install| install.stage) {
-        Some(InstallStage::Failed) => {
-            return Some(LineView {
-                sentence: t(lang, Key::ReaderDownloadFailed).to_owned(),
-                actions: vec![LineAction::TryAgain, LineAction::NotNow],
-                fraction: None,
-            });
-        }
-        Some(InstallStage::Stopped) => {
-            return Some(LineView {
-                sentence: t(lang, Key::ReaderDownloadStopped).to_owned(),
-                actions: vec![LineAction::TryAgain, LineAction::NotNow],
-                fraction: None,
-            });
-        }
-        _ => {}
-    }
-    if reader.catalog.state == CatalogStage::Failed
-        && reader.catalog.code.as_deref() == Some("offline")
+    if let Some(line) = reader
+        .install
+        .as_ref()
+        .and_then(|install| ended(lang, install.stage))
     {
-        return Some(LineView {
-            sentence: sentences(lang, &lead, t(lang, Key::ReaderOfferOffline)),
-            actions: Vec::new(),
-            fraction: None,
-        });
+        return Some(line);
+    }
+    if offline(reader) {
+        return Some(quiet(sentences(
+            lang,
+            &lead,
+            t(lang, Key::ReaderOfferOffline),
+        )));
     }
     let terms = reader.offer.as_ref()?;
-    let size = fill(
-        t(lang, Key::ReaderOfferSize),
-        &[&number::decimal(
-            lang,
-            koru_voice_consent::megabytes(terms.download_bytes),
-        )],
-    );
     Some(LineView {
-        sentence: sentences(lang, &lead, &size),
+        sentence: sentences(lang, &lead, &size(lang, terms.download_bytes)),
         actions: vec![LineAction::TurnOn, LineAction::NotNow],
         fraction: None,
     })

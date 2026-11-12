@@ -125,14 +125,19 @@ fn every_state_the_store_reports_is_its_own_status() {
     };
     on.counts.read = 8_297;
     on.counts.could_not_be_read = 3;
+    // The machine's files whose contents are on another device ride along
+    // to the card, which names them (OCR Plan 3.3).
+    on.counts.not_here = 38;
+    let card = row(&answer(on)).unwrap();
     assert_eq!(
-        row(&answer(on)).unwrap().status,
+        card.status,
         ReaderStatus::On {
             read: 8_297,
             could_not_be_read: 3,
             megabytes: 24,
         }
     );
+    assert_eq!(card.not_here, 38);
 }
 
 /// **Names come from the listing**: a file by its name, a page holding the
