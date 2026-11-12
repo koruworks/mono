@@ -172,8 +172,8 @@ pub enum BotCreationStage {
     /// Refused before it made anything; the BotId is free again.
     Rejected,
     /// The person ended it ([`BotCommand::AbandonBotCreation`]). No Bot is
-    /// made, the BotId stays reserved forever, and whatever it may already
-    /// have made is named in `left_behind`, never removed.
+    /// made, the BotId stays reserved forever, and what it made is named in
+    /// `left_behind`, never removed.
     Abandoned,
 }
 
@@ -264,16 +264,37 @@ impl BotCreationReason {
 }
 
 /// What an abandoned creation leaves in place for the person: a Role page
-/// it may have created, and the managed folder it may have made. Nothing is
-/// removed; ordinary page and file actions deal with them.
+/// it created, and the managed folder it made. Nothing is removed; ordinary
+/// page and file actions deal with them. Something the creation never got
+/// to make is not named.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BotCreationLeftovers {
-    /// The authored Role page, when the Store may have been asked for it.
+    /// The authored Role page, when the Store holds it or may: asked and
+    /// its answer not seen (then `role_page_unconfirmed` is true on the
+    /// creation). Not named when the Store refused it, so nothing was
+    /// written, or when it is gone for good.
     pub role_page: Option<BotPage>,
-    /// The managed folder, when it may have been made. A selected folder
-    /// was the person's own and is never named here.
+    /// The managed folder, when it is there: the abandon and every later
+    /// read look at the disk. Also named, as possibly there, when the look
+    /// failed or a step of the creation was still under way when it was
+    /// abandoned. A selected folder was the person's own and is never named
+    /// here.
     pub folder: Option<String>,
+}
+
+/// What a look at a creation's managed folder found when an answer was
+/// made. Not on the wire: it decides only whether `left_behind` names the
+/// folder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotFolderSeen {
+    /// Something is at the folder's path.
+    Present,
+    /// Nothing is at the folder's path, and no step of the creation can
+    /// make it any more.
+    Absent,
+    /// Not looked at, the look failed, or a step may still make it.
+    Unknown,
 }
 
 /// One creation, as its authorized owner reads it.
@@ -304,7 +325,7 @@ pub struct BotCreation {
     /// can show it when it differs from what was typed.
     #[serde(default)]
     pub folder_binding: Option<String>,
-    /// For an `abandoned` creation, what it may have made and left in place.
+    /// For an `abandoned` creation, what it made and left in place.
     #[serde(default)]
     pub left_behind: Option<BotCreationLeftovers>,
     /// The Bot, once `completed` and while it is readable.
@@ -535,20 +556,41 @@ impl BotCreationRecord {
         self.abandoned
     }
 
-    /// What this creation may have made, from its durable phase: each mark
-    /// is written before the effect it guards, so the phase never claims
-    /// less than may exist.
-    pub fn left_behind(&self) -> BotCreationLeftovers {
+    /// What this creation made, or may have made, and leaves in place.
+    ///
+    /// The durable phase says what may exist (each mark is written before
+    /// the effect it guards); it never says what does. So:
+    /// - the managed folder is named from `folder_pending` on, unless a look
+    ///   at the disk found nothing there ([`BotFolderSeen::Absent`]): a mkdir
+    ///   that was refused leaves no folder to name;
+    /// - the Role page is named while the Store may hold it, never when the
+    ///   Store refused it definitely (`store_refused`: nothing was written)
+    ///   or when it is gone for good (`role_missing`).
+    pub fn left_behind(&self, folder: BotFolderSeen) -> BotCreationLeftovers {
         BotCreationLeftovers {
-            role_page: self.may_hold_role_page().then(|| self.role_target()),
+            role_page: (self.may_hold_role_page()
+                && !matches!(
+                    self.reason,
+                    Some(BotCreationReason::StoreRefused | BotCreationReason::RoleMissing)
+                ))
+            .then(|| self.role_target()),
             folder: match &self.folder {
                 BotCreationFolder::Managed { path, .. }
-                    if self.phase >= BotCreationPhase::FolderPending =>
+                    if self.phase >= BotCreationPhase::FolderPending
+                        && folder != BotFolderSeen::Absent =>
                 {
                     Some(self.folder_binding.clone().unwrap_or_else(|| path.clone()))
                 }
                 _ => None,
             },
+        }
+    }
+
+    /// The managed folder this creation makes, if it makes one.
+    pub fn managed_folder(&self) -> Option<&str> {
+        match &self.folder {
+            BotCreationFolder::Managed { path, .. } => Some(path),
+            BotCreationFolder::Selected { .. } => None,
         }
     }
 
@@ -699,7 +741,14 @@ pub struct BotCreationReceipt {
 
 impl BotCreationReceipt {
     /// The owner's view of this creation; `bot` is the caller's current read.
+    /// An abandoned creation's managed folder is named as possibly left;
+    /// [`Self::view_seen`] says what a look at the disk found.
     pub fn view(&self, bot: Option<Bot>) -> BotCreation {
+        self.view_seen(bot, BotFolderSeen::Unknown)
+    }
+
+    /// [`Self::view`], with what a look at the managed folder found.
+    pub fn view_seen(&self, bot: Option<Bot>, folder: BotFolderSeen) -> BotCreation {
         let record = &self.record;
         let stage = match self.stage {
             BotReceiptStage::Completed if record.abandoned() => BotCreationStage::Abandoned,
@@ -732,7 +781,7 @@ impl BotCreationReceipt {
             role_page,
             role_page_unconfirmed,
             folder_binding: record.folder_binding.clone(),
-            left_behind: (stage == BotCreationStage::Abandoned).then(|| record.left_behind()),
+            left_behind: (stage == BotCreationStage::Abandoned).then(|| record.left_behind(folder)),
             bot: (stage == BotCreationStage::Completed)
                 .then_some(bot)
                 .flatten(),

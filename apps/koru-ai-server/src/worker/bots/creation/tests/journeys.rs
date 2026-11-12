@@ -1208,3 +1208,85 @@ fn a_creation_tells_an_open_window_about_its_role_page_once() {
     assert!(replica.contains_document(page), "the open window lists it");
     h.stop();
 }
+
+/// **An abandoned creation names only what it made** (window run 2: "Its
+/// folder stays at …" for a folder whose mkdir had been denied). Each case
+/// parks, is abandoned, and reads back the same: the folder is named only
+/// when it is there, the Role page only when the Store may hold it.
+#[test]
+fn an_abandoned_creation_names_a_folder_only_when_it_was_made() {
+    for (fail, made) in [(Fail::Before, false), (Fail::After, true)] {
+        let owner = FakeOwner::new();
+        let fs = FakeFs::with(&[root()]);
+        let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+        fs.fail_create("work", fail);
+        let command = create(&owner, authored(), BotFolderChoice::Managed {});
+        let (request, bot_id) = request_of(&command);
+        h.creation(command).unwrap();
+        let parked = h.settle(request);
+        assert_eq!(parked.reason, Some(BotCreationReason::FolderUnavailable));
+        assert_eq!(parked.phase, BotCreationPhase::FolderPending);
+        assert_eq!(fs.exists(&work(bot_id)), made, "{fail:?}");
+        let before = fs.present();
+        let ended = h.abandon(request).unwrap();
+        let folder = made.then(|| work(bot_id).to_str().unwrap().to_owned());
+        let left = Some(BotCreationLeftovers {
+            role_page: None,
+            folder: folder.clone(),
+        });
+        assert_eq!(ended.left_behind, left, "{fail:?}");
+        assert_eq!(h.read(request).unwrap().left_behind, left, "{fail:?}");
+        assert_eq!(fs.present(), before, "nothing is made or removed");
+        h.stop();
+    }
+}
+
+/// A Role page the Store refused definitely was never written: not named.
+/// One whose reply was lost may exist and is named (unconfirmed), as in
+/// `abandon_ends_a_creation_names_what_it_leaves_and_keeps_the_bot_id`.
+#[test]
+fn an_abandoned_creation_never_names_a_page_the_store_refused() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    owner.store.lock().unwrap().refuse = true;
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, bot_id) = request_of(&command);
+    h.creation(command).unwrap();
+    assert_eq!(
+        h.settle(request).reason,
+        Some(BotCreationReason::StoreRefused)
+    );
+    assert!(owner.stored().is_empty());
+    let ended = h.abandon(request).unwrap();
+    assert_eq!(
+        ended.left_behind,
+        Some(BotCreationLeftovers {
+            role_page: None,
+            folder: Some(work(bot_id).to_str().unwrap().to_owned()),
+        })
+    );
+    h.stop();
+}
+
+/// A folder step still under way when the person abandons may yet make the
+/// folder: it is named, since what the answer cannot rule out it never
+/// leaves out.
+#[test]
+fn a_folder_step_under_way_at_abandon_is_named() {
+    let owner = FakeOwner::new();
+    let fs = FakeFs::with(&[root()]);
+    let h = start(Repository::in_memory().unwrap(), &owner, &fs);
+    let (entered, release) = fs.hold_create("work");
+    let command = create(&owner, authored(), BotFolderChoice::Managed {});
+    let (request, bot_id) = request_of(&command);
+    h.creation(command).unwrap();
+    entered.recv_timeout(Duration::from_secs(10)).unwrap();
+    let ended = h.abandon(request).unwrap();
+    assert_eq!(
+        ended.left_behind.and_then(|left| left.folder).as_deref(),
+        Some(work(bot_id).to_str().unwrap())
+    );
+    release.send(()).unwrap();
+    h.stop();
+}

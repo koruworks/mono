@@ -737,13 +737,18 @@ pub(in crate::worker) struct CreationReadJob {
     reply: SyncSender<ApiResult<BotResponse>>,
     authority: Arc<dyn BotAuthority>,
     found: Option<(BotOwner, BotCreation)>,
+    folders: Arc<dyn BotFolderSystem>,
+    /// The record the second pass looked at the managed folder for, and
+    /// what it found. The writer trusts the look only if the creation has
+    /// not moved since and no step of it is under way.
+    seen: Option<(BotCreationRecord, BotFolderSeen)>,
 }
 pub(in crate::worker) struct CreationReadResult {
     job: CreationReadJob,
     checked: Result<BotAuthoritySnapshot, BotError>,
 }
 impl CreationReadJob {
-    pub(in crate::worker) fn run(self) -> CreationReadResult {
+    pub(in crate::worker) fn run(mut self) -> CreationReadResult {
         let workspaces: Vec<WorkspaceId> = self
             .found
             .iter()
@@ -753,6 +758,18 @@ impl CreationReadJob {
             self.authority.inspect(&workspaces, &[])
         }))
         .unwrap_or(Err(BotError::Unavailable));
+        // Off the writer: whether the managed folder is there, so an
+        // abandoned creation names a folder only when it was made.
+        if let Some((record, seen)) = self.seen.as_mut()
+            && let Some(path) = record.managed_folder()
+        {
+            let path = record.folder_binding.as_deref().unwrap_or(path);
+            *seen = match self.folders.occupied(Path::new(path)) {
+                Ok(true) => BotFolderSeen::Present,
+                Ok(false) => BotFolderSeen::Absent,
+                Err(_) => BotFolderSeen::Unknown,
+            };
+        }
         CreationReadResult { job: self, checked }
     }
 }
@@ -802,6 +819,8 @@ impl WorkerState {
                     reply,
                     authority,
                     found: None,
+                    folders: self.bot_creations.folders.clone(),
+                    seen: None,
                 })
             }
             _ => {
@@ -1367,6 +1386,14 @@ impl WorkerState {
                     .workspace(creation.home_workspace)
                     .map_err(bot_failure)?;
                 if job.action == CreationAction::Read {
+                    let mut creation = creation;
+                    // An abandoned creation never moves again: the look
+                    // stands.
+                    if let Some((record, seen)) = job.seen.take()
+                        && creation.stage == BotCreationStage::Abandoned
+                    {
+                        creation.left_behind = Some(record.left_behind(seen));
+                    }
                     return Ok(Some(BotResponse::Creation { creation }));
                 }
                 // Authority is proved; act on the receipt as it is now.
@@ -1378,13 +1405,37 @@ impl WorkerState {
                     Ok(_) | Err(BotError::Conflict) => return Err(not_found()),
                     Err(error) => return Err(bot_failure(error)),
                 };
-                let receipt = match job.action {
-                    CreationAction::Retry => self.retry_creation(receipt)?,
-                    _ => self.abandon_creation(receipt)?,
+                if job.action == CreationAction::Retry {
+                    let receipt = self.retry_creation(receipt)?;
+                    return Ok(Some(BotResponse::Creation {
+                        creation: self.creation_view(&receipt),
+                    }));
+                }
+                // The look at the folder holds only if nothing of this
+                // creation ran since it was taken: the record is the one it
+                // was taken for, and no step is under way that may still
+                // make the folder. Otherwise the folder is named as it may
+                // be there.
+                let key = (receipt.record.user_scope, receipt.request);
+                let under_way = self
+                    .bot_creations
+                    .open
+                    .get(&key)
+                    .is_some_and(|tracked| tracked.busy);
+                let seen = match job.seen.take() {
+                    Some((record, seen))
+                        if record == receipt.record.without_seed() && !under_way =>
+                    {
+                        seen
+                    }
+                    _ => BotFolderSeen::Unknown,
                 };
-                return Ok(Some(BotResponse::Creation {
-                    creation: self.creation_view(&receipt),
-                }));
+                let receipt = self.abandon_creation(receipt)?;
+                let mut creation = self.creation_view(&receipt);
+                if creation.stage == BotCreationStage::Abandoned {
+                    creation.left_behind = Some(receipt.record.left_behind(seen));
+                }
+                return Ok(Some(BotResponse::Creation { creation }));
             }
             let owner = checked.owner;
             let receipt = match self
@@ -1395,6 +1446,9 @@ impl WorkerState {
                 Ok(_) | Err(BotError::Conflict) => return Err(not_found()),
                 Err(error) => return Err(bot_failure(error)),
             };
+            if job.action == CreationAction::Abandon || receipt.record.abandoned() {
+                job.seen = Some((receipt.record.without_seed(), BotFolderSeen::Unknown));
+            }
             job.found = Some((owner, self.creation_view(&receipt)));
             Ok(None)
         })();

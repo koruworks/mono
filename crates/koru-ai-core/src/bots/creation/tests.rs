@@ -496,7 +496,7 @@ fn only_terminal_reasons_refuse_retry_and_an_abandoned_view_names_what_may_exist
         assert_eq!(reason.retryable(), !terminal, "{reason:?}");
     }
     let mut ended = authored(BotCreationPhase::RolePending).without_seed();
-    ended.reason = Some(BotCreationReason::RoleMissing);
+    ended.reason = Some(BotCreationReason::StoreUnavailable);
     ended.abandoned = true;
     let view = receipt(ended.clone(), BotReceiptStage::Completed).view(None);
     assert_eq!(view.stage, BotCreationStage::Abandoned);
@@ -509,6 +509,50 @@ fn only_terminal_reasons_refuse_retry_and_an_abandoned_view_names_what_may_exist
         view.left_behind,
         Some(BotCreationLeftovers {
             role_page: Some(ended.role_target()),
+            folder: Some(path.clone()),
+        })
+    );
+    // What the disk says decides the folder; nothing found is not named.
+    let seen = |seen| {
+        receipt(ended.clone(), BotReceiptStage::Completed)
+            .view_seen(None, seen)
+            .left_behind
+            .unwrap()
+            .folder
+    };
+    assert_eq!(seen(BotFolderSeen::Present), Some(path.clone()));
+    assert_eq!(seen(BotFolderSeen::Unknown), Some(path.clone()));
+    assert_eq!(seen(BotFolderSeen::Absent), None);
+    // A page the Store refused was never written, and one gone for good is
+    // not there: neither is named.
+    for reason in [
+        BotCreationReason::StoreRefused,
+        BotCreationReason::RoleMissing,
+    ] {
+        let mut gone = ended.clone();
+        gone.reason = Some(reason);
+        assert_eq!(
+            receipt(gone, BotReceiptStage::Completed)
+                .view(None)
+                .left_behind
+                .unwrap()
+                .role_page,
+            None,
+            "{reason:?}"
+        );
+    }
+    // A verified page is named, whatever stopped the creation after it.
+    let mut verified = authored(BotCreationPhase::RoleVerified).without_seed();
+    verified.role_page = Some(verified.role_target());
+    verified.folder_binding = Some(path.clone());
+    verified.reason = Some(BotCreationReason::PageUnavailable);
+    verified.abandoned = true;
+    assert_eq!(
+        receipt(verified.clone(), BotReceiptStage::Completed)
+            .view_seen(None, BotFolderSeen::Present)
+            .left_behind,
+        Some(BotCreationLeftovers {
+            role_page: Some(verified.role_target()),
             folder: Some(path.clone()),
         })
     );
