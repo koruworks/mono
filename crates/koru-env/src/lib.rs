@@ -323,6 +323,11 @@ pub const VARS: &[EnvVar] = &[
         "koru.exe",
     ),
     switch_var(
+        name::KORU_READ_DEBUG,
+        "Reading words out of files and pictures: one line per job the Store's reading coordinator runs or copies — ids, a stage, a page count and an outcome code, never a file's name or a word read from it. The unconditional lines (a reading document that could not be applied, a worker killed for memory, a backlog finished) print without it.",
+        "koru-api-gateway, koru-store-server",
+    ),
+    switch_var(
         name::KORU_GOOGLE_DEBUG,
         "Google Docs import OAuth, Picker, keychain and export stages — ids, counts and error codes, never a token or document text.",
         "koru.exe (Google Docs import)",
@@ -1017,6 +1022,7 @@ pub mod name {
     pub const KORU_RECORDING_DEBUG: &str = "KORU_RECORDING_DEBUG";
     pub const KORU_WORKER_OWNS_GROUP: &str = "KORU_WORKER_OWNS_GROUP";
     pub const KORU_SEARCH_DEBUG: &str = "KORU_SEARCH_DEBUG";
+    pub const KORU_READ_DEBUG: &str = "KORU_READ_DEBUG";
     pub const KORU_GOOGLE_DEBUG: &str = "KORU_GOOGLE_DEBUG";
     pub const KORU_GOOGLE_DOCS_CLIENT_ID: &str = "KORU_GOOGLE_DOCS_CLIENT_ID";
     pub const KORU_GOOGLE_DOCS_CLIENT_SECRET: &str = "KORU_GOOGLE_DOCS_CLIENT_SECRET";

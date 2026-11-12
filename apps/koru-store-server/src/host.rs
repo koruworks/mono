@@ -8,7 +8,7 @@ use koru_channel as channel;
 use koru_store_core::errors::{Code, Error, Result};
 
 use crate::{
-    StoreWorker, WorkerConfig, cli, console, log, projection, root_inspection, search,
+    StoreWorker, WorkerConfig, cli, console, log, projection, readings, root_inspection, search,
     store_backup, tasks,
 };
 
@@ -48,6 +48,8 @@ pub fn run() {
         cli::Command::Search(text) => {
             root_for(&invocation).and_then(|root| search::report_to_console(&root, text.as_deref()))
         }
+        cli::Command::Readings(hash) => root_for(&invocation)
+            .and_then(|root| readings::report_to_console(&root, hash.as_deref())),
         cli::Command::Tasks(filter) => root_for(&invocation)
             .and_then(|root| tasks::report_to_console(&root, filter.as_deref())),
         cli::Command::Backup(destination) => root_for(&invocation)

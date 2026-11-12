@@ -43,6 +43,17 @@ pub struct Prepared {
     derived: crate::derived::Derived,
 }
 
+impl Prepared {
+    /// A clone of the indexer's queue, for the readings mirror: a reading
+    /// lives in a document the projector never walks, so the mirror is what
+    /// tells the index its parent and its changed hashes need re-indexing
+    /// (`Queue::enqueue_document`, `Queue::enqueue_hashes`; OCR TECHNICAL §7).
+    /// Cheap and safe from any thread.
+    pub fn queue(&self) -> Queue {
+        self.queue.clone()
+    }
+}
+
 /// Open `search.db` and build the consumer the projector needs.
 ///
 /// **Not fatal.** An index that will not open is a store whose search is stale,
@@ -215,6 +226,7 @@ pub fn spawn(
     prepared: Prepared,
     state: Arc<AppState>,
     sweeps: Sweeps,
+    readings: Option<Box<dyn koru_search::Readings>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<std::thread::JoinHandle<()>> {
     let Prepared {
@@ -229,6 +241,12 @@ pub fn spawn(
     // word nobody can type, never a lost document.
     if let Some(tags) = crate::tagnames::tag_source(&derived, &state) {
         indexer = indexer.with_tag_names(tags);
+    }
+    // **The words read out of files**, beside the tag names and for the same
+    // reason: text the indexer fetches from outside the node. Absent — a
+    // mirror that would not open — a file is found by its name, as before.
+    if let Some(readings) = readings {
+        indexer = indexer.with_readings(readings);
     }
     // **One `Search`, shared.** It owns the mutex over its own connection, so
     // the indexer's tick and every query can hold it at once — and, more to the

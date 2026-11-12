@@ -1459,6 +1459,18 @@ pub const ROUTES: &[Route] = &[
     Route {
         method: "GET",
         audience: Audience::Internal,
+        path: "/v1/debug/readings",
+        handler: || get(routes::debug::readings),
+        request: None,
+        response: None,
+        scope: Some(Scope::ReadDocuments),
+        summary: "What reading words out of files is doing",
+        returns: "queued by reason, the current job's stage, read and failed by code, the \
+                  worker's state, how far the readings mirror is behind — or null if none runs",
+    },
+    Route {
+        method: "GET",
+        audience: Audience::Internal,
         path: "/v1/debug/attributes",
         handler: || get(routes::debug::attributes),
         request: None,

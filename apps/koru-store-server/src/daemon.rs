@@ -153,6 +153,14 @@ pub struct WorkerConfig {
     /// The events worker the commit feed forwards into, when the host opened
     /// one (the gateway does; the standalone diagnostic host does not).
     events: Option<koru_events_server::EventsHandle>,
+    /// Whether this host supervises the read worker (OCR TECHNICAL D4, §10).
+    ///
+    /// **The product desktop does; nothing else does.** A phone reads nothing
+    /// (the words arrive with the documents), and the standalone integration
+    /// host keeps its black-box suites from starting a worker beside a test
+    /// binary. Either way the readings mirror runs, so readings made elsewhere
+    /// are found here.
+    reader: crate::readings::ReaderLaunch,
     #[cfg(test)]
     panic_after_claim: bool,
 }
@@ -179,6 +187,7 @@ impl std::fmt::Debug for WorkerConfig {
             .field("claim_root", &self.claim_root)
             .field("network_edge", &self.network_edge.is_some())
             .field("events", &self.events.is_some())
+            .field("reader", &self.reader)
             .finish()
     }
 }
@@ -203,6 +212,7 @@ impl WorkerConfig {
             gate_transport_modes: true,
             network_edge: None,
             events: None,
+            reader: crate::readings::ReaderLaunch::None,
             #[cfg(test)]
             panic_after_claim: false,
         }
@@ -224,6 +234,7 @@ impl WorkerConfig {
             gate_transport_modes: true,
             network_edge: None,
             events: None,
+            reader: crate::readings::ReaderLaunch::Sibling,
             #[cfg(test)]
             panic_after_claim: false,
         }
@@ -273,6 +284,9 @@ impl WorkerConfig {
         // See the field: Android has no transport-mode initializer yet, so
         // gating it would refuse every picture on every phone.
         config.gate_transport_modes = false;
+        // A phone does not read: the words arrive with the documents (OCR
+        // TECHNICAL §12), and there is no worker to supervise.
+        config.reader = crate::readings::ReaderLaunch::None;
         config
     }
 
@@ -954,6 +968,7 @@ async fn run(
         claim_root,
         network_edge,
         events,
+        reader,
         #[cfg(test)]
         panic_after_claim,
     } = config;
@@ -1211,6 +1226,13 @@ async fn run(
         Some((feed, prepared)) => (Some(prepared), vec![feed]),
         None => (None, Vec::new()),
     };
+    // The readings mirror and the reading coordinator (OCR TECHNICAL §7,
+    // §9): their consumer beside the search feed, before the first tick, and
+    // the tee the projector's source drains commits and landed bytes into.
+    let readings = crate::readings::prepare(&derived);
+    if let Some(readings) = readings.as_ref() {
+        consumers.push(readings.consumer());
+    }
     // The events feed, beside the search feed: seeded from the projection's
     // own listings first (an upgrade must not announce every document as
     // born today), then one more consumer on the same commit feed.
@@ -1231,6 +1253,7 @@ async fn run(
         Arc::clone(&state),
         &derived,
         consumers,
+        readings.as_ref().map(crate::readings::Prepared::tee),
         Arc::clone(&runs_forever),
     );
     if let Some((_, sweeps)) = projection.as_ref() {
@@ -1291,16 +1314,33 @@ async fn run(
             }
         }
     }
+    let search_queue = prepared.as_ref().map(crate::search::Prepared::queue);
     let _search = match (prepared, projection.as_ref()) {
         (Some(prepared), Some((_, sweeps))) => crate::search::spawn(
             prepared,
             Arc::clone(&state),
             sweeps.clone(),
+            readings
+                .as_ref()
+                .and_then(crate::readings::Prepared::source),
             Arc::clone(&runs_forever),
         ),
         _ => None,
     };
     tracing::info!("store startup: search spawned");
+    // The mirror's thread, and on a desktop the coordinator's. Neither is
+    // fatal and neither is waited for: a store whose reading cannot start
+    // serves documents and finds files by name.
+    let _readings = readings.map(|readings| {
+        readings.spawn(
+            &state,
+            search_queue,
+            crate::readings::launcher_for(reader, &root, &channel_name),
+            (reader != crate::readings::ReaderLaunch::None)
+                .then(|| crate::readings::objects_under(&root)),
+            Arc::clone(&runs_forever),
+        )
+    });
 
     let app = koru_store_api::router(Arc::clone(&state));
 

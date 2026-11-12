@@ -111,6 +111,7 @@ Generated from the route catalog. Do not edit.
 - GET `/v1/debug/documents/{id}` — One document's CRDT state (Internal)
 - GET `/v1/debug/projection` — What the projection layer is doing (Internal)
 - GET `/v1/debug/search` — What the search index is doing (Internal)
+- GET `/v1/debug/readings` — What reading words out of files is doing (Internal)
 - GET `/v1/debug/attributes` — What the attribute query service is doing (Internal)
 - GET `/v1/debug/tasks` — What the tasks query service is doing (Internal)
 - GET `/v1/debug/sync` — What peer replication control is doing (Internal)

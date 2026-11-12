@@ -107,7 +107,7 @@ pub use root_catalog::{
 pub use service::{TransportModeChoice, mint_peer_id};
 pub mod sync_digest;
 pub use service::{
-    Backend, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted, ProvisionedReplica,
+    Backend, BlobStored, Committed, DictionaryCommitted, IdentityChange, IdentityCommitted, ProvisionedReplica,
     ReminderCommitted, ReplicaPlacement, SeededCreation, Store, TRASH_RETENTION_MS,
 };
 pub use temporal::{CalendarDate, FloatingDateTime, TemporalValue, ZonedDateTime};

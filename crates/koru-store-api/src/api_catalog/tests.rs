@@ -343,9 +343,10 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // pause, the blob release, the Profile transport mode, the documents
     // waiting on another device and one document's own Cloud coverage
     // (D256, D258, rung 2's space reclaim), as is the Welcome page's
-    // installation-local progress (a query path and a per-row path).
-    assert_eq!(ROUTES.len(), 113, "a row was added or removed");
-    assert_eq!(paths.len(), 91, "a path was added or removed");
+    // installation-local progress (a query path and a per-row path). The
+    // readings debug view (OCR TECHNICAL §14) is one more internal row.
+    assert_eq!(ROUTES.len(), 114, "a row was added or removed");
+    assert_eq!(paths.len(), 92, "a path was added or removed");
 }
 
 #[test]
@@ -530,6 +531,7 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/debug/documents/{id}",
             "/v1/debug/projection",
             "/v1/debug/search",
+            "/v1/debug/readings",
             "/v1/debug/attributes",
             "/v1/debug/tasks",
             "/v1/debug/sync",

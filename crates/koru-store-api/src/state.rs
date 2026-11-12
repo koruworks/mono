@@ -265,6 +265,13 @@ pub struct AppState {
     /// only**: `/v1/debug/*` is metadata, never content, and an index is the
     /// component most tempted to answer with a title.
     pub search: Arc<std::sync::Mutex<serde_json::Value>>,
+    /// What reading words out of files is doing — the coordinator's queue by
+    /// reason, the current job's stage, the worker, how far the readings
+    /// mirror is behind — as the daemon last published it (OCR TECHNICAL §14).
+    ///
+    /// Opaque JSON for the reason [`Self::projection`] gives, and **ids,
+    /// counts and stages only**: never a file's name, a title or a word read.
+    pub readings: Arc<std::sync::Mutex<serde_json::Value>>,
     /// Volatile replication authority. It starts empty after every Store
     /// restart and is cleared when the live Agent control session disappears.
     pub sync_control: Arc<std::sync::Mutex<koru_sync_control::ControlHost>>,
@@ -378,6 +385,7 @@ impl AppState {
             shutdown: Arc::new(tokio::sync::Notify::new()),
             projection: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
             search: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
+            readings: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
             sync_control: Arc::new(std::sync::Mutex::new(
                 koru_sync_control::ControlHost::default(),
             )),

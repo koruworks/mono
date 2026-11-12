@@ -209,6 +209,111 @@ fn ensure_reading_refuses_anything_but_a_file_or_a_page() {
     assert_eq!(error.code(), Code::DocumentNotFound);
 }
 
+/// **A backlog registers many reading documents in one manifest commit**
+/// (TECHNICAL §9 "Registering during a backlog"). Three files and a page take
+/// one each through one journal entry of the manifest; a note and a parent
+/// nobody holds are refused without holding the others up; a parent asked for
+/// twice counts once; and asking again registers nothing.
+#[test]
+fn ensure_readings_registers_a_batch_in_one_manifest_commit() {
+    let mut store = memory_store();
+    let workspace = workspace(&mut store);
+    let files: Vec<DocumentId> = (0..3)
+        .map(|i| a_file(&mut store, workspace, &format!("Scan {i}.pdf")))
+        .collect();
+    let page = a_page(&mut store, workspace, None);
+    let note = store
+        .ensure_file_note(workspace, files[0], at())
+        .unwrap()
+        .id;
+    let already = store.ensure_reading(workspace, files[2], at()).unwrap().id;
+    let manifest = store.manifest_id(workspace).unwrap();
+    let before = store.document_report(workspace, manifest).unwrap();
+
+    let mut asked = files.clone();
+    asked.extend([page, note, DocumentId::new(), files[0]]);
+    let batch = store.ensure_readings(workspace, &asked, at_ms(1)).unwrap();
+
+    let after = store.document_report(workspace, manifest).unwrap();
+    assert_eq!(
+        after.pending_updates + after.checkpoints as u64,
+        before.pending_updates + before.checkpoints as u64 + 1,
+        "three registrations were one manifest commit"
+    );
+    assert!(!batch.delta.is_empty());
+    assert_eq!(batch.created.len(), 3, "files[2] already had one");
+    assert!(!batch.created.contains(&already));
+    assert_eq!(batch.refused.len(), 2, "the note and the unknown parent");
+    assert!(batch.refused.contains(&note));
+    let expected: Vec<(DocumentId, DocumentId)> = files
+        .iter()
+        .chain([&page])
+        .map(|parent| (*parent, reading_document_id(*parent)))
+        .collect();
+    assert_eq!(batch.readings, expected, "each once, in the order asked");
+    for (parent, reading) in &batch.readings {
+        let listed = entry(&mut store, workspace, *reading).expect("listed");
+        assert_eq!(listed.kind, READING);
+        assert_eq!(listed.parent, Some(*parent));
+        assert_eq!(listed.title, "");
+        assert_eq!(keys(&mut store, workspace, *reading), Vec::<String>::new());
+    }
+
+    let again = store.ensure_readings(workspace, &asked, at_ms(2)).unwrap();
+    assert!(again.created.is_empty() && again.delta.is_empty());
+    assert_eq!(again.readings, expected);
+}
+
+/// **Bytes landing are heard, once, and a kind is read back without opening
+/// anything** — the two seams the daemon's coordinator and readings mirror
+/// are told through (OCR ROADMAP §3, TECHNICAL §7).
+#[test]
+fn a_blob_that_lands_is_heard_once_and_a_listed_kind_reads_back() {
+    let mut store = memory_store();
+    let workspace = workspace(&mut store);
+    let file = a_file(&mut store, workspace, "Scan.pdf");
+    let reading = store.ensure_reading(workspace, file, at()).unwrap().id;
+    let hash = koru_store_core::model::BlobHash::parse(&format!("b3:{}", "ab".repeat(32)))
+        .expect("a well-formed hash");
+    assert!(store.take_blobs_stored().is_empty());
+
+    for _ in 0..2 {
+        store
+            .finish_blob_upload(
+                workspace,
+                koru_store_core::ports::CompletedBlobUpload {
+                    hash: hash.clone(),
+                    size: 7,
+                },
+                "application/pdf",
+                None,
+                at(),
+                None,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        store.take_blobs_stored(),
+        vec![koru_store_core::BlobStored {
+            workspace,
+            hash: hash.clone(),
+        }],
+        "the same bytes landing twice is one wake"
+    );
+    assert!(store.take_blobs_stored().is_empty(), "drained");
+
+    assert_eq!(
+        store.document_kind(workspace, reading).as_deref(),
+        Some(READING)
+    );
+    assert_eq!(
+        store.document_kind(workspace, file).as_deref(),
+        Some("file")
+    );
+    assert_eq!(store.document_kind(workspace, DocumentId::new()), None);
+    assert_eq!(store.document_kind(WorkspaceId::new(), file), None);
+}
+
 /// **Two devices that each registered one while apart hold one after they
 /// sync** (TECHNICAL §7). Both derived the same id, so both wrote into the
 /// same document; the manifest held two tree nodes for it, and

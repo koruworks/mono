@@ -23,6 +23,9 @@ pub enum Command {
     Projection(Option<String>),
     /// What the index holds, and what any text finds in it.
     Search(Option<String>),
+    /// What the readings mirror holds. With a hash, that reading and its
+    /// words.
+    Readings(Option<String>),
     /// What is outstanding in the read model. With a lifecycle — `open`,
     /// `completed` or `all` — filter the list.
     Tasks(Option<String>),
@@ -99,6 +102,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "what the read model holds (an id prints that document)",
     ),
     ("search", "what the index holds (any text searches it)"),
+    (
+        "readings",
+        "what has been read out of files (a hash prints its words)",
+    ),
     (
         "tasks",
         "what is outstanding (open, completed or all filters it)",
@@ -237,6 +244,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                     i += 1;
                 }
                 Command::Search(target.cloned())
+            }
+            "readings" => {
+                let target = tokens.get(i + 1).filter(|next| !next.starts_with('-'));
+                if target.is_some() {
+                    i += 1;
+                }
+                Command::Readings(target.cloned())
             }
             "tasks" => {
                 let target = tokens.get(i + 1).filter(|next| !next.starts_with('-'));

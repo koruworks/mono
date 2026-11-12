@@ -482,6 +482,11 @@ pub struct Store<C: Catalog, B: Backend> {
     /// itself from the route that made it; an imported one has no route, so
     /// this is where it becomes visible to the same consumer seam.
     identity_committed: HashMap<(ProfileId, IdentityChange), IdentityCommitted>,
+    /// Blobs that became readable to a Workspace since somebody last drained
+    /// this ([`BlobStored`]). A set, so it is bounded by the blobs the Store
+    /// holds, as `committed` is by its documents, and a burst of the same
+    /// bytes landing is one wake.
+    blobs_stored: std::collections::HashSet<BlobStored>,
     /// Documents whose disposable anti-entropy leaf may be stale. This is
     /// deliberately separate from `committed`: projection workers drain that
     /// queue, while replication may refresh its digest at any later time.
@@ -561,6 +566,25 @@ pub enum IdentityChange {
 pub struct IdentityCommitted {
     pub profile: ProfileId,
     pub change: IdentityChange,
+}
+
+/// **A Workspace may now read these bytes, and they are on this device.**
+///
+/// Recorded where bytes land or become readable to a Workspace —
+/// [`Store::finish_blob_upload`] (which [`Store::put_blob`] ends in),
+/// [`Store::put_remote_blob`] and [`Store::associate_blob`] — and drained with
+/// [`Store::take_blobs_stored`], beside [`Store::take_committed`] and for the
+/// same reason: a file's manifest entry can arrive before its bytes, and
+/// whoever reads a file's words has to hear when the bytes finally do (OCR
+/// TECHNICAL §9, ROADMAP §3). Without it the only thing that would notice is a
+/// timer.
+///
+/// A wake, never truth: ids and a hash, nothing about what the bytes are. The
+/// consumer asks the Store again whether the Workspace holds them.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct BlobStored {
+    pub workspace: WorkspaceId,
+    pub hash: BlobHash,
 }
 
 /// How a replica provisioning may place a Workspace this device holds no
@@ -650,6 +674,22 @@ pub struct EnsuredReading {
     pub created: bool,
     /// The manifest delta — empty on the idempotent path, which changed
     /// nothing, so a broadcaster should skip it.
+    pub delta: Vec<u8>,
+}
+
+/// The answer to [`Store::ensure_readings`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EnsuredReadings {
+    /// `(parent, reading document)` for every parent that has one now, in the
+    /// order asked, each once.
+    pub readings: Vec<(DocumentId, DocumentId)>,
+    /// The reading documents this call registered.
+    pub created: Vec<DocumentId>,
+    /// Parents that cannot take one: not in the manifest, or not a file or a
+    /// page.
+    pub refused: Vec<DocumentId>,
+    /// The one manifest delta — empty when nothing was registered, which a
+    /// broadcaster skips.
     pub delta: Vec<u8>,
 }
 
@@ -904,6 +944,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             // failure than the one restart-seeding would close. A surface reads
             // every profile when it opens anyway.
             identity_committed: HashMap::new(),
+            blobs_stored: std::collections::HashSet::new(),
             sync_dirty: HashMap::new(),
             sync_verified: HashMap::new(),
             transport: crate::transport::Fence::new(),
@@ -2707,6 +2748,96 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         })
     }
 
+    /// [`ensure_reading`](Self::ensure_reading) for **many parents in one
+    /// manifest commit** — the batched door a backlog registers through (OCR
+    /// TECHNICAL §9 "Registering during a backlog").
+    ///
+    /// Each `ensure_reading` is a manifest commit, and a manifest commit
+    /// re-derives the Workspace's listing; a few thousand files arriving at
+    /// once would otherwise cost a few thousand of each. Here the parents that
+    /// have no reading document yet are registered together and committed
+    /// once, with the same rules one at a time has: the id is derived, an
+    /// entry already listed is handed back unchanged, and each is registered
+    /// empty, untitled, as its parent's last child.
+    ///
+    /// **One parent that cannot take one does not refuse the rest.** A parent
+    /// the manifest does not hold, or whose kind is not a file or a page, is
+    /// returned in [`EnsuredReadings::refused`] and the others go ahead — a
+    /// backlog is many unrelated files, and one deleted between the queue and
+    /// this call must not hold up the others. Duplicate parents count once.
+    pub fn ensure_readings(
+        &mut self,
+        workspace: WorkspaceId,
+        parents: &[DocumentId],
+        at: Timestamp,
+    ) -> Result<EnsuredReadings> {
+        self.ensure_open(workspace)?;
+        let open = self.open.get_mut(&workspace).expect("just opened");
+        let before = open.manifest.version();
+        let mut readings = Vec::with_capacity(parents.len());
+        let mut created = Vec::new();
+        let mut refused = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for &parent in parents {
+            if !seen.insert(parent) {
+                continue;
+            }
+            let id = crate::ids::reading_document_id(parent);
+            if open.manifest.contains(id) {
+                if open.repo.document(id)?.is_none() {
+                    open.repo.create_document(id, DocumentKind::Document, at)?;
+                    self.catalog.record_location(id, workspace)?;
+                }
+                readings.push((parent, id));
+                continue;
+            }
+            match open.manifest.kind_of(parent) {
+                Some(kind) if kind == KIND_FILE || kind == KIND_PAGE => {}
+                _ => {
+                    refused.push(parent);
+                    continue;
+                }
+            }
+            open.manifest
+                .add_document_at(id, READING_TITLE, KIND_READING, Some(parent), None)?;
+            if open.repo.document(id)?.is_none() {
+                open.repo.create_document(id, DocumentKind::Document, at)?;
+            }
+            readings.push((parent, id));
+            created.push(id);
+        }
+        if created.is_empty() {
+            return Ok(EnsuredReadings {
+                readings,
+                created,
+                refused,
+                delta: Vec::new(),
+            });
+        }
+        let delta = open.manifest.export_updates_since(&before)?;
+        let manifest_id = open.manifest_id;
+        commit_one(
+            open,
+            workspace,
+            &mut self.committed,
+            &mut self.sync_dirty,
+            manifest_id,
+            delta.clone(),
+            at,
+            crate::ports::UpdateOrigin::Store,
+        )?;
+        open.repo.reindex(&open.manifest.entries())?;
+        for id in &created {
+            self.catalog.record_location(*id, workspace)?;
+        }
+        Ok(EnsuredReadings {
+            readings,
+            created,
+            refused,
+            delta,
+        })
+    }
+
     /// Move one document entry and its inherited subtree to workspace trash.
     /// Bytes remain locally available and a later manifest restore can expose
     /// the same document again.
@@ -3750,6 +3881,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .expect("just opened")
             .repo
             .put_blob(&blob)?;
+        self.blobs_stored.insert(BlobStored {
+            workspace,
+            hash: blob.hash.clone(),
+        });
         Ok(blob)
     }
 
@@ -3812,6 +3947,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .expect("just opened")
             .repo
             .put_blob(blob)?;
+        self.blobs_stored.insert(BlobStored {
+            workspace,
+            hash: blob.hash.clone(),
+        });
         Ok(blob.clone())
     }
 
@@ -3863,6 +4002,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .expect("just opened")
             .repo
             .put_blob(&blob)?;
+        self.blobs_stored.insert(BlobStored {
+            workspace: target,
+            hash: hash.clone(),
+        });
         Ok(blob)
     }
 
@@ -4932,6 +5075,32 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// document, so it is bounded by how many documents have been written.
     pub fn take_committed(&mut self) -> Vec<Committed> {
         self.committed.take()
+    }
+
+    /// Take the blobs that became readable to a Workspace since this was last
+    /// called ([`BlobStored`]) — the bytes-landed half of what
+    /// [`take_committed`](Self::take_committed) is for documents.
+    ///
+    /// Drained rather than delivered by callback for the reason that function
+    /// gives: whatever hears of it must run outside the lock the write holds.
+    /// The daemon drains it on the same tick that drains commits. A build that
+    /// never calls this is not leaking: the set is keyed by Workspace and hash.
+    pub fn take_blobs_stored(&mut self) -> Vec<BlobStored> {
+        self.blobs_stored.drain().collect()
+    }
+
+    /// The kind token a document is registered under in an **already open**
+    /// Workspace's manifest: one index lookup and one meta read, and it opens
+    /// nothing. `None` when the Workspace is not open, the manifest does not
+    /// list the document, or the entry has no kind.
+    ///
+    /// For a host deciding what a commit it has just drained was to — the
+    /// daemon's readings mirror hears of a reading document this way (OCR
+    /// TECHNICAL §7 "Never walked, never versioned, and still heard"). A
+    /// committed document's Workspace is open, because committing opened it.
+    /// The Store still interprets no kind here; it only reads one back.
+    pub fn document_kind(&self, workspace: WorkspaceId, document: DocumentId) -> Option<String> {
+        self.open.get(&workspace)?.manifest.kind_of(document)
     }
 
     /// Install the host's content-free wake. Derived work still runs outside

@@ -307,7 +307,7 @@ pub fn read_ports(
 const IDLE: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// The store, seen through its lock.
-struct StoreSource {
+pub(crate) struct StoreSource {
     state: Arc<AppState>,
     history: Mutex<HashMap<(WorkspaceId, DocumentId), AutoHistory>>,
     /// Whether this Store keeps automatic history at all. A device does. An
@@ -315,6 +315,10 @@ struct StoreSource {
     /// in memory is ephemeral, and markers nobody can ever read would only
     /// grow its memory.
     automatic: bool,
+    /// Where commits to reading documents and landed bytes go — the readings
+    /// mirror and the reading coordinator (OCR TECHNICAL §7, ROADMAP §3).
+    /// `None` in a composition that runs neither.
+    readings: Option<crate::readings::Tee>,
 }
 
 #[derive(Clone)]
@@ -341,12 +345,18 @@ fn history_due(state: &AutoHistory, now: i64) -> Option<HistoryReason> {
 }
 
 impl StoreSource {
-    fn new(state: Arc<AppState>, automatic: bool) -> Self {
+    pub(crate) fn new(state: Arc<AppState>, automatic: bool) -> Self {
         Self {
             state,
             history: Mutex::new(HashMap::new()),
             automatic,
+            readings: None,
         }
+    }
+
+    pub(crate) fn with_readings(mut self, readings: Option<crate::readings::Tee>) -> Self {
+        self.readings = readings;
+        self
     }
 
     /// Called by the projection worker, never by the edit/ack path. Snapshot
@@ -556,10 +566,46 @@ impl Source for StoreSource {
     }
 
     fn take_committed(&self) -> Vec<Committed> {
-        let committed = match self.state.store.lock() {
-            Ok(mut store) => store.take_committed(),
-            Err(_) => Vec::new(),
+        let (committed, readings, landed) = match self.state.store.lock() {
+            Ok(mut store) => {
+                let committed = store.take_committed();
+                // **The feed the projector cannot give** (OCR TECHNICAL §7).
+                // The projector drops a commit to a reading document before
+                // any consumer hears of it, so it is handed to the readings
+                // mirror here, the one place that sees every commit. Its kind
+                // is known: the manifest commit that registered it came first,
+                // and the workspace is open because the commit opened it.
+                let (readings, landed) = match self.readings.as_ref() {
+                    Some(_) => (
+                        committed
+                            .iter()
+                            .filter(|event| !event.is_manifest)
+                            .filter(|event| {
+                                store
+                                    .document_kind(event.workspace, event.document)
+                                    .as_deref()
+                                    == Some(koru_core::explore::KIND_READING)
+                            })
+                            .map(|event| (event.workspace, event.document))
+                            .collect(),
+                        // Bytes that landed: the coordinator's second trigger.
+                        store.take_blobs_stored(),
+                    ),
+                    // Nothing to tell, and drained all the same so a host
+                    // without readings holds no set of them.
+                    None => {
+                        store.take_blobs_stored();
+                        (Vec::new(), Vec::new())
+                    }
+                };
+                (committed, readings, landed)
+            }
+            Err(_) => (Vec::new(), Vec::new(), Vec::new()),
         };
+        if let Some(tee) = self.readings.as_ref() {
+            tee.reading_committed(readings);
+            tee.blobs_stored(&landed);
+        }
         if !committed.is_empty() {
             let mut activity = self
                 .state
@@ -643,6 +689,7 @@ pub fn spawn(
     state: Arc<AppState>,
     derived: &crate::derived::Derived,
     consumers: Vec<Box<dyn koru_projection::Consumer>>,
+    readings: Option<crate::readings::Tee>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<(std::thread::JoinHandle<()>, Sweeps)> {
     let projections = match derived.projections() {
@@ -658,7 +705,10 @@ pub fn spawn(
     };
 
     let published = state.projection.clone();
-    let mut projector = Projector::new(StoreSource::new(state, !derived.is_memory()), projections);
+    let mut projector = Projector::new(
+        StoreSource::new(state, !derived.is_memory()).with_readings(readings),
+        projections,
+    );
     // The counting consumer stays: it costs a vector push per projection and it
     // is what proves the seam still works when the real consumer is the thing
     // being debugged.
