@@ -493,3 +493,71 @@ fn f6_reaches_a_bot_tabs_settings_and_gives_the_keyboard_back() {
         assert_eq!(bot_focus(&v), None, "a press outside the tab clears it");
     });
 }
+
+/// **`Shift+F6` walks the same stops backwards**, in every mode, entered as
+/// a real key enters the window (`MainView::key`). It was never bound — F6
+/// resolved only with no modifier from the first public build — and the
+/// third window run of Bots found it dead in Documents, Chats and Bots. With
+/// a Bot tab in front every stop stands: the lane, the rail, the column's
+/// list and the tab's header.
+#[test]
+fn shift_f6_walks_the_same_stops_backwards_in_every_mode() {
+    use crate::mainview::tab::TabView;
+    let features = koru_features::Features {
+        agents: true,
+        ai: true,
+        ..koru_features::Features::ALL_OFF
+    };
+    koru_features::testing::with(features, || {
+        let (mut v, mut workspace) = crate::mainview::harness::on_document();
+        let bot = crate::bots::roster::RosterBot::from(crate::bots::tests::bot(
+            koru_ai_core::bots::BotId::mint(),
+            koru_store_core::ids::WorkspaceId::new(),
+            "Scout",
+            false,
+        ));
+        v.explore.bots_mut().listed_for_test(vec![bot.clone()]);
+        let back = |v: &mut MainView, ws: &mut WorkspaceDoc| {
+            v.key(ws, &Key::Named(NamedKey::F6), None, ModifiersState::SHIFT)
+        };
+        for mode in [
+            NavigatorMode::Documents,
+            NavigatorMode::Chats,
+            NavigatorMode::Bots,
+        ] {
+            v.show_navigator(mode);
+            if mode == NavigatorMode::Bots {
+                assert!(v.open_bot_tab(bot.clone()));
+                assert!(matches!(v.tabs().active_tab().view, TabView::Bot(_)));
+            }
+            v.chrome_focus = None;
+            v.explore.clear_focus();
+            v.release_tab_keyboard();
+            let n = v.standing_stops().len();
+            let mut forward = Vec::new();
+            for _ in 0..n {
+                press(&mut v, &mut workspace.ws, NamedKey::F6);
+                forward.push(v.current_stop());
+            }
+            assert!(forward.iter().all(Option::is_some), "{mode:?}: {forward:?}");
+            for expected in forward[..n - 1].iter().rev() {
+                assert!(back(&mut v, &mut workspace.ws), "{mode:?}: Shift+F6 moved");
+                assert_eq!(
+                    v.current_stop(),
+                    *expected,
+                    "{mode:?}: backwards over {forward:?}"
+                );
+            }
+            if mode == NavigatorMode::Bots {
+                assert_eq!(forward.last(), Some(&Some(Stop::Tab)), "every stop stands");
+                assert!(forward.contains(&Some(Stop::Column)));
+                // From nowhere, the last stop.
+                v.chrome_focus = None;
+                v.explore.clear_focus();
+                v.release_tab_keyboard();
+                assert!(back(&mut v, &mut workspace.ws));
+                assert_eq!(v.current_stop(), Some(Stop::Tab));
+            }
+        }
+    });
+}

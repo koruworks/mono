@@ -151,13 +151,33 @@ impl MainView {
     /// `F6`: move the keyboard to the next standing stop. Returns whether
     /// anything moved.
     pub(super) fn focus_chrome(&mut self) -> bool {
+        self.rotate_chrome(true)
+    }
+
+    /// `Shift+F6`: the same stops the other way — from nowhere, the last.
+    pub(super) fn focus_chrome_back(&mut self) -> bool {
+        self.rotate_chrome(false)
+    }
+
+    fn rotate_chrome(&mut self, forward: bool) -> bool {
         let stops = self.standing_stops();
-        let first = match self
+        let n = stops.len();
+        let here = self
             .current_stop()
-            .and_then(|s| stops.iter().position(|x| *x == s))
-        {
-            Some(i) => i + 1,
-            None => 0,
+            .and_then(|s| stops.iter().position(|x| *x == s));
+        let first = match (here, forward) {
+            (Some(i), true) => i + 1,
+            (None, true) => 0,
+            (Some(i), false) => i + n - 1,
+            (None, false) => n - 1,
+        };
+        // The `step`th stop from `first`, in the direction asked.
+        let at = |step: usize| {
+            if forward {
+                (first + step) % n
+            } else {
+                (first + n - step) % n
+            }
         };
         let was = self.current_stop();
         // Leave whichever stop had the keyboard, so two rings are never
@@ -169,9 +189,9 @@ impl MainView {
         moved |= self.explore.clear_focus();
         // **The navigator's list, when it has something to land on**: one
         // that has not is passed over, never a dead press.
-        let mut next = stops[first % stops.len()];
-        for step in 0..stops.len() {
-            next = stops[(first + step) % stops.len()];
+        let mut next = stops[at(0)];
+        for step in 0..n {
+            next = stops[at(step)];
             if next != Stop::Column {
                 break;
             }

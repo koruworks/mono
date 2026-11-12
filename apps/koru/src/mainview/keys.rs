@@ -81,6 +81,8 @@ pub enum Chord {
     CopyCloudDetails,
     /// F6 moves focus into window chrome without stealing Tab indentation.
     FocusChrome,
+    /// Shift+F6 — the same stops as `F6`, walked the other way.
+    FocusChromeBack,
     /// F9 — start/stop the internal session recorder
     /// (the internal session-recorder design). Resolved only on internal Windows
     /// builds; everywhere else F9 falls through to whatever is underneath.
@@ -137,6 +139,11 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
     }
     if mods.is_empty() && key == &Key::Named(NamedKey::F6) {
         return Some(Chord::FocusChrome);
+    }
+    // **Backwards, as every F6 rotation the platform teaches goes.** Never
+    // bound before the third window run of Bots found it dead in every mode.
+    if mods == ModifiersState::SHIFT && key == &Key::Named(NamedKey::F6) {
+        return Some(Chord::FocusChromeBack);
     }
     // **F9 is internal tooling, not a shortcut.** It resolves only where the
     // session recorder exists — internal Windows builds — so a public build

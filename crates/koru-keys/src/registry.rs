@@ -194,6 +194,8 @@ pub enum ShortcutId {
     CopyCloudDetails,
     /// Move keyboard focus from the active content region into window chrome.
     FocusChrome,
+    /// The same stops as [`FocusChrome`](Self::FocusChrome), the other way.
+    FocusChromeBack,
     /// **Record this window (internal builds only).** F9 opens the recording
     /// modal — every start asks for a size and a destination — and stops the
     /// active recording. Bound by the container because the surface is the
@@ -772,6 +774,12 @@ pub const REGISTRY: &[Shortcut] = &[
         Layer::Container,
         "Focus window controls",
         Chord::new(named(NamedKey::F6), NONE),
+    ),
+    s(
+        ShortcutId::FocusChromeBack,
+        Layer::Container,
+        "Focus window controls, backwards",
+        Chord::new(named(NamedKey::F6), SHIFT),
     ),
     s_internal(
         ShortcutId::ToggleRecording,

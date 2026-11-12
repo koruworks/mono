@@ -74,6 +74,10 @@ fn the_container_chords_resolve() {
         resolve(&Key::Named(NamedKey::F6), None, NONE),
         Some(Chord::FocusChrome)
     );
+    assert_eq!(
+        resolve(&Key::Named(NamedKey::F6), None, ModifiersState::SHIFT),
+        Some(Chord::FocusChromeBack)
+    );
     assert_eq!(resolve(&ch("t"), Some("t"), PRIMARY), Some(Chord::NewTab));
     assert_eq!(resolve(&ch("n"), Some("n"), PRIMARY), Some(Chord::New));
     assert_eq!(resolve(&ch("a"), Some("a"), PRIMARY_SHIFT), None);

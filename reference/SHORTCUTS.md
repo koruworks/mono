@@ -61,6 +61,7 @@ Chords are shown as this platform writes them.
 | `Ctrl+Alt+K` | Copy Cloud sync details |
 | `F2` | Rename |
 | `F6` | Focus window controls |
+| `Shift+F6` | Focus window controls, backwards |
 | `Ctrl+Shift+R` | Reminders |
 | `Ctrl+S` | Save or rename a snapshot |
 | `Ctrl+M` | Move to… |

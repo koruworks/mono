@@ -16036,6 +16036,7 @@ impl MainView {
                     }
                 }
                 Chord::FocusChrome => self.focus_chrome(),
+                Chord::FocusChromeBack => self.focus_chrome_back(),
                 Chord::ToggleRecording => self.toggle_recording(),
                 Chord::Reminders => self.open_reminders_here(ws),
             };
