@@ -58,8 +58,16 @@ pub use koru_log::Logging;
 /// changes, and unusual reconnect bursts — news on exactly the incidents
 /// somebody reads this file for. Routine peer lifecycle remains behind
 /// `KORU_SYNC_DEBUG`. The mobile host already ships the same base level.
-const DEFAULT_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info";
-const DEFAULT_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info,koru_sync::peer=debug";
+///
+/// `koru_readings` is the target every reading line names (the coordinator,
+/// the mirror, the reader's installer): it does not start with `koru_store`,
+/// so without its own directive its `info` lines — the reader installed or
+/// removed, a backlog finished, and the one line per job `KORU_READ_DEBUG`
+/// asks for — were dropped, which OCR TECHNICAL §14 says are unconditional.
+/// Every filter below names it; `the_reading_lines_reach_every_filter` holds
+/// that.
+const DEFAULT_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info,koru_readings=info";
+const DEFAULT_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info,koru_readings=info,koru_sync::peer=debug";
 
 /// The same, one level louder for our own crates.
 ///
@@ -78,18 +86,18 @@ const DEFAULT_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_a
 /// connection module stays at ERROR unless a developer explicitly overrides it.
 ///
 /// A tray launch keeps `info`. `RUST_LOG` still overrides both.
-const CONSOLE_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info";
-const CONSOLE_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info,koru_sync::peer=debug";
+const CONSOLE_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info,koru_readings=info";
+const CONSOLE_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info,koru_readings=info,koru_sync::peer=debug";
 
 /// The product gateway owns the AI worker as well as the embedded Store.
 ///
 /// Keep ordinary lifecycle records from both domains in the retained log. A
 /// console launch opts the AI timing summaries into DEBUG alongside the Store's
 /// document diagnostics; neither filter admits provider payloads or user text.
-const GATEWAY_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=info,koru_ai_server=info,koru_ai_sqlite=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info";
-const GATEWAY_CONSOLE_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=debug,koru_ai_server=debug,koru_ai_sqlite=debug,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info";
-const GATEWAY_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=info,koru_ai_server=info,koru_ai_sqlite=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info,koru_sync::peer=debug";
-const GATEWAY_CONSOLE_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=debug,koru_ai_server=debug,koru_ai_sqlite=debug,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info,koru_sync::peer=debug";
+const GATEWAY_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=info,koru_ai_server=info,koru_ai_sqlite=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info,koru_readings=info";
+const GATEWAY_CONSOLE_FILTER: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=debug,koru_ai_server=debug,koru_ai_sqlite=debug,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info,koru_readings=info";
+const GATEWAY_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=info,koru_ai_server=info,koru_ai_sqlite=info,koru_store=info,koru_store_api=info,koru_store_core=info,koru_replication=info,koru_network_iroh=info,koru_events=info,koru_metrics=info,koru_readings=info,koru_sync::peer=debug";
+const GATEWAY_CONSOLE_FILTER_SYNC_DEBUG: &str = "warn,noq_proto::connection=error,koru_api_gateway=info,koru_api_gateway_core=info,koru_ai=debug,koru_ai_server=debug,koru_ai_sqlite=debug,koru_store=debug,koru_store_api=debug,koru_store_api::access_log=info,koru_store_core=debug,koru_replication=info,koru_network_iroh=debug,koru_events=info,koru_metrics=info,koru_readings=info,koru_sync::peer=debug";
 
 fn sync_debug_filter(ordinary: &'static str, debug: &'static str) -> &'static str {
     if koru_env::switch(koru_env::name::KORU_SYNC_DEBUG) {

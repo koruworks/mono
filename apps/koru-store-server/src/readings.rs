@@ -160,10 +160,21 @@ impl Prepared {
         // finds on the disk is what the first worker is launched with.
         let service: Arc<dyn koru_store_api::routes::reader::ReaderService> = match installer {
             Some(config) if launcher.is_some() && objects.is_some() => {
+                // The reader installed or removed goes to the event bus the
+                // way the Store's other committed facts do (OCR TECHNICAL
+                // §10): through the daemon's catalog-fact sink, which is
+                // silent where no events worker is wired.
+                let weak = Arc::downgrade(state);
+                let announce: installer::Announce = Box::new(move |draft| {
+                    if let Some(state) = weak.upgrade() {
+                        state.publish_catalog_event(draft);
+                    }
+                });
                 let (service, handle) = installer::start(
                     config,
                     Arc::clone(&self.hub),
                     Arc::clone(&self.inbox),
+                    Some(announce),
                     stop.clone(),
                 );
                 if let Some(handle) = handle {

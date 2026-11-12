@@ -951,26 +951,114 @@ it ended up with is written beside *Search* in the agent's right-click menu** �
 that is the place to look, because a released Koru has no console to print it
 to. `Ctrl+P` always works while Koru is focused.
 
-### Words inside PDFs and text files
+### Words inside pictures, PDFs and text files
 
-A PDF that contains real text, and a `.txt`, `.md`, `.csv` or `.html` file,
-are found by the words inside them, not only by their name. Koru reads them on
-this computer when they are added — nothing is downloaded and nothing is sent
-anywhere to be read — and they are usually findable a moment later. An `.html`
-file is read without its markup.
+Any picture or PDF you put in Koru can be found by the words inside it, not
+only by its name — a photographed receipt called `IMG_2041.jpg`, a scanned
+contract, a screenshot pasted into a page. You do nothing to make a file
+findable: add it the way you always do, and search the way you always do.
 
-All the words of a search must be on the same page of a PDF: `termination
-notice` does not find a PDF that says *termination* on page 2 and *notice* on
-page 39. A result found inside a PDF of more than one page starts its excerpt
-with the page, *Page 3 · …*. Picking it switches Explore to **Files** with the
-file selected, as picking a file by its name does; open the file and go to that
-page.
+**Everything is read on this computer.** Nothing a file contains is sent
+anywhere to be read, and reading never needs a network. The words then travel
+with the workspace, to the devices it already goes to, so another computer
+finds the file too without reading it again — even before it has downloaded
+the file itself.
 
-A password-protected or damaged file is found by its name only. **Pictures and
-scanned PDFs are not read yet**: a photo or a screenshot is found by its name,
-or by the document it sits in, and not by the words in it; a scanned PDF is
-found by its name, and a PDF that mixes text pages with scanned ones by its
-text pages. Deleting a file permanently removes its words from search as well.
+**Some things are read straight away, with nothing to download**: a PDF that
+contains real text (most PDFs made by a program rather than a scanner), and a
+`.txt`, `.md`, `.csv` or `.html` file. They are usually findable a moment
+after they are added. An `.html` file is read without its markup.
+
+**Pictures and scanned pages need a one-time download** of the part of Koru
+that reads them — about 26 MB, asked once per computer, and never downloaded
+without asking. Koru offers it where you are when it first matters:
+
+- **In search**, when the workspaces you are searching hold pictures or
+  scanned PDFs that have not been read. One quiet line sits below the results
+  — *"12 pictures and scanned PDFs can be found by the words in them.
+  One-time download, 26 MB."* — or, when the search found nothing, directly
+  below *No results*, saying they have not been read yet. It carries **Turn
+  on** and **Not now**. The number counts only the workspaces being searched.
+  The size is the real size of the download. `Tab` from the results reaches
+  the two buttons; `Enter` or `Space` presses one, and `Esc` leaves the line
+  without clearing your search.
+- **When an import finishes** and brought pictures or PDFs, its summary gains
+  the same line, with the same two buttons.
+
+Adding or pasting a single picture never interrupts you with a question.
+
+**Turn on** shows the download's progress, with **Stop**; if it stops or
+fails, **Try again** carries on from where it was. When it finishes, Koru reads
+the pictures and scanned pages already in your workspaces, smallest first, and
+then everything you add; a file you add now is read before an older backlog.
+Reading runs in a separate, low-priority program, so it stays out of the way
+of your typing.
+
+**Not now** is an answer Koru keeps: the line leaves search on this computer.
+It comes back once, after the next import that brings pictures or PDFs —
+adding or pasting files never brings it back. Until then a search for a word
+that is only in a scan simply finds nothing. You can turn reading on yourself
+at any time in **Settings → Editor → Text in pictures and PDFs**, without
+waiting to be asked. If this computer is offline when the line would appear,
+it says that it *needs a one-time download* and that Koru will offer it when
+you are online.
+
+**What a result looks like.** A picture inside a document is a result for that
+document, as typed text would be. Its excerpt starts with a small muted picture
+mark, so words that were read are never mistaken for words somebody typed; the
+picture's name follows the mark only if you gave it one. A screen reader says
+*words read from a picture*. Picking the result opens the document, scrolls
+the picture into view, selects it and flashes its frame for about a second. A
+file is a result of its own, with its icon and name; a PDF of more than one
+page starts its excerpt with the page, *Page 3 · …*. Picking it switches
+Explore to **Files** with the file selected, as picking a file by its name
+does; open it and go to that page. Words read from a picture or a file rank
+below a matching title, heading or sentence somebody wrote.
+
+All the words of a search must be on the same page of a PDF, or in the same
+picture: `termination notice` does not find a PDF that says *termination* on
+page 2 and *notice* on page 39.
+
+**While a lot is being read** — after a large import, say — search finds what
+has been read already, and below the results it says how much is left:
+*"Still reading 1,240 of 8,300 pictures and PDFs."* A search that finds
+nothing in the meantime says that instead of *No results*, and adds *Results
+appear as they are read.* A scanned PDF becomes findable a few dozen pages at a
+time. Files whose contents are not on this computer — added on another device
+and not downloaded here — are not fetched only to be read; search and Settings
+say how many there are.
+
+**Long files.** The first 200 pages of a scanned PDF are read, and a PDF with
+real text up to 2,000 pages, so one very long scan never holds up everything
+else. A file that stopped at that limit offers **Read all pages** in its
+right-click menu under **Files**: the rest of that file is read, behind anything
+newly added, and the other devices find the later pages too.
+
+**Read again** is in the right-click menu of a file, and of a picture in a
+document, once it has been read or could not be read. It reads that one item
+again; you will notice nothing unless the words come out differently.
+
+**What is read, and what is not.** Pictures in PNG, JPEG, GIF, WebP, BMP and
+TIFF, inside documents or under **Files**; PDFs; and `.txt`, `.md`, `.csv` and
+`.html` files. The reader reads Latin-script languages, Chinese and Japanese.
+**Arabic and other scripts are not read yet**, and iPhone photos saved as HEIC
+are not read; those are found by their name. Handwriting is not promised:
+whatever is read of it is findable. A photograph with no words in it is simply
+read as having none — that is not an error. A password-protected or damaged
+file is found by its name only, and listed under *Could not be read*. Words
+that were misread show in the excerpt as they were read; they cannot be
+corrected by hand.
+
+**Settings → Editor → Text in pictures and PDFs** is where reading lives on
+this computer. Before the download it reads *Not downloaded · 26 MB*, with
+**Turn on**. Once it is on, it says how many items were read and how many
+could not be, with **Show** to list those with their reasons, and **Turn off**
+and **Remove**, both of which take the download off this computer — what has
+already been read stays findable. It also says which languages and kinds of
+file are read. On a computer where reading pictures is not available it says
+so plainly, and why.
+
+Deleting a file permanently removes its words from search, on every device.
 
 The magnifying-glass status icon at the bottom right reports local indexing
 state; it uses the accent colour while work is queued, running, or needs

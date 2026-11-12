@@ -486,6 +486,59 @@ fn remove_takes_the_model_off_the_disk() {
     );
 }
 
+/// **The reader installed and removed reach the event bus**, once each, as
+/// registered events carrying counts only (OCR TECHNICAL §10); reading the
+/// catalog is not news.
+#[test]
+fn an_install_and_a_removal_are_announced() {
+    let staged = stage();
+    let (hub, mut worker, installer) = desktop(&staged);
+    let heard: Arc<Mutex<Vec<koru_events::Envelope>>> = Arc::default();
+    let ear = Arc::clone(&heard);
+    worker.announce = Some(Box::new(move |draft| {
+        let ctx = koru_events::EmitContext {
+            session_id: koru_events::SessionId::mint(),
+            device_id: None,
+            profile_id: None,
+            actor: koru_events::Actor::system("store"),
+        };
+        ear.lock().unwrap().push(draft.into_envelope(&ctx));
+    }));
+    let terms = offer_terms(&installer, &hub, &mut worker);
+    assert!(
+        heard.lock().unwrap().is_empty(),
+        "reading the catalog is not news"
+    );
+    installer
+        .install(&InstallReader {
+            terms,
+            from: InstallFrom::Offer,
+        })
+        .unwrap();
+    drain(&hub, &mut worker);
+    let (revision, _) = hub.wanted_model();
+    hub.ack_model(revision + 1);
+    installer.remove().unwrap();
+    drain(&hub, &mut worker);
+
+    let heard = heard.lock().unwrap();
+    let names: Vec<&str> = heard.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["reading.reader.installed", "reading.reader.removed"]
+    );
+    for envelope in heard.iter() {
+        koru_events::validate(envelope).unwrap_or_else(|v| panic!("{}: {v}", envelope.name));
+    }
+    assert_eq!(
+        heard[0].attrs.get("size_mb_bucket"),
+        Some(&koru_events::AttrValue::Bucket(koru_events::bucket(
+            koru_voice_consent::megabytes(staged.entry.descriptor.size)
+        )))
+    );
+    assert!(heard[1].attrs.is_empty());
+}
+
 /// The cache root, by the one rule.
 #[test]
 fn the_model_cache_is_resolved_by_one_rule() {

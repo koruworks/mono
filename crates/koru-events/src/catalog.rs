@@ -1407,6 +1407,35 @@ payload!(VoiceModelInstalled, "voice.model.installed", |self| {
         .attr("size_mb_bucket", AttrValue::Bucket(self.size_mb_bucket))
 });
 
+// ----------------------------------------------------------------- reading
+//
+// The reader that finds words in pictures and scanned PDFs (OCR TECHNICAL
+// §10, §14), from the Store's reader installer. Counts only: no model id, no
+// path, nothing about any file — and, as for voice, no field that could carry
+// a word.
+
+/// The reader was installed — `reading.reader.installed`.
+pub struct ReadingReaderInstalled {
+    /// Megabytes, already bucketed — see [`bucket`].
+    pub size_mb_bucket: u32,
+}
+
+payload!(
+    ReadingReaderInstalled,
+    "reading.reader.installed",
+    |self| {
+        Draft::new(EventName::from_static(Self::NAME))
+            .attr("size_mb_bucket", AttrValue::Bucket(self.size_mb_bucket))
+    }
+);
+
+/// The reader's download was removed — `reading.reader.removed`.
+pub struct ReadingReaderRemoved;
+
+payload!(ReadingReaderRemoved, "reading.reader.removed", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+});
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AccountClient {
     Web,

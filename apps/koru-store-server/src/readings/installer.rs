@@ -81,6 +81,13 @@ const RELEASE_PATIENCE: Duration = Duration::from_secs(600);
 /// its stop flag. Woken by commands, never by this.
 const IDLE: Duration = Duration::from_millis(500);
 
+/// **Where the installer tells the event bus what happened**: the reader
+/// installed, the reader removed (OCR TECHNICAL §10), each beside the log
+/// line that says the same. The daemon passes the Store's own catalog-fact
+/// sink; a host without an events worker passes nothing, and a failed record
+/// is never a failed install.
+pub type Announce = Box<dyn Fn(koru_events::Draft) + Send>;
+
 /// **Where the installer reads, writes and fetches**, resolved once.
 pub struct InstallerConfig {
     pub models: ModelPaths,
@@ -244,6 +251,7 @@ pub fn start(
     config: InstallerConfig,
     hub: Arc<ReaderHub>,
     inbox: Arc<Inbox>,
+    announce: Option<Announce>,
     stop: Arc<AtomicBool>,
 ) -> (Installer, Option<std::thread::JoinHandle<()>>) {
     hub.set_installing_here(config.no_trust_root);
@@ -262,6 +270,7 @@ pub fn start(
         .name("koru-reader-install".into())
         .spawn(move || {
             let mut thread = Worker::new(config, hub, inbox);
+            thread.announce = announce;
             thread.open();
             while !stop.load(Ordering::Acquire) && !thread.inbox.is_stopping() {
                 if let Some(command) = thread.hub.next_command(IDLE) {
@@ -280,6 +289,7 @@ pub(crate) struct Worker {
     store: DiskModelStore,
     hub: Arc<ReaderHub>,
     inbox: Arc<Inbox>,
+    pub(crate) announce: Option<Announce>,
 }
 
 impl Worker {
@@ -303,6 +313,13 @@ impl Worker {
             ),
             hub,
             inbox,
+            announce: None,
+        }
+    }
+
+    fn announce(&self, event: impl Into<koru_events::Draft>) {
+        if let Some(announce) = &self.announce {
+            announce(event.into());
         }
     }
 
@@ -431,6 +448,11 @@ impl Worker {
                     version = installed.descriptor.version.as_str(),
                     "the reader was installed"
                 );
+                self.announce(koru_events::ReadingReaderInstalled {
+                    size_mb_bucket: koru_events::bucket(koru_voice_consent::megabytes(
+                        installed.descriptor.size,
+                    )),
+                });
                 self.hub
                     .set_progress(Some(progress(InstallStage::Installed, None)));
                 self.rescan();
@@ -473,6 +495,7 @@ impl Worker {
                     version = model.descriptor.version.as_str(),
                     "the reader was removed"
                 );
+                self.announce(koru_events::ReadingReaderRemoved);
                 self.hub
                     .set_progress(Some(progress(InstallStage::Removed, None)));
             }
