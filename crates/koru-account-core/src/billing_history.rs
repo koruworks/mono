@@ -30,11 +30,15 @@ pub trait BillingHistoryRepository: Send + Sync {
         livemode: bool,
         position: HistoryPosition,
     ) -> PortFuture<'_, Result<Option<HistoryBinding>, BillingError>>;
+    /// Every subscription of the account and mode, newest first. `prices`
+    /// are the Cloud prices currently allowed to grant access (monthly, then
+    /// yearly when configured); an entry at any other price is listed without
+    /// Cloud access.
     fn subscriptions<'a>(
         &'a self,
         account: KoruIdentityId,
         livemode: bool,
-        price: &'a str,
+        prices: &'a [String],
         after: Option<&'a str>,
         limit: u8,
         now: i64,

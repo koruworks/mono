@@ -147,6 +147,42 @@ impl SubscriptionSnapshot {
     }
 }
 
+/// Which of an account's subscriptions at the current Cloud prices answers
+/// for it. `rows` is every such subscription, newest first.
+///
+/// Live means anything not canceled or incomplete_expired. One live
+/// subscription answers for the account. Several live ones are two plans
+/// billing at once, which is a conflict for support, with one exception:
+/// when exactly one of them is not scheduled to end (no
+/// `cancel_at_period_end`, no `cancel_at`), every other one is on its way out
+/// and that one answers. That is the switch from monthly to yearly (cancel
+/// the monthly plan at period end, buy the yearly one), and the same rule
+/// covers a cancel-and-rebuy at one price. Two or more renewing plans remain
+/// a conflict. With nothing live, the newest subscription answers, as before.
+pub fn current_subscription(
+    rows: &[SubscriptionSnapshot],
+) -> Result<Option<&SubscriptionSnapshot>, BillingError> {
+    let live: Vec<_> = rows
+        .iter()
+        .filter(|s| {
+            !matches!(
+                s.status,
+                SubscriptionStatus::Canceled | SubscriptionStatus::IncompleteExpired
+            )
+        })
+        .collect();
+    if live.len() > 1 {
+        let mut renewing = live
+            .iter()
+            .filter(|s| !s.cancel_at_period_end && s.cancel_at_millis.is_none());
+        return match (renewing.next(), renewing.next()) {
+            (Some(only), None) => Ok(Some(*only)),
+            _ => Err(BillingError::Conflict),
+        };
+    }
+    Ok(live.first().copied().or(rows.first()))
+}
+
 pub trait SubscriptionProvider: Send + Sync {
     fn retrieve<'a>(
         &'a self,
@@ -166,12 +202,16 @@ pub trait SubscriptionUpdate: Send {
 
 pub trait SubscriptionRepository: Send + Sync {
     fn begin_update(&self) -> PortFuture<'_, Result<Box<dyn SubscriptionUpdate>, BillingError>>;
+    /// `prices` are the Cloud prices currently allowed to grant access: the
+    /// monthly price, then the yearly one when it is configured. Only
+    /// subscriptions recorded at one of them are claimed and considered, and
+    /// [`current_subscription`] picks the one that answers.
     fn for_account<'a>(
         &'a self,
         account: KoruIdentityId,
         now: i64,
         livemode: bool,
-        price: &'a str,
+        prices: &'a [String],
     ) -> PortFuture<'a, Result<Option<SubscriptionSummary>, BillingError>>;
 }
 
@@ -184,4 +224,115 @@ pub async fn reconcile(
     let update = repository.begin_update().await?;
     let snapshot = provider.retrieve(target).await?;
     update.commit(snapshot, now).await
+}
+
+#[cfg(test)]
+mod current_subscription_tests {
+    use super::*;
+
+    fn sub(
+        id: &str,
+        price: &str,
+        status: SubscriptionStatus,
+        ending: bool,
+    ) -> SubscriptionSnapshot {
+        SubscriptionSnapshot {
+            subscription_id: id.into(),
+            customer_id: "cus_a".into(),
+            checkout_session_id: format!("cs_{id}"),
+            purchase_email: "person@example.com".into(),
+            status,
+            price_id: price.into(),
+            livemode: false,
+            invoice_paid: true,
+            current_period_end_millis: 2_000_000,
+            cancel_at_period_end: ending,
+            cancel_at_millis: None,
+            canceled_at_millis: None,
+        }
+    }
+    use SubscriptionStatus::{Active, Canceled};
+
+    #[test]
+    fn one_live_plan_answers_monthly_or_yearly() {
+        for price in ["price_month", "price_year"] {
+            let rows = [sub("sub_a", price, Active, false)];
+            let current = current_subscription(&rows).unwrap().unwrap();
+            assert_eq!(current.price_id, price);
+        }
+        assert!(current_subscription(&[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn switching_monthly_to_yearly_answers_with_the_renewing_plan() {
+        // Newest first: the yearly purchase, then the monthly plan set to end.
+        let rows = [
+            sub("sub_year", "price_year", Active, false),
+            sub("sub_month", "price_month", Active, true),
+        ];
+        assert_eq!(
+            current_subscription(&rows)
+                .unwrap()
+                .unwrap()
+                .subscription_id,
+            "sub_year"
+        );
+        // Order does not matter; a cancel_at date counts as ending too.
+        let mut month = sub("sub_month", "price_month", Active, false);
+        month.cancel_at_millis = Some(1_500_000);
+        let rows = [month, sub("sub_year", "price_year", Active, false)];
+        assert_eq!(
+            current_subscription(&rows)
+                .unwrap()
+                .unwrap()
+                .subscription_id,
+            "sub_year"
+        );
+    }
+
+    #[test]
+    fn two_renewing_plans_are_still_a_conflict() {
+        let rows = [
+            sub("sub_year", "price_year", Active, false),
+            sub("sub_month", "price_month", Active, false),
+        ];
+        assert!(matches!(
+            current_subscription(&rows),
+            Err(BillingError::Conflict)
+        ));
+        let rows = [
+            sub("sub_year", "price_year", Active, true),
+            sub("sub_month", "price_month", Active, true),
+        ];
+        assert!(matches!(
+            current_subscription(&rows),
+            Err(BillingError::Conflict)
+        ));
+    }
+
+    #[test]
+    fn canceled_history_never_conflicts_and_the_newest_answers_when_none_is_live() {
+        let rows = [
+            sub("sub_new", "price_year", Active, false),
+            sub("sub_old", "price_month", Canceled, false),
+        ];
+        assert_eq!(
+            current_subscription(&rows)
+                .unwrap()
+                .unwrap()
+                .subscription_id,
+            "sub_new"
+        );
+        let rows = [
+            sub("sub_new", "price_year", Canceled, false),
+            sub("sub_old", "price_month", Canceled, false),
+        ];
+        assert_eq!(
+            current_subscription(&rows)
+                .unwrap()
+                .unwrap()
+                .subscription_id,
+            "sub_new"
+        );
+    }
 }
