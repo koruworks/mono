@@ -672,6 +672,57 @@ fn the_rows_publish_one_node_per_cell_at_the_cell_rects() {
     }
 }
 
+/// **The emoji row publishes ten cells at their rectangles** (PLAN §9): a
+/// list named *Workspace emoji* of ten options, each named by its emoji and
+/// keyed by a fixed word, in the card's order, 🌱 chosen, every cell where
+/// `EmojiRow::cells` puts it inside the row's leaf — at the minimum window,
+/// at the narrowest card beside the sidebar, and wrapped in a narrow column.
+/// A client's click on a cell chooses it, as a press does.
+#[test]
+fn the_emoji_row_publishes_ten_cells_at_their_rects() {
+    let mut narrow = OnboardingView::default();
+    narrow.set_embedded(true);
+    narrow.show_setup();
+    narrow.set_viewport(150.0, 900.0);
+    let mut views = vec![narrow];
+    for (width, height) in [(452.0, 640.0), (760.0, 640.0)] {
+        let mut view = at_setup();
+        view.set_viewport(width, height);
+        views.push(view);
+    }
+    for mut view in views {
+        let lang = view.language;
+        let nodes = tree(&mut view);
+        let emoji = find(&nodes, parts::EMOJI).expect("the emoji row");
+        assert_eq!(emoji.role, Role::ListBox);
+        assert_eq!(emoji.label.as_deref(), Some(t(lang, Key::SetupEmojiRow)));
+        assert_eq!(emoji.size_of_set, Some(10));
+        let row = frame_rect(&mut view, KEY_EMOJI);
+        assert_eq!(emoji.bounds, Some(row));
+        let cells = emoji_geometry().cells(row);
+        assert_eq!(emoji.children.len(), 10);
+        for (index, (node, cell)) in emoji.children.iter().zip(&cells).enumerate() {
+            assert_eq!(node.role, Role::ListBoxOption);
+            assert_eq!(node.occurrence.part, parts::EMOJI_PARTS[index]);
+            assert_eq!(node.label.as_deref(), Some(SETUP_EMOJI[index]));
+            assert_eq!(node.position, Some(index));
+            assert_eq!(node.selected, Some(index == 0), "🌱 is chosen");
+            assert_eq!(node.bounds, Some(*cell));
+            assert!(node.actions.contains(&Action::Click));
+        }
+    }
+
+    let (window, slot) = slots();
+    let mut view = at_setup();
+    let nodes = flatten(&view.accessibility_semantics(window, slot));
+    let rocket = at(&nodes, parts::EMOJI_PARTS[5]);
+    assert!(view.accessibility_action(rocket, Action::Click, None));
+    assert_eq!(view.workspace_icon.as_deref(), Some("🚀"));
+    assert_eq!(view.accessibility_focus(window, slot), Some(rocket));
+    // Out of the row's ten, no part.
+    assert!(part_of(Screen::Setup, Hit::Emoji(10)).is_none());
+}
+
 /// A client's focus on a cell puts the keyboard on the row with its cursor
 /// there, choosing nothing; a click chooses, as Enter does.
 #[test]
@@ -1000,10 +1051,18 @@ fn identity_is_the_same_in_every_language() {
 #[test]
 fn every_authored_name_on_the_route_is_translated() {
     let (window, slot) = slots();
+    // The emoji cells are named by their content, the emoji itself, which is
+    // the same in every language; they are left out of the comparison.
+    let authored = |view: &mut OnboardingView| {
+        labels(&flatten(&view.accessibility_semantics(window, slot)))
+            .into_iter()
+            .filter(|name| !SETUP_EMOJI.contains(&name.as_str()))
+            .collect::<Vec<_>>()
+    };
     let english: Vec<String> = {
         let mut view = at_setup();
         view.language = Lang::En;
-        labels(&flatten(&view.accessibility_semantics(window, slot)))
+        authored(&mut view)
     };
     assert!(english.len() > 15);
     for lang in Lang::ALL {
@@ -1012,7 +1071,7 @@ fn every_authored_name_on_the_route_is_translated() {
         }
         let mut view = at_setup();
         view.language = lang;
-        let names = labels(&flatten(&view.accessibility_semantics(window, slot)));
+        let names = authored(&mut view);
         assert_eq!(names.len(), english.len(), "{} lost a name", lang.tag());
         let shared = names.iter().zip(&english).filter(|(a, b)| a == b).count();
         // A few short words coincide between languages — a color called
@@ -1138,6 +1197,8 @@ fn every_control_of_every_screen_round_trips_through_its_part() {
         Hit::WorkspaceAppearance,
         Hit::Swatch(0),
         Hit::Swatch(9),
+        Hit::Emoji(0),
+        Hit::Emoji(9),
         Hit::Back,
         Hit::Recovery,
     ];
@@ -1164,6 +1225,7 @@ fn every_control_of_every_screen_round_trips_through_its_part() {
     assert!(mapped > 12, "the table went quiet: only {mapped} controls");
     // A swatch that does not exist is not a control.
     assert!(part_of(Screen::Setup, Hit::Swatch(10)).is_none());
+    assert!(part_of(Screen::Setup, Hit::Emoji(10)).is_none());
     // And the Google route routes nothing at all.
     assert!(hit_of(Screen::Browser, parts::PRIMARY).is_none());
     assert!(hit_of(Screen::ExistingProfiles, parts::PRIMARY).is_none());

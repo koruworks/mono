@@ -221,6 +221,9 @@ enum Hit {
     /// A cell of the swatch row, by its place in the palette's order. As a
     /// keyboard stop the row is one control, at its cursor.
     Swatch(usize),
+    /// A cell of the emoji row, by its place among the card's ten. One stop,
+    /// at its cursor, like the swatch row.
+    Emoji(usize),
     Back,
 }
 
@@ -311,6 +314,8 @@ pub struct OnboardingView {
     setup_finishing: bool,
     /// The swatch row's cursor: which cell the arrows are on.
     swatch_cursor: usize,
+    /// The emoji row's cursor.
+    emoji_cursor: usize,
     /// The card's shaped text, kept across frames.
     setup_cache: koru_draw::el::TextCache,
     /// The card's bottom and the room under it, from the last frame laid out
@@ -418,6 +423,7 @@ impl Default for OnboardingView {
             workspace_appearance: None,
             setup_finishing: false,
             swatch_cursor: 0,
+            emoji_cursor: 0,
             setup_cache: Default::default(),
             setup_height: Cell::new(None),
             owner_label: SetupOwnerLabel::You,
@@ -1255,7 +1261,10 @@ impl OnboardingView {
             )
         ) {
             CursorIcon::Text
-        } else if matches!(self.hover, Some(Hit::WorkspaceAppearance | Hit::Swatch(_))) {
+        } else if matches!(
+            self.hover,
+            Some(Hit::WorkspaceAppearance | Hit::Swatch(_) | Hit::Emoji(_))
+        ) {
             koru_ui::cursor::PRESS
         } else {
             CursorIcon::Default
@@ -1325,9 +1334,9 @@ impl OnboardingView {
                 self.setup_focus_entered(focused);
                 true
             }
-            // **Inside the swatch row the arrows move its cursor** and are
-            // consumed, ends included: a `ListBox` does not hand focus on.
-            // Everywhere else they keep moving the focus, below.
+            // **Inside a row — the swatches or the emoji — the arrows move its
+            // cursor** and are consumed, ends included: a `ListBox` does not
+            // hand focus on. Everywhere else they keep moving the focus, below.
             Key::Named(
                 named @ (NamedKey::ArrowLeft
                 | NamedKey::ArrowRight
@@ -1335,9 +1344,11 @@ impl OnboardingView {
                 | NamedKey::ArrowDown),
             ) if mods.is_empty()
                 && self.screen == Screen::Setup
-                && matches!(focused, Some(Hit::Swatch(_))) =>
+                && matches!(focused, Some(Hit::Swatch(_) | Hit::Emoji(_))) =>
             {
-                self.setup_arrow(*named);
+                if let Some(row) = focused {
+                    self.setup_arrow(*named, row);
+                }
                 true
             }
             Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) if mods.is_empty() => {
@@ -3006,8 +3017,8 @@ mod tests {
     // ------------------------------------------------- the setup card
 
     use super::setup::{
-        KEY_BACK, KEY_CARD, KEY_COLORS, KEY_NAME, KEY_PRIMARY, KEY_RECOVERY, KEY_WORKSPACE_NAME,
-        swatch_geometry,
+        KEY_BACK, KEY_CARD, KEY_COLORS, KEY_EMOJI, KEY_NAME, KEY_PRIMARY, KEY_RECOVERY,
+        KEY_WORKSPACE_NAME, SETUP_EMOJI, emoji_geometry, swatch_geometry,
     };
     use koru_ui::ColorPickerRow;
 
@@ -3353,13 +3364,15 @@ mod tests {
         let mut view = card();
         set_field(&mut view, Hit::Name, "Ana");
         let controls = view.controls();
-        assert_eq!(controls.len(), 6);
+        assert_eq!(controls.len(), 7);
         assert_eq!(
             controls[..3],
             [Hit::Name, Hit::WorkspaceAppearance, Hit::WorkspaceName]
         );
         assert!(matches!(controls[3], Hit::Swatch(_)));
-        assert_eq!(controls[4..], [Hit::Primary, Hit::Back]);
+        // The emoji row is the next stop after the swatches (I3).
+        assert!(matches!(controls[4], Hit::Emoji(_)));
+        assert_eq!(controls[5..], [Hit::Primary, Hit::Back]);
 
         // On the tile and on the primary, the arrows move the focus.
         focus_on(&mut view, Hit::WorkspaceAppearance);
@@ -3415,6 +3428,99 @@ mod tests {
         named(&mut view, NamedKey::ArrowRight);
         assert!(named(&mut view, NamedKey::Space));
         assert_eq!(view.workspace_color.as_deref(), Some("purple"));
+        // Tab leaves the row.
+        named(&mut view, NamedKey::Tab);
+        assert_ne!(view.focus, stop);
+    }
+
+    /// **The emoji row and the full picker write the same emoji** (D5): a
+    /// press on a cell sets the tile's emoji and rings that cell; an emoji
+    /// from the tile's picker that is one of the ten rings its cell, and one
+    /// that is not rings none while the tile shows it; the action leaves with
+    /// whatever the tile shows.
+    #[test]
+    fn an_emoji_from_the_row_and_one_from_the_full_picker_agree_with_the_tile() {
+        let mut view = card();
+        assert_eq!(view.selected_emoji(), Some(0), "🌱 is the default");
+        let cells = emoji_geometry().cells(rect_of(&mut view, KEY_EMOJI));
+        assert!(press(&mut view, cells[5]));
+        assert_eq!(view.workspace_icon.as_deref(), Some("🚀"));
+        assert_eq!(view.selected_emoji(), Some(5));
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Emoji(5)));
+
+        // One of the ten, from the full picker: its cell is ringed.
+        view.activate(Hit::WorkspaceAppearance);
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🎨".into()),
+            color: Some("green".into()),
+        });
+        assert_eq!(view.selected_emoji(), Some(7));
+
+        // One outside the ten: no cell is ringed, and the tile shows it.
+        view.activate(Hit::WorkspaceAppearance);
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🌊".into()),
+            color: Some("blue".into()),
+        });
+        assert_eq!(view.selected_emoji(), None);
+        assert_eq!(view.workspace_icon.as_deref(), Some("🌊"));
+        set_field(&mut view, Hit::Name, "Ana");
+        view.activate(Hit::Primary);
+        assert!(matches!(
+            view.take_action(),
+            Some(Action::CreateLocalProfile { workspace_icon: Some(icon), .. }) if icon == "🌊"
+        ));
+        assert!(!SETUP_EMOJI.contains(&"🌊"));
+    }
+
+    /// **Arrows inside the emoji row** move its cursor across lines and stop
+    /// at its ends, choosing nothing until Enter or Space — the swatch row's
+    /// rule, on the emoji row's own columns.
+    #[test]
+    fn arrows_move_across_emoji_lines_and_stop_at_the_ends() {
+        // A narrow card: four cells a line, ten on three lines.
+        let mut view = OnboardingView::default();
+        view.set_embedded(true);
+        view.show_setup();
+        view.set_viewport(150.0, 900.0);
+        let row = rect_of(&mut view, KEY_EMOJI);
+        assert_eq!(emoji_geometry().columns(row.w), 4);
+        focus_on(&mut view, Hit::Name);
+        for _ in 0..4 {
+            named(&mut view, NamedKey::Tab);
+        }
+        let stop = view.focus;
+        // Entering the row puts the cursor on the chosen cell, 🌱.
+        assert_eq!(view.controls().get(stop), Some(&Hit::Emoji(0)));
+        let mut step = |key: NamedKey, cursor: usize| {
+            assert!(named(&mut view, key), "{key:?} is consumed");
+            assert_eq!(view.focus, stop, "{key:?} left the row");
+            assert_eq!(view.emoji_cursor, cursor, "after {key:?}");
+            assert_eq!(view.workspace_icon.as_deref(), Some("🌱"), "{key:?} chose");
+        };
+        step(NamedKey::ArrowLeft, 0); // the first cell: nothing
+        step(NamedKey::ArrowUp, 0); // the first line: nothing
+        step(NamedKey::ArrowRight, 1);
+        step(NamedKey::ArrowRight, 2);
+        step(NamedKey::ArrowRight, 3);
+        step(NamedKey::ArrowRight, 4); // across lines
+        step(NamedKey::ArrowDown, 8);
+        step(NamedKey::ArrowDown, 8); // the last line: nothing
+        step(NamedKey::ArrowRight, 9);
+        step(NamedKey::ArrowRight, 9); // the last cell: nothing
+        step(NamedKey::ArrowUp, 5);
+        step(NamedKey::ArrowLeft, 4);
+        step(NamedKey::ArrowLeft, 3); // back across lines
+        step(NamedKey::ArrowDown, 7);
+        step(NamedKey::ArrowDown, 9); // to the shorter line's last cell
+        // Enter chooses the cursor's cell, and so does Space.
+        assert!(named(&mut view, NamedKey::Enter));
+        assert_eq!(view.workspace_icon.as_deref(), Some("🎯"));
+        named(&mut view, NamedKey::ArrowLeft);
+        assert!(named(&mut view, NamedKey::Space));
+        assert_eq!(view.workspace_icon.as_deref(), Some("📚"));
+        // The swatch row's cursor never moved.
+        assert_eq!(view.workspace_color.as_deref(), Some("green"));
         // Tab leaves the row.
         named(&mut view, NamedKey::Tab);
         assert_ne!(view.focus, stop);

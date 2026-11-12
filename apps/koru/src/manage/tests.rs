@@ -427,9 +427,9 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
             view.page_scroll > 0.0,
             "the embedded form uses page scrolling"
         );
-        // Every stop — the card has six here — and round again is revealed
-        // inside the page.
-        for _ in 0..8 {
+        // Every stop — the card has seven here, the emoji row included — and
+        // round again is revealed inside the page.
+        for _ in 0..9 {
             key(&mut view, NamedKey::Tab);
             let focus = view
                 .c

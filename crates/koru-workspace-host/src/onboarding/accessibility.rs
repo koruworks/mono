@@ -58,7 +58,8 @@
 //! from what drawing and hit-testing already share — `welcome_layout`,
 //! `content`, `koru_ui::caption::direct_controls`, and for the setup card its
 //! **frame**: `frame.node(key).rect` for a control, and
-//! `ColorPickerRow::wrapped_swatches` inside the swatch row's leaf for a cell.
+//! `ColorPickerRow::wrapped_swatches` or `EmojiRow::cells` inside the row's
+//! leaf for a cell.
 //! `el::Frame::semantics()` and `focus_order()` are not used for the card
 //! (welcome D7): the element layer has no text-input role, value or live
 //! region yet, and this contract needs all three. A second copy of the
@@ -93,9 +94,9 @@ use crate::accessibility::{
 };
 
 use super::setup::{
-    KEY_BACK, KEY_CARD, KEY_COLORS, KEY_LEAD, KEY_NAME, KEY_NOTE, KEY_PRIMARY, KEY_RECOVERY,
-    KEY_RESUME, KEY_STATUS, KEY_TILE, KEY_WORKSPACE_NAME, KEY_WORKSPACE_ROW, KEY_YOU_ROW,
-    SWATCH_COUNT, swatch_geometry,
+    KEY_BACK, KEY_CARD, KEY_COLORS, KEY_EMOJI, KEY_LEAD, KEY_NAME, KEY_NOTE, KEY_PRIMARY,
+    KEY_RECOVERY, KEY_RESUME, KEY_STATUS, KEY_TILE, KEY_WORKSPACE_NAME, KEY_WORKSPACE_ROW,
+    KEY_YOU_ROW, SETUP_EMOJI, SWATCH_COUNT, emoji_geometry, swatch_geometry,
 };
 use super::{Hit, OnboardingView, Screen};
 
@@ -172,6 +173,22 @@ pub mod parts {
         ControlPart::new("color-slate"),
         ControlPart::new("color-stone"),
     ];
+    /// The emoji row, and one cell per emoji. Keyed by a fixed word for each
+    /// emoji, never its position, so a reordering keeps every locator; in the
+    /// order of the card's `SETUP_EMOJI`, which a test holds this to.
+    pub const EMOJI: ControlPart = ControlPart::new("emoji");
+    pub const EMOJI_PARTS: [ControlPart; 10] = [
+        ControlPart::new("emoji-seedling"),
+        ControlPart::new("emoji-notebook"),
+        ControlPart::new("emoji-briefcase"),
+        ControlPart::new("emoji-graduation-cap"),
+        ControlPart::new("emoji-house"),
+        ControlPart::new("emoji-rocket"),
+        ControlPart::new("emoji-brain"),
+        ControlPart::new("emoji-palette"),
+        ControlPart::new("emoji-books"),
+        ControlPart::new("emoji-target"),
+    ];
 
     /// The card's primary, and the way back.
     pub const PRIMARY: ControlPart = ControlPart::new("primary");
@@ -214,6 +231,7 @@ fn part_of(screen: Screen, hit: Hit) -> Option<ControlPart> {
         (Screen::Setup, Hit::WorkspaceAppearance) => p::WORKSPACE_ICON,
         (Screen::Setup, Hit::WorkspaceName) => p::WORKSPACE_NAME,
         (Screen::Setup, Hit::Swatch(index)) => *p::COLOR.get(index)?,
+        (Screen::Setup, Hit::Emoji(index)) => *p::EMOJI_PARTS.get(index)?,
         (Screen::Setup, Hit::Recovery) => p::RECOVERY,
         (Screen::Recovery, Hit::Back) => p::BACK,
         (Screen::EmailCode, Hit::EmailCode) => p::EMAIL_CODE,
@@ -252,7 +270,10 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
             x if x == p::PRIMARY => Hit::Primary,
             x if x == p::BACK => Hit::Back,
             x if x == p::RECOVERY => Hit::Recovery,
-            x => Hit::Swatch(p::COLOR.iter().position(|color| *color == x)?),
+            x => match p::COLOR.iter().position(|color| *color == x) {
+                Some(index) => Hit::Swatch(index),
+                None => Hit::Emoji(p::EMOJI_PARTS.iter().position(|emoji| *emoji == x)?),
+            },
         },
         // The rows are model-keyed and routed by `accessibility_action`
         // itself; only *Back* is a form part here.
@@ -384,6 +405,7 @@ impl OnboardingView {
         rev.str(self.workspace_icon.as_deref().unwrap_or(""));
         rev.str(self.workspace_color.as_deref().unwrap_or(""));
         rev.u64(self.swatch_cursor as u64);
+        rev.u64(self.emoji_cursor as u64);
         rev.bool(self.setup_finishing);
         rev.bool(self.owner_label == super::SetupOwnerLabel::Profile);
         rev.bool(self.workspace_name_edited);
@@ -481,7 +503,7 @@ impl OnboardingView {
     /// than two fields kept in step. `None` means the window itself, which is
     /// the honest answer while a modal is up or a screen offers no controls at
     /// all.
-    /// For the swatch row, the cell its cursor is on.
+    /// For a row of swatches or emoji, the cell its cursor is on.
     pub fn accessibility_focus(&self, window: WindowSlot, view: ViewSlot) -> Option<Occurrence> {
         if self.workspace_appearance.is_some() {
             return Some(
@@ -575,21 +597,28 @@ impl OnboardingView {
             return self.accessibility_set_value(hit, value);
         }
         let controls = self.controls();
-        // **A swatch is one of the row's options, not a stop of its own**:
-        // focusing one puts the keyboard on the row with its cursor there, and
-        // a click does that and then presses Enter, which chooses it — so a
-        // client's press is the keyboard's.
-        if let (Screen::Setup, Hit::Swatch(cell)) = (self.screen, hit) {
-            let Some(stop) = controls
-                .iter()
-                .position(|control| matches!(control, Hit::Swatch(_)))
-            else {
+        // **A swatch or an emoji is one of its row's options, not a stop of
+        // its own**: focusing one puts the keyboard on the row with its cursor
+        // there, and a click does that and then presses Enter, which chooses
+        // it — so a client's press is the keyboard's.
+        if self.screen == Screen::Setup && matches!(hit, Hit::Swatch(_) | Hit::Emoji(_)) {
+            let same_row = |control: &Hit| {
+                matches!(
+                    (control, hit),
+                    (Hit::Swatch(_), Hit::Swatch(_)) | (Hit::Emoji(_), Hit::Emoji(_))
+                )
+            };
+            let Some(stop) = controls.iter().position(same_row) else {
                 return false;
             };
             let before = controls.get(self.focus).copied();
             self.focus = stop;
             self.setup_focus_entered(before);
-            self.swatch_cursor = cell;
+            match hit {
+                Hit::Swatch(cell) => self.swatch_cursor = cell,
+                Hit::Emoji(cell) => self.emoji_cursor = cell,
+                _ => {}
+            }
             return match action {
                 Action::Focus => true,
                 Action::Click => self.key(
@@ -913,8 +942,9 @@ impl OnboardingView {
     /// **The setup card** (welcome step 1, PLAN §9), in reading order: the
     /// form named by the title, the lead, the *You* group with the name field,
     /// the *First workspace* group with the tile and the workspace's name, the
-    /// swatch row as a `ListBox` of ten options, the note and the status when
-    /// drawn, the primary, then *Back*, *Resume* and recovery when offered.
+    /// swatch row and the emoji row as a `ListBox` of ten options each, the
+    /// note and the status when drawn, the primary, then *Back*, *Resume* and
+    /// recovery when offered.
     ///
     /// **Every rectangle is the card's frame's**, and a cell's is
     /// `ColorPickerRow`'s wrapped geometry inside the row's leaf — the same
@@ -1008,6 +1038,33 @@ impl OnboardingView {
                 .with_bounds(row)
                 // On the container, because that is where an item's total is
                 // read from — see `SemanticNode::size_of_set`.
+                .with_size_of_set(cells.len())
+                .with_children(cells),
+        );
+        // The emoji row: each cell named by its emoji, which a screen reader
+        // speaks by its Unicode name (acceptance A7 confirms it does).
+        let row = rect(KEY_EMOJI);
+        let selected = self.selected_emoji();
+        let cells: Vec<SemanticNode> = emoji_geometry()
+            .cells(row)
+            .into_iter()
+            .zip(SETUP_EMOJI)
+            .enumerate()
+            .map(|(index, (cell, emoji))| {
+                choice(
+                    cx.at(parts::EMOJI_PARTS[index]),
+                    emoji,
+                    cell,
+                    selected == Some(index),
+                    index,
+                )
+                .disabled(finishing)
+            })
+            .collect();
+        children.push(
+            SemanticNode::new(cx.at(parts::EMOJI), Role::ListBox)
+                .with_label(t(lang, Key::SetupEmojiRow))
+                .with_bounds(row)
                 .with_size_of_set(cells.len())
                 .with_children(cells),
         );

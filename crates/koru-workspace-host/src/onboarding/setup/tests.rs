@@ -130,6 +130,29 @@ fn the_card_fits_the_minimum_window_in_every_language() {
                         && primary.y + primary.h <= card.y + card.h + 0.01,
                     "{case}: the primary is cut off: {primary:?} in {card:?}"
                 );
+                // Both rows lie inside the card with every cell inside its
+                // row (the emoji row since I3).
+                let colors = rect(&frame, KEY_COLORS);
+                let emoji = rect(&frame, KEY_EMOJI);
+                for (name, row) in [("swatch row", colors), ("emoji row", emoji)] {
+                    assert!(
+                        row.x >= card.x
+                            && row.x + row.w <= card.x + card.w + 0.01
+                            && row.y + row.h <= card.y + card.h + 0.01,
+                        "{case}: the {name} leaves the card: {row:?} in {card:?}"
+                    );
+                }
+                assert!(
+                    emoji.y >= colors.y + colors.h,
+                    "{case}: emoji under swatches"
+                );
+                for cell in emoji_geometry().cells(emoji) {
+                    assert!(
+                        cell.x + cell.w <= emoji.x + emoji.w + 0.01
+                            && cell.y + cell.h <= emoji.y + emoji.h + 0.01,
+                        "{case}: an emoji cell is clipped: {cell:?} in {emoji:?}"
+                    );
+                }
                 assert!(
                     frame.diagnostics.is_empty(),
                     "{case}: {:?}",
@@ -188,6 +211,13 @@ fn every_target_comes_from_the_frame() {
         let (x, y) = cell.centre();
         assert_eq!(view.hit(x, y), Some(Hit::Swatch(index)));
     }
+    let emoji = emoji_geometry().cells(rect(&frame, KEY_EMOJI));
+    assert_eq!(emoji.len(), SETUP_EMOJI.len());
+    for (index, cell) in emoji.iter().enumerate() {
+        let (x, y) = cell.centre();
+        assert_eq!(view.hit(x, y), Some(Hit::Emoji(index)));
+    }
+    assert_eq!(key_for_hit(Hit::Emoji(3)), Some(KEY_EMOJI));
     // The chip is decorative: no target.
     let (x, y) = rect(&frame, KEY_AVATAR).centre();
     assert_eq!(view.hit(x, y), None);

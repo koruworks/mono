@@ -2,7 +2,7 @@
 
 //! **The first-run setup card** (welcome step 1, TECHNICAL.final §5): one
 //! card in place of the Profile and Workspace steps — a name, a first
-//! workspace with its tile and swatches, one primary.
+//! workspace with its tile, swatches and emoji, one primary.
 //!
 //! ```text
 //! col  Setup window          the area beside the welcome sidebar, below the caption
@@ -14,7 +14,8 @@
 //!     text  "First workspace"
 //!     row   First workspace  tile, name field  setup/workspace-tile, setup/workspace-name
 //!     leaf  swatch row       wraps to the width setup/colors
-//!     text  note, status     when there is one setup/note, setup/status
+//!     leaf  emoji row        wraps to the width setup/emoji
+//!     text  note, status    when there is one setup/note, setup/status
 //!     leaf  primary                            setup/primary
 //!     col   Other actions    Back, Resume, Recovery when offered
 //!   spacer
@@ -22,8 +23,8 @@
 //!
 //! **The frame is the one source of geometry** (D7): drawing, the pointer and
 //! the accessibility projection all read `frame.node(key).rect`, and a
-//! swatch's rectangle is `ColorPickerRow`'s wrapped geometry inside its
-//! leaf's. Focus, typed actions and semantics stay in [`OnboardingView`] and
+//! swatch's or an emoji's rectangle is its component's (`ColorPickerRow`'s
+//! wrapped form, `KoruEmojiRow`) inside its leaf's. Focus, typed actions and semantics stay in [`OnboardingView`] and
 //! [`super::accessibility`]; `el::Frame::semantics()` and `focus_order()` are
 //! not used for this screen.
 //!
@@ -49,8 +50,10 @@ use koru_i18n::{Key as T, t};
 use koru_ui::ColorPickerRow;
 use std::rc::Rc;
 
-use leaves::{AvatarLeaf, ButtonLeaf, ButtonStyle, NameField, SwatchRowLeaf, TileLeaf};
-pub(super) use leaves::{SWATCH_COUNT, swatch_geometry};
+use leaves::{
+    AvatarLeaf, ButtonLeaf, ButtonStyle, EmojiRowLeaf, NameField, SwatchRowLeaf, TileLeaf,
+};
+pub(super) use leaves::{SETUP_EMOJI, SWATCH_COUNT, emoji_geometry, swatch_geometry};
 use tokens::*;
 
 /// Which label the card's first field wears: on first run it names the
@@ -81,6 +84,7 @@ pub(super) const KEY_WORKSPACE_ROW: ElKey = ElKey::surface(SURFACE, "workspace-r
 pub(super) const KEY_TILE: ElKey = ElKey::surface(SURFACE, "workspace-tile");
 pub(super) const KEY_WORKSPACE_NAME: ElKey = ElKey::surface(SURFACE, "workspace-name");
 pub(super) const KEY_COLORS: ElKey = ElKey::surface(SURFACE, "colors");
+pub(super) const KEY_EMOJI: ElKey = ElKey::surface(SURFACE, "emoji");
 pub(super) const KEY_NOTE: ElKey = ElKey::surface(SURFACE, "note");
 pub(super) const KEY_STATUS: ElKey = ElKey::surface(SURFACE, "status");
 pub(super) const KEY_PRIMARY: ElKey = ElKey::surface(SURFACE, "primary");
@@ -92,8 +96,8 @@ pub(super) const KEY_RECOVERY: ElKey = ElKey::surface(SURFACE, "recovery");
 pub(super) const WINDOW: &str = "Setup window";
 pub(super) const CARD: &str = "Setup card";
 
-/// **The key-to-control table**, both ways. The swatch row is one key; the
-/// cell under a point is the component's to say ([`OnboardingView::setup_hit`]).
+/// **The key-to-control table**, both ways. Each row is one key; the cell
+/// under a point is the component's to say ([`OnboardingView::setup_hit`]).
 fn hit_for_key(key: ElKey) -> Option<Hit> {
     Some(match key {
         k if k == KEY_NAME => Hit::Name,
@@ -113,6 +117,7 @@ pub(super) fn key_for_hit(hit: Hit) -> Option<ElKey> {
         Hit::WorkspaceAppearance => KEY_TILE,
         Hit::WorkspaceName => KEY_WORKSPACE_NAME,
         Hit::Swatch(_) => KEY_COLORS,
+        Hit::Emoji(_) => KEY_EMOJI,
         Hit::Primary => KEY_PRIMARY,
         Hit::Back => KEY_BACK,
         Hit::ResumeAccount => KEY_RESUME,
@@ -211,10 +216,17 @@ impl OnboardingView {
             .position(|name| *name == color)
     }
 
+    /// The cell the workspace's emoji is, when it is one of the row's ten;
+    /// `None` for one chosen from the full picker, which rings no cell.
+    pub(super) fn selected_emoji(&self) -> Option<usize> {
+        let icon = self.workspace_icon.as_deref()?;
+        SETUP_EMOJI.iter().position(|emoji| *emoji == icon)
+    }
+
     /// The card's stops, in reading order (TECHNICAL.final §12 item 3): the
-    /// name, the tile, the workspace name, the swatch row as one stop, the
-    /// primary when it can be pressed, then *Back*, *Resume* and recovery
-    /// when offered. Nothing while finishing.
+    /// name, the tile, the workspace name, the swatch row and the emoji row
+    /// as one stop each, the primary when it can be pressed, then *Back*,
+    /// *Resume* and recovery when offered. Nothing while finishing.
     pub(super) fn setup_controls(&self) -> Vec<Hit> {
         if self.setup_finishing {
             return Vec::new();
@@ -224,6 +236,7 @@ impl OnboardingView {
             Hit::WorkspaceAppearance,
             Hit::WorkspaceName,
             Hit::Swatch(self.swatch_cursor),
+            Hit::Emoji(self.emoji_cursor),
         ];
         if self.setup_primary_enabled() {
             controls.push(Hit::Primary);
@@ -249,9 +262,9 @@ impl OnboardingView {
         self.setup_focus_entered(before);
     }
 
-    /// **What entering a stop does.** Entering the swatch row puts its cursor
-    /// on the chosen cell, or the first; entering the workspace name while it
-    /// is still the default selects all of it, so typing replaces it.
+    /// **What entering a stop does.** Entering a row puts its cursor on the
+    /// chosen cell, or the first; entering the workspace name while it is
+    /// still the default selects all of it, so typing replaces it.
     pub(super) fn setup_focus_entered(&mut self, before: Option<Hit>) {
         if self.screen != Screen::Setup {
             return;
@@ -264,6 +277,9 @@ impl OnboardingView {
             Some(Hit::Swatch(_)) if !matches!(before, Some(Hit::Swatch(_))) => {
                 self.swatch_cursor = self.selected_swatch().unwrap_or(0);
             }
+            Some(Hit::Emoji(_)) if !matches!(before, Some(Hit::Emoji(_))) => {
+                self.emoji_cursor = self.selected_emoji().unwrap_or(0);
+            }
             Some(Hit::WorkspaceName) if !self.workspace_name_edited => {
                 self.workspace_name
                     .borrow_mut()
@@ -273,18 +289,31 @@ impl OnboardingView {
         }
     }
 
-    /// **An arrow inside the swatch row** moves its cursor and is consumed:
-    /// Left and Right a cell, across lines; Up and Down a line in the same
-    /// column, to the line's last cell when it is shorter. At the row's ends
-    /// it does nothing, and it never leaves the row — Tab does.
-    pub(super) fn setup_arrow(&mut self, key: NamedKey) {
+    /// **An arrow inside a row** — the swatches or the emoji — moves that
+    /// row's cursor and is consumed: Left and Right a cell, across lines; Up
+    /// and Down a line in the same column, to the line's last cell when it is
+    /// shorter. At the row's ends it does nothing, and it never leaves the
+    /// row — Tab does. Each row's columns are its own component's answer.
+    pub(super) fn setup_arrow(&mut self, key: NamedKey, row: Hit) {
+        let (rect_key, count) = match row {
+            Hit::Swatch(_) => (KEY_COLORS, SWATCH_COUNT),
+            Hit::Emoji(_) => (KEY_EMOJI, SETUP_EMOJI.len()),
+            _ => return,
+        };
         let width = self
-            .setup_node_rect(KEY_COLORS)
+            .setup_node_rect(rect_key)
             .map_or(f32::MAX, |rect| rect.w);
-        let columns = ColorPickerRow::columns(width);
-        let last = SWATCH_COUNT - 1;
-        let cursor = self.swatch_cursor.min(last);
-        self.swatch_cursor = match key {
+        let columns = match row {
+            Hit::Swatch(_) => ColorPickerRow::columns(width),
+            _ => emoji_geometry().columns(width),
+        };
+        let last = count - 1;
+        let current = match row {
+            Hit::Swatch(_) => self.swatch_cursor,
+            _ => self.emoji_cursor,
+        };
+        let cursor = current.min(last);
+        let next = match key {
             NamedKey::ArrowLeft => cursor.saturating_sub(1),
             NamedKey::ArrowRight => (cursor + 1).min(last),
             NamedKey::ArrowUp if cursor >= columns => cursor - columns,
@@ -293,6 +322,10 @@ impl OnboardingView {
             }
             _ => cursor,
         };
+        match row {
+            Hit::Swatch(_) => self.swatch_cursor = next,
+            _ => self.emoji_cursor = next,
+        }
     }
 
     /// What a press, Enter or Space on a card control does.
@@ -315,6 +348,11 @@ impl OnboardingView {
                 self.swatch_cursor = index;
                 self.workspace_color = Some(theme::workspace_color_names()[index].to_owned());
                 self.focus_setup_control(Hit::Swatch(index));
+            }
+            Hit::Emoji(index) if index < SETUP_EMOJI.len() => {
+                self.emoji_cursor = index;
+                self.workspace_icon = Some(SETUP_EMOJI[index].to_owned());
+                self.focus_setup_control(Hit::Emoji(index));
             }
             Hit::Primary if self.creation_conflict => {
                 self.setup_finishing = true;
@@ -494,6 +532,26 @@ impl OnboardingView {
                 .semantic()
                 .id(KEY_COLORS)
                 .hit(),
+            )
+            .child(
+                leaf(
+                    "Emoji row",
+                    EmojiRowLeaf {
+                        selected: self.selected_emoji(),
+                        hovered: match hover {
+                            Some(Hit::Emoji(index)) => Some(index),
+                            _ => None,
+                        },
+                        focused: match focused {
+                            Some(Hit::Emoji(index)) => Some(index),
+                            _ => None,
+                        },
+                        disabled: finishing,
+                    },
+                )
+                .semantic()
+                .id(KEY_EMOJI)
+                .hit(),
             );
         // Only the connected first run says where things live: it is the one
         // that has an account to explain.
@@ -666,6 +724,10 @@ impl OnboardingView {
         if key == KEY_COLORS {
             let rect = frame.node(KEY_COLORS)?.rect;
             return swatch_geometry().wrapped_hit(rect, x, y).map(Hit::Swatch);
+        }
+        if key == KEY_EMOJI {
+            let rect = frame.node(KEY_EMOJI)?.rect;
+            return emoji_geometry().hit(rect, x, y).map(Hit::Emoji);
         }
         let hit = hit_for_key(key)?;
         if hit == Hit::Primary && !self.setup_primary_enabled() {

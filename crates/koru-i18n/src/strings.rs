@@ -3194,13 +3194,15 @@ pub enum Key {
     /// be read: the installation needs repair. There is no other template to
     /// choose; the technical cause goes to the log.
     SetupInstallationNeedsRepair,
+    /// The emoji row's accessible name; each cell is named by its emoji.
+    SetupEmojiRow,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2220] = [
+    pub const ALL: [Key; 2221] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5421,6 +5423,7 @@ impl Key {
         Key::WorkspaceColorSlate,
         Key::WorkspaceColorStone,
         Key::SetupInstallationNeedsRepair,
+        Key::SetupEmojiRow,
     ];
 }
 
@@ -16303,4 +16306,5 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::WorkspaceColorSlate, en: "Slate", es: "Pizarra", pt_br: "Ardósia", de: "Schiefer", fr: "Ardoise", ar: "رمادي أردوازي", zh_hans: "石板灰", ja: "スレート" },
     Row { key: Key::WorkspaceColorStone, en: "Stone", es: "Piedra", pt_br: "Pedra", de: "Stein", fr: "Pierre", ar: "حجري", zh_hans: "岩石灰", ja: "ストーン" },
     Row { key: Key::SetupInstallationNeedsRepair, en: "This Koru installation is missing a file it needs to create your first workspace. Repair or reinstall Koru, then try again.", es: "A esta instalación de Koru le falta un archivo que necesita para crear tu primer espacio de trabajo. Repara o reinstala Koru y vuelve a intentarlo.", pt_br: "Esta instalação do Koru não tem um arquivo de que precisa para criar seu primeiro espaço de trabalho. Repare ou reinstale o Koru e tente novamente.", de: "Dieser Koru-Installation fehlt eine Datei, die zum Anlegen Ihres ersten Arbeitsbereichs nötig ist. Reparieren oder installieren Sie Koru neu und versuchen Sie es dann erneut.", fr: "Il manque à cette installation de Koru un fichier nécessaire pour créer votre premier espace de travail. Réparez ou réinstallez Koru, puis réessayez.", ar: "ينقص تثبيت Koru هذا ملفٌّ يحتاجه لإنشاء مساحة عملك الأولى. أصلِح Koru أو أعِد تثبيته، ثم حاول مجددًا.", zh_hans: "此 Koru 安装缺少创建你的第一个工作区所需的文件。请修复或重新安装 Koru，然后重试。", ja: "この Koru のインストールには、最初のワークスペースを作成するために必要なファイルがありません。Koru を修復または再インストールしてから、もう一度お試しください。" },
+    Row { key: Key::SetupEmojiRow, en: "Workspace emoji", es: "Emoji del espacio de trabajo", pt_br: "Emoji do espaço de trabalho", de: "Emoji des Arbeitsbereichs", fr: "Emoji de l'espace de travail", ar: "رمز تعبيري لمساحة العمل", zh_hans: "工作区表情", ja: "ワークスペースの絵文字" },
 ];

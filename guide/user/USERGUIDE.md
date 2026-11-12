@@ -1108,7 +1108,7 @@ storage; it says nothing about whether another device has your change yet.
 
 **Setting Koru up.** The first window a new person sees is described as well —
 *Welcome to Koru* and the setup card, with every field, every swatch (by its
-color's name) and every error. Tab walks it, Enter presses, and the whole
+color's name), every emoji and every error. Tab walks it, Enter presses, and the whole
 account-free route can be completed without a pointer. An account is never
 required.
 
@@ -1907,12 +1907,15 @@ Google sign-in the name is already filled from your Koru account when one is
 available. Under **First workspace**, the workspace is already called
 *Personal*, with 🌱 on green: click into the name (or Tab to it) and it is
 selected whole, so what you type replaces it. Click a swatch in the row of ten
-colors to change the workspace's color; the row wraps onto more lines in a
-narrow window rather than being cut off. Press the workspace tile left of the
-name for the full picker — every emoji, and "no color" — the same one
-available later from **Icon and color...**; the tile and the swatch row always
+colors to change the workspace's color, and an emoji in the row of ten under
+it (🌱 📓 💼 🎓 🏠 🚀 🧠 🎨 📚 🎯) to change its emoji; both rows wrap onto more
+lines in a narrow window rather than being cut off. Press the workspace tile
+left of the name for the full picker — every emoji, and "no color" — the same
+one available later from **Icon and color...**; the tile and the rows always
 agree. Choosing the unset color uses the current theme's default tile surface
-(white with a border in the light theme), and no swatch is ringed.
+(white with a border in the light theme), and no swatch is ringed; an emoji
+from the picker that is not one of the ten rings no emoji in the row while the
+tile shows it.
 
 Both name boxes behave like the document Find box: click to place the caret,
 drag to select, and use the ordinary word-delete, clipboard, and undo
@@ -1923,8 +1926,9 @@ the Welcome tab, which greets you by name. Your workspace holds one untitled
 document. If creating them is refused, the card comes back with the reason
 under the swatches and everything you typed, and trying again cannot make a
 second Profile. With the keyboard, Tab visits the name, the tile, the
-workspace name, the swatch row (one stop — the arrow keys move between swatches
-and Enter or Space chooses one), **Start using Koru**, then **Back**. **Back**
+workspace name, the swatch row and the emoji row (one stop each — the arrow
+keys move between a row's swatches or emoji and Enter or Space chooses one),
+**Start using Koru**, then **Back**. **Back**
 under the button returns to Welcome, and the card comes back as you left it. A session saved by an older version with a
 separate profiles tab opens on Welcome instead; the Manage tab itself comes
 back after a restart.

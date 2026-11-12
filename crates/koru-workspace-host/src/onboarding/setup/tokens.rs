@@ -52,6 +52,12 @@ pub(crate) const SETUP_RING_W: Metric = Metric::new("SETUP_RING_W", 2.0);
 pub(crate) const SETUP_RING_GAP: Metric = Metric::new("SETUP_RING_GAP", 2.0);
 pub(crate) const SETUP_RING_RADIUS: Metric = Metric::new("SETUP_RING_RADIUS", 12.0);
 
+/// An emoji row cell's side, and the gap between two cells on a line: ten
+/// cells fit one line beside the welcome sidebar at its narrowest (352 of
+/// about 361) and wrap below that.
+pub(crate) const SETUP_EMOJI_CELL: Metric = Metric::new("SETUP_EMOJI_CELL", 28.0);
+pub(crate) const SETUP_EMOJI_GAP: Metric = Metric::new("SETUP_EMOJI_GAP", 8.0);
+
 /// Under the card when it is embedded in a host page that scrolls it: 24.
 pub(crate) const SETUP_EMBEDDED_BOTTOM: Metric = Metric::new("SETUP_EMBEDDED_BOTTOM", 24.0);
 

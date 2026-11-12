@@ -3,8 +3,8 @@
 //! **The setup card's leaves**: the existing drawables the card is made of,
 //! each a named `impl Leaf` that takes what it draws as a value built per
 //! frame — the shared `TextInput`, `KoruAvatar`, the workspace `Tile`,
-//! `ColorPickerRow` in its wrapped form, and the shared buttons. Colors come
-//! from the frame's palette.
+//! `ColorPickerRow` in its wrapped form, `KoruEmojiRow`, and the shared
+//! buttons. Colors come from the frame's palette.
 //!
 //! **No geometry lives here.** The two row leaves forward to their
 //! components' own wrapped geometry, so paint, the view's pointer and the
@@ -21,15 +21,26 @@ use koru_draw::tile::Tile;
 use koru_draw::{inspect, scene};
 use koru_ui::button::{ActionButton, ActionStyle, ButtonRole, button_width, draw_button_enabled};
 use koru_ui::text_input::{InputStyle, TextInput};
-use koru_ui::{ColorPickerRow, KoruAvatar};
+use koru_ui::{ColorPickerRow, EmojiRow, KoruAvatar};
 use vello::Scene;
 use vello::kurbo::Affine;
 use vello::peniko::Color;
 
 use super::tokens::{
-    SETUP_ACTION_H, SETUP_CHIP, SETUP_DISABLED_ALPHA, SETUP_FIELD_H, SETUP_PRIMARY_H,
-    SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W,
+    SETUP_ACTION_H, SETUP_CHIP, SETUP_DISABLED_ALPHA, SETUP_EMOJI_CELL, SETUP_EMOJI_GAP,
+    SETUP_FIELD_H, SETUP_PRIMARY_H, SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W,
 };
+
+/// The emoji row's ten (D6), in the mock-up's order: 🌱 is the first
+/// workspace's default.
+pub(crate) const SETUP_EMOJI: [&str; 10] =
+    ["🌱", "📓", "💼", "🎓", "🏠", "🚀", "🧠", "🎨", "📚", "🎯"];
+
+/// The emoji row's geometry, at the card's cell size: what paint, the
+/// view's pointer and the screen reader all read.
+pub(crate) fn emoji_geometry() -> EmojiRow<'static> {
+    EmojiRow::new(&SETUP_EMOJI).cell(SETUP_EMOJI_CELL.value, SETUP_EMOJI_GAP.value)
+}
 
 /// The ten named workspace colors the swatch row offers (D6), in the
 /// palette's order (`theme::workspace_color_names`).
@@ -205,6 +216,46 @@ impl Leaf for SwatchRowLeaf {
                 1.0
             })
             .draw_wrapped(scene, root, engine, at);
+    }
+}
+
+/// **The emoji row**: `KoruEmojiRow`, wrapping as the swatch row does.
+/// `measure(Some(width))` is the component's `height(width)`.
+pub(crate) struct EmojiRowLeaf {
+    pub(crate) selected: Option<usize>,
+    pub(crate) hovered: Option<usize>,
+    pub(crate) focused: Option<usize>,
+    pub(crate) disabled: bool,
+}
+
+impl Leaf for EmojiRowLeaf {
+    fn measure(&self, width: Option<f32>) -> (f32, f32) {
+        let row = emoji_geometry();
+        match width {
+            Some(width) => (width, row.height(width)),
+            None => (row.width(), row.height(row.width())),
+        }
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        _state: ElState,
+    ) {
+        emoji_geometry()
+            .selected(self.selected)
+            .hovered(self.hovered.filter(|_| !self.disabled))
+            .focused(self.focused.filter(|_| !self.disabled))
+            .alpha(if self.disabled {
+                SETUP_DISABLED_ALPHA
+            } else {
+                1.0
+            })
+            .draw(scene, root, engine, at);
     }
 }
 
