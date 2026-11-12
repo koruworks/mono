@@ -731,17 +731,33 @@ fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
                     dialog.body()
                 ),
             }
-            // **That running work is stopped is said where it can be true**:
-            // a conversation the window knows is idle is not told so (the
-            // third window run); a whole Bot's question says what always
-            // happens to work that runs, as it did.
-            let says_stop = dialog
-                .body()
-                .contains("including a session you have taken over");
+            // **What is said of running work is what the window knows**
+            // (the fourth window run): stopped when it runs or waits; nothing
+            // of it when the window knows nothing runs, for a whole Bot too;
+            // a sentence true either way when it does not know.
+            let body = match (question, known) {
+                (Question::Archive, Known::Running | Known::NeedsYou) => Words::BotsArchiveBody,
+                (Question::Archive, Known::Idle) => Words::BotsArchiveBodyIdle,
+                (Question::Archive, Known::Unknown) => Words::BotsArchiveBodyUnknown,
+                (Question::Trash, Known::Running | Known::NeedsYou) => Words::BotsTrashBody,
+                (Question::Trash, Known::Idle) => Words::BotsTrashBodyIdle,
+                (Question::Trash, Known::Unknown) => Words::BotsTrashBodyUnknown,
+                (Question::TrashConversation, Known::Running | Known::NeedsYou) => {
+                    Words::BotsTrashMainBody
+                }
+                (Question::TrashConversation, Known::Idle) => Words::BotsTrashMainBodyIdle,
+                (Question::TrashConversation, Known::Unknown) => Words::BotsTrashMainBodyUnknown,
+            };
+            assert!(
+                dialog.body().ends_with(t(lang, body)),
+                "{case}: {:?}: {}",
+                body,
+                dialog.body()
+            );
             assert_eq!(
-                says_stop,
-                !(conversation && known == Known::Idle),
-                "{case}: {}",
+                dialog.body().contains("Its running work is stopped"),
+                matches!(known, Known::Running | Known::NeedsYou),
+                "{case}: said to be stopped only where work runs: {}",
                 dialog.body()
             );
             if conversation {
@@ -1376,4 +1392,68 @@ fn the_compact_conversations_list_takes_the_keyboard_when_it_opens() {
     koru_workspace_host::View::mouse_up(&mut v, ws);
     assert!(front_bot(&mut v).compact_list_shown());
     assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
+}
+
+/// **A conversation the tab has read and finds idle is known idle**, with
+/// no roster activity read at all (the fourth window run: the roster's read
+/// is fresh for 30 s and never refreshed on a timer, so the question for an
+/// idle conversation almost always said its running work is stopped, with
+/// Cancel the default). Entered as a person asks it: a click on the row
+/// gives the list the keyboard, Delete asks. The tab's own conversation,
+/// read empty (as the service answers a read, `read_chat`), is asked about
+/// with no word of stopping work and Enter confirming; another
+/// conversation, which the tab has not read, is asked about with the
+/// sentence true either way and Cancel the default.
+#[test]
+fn the_tabs_own_idle_conversation_is_asked_about_as_idle_without_the_roster() {
+    use koru_ui::confirm::Outcome;
+    use winit::keyboard::NamedKey;
+    let lang = crate::format::lang();
+    let (mut v, mut workspace, bot, other, _tab) = renaming_window();
+    front_bot(&mut v)
+        .conversation_mut()
+        .expect("bound")
+        .pretend_read(bot.main_chat);
+    assert!(
+        v.explore
+            .bots()
+            .activity_now(std::time::Instant::now())
+            .is_none(),
+        "no roster activity read"
+    );
+    for (chat, default, body) in [
+        (
+            bot.main_chat,
+            Outcome::Confirm,
+            Words::BotsTrashMainBodyIdle,
+        ),
+        (
+            other,
+            Outcome::Cancel,
+            Words::BotsTrashConversationBodyUnknown,
+        ),
+    ] {
+        lay_out(&mut v, &workspace);
+        let ws = &mut workspace.ws;
+        let (x, y) = row_centre(&mut v, chat);
+        koru_workspace_host::View::mouse_down(&mut v, ws, x, y, false);
+        koru_workspace_host::View::mouse_up(&mut v, ws);
+        // A click opens the row: the tab moves to it, as it does.
+        lay_out(&mut v, &workspace);
+        let ws = &mut workspace.ws;
+        if chat == other {
+            // The tab moved to a conversation it has not read: what it
+            // read was the main one's.
+            assert_eq!(front_bot(&mut v).chat_id(), other);
+        }
+        assert!(press(&mut v, ws, NamedKey::Delete), "{chat:?}");
+        lay_out(&mut v, &workspace);
+        v.drain_bot_lifecycle_asks();
+        let (dialog, _) = v.confirm.as_ref().expect("it asks");
+        assert_eq!(dialog.default_action(), Some(default), "{chat:?}");
+        assert_eq!(dialog.body(), t(lang, body), "{chat:?}");
+        let ws = &mut workspace.ws;
+        assert!(press(&mut v, ws, NamedKey::Escape));
+        assert!(v.confirm.is_none());
+    }
 }

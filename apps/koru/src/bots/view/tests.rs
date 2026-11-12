@@ -1328,7 +1328,10 @@ fn a_bots_conversations_are_titled_as_ai_chats_are() {
         .expect("asked");
     let (bot_title, _, _) = f
         .view
-        .confirm_words(crate::bots::lifecycle::Ask::Trash)
+        .confirm_words(
+            crate::bots::lifecycle::Ask::Trash,
+            crate::bots::stops::WorkNow::Unknown,
+        )
         .expect("asked");
     assert_eq!(
         title,

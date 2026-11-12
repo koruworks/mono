@@ -13812,6 +13812,32 @@ mod tests {
         }
     }
 
+    /// **A surface knows nothing runs only once it has read its chat and
+    /// nothing in it runs or waits** — not before its read (it is not
+    /// working then either), not while the read shows a reply in progress
+    /// that it did not start, not while it follows one.
+    #[test]
+    fn a_surface_knows_nothing_runs_only_once_it_has_read_its_chat_and_nothing_runs() {
+        let mut surface = ChatSurface::new();
+        assert!(!surface.knows_nothing_runs(), "nothing read yet");
+        let read = transcript();
+        surface.apply_update(Update::Transcript(read.clone()));
+        assert!(surface.knows_nothing_runs(), "read, and idle");
+        let mut running = read.clone();
+        let mut reply = user_message(&running, "");
+        reply.role = ChatRole::Assistant;
+        reply.state = MessageState::Pending;
+        running.messages.push(reply);
+        surface.apply_update(Update::Transcript(running));
+        assert!(
+            !surface.knows_nothing_runs(),
+            "a reply in progress, started somewhere else"
+        );
+        surface.apply_update(Update::Transcript(read));
+        surface.attempt = Some(InferenceAttemptId::new());
+        assert!(!surface.knows_nothing_runs(), "a reply it follows");
+    }
+
     #[test]
     fn picker_keys_come_before_send_and_the_chip_is_pinned_at_send() {
         let mut surface = ChatSurface::new();

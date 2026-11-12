@@ -144,20 +144,51 @@ impl BotView {
     /// **The confirmation a whole-Bot ask needs**, in the person's words:
     /// its title, what will happen, and the answering button. `None` for an
     /// ask that needs none (Unarchive and Restore put things back).
-    pub(crate) fn confirm_words(&self, ask: Ask) -> Option<(String, String, String)> {
+    ///
+    /// **What it says of running work is what the window knows** (the
+    /// fourth window run, `bots::stops`): that it is stopped when work runs
+    /// or waits — the question then leads with it ([`Self::stops_words`]);
+    /// nothing of it when the window knows nothing runs; and, when it does
+    /// not know, a sentence true either way: anything still running is
+    /// stopped.
+    pub(crate) fn confirm_words(
+        &self,
+        ask: Ask,
+        work: WorkNow,
+    ) -> Option<(String, String, String)> {
         let name = self.label();
-        let (title, body, confirm) = match ask {
-            Ask::Archive => (
+        let (title, body, confirm) = match (ask, work) {
+            (Ask::Archive, WorkNow::Running | WorkNow::NeedsYou) => (
                 Words::BotsArchiveTitle,
                 Words::BotsArchiveBody,
                 Words::BotsArchiveConfirm,
             ),
-            Ask::Trash => (
+            (Ask::Archive, WorkNow::Idle) => (
+                Words::BotsArchiveTitle,
+                Words::BotsArchiveBodyIdle,
+                Words::BotsArchiveConfirm,
+            ),
+            (Ask::Archive, WorkNow::Unknown) => (
+                Words::BotsArchiveTitle,
+                Words::BotsArchiveBodyUnknown,
+                Words::BotsArchiveConfirm,
+            ),
+            (Ask::Trash, WorkNow::Running | WorkNow::NeedsYou) => (
                 Words::BotsTrashTitle,
                 Words::BotsTrashBody,
                 Words::BotsTrashConfirm,
             ),
-            Ask::Unarchive | Ask::Restore => return None,
+            (Ask::Trash, WorkNow::Idle) => (
+                Words::BotsTrashTitle,
+                Words::BotsTrashBodyIdle,
+                Words::BotsTrashConfirm,
+            ),
+            (Ask::Trash, WorkNow::Unknown) => (
+                Words::BotsTrashTitle,
+                Words::BotsTrashBodyUnknown,
+                Words::BotsTrashConfirm,
+            ),
+            (Ask::Unarchive | Ask::Restore, _) => return None,
         };
         Some((
             koru_i18n::fill(t(self.lang, title), &[name.as_str()]),
@@ -167,12 +198,17 @@ impl BotView {
     }
 
     /// **What this tab knows itself of work running now**: the
-    /// conversation it shows and that conversation's status, as the
-    /// window's pass last set it from the chat surface. Evidence that a
-    /// reply runs or waits on the person, never that none does
-    /// (`bots::stops`). `None` while the conversation is let go.
-    pub(crate) fn own_work(&self) -> Option<(ChatId, koru_chats_ui::ChatStatus)> {
-        self.conversation().map(|view| (self.chat, view.status()))
+    /// conversation it shows, that conversation's status as the window's
+    /// pass last set it from the chat surface — evidence that a reply runs
+    /// or waits on the person — and whether the surface has read that
+    /// conversation and knows nothing runs in it (`bots::stops`). `None`
+    /// while the conversation is let go.
+    pub(crate) fn own_work(&self) -> Option<crate::bots::stops::Own> {
+        self.conversation().map(|view| crate::bots::stops::Own {
+            chat: self.chat,
+            status: view.status(),
+            known_idle: view.chat_id() == Some(self.chat) && view.knows_nothing_runs(),
+        })
     }
 
     /// **The first paragraph of an Archive or Trash question when it will
@@ -246,11 +282,11 @@ impl BotView {
     /// **One conversation's Trash confirmation**, in the person's words:
     /// the main conversation's says the Bot keeps working without it.
     ///
-    /// **That its running work is stopped is said only where it can be
-    /// true** — work runs in it, or the window does not know — from the
-    /// facts the question's default answer is chosen by (`bots::stops`).
-    /// A conversation the window knows is idle is not told its running
-    /// work is stopped (the third window run).
+    /// **What it says of running work is what the window knows**, from
+    /// the facts the question's default answer is chosen by (`bots::stops`):
+    /// that it is stopped when work runs or waits; nothing of it when the
+    /// window knows nothing runs (the third window run); and a sentence true
+    /// either way when it does not know (the fourth).
     pub(crate) fn conversation_trash_words(
         &self,
         chat: ChatId,
@@ -258,12 +294,13 @@ impl BotView {
     ) -> Option<(String, String, String)> {
         let facts = self.facts.as_ref()?;
         let title = self.conversation_title(chat);
-        let idle = work == WorkNow::Idle;
-        let body = match (chat == facts.main_chat, idle) {
-            (true, false) => Words::BotsTrashMainBody,
-            (true, true) => Words::BotsTrashMainBodyIdle,
-            (false, false) => Words::BotsTrashConversationBody,
-            (false, true) => Words::BotsTrashConversationBodyIdle,
+        let body = match (chat == facts.main_chat, work) {
+            (true, WorkNow::Running | WorkNow::NeedsYou) => Words::BotsTrashMainBody,
+            (true, WorkNow::Idle) => Words::BotsTrashMainBodyIdle,
+            (true, WorkNow::Unknown) => Words::BotsTrashMainBodyUnknown,
+            (false, WorkNow::Running | WorkNow::NeedsYou) => Words::BotsTrashConversationBody,
+            (false, WorkNow::Idle) => Words::BotsTrashConversationBodyIdle,
+            (false, WorkNow::Unknown) => Words::BotsTrashConversationBodyUnknown,
         };
         Some((
             // **Named as a conversation of its Bot**, so it cannot be read

@@ -58,14 +58,15 @@ fn the_menu_and_its_questions_send_nothing_and_say_what_will_happen() {
         .take_actions_request()
         .expect("the menu is the window's");
     assert!(at.0 > 0.0 && at.1 > 0.0, "under the ⋯: {at:?}");
-    let (title, body, verb) = f.view.confirm_words(Ask::Archive).unwrap();
+    let running = crate::bots::stops::WorkNow::Running;
+    let (title, body, verb) = f.view.confirm_words(Ask::Archive, running).unwrap();
     assert_eq!(title, "Archive “Scout”?");
     assert!(
         body.contains("including a session you have taken over"),
         "{body}"
     );
     assert_eq!(verb, "Archive");
-    let (title, body, verb) = f.view.confirm_words(Ask::Trash).unwrap();
+    let (title, body, verb) = f.view.confirm_words(Ask::Trash, running).unwrap();
     assert_eq!(title, "Move “Scout” to Trash?");
     assert!(body.contains("including a session you have taken over"));
     assert!(body.contains("conversations go to the Trash with it"));
@@ -83,6 +84,12 @@ fn the_menu_and_its_questions_send_nothing_and_say_what_will_happen() {
             Words::BotsTrashBody,
             Words::BotsTrashConversationBody,
             Words::BotsTrashMainBody,
+            Words::BotsArchiveBodyIdle,
+            Words::BotsArchiveBodyUnknown,
+            Words::BotsTrashBodyIdle,
+            Words::BotsTrashBodyUnknown,
+            Words::BotsTrashMainBodyUnknown,
+            Words::BotsTrashConversationBodyUnknown,
             Words::BotsSettling,
             Words::BotsLifecycleIncomplete,
             Words::BotsInTrash,

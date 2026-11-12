@@ -54,6 +54,79 @@ impl ChatSurface {
         })
     }
 
+    /// **This surface knows nothing runs in the chat on screen**: it has
+    /// read that chat, and no reply runs or waits in it — none it sent or
+    /// follows, none its read left in progress (a reply started somewhere
+    /// else), no question waiting. *Not working* alone is no such evidence:
+    /// a surface that has not read its chat yet is not working either. For
+    /// a host asking before it stops work.
+    pub fn knows_nothing_runs(&self) -> bool {
+        let Some(transcript) = &self.transcript else {
+            return false;
+        };
+        // An owned surface moved to another conversation has not read that
+        // one yet: what it read is the last one's.
+        let read_bound = self
+            .owned()
+            .is_none_or(|owned| owned.chat == transcript.chat.id);
+        self.current_chat_made()
+            && read_bound
+            && !self.is_working()
+            && !self.reply_pending()
+            && !self.needs_you()
+            && transcript
+                .messages
+                .iter()
+                .all(|message| message.state != MessageState::Pending)
+    }
+
+    /// The chat `chat` read, as the service answers a read of a chat with
+    /// nothing in it: a host's tests arm what only the service could
+    /// otherwise say.
+    #[cfg(feature = "test-support")]
+    pub fn pretend_read(&mut self, chat: koru_ai_core::ChatId) {
+        let now = koru_ai_core::Timestamp::from_millis(1);
+        let transcript = koru_ai_wire::ChatTranscript {
+            sources: Vec::new(),
+            chat: koru_ai_core::Chat {
+                id: chat,
+                title: crate::DEFAULT_CHAT_TITLE.into(),
+                private: false,
+                current_model: koru_ai_core::ModelSelection {
+                    provider: koru_ai_core::AiProviderId::parse(koru_ai_core::AiProviderId::OPENAI)
+                        .expect("a provider id"),
+                    requested_model: "fixture".into(),
+                    default_reasoning: koru_ai_core::ReasoningChoice::Default,
+                },
+                branched_from: None,
+                agent_working_folder: None,
+                agent_mode: None,
+                agent_fast: None,
+                pinned_at: None,
+                profile_id: None,
+                bot: None,
+                created_at: now,
+                updated_at: now,
+            },
+            tool_policy: koru_ai_core::ChatToolPolicy {
+                chat_id: chat,
+                mode: koru_ai_core::ToolMode::Manual,
+                workspace_ids: Vec::new(),
+            },
+            tool_activities: Vec::new(),
+            notices: Vec::new(),
+            messages: Vec::new(),
+            blocks: Vec::new(),
+            pinned_documents: Vec::new(),
+            feedback: Vec::new(),
+            usage: Vec::new(),
+            reasoning_control: None,
+            agent_commands: None,
+            attachments: Vec::new(),
+        };
+        self.apply_update(crate::reader::Update::Transcript(transcript));
+    }
+
     /// This chat's status, given whether the host counts it unread.
     pub fn chat_status(&self, unread: bool) -> ChatStatus {
         ChatStatus::of(self.is_working(), self.needs_you(), unread)

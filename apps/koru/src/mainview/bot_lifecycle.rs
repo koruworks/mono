@@ -167,15 +167,15 @@ impl MainView {
             MenuAction::UnarchiveBot => Ask::Unarchive,
             _ => return false,
         };
+        let work = self.bot_work_now(tab, Scope::Bot(bot));
         let Some(view) = self.asking_bot_tab_mut(tab, bot) else {
             return self.say_asking_tab_gone();
         };
-        let Some((title, body, verb)) = view.confirm_words(ask) else {
+        let Some((title, body, verb)) = view.confirm_words(ask, work) else {
             let sent = view.begin_lifecycle(ask);
             view.dialog_closed();
             return sent;
         };
-        let work = self.bot_work_now(tab, Scope::Bot(bot));
         let lead = self
             .asking_bot_tab(tab, bot)
             .and_then(|view| view.stops_words(work, false));

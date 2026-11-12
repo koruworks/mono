@@ -14,9 +14,15 @@
 //!
 //! - **the asking tab's own conversation**: its status as the window's pass
 //!   last set it from the chat surface (`AiChatView::status`: a reply
-//!   running, or one waiting on the person). It is evidence that work runs,
-//!   never that none does — a surface that has not read its transcript yet
-//!   also says idle;
+//!   running, or one waiting on the person) — evidence that work runs — and
+//!   whether the surface **knows** nothing runs in it
+//!   (`AiChatView::knows_nothing_runs`: it has read the conversation and no
+//!   reply runs or waits there). Idle alone is no such evidence, because a
+//!   surface that has not read its transcript yet also says idle; read and
+//!   idle is, for that conversation's own Trash (the fourth window run:
+//!   without it the question for an idle conversation almost always said
+//!   its running work is stopped). It says nothing of the Bot's other
+//!   conversations, so a whole Bot's question still needs the roster;
 //! - **the roster's activity read** (`ListActivity`, the running and
 //!   Needs-you conversations of the workspace), only while it is fresh
 //!   (`BotsRoster::activity_now`): answered, nothing owed or on its way
@@ -26,7 +32,9 @@
 //!
 //! "Needs you" counts as running: a reply waiting on an approval is work the
 //! Archive or Trash stops too. Anything the window does not know is
-//! [`WorkNow::Unknown`], and the default is the safe one, Cancel.
+//! [`WorkNow::Unknown`], and the default is the safe one, Cancel; the
+//! question then says a sentence true either way — anything still running
+//! is stopped — never that work runs, and never nothing.
 
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{BotActivity, BotActivityState, BotId};
@@ -62,11 +70,21 @@ pub(crate) enum Scope {
     Conversation(BotId, ChatId),
 }
 
+/// What the asking tab knows of its own conversation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Own {
+    pub chat: ChatId,
+    /// Its status as the window's pass last set it.
+    pub status: ChatStatus,
+    /// The surface has read it and nothing in it runs or waits.
+    pub known_idle: bool,
+}
+
 /// What the window knows, gathered at the moment of asking.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct Facts<'a> {
-    /// The asking tab's own conversation and its status as last set.
-    pub own: Option<(ChatId, ChatStatus)>,
+    /// The asking tab's own conversation, as far as it knows it.
+    pub own: Option<Own>,
     /// The roster's activity read **while fresh**: its entries, and whether
     /// it stopped before the end. `None` when not read yet, or stale.
     pub activity: Option<(&'a [BotActivity], bool)>,
@@ -80,17 +98,21 @@ pub(crate) fn work_now(scope: Scope, facts: Facts<'_>) -> WorkNow {
     };
     let covers = |of: ChatId| chat.is_none_or(|chat| chat == of);
     let (mut running, mut needs_you) = (false, false);
-    if let Some((own, status)) = facts.own
-        && covers(own)
+    if let Some(own) = facts.own
+        && covers(own.chat)
     {
-        match status {
+        match own.status {
             ChatStatus::Working => running = true,
             ChatStatus::NeedsYou => needs_you = true,
             // Not evidence that nothing runs: see the module docs.
             ChatStatus::Idle | ChatStatus::Unread => {}
         }
     }
-    let mut known = false;
+    // **The tab's own conversation, read and idle, is known idle** — for
+    // that conversation's question alone.
+    let mut known = facts
+        .own
+        .is_some_and(|own| own.known_idle && chat == Some(own.chat));
     if let Some((entries, truncated)) = facts.activity {
         for entry in entries
             .iter()
@@ -102,7 +124,7 @@ pub(crate) fn work_now(scope: Scope, facts: Facts<'_>) -> WorkNow {
             }
         }
         // A read that stopped before the end cannot say what it left out.
-        known = !truncated;
+        known |= !truncated;
     }
     if running {
         WorkNow::Running

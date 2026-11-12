@@ -109,6 +109,18 @@ impl AiChatView {
         self.surface.needs_you()
     }
 
+    /// The surface has read its chat and nothing in it runs or waits
+    /// ([`ChatSurface::knows_nothing_runs`]).
+    pub fn knows_nothing_runs(&self) -> bool {
+        self.surface.knows_nothing_runs()
+    }
+
+    /// The chat `chat` read, empty, as the service answers it. Test only.
+    #[cfg(test)]
+    pub fn pretend_read(&mut self, chat: ChatId) {
+        self.surface.pretend_read(chat);
+    }
+
     /// Take the status the window's pass decided; `true` when the mark
     /// changed and the strip owes a repaint.
     pub fn set_status(&mut self, status: koru_chats_ui::ChatStatus, reduced_motion: bool) -> bool {
