@@ -14,7 +14,10 @@
 //! - the blob is readable: a PDF or a plain-text file always; a picture, or
 //!   a PDF whose text-only pass left pages for the reader, only while the
 //!   reader is installed **and the worker's own status says it recognizes**
-//!   (OCR Plan 2.4). Otherwise it is counted `needs_reader` and not sent;
+//!   (OCR Plan 2.4). Otherwise it is counted `needs_reader` and not sent —
+//!   **unless the worker could not be asked at all** (starting, backing off,
+//!   silent): that says nothing about the reader, so the pair is queued and
+//!   waits for the worker (OCR Plan 3.6, below);
 //! - the entry's reading document has no settled entry for the blob at this
 //!   build's generation (the mirror's `settled_in`, checked again against the
 //!   document itself just before the job);
@@ -63,6 +66,18 @@
 //! The backlog waits while the system saves energy ([`super::power`]); a
 //! fresh file does not. The worker is launched below normal priority with
 //! background I/O (`supervised.rs`).
+//!
+//! ## A worker that cannot be asked (OCR Plan 3.6)
+//!
+//! When the worker cannot be asked — the launcher says it is unavailable, a
+//! probe for its status fails, or a job finds no worker — the pair goes to
+//! the waiting list, and so does every later pair the queue reaches, without
+//! asking, until [`READER_RETRY_MILLIS`] has passed. Then what waited goes
+//! first again and its first pair asks. Only a real "not here" (no model, a
+//! model that will not load, lost on this launch, a worker built without
+//! recognition or missing) takes a recognition pair off the plan, and the
+//! recount that follows counts it as `needs_reader`. A backlog with pairs
+//! waiting is paused, not finished.
 //!
 //! ## Told, not polling
 //!
@@ -154,6 +169,15 @@ const BACKOFF_CEILING_MILLIS: i64 = 60 * 60_000;
 /// finished (one line, with counts)").
 const BACKLOG_NEWS: u64 = 25;
 
+/// **How long a worker that could not be asked is left alone before it is
+/// asked again** (OCR Plan 3.6). Meanwhile whatever needs it waits beside
+/// what already waits, without asking, so a worker that is starting, backing
+/// off after crashes, or never coming back costs one question per this long:
+/// never one per file, and never a spin. The daemon's loop lingers
+/// `supervised::LINGER`, also 30 s, once nothing can go on, so the step after
+/// the linger is the one that asks.
+pub const READER_RETRY_MILLIS: i64 = 30_000;
+
 /// What kind of reading a blob needs, by its media type.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Readable {
@@ -216,7 +240,8 @@ pub struct Pair {
     pub mime: String,
     pub size: u64,
     pub fresh: bool,
-    /// `Recognize` only when the worker said it recognizes (OCR Plan 2.4).
+    /// `Recognize` only when the worker said it recognizes (OCR Plan 2.4),
+    /// or could not be asked with the reader installed (OCR Plan 3.6).
     pub want: Want,
     /// Read from page 1 whatever a `partial` says: the earlier pass was a
     /// text-only one that left pages for the reader, and this is the reader.
@@ -367,6 +392,19 @@ enum Processed {
     NoReader(Unavailable),
 }
 
+/// **Whether the worker recognizes, as far as can be known now.**
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Recognition {
+    Yes,
+    /// Not on this computer now: no model, a model that will not load, lost
+    /// on this launch, a worker built without recognition or not there.
+    No,
+    /// **The worker could not be asked**: starting, backing off after
+    /// crashes, silent past its patience. Not an answer about the reader, so
+    /// what needs it is queued and waits for the worker (OCR Plan 3.6).
+    NotNow(Unavailable),
+}
+
 pub struct Coordinator {
     state: Weak<AppState>,
     projections: Projections,
@@ -399,6 +437,11 @@ pub struct Coordinator {
     pub stats: CoordinatorStats,
     pub current: Current,
     pub worker_down: Option<Unavailable>,
+    /// While `worker_down` is set, the worker is not asked again before this
+    /// instant: what needs it waits ([`READER_RETRY_MILLIS`]).
+    reader_retry_at: i64,
+    /// The counts were found disagreeing with the plan, and it was said once.
+    adrift_said: bool,
     debug: bool,
     on_progress: Option<Box<dyn Fn() + Send>>,
     // ---- the reader (OCR Plan 2.4)
@@ -486,6 +529,8 @@ impl Coordinator {
             stats: CoordinatorStats::default(),
             current: Arc::new(Mutex::new(None)),
             worker_down: None,
+            reader_retry_at: i64::MIN,
+            adrift_said: false,
             debug: koru_env::switch(koru_env::name::KORU_READ_DEBUG),
             on_progress: None,
             hub: None,
@@ -577,9 +622,19 @@ impl Coordinator {
     /// `recognition: true`. Asks the worker (starting it) when it has not
     /// been asked since it started — only ever when something is waiting to
     /// be recognized.
-    fn recognizing(&mut self) -> bool {
+    ///
+    /// **A worker that cannot be asked is [`Recognition::NotNow`], never
+    /// `No`** (OCR Plan 3.6). The big run's first pass on the archive took a
+    /// failed probe after a hung worker for "the reader is gone": every scan
+    /// behind it left the plan, and the recount after it, meeting the same
+    /// silence, counted them as needing a reader that was installed — and
+    /// nothing asked the worker again until a listing changed.
+    fn recognition(&mut self, now: i64) -> Recognition {
         if self.model.is_none() || self.will_not_load() {
-            return false;
+            return Recognition::No;
+        }
+        if let Some(why) = self.reader_down(now) {
+            return Recognition::NotNow(why);
         }
         let status = match self.launcher.status() {
             Some(status) => status,
@@ -587,16 +642,37 @@ impl Coordinator {
                 Ok(status) => status,
                 Err(Unavailable::NoLauncher | Unavailable::NotInstalled) => {
                     self.worker_missing = true;
-                    return false;
+                    return Recognition::No;
                 }
-                Err(_) => return false,
+                Err(why) => {
+                    self.worker_unreachable(why.clone(), now);
+                    return Recognition::NotNow(why);
+                }
             },
         };
         self.built = Some(status.recognition_built);
-        if self.lost_on.as_ref() == Some(&status.supervisor_launch_id) {
-            return false;
+        if self.lost_on.as_ref() == Some(&status.supervisor_launch_id) || !status.recognition {
+            return Recognition::No;
         }
-        status.recognition
+        Recognition::Yes
+    }
+
+    /// Why the worker is not to be asked yet: it could not be asked a moment
+    /// ago, and [`READER_RETRY_MILLIS`] has not passed.
+    fn reader_down(&self, now: i64) -> Option<Unavailable> {
+        self.worker_down
+            .clone()
+            .filter(|_| now < self.reader_retry_at)
+    }
+
+    /// **The worker could not be asked**: what needs it waits, and it is not
+    /// asked again before the retry. A pair sent to wait *because* of the
+    /// retry does not move it, or the retry would never come.
+    fn worker_unreachable(&mut self, why: Unavailable, now: i64) {
+        if now >= self.reader_retry_at {
+            self.reader_retry_at = now.saturating_add(READER_RETRY_MILLIS);
+        }
+        self.worker_down = Some(why);
     }
 
     /// Hand the counts and what is known of the worker to the hub.
@@ -715,8 +791,13 @@ impl Coordinator {
         {
             self.recompute(now);
         }
-        if !self.waiting.is_empty() && matches!(self.launcher.availability(), Availability::Ready) {
-            // A reader is back: what waited goes first, in its old order.
+        if !self.waiting.is_empty()
+            && now >= self.reader_retry_at
+            && matches!(self.launcher.availability(), Availability::Ready)
+        {
+            // A reader may be back: what waited goes first, in its old order.
+            // Its first pair asks; if the worker still cannot answer, all of
+            // it waits again until the next retry.
             for pair in self.waiting.drain(..).rev() {
                 self.plan.push_front(pair);
             }
@@ -742,10 +823,15 @@ impl Coordinator {
             None => self.set_paused(false),
         }
         let Some(pair) = self.plan.pop_front() else {
-            self.written.clear();
-            self.finish_backlog();
+            // **Not finished while anything waits for the worker**: the
+            // backlog is paused, and goes on at the retry (OCR Plan 3.6).
+            if self.waiting.is_empty() {
+                self.written.clear();
+                self.finish_backlog();
+            }
+            let again = self.counts_adrift(now);
             self.publish();
-            return false;
+            return again;
         };
         if pair.fresh {
             self.counts.fresh = self.counts.fresh.saturating_sub(1);
@@ -772,8 +858,12 @@ impl Coordinator {
                 }
             }
             Processed::NoReader(why) => {
-                self.worker_down = Some(why);
+                self.worker_unreachable(why, now);
                 self.counts.waiting_for_reader += 1;
+                if !pair.fresh && !pair.requested {
+                    // Counted when it is read, not each time it waits.
+                    self.backlog_seen = self.backlog_seen.saturating_sub(1);
+                }
                 self.waiting.push(pair);
             }
         }
@@ -814,6 +904,44 @@ impl Coordinator {
         self.backlog_seen = 0;
     }
 
+    /// **The plan is empty, and the counts hold unread items nothing
+    /// accounts for** (OCR Plan 3.6). With no recount owed, every unread
+    /// item this computer could read is in the plan, waiting for the worker,
+    /// not here, waiting for the reader, or in a backoff — so more unread
+    /// than those is the coordinator's own bookkeeping losing an item, which
+    /// is how the big run's stall looked from outside. Said once, counts
+    /// only, and a recompute is asked for instead of going idle on it: at
+    /// once, or at the recompute cadence if one has just run, so a fault
+    /// that recurs cannot spin. Returns whether to step again now.
+    fn counts_adrift(&mut self, now: i64) -> bool {
+        if self.recount || self.owed || !self.computed {
+            return false;
+        }
+        let accounted = self.counts.needs_reader
+            + self.counts.not_here
+            + self.counts.backoff
+            + self.waiting.len() as u64;
+        if self.machine.unread <= accounted {
+            return false;
+        }
+        if !self.adrift_said {
+            self.adrift_said = true;
+            tracing::warn!(
+                target: "koru_readings",
+                unread = self.machine.unread,
+                accounted,
+                "the reading queue emptied with unread items it does not hold; counting again"
+            );
+        }
+        if now.saturating_sub(self.last_recompute) >= RECOMPUTE_EVERY_MILLIS {
+            self.owed = true;
+            true
+        } else {
+            self.recount = true;
+            false
+        }
+    }
+
     // ---------------------------------------------------------- the query
 
     /// **The queue, recomputed from the projection, the mirror, the attempts
@@ -826,7 +954,7 @@ impl Coordinator {
         self.computed = true;
         self.last_recompute = now;
         let mut tally = Tally::default();
-        let mut recognize: Option<bool> = None;
+        let mut recognize: Option<Recognition> = None;
         let mut plan = Vec::new();
         let attempts = self.mirror.attempts(READER_TEXT).unwrap_or_default();
         self.fuller = self.mirror.best_shared().unwrap_or_default();
@@ -985,7 +1113,7 @@ impl Coordinator {
         }
         let mut fresh = Vec::new();
         let mut ignored = Tally::default();
-        let mut recognize: Option<bool> = None;
+        let mut recognize: Option<Recognition> = None;
         for (workspace, documents) in by_workspace {
             if let Ok(references) = self
                 .projections
@@ -1098,7 +1226,7 @@ impl Coordinator {
         now: i64,
         out: &mut Vec<Pair>,
         tally: &mut Tally,
-        recognize: &mut Option<bool>,
+        recognize: &mut Option<Recognition>,
     ) {
         if references.is_empty() {
             return;
@@ -1282,21 +1410,25 @@ impl Coordinator {
             // sent for recognition whenever it can be, so a scan is read in
             // one pass; a plain-text file never needs it.
             let want = if needs_reader || is_pdf(&mime) {
-                let can = match *recognize {
-                    Some(can) => can,
+                let can = match recognize {
+                    Some(can) => can.clone(),
                     None => {
-                        let can = self.recognizing();
-                        *recognize = Some(can);
+                        let can = self.recognition(now);
+                        *recognize = Some(can.clone());
                         can
                     }
                 };
                 match (can, needs_reader) {
-                    (true, _) => Want::Recognize,
-                    (false, true) => {
+                    // A worker that cannot be asked right now: the reader is
+                    // installed, so the pair is queued for it and waits for
+                    // the worker there (`process`), not counted as needing
+                    // a reader (OCR Plan 3.6).
+                    (Recognition::Yes | Recognition::NotNow(_), _) => Want::Recognize,
+                    (Recognition::No, true) => {
                         tally.needs_reader(workspace);
                         continue;
                     }
-                    (false, false) => Want::Text,
+                    (Recognition::No, false) => Want::Text,
                 }
             } else {
                 Want::Text
@@ -1385,15 +1517,30 @@ impl Coordinator {
             return Processed::Done;
         }
 
+        // The worker could not be asked a moment ago: this waits with what
+        // already waits, and the worker is not asked again before the retry.
+        if let Some(why) = self.reader_down(now) {
+            return Processed::NoReader(why);
+        }
         if let Availability::Unavailable(why) = self.launcher.availability() {
             return Processed::NoReader(why);
         }
         self.worker_down = None;
-        // Queued for recognition, and the reader has gone since — removed, or
-        // its model would not load: the recompute counts it as waiting.
-        if pair.want == Want::Recognize && !self.recognizing() {
-            self.stats.skipped += 1;
-            return Processed::Done;
+        if pair.want == Want::Recognize {
+            match self.recognition(now) {
+                Recognition::Yes => {}
+                // Queued for recognition, and the reader has gone since —
+                // removed, its model would not load, lost on this launch:
+                // off the plan, and the recount `step` asks for counts it as
+                // waiting for a reader.
+                Recognition::No => {
+                    self.stats.skipped += 1;
+                    return Processed::Done;
+                }
+                // **The worker cannot be asked right now**: not a reader that
+                // is gone. The pair waits for it (OCR Plan 3.6).
+                Recognition::NotNow(why) => return Processed::NoReader(why),
+            }
         }
         if let Err(why) = self.register(&state, pair) {
             self.commit_failed(pair, now, why);

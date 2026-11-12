@@ -166,6 +166,11 @@ pub struct StubLauncher {
     /// Probes and restarts, counted.
     pub probes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub restarts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// **How many of the next probes fail `not-ready`**, each taking one: a
+    /// worker that is starting, backing off after crashes, or not answering
+    /// its status in time, as the real one is for a while after it was ended
+    /// (OCR Plan 3.6). Failed probes are not counted in `probes`.
+    pub failing_probes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Bumped on every restart, as a real launch id is new per launch.
     launch: u64,
     /// Asked since the last restart.
@@ -189,6 +194,7 @@ impl StubLauncher {
             model: Default::default(),
             probes: Default::default(),
             restarts: Default::default(),
+            failing_probes: Default::default(),
             launch: 1,
             asked: false,
             lost: false,
@@ -230,7 +236,19 @@ impl Launcher for StubLauncher {
             .unwrap_or_else(|e| e.into_inner())
             .push(request.clone());
         self.asked = true;
-        let answered = (self.script)(request)?;
+        let answered = match (self.script)(request) {
+            Ok(answered) => answered,
+            Err(crashed @ Interrupted::Crashed { .. }) => {
+                // **The worker is gone**, as the real launcher's is once it
+                // ends one that went past its patience: the next is another
+                // launch, and nothing is known of it until it is asked.
+                self.launch += 1;
+                self.asked = false;
+                self.lost = false;
+                return Err(crashed);
+            }
+            Err(other) => return Err(other),
+        };
         let mut ended = false;
         for event in answered {
             ended |= event.is_terminal();
@@ -280,6 +298,16 @@ impl Launcher for StubLauncher {
     fn probe(&mut self) -> Result<WorkerStatus, Unavailable> {
         if let Availability::Unavailable(why) = &self.availability {
             return Err(why.clone());
+        }
+        let left = self
+            .failing_probes
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if left > 0 {
+            self.failing_probes
+                .store(left - 1, std::sync::atomic::Ordering::Relaxed);
+            return Err(Unavailable::NotReady(
+                "the stub worker did not answer its status".into(),
+            ));
         }
         self.probes
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

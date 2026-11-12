@@ -1635,3 +1635,7 @@ mod backlog;
 // ------------------------------------------------- long files (OCR Plan 3.2)
 
 mod long_files;
+
+// ------------------------------------- a worker that cannot be asked (3.6)
+
+mod worker_down;
