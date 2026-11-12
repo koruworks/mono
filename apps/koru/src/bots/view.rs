@@ -193,9 +193,9 @@ impl From<&RosterBot> for BotFacts {
             id: bot.id,
             name: bot.name.clone(),
             paused: bot.paused,
-            // The roster lists active Bots only (`BotCommand::List`); an
-            // archived row of its Archived filter is corrected by its read.
-            archived: false,
+            // The roster's own rows are active Bots (`BotCommand::List`); a
+            // row of its Archived filter says it is archived.
+            archived: bot.archived,
             trashed: false,
             home: bot.home,
             provider: bot.provider.clone(),
@@ -558,7 +558,18 @@ impl BotView {
         // moving operation, an archived Bot's holder and the settings are
         // the owner's from the start, not from the roster's row.
         view.know(BotFacts::from(bot));
+        view.know_listed_holder(bot);
         view
+    }
+
+    /// **The Archive an Archived-filter row names as holding the Bot**, for
+    /// a tab that shows it archived: its Unarchive is offered before the
+    /// tab's own read answers. Nothing for an active row.
+    fn know_listed_holder(&mut self, bot: &RosterBot) {
+        let archived = self.facts.as_ref().is_some_and(|facts| facts.archived);
+        if let (true, Some(holder)) = (archived && bot.archived, &bot.held_by) {
+            self.lifecycle.know_listed_archive(holder);
+        }
     }
 
     /// **A conversation the window learned is `bot`'s**, from its label,
@@ -787,16 +798,32 @@ impl BotView {
 
     /// The Bot service's newer word about this Bot — the roster's, opened
     /// again. `true` when the label may have moved.
+    ///
+    /// **A row never makes the tab less true than what it read** (the fourth
+    /// window run's finding A: an archived Bot's tab, brought forward from
+    /// its Archived row, lost *Archived* and *Unarchive* and offered Rename
+    /// again). The row brings the name, the pause, the home and the agent;
+    /// whether the Bot is archived or in Trash stays what the tab knows, and
+    /// a row that says otherwise has the tab read its Bot again — the owner
+    /// says which is current, not whichever list was opened last.
     pub(crate) fn refresh_from(&mut self, bot: &RosterBot) -> bool {
         if Some(bot.id) != self.bot {
             return false;
         }
-        let facts = BotFacts::from(bot);
-        if self.facts.as_ref() == Some(&facts) {
-            return false;
+        let mut facts = BotFacts::from(bot);
+        if let Some(known) = &self.facts {
+            if known.archived != facts.archived || known.trashed {
+                self.asked = false;
+            }
+            facts.archived = known.archived;
+            facts.trashed = known.trashed;
         }
-        self.know(facts);
-        true
+        let changed = self.facts.as_ref() != Some(&facts);
+        if changed {
+            self.know(facts);
+        }
+        self.know_listed_holder(bot);
+        changed
     }
 
     /// Take `facts` as what the tab knows, and bind the conversation to the

@@ -46,8 +46,9 @@ use std::time::{Duration, Instant};
 
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
-    Bot, BotCommand, BotId, BotLifecycle, BotLifecycleKind, BotLifecycleProgress,
-    BotLifecycleRefusal, BotLifecycleStage, BotOpenLifecycle, BotRequestId, BotResponse,
+    Bot, BotCommand, BotId, BotLifecycle, BotLifecycleHolder, BotLifecycleKind,
+    BotLifecycleProgress, BotLifecycleRefusal, BotLifecycleStage, BotOpenLifecycle, BotRequestId,
+    BotResponse,
 };
 use koru_i18n::Key as Words;
 use koru_store_core::ids::WorkspaceId;
@@ -353,6 +354,17 @@ impl Lifecycle {
     pub(crate) fn know_written(&mut self, bot: &Bot) {
         if Some(bot.id) == self.bot {
             self.know_holders(bot);
+        }
+    }
+
+    /// **The Archive the owner's Archived listing names as holding the Bot**
+    /// (`list_lifecycle`'s `held_by`), for a tab that shows it archived:
+    /// the holder the owner names wins, as a read's does. Another kind of
+    /// holder says nothing about an Archive.
+    pub(crate) fn know_listed_archive(&mut self, holder: &BotLifecycleHolder) {
+        if self.bot.is_some() && holder.kind == BotLifecycleKind::Archive {
+            self.archive = Some(holder.request_id);
+            self.trash = None;
         }
     }
 

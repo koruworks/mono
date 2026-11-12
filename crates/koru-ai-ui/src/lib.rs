@@ -494,6 +494,9 @@ pub struct ChatSurface {
     /// A chat was created, renamed, deleted, re-pointed or answered since the
     /// host last asked ([`ChatSurface::take_chat_list_changed`]).
     chat_list_changed: bool,
+    /// The last rename the service refused, and why, until the host takes
+    /// it ([`ChatSurface::take_rename_refused`]).
+    rename_refused: Option<(ChatId, koru_ai_wire::Failure)>,
     transcript: Option<ChatTranscript>,
     usage_report: Option<UsageReport>,
     live_usage: Option<AiUsage>,
@@ -1025,6 +1028,7 @@ impl ChatSurface {
             settings: None,
             chats: Vec::new(),
             chat_list_changed: false,
+            rename_refused: None,
             transcript: None,
             usage_report: None,
             live_usage: None,
@@ -4584,6 +4588,14 @@ impl ChatSurface {
                 }
             }
             Update::Unavailable { chat, reason } => self.owned_read_failed(chat, reason),
+            // **A refused rename is said as any failure is** — in the
+            // host's words when it names the code — and kept for a host
+            // that renames from a list of its own to say under it.
+            Update::RenameFailed(chat, failure) => {
+                let words = self.failure_words(&failure);
+                self.rename_refused = Some((chat, failure));
+                return self.apply_update(Update::Failure(words));
+            }
             // A command queued behind a create that failed: the create
             // has said why.
             Update::Failure(_) if self.chat_unmade() => {}

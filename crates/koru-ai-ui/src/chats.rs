@@ -16,6 +16,8 @@ use winit::keyboard::{Key, ModifiersState};
 
 use crate::ChatSurface;
 use crate::reader::Command;
+#[cfg(feature = "test-support")]
+use crate::reader::Update;
 
 /// **A chat of another profile this surface was asked to show** (AI schema
 /// 13), and the block it was to open at. A host opens it in a window of the
@@ -124,6 +126,33 @@ impl ChatSurface {
     /// on its maintain pass and refreshes its Chats view; nothing polls.
     pub fn take_chat_list_changed(&mut self) -> bool {
         std::mem::take(&mut self.chat_list_changed)
+    }
+
+    /// **The last rename the service refused**, and the failure's stable
+    /// code, taken once: a host that renames from a list of its own says
+    /// why under that list, in its own words, rather than only in a status
+    /// line the list may be covering. Folded in by the surface's drain, as
+    /// every answer is.
+    pub fn take_rename_refused(&mut self) -> Option<(ChatId, String)> {
+        self.rename_refused
+            .take()
+            .map(|(chat, failure)| (chat, failure.code))
+    }
+
+    /// The service refused a rename with `code`, as the reader hands its
+    /// answer on (`client.ai().rename_chat`'s failure): a host's tests arm
+    /// what only the service could otherwise say.
+    #[cfg(feature = "test-support")]
+    pub fn pretend_rename_refused(&mut self, chat: ChatId, code: &str, message: &str) {
+        self.apply_update(Update::RenameFailed(
+            chat,
+            koru_ai_wire::Failure {
+                code: code.to_owned(),
+                message: message.to_owned(),
+                retryable: false,
+                details: Default::default(),
+            },
+        ));
     }
 
     /// **Rename a chat** through the reader's rename command — the one a
@@ -245,6 +274,31 @@ mod tests {
         assert!(surface.take_chat_list_changed());
         surface.apply_update(Update::Failure("nope".into()));
         assert!(!surface.take_chat_list_changed());
+    }
+
+    /// **A refused rename is said, and its code is handed to the host once**
+    /// — a host renaming from a list of its own says why under that list —
+    /// and the chat list is not changed by it.
+    #[test]
+    fn a_refused_rename_is_said_and_handed_to_the_host_once() {
+        let mut surface = ready();
+        let about = ChatId::new();
+        surface.apply_update(Update::RenameFailed(
+            about,
+            koru_ai_wire::Failure {
+                code: "not_found".into(),
+                message: "Chat not found.".into(),
+                retryable: false,
+                details: Default::default(),
+            },
+        ));
+        assert!(surface.status.is_some(), "said in the status line");
+        assert!(!surface.take_chat_list_changed());
+        assert_eq!(
+            surface.take_rename_refused(),
+            Some((about, "not_found".to_owned()))
+        );
+        assert_eq!(surface.take_rename_refused(), None, "taken once");
     }
 
     /// **A renamed chat keeps its place** in the list: a rename is not

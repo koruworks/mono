@@ -227,6 +227,14 @@ pub(crate) struct RosterBot {
     pub main_chat: koru_ai_core::ChatId,
     pub home: WorkspaceId,
     pub provider: koru_ai_core::AiProviderId,
+    /// **A row of the Archived filter** (`list_lifecycle`): the Bot is
+    /// archived, and the tab it opens says so from the start — never as
+    /// active until its own read (the fourth window run's finding A).
+    /// `false` on the roster's own rows, which list active Bots only.
+    pub archived: bool,
+    /// The finished Archive or Trash the owner names as holding the Bot
+    /// (`held_by`): what the tab's Unarchive names before its own read.
+    pub held_by: Option<koru_ai_core::bots::BotLifecycleHolder>,
 }
 
 impl From<Bot> for RosterBot {
@@ -238,6 +246,8 @@ impl From<Bot> for RosterBot {
             main_chat: bot.main_chat,
             home: bot.home_workspace,
             provider: bot.config.model.provider,
+            archived: bot.lifecycle == BotLifecycle::Archived,
+            held_by: bot.held_by,
         }
     }
 }

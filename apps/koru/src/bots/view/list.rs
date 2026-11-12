@@ -316,6 +316,27 @@ impl BotView {
             changed |= self.close_compact_list();
             changed |= self.show_conversation(chat);
         }
+        // **A rename the owner refused says why under the list** (the
+        // fourth window run: refused in silence, the reason only in a
+        // status line the list stood over). The row keeps the name the
+        // owner holds — it never took the new one — and the Bot is read
+        // again when the refusal says its lifecycle moved, so the header
+        // says so beside the sentence.
+        if let Some((_, code)) = self
+            .conversation
+            .as_mut()
+            .and_then(|view| view.take_rename_refused())
+        {
+            self.list_notice = Some(super::super::settings::general_refusal_words(&code));
+            if matches!(
+                code.as_str(),
+                super::super::settings::BOT_ARCHIVED | super::super::settings::BOT_TRASHED_BOT
+            ) {
+                self.asked = false;
+            }
+            self.conversations.owe_read();
+            changed = true;
+        }
         // A row's ⋯ or Delete asked for one conversation's Trash (S14).
         changed |= self.take_list_asks();
         // The tab is on the Bot's main conversation and the owner's list

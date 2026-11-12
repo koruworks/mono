@@ -297,6 +297,11 @@ pub(crate) enum Update {
     /// What was queued behind it for that chat is answered with the same
     /// failure, so the message comes back to the composer with the reason.
     CreateFailed(ChatId, koru_ai_wire::Failure),
+    /// **A rename the service refused**, with its failure: said as any
+    /// failure is, and handed to the host
+    /// ([`crate::ChatSurface::take_rename_refused`]) — a host that renames
+    /// from a list of its own says why under that list, in its words.
+    RenameFailed(ChatId, koru_ai_wire::Failure),
     Failure(String),
     /// **An owned surface's conversation cannot be shown** (Bots P1.8 S3):
     /// the chat it boots or reads is gone, or the service did not answer.
@@ -604,7 +609,7 @@ fn run(
             Command::Rename(chat, request) => {
                 let update = match client.ai().rename_chat(chat, &request) {
                     Ok(response) => Update::Renamed(response.chat),
-                    Err(error) => Update::Failure(error.message),
+                    Err(error) => Update::RenameFailed(chat, error),
                 };
                 if updates.send(update).is_err() {
                     return;
@@ -1450,8 +1455,10 @@ fn refused_answer(
                 result: Err(failure.message.clone()),
             });
         }
+        Command::Rename(about, _) => {
+            return (*about == *chat).then(|| Update::RenameFailed(*about, failure.clone()));
+        }
         Command::Read(about)
-        | Command::Rename(about, _)
         | Command::Pin(about, _)
         | Command::UpdateModel(about, _)
         | Command::UpdatePrivacy(about, _)

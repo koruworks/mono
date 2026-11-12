@@ -952,3 +952,159 @@ fn a_retry_from_the_roster_makes_the_create_tab_read_its_creation() {
         "the create tab reads its creation again"
     );
 }
+
+/// **An archived Bot's tab stays archived when its row in the roster's
+/// Archived section is clicked** (the fourth window run's finding A: the
+/// header lost *Archived* and *Unarchive*, *Bot actions* offered *Archive
+/// bot* again and the rows offered *Rename…*, while the roster and the tab's
+/// notice still said archived). Entered as a person enters it: the row is
+/// found where the window publishes it and clicked there (`View::mouse_down`
+/// and `mouse_up`), and the window's own pass hands the roster's ask to the
+/// tab. The Archived filter answers as `list_lifecycle` does
+/// (`apps/koru-ai-server/src/worker/bots/reads.rs`): the Bot, archived,
+/// with the Archive that holds it.
+#[test]
+fn an_archived_bots_tab_stays_archived_when_its_archived_row_is_clicked() {
+    use crate::bots::lifecycle::Ask;
+    use crate::bots::link::{Answer, BotsLink, Command};
+    use koru_ai_core::bots::{
+        BotId, BotLifecycle, BotLifecycleHolder, BotLifecycleKind, BotRequestId,
+    };
+    use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot};
+    fn flatten(nodes: &[SemanticNode], out: &mut Vec<SemanticNode>) {
+        for node in nodes {
+            out.push(node.clone());
+            flatten(&node.children, out);
+        }
+    }
+
+    let (mut v, mut w) = on_document();
+    koru_workspace_host::View::set_viewport(&mut v, 1400.0, 800.0);
+    let (home, commands, answers) = roster_with(&mut v, |_| Vec::new());
+    let holder = BotRequestId::mint();
+    let mut bot = crate::bots::tests::bot(BotId::mint(), home, "Charlie", false);
+    bot.lifecycle = BotLifecycle::Archived;
+    bot.held_by = Some(BotLifecycleHolder {
+        request_id: holder,
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 1,
+    });
+
+    // Its tab, archived by its own read (`read`'s answer), in front.
+    let (link, tab_commands, tab_answers) = BotsLink::test_pair();
+    let mut view = BotView::with_link(bot.id, bot.main_chat, link);
+    view.shown_pass(None);
+    let read = tab_commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::Read { seq, .. } => Some(seq),
+            _ => None,
+        })
+        .expect("the tab reads its Bot");
+    tab_answers
+        .send(Answer::Read {
+            seq: read,
+            bot: bot.id,
+            result: Ok(bot.clone()),
+        })
+        .unwrap();
+    view.shown_pass(None);
+    assert_eq!(view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
+    v.tabs_mut().push(Tab::bot(view));
+
+    // The roster's Archived section, open and listed.
+    v.explore.bots_mut().toggle_archived();
+    v.maintain_bots();
+    let seq = commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::Lifecycle {
+                seq,
+                lifecycle: BotLifecycle::Archived,
+                ..
+            } => Some(seq),
+            _ => None,
+        })
+        .expect("the Archived filter is asked");
+    answers
+        .send(Answer::Lifecycle {
+            seq,
+            workspace: home,
+            lifecycle: BotLifecycle::Archived,
+            result: Ok(vec![bot.clone()]),
+        })
+        .unwrap();
+    v.maintain_bots();
+    assert_eq!(v.explore.bots().archived().len(), 1);
+
+    // Drawn, then clicked where it is published.
+    v.relayout();
+    v.draw_frame(
+        &mut vello::Scene::new(),
+        &w,
+        &koru_draw::ImageCache::new(),
+        vello::kurbo::Affine::IDENTITY,
+        false,
+        (-1.0, -1.0),
+    );
+    let mut published = Vec::new();
+    flatten(
+        &v.semantics(ViewSlot::from_raw(1), Scope::Whole),
+        &mut published,
+    );
+    let row = published
+        .iter()
+        .find(|node| {
+            node.role == accesskit::Role::ListItem && node.label.as_deref() == Some("Charlie")
+        })
+        .expect("the archived row is published");
+    let bounds = row.bounds.expect("with bounds");
+    let (x, y) = (bounds.x + bounds.w * 0.5, bounds.y + bounds.h * 0.5);
+    View::mouse_down(&mut v, &mut w.ws, x, y, false);
+    View::mouse_up(&mut v, &mut w.ws);
+    v.maintain_bots();
+
+    let TabView::Bot(view) = &v.tabs().active_tab().view else {
+        panic!("the Bot's tab in front");
+    };
+    assert_eq!(view.bot(), Some(bot.id), "the same tab, brought forward");
+    assert!(
+        view.facts().is_some_and(|facts| facts.archived),
+        "the tab still says archived"
+    );
+    assert_eq!(
+        view.lifecycle_rows(),
+        [Ask::Unarchive, Ask::Trash],
+        "Bot actions offer Unarchive, never Archive"
+    );
+    assert_eq!(
+        view.rename_refusal(bot.main_chat),
+        Some(koru_i18n::Key::BotsErrArchived),
+        "its rows offer no rename"
+    );
+    assert_eq!(on_chat(&v, bot.main_chat), ["bot"], "nothing opened twice");
+}
+
+/// **An archived Bot opened from its Archived row with no tab open says it
+/// is archived from the start, and offers Unarchive by the Archive the row
+/// names** — not as an active Bot until its own read answers.
+#[test]
+fn an_archived_row_opens_a_tab_that_is_archived_from_the_start() {
+    use crate::bots::lifecycle::Ask;
+    use koru_ai_core::bots::{
+        BotId, BotLifecycle, BotLifecycleHolder, BotLifecycleKind, BotRequestId,
+    };
+    let mut bot = crate::bots::tests::bot(BotId::mint(), WorkspaceId::new(), "Charlie", false);
+    bot.lifecycle = BotLifecycle::Archived;
+    bot.held_by = Some(BotLifecycleHolder {
+        request_id: BotRequestId::mint(),
+        kind: BotLifecycleKind::Archive,
+        completed_at_ms: 1,
+    });
+    let row = RosterBot::from(bot.clone());
+    let mut view = BotView::opened(&row);
+    assert!(view.facts().is_some_and(|facts| facts.archived));
+    // The settings come with the tab's own read; until then the ⋯ waits.
+    view.know_bot_for_test(bot);
+    assert_eq!(view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
+}

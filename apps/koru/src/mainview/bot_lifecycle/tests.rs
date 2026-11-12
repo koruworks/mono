@@ -1182,3 +1182,53 @@ fn a_rename_the_owner_would_refuse_is_not_offered_and_says_why() {
     );
     assert!(front_bot(&mut v).renames_sent().is_empty());
 }
+
+/// **A rename the owner refuses says why under the list, and the row keeps
+/// its name** (the fourth window run: a rename sent from an archived Bot's
+/// tab was refused in silence — the log said only *AI UI received a client
+/// failure*). Entered as a person renames: `F2` over the row, the title
+/// typed, Enter. The refusal comes back where the surface's reader hands
+/// it on (`client.ai().rename_chat`'s failure, koru-ai-ui `reader.rs`),
+/// with each code the owner refuses a Bot conversation's rename with; the
+/// sentence is the refusal's own (`general_refusal_words`).
+#[test]
+fn a_refused_rename_says_the_owners_reason_and_the_row_keeps_its_name() {
+    use winit::keyboard::NamedKey;
+    for (code, words) in [
+        (crate::bots::settings::BOT_ARCHIVED, Words::BotsErrArchived),
+        (crate::bots::settings::BOT_PENDING, Words::BotsErrPending),
+        (crate::bots::settings::BOT_TRASHED, Words::BotsErrTrashed),
+        (
+            crate::bots::settings::BOT_TRASHED_BOT,
+            Words::BotsErrBotTrashed,
+        ),
+    ] {
+        let (mut v, mut workspace, _bot, other, _tab) = renaming_window();
+        let ws = &mut workspace.ws;
+        let (x, y) = row_centre(&mut v, other);
+        koru_workspace_host::View::mouse_move(&mut v, x, y);
+        assert!(press(&mut v, ws, NamedKey::F2));
+        type_text(&mut v, ws, "Budget review");
+        assert!(press(&mut v, ws, NamedKey::Enter));
+        assert_eq!(
+            front_bot(&mut v).renames_sent(),
+            [(other, "Budget review".to_owned())]
+        );
+        assert_eq!(front_bot(&mut v).list_notice(), None);
+
+        front_bot(&mut v)
+            .conversation_mut()
+            .expect("the conversation is bound")
+            .pretend_rename_refused(other, code);
+        lay_out(&mut v, &workspace);
+        let view = front_bot(&mut v);
+        assert_eq!(view.list_notice(), Some(words), "{code}: says why");
+        assert!(
+            view.conversation_titles()
+                .iter()
+                .any(|(chat, title)| *chat == other && title == "Plan the launch"),
+            "{code}: the row keeps its name: {:?}",
+            view.conversation_titles()
+        );
+    }
+}

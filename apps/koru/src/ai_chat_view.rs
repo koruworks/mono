@@ -351,6 +351,20 @@ impl AiChatView {
         self.surface.rename_chat(chat, title)
     }
 
+    /// The last rename the service refused, and its code, taken once
+    /// ([`ChatSurface::take_rename_refused`]).
+    pub fn take_rename_refused(&mut self) -> Option<(ChatId, String)> {
+        self.surface.take_rename_refused()
+    }
+
+    /// The service refused a rename with `code`, as the surface's reader
+    /// hands it on.
+    #[cfg(test)]
+    pub fn pretend_rename_refused(&mut self, chat: ChatId, code: &str) {
+        self.surface
+            .pretend_rename_refused(chat, code, "developer text, never shown");
+    }
+
     /// Pin or unpin a chat through this tab's surface — the Chats view's
     /// pin, sent here when this tab shows the chat (D86).
     pub fn pin_chat(&mut self, chat: ChatId, pinned: bool) -> bool {
