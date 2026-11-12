@@ -1036,7 +1036,8 @@ newly added, and the other devices find the later pages too.
 
 **Read again** is in the right-click menu of a file, and of a picture in a
 document, once it has been read or could not be read. It reads that one item
-again; you will notice nothing unless the words come out differently.
+again; you will notice nothing unless the words come out differently. A file
+that stopped at the page limit offers **Read all pages** in its place.
 
 **What is read, and what is not.** Pictures in PNG, JPEG, GIF, WebP, BMP and
 TIFF, inside documents or under **Files**; PDFs; and `.txt`, `.md`, `.csv` and
@@ -1052,11 +1053,21 @@ corrected by hand.
 **Settings → Editor → Text in pictures and PDFs** is where reading lives on
 this computer. Before the download it reads *Not downloaded · 26 MB*, with
 **Turn on**. Once it is on, it says how many items were read and how many
-could not be, with **Show** to list those with their reasons, and **Turn off**
-and **Remove**, both of which take the download off this computer — what has
-already been read stays findable. It also says which languages and kinds of
-file are read. On a computer where reading pictures is not available it says
-so plainly, and why.
+could not be, and which languages and kinds of file are read. Below it are two
+lists:
+
+- **Could not be read**: each item with its reason, **Show** to go to where it
+  lives, and **Read again** where trying once more could help.
+- **Partly read**: files that stopped at the page limit, with how far each
+  got and **Read all pages**. A file leaves the list when it is finished.
+
+**Turn off** stops reading pictures and scanned pages and keeps the download:
+what was already read stays findable, PDFs with real text and text files are
+still read, and pictures added meanwhile wait. Nothing offers to turn it back
+on; **Turn on** in the same place does, with nothing to download again.
+**Remove** takes the download off this computer; what has already been read
+stays findable then too. On a computer where reading pictures is not
+available the row says so plainly, and why.
 
 Deleting a file permanently removes its words from search, on every device.
 
