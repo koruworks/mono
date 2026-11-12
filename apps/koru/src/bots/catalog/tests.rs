@@ -227,6 +227,70 @@ fn answer_readiness(
     n
 }
 
+/// **An agents' read that did not answer is asked again while shown**, on
+/// the readiness clock and within [`CHECKING_LIMIT`] — a tab restored at
+/// startup reads before Koru AI is up, and its form offered no agent until
+/// it was hidden and shown again. A lost connection is answered as the real
+/// link gives it (`Failure::lost`, `link.rs`'s `Failure::of`).
+#[test]
+fn an_agents_read_that_did_not_answer_is_asked_again_within_the_limit() {
+    let (link, commands, answers) = CatalogLink::test_pair();
+    let mut catalog = Catalog::with_link(link);
+    let start = std::time::Instant::now();
+    catalog.shown();
+    catalog.pass_at(None, start);
+    assert_eq!(asked(&commands), ["agents 1"]);
+    answers
+        .send(Answer::Agents {
+            seq: 1,
+            result: Err(Failure::lost()),
+        })
+        .unwrap();
+    catalog.pass_at(None, start);
+    let due = catalog.deadline().expect("asked again on a clock");
+    catalog.pass_at(None, due);
+    let seq: u64 = asked(&commands)[0]
+        .trim_start_matches("agents ")
+        .parse()
+        .unwrap();
+    answers
+        .send(Answer::Agents {
+            seq,
+            result: Ok(vec![agent("agent-claude", "claude", "Claude")]),
+        })
+        .unwrap();
+    catalog.pass_at(None, due);
+    assert_eq!(catalog.agents().len(), 1, "listed once it answered");
+
+    // Never answered past the limit: the clock stops.
+    let (link, commands, answers) = CatalogLink::test_pair();
+    let mut catalog = Catalog::with_link(link);
+    catalog.shown();
+    catalog.pass_at(None, start);
+    asked(&commands);
+    answers
+        .send(Answer::Agents {
+            seq: 1,
+            result: Err(Failure::lost()),
+        })
+        .unwrap();
+    catalog.pass_at(None, start);
+    let late = start + CHECKING_LIMIT;
+    catalog.pass_at(None, late);
+    let seq: u64 = asked(&commands)[0]
+        .trim_start_matches("agents ")
+        .parse()
+        .unwrap();
+    answers
+        .send(Answer::Agents {
+            seq,
+            result: Err(Failure::lost()),
+        })
+        .unwrap();
+    catalog.pass_at(None, late);
+    assert_eq!(catalog.deadline(), None, "no more asking past the limit");
+}
+
 /// **A readiness still being checked ends in a sentence, never a spinner
 /// forever** (the first window run's finding 3: *Checking…* for more than
 /// two minutes on a machine where nothing can run). An agent answering

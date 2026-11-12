@@ -92,12 +92,62 @@ fn every_failure_the_client_reports_is_classified_once() {
         // `checked`: a 4xx whose body did not parse, and a 401.
         ("gateway_failure", false, false),
         ("unauthenticated", false, false),
+        // The AI worker's `authorize`: no `bots.manage` held — what every
+        // Bot read is answered while the Agent has not vouched for the
+        // window (the second window run, after every restart). A refusal:
+        // a write so refused did not run.
+        ("forbidden", false, false),
     ];
     for (code, retryable, again) in refused {
         let failure = Failure::of(Said::new(code, retryable));
         assert_eq!(failure, Failure::Refused(code.to_owned()), "{code}");
         assert_eq!(failure.again(), again, "{code}");
+        // **Only `forbidden` is the unvouched window**, which a read asks
+        // again for a bounded while (`Vouching`).
+        assert_eq!(failure.unvouched(), code == "forbidden", "{code}");
     }
+    for (code, retryable) in unanswered {
+        assert!(
+            !Failure::of(Said::new(code, retryable)).unvouched(),
+            "{code}"
+        );
+    }
+    assert!(Failure::unvouched_refusal().unvouched());
+}
+
+/// **A read refused as unvouched is asked again for a bounded while, then
+/// said as no access**; any other failure keeps what it was. The while runs
+/// from the first such refusal, survives a lost answer in between, and
+/// starts again once reset (an answer, or the surface hidden).
+#[test]
+fn an_unvouched_read_is_asked_again_for_a_while_then_denied() {
+    let now = std::time::Instant::now();
+    let mut vouching = Vouching::default();
+    assert_eq!(
+        vouching.read_failed(&Failure::lost(), now),
+        Reread::Again,
+        "an unanswered read is asked again as before"
+    );
+    assert_eq!(
+        vouching.read_failed(&Failure::Refused("wrong_owner".into()), now),
+        Reread::Final
+    );
+    let forbidden = Failure::unvouched_refusal();
+    assert_eq!(vouching.read_failed(&forbidden, now), Reread::Unvouched);
+    let later = now + UNVOUCHED_LIMIT / 2;
+    assert_eq!(vouching.read_failed(&Failure::lost(), later), Reread::Again);
+    assert_eq!(vouching.read_failed(&forbidden, later), Reread::Unvouched);
+    assert_eq!(
+        vouching.read_failed(&forbidden, now + UNVOUCHED_LIMIT),
+        Reread::Denied,
+        "past the limit: no more asking"
+    );
+    vouching.reset();
+    assert_eq!(
+        vouching.read_failed(&forbidden, now + UNVOUCHED_LIMIT * 2),
+        Reread::Unvouched,
+        "a new while after a reset"
+    );
 }
 
 /// Every reply helper classifies through the one function: a lost

@@ -6067,6 +6067,13 @@ impl MainView {
             self.bot_moved_elsewhere(done.bot);
             changed = true;
         }
+        // **A Retry or an Abandon from the Unfinished group**: a create tab
+        // holding that creation reads it again and follows what was done
+        // here, rather than go on offering Retry and Abandon (the second
+        // window run's finding 3d).
+        for request in self.explore.bots_mut().take_creations_moved() {
+            changed |= self.creation_moved_elsewhere(request);
+        }
         // **The roster asks; this window opens** — the Bot's tab, or the one
         // already on its conversation (Bots P1.8 S4).
         let opened = match self.explore.bots_mut().take_wants_open() {

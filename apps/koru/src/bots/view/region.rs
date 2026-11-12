@@ -1375,6 +1375,9 @@ impl BotView {
                 })
         });
         self.scroll = (self.scroll + dy).clamp(0.0, max);
+        // The person moved the form: a press no longer owes keeping its
+        // actions in view.
+        self.create_scrolled();
     }
 
     // ------------------------------------------------- the window's asks

@@ -72,7 +72,7 @@ use koru_store_core::ids::WorkspaceId;
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use super::link::{Answer, BotsLink, Command, Failure};
+use super::link::{Answer, BotsLink, Command, Failure, Reread};
 
 /// The surface every key below that names no Bot belongs to.
 pub(crate) const SURFACE: &str = "bots";
@@ -146,6 +146,13 @@ pub(crate) fn creation_abandon_key(request: BotRequestId) -> Key {
     Key::model(request.as_uuid().as_u128(), CREATION_ABANDON_PART)
 }
 
+/// An unfinished creation's state line, under its row.
+pub(crate) const CREATION_STATE_PART: &str = "bot-creation-state";
+
+pub(crate) fn creation_state_key(request: BotRequestId) -> Key {
+    Key::model(request.as_uuid().as_u128(), CREATION_STATE_PART)
+}
+
 /// An archived row's key.
 pub(crate) fn archived_key(bot: BotId) -> Key {
     Key::model(bot.as_uuid().as_u128(), ARCHIVED_PART)
@@ -201,6 +208,11 @@ pub(crate) enum Load {
     /// The service did not answer. **Not an empty roster**: what was on
     /// screen stays.
     Unavailable,
+    /// **Koru AI answered, refusing this window access to Bots** past the
+    /// while a starting Koru takes to vouch for it ([`super::link::Vouching`]).
+    /// What was on screen stays; the sentence says why, not that Koru AI is
+    /// silent.
+    Denied,
 }
 
 /// One row: what the service said about one Bot that the roster draws, and
@@ -364,6 +376,12 @@ pub(crate) struct BotsRoster {
     /// run's finding 4).
     list_next: Option<std::time::Instant>,
     list_backoff: std::time::Duration,
+    /// **Since when the listing is refused as unvouched**: asked again on
+    /// the same clock for a bounded while, said as loading meanwhile (the
+    /// second window run: after every restart the first listing was refused
+    /// `forbidden` 3 ms after the first frame, and the roster said *Koru AI
+    /// isn't answering…* until it was hidden and shown again).
+    vouching: super::link::Vouching,
     /// Why the last Retry or Abandon from here did not happen.
     creation_refused: Option<Words>,
     /// The creation abandoned from here last: what it left, said once.
@@ -375,6 +393,9 @@ pub(crate) struct BotsRoster {
     abandon_ask: Option<(BotRequestId, String)>,
     /// A page an abandoned creation left, to open. Taken once.
     open_page: Option<BotPage>,
+    /// Creations a Retry or an Abandon from here answered for, by request:
+    /// a create tab holding one reads it again. Taken once.
+    creations_moved: Vec<BotRequestId>,
 }
 
 impl BotsRoster {
@@ -482,6 +503,7 @@ impl BotsRoster {
         self.creations_next = None;
         self.list_next = None;
         self.list_backoff = LIST_FIRST;
+        self.vouching.reset();
         true
     }
 
@@ -516,6 +538,8 @@ impl BotsRoster {
             // Nothing is listed while hidden: shown again, it lists once.
             self.creations_next = None;
             self.list_next = None;
+            // Shown again, an unvouched window has the whole while again.
+            self.vouching.reset();
         }
         true
     }
@@ -614,6 +638,53 @@ impl BotsRoster {
             }
             _ => false,
         }
+    }
+
+    /// **A create tab's own answer says where a creation stands** — it
+    /// stopped unfinished, it is still being made, or it ended: the
+    /// Unfinished group says so at once, shown or not, rather than when the
+    /// roster next lists (the second window run: the group appeared only
+    /// after the roster was shown again). Another workspace's creation is
+    /// not this roster's. `true` when the group changed.
+    pub(crate) fn know_creation(&mut self, creation: BotCreation) -> bool {
+        if Some(creation.home_workspace) != self.workspace {
+            return false;
+        }
+        let at = self
+            .creations
+            .iter()
+            .position(|row| row.request_id == creation.request_id);
+        let unfinished = matches!(
+            creation.stage,
+            BotCreationStage::Pending | BotCreationStage::Incomplete
+        );
+        let changed = match (at, unfinished) {
+            (Some(at), true) if self.creations[at] != creation => {
+                self.creations[at] = creation;
+                true
+            }
+            (None, true) => {
+                self.creations.push(creation);
+                true
+            }
+            (Some(at), false) => {
+                self.creations.remove(at);
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.keep_focus();
+        }
+        changed
+    }
+
+    /// **The creations a Retry or an Abandon from here moved**, by their
+    /// request, for the window to tell a create tab holding one: it reads
+    /// its creation again rather than go on offering what was done here.
+    /// Taken once.
+    pub(crate) fn take_creations_moved(&mut self) -> Vec<BotRequestId> {
+        std::mem::take(&mut self.creations_moved)
     }
 
     /// **Another surface of the window changed a Bot's lifecycle**: both
@@ -1007,15 +1078,37 @@ impl BotsRoster {
                 self.hover = hover;
                 self.list_next = None;
                 self.list_backoff = LIST_FIRST;
+                self.vouching.reset();
             }
             // What was shown stays; the line over it says why it may be old.
             // Asked again on the bounded clock while shown when asking
             // again may help — never for a refusal that would only repeat.
             Err(failure) => {
-                self.load = Load::Unavailable;
-                if failure.again() {
+                let now = std::time::Instant::now();
+                let again = match self.vouching.read_failed(&failure, now) {
+                    Reread::Again => {
+                        self.load = Load::Unavailable;
+                        true
+                    }
+                    // Koru AI answered: the window is not vouched for yet.
+                    // Still loading, not *isn't answering*; rows shown stay.
+                    Reread::Unvouched => {
+                        if self.load != Load::Ready {
+                            self.load = Load::Loading;
+                        }
+                        true
+                    }
+                    Reread::Denied => {
+                        self.load = Load::Denied;
+                        false
+                    }
+                    Reread::Final => {
+                        self.load = Load::Unavailable;
+                        false
+                    }
+                };
+                if again {
                     let wait = self.list_backoff.max(LIST_FIRST);
-                    let now = std::time::Instant::now();
                     self.list_next = Some(now.checked_add(wait).unwrap_or(now));
                     self.list_backoff = (wait * 2).min(LIST_MAX);
                 }
@@ -1391,11 +1484,13 @@ impl BotsRoster {
         Rect::new(area.x, top, area.w, (area.y + area.h - top).max(0.0))
     }
 
-    /// The line over the list, when there is one to say.
-    fn notice(&self) -> Option<Words> {
+    /// The line over the list, when there is one to say — what the roster
+    /// draws and what it publishes, from this one place.
+    pub(crate) fn notice(&self) -> Option<Words> {
         match self.load {
             Load::Loading => Some(Words::BotsLoading),
             Load::Unavailable => Some(Words::BotsUnavailable),
+            Load::Denied => Some(Words::BotsNoAccess),
             Load::Cold | Load::Ready => None,
         }
     }
@@ -1685,59 +1780,75 @@ impl BotsRoster {
         self.creations_more
     }
 
-    /// One unfinished creation: its name and where it stands, *Retry* and
-    /// *Abandon*.
+    /// **One unfinished creation**: a head row — its name, *Retry*,
+    /// *Abandon* — and under it where it stands, on its own line with the
+    /// row's whole width.
+    ///
+    /// **The state is never squeezed beside the buttons**: drawn in a column
+    /// between the name and the buttons, a sentence like *The working folder
+    /// couldn't be made or read.* wrapped into a column about 90 px wide
+    /// at the navigator's width, and the row, measured as one line, was
+    /// overlapped by *Show archived bots* (the second window run's finding
+    /// 3b, `scr-b12-04`).
     fn creation_row(&self, creation: &BotCreation) -> El {
         let name = self.creation_name(creation);
-        let mut row_el = row("Bot creation row")
-            .id(creation_key(creation.request_id))
-            .fill()
+        let mut head = row("Bot creation head")
             .min_h(metrics::NAV_ROW_MIN)
-            .pad_x(alias::ROW_PLATE_INSET)
             .gap(Space::S2)
             .items_center()
             .child(icon(icons::ROBOT, IconSize::S).decorative())
             .child(
-                col("Bot creation words")
+                text(name.clone())
+                    .named("Bot creation name")
+                    .role(roles::ROW)
+                    .ink(Ink::Secondary)
                     .fill()
-                    .child(
-                        text(name.clone())
-                            .named("Bot creation name")
-                            .role(roles::ROW)
-                            .ink(Ink::Secondary)
-                            .truncate(),
-                    )
-                    .child(
-                        text(self.creation_state(creation))
-                            .named("Bot creation state")
-                            .role(roles::META)
-                            .ink(Ink::Hint)
-                            .wrap(),
-                    ),
+                    .truncate(),
             );
         let acting = self.creations_acting.contains(&creation.request_id);
         if acting {
-            return row_el.child(
+            head = head.child(
                 text(t(self.lang, Words::BotsSaving))
                     .named("Bot creation acting")
                     .role(roles::META)
                     .ink(Ink::Hint),
             );
-        }
-        if creation.retryable {
-            row_el = row_el.child(self.text_button(
-                "Bot creation retry",
-                creation_retry_key(creation.request_id),
-                Words::BotsRetry,
-                koru_i18n::fill(t(self.lang, Words::BotsRetryNamed), &[name.as_str()]),
+        } else {
+            if creation.retryable {
+                head = head.child(self.text_button(
+                    "Bot creation retry",
+                    creation_retry_key(creation.request_id),
+                    Words::BotsRetry,
+                    koru_i18n::fill(t(self.lang, Words::BotsRetryNamed), &[name.as_str()]),
+                ));
+            }
+            head = head.child(self.text_button(
+                "Bot creation abandon",
+                creation_abandon_key(creation.request_id),
+                Words::BotsAbandon,
+                koru_i18n::fill(t(self.lang, Words::BotsAbandonNamed), &[name.as_str()]),
             ));
         }
-        row_el.child(self.text_button(
-            "Bot creation abandon",
-            creation_abandon_key(creation.request_id),
-            Words::BotsAbandon,
-            koru_i18n::fill(t(self.lang, Words::BotsAbandonNamed), &[name.as_str()]),
-        ))
+        // **No `fill` down the group's column**: in a column it shares out
+        // the height, so the row was given one line's height whatever its
+        // words needed — what let *Show archived bots* draw over them.
+        col("Bot creation row")
+            .id(creation_key(creation.request_id))
+            .pad_x(alias::ROW_PLATE_INSET)
+            .child(head)
+            .child(
+                row("Bot creation state row")
+                    .id(creation_state_key(creation.request_id))
+                    .pad_bottom(Space::S1)
+                    .child(
+                        text(self.creation_state(creation))
+                            .named("Bot creation state")
+                            .role(roles::META)
+                            .ink(Ink::Hint)
+                            .wrap()
+                            .fill(),
+                    ),
+            )
     }
 
     /// An unfinished creation's name, or *New bot* when it has none.
@@ -1920,6 +2031,10 @@ impl BotsRoster {
         if !self.creations_acting.remove(&request) {
             return false;
         }
+        // Whatever it came to, a create tab holding this creation reads it
+        // again: it must not go on offering Retry and Abandon for a
+        // creation finished or abandoned here.
+        self.creations_moved.push(request);
         match result {
             Ok(BotResponse::Creation { creation }) if creation.request_id == request => {
                 match creation.stage {

@@ -36,7 +36,7 @@ use koru_i18n::{Key as Words, Lang, t};
 use koru_store_core::ids::WorkspaceId;
 
 use super::lifecycle::{Finished, restored_or_moved};
-use super::link::{Answer, BotsLink, Command, Failure};
+use super::link::{Answer, BotsLink, Command, Failure, Reread};
 
 /// What a Bot row of the Trash is.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -173,7 +173,19 @@ pub(crate) struct BotTrash {
     link: Option<BotsLink>,
     started: bool,
     work: Work,
+    /// **When a Trash read that did not answer is read again**, while a
+    /// Trash tab is in front: the roster's bounded clock (250 ms doubling
+    /// to two seconds). A Trash tab restored at startup reads before Koru AI
+    /// is up, or before the Agent has vouched for the window (`forbidden`,
+    /// asked again only for [`super::link::UNVOUCHED_LIMIT`]).
+    next: Option<std::time::Instant>,
+    backoff: std::time::Duration,
+    vouching: super::link::Vouching,
 }
+
+/// The bounded clock a Trash read that did not answer is asked again on.
+const AGAIN_FIRST: std::time::Duration = std::time::Duration::from_millis(250);
+const AGAIN_MAX: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl BotTrash {
     /// A feed over a link a test holds the other end of.
@@ -241,6 +253,10 @@ impl BotTrash {
         }
         if self.shown != shown && !shown {
             self.fresh = false;
+            // No clock while hidden: shown again, it reads once.
+            self.next = None;
+            self.backoff = AGAIN_FIRST;
+            self.vouching.reset();
         }
         self.shown = shown;
     }
@@ -253,7 +269,7 @@ impl BotTrash {
 
     /// Whether an answer is owed: the one reason the window keeps a wake.
     pub(crate) fn awaiting(&self) -> bool {
-        (self.shown && (self.in_flight || self.chats_in_flight))
+        (self.shown && (self.in_flight || self.chats_in_flight || self.next.is_some()))
             || self.restoring_any()
             || self.looking.is_some()
     }
@@ -274,9 +290,39 @@ impl BotTrash {
             let asked = self.wanted.is_some() && !self.chats_in_flight && self.ask_chats();
             return asked || ((self.restoring_any() || self.looking.is_some()) && self.poll());
         }
+        // A read that did not answer, due again.
+        if self.next.is_some_and(|at| at <= std::time::Instant::now()) {
+            self.next = None;
+            self.fresh = false;
+        }
         let asked = !self.fresh && self.refresh();
         let answered = self.poll();
         asked || answered
+    }
+
+    /// **One of the two Trash reads answered**: an answer stops the clock;
+    /// a failure starts it when asking again may help — and, refused as
+    /// unvouched, only for a bounded while.
+    fn read_answered(&mut self, failure: Option<&Failure>) {
+        let Some(failure) = failure else {
+            self.vouching.reset();
+            if !self.in_flight && !self.chats_in_flight {
+                self.next = None;
+                self.backoff = AGAIN_FIRST;
+            }
+            return;
+        };
+        let now = std::time::Instant::now();
+        match self.vouching.read_failed(failure, now) {
+            Reread::Again | Reread::Unvouched => {
+                if self.next.is_none() {
+                    let wait = self.backoff.max(AGAIN_FIRST);
+                    self.next = Some(now.checked_add(wait).unwrap_or(now));
+                    self.backoff = (wait * 2).min(AGAIN_MAX);
+                }
+            }
+            Reread::Denied | Reread::Final => {}
+        }
     }
 
     fn refresh(&mut self) -> bool {
@@ -330,9 +376,14 @@ impl BotTrash {
                     result,
                 } if seq == self.seq && Some(workspace) == self.workspace => {
                     self.in_flight = false;
-                    // A read that did not answer keeps what was listed.
-                    if let Ok(bots) = result {
-                        self.listed = bots;
+                    // A read that did not answer keeps what was listed, and
+                    // is asked again while shown when that may help.
+                    match result {
+                        Ok(bots) => {
+                            self.listed = bots;
+                            self.read_answered(None);
+                        }
+                        Err(failure) => self.read_answered(Some(&failure)),
                     }
                     self.settle_lookup();
                     changed = true;
@@ -343,10 +394,15 @@ impl BotTrash {
                     result,
                 } if seq == self.chats_seq && Some(workspace) == self.workspace => {
                     self.chats_in_flight = false;
-                    // A read that did not answer keeps what was listed.
-                    if let Ok(listing) = result {
-                        self.chats = listing.items;
-                        self.chats_more = listing.more;
+                    // A read that did not answer keeps what was listed, and
+                    // is asked again while shown when that may help.
+                    match result {
+                        Ok(listing) => {
+                            self.chats = listing.items;
+                            self.chats_more = listing.more;
+                            self.read_answered(None);
+                        }
+                        Err(failure) => self.read_answered(Some(&failure)),
                     }
                     if let Some(chat) = self.wanted.take() {
                         self.restore_listed_chat(chat);

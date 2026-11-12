@@ -153,6 +153,52 @@ fn a_stale_bot_read_is_ignored_and_a_failed_one_keeps_what_was_shown() {
     assert!(f.view.conversation().is_some(), "and the conversation");
 }
 
+/// **A Bot tab restored at startup reads its Bot again while the window is
+/// not yet vouched for**, says it is loading meanwhile — never *Koru AI
+/// isn't answering* — and lists its conversations once it has its Bot.
+/// Past the bounded while it says the window has no access. The refusal is the real link's: the AI worker's
+/// `authorize` answering `forbidden` to a caller with no `bots.manage`
+/// (`Failure::unvouched_refusal`, `link.rs`'s `Failure::of`).
+#[test]
+fn a_restored_tab_reads_its_bot_again_until_the_window_is_vouched_for() {
+    let mut f = fixture();
+    assert!(f.view.shown_pass(None));
+    let seq = f.asked();
+    f.answer(seq, f.bot.id, Err(Failure::unvouched_refusal()));
+    assert_eq!(
+        f.view.load(),
+        Load::Loading,
+        "Koru AI answered: still loading"
+    );
+    assert_eq!(f.view.notice(), Some(Words::BotsBotLoading));
+    let due = f.view.bot_read_next.expect("asked again on the clock");
+    f.view.bot_read_next = Some(due.min(std::time::Instant::now()));
+    f.view.shown_pass(None);
+    let again = f.asked();
+    assert!(again > seq, "without being hidden and shown again");
+    f.answer(again, f.bot.id, Ok(f.bot.clone()));
+    assert_eq!(f.view.load(), Load::Ready);
+    assert_eq!(f.view.notice(), None);
+    f.view.shown_pass(None);
+    f.listed();
+
+    // Refused for longer than a starting Koru takes: said as no access.
+    let mut f = fixture();
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    f.answer(seq, f.bot.id, Err(Failure::unvouched_refusal()));
+    f.view
+        .vouching
+        .age_for_test(crate::bots::link::UNVOUCHED_LIMIT);
+    f.view.bot_read_next = Some(std::time::Instant::now());
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    f.answer(seq, f.bot.id, Err(Failure::unvouched_refusal()));
+    assert_eq!(f.view.load(), Load::Denied);
+    assert_eq!(f.view.notice(), Some(Words::BotsBotNoAccess));
+    assert_eq!(f.view.bot_read_next, None, "no more asking");
+}
+
 /// **The Bot's refusal words are the Bot adapter's data**, handed to the
 /// shared chat when its conversation is bound (the standalone-component
 /// rule: the chat crate knows no Bot code). Each lifecycle hold and the
@@ -1630,4 +1676,79 @@ fn a_narrow_tab_gives_the_conversation_the_whole_width() {
     assert_eq!(narrow.1.w, 420.0, "the conversation takes the tab's width");
     f.view.set_viewport(800.0, 600.0);
     assert!(f.keys().contains(&list::CONVERSATIONS), "back, wide");
+}
+
+/// **While the settings cover the conversation, its composer takes no
+/// keys** — entered as the window enters them (`View::key`), with nothing
+/// of the settings focused, as after a press on the content's background
+/// (the second window run: *hello fixture* typed under the settings went
+/// to the hidden composer, and the next message was sent doubled). Closed,
+/// the conversation answers again.
+#[test]
+fn keys_never_reach_the_composer_under_the_settings() {
+    let mut f = listed(&[]);
+    f.view.set_settings_open(true);
+    f.view.focus = None;
+    for typed in ["h", "i"] {
+        assert!(
+            !key(&mut f.view, WinitKey::Character(typed.into()), Some(typed)),
+            "{typed}: not the hidden conversation's"
+        );
+    }
+    assert!(
+        !key(&mut f.view, named(winit::keyboard::NamedKey::Enter), None),
+        "Enter sends nothing"
+    );
+    f.view.set_settings_open(false);
+    assert!(
+        key(&mut f.view, WinitKey::Character("h".into()), Some("h")),
+        "the conversation, shown, takes typing again"
+    );
+}
+
+/// **A click on a conversation row gives the list the keyboard**, on that
+/// row, as `F6` then Tab does: Delete then asks for that conversation's
+/// Trash instead of reaching the composer (the second window run). The
+/// press goes through the tab's pointer path (`View::mouse_down`).
+#[test]
+fn a_click_on_a_conversation_row_gives_the_list_the_keyboard() {
+    let other = ChatId::new();
+    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
+    let row = f
+        .view
+        .with_frame(|_, frame| BotView::list_area(frame))
+        .and_then(|area| {
+            f.view
+                .conversations
+                .surface
+                .chat_rects(area, area.y)
+                .into_iter()
+                .find(|(chat, _)| *chat == other)
+                .map(|(_, rect)| rect)
+        })
+        .expect("the row is drawn");
+    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
+        .expect("a document");
+    View::mouse_down(
+        &mut f.view,
+        &mut ws,
+        row.x + 8.0,
+        row.y + row.h / 2.0,
+        false,
+    );
+    View::mouse_up(&mut f.view, &mut ws);
+    assert_eq!(f.view.focus(), Some(list::CONVERSATION_LIST));
+    f.view.shown_pass(None);
+    let _ = f.view.take_conversation_trash();
+    assert!(key(
+        &mut f.view,
+        named(winit::keyboard::NamedKey::Delete),
+        None
+    ));
+    f.view.shown_pass(None);
+    assert_eq!(
+        f.view.take_conversation_trash(),
+        Some(other),
+        "Delete asks for the clicked row's Trash"
+    );
 }

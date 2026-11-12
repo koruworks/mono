@@ -7,10 +7,6 @@
 //! ```text
 //! scroll_y  Bot create                         the region (keyed as the settings' viewport)
 //!   col  Bot create content                    NAV_PAD at the sides, S3 above and below, S4 between
-//!     Bot create notice                        a refusal's sentence, by its code
-//!     col  Bot create ended                    a rejected or abandoned creation, and what it left
-//!     col  Bot create progress                 a creation the owner holds: where it stands,
-//!                                              the unconfirmed role page, Retry, Abandon
 //!     col  Bot settings card  (Name)           the name
 //!     Bot settings title  (Standing role)
 //!     col  Bot settings card  (Standing role)  write a role | use an existing page; the title,
@@ -24,8 +20,17 @@
 //!     col  Bot settings card  (Working folder) managed in words, or the chosen path; what the
 //!                                              owner bound; *Choose…*, *Use a managed folder*
 //!     col  Bot disclosures                     the settings' own
+//!     col  Bot create ended                    a rejected or abandoned creation, and what it left
+//!     col  Bot create progress                 a creation the owner holds: where it stands,
+//!                                              the unconfirmed role page, Retry, Abandon
+//!     Bot create notice                        a refusal's sentence, by its code
+//!     row  Bot create unconfirmed actions      *Start over*
 //!     row  Bot create actions                  what the form refuses, in words; *Create bot*
 //! ```
+//!
+//! **Everything a press comes to is drawn where it was pressed**, at the
+//! form's foot beside *Create bot*, and the form keeps it and the actions
+//! row in view as answers arrive (until the person scrolls).
 //!
 //! **The draft is [`CreateForm`]'s** ([`crate::bots::creation`]); this file
 //! draws it, takes the person's keys and presses into it, and carries its
@@ -90,6 +95,8 @@ pub(crate) const CHOOSE_FOLDER: Key = Key::surface(SURFACE, "choose-folder");
 pub(crate) const USE_MANAGED_FOLDER: Key = Key::surface(SURFACE, "use-managed-folder");
 pub(crate) const FOLDER_RESOLVED: Key = Key::surface(SURFACE, "folder-resolved");
 pub(crate) const CREATE_BUTTON: Key = Key::surface(SURFACE, "create");
+/// The form's last row: what it refuses, and *Create bot* or *Creating…*.
+pub(crate) const CREATE_ACTIONS: Key = Key::surface(SURFACE, "create-actions");
 pub(crate) const CREATING: Key = Key::surface(SURFACE, "creating");
 /// What the form refuses before anything is sent, in words.
 pub(crate) const CREATE_PROBLEM: Key = Key::surface(SURFACE, "create-problem");
@@ -124,6 +131,11 @@ pub(crate) struct CreateTab {
     access_open: bool,
     /// The person pressed Abandon: the window asks before anything is sent.
     abandon_ask: bool,
+    /// **The person pressed one of the form's own actions** — *Create bot*,
+    /// *Retry*, *Start over*, a confirmed *Abandon* — and what it comes to
+    /// is drawn beside it: the form keeps that and the actions row in view
+    /// as answers arrive, until the person scrolls it themselves.
+    reveal_owed: bool,
 }
 
 impl CreateTab {
@@ -134,6 +146,7 @@ impl CreateTab {
             text_field: RefCell::new(None),
             access_open: false,
             abandon_ask: false,
+            reveal_owed: false,
         }
     }
 }
@@ -343,12 +356,6 @@ impl BotView {
             .pad_x(alias::NAV_PAD)
             .pad_y(Space::S3)
             .gap(Space::S4);
-        if let Some(ended) = form.ended() {
-            content = content.child(self.ended_block(engine, ended));
-        }
-        if let Some(live) = form.live() {
-            content = content.child(self.progress_block(engine, live));
-        }
         // The name, in the settings' own field.
         let input = self.name_input_with(engine);
         let name = row("Bot name row")
@@ -408,8 +415,18 @@ impl BotView {
             .child(self.disclosures());
         // **What the last press came to, beside the button that was
         // pressed** — never only at the top of a form scrolled to its end
-        // (the first window run's finding 3): a refusal's sentence, and
-        // *Start over* when Koru could not confirm whether the bot was made.
+        // (the first window run's finding 3; the second run's finding 2: an
+        // unfinished creation's reason, Retry and Abandon were drawn 226 px
+        // above the view while the person was at *Create bot*): a creation
+        // the owner ended or holds, its reason, Retry and Abandon; a
+        // refusal's sentence; and *Start over* when Koru could not confirm
+        // whether the bot was made.
+        if let Some(ended) = form.ended() {
+            content = content.child(self.ended_block(engine, ended));
+        }
+        if let Some(live) = form.live() {
+            content = content.child(self.progress_block(engine, live));
+        }
         if let Some(notice) = form.notice() {
             content = content.child(line(
                 "Bot create notice",
@@ -434,7 +451,10 @@ impl BotView {
                     .child(spacer()),
             );
         }
-        let mut actions = row("Bot create actions").gap(Space::S2).items_center();
+        let mut actions = row("Bot create actions")
+            .id(CREATE_ACTIONS)
+            .gap(Space::S2)
+            .items_center();
         actions = match self.create_problem() {
             Some(problem) if form.editable() => actions.child(
                 line(
@@ -918,6 +938,9 @@ impl BotView {
                 if started && self.focus == Some(START_OVER) {
                     self.focus = Some(CREATE_BUTTON);
                 }
+                if started {
+                    self.reveal_create_actions();
+                }
                 return started;
             }
             Act::Abandon => {
@@ -1004,10 +1027,69 @@ impl BotView {
         match command {
             Some(command) => {
                 self.send_create(command);
+                self.reveal_create_actions();
                 true
             }
             None => false,
         }
+    }
+
+    /// **Keep what the last press came to, and the actions row, in view**
+    /// from now on, as answers arrive (until the person scrolls).
+    fn reveal_create_actions(&mut self) {
+        if let Some(create) = self.create.as_deref_mut() {
+            create.reveal_owed = true;
+        }
+        self.keep_create_actions_in_view();
+    }
+
+    /// The person scrolled the form: what they look at is theirs.
+    pub(super) fn create_scrolled(&mut self) {
+        if let Some(create) = self.create.as_deref_mut() {
+            create.reveal_owed = false;
+        }
+    }
+
+    /// **Scroll the form so the actions row shows**, and above it what the
+    /// last press came to — the ended or unfinished creation's first line,
+    /// the refusal — as much of it as fits with the actions row in view
+    /// (the second window run: a sentence inserted above the actions row
+    /// pushed *Create bot* below the clip, and the scroll stayed where it
+    /// was). Only while a press of the person's owes it.
+    fn keep_create_actions_in_view(&mut self) {
+        if !self
+            .create
+            .as_deref()
+            .is_some_and(|create| create.reveal_owed)
+        {
+            return;
+        }
+        let placed = self.with_frame(|_, frame| {
+            let region = frame.node(SETTINGS)?;
+            let viewport = region.viewport?;
+            let extent = region.scroll.map_or(0.0, |(extent, _)| extent);
+            let actions = frame.node(CREATE_ACTIONS)?.rect;
+            let top = [ENDED_LINES[0], STAGE_LINES[0], CREATE_NOTICE]
+                .into_iter()
+                .filter_map(|key| frame.node(key).map(|node| node.rect.y))
+                .fold(actions.y, f32::min);
+            Some((viewport, extent, top, actions.y + actions.h))
+        });
+        let Some((viewport, extent, mut top, mut bottom)) = placed else {
+            return;
+        };
+        let mut scroll = self.scroll;
+        let below = bottom - (viewport.y + viewport.h);
+        if below > 0.0 {
+            scroll += below;
+            top -= below;
+            bottom -= below;
+        }
+        if top < viewport.y {
+            let room = (viewport.y + viewport.h) - bottom;
+            scroll -= (viewport.y - top).min(room).max(0.0);
+        }
+        self.scroll = scroll.clamp(0.0, (extent - viewport.h).max(0.0));
     }
 
     /// Hand a creation command to the link, by the draft's request and
@@ -1042,6 +1124,7 @@ impl BotView {
             return false;
         };
         self.send_create(command);
+        self.reveal_create_actions();
         true
     }
 
@@ -1336,7 +1419,20 @@ impl BotView {
         let Some(create) = self.create.as_deref_mut() else {
             return false;
         };
+        let before = (create.form.live().cloned(), create.form.ended().cloned());
         let settled = create.form.answer(request, result, now);
+        // Where the creation stands now, when the answer moved it: the
+        // roster's Unfinished group is told at once.
+        let live = create.form.live().cloned();
+        let ended = create.form.ended().cloned();
+        if live.is_some() && live != before.0 {
+            self.creation_news = live;
+        } else if ended.is_some() && ended != before.1 {
+            self.creation_news = ended;
+        }
+        let Some(create) = self.create.as_deref_mut() else {
+            return settled.matched;
+        };
         let finished = create
             .form
             .live()
@@ -1347,6 +1443,18 @@ impl BotView {
             // says so, and the roster — which lists it — is read again.
             None if finished => self.created = true,
             None => {}
+        }
+        // *Create bot* left with the keyboard on it — the creation stopped
+        // unfinished: the keyboard goes on to what replaced it, beside it.
+        if self.focus == Some(CREATE_BUTTON)
+            && let Some(live) = self.create.as_deref().and_then(|create| create.form.live())
+            && live.stage == BotCreationStage::Incomplete
+        {
+            self.focus = Some(if live.retryable { RETRY } else { ABANDON });
+        }
+        // What it came to is drawn beside the press: kept in view.
+        if settled.matched {
+            self.keep_create_actions_in_view();
         }
         settled.matched
     }
@@ -1368,6 +1476,7 @@ impl BotView {
         next.agent_settings = std::mem::take(&mut self.agent_settings);
         next.page_titles = std::mem::take(&mut self.page_titles);
         next.created = true;
+        next.creation_news = self.creation_news.take();
         *self = next;
     }
 
@@ -1389,6 +1498,23 @@ impl BotView {
             .into_iter()
             .flatten()
             .min()
+    }
+
+    /// **The roster's Retry or Abandon answered for `request`**: when it is
+    /// this tab's creation, the tab reads it on its next pass and follows
+    /// what the owner says — never goes on offering Retry and Abandon for a
+    /// creation finished or abandoned there. `true` when it was this tab's.
+    pub(crate) fn creation_moved_elsewhere(
+        &mut self,
+        request: koru_ai_core::bots::BotRequestId,
+    ) -> bool {
+        match self.create.as_deref_mut() {
+            Some(create) if create.form.request() == request => {
+                create.form.moved_elsewhere();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// A create tab behind another: its clock stops, and nothing is sent
@@ -1459,7 +1585,19 @@ pub(crate) fn abandoned_lines(lang: koru_i18n::Lang, ended: &BotCreation) -> Vec
             .to_owned(),
         );
     }
-    if let Some(folder) = &left.folder {
+    // **A folder is said to stay only where it was made.** The owner names
+    // the managed folder in `left_behind` from the moment it *may* have been
+    // made (`BotCreationRecord::left_behind`, phase `folder_pending`); it is
+    // known made only once the creation bound it (`folder_binding`, from
+    // `folder_ready`). The second window run: a creation whose folder could
+    // not be made was abandoned, and the roster said *Its folder stays at
+    // C:\…\work* — a path that did not exist. Where it may never have been
+    // made, nothing is claimed about it.
+    if let Some(folder) = left
+        .folder
+        .as_ref()
+        .filter(|_| ended.folder_binding.is_some())
+    {
         lines.push(koru_i18n::fill(
             t(lang, Words::BotsLeftFolder),
             &[folder.as_str()],

@@ -7,7 +7,9 @@
 //! over what is *standing* rather than a chord per surface: "a stop that is
 //! not there is never a dead press". The stops here follow that rule:
 //! the lane is always there (its toggle is, in the pane or in the caption's
-//! chain), and the rail is reachable only while the pane is open. Last, the
+//! chain), and the rail is reachable only while the pane is open, and after
+//! it the column's own list (the documents tree, the Chats list, the Bots
+//! roster), landed on as `Ctrl+Shift+E` lands, so its keys answer. Last, the
 //! header of the tab in front, while it has a control of its own — today a
 //! Bot tab's *Settings* (Bots P1.8): a tab answers its own keys, so this stop
 //! hands it the keyboard (`BotView::focus_header`) and takes it back when
@@ -56,14 +58,29 @@ pub(super) enum LaneControl {
 }
 
 /// The rotation's order, as the eye reads the chrome: the reminder pill and
-/// the bell (when reminders are shown), then the lane and the visible rail,
-/// then the header of the tab in front when it has controls of its own.
+/// the bell (when reminders are shown), then the lane, the visible rail and
+/// the column's list, then the header of the tab in front when it has
+/// controls of its own.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Stop {
     Pill,
     Bell,
     Lane,
     Apps,
+    /// **The navigator's own list**, beside the rail: the documents tree, the
+    /// Chats list, the Bots roster — whatever the column shows, landed on as
+    /// `Ctrl+Shift+E` and the view chords land (`ExploreView::focus_tree`),
+    /// so its own keys — the arrows, Enter, Escape — answer from there.
+    ///
+    /// **Why it is a stop** (the second window run, Bots finding 3c): Enter
+    /// on a rail view shows its list and puts the keyboard in it, but the
+    /// rail keeps `F6`'s focus (`retain_rail_focus`), and a stop on the
+    /// chrome answers the arrows first — so the arrows walked the rail, and
+    /// the roster's Retry and Abandon, walked by its own keys in every unit
+    /// test, could not be reached from a real keyboard at all. Standing
+    /// while the column is open; a list with nothing to land on is skipped
+    /// rather than made a dead press.
+    Column,
     /// **The tab's header** (Bots P1.8): a Bot tab's *Settings*, which
     /// otherwise only the pointer and an assistive technology reach, because
     /// with the settings closed every key is the conversation's. The tab
@@ -84,6 +101,7 @@ impl MainView {
         out.push(Stop::Lane);
         if self.sidebar.is_open() {
             out.push(Stop::Apps);
+            out.push(Stop::Column);
         }
         if self.tab_header_stands() {
             out.push(Stop::Tab);
@@ -103,6 +121,9 @@ impl MainView {
                 ChromeStop::Lane(_) => Stop::Lane,
                 ChromeStop::Apps(_) => Stop::Apps,
             });
+        }
+        if self.sidebar.is_open() && self.explore.has_focus() {
+            return Some(Stop::Column);
         }
         self.tab_holds_keyboard().then_some(Stop::Tab)
     }
@@ -131,12 +152,12 @@ impl MainView {
     /// anything moved.
     pub(super) fn focus_chrome(&mut self) -> bool {
         let stops = self.standing_stops();
-        let next = match self
+        let first = match self
             .current_stop()
             .and_then(|s| stops.iter().position(|x| *x == s))
         {
-            Some(i) => stops[(i + 1) % stops.len()],
-            None => stops[0],
+            Some(i) => i + 1,
+            None => 0,
         };
         let was = self.current_stop();
         // Leave whichever stop had the keyboard, so two rings are never
@@ -145,7 +166,25 @@ impl MainView {
         moved |= self.reminder_creation.blur_pill();
         moved |= self.chrome_focus.take().is_some();
         moved |= self.release_tab_keyboard();
+        moved |= self.explore.clear_focus();
+        // **The navigator's list, when it has something to land on**: one
+        // that has not is passed over, never a dead press.
+        let mut next = stops[first % stops.len()];
+        for step in 0..stops.len() {
+            next = stops[(first + step) % stops.len()];
+            if next != Stop::Column {
+                break;
+            }
+            let area = self.explore_area();
+            if self.explore.focus_tree(area) {
+                self.ai_focused = false;
+                moved = true;
+                break;
+            }
+        }
         match next {
+            // Landed above, as the loop found it.
+            Stop::Column => {}
             Stop::Pill => moved |= self.reminder_creation.focus_first_failed_pill(),
             Stop::Bell => moved |= self.reminder_shell.focus_bell(),
             Stop::Lane => {

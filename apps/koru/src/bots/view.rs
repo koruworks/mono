@@ -90,7 +90,7 @@ use winit::keyboard::{Key as WinitKey, ModifiersState};
 use winit::window::CursorIcon;
 
 use super::lifecycle::Lifecycle;
-use super::link::{Answer, BotsLink, Command, Failure};
+use super::link::{Answer, BotsLink, Command, Failure, Reread};
 use super::roster::RosterBot;
 use super::settings::Settings;
 use crate::ai_chat_view::AiChatView;
@@ -225,6 +225,9 @@ pub(crate) enum Load {
     Ready,
     /// The service did not answer. **What was shown stays**.
     Unavailable,
+    /// **Koru AI refused this window access to bots** past the while a
+    /// starting Koru takes to vouch for it ([`super::link::Vouching`]).
+    Denied,
 }
 
 /// What the tab has done, so a test can assert a count rather than a clock.
@@ -350,6 +353,11 @@ pub(crate) struct BotView {
     /// (250 ms doubling to 2 s), only while shown.
     bot_read_next: Option<std::time::Instant>,
     bot_read_backoff: std::time::Duration,
+    /// **Since when the Bot's read is refused as unvouched**: asked again on
+    /// the same clock for a bounded while, as a tab restored at startup is
+    /// (the second window run: the first read after a restart is refused
+    /// `forbidden` until the Agent vouches for the window).
+    vouching: super::link::Vouching,
     /// A Trash filter read is owed: the Bot went to Trash, or its read said
     /// it is not found.
     trash_read_owed: bool,
@@ -398,6 +406,11 @@ pub(crate) struct BotView {
     /// read that shows either — for the window to hand the roster. Taken
     /// once (`take_roster_news`).
     roster_news: Option<Bot>,
+    /// **Where this create tab's creation stands, as its own answer just
+    /// said** — stopped unfinished, still being made, or ended — for the
+    /// window to hand the roster's Unfinished group at once. Taken once
+    /// (`take_creation_news`).
+    creation_news: Option<koru_ai_core::bots::BotCreation>,
 }
 
 impl BotView {
@@ -447,6 +460,7 @@ impl BotView {
             lifecycle_awaits_read: false,
             bot_read_next: None,
             bot_read_backoff: BOT_READ_FIRST,
+            vouching: super::link::Vouching::default(),
             trash_read_owed: false,
             trash_in_flight: false,
             trash_seq: 0,
@@ -464,7 +478,16 @@ impl BotView {
             picker_for_role: false,
             created: false,
             roster_news: None,
+            creation_news: None,
         }
+    }
+
+    /// **Where this create tab's creation stands**, when one of its own
+    /// answers just moved it: the window puts it in the roster's
+    /// Unfinished group at once (the second window run's finding 3a).
+    /// Taken once.
+    pub(crate) fn take_creation_news(&mut self) -> Option<koru_ai_core::bots::BotCreation> {
+        self.creation_news.take()
     }
 
     /// **The Bot as one of this tab's answers left it, when what the roster
@@ -676,9 +699,11 @@ impl BotView {
         if (self.started_link && self.asked) || self.opening() == Some(Opening::Failed) {
             self.stale = true;
         }
-        // No clock while hidden: shown again, it reads once.
+        // No clock while hidden: shown again, it reads once, and an
+        // unvouched window has the whole while again.
         self.bot_read_next = None;
         self.bot_read_backoff = BOT_READ_FIRST;
+        self.vouching.reset();
     }
 
     /// **Shown again after a read of whose the conversation is failed**:
@@ -1010,6 +1035,13 @@ impl BotView {
         match result {
             // A Bot that says it is another is not this tab's.
             Ok(bot) if Some(bot.id) == self.bot => {
+                self.vouching.reset();
+                // **The list read after a refused start is read again** with
+                // the Bot: refused for the same reason, it said only that it
+                // may be old.
+                if self.conversations.load() == conversations::Load::Unavailable {
+                    self.conversations.owe_read();
+                }
                 // **A change still being delivered is read again** on the
                 // bounded clock while the tab is shown (never while hidden),
                 // so its sentence and the controls it holds inert go by
@@ -1044,19 +1076,41 @@ impl BotView {
             }
             Ok(_) => self.load = Load::Unavailable,
             Err(failure) => {
-                self.load = Load::Unavailable;
+                let now = std::time::Instant::now();
                 // **A read a Restore left owed is asked again** on the
                 // bounded clock while the tab is shown — until it answers,
                 // nothing else is offered — when asking again may help. So
                 // is one a settled `rejected` waits on, or one that last
-                // said a change was still being delivered.
+                // said a change was still being delivered, and **a tab that
+                // has never had its Bot** — restored at startup, before
+                // Koru AI or its vouching is up.
                 let owed = self.lifecycle_awaits_read
                     || self.settings.awaits_read()
-                    || self.settings.delivering();
-                if owed && failure.again() {
-                    self.bot_read_again(std::time::Instant::now());
-                } else if !failure.again() {
-                    self.settings.read_refused();
+                    || self.settings.delivering()
+                    || self.facts.is_none();
+                match self.vouching.read_failed(&failure, now) {
+                    Reread::Again => {
+                        self.load = Load::Unavailable;
+                        if owed {
+                            self.bot_read_again(now);
+                        }
+                    }
+                    // Koru AI answered: the window is not vouched for yet.
+                    // Still loading, not *isn't answering*.
+                    Reread::Unvouched => {
+                        if self.facts.is_none() {
+                            self.load = Load::Loading;
+                        }
+                        self.bot_read_again(now);
+                    }
+                    Reread::Denied => {
+                        self.load = Load::Denied;
+                        self.settings.read_refused();
+                    }
+                    Reread::Final => {
+                        self.load = Load::Unavailable;
+                        self.settings.read_refused();
+                    }
                 }
             }
         }
@@ -1105,6 +1159,7 @@ impl BotView {
         match (self.load, self.facts.is_some()) {
             (Load::Cold | Load::Loading, false) => Some(Words::BotsBotLoading),
             (Load::Unavailable, _) => Some(Words::BotsBotUnavailable),
+            (Load::Denied, _) => Some(Words::BotsBotNoAccess),
             _ => None,
         }
     }
@@ -1591,7 +1646,11 @@ impl View for BotView {
         if let Some(handled) = self.region_key(key, text, mods) {
             return handled;
         }
-        if !self.shows_conversation() {
+        // **A form that covers the conversation keeps every key from it**:
+        // with the settings open and nothing of theirs focused, typing went
+        // to the hidden composer (the second window run: a message sent
+        // doubled). The conversation takes keys only while it is shown.
+        if self.form_open() || !self.shows_conversation() {
             return false;
         }
         self.conversation_mut()

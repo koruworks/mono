@@ -81,6 +81,26 @@ impl MainView {
         told
     }
 
+    /// **A Retry or an Abandon from the roster's Unfinished group answered
+    /// for `request`**: every create tab holding that creation reads it
+    /// again and follows its stage — made (it becomes the Bot's tab),
+    /// abandoned (its draft again), or still unfinished. `true` when one
+    /// was told.
+    pub(super) fn creation_moved_elsewhere(
+        &mut self,
+        request: koru_ai_core::bots::BotRequestId,
+    ) -> bool {
+        let mut told = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::Bot(view) = &mut tab.view {
+                    told |= view.creation_moved_elsewhere(request);
+                }
+            }
+        }
+        told
+    }
+
     /// **The Bot tab in front asked for its menu or a question** — its ⋯,
     /// a conversation row's menu or its Delete. Opened here, at the place
     /// the tab named, in window coordinates. `true` when one opened.

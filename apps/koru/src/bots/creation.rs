@@ -515,6 +515,20 @@ impl CreateForm {
         }
     }
 
+    /// **Another surface acted on this creation** — the roster's Retry or
+    /// Abandon: what the owner holds is read once, so the form follows it
+    /// rather than go on offering what was done there. Nothing for a draft
+    /// the owner holds nothing of, or one already made.
+    pub(crate) fn moved_elsewhere(&mut self) {
+        let finished = self
+            .live
+            .as_ref()
+            .is_some_and(|live| live.stage == BotCreationStage::Completed);
+        if (self.sent || self.live.is_some()) && !finished {
+            self.read_owed = true;
+        }
+    }
+
     /// The `ReadBotCreation` owed by `now`: once after showing, or on the
     /// bounded clock while the creation moves. Never while another command
     /// is with the link.

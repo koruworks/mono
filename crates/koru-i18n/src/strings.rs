@@ -1777,6 +1777,8 @@ pub enum Key {
     BotsLoading,
     /// The AI service is not answering. **Not an empty roster**: what is on screen stays, and this says why it may be old.
     BotsUnavailable,
+    /// Koru AI answered, but refused this window access to bots (it was not vouched for) for longer than a starting Koru takes. Not "isn't answering": the service did answer.
+    BotsNoAccess,
     /// The empty roster, in the approved experience's words. It names no button: creating a Bot is not in this build yet.
     BotsEmpty,
     /// A paused Bot's mark on its row: new work waits until it is resumed.
@@ -1794,6 +1796,8 @@ pub enum Key {
     BotsBotLoading,
     /// The Bot service did not answer a Bot tab. Shown **over what the header showed before**, never as an empty tab.
     BotsBotUnavailable,
+    /// A Bot tab's read: Koru AI refused this window access to bots for longer than a starting Koru takes to vouch for it.
+    BotsBotNoAccess,
     /// Where a Bot's work goes: `{}` is its home workspace's name.
     BotsSavesTo,
     /// The first version's limit (QUESTIONS O8), said beside where a Bot's work goes.
@@ -3655,7 +3659,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2462] = [
+    pub const ALL: [Key; 2464] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4921,6 +4925,7 @@ impl Key {
         Key::BotsTitle,
         Key::BotsLoading,
         Key::BotsUnavailable,
+        Key::BotsNoAccess,
         Key::BotsEmpty,
         Key::BotsPaused,
         Key::BotsRowPaused,
@@ -4929,6 +4934,7 @@ impl Key {
         Key::BotsTabUnnamed,
         Key::BotsBotLoading,
         Key::BotsBotUnavailable,
+        Key::BotsBotNoAccess,
         Key::BotsSavesTo,
         Key::BotsHomeOnly,
         Key::BotsHomeWorkspace,
@@ -15337,6 +15343,17 @@ pub const ROWS: &[Row] = &[
         ja: "Koru AI が応答していないため、今は Bot を一覧表示できません。",
     },
     Row {
+        key: Key::BotsNoAccess,
+        en: "This window wasn't given access to your bots. Restarting Koru may fix it.",
+        es: "Esta ventana no recibió acceso a tus bots. Reiniciar Koru puede solucionarlo.",
+        pt_br: "Esta janela não recebeu acesso aos seus bots. Reiniciar o Koru pode resolver.",
+        de: "Dieses Fenster hat keinen Zugriff auf deine Bots erhalten. Ein Neustart von Koru kann helfen.",
+        fr: "Cette fenêtre n'a pas reçu l'accès à vos bots. Redémarrer Koru peut régler le problème.",
+        ar: "لم تُمنح هذه النافذة إذن الوصول إلى البوتات. قد تحل إعادة تشغيل Koru المشكلة.",
+        zh_hans: "此窗口未获得访问你的 Bot 的权限。重新启动 Koru 也许能解决。",
+        ja: "このウィンドウには Bot へのアクセスが許可されませんでした。Koru を再起動すると直る場合があります。",
+    },
+    Row {
         key: Key::BotsEmpty,
         en: "Give a bot a standing job. Its conversations and work stay together here.",
         es: "Dale a un bot un trabajo permanente. Sus conversaciones y su trabajo quedan reunidos aquí.",
@@ -15423,6 +15440,17 @@ pub const ROWS: &[Row] = &[
         ar: "لا يستجيب Koru AI، لذلك لا يمكن عرض هذا البوت الآن.",
         zh_hans: "Koru AI 没有响应，因此目前无法显示此 Bot。",
         ja: "Koru AI が応答していないため、この Bot は今は表示できません。",
+    },
+    Row {
+        key: Key::BotsBotNoAccess,
+        en: "This window wasn't given access to this bot. Restarting Koru may fix it.",
+        es: "Esta ventana no recibió acceso a este bot. Reiniciar Koru puede solucionarlo.",
+        pt_br: "Esta janela não recebeu acesso a este bot. Reiniciar o Koru pode resolver.",
+        de: "Dieses Fenster hat keinen Zugriff auf diesen Bot erhalten. Ein Neustart von Koru kann helfen.",
+        fr: "Cette fenêtre n'a pas reçu l'accès à ce bot. Redémarrer Koru peut régler le problème.",
+        ar: "لم تُمنح هذه النافذة إذن الوصول إلى هذا البوت. قد تحل إعادة تشغيل Koru المشكلة.",
+        zh_hans: "此窗口未获得访问此 Bot 的权限。重新启动 Koru 也许能解决。",
+        ja: "このウィンドウにはこの Bot へのアクセスが許可されませんでした。Koru を再起動すると直る場合があります。",
     },
     Row {
         key: Key::BotsSavesTo,

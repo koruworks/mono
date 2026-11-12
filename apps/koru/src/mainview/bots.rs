@@ -828,6 +828,7 @@ impl MainView {
         let mut moved = false;
         let mut created = false;
         let mut news = Vec::new();
+        let mut creations = Vec::new();
         for (_, group) in self.panes.iter_groups_mut() {
             let mut relabeled = false;
             let active = group.active();
@@ -861,6 +862,11 @@ impl MainView {
                     // carried: the roster's row says it now.
                     if let Some(bot) = view.take_roster_news() {
                         news.push(bot);
+                    }
+                    // Where a create tab's creation stands, as its own
+                    // answer said: the Unfinished group says it now.
+                    if let Some(creation) = view.take_creation_news() {
+                        creations.push(creation);
                     }
                     if index == active {
                         let mine = view
@@ -899,6 +905,13 @@ impl MainView {
             }
             roster.owe_lifecycle_refresh();
             moved = true;
+        }
+        // A create tab's creation stopped unfinished, moved or ended: the
+        // roster's Unfinished group says so at once, shown or not (the
+        // second window run: it appeared only once the roster was shown
+        // again).
+        for creation in creations {
+            moved |= self.explore.bots_mut().know_creation(creation);
         }
         moved || placed || recorded
     }

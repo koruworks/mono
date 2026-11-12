@@ -553,6 +553,8 @@ fn abandon_is_asked_first_and_names_what_it_left() {
     };
     let mut abandoned = c.creation(BotCreationStage::Abandoned);
     abandoned.role_page_unconfirmed = true;
+    // The folder was made: the creation bound it (`folder_ready`).
+    abandoned.folder_binding = Some("C:\\koru\\ai\\bots\\b\\work".into());
     abandoned.left_behind = Some(BotCreationLeftovers {
         role_page: Some(page.clone()),
         folder: Some("C:\\koru\\ai\\bots\\b\\work".into()),
@@ -586,6 +588,46 @@ fn abandon_is_asked_first_and_names_what_it_left() {
     assert!(c.form().editable());
     assert_eq!(c.form().draft().name, "Scout");
     assert!(c.keys_include(CREATE_BUTTON));
+}
+
+/// **An abandoned creation whose folder was never made claims no folder**
+/// (the second window run: *Its folder stays at C:\…\work.* for a path
+/// that did not exist — the managed folder could not be made). The owner's
+/// answer is as `BotCreationReceipt::view` gives it: `left_behind` names
+/// the folder from the moment it *may* have been made, and `folder_binding`
+/// is set only once it was (`folder_ready`). The roster says the same lines.
+#[test]
+fn an_abandoned_creation_claims_no_folder_it_never_made() {
+    let mut c = shown();
+    c.fill();
+    assert!(c.view.perform(Act::Create));
+    let _ = c.sent();
+    let mut abandoned = c.creation(BotCreationStage::Abandoned);
+    abandoned.reason = Some(BotCreationReason::FolderUnavailable);
+    abandoned.phase = BotCreationPhase::FolderPending;
+    abandoned.folder_binding = None;
+    let path = "C:\\smoke\\root-02\\ai\\bots\\f3409910\\work";
+    abandoned.left_behind = Some(BotCreationLeftovers {
+        role_page: None,
+        folder: Some(path.into()),
+    });
+    let lang = c.view.lang;
+    let lines = abandoned_lines(lang, &abandoned);
+    let folder = koru_i18n::fill(t(lang, Words::BotsLeftFolder), &[path]);
+    assert!(!lines.contains(&folder), "no folder claimed: {lines:?}");
+    assert!(
+        !lines.contains(&t(lang, Words::BotsLeftNothing).to_owned()),
+        "nor that nothing was made: the folder may have been"
+    );
+    c.reply(abandoned.clone());
+    let labels: Vec<String> = all_controls(&c.view).into_iter().map(|c| c.label).collect();
+    assert!(
+        !labels.contains(&folder),
+        "not in the tab either: {labels:?}"
+    );
+    // Made and bound: said.
+    abandoned.folder_binding = Some(path.into());
+    assert!(abandoned_lines(lang, &abandoned).contains(&folder));
 }
 
 /// **On completion the tab becomes the Bot's tab on its main conversation**,
@@ -938,6 +980,79 @@ fn the_create_forms_mode_chip_wears_the_modes_color_and_reads_inert_while_creati
 fn rect_of(view: &BotView, key: Key) -> koru_draw::geometry::Rect {
     view.with_frame(|_, frame| frame.node(key).map(|node| node.rect))
         .unwrap_or_else(|| panic!("{key:?} is drawn"))
+}
+
+/// Whether `key` is drawn wholly inside the form's scrolled region.
+fn in_view(view: &BotView, key: Key) -> bool {
+    view.with_frame(|_, frame| {
+        let viewport = frame
+            .node(crate::bots::view::region::SETTINGS)
+            .and_then(|node| node.viewport)
+            .expect("the region scrolls");
+        frame.node(key).is_some_and(|node| {
+            node.rect.y >= viewport.y - 0.5
+                && node.rect.y + node.rect.h <= viewport.y + viewport.h + 0.5
+        })
+    })
+}
+
+/// **A creation that stops unfinished is told where *Create bot* was
+/// pressed**: its reason, Retry and Abandon drawn at the form's foot, in
+/// view, with the keyboard on Retry — at the default window's size, pressed
+/// with the keyboard through `View::key` (the second window run: the
+/// managed folder impossible to create, the reason, Retry and Abandon were
+/// drawn at the form's top, 226 px above the view, and the person saw only
+/// greyed controls). Answered as the owner answers a folder it could not
+/// make (`BotCreationReason::FolderUnavailable`, retryable).
+#[test]
+fn a_creation_that_stops_unfinished_is_told_where_create_was_pressed() {
+    let mut c = shown();
+    c.fill();
+    c.view.set_viewport(940.0, 620.0);
+    c.view.scroll_region(1.0e6);
+    c.tab_to(CREATE_BUTTON);
+    assert!(in_view(&c.view, CREATE_BUTTON), "where the person presses");
+    key(&mut c.view, named(winit::keyboard::NamedKey::Enter), None);
+    let _ = c.sent();
+    let mut stopped = c.creation(BotCreationStage::Incomplete);
+    stopped.reason = Some(BotCreationReason::FolderUnavailable);
+    stopped.retryable = true;
+    c.reply(stopped);
+    for key in [STAGE_LINES[0], STAGE_LINES[1], RETRY, ABANDON] {
+        assert!(in_view(&c.view, key), "{key:?} is drawn in view");
+    }
+    let disclosures = rect_of(&c.view, crate::bots::view::region::RUNTIME_LIMITS);
+    assert!(
+        rect_of(&c.view, STAGE_LINES[0]).y > disclosures.y,
+        "at the form's foot, after its cards"
+    );
+    assert_eq!(c.view.focus(), Some(RETRY), "the keyboard goes on to Retry");
+}
+
+/// **A refusal inserted above the actions row keeps *Create bot* in view**
+/// (the second window run: a 16 px sentence above the row pushed the button
+/// to 607–633 against a clip at 612, and the scroll stayed). Refused as the
+/// owner refuses an agent whose models cannot be listed
+/// (`validate_model_evidence` → `agent_models_failed`).
+#[test]
+fn a_refusal_above_the_actions_row_keeps_create_in_view() {
+    let mut c = shown_with_default("claude");
+    c.fill();
+    c.view.set_viewport(940.0, 620.0);
+    c.view.scroll_region(1.0e6);
+    c.tab_to(CREATE_BUTTON);
+    key(&mut c.view, named(winit::keyboard::NamedKey::Enter), None);
+    let _ = c.sent();
+    c.answers
+        .send(Answer::Wrote {
+            bot: c.form().bot(),
+            request: c.form().request(),
+            result: Err(Failure::Refused("agent_models_failed".into())),
+        })
+        .unwrap();
+    c.view.poll();
+    assert!(in_view(&c.view, CREATE_NOTICE), "the refusal is in view");
+    assert!(in_view(&c.view, CREATE_BUTTON), "and Create bot with it");
 }
 
 /// **A Create the owner refuses because its agent cannot run says so,

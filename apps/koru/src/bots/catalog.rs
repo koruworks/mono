@@ -323,6 +323,13 @@ pub(crate) struct Catalog {
     agents_seq: Option<u64>,
     /// The agents must be read again: never read, or shown after hidden.
     agents_owed: bool,
+    /// **The agents' read did not answer**: since when, and when it is
+    /// asked again — on the readiness clock, for at most [`CHECKING_LIMIT`]
+    /// (a tab restored at startup reads before Koru AI is up; its form then
+    /// offered no agent until it was hidden and shown again).
+    agents_failing: Option<std::time::Instant>,
+    agents_next: Option<std::time::Instant>,
+    agents_backoff: std::time::Duration,
     readiness: HashMap<AiProviderId, Readiness>,
     readiness_seq: HashMap<AiProviderId, u64>,
     readiness_owed: HashSet<AiProviderId>,
@@ -402,9 +409,13 @@ impl Catalog {
             })
     }
 
-    /// When the readiness still being checked is next asked, while it is.
+    /// When the readiness still being checked, or the agents' read that did
+    /// not answer, is next asked, while one is.
     pub(crate) fn deadline(&self) -> Option<std::time::Instant> {
-        self.readiness_next
+        match (self.readiness_next, self.agents_next) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     pub(crate) fn listing(&self, id: &AiProviderId) -> Option<&CatalogListing> {
@@ -437,6 +448,9 @@ impl Catalog {
         self.unsettled.clear();
         self.readiness_next = None;
         self.readiness_backoff = READINESS_FIRST;
+        self.agents_failing = None;
+        self.agents_next = None;
+        self.agents_backoff = READINESS_FIRST;
     }
 
     /// **`agent`'s listing is wanted** (the control's `Outcome::Catalog`, or
@@ -477,6 +491,11 @@ impl Catalog {
             self.agents_owed = true;
         }
         let moved = self.fold(now);
+        // The agents' read that did not answer, due again.
+        if self.agents_next.is_some_and(|at| at <= now) {
+            self.agents_next = None;
+            self.agents_owed = true;
+        }
         // A readiness still being checked, due again.
         if self.readiness_next.is_some_and(|at| at <= now) {
             self.readiness_next = None;
@@ -578,8 +597,21 @@ impl Catalog {
             match answer {
                 Answer::Agents { seq, result } if self.agents_seq == Some(seq) => {
                     self.agents_seq = None;
-                    // A failed read keeps what was shown.
+                    // A failed read keeps what was shown, and is asked again
+                    // on the clock while that may help, within the limit.
+                    if let Err(failure) = &result {
+                        let since = *self.agents_failing.get_or_insert(now);
+                        let again = failure.again() || failure.unvouched();
+                        if again && now.saturating_duration_since(since) < CHECKING_LIMIT {
+                            let wait = self.agents_backoff.max(READINESS_FIRST);
+                            self.agents_next = Some(now.checked_add(wait).unwrap_or(now));
+                            self.agents_backoff = (wait * 2).min(READINESS_MAX);
+                        }
+                    }
                     if let Ok(agents) = result {
+                        self.agents_failing = None;
+                        self.agents_next = None;
+                        self.agents_backoff = READINESS_FIRST;
                         for agent in &agents {
                             self.readiness_owed.insert(agent.id.clone());
                         }

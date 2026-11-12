@@ -103,6 +103,57 @@ fn a_hidden_trash_asks_nothing_and_a_shown_one_asks_once() {
     assert_eq!(trash.work().commands, 2);
 }
 
+/// **A Trash shown at startup reads again while its reads are not answered**
+/// — Koru AI not up, or the window not yet vouched for (`forbidden`, as the
+/// AI worker's `authorize` answers a caller with no `bots.manage`;
+/// `Failure::unvouched_refusal`) — on a bounded clock, only while shown,
+/// and lists the rows once they answer. Before, a failed read left the
+/// Trash's Bot rows absent until the tab was hidden and shown again.
+#[test]
+fn a_trash_read_refused_at_startup_is_asked_again_while_shown() {
+    let (mut trash, commands, answers, home) = feed();
+    trash.set_shown(true, None);
+    trash.maintain();
+    while let Ok(command) = commands.try_recv() {
+        match command {
+            Command::Lifecycle {
+                seq,
+                workspace,
+                lifecycle,
+            } => answers
+                .send(Answer::Lifecycle {
+                    seq,
+                    workspace,
+                    lifecycle,
+                    result: Err(Failure::unvouched_refusal()),
+                })
+                .unwrap(),
+            Command::TrashedChats { seq, workspace } => answers
+                .send(Answer::TrashedChats {
+                    seq,
+                    workspace,
+                    result: Err(Failure::lost()),
+                })
+                .unwrap(),
+            _ => panic!("the Trash's two reads"),
+        }
+    }
+    trash.maintain();
+    assert!(trash.awaiting(), "a clock runs while shown");
+    let due = trash.next.expect("asked again");
+    trash.next = Some(due.min(std::time::Instant::now()));
+    let scout = trashed(home, "Scout", Some(BotRequestId::mint()));
+    listed(&mut trash, &commands, &answers, vec![scout], Vec::new());
+    assert_eq!(trash.rows().len(), 1, "listed once it answered");
+    assert_eq!(trash.next, None, "answered: no clock");
+
+    // Hidden, the clock stops.
+    trash.next = Some(std::time::Instant::now());
+    trash.set_shown(false, None);
+    assert_eq!(trash.next, None);
+    assert!(!trash.awaiting());
+}
+
 /// **Rows for a trashed Bot and a conversation trashed on its own**, with
 /// Restore exactly where the owner names what to undo: a Bot whose holder
 /// is named; a conversation the owner says its own Restore brings back. A

@@ -227,6 +227,76 @@ fn an_unanswered_listing_is_asked_again_while_shown() {
     assert!(!f.roster.list_retry_due_for_test(), "no clock while hidden");
 }
 
+/// **A listing refused before the window is vouched for is asked again,
+/// said as loading, and after a bounded while said as no access** — never
+/// *Koru AI isn't answering…*, because Koru AI did answer (the second window
+/// run, 2 of 2 restarts: `failure="forbidden"` 3 ms after the first frame,
+/// and the roster said *isn't answering* until it was hidden and shown
+/// again). The refusal is answered as the real link answers it: the AI
+/// worker's `authorize` refusing a caller with no `bots.manage`, classified
+/// by `link.rs`'s `Failure::of` (`Failure::unvouched_refusal`).
+#[test]
+fn a_listing_refused_before_the_window_is_vouched_for_is_asked_again() {
+    let unvouched = Failure::unvouched_refusal;
+    let published = |roster: &BotsRoster| {
+        crate::panes::explore::accessibility::roster_tree(roster)
+            .iter()
+            .filter_map(|node| node.label.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut f = fixture();
+    f.roster.set_shown(true);
+    f.roster.maintain();
+    let seq = f.asked();
+    f.answer(seq, Err(unvouched()));
+    assert_ne!(
+        f.roster.notice(),
+        Some(Words::BotsUnavailable),
+        "Koru AI answered: it is not *isn't answering*"
+    );
+    assert_eq!(f.roster.notice(), Some(Words::BotsLoading));
+    assert!(f.roster.awaiting(), "a clock runs while shown");
+    assert!(f.roster.list_retry_due_for_test(), "asked again");
+    assert!(f.roster.maintain());
+    let again = f.asked();
+    assert!(again > seq, "without being hidden and shown again");
+    f.answer(again, Ok(vec![f.bot("Scout")]));
+    assert_eq!(f.roster.load(), Load::Ready, "vouched for: listed");
+
+    // Refused for longer than a starting Koru takes: no more asking, the
+    // rows shown stay, and the sentence is about access.
+    f.roster.owe_lifecycle_refresh();
+    f.roster.maintain();
+    let seq = f.asked();
+    f.answer(seq, Err(unvouched()));
+    assert_eq!(f.roster.load(), Load::Ready, "rows shown stay as they were");
+    f.roster
+        .vouching
+        .age_for_test(crate::bots::link::UNVOUCHED_LIMIT);
+    assert!(f.roster.list_retry_due_for_test());
+    f.roster.maintain();
+    let seq = f.asked();
+    f.answer(seq, Err(unvouched()));
+    assert_eq!(f.roster.load(), Load::Denied);
+    assert_eq!(f.roster.notice(), Some(Words::BotsNoAccess));
+    assert!(!f.roster.list_retry_due_for_test(), "no more asking");
+    assert_eq!(f.roster.bots().len(), 1, "what was shown stays");
+    assert!(
+        published(&f.roster).contains(&t(Lang::En, Words::BotsNoAccess).to_owned()),
+        "published as drawn: {:?}",
+        published(&f.roster)
+    );
+
+    // Shown again, it has the whole while again.
+    f.roster.set_shown(false);
+    f.roster.set_shown(true);
+    f.roster.maintain();
+    let seq = f.asked();
+    f.answer(seq, Err(unvouched()));
+    assert_eq!(f.roster.notice(), Some(Words::BotsLoading));
+    assert!(f.roster.list_retry_due_for_test());
+}
+
 /// **A Bot tab's own news reaches its row at once** — renamed, paused —
 /// and a Bot the roster does not list is left to the list.
 #[test]
@@ -873,6 +943,119 @@ fn unfinished(home: WorkspaceId, name: &str, retryable: bool) -> BotCreation {
         left_behind: None,
         bot: None,
     }
+}
+
+/// **A create tab's news reaches the Unfinished group at once** — shown or
+/// not, before the roster lists again (the second window run: the group
+/// appeared only once the roster was shown again). The creation is the
+/// owner's own answer to the tab (`ReadBotCreation`/`CreateBotWithRole`,
+/// stage `Incomplete`); one that ended leaves the group; another
+/// workspace's is not this roster's.
+#[test]
+fn a_create_tabs_news_reaches_the_unfinished_group_at_once() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    f.roster.set_shown(false);
+    let stuck = unfinished(f.home, "Dark Check", true);
+    assert!(f.roster.know_creation(stuck.clone()), "known at once");
+    assert_eq!(f.roster.creations(), [stuck.clone()]);
+    assert!(
+        frame_of(&f.roster).contains(creation_retry_key(stuck.request_id)),
+        "drawn with its Retry"
+    );
+    assert!(
+        !f.roster.know_creation(stuck.clone()),
+        "the same: nothing moved"
+    );
+    let mut done = stuck.clone();
+    done.stage = BotCreationStage::Completed;
+    assert!(f.roster.know_creation(done), "finished: out of the group");
+    assert!(f.roster.creations().is_empty());
+    let elsewhere = unfinished(WorkspaceId::new(), "Other", true);
+    assert!(!f.roster.know_creation(elsewhere));
+    assert!(f.roster.creations().is_empty());
+}
+
+/// **An unfinished row gives its state the row's whole width, under its
+/// name and buttons, and nothing overlaps it** at the navigator's narrowest
+/// width (the second window run, `scr-b12-04`: *The working folder
+/// couldn't be made or read.* wrapped into a column about 90 px wide and
+/// ran over *Show archived bots*). Laid out at the narrowest column and at
+/// a wide one: the wrapped state is taller where it wraps — so its measured
+/// height follows its lines — and the toggle starts below it.
+#[test]
+fn an_unfinished_rows_state_has_the_rows_width_and_overlaps_nothing() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    let mut stuck = unfinished(f.home, "Dark Check", true);
+    stuck.reason = Some(koru_ai_core::bots::BotCreationReason::FolderUnavailable);
+    assert!(f.roster.know_creation(stuck.clone()));
+    let narrow = Rect::new(0.0, area().y, koru_draw::theme::SIDEBAR_MIN_W, 600.0);
+    let wide = Rect::new(0.0, area().y, 1200.0, 600.0);
+    let rects = |within: Rect| {
+        crate::input_engine::with(|engine| {
+            let (_, frame) = f.roster.layout(engine, within, top());
+            let rect = |key| frame.node(key).map(|node| node.rect).expect("drawn");
+            (
+                rect(creation_state_key(stuck.request_id)),
+                rect(creation_retry_key(stuck.request_id)),
+                rect(creation_abandon_key(stuck.request_id)),
+                rect(ARCHIVED_TOGGLE),
+            )
+        })
+    };
+    let (state, retry, abandon, toggle) = rects(narrow);
+    assert!(
+        state.w >= narrow.w * 0.75,
+        "the state has the row's width: {state:?} in {narrow:?}"
+    );
+    assert!(
+        state.y >= retry.y + retry.h - 0.5 && state.y >= abandon.y + abandon.h - 0.5,
+        "under the name and its buttons: {state:?} {retry:?} {abandon:?}"
+    );
+    assert!(
+        toggle.y >= state.y + state.h - 0.5,
+        "Show archived bots starts below it: {toggle:?} {state:?}"
+    );
+    let (wide_state, ..) = rects(wide);
+    assert!(
+        state.h > wide_state.h + 1.0,
+        "wrapped, it is measured taller: {} at {} px, {} at {} px",
+        state.h,
+        narrow.w,
+        wide_state.h,
+        wide.w
+    );
+}
+
+/// **A Retry or an Abandon from the group tells the window which creation
+/// moved**, whatever it came to, so a create tab holding it reads it again
+/// (the second window run: the tab went on offering Retry and Abandon).
+#[test]
+fn a_retry_from_the_group_says_which_creation_moved() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    let stuck = unfinished(f.home, "Dark Check", true);
+    f.roster.know_creation(stuck.clone());
+    let _ = f.commands.try_iter().count();
+    assert!(f.roster.retry(stuck.request_id));
+    let _ = f.commands.try_iter().count();
+    assert!(
+        f.roster.take_creations_moved().is_empty(),
+        "not before it answers"
+    );
+    let mut done = stuck.clone();
+    done.stage = BotCreationStage::Completed;
+    f.answers
+        .send(Answer::Wrote {
+            bot: stuck.bot_id,
+            request: stuck.request_id,
+            result: Ok(BotResponse::Creation { creation: done }),
+        })
+        .unwrap();
+    f.roster.maintain();
+    assert_eq!(f.roster.take_creations_moved(), [stuck.request_id]);
+    assert!(f.roster.take_creations_moved().is_empty(), "taken once");
 }
 
 /// **A creation a restart interrupted is never invisible**: a roster made

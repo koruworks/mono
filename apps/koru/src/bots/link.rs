@@ -215,6 +215,24 @@ const AGAIN: &[&str] = &[
     "folder_unavailable",
 ];
 
+/// **The refusal of a window the Agent has not vouched for (yet)**: the AI
+/// worker's `authorize` answers `forbidden` to a caller without the scope a
+/// command needs. The link asks for `bots.manage` first-party; a hello with
+/// no grant — the Agent refusing, or not ready to vouch, as it is for the
+/// first connection after a start (`Refusal::Unverified` in its
+/// `routing.log`) — is admitted with the ordinary scopes
+/// (`koru_api_client::first_party_identity`), and every Bot command is then
+/// answered `forbidden`. The link drops the client after any failure, so the
+/// next command connects again and asks for a fresh grant.
+const UNVOUCHED: &str = "forbidden";
+
+/// **How long a read refused as unvouched is asked again** before the
+/// surface stops and says the window has no access. A starting Koru vouches
+/// within milliseconds (the second window run: granted 11 ms after the
+/// first refusal); this is the readiness check's own bound
+/// ([`super::catalog::CHECKING_LIMIT`]).
+pub(crate) const UNVOUCHED_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl Failure {
     /// **The one classification** of what the client said: an answer that
     /// leaves the outcome unknown is [`Failure::Unanswered`]; a named
@@ -240,11 +258,27 @@ impl Failure {
         }
     }
 
+    /// **Refused because this window holds no `bots.manage`** ([`UNVOUCHED`]):
+    /// a refusal — a write refused so did not run — but one a *read* asks
+    /// again for a bounded while ([`Vouching`]), because right after a start
+    /// it is the Agent not having vouched for the window yet.
+    pub(crate) fn unvouched(&self) -> bool {
+        matches!(self, Self::Refused(code) if code == UNVOUCHED)
+    }
+
     /// The failure as the real link gives it for a lost connection, for a
     /// test standing in for the link.
     #[cfg(test)]
     pub(crate) fn lost() -> Self {
         Self::of(Said::new("gateway_unavailable", true))
+    }
+
+    /// The failure as the real link gives it for a window the Agent has not
+    /// vouched for yet: the AI worker's `authorize` refusing a caller with
+    /// no `bots.manage` (`forbidden`, not retryable).
+    #[cfg(test)]
+    pub(crate) fn unvouched_refusal() -> Self {
+        Self::of(Said::new("forbidden", false))
     }
 
     /// The failure as the real link gives it for a worker that did not
@@ -260,6 +294,65 @@ impl Failure {
     #[cfg(test)]
     pub(crate) fn turned_away() -> Self {
         Self::of(Said::new("ai_worker_saturated", true))
+    }
+}
+
+/// **What a surface does with a failed read**, from [`Vouching::read_failed`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Reread {
+    /// Asking again may answer ([`Failure::again`]): on the surface's clock.
+    Again,
+    /// Refused as unvouched, within [`UNVOUCHED_LIMIT`]: asked again on the
+    /// clock, and said as still loading — Koru AI *is* answering.
+    Unvouched,
+    /// Refused as unvouched past the limit: no more asking; the surface says
+    /// this window was not given access, never that Koru AI is silent.
+    Denied,
+    /// A refusal that would only repeat.
+    Final,
+}
+
+/// **Since when a surface's reads are refused as unvouched**: the bounded
+/// time it asks again for ([`UNVOUCHED_LIMIT`]). Cleared by an answer, and
+/// by the surface being hidden — shown again, it has the whole while again.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Vouching {
+    since: Option<std::time::Instant>,
+}
+
+impl Vouching {
+    /// **A read failed at `now`**: what the surface does next. The bound
+    /// runs from the first unvouched refusal and is not reset by another
+    /// failure in between — a lost connection while the Agent still has not
+    /// vouched is the same wait.
+    pub(crate) fn read_failed(&mut self, failure: &Failure, now: std::time::Instant) -> Reread {
+        if !failure.unvouched() {
+            return if failure.again() {
+                Reread::Again
+            } else {
+                Reread::Final
+            };
+        }
+        let since = *self.since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= UNVOUCHED_LIMIT {
+            Reread::Denied
+        } else {
+            Reread::Unvouched
+        }
+    }
+
+    /// A read answered, or the surface was hidden: the next refusal starts
+    /// a new while.
+    pub(crate) fn reset(&mut self) {
+        self.since = None;
+    }
+
+    /// The while began `ago`: a test standing in for the time passing.
+    #[cfg(test)]
+    pub(crate) fn age_for_test(&mut self, ago: std::time::Duration) {
+        if let Some(since) = &mut self.since {
+            *since = since.checked_sub(ago).unwrap_or(*since);
+        }
     }
 }
 

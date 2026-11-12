@@ -42,7 +42,7 @@ use crate::bots::roster::{
     ARCHIVED_TOGGLE, CREATE, CREATION_ABANDON_PART, CREATION_PART, CREATION_RETRY_PART, EMPTY,
     LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, UNARCHIVE_PART, UNFINISHED_HEADING, UNFINISHED_MORE,
     UNFINISHED_NOTICE, activity_key, archived_key, creation_abandon_key, creation_key,
-    creation_retry_key, row_key, unarchive_key,
+    creation_retry_key, creation_state_key, row_key, unarchive_key,
 };
 use crate::panes::Outcome;
 
@@ -102,10 +102,8 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
         let rect_of = |key| frame.node(key).map(|node| node.rect);
         let mut out = Vec::new();
         if let Some(rect) = rect_of(NOTICE) {
-            let words = match roster.load() {
-                crate::bots::roster::Load::Unavailable => Key::BotsUnavailable,
-                _ => Key::BotsLoading,
-            };
+            // What the roster draws there, from the one place that says it.
+            let words = roster.notice().unwrap_or(Key::BotsLoading);
             out.push(
                 SemanticNode::new(
                     Occurrence::surface(cx.window, cx.view, BOTS, NOTICE_PART),
@@ -263,7 +261,8 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                             Role::Label,
                         )
                         .with_label(roster.creation_state(creation))
-                        .with_bounds(rect),
+                        // Its own line under the row's head.
+                        .with_bounds(rect_of(creation_state_key(request)).unwrap_or(rect)),
                     ];
                     for (key, part, words) in [
                         (

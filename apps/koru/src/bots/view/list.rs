@@ -342,8 +342,23 @@ impl BotView {
         if !area.contains(x, y) {
             return None;
         }
-        self.focus = None;
-        Some(self.conversations.surface.mouse_down(area, top, x, y))
+        // **A press on a row gives the list the keyboard, on that row**, as
+        // the keyboard's way in does (`F6`, then Tab): Delete then asks for
+        // that conversation's Trash rather than reaching the composer (the
+        // second window run). Typing still falls through to the
+        // conversation: the list claims only its own keys.
+        let pressed = self.conversations.surface.chat_pressed_at(area, top, x, y);
+        let handled = self.conversations.surface.mouse_down(area, top, x, y);
+        match pressed {
+            Some(chat) => {
+                self.focus = Some(CONVERSATION_LIST);
+                self.conversations
+                    .surface
+                    .set_focus(koru_chats_ui::Focus::Chat(chat), area, top);
+            }
+            None => self.focus = None,
+        }
+        Some(handled)
     }
 
     /// The pointer over the list. `true` when its hover changed.

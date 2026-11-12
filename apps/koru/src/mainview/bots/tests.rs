@@ -738,3 +738,217 @@ fn create_a_bot_opens_one_form_found_by_no_conversation_and_not_saved() {
         settings.tabs
     );
 }
+
+// ------------------------------------ the Unfinished group from the window
+
+/// An unfinished creation of `home`, as the owner answers it: stopped
+/// because the managed folder could not be made (`FolderUnavailable`,
+/// retryable), as the second window run produced it.
+fn stuck(home: WorkspaceId) -> koru_ai_core::bots::BotCreation {
+    koru_ai_core::bots::BotCreation {
+        request_id: koru_ai_core::bots::BotRequestId::mint(),
+        bot_id: koru_ai_core::bots::BotId::mint(),
+        home_workspace: home,
+        name: "Dark Check".into(),
+        stage: koru_ai_core::bots::BotCreationStage::Incomplete,
+        phase: koru_ai_core::bots::BotCreationPhase::RolePending,
+        reason: Some(koru_ai_core::bots::BotCreationReason::FolderUnavailable),
+        retryable: true,
+        role_page: None,
+        role_page_unconfirmed: false,
+        folder_binding: None,
+        left_behind: None,
+        bot: None,
+    }
+}
+
+/// The roster shown in the column over a link the test answers, listed
+/// with no Bots and `creations` unfinished — as the link's thread answers
+/// a `List` (its second answer, `ListBotCreations`). Its workspace is the
+/// window's.
+fn roster_with(
+    v: &mut MainView,
+    creations: impl FnOnce(WorkspaceId) -> Vec<koru_ai_core::bots::BotCreation>,
+) -> (
+    WorkspaceId,
+    std::sync::mpsc::Receiver<crate::bots::link::Command>,
+    std::sync::mpsc::SyncSender<crate::bots::link::Answer>,
+) {
+    use crate::bots::link::{Answer, BotsLink, Command, Listing};
+    if !v.sidebar.is_open() {
+        assert!(v.toggle_sidebar());
+    }
+    let (link, commands, answers) = BotsLink::test_pair();
+    *v.explore.bots_mut() = crate::bots::BotsRoster::with_link(link);
+    v.explore.show_bots();
+    v.maintain_bots();
+    let (seq, home) = commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::List { seq, workspace } => Some((seq, workspace)),
+            _ => None,
+        })
+        .expect("the roster lists the window's workspace");
+    answers
+        .send(Answer::Listed {
+            seq,
+            workspace: home,
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    answers
+        .send(Answer::Creations {
+            seq,
+            workspace: home,
+            result: Ok(Listing::all(creations(home))),
+        })
+        .unwrap();
+    v.maintain_bots();
+    (home, commands, answers)
+}
+
+/// Every Bot tab of the window runs its shown pass, as the window's draw
+/// gives the tab in front.
+fn pass_bot_tabs(v: &mut MainView) {
+    for (_, group) in v.panes.iter_groups_mut() {
+        for tab in group.tabs_mut().iter_mut() {
+            if let TabView::Bot(view) = &mut tab.view {
+                view.shown_pass(None);
+            }
+        }
+    }
+}
+
+/// **`F6` puts the keyboard in the roster, and its own keys press an
+/// Unfinished row's Retry** — entered as a real key enters the window
+/// (`MainView::key`), because the unit tests that walked the roster's keys
+/// passed while the window offered no way in (the second window run's
+/// finding 3c: the arrows walked the rail, and `F6` had no stop on the
+/// roster). Retry is sent as the roster sends it, by the request alone.
+#[test]
+fn f6_puts_the_keyboard_in_the_roster_and_enter_presses_retry() {
+    use crate::bots::link::Command;
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let (mut v, mut w) = on_document();
+    let mut listed = None;
+    let (_, commands, _answers) = roster_with(&mut v, |home| {
+        let one = stuck(home);
+        listed = Some(one.clone());
+        vec![one]
+    });
+    let creation = listed.expect("listed");
+    assert_eq!(v.explore.bots().creations().len(), 1);
+    v.explore.clear_focus();
+    let mut press = |v: &mut MainView, key: NamedKey| {
+        v.key(&mut w.ws, &Key::Named(key), None, ModifiersState::empty())
+    };
+    for _ in 0..8 {
+        if v.explore.bots().has_keyboard() {
+            break;
+        }
+        press(&mut v, NamedKey::F6);
+    }
+    assert!(v.explore.bots().has_keyboard(), "F6 reaches the roster");
+    let retry = crate::bots::roster::creation_retry_key(creation.request_id);
+    for _ in 0..8 {
+        if v.explore.bots().focus() == Some(retry) {
+            break;
+        }
+        press(&mut v, NamedKey::ArrowDown);
+    }
+    assert_eq!(v.explore.bots().focus(), Some(retry), "the arrows walk it");
+    let _ = commands.try_iter().count();
+    press(&mut v, NamedKey::Enter);
+    assert!(
+        commands.try_iter().any(|command| matches!(
+            command,
+            Command::Write { request, .. } if request == creation.request_id
+        )),
+        "Enter retried it"
+    );
+}
+
+/// **A create tab's creation that stopped unfinished reaches the roster's
+/// Unfinished group at once**, through the window's pass over its tabs —
+/// not when the roster is next shown (the second window run's finding 3a).
+/// The tab's answer is the owner's own (`CreateBotWithRole`'s creation,
+/// stage `Incomplete`).
+#[test]
+fn a_create_tabs_unfinished_creation_reaches_the_roster_at_once() {
+    use crate::bots::link::{Answer, BotsLink};
+    let (mut v, _w) = on_document();
+    let (home, _commands, _answers) = roster_with(&mut v, |_| Vec::new());
+    let (link, _tab_commands, tab_answers) = BotsLink::test_pair();
+    let view = BotView::creating_with_link(home, link);
+    let form = view.create_form().expect("a create tab");
+    let mut creation = stuck(home);
+    creation.request_id = form.request();
+    creation.bot_id = form.bot();
+    v.tabs_mut().push(Tab::bot(view));
+    tab_answers
+        .send(Answer::Wrote {
+            bot: creation.bot_id,
+            request: creation.request_id,
+            result: Ok(koru_ai_core::bots::BotResponse::Creation {
+                creation: creation.clone(),
+            }),
+        })
+        .unwrap();
+    pass_bot_tabs(&mut v);
+    assert!(v.refresh_bot_tabs());
+    assert_eq!(v.explore.bots().creations(), [creation]);
+}
+
+/// **A Retry from the roster's Unfinished group is followed by the create
+/// tab holding that creation**: it reads its creation again, rather than
+/// go on offering Retry and Abandon (the second window run's finding 3d).
+#[test]
+fn a_retry_from_the_roster_makes_the_create_tab_read_its_creation() {
+    use crate::bots::link::{Answer, BotsLink, Command};
+    use koru_ai_core::bots::{BotCommand, BotCreationStage, BotResponse};
+    let (mut v, _w) = on_document();
+    let (home, commands, answers) = roster_with(&mut v, |_| Vec::new());
+    let (link, tab_commands, tab_answers) = BotsLink::test_pair();
+    let view = BotView::creating_with_link(home, link);
+    let form = view.create_form().expect("a create tab");
+    let mut creation = stuck(home);
+    creation.request_id = form.request();
+    creation.bot_id = form.bot();
+    v.tabs_mut().push(Tab::bot(view));
+    // The tab heard the creation stop; the roster lists it.
+    tab_answers
+        .send(Answer::Wrote {
+            bot: creation.bot_id,
+            request: creation.request_id,
+            result: Ok(BotResponse::Creation {
+                creation: creation.clone(),
+            }),
+        })
+        .unwrap();
+    pass_bot_tabs(&mut v);
+    v.refresh_bot_tabs();
+    let _ = tab_commands.try_iter().count();
+    // Retry from the roster; the owner finished it.
+    let _ = commands.try_iter().count();
+    assert!(v.explore.bots_mut().retry(creation.request_id));
+    assert!(commands.try_iter().count() > 0);
+    let mut done = creation.clone();
+    done.stage = BotCreationStage::Completed;
+    answers
+        .send(Answer::Wrote {
+            bot: creation.bot_id,
+            request: creation.request_id,
+            result: Ok(BotResponse::Creation { creation: done }),
+        })
+        .unwrap();
+    v.maintain_bots();
+    pass_bot_tabs(&mut v);
+    assert!(
+        tab_commands.try_iter().any(|command| matches!(
+            command,
+            Command::Write { command, .. }
+                if *command == BotCommand::ReadBotCreation { request_id: creation.request_id }
+        )),
+        "the create tab reads its creation again"
+    );
+}
