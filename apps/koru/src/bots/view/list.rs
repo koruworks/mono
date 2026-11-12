@@ -82,14 +82,30 @@ impl BotView {
 
     /// The header's *Conversations*: the list in the conversation's place,
     /// or the conversation back. Only while compact. `true` when it moved.
+    ///
+    /// **Opening it gives the list the keyboard, on the open conversation's
+    /// row** (the fourth window run: Enter or a click opened the list and
+    /// the keyboard was nowhere — closing the settings on the way dropped
+    /// it — so no key answered until `F6`). Its own keys answer from there,
+    /// as at the wide size; Escape closes it and gives the keyboard back to
+    /// *Conversations* ([`Self::list_key`]). Closing it from here while the
+    /// keyboard is in it does the same.
     pub(super) fn toggle_conversation_list(&mut self) -> bool {
         if !self.compact() {
             return false;
         }
-        self.list_open = !self.list_open;
-        if self.list_open {
-            self.set_settings_open(false);
+        if self.list_covers() {
+            let keyboard = self.focus == Some(CONVERSATION_LIST);
+            self.close_compact_list();
+            if keyboard {
+                self.focus = Some(CONVERSATIONS_BUTTON);
+            }
+            return true;
         }
+        self.list_open = true;
+        self.set_settings_open(false);
+        self.focus = Some(CONVERSATION_LIST);
+        self.focus_list();
         true
     }
 
@@ -561,6 +577,13 @@ impl BotView {
         }
         let (area, top) = self.list_band()?;
         let press = Press::of_with(key, mods)?;
+        // Compact, the list stands in the conversation's place: Escape puts
+        // it away and the keyboard goes back to where it was opened from.
+        if press == Press::Escape && self.list_covers() {
+            self.close_compact_list();
+            self.focus = Some(CONVERSATIONS_BUTTON);
+            return Some(true);
+        }
         if press == Press::Escape {
             self.conversations.surface.clear_focus();
             self.focus = None;
@@ -762,6 +785,22 @@ impl BotView {
     #[cfg(test)]
     pub(crate) fn renames_sent(&self) -> &[(ChatId, String)] {
         &self.conversations.renamed
+    }
+
+    /// **The row the list's keyboard is on**, while the list holds the
+    /// keyboard. Test only.
+    #[cfg(test)]
+    pub(crate) fn list_keyboard_row(&self) -> Option<ChatId> {
+        (self.focus == Some(CONVERSATION_LIST))
+            .then(|| self.conversations.surface.focused_chat())
+            .flatten()
+    }
+
+    /// Whether the compact list stands in the conversation's place. Test
+    /// only.
+    #[cfg(test)]
+    pub(crate) fn compact_list_shown(&self) -> bool {
+        self.list_covers()
     }
 
     /// **The list answered with `page`**, as the owner's `ListBotChats`

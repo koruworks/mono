@@ -1267,8 +1267,10 @@ impl BotView {
         if activate && let Some(act) = self.act_for(focus) {
             return Some(self.perform(act));
         }
-        if !self.form_open() {
-            // *Settings* had the keyboard and the key is the conversation's.
+        // *Settings* had the keyboard and the key is the conversation's —
+        // unless the compact list stands in the conversation's place, when
+        // there is no conversation to give it to and the keyboard stays.
+        if !self.form_open() && !self.list_covers() {
             self.focus = None;
             return None;
         }

@@ -1232,3 +1232,148 @@ fn a_refused_rename_says_the_owners_reason_and_the_row_keeps_its_name() {
         );
     }
 }
+
+/// **The compact *Conversations* list takes the keyboard when it opens**
+/// (the fourth window run, at 940 × 620: Enter or a click on the header's
+/// *Conversations* showed the list in the conversation's place, and then
+/// Enter, Space, the arrows, Tab and typed letters did nothing until `F6`).
+/// Entered as a keyboard enters it, through `MainView::key`: `F6` to the
+/// tab, Tab to *Conversations*, Enter. The keyboard is on the open
+/// conversation's row; a typed letter leaves it there; the arrows move it;
+/// `F2` renames the row; Delete asks for its Trash; Escape closes the list
+/// and gives the keyboard back to *Conversations*; Tab leaves the list for
+/// the next stop and Shift+Tab comes back; Enter opens the row, and the
+/// conversation comes back with the keyboard. A click on *Conversations*
+/// gives the list the keyboard too.
+#[test]
+fn the_compact_conversations_list_takes_the_keyboard_when_it_opens() {
+    use crate::bots::view::list::{CONVERSATION_LIST, CONVERSATIONS_BUTTON};
+    use winit::keyboard::NamedKey;
+    let (mut v, mut workspace, bot, other, _tab) = renaming_window();
+    // The default window, the navigator open beside the tab.
+    koru_workspace_host::View::set_viewport(&mut v, 940.0, 620.0);
+    if !v.sidebar.is_open() {
+        assert!(v.toggle_sidebar());
+    }
+    v.sidebar
+        .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
+    lay_out(&mut v, &workspace);
+    assert!(
+        front_bot(&mut v)
+            .focus_order()
+            .contains(&CONVERSATIONS_BUTTON),
+        "compact: the header offers Conversations"
+    );
+    let ws = &mut workspace.ws;
+    for _ in 0..8 {
+        if v.tab_holds_keyboard() {
+            break;
+        }
+        press(&mut v, ws, NamedKey::F6);
+    }
+    assert!(v.tab_holds_keyboard(), "F6 reaches the tab");
+    for _ in 0..8 {
+        if front_bot(&mut v).focus() == Some(CONVERSATIONS_BUTTON) {
+            break;
+        }
+        press(&mut v, ws, NamedKey::Tab);
+    }
+    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATIONS_BUTTON));
+
+    // Enter: the list, with the keyboard on the open conversation's row.
+    assert!(press(&mut v, ws, NamedKey::Enter));
+    assert!(front_bot(&mut v).compact_list_shown());
+    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(bot.main_chat));
+    type_text(&mut v, ws, "x");
+    assert_eq!(
+        front_bot(&mut v).list_keyboard_row(),
+        Some(bot.main_chat),
+        "a typed letter leaves the keyboard on the list"
+    );
+    press(&mut v, ws, NamedKey::ArrowDown);
+    if front_bot(&mut v).list_keyboard_row() == Some(bot.main_chat) {
+        press(&mut v, ws, NamedKey::ArrowUp);
+    }
+    assert_eq!(
+        front_bot(&mut v).list_keyboard_row(),
+        Some(other),
+        "the arrows move"
+    );
+
+    // F2 renames the row the keyboard is on; Escape puts the field away.
+    assert!(press(&mut v, ws, NamedKey::F2));
+    assert!(matches!(
+        v.workspace_rename.as_ref().map(|field| field.target),
+        Some(crate::mainview::workspace_rename::Target::BotChat { chat, .. }) if chat == other
+    ));
+    assert!(press(&mut v, ws, NamedKey::Escape));
+    assert!(v.workspace_rename.is_none());
+    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
+
+    // Delete asks for the row's Trash; Escape answers no.
+    assert!(press(&mut v, ws, NamedKey::Delete));
+    lay_out(&mut v, &workspace);
+    let ws = &mut workspace.ws;
+    v.drain_bot_lifecycle_asks();
+    assert!(matches!(
+        v.confirm.as_ref().map(|(_, subject)| subject),
+        Some(ConfirmSubject::TrashBotConversation { chat, .. }) if *chat == other
+    ));
+    assert!(press(&mut v, ws, NamedKey::Escape));
+    assert!(v.confirm.is_none());
+    assert_eq!(
+        front_bot(&mut v).focus(),
+        Some(CONVERSATION_LIST),
+        "the keyboard is back on the list"
+    );
+
+    // Escape closes the list: the keyboard is back on Conversations.
+    assert!(press(&mut v, ws, NamedKey::Escape));
+    assert!(!front_bot(&mut v).compact_list_shown());
+    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATIONS_BUTTON));
+
+    // Tab leaves the list for the next stop, Shift+Tab comes back.
+    assert!(press(&mut v, ws, NamedKey::Enter));
+    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATION_LIST));
+    assert!(press(&mut v, ws, NamedKey::Tab));
+    let next = front_bot(&mut v).focus();
+    assert!(
+        next.is_some() && next != Some(CONVERSATION_LIST),
+        "Tab left the list: {next:?}"
+    );
+    assert!(koru_workspace_host::View::key(
+        &mut v,
+        ws,
+        &winit::keyboard::Key::Named(NamedKey::Tab),
+        None,
+        winit::keyboard::ModifiersState::SHIFT,
+    ));
+    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATION_LIST));
+
+    // Enter opens the row: the conversation is back, with the keyboard.
+    press(&mut v, ws, NamedKey::ArrowDown);
+    if front_bot(&mut v).list_keyboard_row() == Some(bot.main_chat) {
+        press(&mut v, ws, NamedKey::ArrowUp);
+    }
+    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
+    assert!(press(&mut v, ws, NamedKey::Enter));
+    lay_out(&mut v, &workspace);
+    let ws = &mut workspace.ws;
+    assert_eq!(front_bot(&mut v).chat_id(), other);
+    assert!(!front_bot(&mut v).compact_list_shown());
+    assert_eq!(front_bot(&mut v).focus(), None, "the composer's keyboard");
+
+    // A click on Conversations: the list has the keyboard too.
+    let at = v.focused_view_rect();
+    let button = front_bot(&mut v)
+        .with_frame(|_, frame| frame.node(CONVERSATIONS_BUTTON).map(|node| node.rect))
+        .expect("Conversations is drawn");
+    let (x, y) = (
+        at.x + button.x + button.w * 0.5,
+        at.y + button.y + button.h * 0.5,
+    );
+    koru_workspace_host::View::mouse_down(&mut v, ws, x, y, false);
+    koru_workspace_host::View::mouse_up(&mut v, ws);
+    assert!(front_bot(&mut v).compact_list_shown());
+    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
+}
