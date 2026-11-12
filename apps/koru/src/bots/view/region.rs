@@ -1208,6 +1208,15 @@ impl BotView {
         if !self.form_open() && self.focus.is_none() {
             return None;
         }
+        // **A modifier alone is nobody's key**: Shift, Ctrl or Alt pressed on
+        // its way to a chord leaves the keyboard where it is. It reached the
+        // tab before the chord did, and the fall-through below handed the
+        // keyboard back to the conversation — so `Shift+F6` found no stop
+        // held and landed on the last one, *Settings*, every time (the
+        // fourth window run: it never moved past it).
+        if is_modifier(key) {
+            return Some(false);
+        }
         // Tab walks the region's controls while it is open, and the
         // header's and the conversation column's once one of them has the
         // keyboard (`F6` landed on *Settings*). The create form is a region
@@ -1780,4 +1789,23 @@ pub(crate) fn focus_order(frame: &Frame) -> Vec<Key> {
         .filter(|node| node.focusable && !node.disabled)
         .filter_map(|node| node.key)
         .collect()
+}
+
+/// **A modifier pressed on its own**, which the shell hands on as a key of
+/// its own before the chord it is part of.
+fn is_modifier(key: &WinitKey) -> bool {
+    matches!(
+        key,
+        WinitKey::Named(
+            NamedKey::Shift
+                | NamedKey::Control
+                | NamedKey::Alt
+                | NamedKey::AltGraph
+                | NamedKey::Super
+                | NamedKey::Meta
+                | NamedKey::Hyper
+                | NamedKey::Fn
+                | NamedKey::CapsLock
+        )
+    )
 }

@@ -561,3 +561,84 @@ fn shift_f6_walks_the_same_stops_backwards_in_every_mode() {
         }
     });
 }
+
+/// **`Shift+F6` with a Bot tab in front walks every stop backwards, as a
+/// keyboard sends it** — the Shift key first, on its own, then `F6` held
+/// with it (the shell dispatches a modifier's first press,
+/// `koru-workspace-host` `app.rs`, dropping only its repeats). The fourth
+/// window run: from the composer `Shift+F6` reached the tab's *Settings*
+/// and never moved again, in every mode, because the Shift on its own
+/// handed the tab's keyboard back to the conversation before `F6` arrived.
+/// A full backwards cycle from the composer visits the stops `F6` visits,
+/// reversed, and comes round to where it began.
+#[test]
+fn shift_f6_as_a_keyboard_sends_it_walks_a_bot_tab_backwards_in_every_mode() {
+    use crate::mainview::tab::TabView;
+    let features = koru_features::Features {
+        agents: true,
+        ai: true,
+        ..koru_features::Features::ALL_OFF
+    };
+    koru_features::testing::with(features, || {
+        let (mut v, mut workspace) = crate::mainview::harness::on_document();
+        let bot = crate::bots::roster::RosterBot::from(crate::bots::tests::bot(
+            koru_ai_core::bots::BotId::mint(),
+            koru_store_core::ids::WorkspaceId::new(),
+            "Scout",
+            false,
+        ));
+        v.explore.bots_mut().listed_for_test(vec![bot.clone()]);
+        assert!(v.open_bot_tab(bot.clone()));
+        let back = |v: &mut MainView, ws: &mut WorkspaceDoc| {
+            v.key(
+                ws,
+                &Key::Named(NamedKey::Shift),
+                None,
+                ModifiersState::SHIFT,
+            );
+            v.key(ws, &Key::Named(NamedKey::F6), None, ModifiersState::SHIFT)
+        };
+        let to_composer = |v: &mut MainView| {
+            v.chrome_focus = None;
+            v.explore.clear_focus();
+            v.release_tab_keyboard();
+        };
+        for mode in [
+            NavigatorMode::Documents,
+            NavigatorMode::Chats,
+            NavigatorMode::Bots,
+        ] {
+            v.show_navigator(mode);
+            assert!(matches!(v.tabs().active_tab().view, TabView::Bot(_)));
+            to_composer(&mut v);
+            // F6's cycle from the composer: every stop it lands on, until
+            // it comes round to the first again (a list with nothing to
+            // land on is passed over).
+            let mut forward = Vec::new();
+            for _ in 0..2 * v.standing_stops().len() {
+                press(&mut v, &mut workspace.ws, NamedKey::F6);
+                let stop = v.current_stop();
+                if forward.first() == Some(&stop) {
+                    break;
+                }
+                forward.push(stop);
+            }
+            assert!(forward.iter().all(Option::is_some), "{mode:?}: {forward:?}");
+            assert_eq!(forward.last(), Some(&Some(Stop::Tab)), "{mode:?}");
+            to_composer(&mut v);
+            let mut backward = Vec::new();
+            for _ in 0..forward.len() {
+                assert!(back(&mut v, &mut workspace.ws), "{mode:?}: Shift+F6 moved");
+                backward.push(v.current_stop());
+            }
+            let reversed: Vec<_> = forward.iter().rev().copied().collect();
+            assert_eq!(backward, reversed, "{mode:?}: F6's stops, reversed");
+            assert!(back(&mut v, &mut workspace.ws));
+            assert_eq!(
+                v.current_stop(),
+                Some(Stop::Tab),
+                "{mode:?}: round to where the backwards walk began"
+            );
+        }
+    });
+}
