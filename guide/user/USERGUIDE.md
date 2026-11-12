@@ -1922,8 +1922,7 @@ drag to select, and use the ordinary word-delete, clipboard, and undo
 shortcuts. **Start using Koru** is available once both names hold more than
 spaces; press it, or press Enter in either name box. The card then reads
 *Finishing…* until your Profile and workspace are ready, and the app opens on
-the Welcome tab, which greets you by name. Your workspace holds one untitled
-document. If creating them is refused, the card comes back with the reason
+the Welcome tab. Your workspace holds one untitled document. If creating them is refused, the card comes back with the reason
 under the swatches and everything you typed, and trying again cannot make a
 second Profile. With the keyboard, Tab visits the name, the tile, the
 workspace name, the swatch row and the emoji row (one stop each — the arrow
@@ -1941,7 +1940,7 @@ right under the page's own *New profile* heading — so the card has no title or
 lead of its own, and in a narrow pane its color and emoji rows wrap to fit —
 with its first label reading **Profile**: the box starts empty (placeholder
 *Profile name*) and names only the new Profile, so creating a Profile there never
-changes your Koru account's name, and the Welcome tab greets you without a name.
+changes your Koru account's name.
 Connect it to the signed-in Google identity, or choose **Continue offline** and
 create only the local Profile and first Workspace. If you sign in with another Google
 Account, existing local Profiles
