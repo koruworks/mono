@@ -85,6 +85,24 @@ YaHei, Yu Gothic); set `FIXTURE_FONT_LATIN`, `FIXTURE_FONT_ZH` and
 `FIXTURE_FONT_JA` elsewhere. Everything is seeded and repeatable except the
 encrypted files, whose salt and IV pypdf draws at random.
 
+## A generated Evernote archive
+
+```bash
+target/ocr-measure/venv-fixtures/Scripts/python -I -B scripts/dev/read-model/make_archive.py <out> [notes] [seed]
+```
+
+Writes `<out>/generated.enex`, an Evernote export of `notes` notes (default
+3,000), each with one picture or PDF attached, and `<out>/words.json`, the
+made-up word on each page of each attachment (OCR Plan 3.4). The mix:
+screenshots, photographed signs, photographs with no text, text-layer PDFs of
+one to four pages, scanned PDFs of two to four pages, two 300-page text PDFs
+and a 210-page scan, a few password-protected and cut-off PDFs, and about 8%
+of notes that carry the same bytes as an earlier one. The same seed gives the
+same bytes, encrypted files included. It imports through the real importer;
+`apps/koru-store-server/examples/reader_bulk_run.rs` is the run that does so
+and checks what was read against `words.json`. `make_cases.py` beside it
+writes the smaller per-run cases of the second milestone's acceptance run.
+
 ## Measuring
 
 The throwaway measurement binary that reads a folder with these files is not

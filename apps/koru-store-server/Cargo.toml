@@ -182,3 +182,9 @@ koru-delegate-core = { path = "../../crates/koru-delegate-core" }
 # The hosted creation candidate's id is a SHA-256 of its key (TECHNICAL §5.6);
 # the driver's test derives one exactly so, to show the Store accepts it.
 sha2.workspace = true
+# `examples/reader_bulk_run.rs` (OCR Plan 3.4) imports a generated archive
+# through the real Evernote importer, driven as the shell's import worker
+# drives it, and finds each attachment by the MD5 the archive names it by.
+koru-import = { path = "../../crates/koru-import" }
+koru-import-evernote = { path = "../../crates/koru-import-evernote" }
+md5.workspace = true
