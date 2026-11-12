@@ -6571,6 +6571,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-models"
+version = "0.0.3"
+dependencies = [
+ "fs2",
+ "koru-update",
+ "koru-voice-consent",
+ "minisign",
+ "minisign-verify",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "koru-native-notifications"
 version = "0.0.3"
 dependencies = [
@@ -7617,18 +7634,14 @@ dependencies = [
 name = "koru-voice-models"
 version = "0.0.3"
 dependencies = [
- "fs2",
  "koru-env",
- "koru-update",
+ "koru-models",
  "koru-voice",
  "koru-voice-consent",
  "minisign",
- "minisign-verify",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",
- "tracing",
  "url",
  "zip",
 ]

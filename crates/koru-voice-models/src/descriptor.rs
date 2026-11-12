@@ -1,302 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **What is signed: every field of a model that changes behaviour, consent or
-//! licence compliance, in a byte sequence two implementations can produce.**
+//! **A speech model's signed descriptor, in speech's own words.**
 //!
-//! The tempting envelope is the digest, and it is too small. A catalog entry
-//! carries fields that do real harm without a single byte of the archive
-//! changing: an unsigned `engine` routes verified bytes into the wrong native
-//! parser, an unsigned `working_set_bytes` understates what a phone needs and
-//! defeats Milestone 4's device gate, an unsigned `languages` changes what the
-//! product claims to support, and an unsigned `attribution` changes what a
-//! licence notice says about somebody else's work.
-//! [ADR-250](../../../docs/decisions/ADR-226-250.md) argues each of those; this
-//! module is the shape it settled on.
+//! The descriptor, its canonical bytes and every rule about them live in
+//! [`koru_models::descriptor`], which a model that is not a speech model is
+//! described with too. There, `engine`, `tier` and `languages` are validated
+//! tokens; here they are [`EngineId`], [`ModelTier`] and [`VoiceLanguage`],
+//! because voice's worker, its engine adapters and its catalog chooser branch on
+//! those types. This module is the map between the two, and nothing else:
 //!
-//! ## Why the canonical form is written by hand
+//! - [`ModelDescriptor::to_model`] writes each typed field as the token it has
+//!   always been signed as — `EngineId::as_str`, `ModelTier::as_str`,
+//!   `VoiceLanguage::tag` — so [`ModelDescriptor::canonical_bytes`] is the
+//!   generic form's bytes, which are the bytes every speech descriptor has
+//!   ever been signed over. `descriptor/projection_tests.rs` builds the same
+//!   descriptor both ways for every vector this crate has and compares them,
+//!   against the canonicalisation as it was written before the extraction.
+//! - [`ModelDescriptor::from_model`] reads tokens back, and refuses a token
+//!   speech has no word for — a tier that is not `compact` or
+//!   `high_accuracy`, a language that is not one of the eight — rather than
+//!   guessing one. A model that is not a speech model is therefore never a
+//!   speech model by accident.
 //!
-//! *Whatever this `serde_json` emitted* is a specification only for programs
-//! that link this `serde_json`. The signing tool will one day not be this
-//! program — a release pipeline, a third party signing their own weights — and
-//! at that point the signed bytes have to be something a person can implement
-//! from a paragraph. So [`ModelDescriptor::canonical_bytes`] is a fixed-order,
-//! LF-terminated, tab-separated line format, and its first line names the
-//! schema version so a reader knows before parsing whether it understands what
-//! follows.
-//!
-//! ```text
-//! koru-model-descriptor/1
-//! id\tparakeet-tdt-v3
-//! version\t1.2.0
-//! engine\tsherpa
-//! tier\tcompact
-//! languages\ten,es,pt-BR,de,fr,ar,zh-Hans,ja
-//! size\t648291840
-//! digest\t9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
-//! working_set_bytes\t1073741824
-//! licence\tApache-2.0
-//! attribution\tk2-fsa, Apache-2.0
-//! ```
-//!
-//! Only `attribution` is free text, so only `attribution` is escaped —
-//! backslash, newline, carriage return and tab. Every other field's own charset
-//! rule already excludes the separators, which is why those rules are enforced
-//! at construction and not at signing time: a value that cannot hold a tab
-//! cannot smuggle a field boundary into the envelope.
-//!
-//! ## The one rule about a version this build does not know
-//!
-//! It is refused, and it is refused **before** any signature is checked.
-//! Canonicalising a shape we do not understand produces bytes the signer never
-//! signed, so the failure would arrive as
-//! [`SignatureInvalid`](crate::ModelErrorCode::SignatureInvalid) — an attack
-//! report for what is only an old build.
+//! The struct and its JSON are exactly what they were, so a catalog, a
+//! `.koru-model.json` and every caller that builds one by hand are unchanged.
 
 use crate::error::{ModelError, ModelErrorCode};
 use crate::tier::ModelTier;
+use koru_models::{LanguageTag, Token};
 use koru_voice::{EngineId, ModelId, VoiceLanguage};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::path::Path;
 
-/// The version of the canonical form in [`ModelDescriptor::canonical_bytes`].
-///
-/// A new field is a bump, a re-sign of every catalog entry, and a build that
-/// answers [`ModelErrorCode::SchemaUnsupported`] until it is updated. That cost
-/// is why the field list was argued through in ADR-250 rather than grown one
-/// need at a time.
-pub const DESCRIPTOR_SCHEMA_VERSION: u32 = 1;
+pub use koru_models::descriptor::{
+    DESCRIPTOR_SCHEMA_VERSION, LicenceRef, ModelSignature, ModelVersion, Sha256Digest,
+};
 
-/// The first line of the canonical form, without its version.
-const CANONICAL_MAGIC: &str = "koru-model-descriptor";
-
-/// Which build of a model — `1.2.0`, `2026-03-int8`.
-///
-/// **A path component**, so its charset is checked rather than assumed:
-/// installed bytes live under `<id>/<version>/<digest>/`, and
-/// [PRINCIPLES](../../../guide/contributing/PRINCIPLES.md) is explicit that arbitrary Unicode
-/// is fine in a filename and never fine in a path component.
-///
-/// The rule is [`ModelId`]'s, and it is **borrowed rather than copied** —
-/// [`ModelVersion::parse`] asks `ModelId::parse` whether the string is legal
-/// instead of restating the charset. Two bodies of one rule kept identical by
-/// hand is a drift hazard this repository has already paid for once
-/// (`ctrl_letter`, in AGENTS.md's crate note), and there is no reason to buy a
-/// second.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct ModelVersion(String);
-
-impl ModelVersion {
-    /// Check and wrap. The only constructor, for the reason `ModelId` gives:
-    /// an unchecked `From<String>` would be the shortest path and would
-    /// therefore be the one used.
-    pub fn parse(value: impl Into<String>) -> Result<ModelVersion, ModelError> {
-        let value = value.into();
-        ModelId::parse(value.clone()).map_err(|e| {
-            let why = e
-                .message
-                .strip_prefix("a model id ")
-                .unwrap_or(&e.message)
-                .to_string();
-            ModelErrorCode::DescriptorInvalid.with(format!("a model version {why}"))
-        })?;
-        Ok(ModelVersion(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl TryFrom<String> for ModelVersion {
-    type Error = ModelError;
-
-    fn try_from(value: String) -> Result<ModelVersion, ModelError> {
-        ModelVersion::parse(value)
-    }
-}
-
-impl From<ModelVersion> for String {
-    fn from(value: ModelVersion) -> String {
-        value.0
-    }
-}
-
-impl std::fmt::Display for ModelVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// A SHA-256, as 64 lowercase hex characters.
-///
-/// **The cache identity** (ADR-250), so it is also a path component — which is
-/// free here, because 64 hex characters are legal on every filesystem and
-/// identical in every case-folding. Lowercase is enforced rather than accepted
-/// so that one set of bytes has exactly one directory name.
-///
-/// Held as a `String` rather than `[u8; 32]` deliberately: it is compared,
-/// logged and turned into a path far more often than it is hashed, and
-/// `koru_update::sha256_file` — the function that produces it —
-/// already answers lowercase hex.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct Sha256Digest(String);
-
-impl Sha256Digest {
-    pub fn parse(value: impl Into<String>) -> Result<Sha256Digest, ModelError> {
-        let value = value.into();
-        if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(ModelErrorCode::DescriptorInvalid
-                .with("a digest is not 64 hexadecimal characters".to_string()));
-        }
-        if value.bytes().any(|b| b.is_ascii_uppercase()) {
-            return Err(ModelErrorCode::DescriptorInvalid
-                .with("a digest is not lowercase; one set of bytes has one directory name"));
-        }
-        Ok(Sha256Digest(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Hash a file, answering its length beside its digest.
-    ///
-    /// **`koru_update::sha256_file`, not a second streamer.** It is a
-    /// 64 KiB streaming hash that is not update-specific, and the roadmap names
-    /// it as something this feature reuses. The length comes back for free and
-    /// is what [`ModelDescriptor::verify_archive`] checks first, because a
-    /// disagreeing length names a truncated download rather than a substituted
-    /// one.
-    pub fn of_file(path: &Path) -> Result<(u64, Sha256Digest), ModelError> {
-        let (size, hex) = koru_update::sha256_file(path).map_err(|e| {
-            ModelErrorCode::Io.with(format!("could not hash {}: {e}", path.display()))
-        })?;
-        Ok((size, Sha256Digest::parse(hex)?))
-    }
-}
-
-impl TryFrom<String> for Sha256Digest {
-    type Error = ModelError;
-
-    fn try_from(value: String) -> Result<Sha256Digest, ModelError> {
-        Sha256Digest::parse(value)
-    }
-}
-
-impl From<Sha256Digest> for String {
-    fn from(value: Sha256Digest) -> String {
-        value.0
-    }
-}
-
-impl std::fmt::Display for Sha256Digest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// An SPDX licence identifier — `Apache-2.0`, `CC-BY-4.0`, `LicenseRef-…`.
-///
-/// **Not a path component**, so uppercase is kept: SPDX identifiers are
-/// case-sensitive in practice and lowercasing `Apache-2.0` would produce a
-/// string that names no licence. What is enforced is that it is short, ASCII,
-/// and cannot hold a canonical-form separator.
-///
-/// It is inside the signature envelope because a licence a catalog can change
-/// is a licence nobody agreed to, and because it is what a *Third-party
-/// notices* surface will list.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct LicenceRef(String);
-
-impl LicenceRef {
-    pub fn parse(value: impl Into<String>) -> Result<LicenceRef, ModelError> {
-        let value = value.into();
-        let bad = |why: &str| {
-            Err(ModelErrorCode::DescriptorInvalid.with(format!("a licence reference {why}")))
-        };
-        if value.is_empty() {
-            return bad("is empty");
-        }
-        if value.chars().count() > 64 {
-            return bad("is longer than 64 characters");
-        }
-        if !value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '+' | '_'))
-        {
-            return bad("is not ASCII letters, digits, '-', '.', '+' or '_'");
-        }
-        Ok(LicenceRef(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl TryFrom<String> for LicenceRef {
-    type Error = ModelError;
-
-    fn try_from(value: String) -> Result<LicenceRef, ModelError> {
-        LicenceRef::parse(value)
-    }
-}
-
-impl From<LicenceRef> for String {
-    fn from(value: LicenceRef) -> String {
-        value.0
-    }
-}
-
-impl std::fmt::Display for LicenceRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// A Minisign signature block, as it appears in a `.minisig` file.
-///
-/// A newtype rather than a bare `String` so that the thing a caller passes to
-/// [`crate::TrustedKeys::verify`] cannot be a URL, a digest or an attribution
-/// line by accident. It is deliberately *not* validated beyond being non-empty:
-/// whether it decodes is [`minisign_verify::Signature::decode`]'s answer, and
-/// pre-judging it here would be a second parser.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-#[serde(try_from = "String", into = "String")]
-pub struct ModelSignature(String);
-
-impl ModelSignature {
-    pub fn parse(value: impl Into<String>) -> Result<ModelSignature, ModelError> {
-        let value = value.into();
-        if value.trim().is_empty() {
-            return Err(ModelErrorCode::SignatureMalformed.with("the signature is empty"));
-        }
-        Ok(ModelSignature(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl TryFrom<String> for ModelSignature {
-    type Error = ModelError;
-
-    fn try_from(value: String) -> Result<ModelSignature, ModelError> {
-        ModelSignature::parse(value)
-    }
-}
-
-impl From<ModelSignature> for String {
-    fn from(value: ModelSignature) -> String {
-        value.0
-    }
-}
-
-/// **Everything about a model that is signed.**
+/// **Everything about a speech model that is signed**, typed for speech.
 ///
 /// Not the archive, and not the digest alone. Verifying an entry is one
 /// signature check over these fields followed by one digest check over the
@@ -329,9 +70,7 @@ pub struct ModelDescriptor {
     ///
     /// Milestone 4's device gate is a *pre-download* decision — a phone cannot
     /// measure a model it has not downloaded — so this number is the only
-    /// evidence it has, which is exactly why it is inside the envelope. An
-    /// unsigned one lets a catalog talk a 3 GB phone into a model that will
-    /// not fit.
+    /// evidence it has, which is exactly why it is inside the envelope.
     pub working_set_bytes: u64,
     /// The SPDX identifier the weights are published under.
     pub licence: LicenceRef,
@@ -341,96 +80,86 @@ pub struct ModelDescriptor {
 }
 
 impl ModelDescriptor {
-    /// Check every field's own rule and the relationships between them.
+    /// **The generic descriptor this one projects** — the same fields, with
+    /// `engine`, `tier` and `languages` written as the tokens they are signed
+    /// as.
     ///
-    /// The newtypes have already refused a bad `id`, `version`, `digest` or
-    /// `licence` at construction; what is left is what no single field can
-    /// know — an unknown schema version, an empty or duplicated language list,
-    /// a zero size, an attribution carrying a control character the canonical
-    /// escape does not name.
-    pub fn validate(&self) -> Result<(), ModelError> {
-        if self.schema_version != DESCRIPTOR_SCHEMA_VERSION {
-            return Err(ModelErrorCode::SchemaUnsupported.with(format!(
-                "descriptor schema {} is not {DESCRIPTOR_SCHEMA_VERSION}",
-                self.schema_version
-            )));
-        }
-        let bad = |why: String| Err(ModelErrorCode::DescriptorInvalid.with(why));
-        if self.languages.is_empty() {
-            return bad("a model declares no languages".into());
-        }
-        for (at, language) in self.languages.iter().enumerate() {
-            if self.languages[..at].contains(language) {
-                return bad(format!("language {} is declared twice", language.tag()));
-            }
-        }
-        if self.size == 0 {
-            return bad("a model archive of zero bytes".into());
-        }
-        if self.working_set_bytes == 0 {
-            return bad("a working set of zero bytes".into());
-        }
-        if self.attribution.trim().is_empty() {
-            return bad("a model with no attribution".into());
-        }
-        if let Some(c) = self
-            .attribution
-            .chars()
-            .find(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-        {
-            return bad(format!(
-                "attribution carries control character U+{:04X}",
-                c as u32
-            ));
-        }
-        Ok(())
+    /// Fallible only in its type: every speech identity is a legal token. The
+    /// error is `descriptor_invalid`, which is what verifying a value the
+    /// generic rules refuse would answer anyway.
+    pub fn to_model(&self) -> Result<koru_models::ModelDescriptor, ModelError> {
+        Ok(koru_models::ModelDescriptor {
+            schema_version: self.schema_version,
+            id: koru_models::ModelId::parse(self.id.as_str())?,
+            version: self.version.clone(),
+            engine: Token::parse(self.engine.as_str())?,
+            tier: Token::parse(self.tier.as_str())?,
+            languages: self
+                .languages
+                .iter()
+                .map(|language| LanguageTag::parse(language.tag()))
+                .collect::<Result<_, _>>()?,
+            size: self.size,
+            digest: self.digest.clone(),
+            working_set_bytes: self.working_set_bytes,
+            licence: self.licence.clone(),
+            attribution: self.attribution.clone(),
+        })
     }
 
-    /// **The bytes that are signed.**
+    /// **The speech descriptor a generic one names**, or a refusal when it
+    /// names something speech has no word for.
     ///
-    /// Fixed order, LF endings, tab between a field name and its value, and a
-    /// header line naming the schema version. Deterministic by construction
-    /// rather than by trusting a serializer's field order, because the signer
-    /// will one day not be this program.
-    ///
-    /// Refuses an unknown schema version rather than canonicalising a shape it
-    /// does not understand — see the module note: doing otherwise turns *your
-    /// build is old* into *somebody tampered with this*.
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>, ModelError> {
-        if self.schema_version != DESCRIPTOR_SCHEMA_VERSION {
-            return Err(ModelErrorCode::SchemaUnsupported.with(format!(
-                "cannot canonicalise descriptor schema {}; this build knows {DESCRIPTOR_SCHEMA_VERSION}",
-                self.schema_version
-            )));
-        }
-        let languages = self
-            .languages
-            .iter()
-            .map(|l| l.tag())
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut out = String::new();
-        out.push_str(CANONICAL_MAGIC);
-        out.push('/');
-        out.push_str(&self.schema_version.to_string());
-        out.push('\n');
-        let mut line = |name: &str, value: &str| {
-            out.push_str(name);
-            out.push('\t');
-            out.push_str(value);
-            out.push('\n');
+    /// Exact, never lenient: a language tag must be one of the eight spelled
+    /// as `VoiceLanguage` spells it, and a tier must be `ModelTier`'s own
+    /// token, so a descriptor round-trips to the bytes it came from.
+    pub fn from_model(model: koru_models::ModelDescriptor) -> Result<ModelDescriptor, ModelError> {
+        let refuse = |what: String| Err(ModelErrorCode::DescriptorInvalid.with(what));
+        let Some(tier) = ModelTier::parse(model.tier.as_str()) else {
+            return refuse(format!("tier {} is not a speech tier", model.tier));
         };
-        line("id", self.id.as_str());
-        line("version", self.version.as_str());
-        line("engine", self.engine.as_str());
-        line("tier", self.tier.as_str());
-        line("languages", &languages);
-        line("size", &self.size.to_string());
-        line("digest", self.digest.as_str());
-        line("working_set_bytes", &self.working_set_bytes.to_string());
-        line("licence", self.licence.as_str());
-        line("attribution", &escape(&self.attribution));
-        Ok(out.into_bytes())
+        let mut languages = Vec::with_capacity(model.languages.len());
+        for tag in &model.languages {
+            match VoiceLanguage::ALL
+                .into_iter()
+                .find(|language| language.tag() == tag.as_str())
+            {
+                Some(language) => languages.push(language),
+                None => return refuse(format!("language {tag} is not one voice transcribes")),
+            }
+        }
+        let id = ModelId::parse(model.id.as_str()).map_err(|e| {
+            ModelErrorCode::DescriptorInvalid.with(format!("model id: {}", e.message))
+        })?;
+        let engine = EngineId::parse(model.engine.as_str()).map_err(|e| {
+            ModelErrorCode::DescriptorInvalid.with(format!("engine: {}", e.message))
+        })?;
+        Ok(ModelDescriptor {
+            schema_version: model.schema_version,
+            id,
+            version: model.version,
+            engine,
+            tier,
+            languages,
+            size: model.size,
+            digest: model.digest,
+            working_set_bytes: model.working_set_bytes,
+            licence: model.licence,
+            attribution: model.attribution,
+        })
+    }
+
+    /// Check every field's own rule and the relationships between them — the
+    /// generic descriptor's rules, applied to what this one projects.
+    pub fn validate(&self) -> Result<(), ModelError> {
+        self.to_model()?.validate()
+    }
+
+    /// **The bytes that are signed** — the generic canonical form of what this
+    /// descriptor projects, which is byte for byte the form speech descriptors
+    /// have always been signed over. See [`koru_models::ModelDescriptor::canonical_bytes`].
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, ModelError> {
+        self.to_model()?.canonical_bytes()
     }
 
     /// The last three components of an installed model's path, in order.
@@ -461,48 +190,25 @@ impl ModelDescriptor {
     }
 
     /// **The second half of verification: are these the bytes we signed for?**
-    ///
-    /// Length first — it is answerable from metadata and a disagreement names a
-    /// truncated download rather than a substituted one — then the streaming
-    /// hash. This says nothing about the signature; that is
-    /// [`crate::TrustedKeys::verify`]'s job, and it runs *first*, because
-    /// hashing 650 MB to discover the descriptor was forged is work nobody
-    /// needed to do.
+    /// Length first, then the streaming hash — see
+    /// [`koru_models::ModelDescriptor::verify_archive`].
     pub fn verify_archive(&self, path: &Path) -> Result<(), ModelError> {
-        let (size, digest) = Sha256Digest::of_file(path)?;
-        if size != self.size {
-            return Err(ModelErrorCode::SizeMismatch.with(format!(
-                "{} is {size} bytes, the descriptor says {}",
-                path.display(),
-                self.size
-            )));
-        }
-        if digest != self.digest {
-            return Err(ModelErrorCode::DigestMismatch.with(format!(
-                "{} hashes to {digest}, the descriptor says {}",
-                path.display(),
-                self.digest
-            )));
-        }
-        Ok(())
+        self.to_model()?.verify_archive(path)
     }
 }
 
-/// Escape the one free-text field. Backslash first, or the escapes escape each
-/// other.
-fn escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            _ => out.push(c),
-        }
+/// What lets [`crate::TrustedKeys::verify`] check a speech descriptor: the
+/// signature is verified over the generic descriptor it projects.
+impl koru_models::AsDescriptor for ModelDescriptor {
+    fn as_descriptor(&self) -> Result<Cow<'_, koru_models::ModelDescriptor>, ModelError> {
+        self.to_model().map(Cow::Owned)
     }
-    out
 }
 
+/// The extraction's proof: the same descriptor built through the typed path
+/// and the token path canonicalises to the same bytes as before, and a
+/// signature made before the change still verifies.
+#[cfg(test)]
+mod projection_tests;
 #[cfg(test)]
 mod tests;
