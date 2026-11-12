@@ -820,7 +820,9 @@ impl BotView {
     /// A refusal's sentence, the agent named where it is about the agent.
     pub(super) fn create_notice_words(&self, notice: Words) -> String {
         if crate::bots::creation::names_the_agent(notice) {
-            koru_i18n::fill(t(self.lang, notice), &[self.agent_label().as_str()])
+            // Every `{}` is the agent: one sentence names it twice.
+            let agent = self.agent_label();
+            koru_i18n::fill(t(self.lang, notice), &[agent.as_str(), agent.as_str()])
         } else {
             self.words(notice)
         }

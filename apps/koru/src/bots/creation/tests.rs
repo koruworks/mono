@@ -703,3 +703,64 @@ fn a_creation_read_after_an_unconfirmed_create_settles_it() {
     assert_eq!(form.notice(), None);
     assert_eq!(form.request(), request);
 }
+
+/// **Every reason the engine sends for an agent that cannot run has its
+/// own sentence**, in all eight languages, naming the agent (`{}`) — the
+/// fourteen `koru_ai_wire::agent_readiness_reasons` values, spelled as the
+/// engine spells them (`apps/koru-ai-server/src/worker/agents.rs`,
+/// `readiness_reason`; `bots.rs`, `validate_model_evidence`). A refusal
+/// with a reason says it; with none, or one from a later build, it says
+/// what its code always said; *still listing* stays itself.
+#[test]
+fn every_agent_reason_has_its_own_sentence_naming_the_agent() {
+    let reasons = [
+        "agent_service_unavailable",
+        "agent_checking",
+        "agent_not_installed",
+        "agent_adapter_missing",
+        "agent_runtime_missing",
+        "agent_signed_out",
+        "agent_version_too_old",
+        "agent_version_not_reviewed",
+        "agent_unsupported_version",
+        "agent_failed_to_start",
+        "agent_check_timed_out",
+        "agent_check_failed",
+        "agent_listing_failed",
+        "agent_model_not_offered",
+    ];
+    let mut seen = Vec::new();
+    for reason in reasons {
+        let words = agent_reason_words(reason).unwrap_or_else(|| panic!("{reason}"));
+        assert!(!seen.contains(&words), "{reason}: a sentence of its own");
+        seen.push(words);
+        assert!(names_the_agent(words), "{reason}");
+        for lang in Lang::ALL {
+            let said = t(lang, words);
+            assert!(said.contains("{}"), "{reason} {lang:?}: names the agent");
+            let filled = koru_i18n::fill(said, &["Claude", "Claude"]);
+            assert!(!filled.contains("{}"), "{reason} {lang:?}: {filled}");
+        }
+        for code in ["agent_models_failed", "runtime_unavailable"] {
+            assert_eq!(agent_refusal_with(code, Some(reason)), Some(words));
+        }
+    }
+    assert_eq!(seen.len(), AGENT_REASONS.len());
+    assert_eq!(
+        agent_refusal_with("agent_models_failed", None),
+        Some(Words::BotsCreateAgentNotReady)
+    );
+    assert_eq!(
+        agent_refusal_with("agent_models_failed", Some("agent_from_a_later_build")),
+        Some(Words::BotsCreateAgentNotReady),
+        "an unknown reason falls back"
+    );
+    assert_eq!(
+        agent_refusal_with("agent_models_listing", Some("agent_checking")),
+        Some(Words::BotsCreateAgentStillListing)
+    );
+    assert_eq!(
+        agent_refusal_with("not_found", Some("agent_signed_out")),
+        None
+    );
+}

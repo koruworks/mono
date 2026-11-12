@@ -957,6 +957,21 @@ impl BotView {
         let mut changed = false;
         for answer in answers {
             match answer {
+                // Why a write was refused for its agent: noted before its
+                // refusal is folded, so the refusal names why.
+                Answer::Reason {
+                    bot,
+                    request,
+                    reason,
+                } => {
+                    if Some(bot) == creating {
+                        if let Some(create) = self.create.as_deref_mut() {
+                            create.form.note_reason(request, reason);
+                        }
+                    } else if Some(bot) == self.bot {
+                        self.settings.note_reason(request, reason);
+                    }
+                }
                 // The create form's (S8): by its draft's reserved BotId.
                 Answer::Wrote {
                     bot,

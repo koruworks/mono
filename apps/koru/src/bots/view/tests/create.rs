@@ -1160,6 +1160,109 @@ fn the_card_says_where_the_agents_readiness_stands() {
     }
 }
 
+/// **The card says why the agent cannot run, as the engine says it**: the
+/// readiness's `details.reason` (`koru_ai_wire::agent_readiness_reasons`),
+/// carried by the catalog's thread just before the readiness itself, as
+/// `catalog::run` sends it from `validate_provider`'s failure. Signed out
+/// says to sign in; a reason this build does not know says the general
+/// sentence.
+#[test]
+fn the_card_says_why_the_agent_cannot_run() {
+    let mut c = shown_with_default("claude");
+    let lang = c.view.lang;
+    for (reason, words) in [
+        ("agent_signed_out", Words::BotsAgentReasonSignedOut),
+        ("agent_version_too_old", Words::BotsAgentReasonTooOld),
+        ("agent_from_a_later_build", Words::BotsAgentNotReady),
+    ] {
+        c.view.catalog.shown();
+        c.view.shown_pass(None);
+        for _ in 0..4 {
+            while let Ok(command) = c.catalog_commands.try_recv() {
+                match command {
+                    catalog::Command::Agents { seq } => c
+                        .catalog_answers
+                        .send(catalog::Answer::Agents {
+                            seq,
+                            result: Ok(vec![
+                                agent("agent-codex", "Codex"),
+                                agent("agent-claude", "Claude"),
+                            ]),
+                        })
+                        .unwrap(),
+                    catalog::Command::Readiness { seq, agent } => {
+                        let claude = agent.as_str() == "agent-claude";
+                        c.catalog_answers
+                            .send(catalog::Answer::Reason {
+                                seq,
+                                agent: agent.clone(),
+                                reason: claude.then(|| reason.to_owned()),
+                            })
+                            .unwrap();
+                        c.catalog_answers
+                            .send(catalog::Answer::Readiness {
+                                seq,
+                                result: Ok(if claude {
+                                    Readiness::SignedOut
+                                } else {
+                                    Readiness::Ready
+                                }),
+                                agent,
+                            })
+                            .unwrap();
+                    }
+                    catalog::Command::Listing { seq, agent, .. } => c
+                        .catalog_answers
+                        .send(catalog::Answer::Listing {
+                            seq,
+                            agent,
+                            result: Ok(listing()),
+                        })
+                        .unwrap(),
+                }
+            }
+            c.view.shown_pass(None);
+        }
+        assert_eq!(
+            c.view.agent_readiness_words(),
+            Some(koru_i18n::fill(t(lang, words), &["Claude", "Claude"])),
+            "{reason}"
+        );
+    }
+}
+
+/// **A Create refused because its agent cannot run says why**, from the
+/// refusal's `details.reason`, which the link hands on just before the
+/// refusal (`Answer::Reason`, from `koru_api_client`'s failure details as
+/// `link::run` reads them): naming the agent and what to do.
+#[test]
+fn a_create_refused_for_its_agent_says_why() {
+    let mut c = shown_with_default("claude");
+    c.fill();
+    assert!(c.view.perform(Act::Create));
+    let _ = c.sent();
+    c.answers
+        .send(Answer::Reason {
+            bot: c.form().bot(),
+            request: c.form().request(),
+            reason: "agent_not_installed".into(),
+        })
+        .unwrap();
+    c.answers
+        .send(Answer::Wrote {
+            bot: c.form().bot(),
+            request: c.form().request(),
+            result: Err(Failure::Refused("agent_models_failed".into())),
+        })
+        .unwrap();
+    c.view.poll();
+    let lang = c.view.lang;
+    assert_eq!(
+        published(&c.view, CREATE_NOTICE).as_deref(),
+        Some(koru_i18n::fill(t(lang, Words::BotsAgentReasonNotInstalled), &["Claude"]).as_str())
+    );
+}
+
 /// **A create tab's header says what the tab is** — *New bot*, then the
 /// name typed — and never *Loading this bot…*, which stood under it for
 /// the form's whole life (the first window run's finding 6): a create tab

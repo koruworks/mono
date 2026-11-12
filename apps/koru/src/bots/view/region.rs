@@ -348,7 +348,8 @@ impl BotView {
             content = content.child(line(
                 "Bot settings notice",
                 SETTINGS_NOTICE,
-                self.words(words),
+                // An agent that cannot run is named in its sentence.
+                self.create_notice_words(words),
                 Ink::Accent,
             ));
         }
@@ -866,12 +867,22 @@ impl BotView {
         let words = match self.catalog.standing(&provider) {
             Standing::Ready => return None,
             Standing::Checking => Words::BotsAgentChecking,
-            Standing::NotReady(_) => Words::BotsAgentNotReady,
+            // **Why, when the engine said** (`details.reason` on the
+            // readiness): installed or not, signed in, too old — each with
+            // what a person can do. A reason this build does not know reads
+            // as the general sentence.
+            Standing::NotReady(_) => self
+                .catalog
+                .reason(&provider)
+                .and_then(crate::bots::creation::agent_reason_words)
+                .unwrap_or(Words::BotsAgentNotReady),
             Standing::Unknown => Words::BotsAgentReadinessUnknown,
         };
+        // Every `{}` is the agent: one sentence names it twice.
+        let agent = self.agent_label();
         Some(koru_i18n::fill(
             t(self.lang, words),
-            &[self.agent_label().as_str()],
+            &[agent.as_str(), agent.as_str()],
         ))
     }
 
@@ -1625,7 +1636,7 @@ impl BotView {
         let bot = settings.bot()?;
         let agent = self.agent_name();
         Some(match key {
-            k if k == SETTINGS_NOTICE => self.words(settings.notice_words()?),
+            k if k == SETTINGS_NOTICE => self.create_notice_words(settings.notice_words()?),
             k if k == SETTINGS_DELIVERING => self.words(settings.delivering_line()?),
             k if k == ACCESS_SUMMARY => self.access_summary(),
             k if k == SELECTED_PAGES_TITLE => self.words(Words::BotsSelectedPages),

@@ -161,9 +161,18 @@ pub(crate) struct Settings {
     /// under a request of its own, so only the read says whether it was
     /// applied; until then the change is shown as on its way.
     rejected: Option<(Change, BotCommand)>,
+    /// **Why the owner refused a save for its agent**, by the save's
+    /// request (`Answer::Reason`, just before the refusal).
+    agent_reason: Option<(BotRequestId, String)>,
 }
 
 impl Settings {
+    /// **Why the owner is refusing `request` for its agent** — noted just
+    /// before the refusal itself is folded.
+    pub(crate) fn note_reason(&mut self, request: BotRequestId, reason: String) {
+        self.agent_reason = Some((request, reason));
+    }
+
     /// The Bot as the owner last said. **The person's edits are kept**; one
     /// the owner now holds is no longer an edit.
     pub(crate) fn know(&mut self, bot: Bot) {
@@ -783,9 +792,21 @@ impl Settings {
             Err(Failure::Refused(code)) => {
                 self.pending.remove(index);
                 self.unanswered = None;
+                // Why, when the engine said (`Answer::Reason`).
+                let reason = self
+                    .agent_reason
+                    .take()
+                    .filter(|(noted, _)| *noted == request)
+                    .map(|(_, reason)| reason);
                 if code == "revision_conflict" {
                     self.notice = Some(Notice::ChangedElsewhere);
                     self.read_owed = true;
+                } else if let Some(words) =
+                    super::creation::agent_refusal_with(&code, reason.as_deref())
+                {
+                    // **The agent cannot run**: why, naming it, and what the
+                    // person can do — never *That wasn't saved* alone.
+                    self.notice = Some(Notice::Refused(words));
                 } else {
                     self.notice = Some(Notice::Refused(refusal_words(&code)));
                     // A lock, a missing Bot, an owner that moved or a Bot

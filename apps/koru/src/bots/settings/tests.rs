@@ -426,6 +426,32 @@ fn an_answer_about_another_request_settles_nothing() {
     assert_eq!(settings.bot().unwrap().config.name, "Scout");
 }
 
+/// **A model save refused because its agent cannot run says why**, naming
+/// the agent at draw time — never only *That wasn't saved*.
+#[test]
+fn a_model_save_refused_for_its_agent_says_why() {
+    // The owner's `update` refuses a model whose agent cannot run with
+    // `agent_models_failed` and `details.reason` (`validate_model_evidence`
+    // → `explain_agent_refusal`); the link hands the reason on just before
+    // the refusal (`Answer::Reason`).
+    let (mut settings, _) = known();
+    let mut draft = settings.model_shown().unwrap();
+    draft.model.requested_model = "gpt-5".into();
+    settings.edit_model(draft);
+    let (request, _) = write(settings.save_model().unwrap());
+    settings.note_reason(request, "agent_signed_out".into());
+    settings.answer(
+        request,
+        Err(Failure::Refused("agent_models_failed".into())),
+        Instant::now(),
+    );
+    assert_eq!(
+        settings.notice_words(),
+        Some(Words::BotsAgentReasonSignedOut),
+        "why, not *That wasn't saved*"
+    );
+}
+
 /// **The agent-and-model card's write** (S7): the draft changes nothing
 /// until *Save*, which is an `Update` of the configuration read with the
 /// chosen model, mode and Fast and nothing else; it is pending until the

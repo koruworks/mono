@@ -915,7 +915,7 @@ fn a_retry_from_the_roster_makes_the_create_tab_read_its_creation() {
     creation.request_id = form.request();
     creation.bot_id = form.bot();
     v.tabs_mut().push(Tab::bot(view));
-    // The tab heard the creation stop; the roster lists it.
+    // The tab heard the creation stop, and the roster lists it.
     tab_answers
         .send(Answer::Wrote {
             bot: creation.bot_id,
@@ -926,7 +926,7 @@ fn a_retry_from_the_roster_makes_the_create_tab_read_its_creation() {
         })
         .unwrap();
     pass_bot_tabs(&mut v);
-    v.refresh_bot_tabs();
+    v.explore.bots_mut().know_creation(creation.clone());
     let _ = tab_commands.try_iter().count();
     // Retry from the roster; the owner finished it.
     let _ = commands.try_iter().count();

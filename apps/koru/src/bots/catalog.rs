@@ -94,6 +94,15 @@ pub(crate) enum Answer {
         agent: AiProviderId,
         result: Result<Readiness, Failure>,
     },
+    /// **Why an agent is not ready, as the engine says it**: the readiness
+    /// failure's `details.reason` (`koru_ai_wire::agent_readiness_reasons`),
+    /// or `None` when it said none — sent just before that readiness's
+    /// [`Answer::Readiness`].
+    Reason {
+        seq: u64,
+        agent: AiProviderId,
+        reason: Option<String>,
+    },
     Listing {
         seq: u64,
         agent: AiProviderId,
@@ -184,15 +193,33 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     .map(|settings| agent_catalog::agents_from(&settings))
                     .map_err(|refused| failure(refused.code, refused.retryable)),
             },
-            (Some(connected), Command::Readiness { seq, agent }) => Answer::Readiness {
-                seq,
-                result: connected
-                    .ai()
-                    .validate_provider(&agent)
-                    .map(|validation| agent_catalog::readiness_from(&validation))
-                    .map_err(|refused| failure(refused.code, refused.retryable)),
-                agent,
-            },
+            (Some(connected), Command::Readiness { seq, agent }) => {
+                let validation = connected.ai().validate_provider(&agent);
+                // Why it is not ready, beside the readiness itself.
+                let reason = validation.as_ref().ok().and_then(|validation| {
+                    validation
+                        .failure
+                        .as_ref()
+                        .and_then(|failure| super::link::refusal_reason(&failure.details))
+                });
+                if answers
+                    .send(Answer::Reason {
+                        seq,
+                        agent: agent.clone(),
+                        reason,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                Answer::Readiness {
+                    seq,
+                    result: validation
+                        .map(|validation| agent_catalog::readiness_from(&validation))
+                        .map_err(|refused| failure(refused.code, refused.retryable)),
+                    agent,
+                }
+            }
             (
                 Some(connected),
                 Command::Listing {
@@ -223,6 +250,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
         let broken = match &answer {
             Answer::Agents { result, .. } => result.is_err(),
             Answer::Readiness { result, .. } => result.is_err(),
+            Answer::Reason { .. } => false,
             Answer::Listing { result, .. } => {
                 matches!(result, Err(ListingFailure::Unreachable))
             }
@@ -331,6 +359,9 @@ pub(crate) struct Catalog {
     agents_next: Option<std::time::Instant>,
     agents_backoff: std::time::Duration,
     readiness: HashMap<AiProviderId, Readiness>,
+    /// **Why each agent is not ready**, as its last readiness said
+    /// (`details.reason`); absent when it said none.
+    reasons: HashMap<AiProviderId, String>,
     readiness_seq: HashMap<AiProviderId, u64>,
     readiness_owed: HashSet<AiProviderId>,
     /// **Agents whose readiness is still being checked** — answered
@@ -377,6 +408,12 @@ impl Catalog {
             return Some(Readiness::CheckFailed);
         }
         self.readiness.get(id).copied()
+    }
+
+    /// **Why `id` is not ready, as its last readiness said** — the stable
+    /// word the card turns into a sentence (`creation::agent_reason_words`).
+    pub(crate) fn reason(&self, id: &AiProviderId) -> Option<&str> {
+        self.reasons.get(id).map(String::as_str)
     }
 
     /// **Where `id`'s readiness stands, for the sentence on the card**.
@@ -620,6 +657,15 @@ impl Catalog {
                             moved = true;
                         }
                     }
+                }
+                Answer::Reason { seq, agent, reason }
+                    if self.readiness_seq.get(&agent) == Some(&seq) =>
+                {
+                    let had = match reason {
+                        Some(reason) => self.reasons.insert(agent, reason.clone()) != Some(reason),
+                        None => self.reasons.remove(&agent).is_some(),
+                    };
+                    moved |= had;
                 }
                 Answer::Readiness { seq, agent, result }
                     if self.readiness_seq.get(&agent) == Some(&seq) =>

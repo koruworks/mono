@@ -156,6 +156,9 @@ pub(crate) struct CreateForm {
     read_owed: bool,
     next_read: Option<Instant>,
     backoff: Duration,
+    /// **Why the owner refused the last write for its agent**, by the
+    /// write's request (`Answer::Reason`, just before the refusal).
+    agent_reason: Option<(BotRequestId, String)>,
 }
 
 impl CreateForm {
@@ -190,6 +193,15 @@ impl CreateForm {
             read_owed: false,
             next_read: None,
             backoff: READ_FIRST,
+            agent_reason: None,
+        }
+    }
+
+    /// **Why the owner is refusing `request` for its agent** — noted just
+    /// before the refusal itself is folded ([`Self::answer`]).
+    pub(crate) fn note_reason(&mut self, request: BotRequestId, reason: String) {
+        if request == self.request {
+            self.agent_reason = Some((request, reason));
         }
     }
 
@@ -689,7 +701,13 @@ impl CreateForm {
                     // src/worker/bots.rs`): its own sentence, naming the
                     // agent at draw time, never *That wasn't done*.
                     (_, code) if agent_refusal(code).is_some() => {
-                        self.notice = agent_refusal(code);
+                        // Why, when the engine said (`Answer::Reason`).
+                        let reason = self
+                            .agent_reason
+                            .take()
+                            .filter(|(request, _)| *request == self.request)
+                            .map(|(_, reason)| reason);
+                        self.notice = agent_refusal_with(code, reason.as_deref());
                     }
                     _ => self.notice = Some(super::settings::general_refusal_words(&code)),
                 }
@@ -810,9 +828,74 @@ pub(crate) fn agent_refusal(code: &str) -> Option<Words> {
         .map(|(_, words)| *words)
 }
 
+/// **Why an agent cannot run, as the engine says it** — the stable
+/// `details.reason` beside a readiness's `agent_*` code or a refused
+/// Create's or save's `agent_models_failed`/`runtime_unavailable`
+/// (`koru_ai_wire::agent_readiness_reasons`, spelled here because the app
+/// does not depend on the wire crate) — and the sentence each says, naming
+/// the agent (`{}`) and what a person can do. A reason this table does not
+/// know reads as the code alone: the general sentence it always said.
+pub(crate) const AGENT_REASONS: [(&str, Words); 14] = [
+    ("agent_not_installed", Words::BotsAgentReasonNotInstalled),
+    (
+        "agent_adapter_missing",
+        Words::BotsAgentReasonAdapterMissing,
+    ),
+    (
+        "agent_runtime_missing",
+        Words::BotsAgentReasonRuntimeMissing,
+    ),
+    ("agent_signed_out", Words::BotsAgentReasonSignedOut),
+    ("agent_version_too_old", Words::BotsAgentReasonTooOld),
+    (
+        "agent_version_not_reviewed",
+        Words::BotsAgentReasonNotReviewed,
+    ),
+    (
+        "agent_unsupported_version",
+        Words::BotsAgentReasonUnsupported,
+    ),
+    ("agent_failed_to_start", Words::BotsAgentReasonFailedToStart),
+    ("agent_check_timed_out", Words::BotsAgentReasonTimedOut),
+    ("agent_check_failed", Words::BotsAgentReasonCheckFailed),
+    ("agent_listing_failed", Words::BotsAgentReasonListingFailed),
+    (
+        "agent_model_not_offered",
+        Words::BotsAgentReasonModelNotOffered,
+    ),
+    (
+        "agent_service_unavailable",
+        Words::BotsAgentReasonServiceUnavailable,
+    ),
+    ("agent_checking", Words::BotsAgentReasonChecking),
+];
+
+/// The sentence for an agent that cannot run because of `reason`, if the
+/// reason is one this build knows.
+pub(crate) fn agent_reason_words(reason: &str) -> Option<Words> {
+    AGENT_REASONS
+        .iter()
+        .find(|(known, _)| *known == reason)
+        .map(|(_, words)| *words)
+}
+
 /// Whether `words` names the draft's agent (`{}`), to be filled at draw.
 pub(crate) fn names_the_agent(words: Words) -> bool {
     AGENT_REFUSALS.iter().any(|(_, known)| *known == words)
+        || AGENT_REASONS.iter().any(|(_, known)| *known == words)
+}
+
+/// **A refusal for an agent that cannot run, in words**: why, when the
+/// engine said (`reason`) and this build knows the reason; else the
+/// sentence the code always said. `None` for a code that is not about the
+/// agent.
+pub(crate) fn agent_refusal_with(code: &str, reason: Option<&str>) -> Option<Words> {
+    let general = agent_refusal(code)?;
+    // *Still listing* is its own state; the engine sends no reason with it.
+    if general == Words::BotsCreateAgentStillListing {
+        return Some(general);
+    }
+    Some(reason.and_then(agent_reason_words).unwrap_or(general))
 }
 
 #[cfg(test)]

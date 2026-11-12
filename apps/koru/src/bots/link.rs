@@ -98,6 +98,17 @@ pub(crate) enum Answer {
         bot: BotId,
         result: Result<Bot, Failure>,
     },
+    /// **Why the owner refused a [`Command::Write`] for its agent**: the
+    /// refusal's `details.reason` (`koru_ai_wire::agent_readiness_reasons`,
+    /// beside `agent_models_failed` or `runtime_unavailable`), sent just
+    /// before that write's [`Answer::Wrote`] on the same channel, so whoever
+    /// folds the refusal already knows why. A surface that does not care
+    /// ignores it.
+    Reason {
+        bot: BotId,
+        request: BotRequestId,
+        reason: String,
+    },
     /// What the owner said to a [`Command::Write`].
     Wrote {
         bot: BotId,
@@ -518,15 +529,25 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 if client.is_none() {
                     client = connect(root.as_deref());
                 }
+                let mut reason = None;
                 let result = match &client {
-                    Some(connected) => wrote(
-                        connected
-                            .ai()
-                            .bots(&command)
-                            .map_err(|failure| said(failure.code, failure.retryable)),
-                    ),
+                    Some(connected) => wrote(connected.ai().bots(&command).map_err(|failure| {
+                        reason = refusal_reason(&failure.details);
+                        said(failure.code, failure.retryable)
+                    })),
                     None => Err(Failure::Unanswered),
                 };
+                if let (Some(reason), Err(Failure::Refused(_))) = (reason, &result)
+                    && answers
+                        .send(Answer::Reason {
+                            bot,
+                            request,
+                            reason,
+                        })
+                        .is_err()
+                {
+                    return;
+                }
                 if let Err(failure) = &result {
                     tracing::info!(
                         target: "koru::bots",
@@ -856,6 +877,18 @@ pub(crate) fn listed(reply: Result<BotResponse, Said>) -> Result<Vec<Bot>, Failu
         Ok(_) => Err(Failure::Unanswered),
         Err(said) => Err(Failure::of(said)),
     }
+}
+
+/// **A refusal's `details.reason`**, when it carries one: the stable word
+/// for why an agent cannot run (`koru_ai_wire::agent_readiness_reasons`).
+pub(crate) fn refusal_reason(
+    details: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Option<String> {
+    details
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .filter(|reason| !reason.is_empty())
+        .map(str::to_owned)
 }
 
 /// A content-free word for the log: the code, never the message.
