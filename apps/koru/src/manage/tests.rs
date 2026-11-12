@@ -373,28 +373,46 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
         let (mut view, _, _) = manage();
         View::set_viewport(&mut view, width, height);
         view.show(Page::NewProfile);
-        view.c.with_creation_form(|form| form.show_profile());
+        view.c.with_creation_form(|form| form.show_setup());
         view.size_creation_form();
         let mut cx = context();
         cx.area.w = width;
         cx.area.h = height;
+        let lang = view
+            .c
+            .creation_form()
+            .expect("the embedded card")
+            .language();
+        // One card: the name, the workspace's tile and name, the primary.
         let tree = view.semantics(&cx);
+        let you = find(&tree, "you").expect("the first group");
         let owner = find(&tree, "owner-name").expect("embedded owner field");
-        let name = find(&tree, "profile-name").expect("embedded Profile field");
+        let name = find(&tree, "workspace-name").expect("embedded workspace field");
+        assert!(find(&tree, "workspace-icon").is_some());
         let primary = find(&tree, "primary").unwrap();
+        // The host said *Profile* (D8): the field names the new Profile.
+        assert_eq!(
+            you.label.as_deref(),
+            Some(koru_i18n::t(lang, koru_i18n::Key::SetupProfileLabel))
+        );
+        assert_eq!(
+            owner.label.as_deref(),
+            Some(koru_i18n::t(lang, koru_i18n::Key::A11yFirstRunProfileName))
+        );
+        assert_eq!(owner.value.as_deref(), Some(""));
         assert!(name.bounds.unwrap().y + name.bounds.unwrap().h < primary.bounds.unwrap().y);
         assert!(view.creation_accessibility_action(
             owner.occurrence,
             Action::SetValue,
-            Some(&ActionData::Value("Ada".into()))
+            Some(&ActionData::Value("Work".into()))
         ));
         assert!(view.creation_accessibility_action(
             name.occurrence,
             Action::SetValue,
-            Some(&ActionData::Value("Personal".into()))
+            Some(&ActionData::Value("Notes".into()))
         ));
         assert!(view.creation_accessibility_action(name.occurrence, Action::Focus, None));
-        let visible = find(&view.semantics(&cx), "profile-name").unwrap();
+        let visible = find(&view.semantics(&cx), "workspace-name").unwrap();
         let bounds = visible.bounds.unwrap();
         let area = view.page_area();
         assert!(bounds.y >= cx.area.y + area.y);
@@ -409,6 +427,8 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
             view.page_scroll > 0.0,
             "the embedded form uses page scrolling"
         );
+        // Every stop — the card has six here — and round again is revealed
+        // inside the page.
         for _ in 0..8 {
             key(&mut view, NamedKey::Tab);
             let focus = view
@@ -421,16 +441,7 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
             assert!(top >= area.y - 0.01);
             assert!(top + focus.h <= area.y + area.h + 0.01);
         }
-        let primary = find(&view.semantics(&cx), "primary").unwrap();
-        assert!(view.creation_accessibility_action(primary.occurrence, Action::Click, None));
-        let workspace_tree = view.semantics(&cx);
-        let workspace_name = find(&workspace_tree, "workspace-name")
-            .unwrap()
-            .bounds
-            .unwrap();
-        let create = find(&workspace_tree, "primary").unwrap().bounds.unwrap();
-        assert!(workspace_name.y + workspace_name.h < create.y);
-        let icon = find(&workspace_tree, "workspace-icon").unwrap();
+        let icon = find(&view.semantics(&cx), "workspace-icon").unwrap();
         let scroll = view.page_scroll;
         assert!(view.creation_accessibility_action(icon.occurrence, Action::Click, None));
         capture(&mut view);
@@ -446,13 +457,24 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
         assert_eq!(overlay.y, cx.area.y + area.y);
         assert_eq!((overlay.w, overlay.h), (area.w, area.h));
         assert!(key(&mut view, NamedKey::Escape));
+        // Both names filled: the primary creates, and the draft carries no
+        // owner name, so the account's name is never touched (Q-G).
+        let primary = find(&view.semantics(&cx), "primary").unwrap();
+        assert!(!primary.disabled);
+        assert!(view.creation_accessibility_action(primary.occurrence, Action::Click, None));
+        let draft = view
+            .delegate(|c| c.take_profile_creation_request())
+            .expect("a creation request");
+        assert_eq!(draft.owner_display_name, None);
+        assert_eq!(draft.profile_name, "Work");
+        assert_eq!(draft.workspace_name, "Notes");
         assert!(
             !view.creation_accessibility_action(primary.occurrence, Action::Click, None),
-            "departed screen cannot create a workspace"
+            "a finishing card cannot create twice"
         );
         view.close_creation();
         view.show(Page::NewProfile);
-        view.c.with_creation_form(|form| form.show_profile());
+        view.c.with_creation_form(|form| form.show_setup());
         view.semantics(&cx);
         assert!(!view.creation_accessibility_action(
             name.occurrence,

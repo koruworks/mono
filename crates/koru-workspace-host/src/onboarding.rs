@@ -8,10 +8,13 @@
 //! **What it offers a screen reader is [`accessibility`]**, a child module
 //! rather than a section of this file: §7.10 of the accessibility roadmap is
 //! explicit that a projection does not grow inline inside this one. What stays
-//! here is what was already here — the screens, their geometry, their
-//! validation and the typed actions they raise — plus the two fields the
-//! projection needs and could not keep for itself (`screen_shown`,
-//! `screen_instance`) and one grid helper three call sites had a copy of.
+//! here is what was already here — the screens, their validation and the
+//! typed actions they raise — plus the two fields the projection needs and
+//! could not keep for itself (`screen_shown`, `screen_instance`).
+//!
+//! **The first-run setup card is [`setup`]**: one card in place of the old
+//! Profile and Workspace steps (welcome step 1), an element tree whose frame
+//! is the one source of its geometry.
 
 pub mod accessibility;
 mod browser_signin;
@@ -20,14 +23,19 @@ mod creation_tests;
 mod email;
 mod profile_selection;
 mod recovery;
+mod setup;
 use profile_selection::SelectionDraft;
 pub use recovery::{RecoverableProfile, UnassignedWorkspaceRow};
+pub use setup::SetupOwnerLabel;
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use koru_agent_wire::{AccountProfileChoice, AccountProfileRow, AccountState};
 use koru_appearance_ui::{EmojiColorPanel, Outcome as AppearanceOutcome};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{inspect, scene, theme, tile::Tile};
+use koru_draw::{inspect, scene, theme};
 use koru_ui::Typed;
 use koru_ui::button::{
     ActionButton, ActionStyle, ButtonRole, GAP as BUTTON_GAP, button_width, draw_button,
@@ -48,22 +56,13 @@ use winit::{
 
 const PAD: f32 = 24.0;
 const MAX_W: f32 = 600.0;
-const CARD_GAP: f32 = 12.0;
 const EXISTING_ROW_PITCH: f32 = 58.0;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Purpose {
-    Work,
-    School,
-    Personal,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Telemetry {
     EntryOffline,
     EntryGoogle,
     EntryApple,
-    ProfilePurpose(Purpose),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +108,10 @@ pub enum Action {
     },
     CreateLocalProfile {
         id: koru_core::ProfileId,
-        owner_display_name: String,
+        /// The account owner's name: the typed name on first run (D3), and
+        /// `None` from Manage → New profile, which never renames the account
+        /// (welcome Q-G).
+        owner_display_name: Option<String>,
         name: String,
         workspace_name: String,
         template: String,
@@ -134,12 +136,12 @@ enum Screen {
     AccountStatus,
     ExistingProfiles,
     RestoringProfile,
-    /// The restorable Trash and the unassigned workspaces, from the Profile
-    /// form (root-catalog §6.3). See `recovery`.
+    /// The restorable Trash and the unassigned workspaces, from the setup
+    /// card (root-catalog §6.3). See `recovery`.
     Recovery,
-    Profile,
-    Workspace,
-    Finishing,
+    /// The setup card: a name, a first workspace, one primary (welcome step
+    /// 1). Finishing is a state of it (`setup_finishing`), not a screen.
+    Setup,
 }
 
 impl Screen {
@@ -147,12 +149,12 @@ impl Screen {
     /// entry choice — an account (email, Google, Apple) or *Use Koru without an
     /// account*. **With it hidden** (koru-features) there is nothing to
     /// choose: the first run starts where *Use Koru without an account* leads,
-    /// the local Profile form, and every later step is unchanged.
+    /// the setup card, and every later step is unchanged.
     fn first() -> Screen {
         if koru_features::cloud_sync() {
             Screen::Entry
         } else {
-            Screen::Profile
+            Screen::Setup
         }
     }
 
@@ -169,8 +171,7 @@ impl Screen {
             Screen::ExistingProfiles => "Profile chooser",
             Screen::RestoringProfile => "Restoring Profile",
             Screen::Recovery => "Recovery",
-            Screen::Profile => "Profile form",
-            Screen::Workspace | Screen::Finishing => "Workspace form",
+            Screen::Setup => "Setup",
         }
     }
 }
@@ -204,19 +205,23 @@ enum Hit {
     RetryExisting(usize),
     RefreshProfiles,
     CancelSelection,
-    /// The Profile form's way to the recovery screen.
+    /// The setup card's way to the recovery screen.
     Recovery,
     /// A recovery row's *Restore*, by its position in the deleted list.
     RestoreDeleted(usize),
     CreateNew,
     ContinueOffline,
     ResumeAccount,
+    /// The setup card's first field: the owner's name (the Profile's name
+    /// under the *Profile* label).
     Name,
-    ProfileName,
-    Purpose(Purpose),
-    ProfileAppearance,
-    Template(usize),
+    /// The setup card's workspace name.
+    WorkspaceName,
+    /// The workspace tile, which opens the full emoji and color picker.
     WorkspaceAppearance,
+    /// A cell of the swatch row, by its place in the palette's order. As a
+    /// keyboard stop the row is one control, at its cursor.
+    Swatch(usize),
     Back,
 }
 
@@ -290,22 +295,30 @@ pub struct OnboardingView {
     email_code: TextInput,
     new_password: TextInput,
     confirm_password: TextInput,
-    owner_name: TextInput,
-    profile_name: TextInput,
-    profile_name_edited: bool,
-    purpose: Option<Purpose>,
-    profile_icon: Option<String>,
-    profile_color: Option<String>,
-    profile_appearance_customized: bool,
-    profile_appearance: Option<EmojiColorPanel>,
+    /// The setup card's two name fields. Shared with the card's leaves,
+    /// which draw them from `Leaf::paint(&self)`; the view is their only
+    /// writer.
+    owner_name: Rc<RefCell<TextInput>>,
     connect_account: bool,
-    workspace_name: TextInput,
-    template: Option<usize>,
+    workspace_name: Rc<RefCell<TextInput>>,
+    /// The person has typed in the workspace name: until then every focus
+    /// entry selects the default whole, so typing replaces it.
     workspace_name_edited: bool,
     workspace_icon: Option<String>,
     workspace_color: Option<String>,
-    workspace_appearance_customized: bool,
     workspace_appearance: Option<EmojiColorPanel>,
+    /// The card's primary raised a creation (or Manage) that has not come
+    /// back: everything on it is inert and the primary reads *Finishing…*.
+    setup_finishing: bool,
+    /// The swatch row's cursor: which cell the arrows are on.
+    swatch_cursor: usize,
+    /// The card's shaped text, kept across frames.
+    setup_cache: koru_draw::el::TextCache,
+    /// The card's bottom and the room under it, from the last frame laid out
+    /// — what a host page scrolls an embedded card by, asked through `&self`.
+    setup_height: Cell<Option<f32>>,
+    /// What the card's first label says, which the host decides (D8).
+    owner_label: SetupOwnerLabel,
     custom_caption: bool,
     /// The form is embedded in a host page that frames it (the Profile
     /// manager's *New profile*): no presentation pane, and the column starts
@@ -321,8 +334,9 @@ pub struct OnboardingView {
     /// [`accessibility`], which is the only thing that reads or writes them;
     /// they are fields here because a projection built from `&self` state
     /// cannot keep state of its own. See that module for why a transition
-    /// mints a new number rather than reusing one.
-    screen_shown: Option<Screen>,
+    /// mints a new number rather than reusing one. The bool is
+    /// `setup_finishing`: entering and leaving finishing mint too.
+    screen_shown: Option<(Screen, bool)>,
     screen_instance: u64,
     focus: usize,
     hover: Option<Hit>,
@@ -352,9 +366,16 @@ pub struct OnboardingView {
 impl Default for OnboardingView {
     fn default() -> Self {
         let mut engine = TextEngine::new();
+        let language =
+            koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref());
         let name = TextInput::new(&mut engine, theme::role::row());
-        let profile_name = TextInput::new(&mut engine, theme::role::row());
-        let workspace_name = TextInput::new(&mut engine, theme::role::row());
+        // The first workspace starts as *Personal*, in the language the view
+        // speaks (D6); nothing changes that language afterwards.
+        let workspace_name = TextInput::with_text(
+            &mut engine,
+            theme::role::row(),
+            koru_i18n::t(language, koru_i18n::Key::SetupWorkspaceDefaultName),
+        );
         let email_address = TextInput::new(&mut engine, theme::role::row());
         // Secret, with the shared eye that shows what was typed.
         let email_password = TextInput::new(&mut engine, theme::role::row())
@@ -369,9 +390,7 @@ impl Default for OnboardingView {
             browser_signin: None,
             browser_apple: false,
             account_forms: Default::default(),
-            language: koru_i18n::Lang::for_system(
-                koru_window::system_locale::system_locale().as_deref(),
-            ),
+            language,
             viewport: (1000.0, 680.0),
             engine,
             screen: Screen::first(),
@@ -391,22 +410,18 @@ impl Default for OnboardingView {
             email_code,
             new_password,
             confirm_password,
-            owner_name: name,
-            profile_name,
-            profile_name_edited: false,
-            purpose: None,
-            profile_icon: None,
-            profile_color: None,
-            profile_appearance_customized: false,
-            profile_appearance: None,
+            owner_name: Rc::new(RefCell::new(name)),
             connect_account: false,
-            workspace_name,
-            template: None,
+            workspace_name: Rc::new(RefCell::new(workspace_name)),
             workspace_name_edited: false,
-            workspace_icon: None,
-            workspace_color: None,
-            workspace_appearance_customized: false,
+            workspace_icon: Some(setup::SETUP_DEFAULT_EMOJI.to_owned()),
+            workspace_color: Some(setup::SETUP_DEFAULT_COLOR.to_owned()),
             workspace_appearance: None,
+            setup_finishing: false,
+            swatch_cursor: 0,
+            setup_cache: Default::default(),
+            setup_height: Cell::new(None),
+            owner_label: SetupOwnerLabel::You,
             custom_caption: false,
             embedded: false,
             embedded_visible_area: None,
@@ -508,6 +523,7 @@ impl OnboardingView {
         next.viewport = self.viewport;
         next.custom_caption = self.custom_caption;
         next.embedded = self.embedded;
+        next.owner_label = self.owner_label;
         next.embedded_visible_area = self.embedded_visible_area;
         next.language = self.language;
         std::mem::swap(self, &mut next);
@@ -519,6 +535,11 @@ impl OnboardingView {
     pub fn set_viewport(&mut self, width: f32, height: f32) {
         self.viewport = (width.max(1.0), height.max(1.0));
         self.clamp_existing_profile_scroll();
+        // A host page asks the embedded card's height through `&self` right
+        // after sizing it; lay the card out now so the answer is this size's.
+        if self.embedded && self.screen == Screen::Setup {
+            let _ = self.setup_frame();
+        }
     }
 
     /// Embed the form in a host page that already frames it (the Profile
@@ -604,12 +625,6 @@ impl OnboardingView {
         };
         self.focus = 0;
         true
-    }
-
-    fn resume_account_rect(&mut self) -> Rect {
-        let c = self.content();
-        let label = koru_i18n::t(self.language, koru_i18n::Key::AccountCreationResume);
-        Rect::new(c.x, c.y, button_width(&mut self.engine, label), 36.0)
     }
 
     pub fn account_command_failed(&mut self, failure: crate::account_ui::CommandFailure) -> bool {
@@ -719,13 +734,18 @@ impl OnboardingView {
         owner_display_name: &str,
         choices: Vec<AccountProfileChoice>,
     ) {
-        let keep_local_form = !self.account_profiles.is_empty()
-            && matches!(self.screen, Screen::Profile | Screen::Workspace);
+        let keep_local_form = !self.account_profiles.is_empty() && self.screen == Screen::Setup;
         self.account_creation_finished();
-        if !keep_local_form && !owner_display_name.trim().is_empty() {
+        // First run fills the owner field from the account (D6). Under the
+        // *Profile* label the field names a new Profile, not the person, so
+        // it is left as it is (Q-A).
+        if !keep_local_form
+            && self.owner_label == SetupOwnerLabel::You
+            && !owner_display_name.trim().is_empty()
+        {
             self.owner_name
+                .borrow_mut()
                 .set_text(&mut self.engine, owner_display_name.trim());
-            self.update_profile_name_suggestion();
         }
         if choices.is_empty() {
             self.account_profiles.clear();
@@ -906,7 +926,7 @@ impl OnboardingView {
             return;
         }
         if (self.selection.submitted.is_some() || !self.account_profiles.is_empty())
-            && matches!(self.screen, Screen::Profile | Screen::Workspace)
+            && self.screen == Screen::Setup
             && matches!(
                 state.stage,
                 koru_agent_wire::AccountStage::SignedIn
@@ -970,15 +990,7 @@ impl OnboardingView {
         self.focus = 0;
         self.error = None;
     }
-    pub fn show_profile(&mut self) {
-        self.connect_account = false;
-        self.screen = Screen::Profile;
-        self.focus = 0;
-        self.error = None;
-    }
-
     fn show_entry(&mut self) {
-        self.profile_appearance = None;
         self.screen = Screen::first();
         self.focus = 0;
         self.error = None;
@@ -988,7 +1000,8 @@ impl OnboardingView {
     /// application. Persistence still leaves through the typed action seam.
     pub fn begin_connected_profile_creation(&mut self) {
         self.connect_account = true;
-        self.screen = Screen::Profile;
+        self.setup_finishing = false;
+        self.screen = Screen::Setup;
         self.focus = 0;
         self.error = None;
     }
@@ -998,9 +1011,11 @@ impl OnboardingView {
     }
 
     /// A Store refusal before Profile acknowledgement is safe to retry from
-    /// the Workspace step. The form values remain intact.
+    /// the card: it comes back enabled with the reason, every typed value
+    /// intact and the same creation id.
     pub fn creation_failed(&mut self, message: impl Into<String>) {
-        self.screen = Screen::Workspace;
+        self.screen = Screen::Setup;
+        self.setup_finishing = false;
         self.focus = 0;
         self.error = Some(message.into());
     }
@@ -1011,16 +1026,6 @@ impl OnboardingView {
             self.language,
             koru_i18n::Key::ProfileCreationExists,
         ));
-    }
-
-    fn workspace_action_label(&self) -> &'static str {
-        if self.screen == Screen::Finishing {
-            "Finishing..."
-        } else if self.creation_conflict {
-            koru_i18n::t(self.language, koru_i18n::Key::ProfileCreationManage)
-        } else {
-            "Create workspace"
-        }
     }
 
     /// Account errors return to the entry choice; they are unrelated to local
@@ -1035,14 +1040,6 @@ impl OnboardingView {
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.pointer = (x, y);
         let area = self.appearance_area();
-        if let Some(appearance) = self.profile_appearance.as_mut() {
-            return appearance.mouse_move(
-                &mut self.engine,
-                (area.w, area.h),
-                x - area.x,
-                y - area.y,
-            );
-        }
         if let Some(appearance) = self.workspace_appearance.as_mut() {
             return appearance.mouse_move(
                 &mut self.engine,
@@ -1061,15 +1058,11 @@ impl OnboardingView {
             return true;
         }
         let dragged = match self.screen {
-            Screen::Profile => {
-                let owner = self.owner_name_rect();
-                let profile = self.profile_name_rect();
-                self.owner_name.drag(&mut self.engine, owner, x)
-                    | self.profile_name.drag(&mut self.engine, profile, x)
-            }
-            Screen::Workspace => {
-                let field = self.workspace_name_rect();
-                self.workspace_name.drag(&mut self.engine, field, x)
+            Screen::Setup
+                if self.owner_name.borrow().is_dragging()
+                    || self.workspace_name.borrow().is_dragging() =>
+            {
+                self.setup_drag(x)
             }
             _ => false,
         };
@@ -1098,7 +1091,7 @@ impl OnboardingView {
                     | Hit::NewPassword
                     | Hit::ConfirmPassword
                     | Hit::Name
-                    | Hit::ProfileName
+                    | Hit::WorkspaceName
             )
         )
     }
@@ -1128,12 +1121,6 @@ impl OnboardingView {
         self.restart_caret_blink();
         self.pointer = (x, y);
         let area = self.appearance_area();
-        if self.profile_appearance.is_some() {
-            let outcome = self.profile_appearance.as_mut().map(|appearance| {
-                appearance.mouse_down(&mut self.engine, (area.w, area.h), x - area.x, y - area.y)
-            });
-            return outcome.is_some_and(|outcome| self.settle_profile_appearance(outcome));
-        }
         if self.workspace_appearance.is_some() {
             let outcome = self.workspace_appearance.as_mut().map(|appearance| {
                 appearance.mouse_down(&mut self.engine, (area.w, area.h), x - area.x, y - area.y)
@@ -1199,25 +1186,9 @@ impl OnboardingView {
                     None
                 }
             }
-            Screen::Profile => {
-                let owner = self.owner_name_rect();
-                let profile = self.profile_name_rect();
-                if self.owner_name.click(&mut self.engine, owner, x, y) {
-                    self.controls().iter().position(|hit| *hit == Hit::Name)
-                } else if self.profile_name.click(&mut self.engine, profile, x, y) {
-                    self.controls()
-                        .iter()
-                        .position(|hit| *hit == Hit::ProfileName)
-                } else {
-                    None
-                }
-            }
-            Screen::Workspace => {
-                let field = self.workspace_name_rect();
-                self.workspace_name
-                    .click(&mut self.engine, field, x, y)
-                    .then_some(0)
-            }
+            // The card's two name fields, at their frame rectangles; the
+            // press puts the keyboard there itself.
+            Screen::Setup => self.setup_field_press(x, y),
             _ => None,
         };
         if let Some(focus) = field_clicked {
@@ -1232,19 +1203,13 @@ impl OnboardingView {
     }
 
     pub fn mouse_up(&mut self) {
-        if let Some(appearance) = self.profile_appearance.as_mut() {
-            let outcome = appearance.mouse_up();
-            self.settle_profile_appearance(outcome);
-            return;
-        }
         if let Some(appearance) = self.workspace_appearance.as_mut() {
             let outcome = appearance.mouse_up();
             self.settle_workspace_appearance(outcome);
             return;
         }
-        self.owner_name.release();
-        self.profile_name.release();
-        self.workspace_name.release();
+        self.owner_name.borrow_mut().release();
+        self.workspace_name.borrow_mut().release();
         self.email_address.release();
         self.email_password.release();
         self.email_code.release();
@@ -1254,10 +1219,6 @@ impl OnboardingView {
     }
 
     pub fn scroll_by(&mut self, delta: winit::event::MouseScrollDelta) -> bool {
-        if let Some(appearance) = self.profile_appearance.as_mut() {
-            appearance.scroll_by(delta);
-            return true;
-        }
         if let Some(appearance) = self.workspace_appearance.as_mut() {
             appearance.scroll_by(delta);
             return true;
@@ -1280,15 +1241,13 @@ impl OnboardingView {
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
-        if let Some(appearance) = &self.profile_appearance {
-            appearance.cursor()
-        } else if let Some(appearance) = &self.workspace_appearance {
+        if let Some(appearance) = &self.workspace_appearance {
             appearance.cursor()
         } else if matches!(
             self.hover,
             Some(
                 Hit::Name
-                    | Hit::ProfileName
+                    | Hit::WorkspaceName
                     | Hit::EmailAddress
                     | Hit::EmailPassword
                     | Hit::EmailCode
@@ -1297,10 +1256,7 @@ impl OnboardingView {
             )
         ) {
             CursorIcon::Text
-        } else if matches!(
-            self.hover,
-            Some(Hit::ProfileAppearance | Hit::WorkspaceAppearance | Hit::Template(_))
-        ) {
+        } else if matches!(self.hover, Some(Hit::WorkspaceAppearance | Hit::Swatch(_))) {
             koru_ui::cursor::PRESS
         } else {
             CursorIcon::Default
@@ -1309,10 +1265,6 @@ impl OnboardingView {
 
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         self.restart_caret_blink();
-        if let Some(appearance) = self.profile_appearance.as_mut() {
-            let outcome = appearance.key(&mut self.engine, key, text, mods);
-            return self.settle_profile_appearance(outcome);
-        }
         if let Some(appearance) = self.workspace_appearance.as_mut() {
             let outcome = appearance.key(&mut self.engine, key, text, mods);
             return self.settle_workspace_appearance(outcome);
@@ -1320,19 +1272,21 @@ impl OnboardingView {
         let focused = self.controls().get(self.focus).copied();
         if let Some(focused) = focused {
             let typed = match (self.screen, focused) {
-                (Screen::Profile, Hit::Name) => {
-                    let before = self.owner_name.value();
-                    let typed = self.owner_name.key(&mut self.engine, key, text, mods);
-                    if typed == Typed::Handled && self.owner_name.value() != before {
-                        self.update_profile_name_suggestion();
-                    }
-                    typed
+                (Screen::Setup, Hit::Name) => {
+                    self.owner_name
+                        .borrow_mut()
+                        .key(&mut self.engine, key, text, mods)
                 }
-                (Screen::Profile, Hit::ProfileName) => {
-                    let before = self.profile_name.value();
-                    let typed = self.profile_name.key(&mut self.engine, key, text, mods);
-                    if typed == Typed::Handled && self.profile_name.value() != before {
-                        self.profile_name_edited = true;
+                (Screen::Setup, Hit::WorkspaceName) => {
+                    let before = self.workspace_name.borrow().value();
+                    let typed =
+                        self.workspace_name
+                            .borrow_mut()
+                            .key(&mut self.engine, key, text, mods);
+                    if typed == Typed::Handled && self.workspace_name.borrow().value() != before {
+                        // Typed text is the person's; an empty field holds no
+                        // text of theirs, so the next focus selects again.
+                        self.workspace_name_edited = !self.workspace_name.borrow().is_empty();
                     }
                     typed
                 }
@@ -1349,17 +1303,6 @@ impl OnboardingView {
                 (Screen::EmailPassword, Hit::ConfirmPassword) => {
                     self.confirm_password.key(&mut self.engine, key, text, mods)
                 }
-                (Screen::Workspace, Hit::Name) => {
-                    let before = self.workspace_name.value();
-                    let typed = self.workspace_name.key(&mut self.engine, key, text, mods);
-                    if typed == Typed::Handled && self.workspace_name.value() != before {
-                        // Typed text outranks the card suggestions; an empty
-                        // field holds no text, so deleting it all hands the
-                        // authority back to the cards — they are pickable again.
-                        self.workspace_name_edited = !self.workspace_name.is_empty();
-                    }
-                    typed
-                }
                 _ => Typed::Passed,
             };
             if typed == Typed::Handled {
@@ -1371,6 +1314,7 @@ impl OnboardingView {
             Key::Named(NamedKey::Tab) if mods.is_empty() => {
                 self.focus = (self.focus + 1) % controls.len().max(1);
                 self.keep_focused_existing_profile_visible(&controls);
+                self.setup_focus_entered(focused);
                 true
             }
             Key::Named(NamedKey::Tab) if mods == ModifiersState::SHIFT => {
@@ -1379,11 +1323,28 @@ impl OnboardingView {
                     .checked_sub(1)
                     .unwrap_or(controls.len().saturating_sub(1));
                 self.keep_focused_existing_profile_visible(&controls);
+                self.setup_focus_entered(focused);
+                true
+            }
+            // **Inside the swatch row the arrows move its cursor** and are
+            // consumed, ends included: a `ListBox` does not hand focus on.
+            // Everywhere else they keep moving the focus, below.
+            Key::Named(
+                named @ (NamedKey::ArrowLeft
+                | NamedKey::ArrowRight
+                | NamedKey::ArrowUp
+                | NamedKey::ArrowDown),
+            ) if mods.is_empty()
+                && self.screen == Screen::Setup
+                && matches!(focused, Some(Hit::Swatch(_))) =>
+            {
+                self.setup_arrow(*named);
                 true
             }
             Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) if mods.is_empty() => {
                 self.focus = (self.focus + 1) % controls.len().max(1);
                 self.keep_focused_existing_profile_visible(&controls);
+                self.setup_focus_entered(focused);
                 true
             }
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) if mods.is_empty() => {
@@ -1392,6 +1353,7 @@ impl OnboardingView {
                     .checked_sub(1)
                     .unwrap_or(controls.len().saturating_sub(1));
                 self.keep_focused_existing_profile_visible(&controls);
+                self.setup_focus_entered(focused);
                 true
             }
             Key::Named(NamedKey::Enter) if mods.is_empty() => {
@@ -1402,8 +1364,10 @@ impl OnboardingView {
                 // field hit would only refocus it and read as "Enter does
                 // nothing" once everything is filled.
                 match (self.screen, focused) {
-                    (Screen::Profile, Some(Hit::ProfileName)) => self.activate(Hit::Primary),
-                    (Screen::Workspace, Some(Hit::Name)) => self.activate(Hit::Primary),
+                    // Either name field submits a complete card.
+                    (Screen::Setup, Some(Hit::Name | Hit::WorkspaceName)) => {
+                        self.activate(Hit::Primary)
+                    }
                     // Enter anywhere in the email form submits it, which is
                     // what a browser does and what a password manager's fill
                     // ends with.
@@ -1436,9 +1400,12 @@ impl OnboardingView {
                 self.abandon_email_journey(None);
                 true
             }
+            // Space presses the focused control. On the card the name fields
+            // took it above as text, so it reaches the tile, a swatch and a
+            // button here.
             key if (matches!(key, Key::Named(NamedKey::Space))
                 || matches!(key, Key::Character(value) if value.as_str() == " "))
-                && self.screen == Screen::ExistingProfiles
+                && matches!(self.screen, Screen::ExistingProfiles | Screen::Setup)
                 && mods.is_empty() =>
             {
                 if let Some(hit) = controls.get(self.focus).copied() {
@@ -1447,14 +1414,14 @@ impl OnboardingView {
                 true
             }
             Key::Named(NamedKey::Escape) if self.screen == Screen::Recovery => {
-                self.show_profile();
+                self.show_setup();
                 true
             }
             Key::Named(NamedKey::Escape) if self.screen == Screen::ExistingProfiles => {
                 if self.selection_has_unfinished() {
                     self.activate_selection(Hit::CancelSelection);
                 } else {
-                    self.show_profile();
+                    self.show_setup();
                 }
                 true
             }
@@ -1498,11 +1465,17 @@ impl OnboardingView {
         // viewport-wide node — drawn after the backdrop — would shadow the
         // sidebar's parts on every screen but Entry. Entry is the welcome
         // surface itself, so its parts draw inside the node either way.
-        let screen_bounds = if self.screen == Screen::Entry {
-            scene::rect(0.0, 0.0, self.viewport.0, self.viewport.1)
-        } else {
-            let c = self.content();
-            scene::rect(c.x, c.y, c.w, c.h)
+        let screen_bounds = match self.screen {
+            Screen::Entry => scene::rect(0.0, 0.0, self.viewport.0, self.viewport.1),
+            // The card's own area: the panel and its contents nest inside.
+            Screen::Setup => {
+                let area = self.setup_area();
+                scene::rect(area.x, area.y, area.w, area.h)
+            }
+            _ => {
+                let c = self.content();
+                scene::rect(c.x, c.y, c.w, c.h)
+            }
         };
         {
             let _screen = inspect::scope(
@@ -1533,18 +1506,14 @@ impl OnboardingView {
                 Screen::ExistingProfiles => self.draw_existing_profiles(canvas, root),
                 Screen::RestoringProfile => self.draw_restoring_profile(canvas, root),
                 Screen::Recovery => self.draw_recovery(canvas, root),
-                Screen::Profile => self.draw_profile(canvas, root),
-                Screen::Workspace | Screen::Finishing => self.draw_workspace(canvas, root),
+                Screen::Setup => self.draw_setup(canvas, root),
             }
+            // The tile's full picker, over the card.
             let area = self.appearance_area();
             let overlay = root * Affine::translate((f64::from(area.x), f64::from(area.y)));
             if let Some(mut appearance) = self.workspace_appearance.take() {
                 appearance.draw(canvas, overlay, &mut self.engine, (area.w, area.h));
                 self.workspace_appearance = Some(appearance);
-            }
-            if let Some(mut appearance) = self.profile_appearance.take() {
-                appearance.draw(canvas, overlay, &mut self.engine, (area.w, area.h));
-                self.profile_appearance = Some(appearance);
             }
         }
         // Window furniture, not screen content: the caption hangs directly
@@ -1684,51 +1653,23 @@ impl OnboardingView {
     }
 
     /// The host scrolls an embedded form instead of shrinking its fields into
-    /// the action row. This uses the same field geometry as paint and input.
+    /// the action row: on the card, its bottom and the room under it, from
+    /// the frame its paint and input read.
     pub fn embedded_content_height(&self) -> f32 {
-        let field = match self.screen {
-            Screen::Profile => self.profile_name_rect(),
-            Screen::Workspace | Screen::Finishing => self.workspace_name_rect(),
-            _ => return 600.0,
-        };
-        (field.y + field.h + 16.0 + profile_note_h(self.connect_account) + 24.0 + 64.0 + PAD)
-            .max(600.0)
+        match self.screen {
+            Screen::Setup => self.setup_content_height().unwrap_or(600.0),
+            _ => 600.0,
+        }
     }
 
     /// The currently focused local-creation control, for the host's existing
-    /// scroll container to reveal after keyboard or accessibility navigation.
+    /// scroll container to reveal after keyboard or accessibility navigation:
+    /// the focused key's frame rectangle.
     pub fn focused_form_rect(&mut self) -> Option<Rect> {
-        if self.profile_appearance.is_some() || self.workspace_appearance.is_some() {
+        if self.workspace_appearance.is_some() || self.screen != Screen::Setup {
             return None;
         }
-        if !matches!(self.screen, Screen::Profile | Screen::Workspace) {
-            return None;
-        }
-        let hit = *self.controls().get(self.focus)?;
-        Some(match hit {
-            Hit::Name if self.screen == Screen::Workspace => self.workspace_name_rect(),
-            Hit::Name => self.owner_name_rect(),
-            Hit::ProfileName => self.profile_name_rect(),
-            Hit::ProfileAppearance => self.profile_icon_rect(),
-            Hit::WorkspaceAppearance => self.workspace_icon_rect(),
-            Hit::Purpose(purpose) => self.card_rect(
-                PURPOSES
-                    .iter()
-                    .position(|candidate| *candidate == purpose)?,
-                self.profile_card_metrics(),
-            ),
-            Hit::Template(index) => self.card_rect(index, self.workspace_card_metrics()),
-            Hit::Primary | Hit::Back => {
-                let label = if self.screen == Screen::Profile {
-                    "Continue"
-                } else {
-                    self.workspace_action_label()
-                };
-                let (primary, back) = self.form_action_buttons(label);
-                if hit == Hit::Primary { primary } else { back }
-            }
-            _ => return None,
-        })
+        self.setup_focused_rect()
     }
 
     fn existing_profiles_viewport(&mut self) -> Rect {
@@ -1829,40 +1770,7 @@ impl OnboardingView {
             Screen::ExistingProfiles => self.selection_controls(),
             Screen::RestoringProfile => Vec::new(),
             Screen::Recovery => self.recovery_controls(),
-            Screen::Profile => {
-                let mut controls = vec![Hit::Name];
-                if self.can_reopen_account_creation() {
-                    controls.insert(0, Hit::ResumeAccount);
-                }
-                controls.extend([
-                    Hit::Purpose(Purpose::Work),
-                    Hit::Purpose(Purpose::School),
-                    Hit::Purpose(Purpose::Personal),
-                ]);
-                controls.extend([Hit::ProfileAppearance, Hit::ProfileName]);
-                if self.profile_form_complete() {
-                    controls.push(Hit::Primary);
-                }
-                if Self::profile_has_back() {
-                    controls.push(Hit::Back);
-                }
-                if self.recovery_offered() {
-                    controls.push(Hit::Recovery);
-                }
-                controls
-            }
-            Screen::Workspace => {
-                let mut controls = vec![Hit::Name, Hit::WorkspaceAppearance];
-                if !self.workspace_name_edited {
-                    controls.extend((0..TEMPLATES.len()).map(Hit::Template));
-                }
-                if self.workspace_form_complete() {
-                    controls.push(Hit::Primary);
-                }
-                controls.push(Hit::Back);
-                controls
-            }
-            Screen::Finishing => Vec::new(),
+            Screen::Setup => self.setup_controls(),
         }
     }
 
@@ -1882,7 +1790,7 @@ impl OnboardingView {
         match (self.screen, hit) {
             (Screen::Entry, Hit::Primary) => {
                 self.telemetry.push(Telemetry::EntryOffline);
-                self.show_profile();
+                self.show_setup();
             }
             (Screen::Entry, Hit::Secondary) => {
                 if self.reopen_account_creation() {
@@ -1926,65 +1834,11 @@ impl OnboardingView {
                 | Hit::Primary),
             ) => self.activate_selection(hit),
             (Screen::ExistingProfiles, Hit::CreateNew) => self.show_connected_profile(),
-            (Screen::ExistingProfiles, Hit::ContinueOffline) => self.show_profile(),
-            (Screen::Profile, Hit::Recovery) if self.recovery_offered() => self.open_recovery(),
+            (Screen::ExistingProfiles, Hit::ContinueOffline) => self.show_setup(),
             (Screen::Recovery, hit @ (Hit::Back | Hit::RestoreDeleted(_))) => {
                 self.activate_recovery(hit)
             }
-            (Screen::Profile, Hit::Name) => self.focus = 0,
-            (Screen::Profile, Hit::ProfileName) => {
-                if let Some(index) = self
-                    .controls()
-                    .iter()
-                    .position(|hit| *hit == Hit::ProfileName)
-                {
-                    self.focus = index;
-                }
-            }
-            (Screen::Profile, Hit::ProfileAppearance) => {
-                let profile_name = self.profile_name();
-                self.profile_appearance = Some(EmojiColorPanel::for_profile_draft(
-                    &mut self.engine,
-                    &profile_name,
-                    self.profile_icon.clone(),
-                    self.profile_color.clone(),
-                ));
-            }
-            (Screen::Profile, Hit::Purpose(purpose)) => {
-                self.telemetry.push(Telemetry::ProfilePurpose(purpose));
-                self.purpose = Some(purpose);
-                self.update_profile_name_suggestion();
-                if !self.profile_appearance_customized {
-                    self.profile_icon = Some(purpose_emoji(purpose).to_owned());
-                    self.profile_color = None;
-                }
-            }
-            (Screen::Profile, Hit::Back) => self.show_entry(),
-            (Screen::Profile, Hit::Primary) if self.profile_form_complete() => {
-                self.screen = Screen::Workspace;
-                self.focus = 0;
-            }
-            (Screen::Workspace, Hit::Name) => self.focus = 0,
-            (Screen::Workspace, Hit::WorkspaceAppearance) => {
-                self.workspace_appearance = Some(EmojiColorPanel::for_draft(
-                    &mut self.engine,
-                    &self.workspace_name.value(),
-                    self.workspace_icon.clone(),
-                    self.workspace_color.clone(),
-                ));
-            }
-            (Screen::Workspace, Hit::Template(index)) if !self.workspace_name_edited => {
-                self.template = Some(index);
-                // A template is a complete starting suggestion, including its
-                // plain-language name. Keep following card choices until the
-                // person types; from that moment their text is authoritative.
-                self.workspace_name
-                    .set_text(&mut self.engine, TEMPLATES[index].label);
-                if !self.workspace_appearance_customized {
-                    self.workspace_icon = Some(TEMPLATES[index].emoji.to_owned());
-                    self.workspace_color = None;
-                }
-            }
+            (Screen::Setup, hit) => self.activate_setup(hit),
             (Screen::Entry, Hit::ContinueWithEmail) if self.email_form_ready() => {
                 let address = self.email_address.value();
                 let password = self.email_password.value();
@@ -2005,30 +1859,6 @@ impl OnboardingView {
                 self.error = None;
                 self.pending = Some(Action::SubmitEmailPassword {
                     password: self.new_password.value(),
-                });
-            }
-            (Screen::Workspace, Hit::Back) => {
-                self.screen = Screen::Profile;
-                self.focus = 0;
-            }
-            (Screen::Workspace, Hit::Primary) if self.creation_conflict => {
-                self.screen = Screen::Finishing;
-                self.pending = Some(Action::ManageProfiles);
-            }
-            (Screen::Workspace, Hit::Primary) if self.workspace_form_complete() => {
-                let index = self.template.unwrap_or(EMPTY_TEMPLATE);
-                self.screen = Screen::Finishing;
-                self.pending = Some(Action::CreateLocalProfile {
-                    id: self.local_creation_id,
-                    owner_display_name: self.owner_name.value(),
-                    name: self.profile_name(),
-                    workspace_name: self.workspace_name.value(),
-                    template: TEMPLATES[index].key.to_owned(),
-                    workspace_icon: self.workspace_icon.clone(),
-                    workspace_color: self.workspace_color.clone(),
-                    profile_icon: self.profile_icon.clone(),
-                    profile_color: self.profile_color.clone(),
-                    connect_account: self.connect_account,
                 });
             }
             _ => {}
@@ -2095,81 +1925,16 @@ impl OnboardingView {
             Screen::ExistingProfiles => self.existing_profiles_hit(x, y),
             Screen::RestoringProfile => None,
             Screen::Recovery => self.recovery_hit(x, y),
-            Screen::Profile => {
-                if self.can_reopen_account_creation() && self.resume_account_rect().contains(x, y) {
-                    return Some(Hit::ResumeAccount);
-                }
-                if self.recovery_offered() && self.recovery_link_rect().contains(x, y) {
-                    return Some(Hit::Recovery);
-                }
-                if self.owner_name_rect().contains(x, y) {
-                    return Some(Hit::Name);
-                }
-                if self.profile_name_rect().contains(x, y) {
-                    return Some(Hit::ProfileName);
-                }
-                if self.profile_icon_rect().contains(x, y) {
-                    return Some(Hit::ProfileAppearance);
-                }
-                let metrics = self.profile_card_metrics();
-                for (index, purpose) in PURPOSES.into_iter().enumerate() {
-                    if self.card_rect(index, metrics).contains(x, y) {
-                        return Some(Hit::Purpose(purpose));
-                    }
-                }
-                if self.profile_form_complete()
-                    && self.form_action_buttons("Continue").0.contains(x, y)
-                {
-                    Some(Hit::Primary)
-                } else if Self::profile_has_back()
-                    && self.form_action_buttons("Continue").1.contains(x, y)
-                {
-                    Some(Hit::Back)
-                } else {
-                    None
-                }
-            }
-            Screen::Workspace => self.workspace_hit(x, y),
-            Screen::Finishing => None,
+            Screen::Setup => self.setup_hit(x, y),
         }
     }
 
     fn existing_profiles_hit(&mut self, x: f32, y: f32) -> Option<Hit> {
         self.selection_hit(x, y)
     }
-    fn workspace_hit(&mut self, x: f32, y: f32) -> Option<Hit> {
-        if self.workspace_icon_rect().contains(x, y) {
-            return Some(Hit::WorkspaceAppearance);
-        }
-        if self.workspace_name_rect().contains(x, y) {
-            return Some(Hit::Name);
-        }
-        let metrics = self.workspace_card_metrics();
-        if !self.workspace_name_edited {
-            for index in 0..TEMPLATES.len() {
-                if self.card_rect(index, metrics).contains(x, y) {
-                    return Some(Hit::Template(index));
-                }
-            }
-        }
-        if self.workspace_form_complete()
-            && self
-                .form_action_buttons(self.workspace_action_label())
-                .0
-                .contains(x, y)
-        {
-            Some(Hit::Primary)
-        } else if self
-            .form_action_buttons(self.workspace_action_label())
-            .1
-            .contains(x, y)
-        {
-            Some(Hit::Back)
-        } else {
-            None
-        }
-    }
 
+    /// The tile's full picker answered: a saved choice is what the tile, the
+    /// swatch row and the action all read — "no color" included (D5).
     fn settle_workspace_appearance(&mut self, outcome: AppearanceOutcome) -> bool {
         match outcome {
             AppearanceOutcome::Keep => true,
@@ -2180,25 +1945,7 @@ impl OnboardingView {
             AppearanceOutcome::Save { icon, color } => {
                 self.workspace_icon = icon;
                 self.workspace_color = color;
-                self.workspace_appearance_customized = true;
                 self.workspace_appearance = None;
-                true
-            }
-        }
-    }
-
-    fn settle_profile_appearance(&mut self, outcome: AppearanceOutcome) -> bool {
-        match outcome {
-            AppearanceOutcome::Keep => true,
-            AppearanceOutcome::Cancel => {
-                self.profile_appearance = None;
-                true
-            }
-            AppearanceOutcome::Save { icon, color } => {
-                self.profile_icon = icon;
-                self.profile_color = color;
-                self.profile_appearance_customized = true;
-                self.profile_appearance = None;
                 true
             }
         }
@@ -2212,136 +1959,6 @@ impl OnboardingView {
             button_width(&mut self.engine, label).max(128.0),
             42.0,
         )
-    }
-
-    /// Whether the Profile form has a *Back*: only when there is an entry
-    /// choice to go back to ([`Screen::first`]).
-    fn profile_has_back() -> bool {
-        Screen::first() != Screen::Profile
-    }
-
-    fn form_action_buttons(&mut self, primary_label: &str) -> (Rect, Rect) {
-        let primary = self.button(primary_label, 64.0);
-        let back_w = ActionButton::new("Back", ActionStyle::Ghost, None).width(&mut self.engine);
-        let back = Rect::new(
-            primary.x + primary.w + BUTTON_GAP,
-            primary.y,
-            back_w,
-            primary.h,
-        );
-        (primary, back)
-    }
-
-    fn owner_name_rect(&self) -> Rect {
-        let c = self.content();
-        Rect::new(c.x, c.y + 194.0, c.w, 44.0)
-    }
-
-    fn profile_icon_rect(&self) -> Rect {
-        let c = self.content();
-        let (columns, card_h, pitch, top) = self.profile_card_metrics();
-        let rows = 3_usize.div_ceil(columns);
-        let last_card_bottom = top + (rows - 1) as f32 * pitch + card_h;
-        let gap = if columns == 3 { 40.0 } else { 20.0 };
-        Rect::new(c.x, last_card_bottom + gap, 44.0, 44.0)
-    }
-
-    fn profile_name_rect(&self) -> Rect {
-        let c = self.content();
-        let icon = self.profile_icon_rect();
-        Rect::new(icon.x + icon.w + 10.0, icon.y, c.w - icon.w - 10.0, icon.h)
-    }
-
-    fn workspace_name_rect(&self) -> Rect {
-        let c = self.content();
-        let icon = self.workspace_icon_rect();
-        Rect::new(icon.x + icon.w + 10.0, icon.y, c.w - icon.w - 10.0, icon.h)
-    }
-
-    fn workspace_icon_rect(&self) -> Rect {
-        let c = self.content();
-        let (columns, _, pitch, top) = self.workspace_card_metrics();
-        let rows = TEMPLATES.len().div_ceil(columns);
-        Rect::new(c.x, top + rows as f32 * pitch + 10.0, 44.0, 44.0)
-    }
-
-    /// **Where card `index` sits** in a row-major grid, from the metrics one of
-    /// the two `*_card_metrics` answers with.
-    ///
-    /// One copy: drawing, hit-testing and the accessibility projection each
-    /// had — or would have had — the same four lines, and a card a screen
-    /// reader can find somewhere other than where it answers a press is
-    /// exactly the defect a second copy produces.
-    fn card_rect(&self, index: usize, metrics: (usize, f32, f32, f32)) -> Rect {
-        let (columns, card_h, pitch, top) = metrics;
-        let c = self.content();
-        let card_w = (c.w - CARD_GAP * (columns - 1) as f32) / columns as f32;
-        Rect::new(
-            c.x + (index % columns) as f32 * (card_w + CARD_GAP),
-            top + (index / columns) as f32 * pitch,
-            card_w,
-            card_h,
-        )
-    }
-
-    fn profile_card_metrics(&self) -> (usize, f32, f32, f32) {
-        let c = self.content();
-        if c.w >= 528.0 {
-            (3, 76.0, 88.0, c.y + 278.0)
-        } else {
-            // The documented minimum window has two columns. Compact cards
-            // leave the derived Profile name and action row reachable below
-            // them without changing their row-major order.
-            (card_columns(c.w), 62.0, 70.0, c.y + 278.0)
-        }
-    }
-
-    fn workspace_card_metrics(&self) -> (usize, f32, f32, f32) {
-        let c = self.content();
-        if c.w >= 528.0 && self.viewport.1 >= 640.0 {
-            (3, 122.0, 134.0, c.y + 126.0)
-        } else {
-            // Two compact columns keep all six choices, the name field and the
-            // action row reachable at the window's documented minimum size.
-            (2, 62.0, 70.0, c.y + 106.0)
-        }
-    }
-
-    /// A purpose card is a shortcut to a suggested Profile name, not a
-    /// requirement: a person who types the name themselves can go on.
-    fn profile_form_complete(&self) -> bool {
-        !self.owner_name.is_empty() && !self.profile_name.is_empty()
-    }
-
-    /// Like the Profile step, no card is chosen for the person: a name is
-    /// enough, and a workspace named without a card starts
-    /// [empty](EMPTY_TEMPLATE).
-    fn workspace_form_complete(&self) -> bool {
-        self.creation_conflict || !self.workspace_name.is_empty()
-    }
-
-    fn profile_name(&self) -> String {
-        self.profile_name.value()
-    }
-
-    fn update_profile_name_suggestion(&mut self) {
-        if self.profile_name_edited {
-            return;
-        }
-        let owner = self.owner_name.value();
-        let suggestion = match self.purpose {
-            Some(purpose) if !owner.is_empty() => {
-                format!("{owner} ({})", purpose_label(purpose))
-            }
-            _ => String::new(),
-        };
-        self.profile_name.set_text(&mut self.engine, &suggestion);
-        if !self.profile_appearance_customized {
-            self.profile_icon = self
-                .purpose
-                .map(|purpose| purpose_emoji(purpose).to_owned());
-            self.profile_color = None;
-        }
     }
 
     fn draw_entry(&mut self, canvas: &mut Scene, root: Affine) {
@@ -2587,7 +2204,7 @@ impl OnboardingView {
                 if let Some((profile, _)) = &self.created_profile_retry {
                     self.pending = Some(Action::OpenCreatedProfile(*profile));
                 } else {
-                    self.show_profile();
+                    self.show_setup();
                 }
             }
             AccountAction::Cancel => self.cancel_browser_signin(),
@@ -2740,656 +2357,6 @@ impl OnboardingView {
             .and_then(|profile| profile.name.as_deref())
             .unwrap_or("this Profile")
     }
-    fn draw_profile(&mut self, canvas: &mut Scene, root: Affine) {
-        let p = theme::p();
-        let c = self.content();
-        if self.can_reopen_account_creation() {
-            let rect = self.resume_account_rect();
-            let focused = self.controls().get(self.focus) == Some(&Hit::ResumeAccount);
-            draw_button(
-                canvas,
-                root,
-                &mut self.engine,
-                rect,
-                koru_i18n::t(self.language, koru_i18n::Key::AccountCreationResume),
-                ButtonRole::Secondary,
-                self.hover == Some(Hit::ResumeAccount),
-                focused,
-            );
-        } else {
-            draw_text(
-                &mut self.engine,
-                canvas,
-                root,
-                "Step 1 of 2",
-                c.x,
-                c.y + 24.0,
-                theme::role::meta(),
-                "theme::role::meta()",
-                p.text_dim,
-            );
-        }
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "First, who's working here?",
-            c.x,
-            c.y + 62.0,
-            theme::role::subtitle(),
-            "theme::role::subtitle()",
-            p.text,
-        );
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "This is the name of the person who owns this Koru Identity.",
-            c.x,
-            c.y + 108.0,
-            theme::role::row(),
-            "theme::role::row()",
-            p.text_dim,
-        );
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "Display name",
-            c.x,
-            c.y + 174.0,
-            theme::role::meta(),
-            "theme::role::meta()",
-            p.text_dim,
-        );
-        let focused_control = self.controls().get(self.focus).copied();
-        let owner_focused = focused_control == Some(Hit::Name);
-        let profile_name_focused = focused_control == Some(Hit::ProfileName);
-        let field = self.owner_name_rect();
-        {
-            let _name_field = inspect::scope(
-                "NameField",
-                "component",
-                root,
-                scene::rect(field.x, field.y, field.w, field.h),
-                |record| {
-                    record.property("control", "TextInput", "koru_ui::text_input");
-                    record.property("focused", owner_focused, "view state");
-                },
-            );
-            let caret_on = self.caret_on();
-            self.owner_name.draw(
-                canvas,
-                root,
-                &mut self.engine,
-                field,
-                InputStyle::form(owner_focused).caret_shown(caret_on),
-                Some("Your name"),
-                owner_focused,
-            );
-        }
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "What is this Profile for?",
-            c.x,
-            c.y + 254.0,
-            theme::role::meta(),
-            "theme::role::meta()",
-            p.text_dim,
-        );
-        let metrics = self.profile_card_metrics();
-        let focused_control = self.controls().get(self.focus).copied();
-        for (index, purpose) in PURPOSES.into_iter().enumerate() {
-            let rect = self.card_rect(index, metrics);
-            let _card = inspect::scope(
-                "PurposeCard",
-                "container",
-                root,
-                scene::rect(rect.x, rect.y, rect.w, rect.h),
-                |record| {
-                    record.property("purpose", purpose_label(purpose), "PURPOSES");
-                    record.property("selected", self.purpose == Some(purpose), "view state");
-                },
-            );
-            paint_choice_card(
-                canvas,
-                root,
-                rect,
-                self.purpose == Some(purpose),
-                focused_control == Some(Hit::Purpose(purpose)),
-            );
-            // The label sits on the card's floor and the emoji takes the room
-            // above it: twice the row size where the card has it, and only as
-            // much as fits in the compact cards, so the two never touch.
-            let label_style = theme::role::section_heading();
-            let label_y = rect.y + rect.h - PURPOSE_CARD_PAD - label_style.metrics.line_height;
-            let emoji_size = (label_y - PURPOSE_EMOJI_GAP - (rect.y + PURPOSE_CARD_PAD))
-                .min(theme::role::row().metrics.size * 2.0);
-            let emoji = self.engine.simple_layout(
-                purpose_emoji(purpose),
-                theme::TextStyle::new(
-                    theme::TextMetrics::new(emoji_size, emoji_size),
-                    theme::FontWeight::Medium,
-                ),
-            );
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &emoji,
-                rect.x + 12.0,
-                rect.y + PURPOSE_CARD_PAD,
-                None,
-            );
-            draw_text(
-                &mut self.engine,
-                canvas,
-                root,
-                purpose_label(purpose),
-                rect.x + 12.0,
-                label_y,
-                label_style,
-                "theme::role::section_heading()",
-                p.text,
-            );
-        }
-        let icon = self.profile_icon_rect();
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "Profile name",
-            c.x,
-            icon.y - 20.0,
-            theme::role::meta(),
-            "theme::role::meta()",
-            p.text_dim,
-        );
-        let profile_name = self.profile_name();
-        {
-            let _icon = inspect::scope(
-                "ProfileIcon",
-                "component",
-                root,
-                scene::rect(icon.x, icon.y, icon.w, icon.h),
-                |record| {
-                    record.property("control", "Tile", "koru_draw::tile");
-                },
-            );
-            Tile {
-                icon: self.profile_icon.as_deref(),
-                color: self.profile_color.as_deref(),
-                name: &profile_name,
-            }
-            .draw(canvas, root, &mut self.engine, icon);
-            if self.controls().get(self.focus) == Some(&Hit::ProfileAppearance) {
-                scene::stroke(
-                    canvas,
-                    root,
-                    p.focus_ring,
-                    2.0,
-                    &scene::rrect(icon.x - 2.0, icon.y - 2.0, icon.w + 4.0, icon.h + 4.0, 12.0),
-                );
-            }
-        }
-        let profile_field = self.profile_name_rect();
-        {
-            let _profile_field = inspect::scope(
-                "ProfileNameField",
-                "component",
-                root,
-                scene::rect(
-                    profile_field.x,
-                    profile_field.y,
-                    profile_field.w,
-                    profile_field.h,
-                ),
-                |record| {
-                    record.property("control", "TextInput", "koru_ui::text_input");
-                    record.property("focused", profile_name_focused, "view state");
-                },
-            );
-            let caret_on = self.caret_on();
-            self.profile_name.draw(
-                canvas,
-                root,
-                &mut self.engine,
-                profile_field,
-                InputStyle::form(profile_name_focused).caret_shown(caret_on),
-                Some("Profile name"),
-                profile_name_focused,
-            );
-        }
-        let footer_y = icon.y + icon.h + 16.0;
-        // Only the connected route says where things live: it is the one
-        // that has an account to explain.
-        if self.connect_account {
-            draw_text(
-                &mut self.engine,
-                canvas,
-                root,
-                "Your Profile and content stay on your devices. Your Koru account only helps connect them.",
-                c.x,
-                footer_y,
-                theme::role::meta(),
-                "theme::role::meta()",
-                p.text_dim,
-            );
-        }
-        if let Some(error) = self.error.as_deref() {
-            draw_text(
-                &mut self.engine,
-                canvas,
-                root,
-                error,
-                c.x,
-                footer_y + profile_note_h(self.connect_account),
-                theme::role::meta(),
-                "theme::role::meta()",
-                p.notice_fg,
-            );
-        }
-        let label = if self.screen == Screen::Finishing {
-            "Finishing..."
-        } else {
-            "Continue"
-        };
-        let (button, back) = self.form_action_buttons(label);
-        let complete = self.profile_form_complete();
-        let controls = self.controls();
-        let primary_focused = controls.get(self.focus) == Some(&Hit::Primary);
-        let back_focused = controls.get(self.focus) == Some(&Hit::Back);
-        draw_button_enabled(
-            canvas,
-            root,
-            &mut self.engine,
-            button,
-            label,
-            ButtonRole::Primary,
-            self.hover == Some(Hit::Primary),
-            primary_focused,
-            complete,
-        );
-        if Self::profile_has_back() {
-            ActionButton::new("Back", ActionStyle::Ghost, None).draw_focused(
-                canvas,
-                root,
-                &mut self.engine,
-                back,
-                self.hover == Some(Hit::Back),
-                back_focused,
-            );
-        }
-        // `NeedsProfile` recovery (root-catalog §6.3): only while the host
-        // found a restorable Profile or an unassigned workspace.
-        if self.recovery_offered() {
-            let rect = self.recovery_link_rect();
-            let focused = controls.get(self.focus) == Some(&Hit::Recovery);
-            ActionButton::new(
-                koru_i18n::t(self.language, koru_i18n::Key::OnboardingRecoveryLink),
-                ActionStyle::Ghost,
-                None,
-            )
-            .draw_focused(
-                canvas,
-                root,
-                &mut self.engine,
-                rect,
-                self.hover == Some(Hit::Recovery),
-                focused,
-            );
-        }
-    }
-    fn draw_workspace(&mut self, canvas: &mut Scene, root: Affine) {
-        let p = theme::p();
-        let c = self.content();
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "Step 2 of 2",
-            c.x,
-            c.y + 18.0,
-            theme::role::meta(),
-            "theme::role::meta()",
-            p.text_dim,
-        );
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "Now a workspace to put things in",
-            c.x,
-            c.y + 54.0,
-            theme::role::subtitle(),
-            "theme::role::subtitle()",
-            p.text,
-        );
-        draw_text(
-            &mut self.engine,
-            canvas,
-            root,
-            "Pick a template to start from. You can rename or empty it later.",
-            c.x,
-            c.y + 86.0,
-            theme::role::row(),
-            "theme::role::row()",
-            p.text_dim,
-        );
-        let metrics = self.workspace_card_metrics();
-        let detailed = metrics.1 >= 100.0;
-        for (index, template) in TEMPLATES.iter().enumerate() {
-            let rect = self.card_rect(index, metrics);
-            let selected = self.template == Some(index);
-            let enabled = !self.workspace_name_edited;
-            let _card = inspect::scope(
-                "TemplateCard",
-                "container",
-                root,
-                scene::rect(rect.x, rect.y, rect.w, rect.h),
-                |record| {
-                    record.property("template", template.label, "TEMPLATES");
-                    record.property("selected", selected, "view state");
-                    record.property("enabled", enabled, "view state");
-                    record.property(
-                        "suggested",
-                        template_is_suggested(self.purpose, index),
-                        "template_is_suggested",
-                    );
-                },
-            );
-            paint_choice_card(
-                canvas,
-                root,
-                rect,
-                selected,
-                self.controls().get(self.focus) == Some(&Hit::Template(index)),
-            );
-            let emoji = self
-                .engine
-                .simple_layout(template.emoji, theme::role::row());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &emoji,
-                rect.x + 12.0,
-                rect.y + if detailed { 12.0 } else { 18.0 },
-                None,
-            );
-            draw_text(
-                &mut self.engine,
-                canvas,
-                root,
-                template.label,
-                rect.x + if detailed { 12.0 } else { 42.0 },
-                rect.y + if detailed { 43.0 } else { 18.0 },
-                theme::role::section_heading(),
-                "theme::role::section_heading()",
-                if enabled || selected {
-                    p.text
-                } else {
-                    p.text_dim
-                },
-            );
-            if detailed {
-                let description = self.engine.simple_layout_wrapped(
-                    template.description,
-                    theme::role::meta(),
-                    rect.w - 24.0,
-                );
-                scene::draw_layout(
-                    canvas,
-                    root,
-                    &description,
-                    rect.x + 12.0,
-                    rect.y + 69.0,
-                    Some(if enabled || selected {
-                        p.text_dim
-                    } else {
-                        p.row_hint
-                    }),
-                );
-            }
-            if detailed && template_is_suggested(self.purpose, index) {
-                let suggested = self.engine.simple_layout("Suggested", theme::role::meta());
-                let badge = Rect::new(
-                    rect.x + rect.w - suggested.width() - 18.0,
-                    rect.y + 9.0,
-                    suggested.width() + 12.0,
-                    20.0,
-                );
-                scene::fill(
-                    canvas,
-                    root,
-                    p.row_selected,
-                    &scene::rrect(badge.x, badge.y, badge.w, badge.h, 10.0),
-                );
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &suggested,
-                    badge.x + 6.0,
-                    badge.y + 2.0,
-                    Some(p.accent),
-                );
-            }
-        }
-        let icon = self.workspace_icon_rect();
-        {
-            let _icon = inspect::scope(
-                "WorkspaceIcon",
-                "component",
-                root,
-                scene::rect(icon.x, icon.y, icon.w, icon.h),
-                |record| {
-                    record.property("control", "Tile", "koru_draw::tile");
-                },
-            );
-            Tile {
-                icon: self.workspace_icon.as_deref(),
-                color: self.workspace_color.as_deref(),
-                name: &self.workspace_name.value(),
-            }
-            .draw(canvas, root, &mut self.engine, icon);
-            if self.controls().get(self.focus) == Some(&Hit::WorkspaceAppearance) {
-                scene::stroke(
-                    canvas,
-                    root,
-                    p.focus_ring,
-                    2.0,
-                    &scene::rrect(icon.x - 2.0, icon.y - 2.0, icon.w + 4.0, icon.h + 4.0, 12.0),
-                );
-            }
-        }
-        let field = self.workspace_name_rect();
-        {
-            let _name_field = inspect::scope(
-                "WorkspaceNameField",
-                "component",
-                root,
-                scene::rect(field.x, field.y, field.w, field.h),
-                |record| {
-                    record.property("control", "TextInput", "koru_ui::text_input");
-                    record.property("focused", self.focus == 0, "view state");
-                },
-            );
-            let caret_on = self.caret_on();
-            self.workspace_name.draw(
-                canvas,
-                root,
-                &mut self.engine,
-                field,
-                InputStyle::form(self.focus == 0).caret_shown(caret_on),
-                Some("Workspace name"),
-                self.focus == 0,
-            );
-        }
-        if let Some(error) = self.error.as_deref() {
-            draw_text(
-                &mut self.engine,
-                canvas,
-                root,
-                error,
-                c.x,
-                c.y + c.h - 150.0,
-                theme::role::meta(),
-                "theme::role::meta()",
-                p.notice_fg,
-            );
-        }
-        let label = self.workspace_action_label();
-        let (primary, back) = self.form_action_buttons(label);
-        let complete = self.workspace_form_complete();
-        let controls = self.controls();
-        draw_button_enabled(
-            canvas,
-            root,
-            &mut self.engine,
-            primary,
-            label,
-            ButtonRole::Primary,
-            self.hover == Some(Hit::Primary),
-            controls.get(self.focus) == Some(&Hit::Primary),
-            complete,
-        );
-        if self.screen != Screen::Finishing {
-            ActionButton::new("Back", ActionStyle::Ghost, None).draw_focused(
-                canvas,
-                root,
-                &mut self.engine,
-                back,
-                self.hover == Some(Hit::Back),
-                controls.get(self.focus) == Some(&Hit::Back),
-            );
-        }
-    }
-}
-
-fn paint_choice_card(canvas: &mut Scene, root: Affine, rect: Rect, selected: bool, focused: bool) {
-    let p = theme::p();
-    scene::fill(
-        canvas,
-        root,
-        if selected { p.row_selected } else { p.panel_bg },
-        &scene::rrect(rect.x, rect.y, rect.w, rect.h, 8.0),
-    );
-    scene::stroke(
-        canvas,
-        root,
-        if selected { p.accent } else { p.panel_border },
-        theme::BORDER_W,
-        &scene::rrect(rect.x, rect.y, rect.w, rect.h, 8.0),
-    );
-    if focused {
-        scene::stroke(
-            canvas,
-            root,
-            p.focus_ring,
-            2.0,
-            &scene::rrect(rect.x - 2.0, rect.y - 2.0, rect.w + 4.0, rect.h + 4.0, 10.0),
-        );
-    }
-}
-
-/// The three purpose cards, in the one order drawing, hit-testing and the
-/// accessibility projection all read them in.
-const PURPOSES: [Purpose; 3] = [Purpose::Work, Purpose::School, Purpose::Personal];
-
-fn purpose_label(purpose: Purpose) -> &'static str {
-    match purpose {
-        Purpose::Work => "Work",
-        Purpose::School => "School",
-        Purpose::Personal => "Personal",
-    }
-}
-
-/// The line the connected route's note takes under the Profile form, which
-/// a failure is written below. The account-free route has no note.
-fn profile_note_h(connect_account: bool) -> f32 {
-    if connect_account { 24.0 } else { 0.0 }
-}
-
-/// A purpose card's top and bottom air, and the least gap between its emoji
-/// and its label.
-const PURPOSE_CARD_PAD: f32 = 10.0;
-const PURPOSE_EMOJI_GAP: f32 = 4.0;
-
-fn purpose_emoji(purpose: Purpose) -> &'static str {
-    match purpose {
-        Purpose::Work => "💼",
-        Purpose::School => "🎓",
-        Purpose::Personal => "🏡",
-    }
-}
-
-struct Template {
-    key: &'static str,
-    label: &'static str,
-    emoji: &'static str,
-    description: &'static str,
-}
-
-/// What a workspace named without choosing a card starts from: the one
-/// template that adds nothing the person did not ask for.
-const EMPTY_TEMPLATE: usize = 5;
-
-const TEMPLATES: [Template; 6] = [
-    Template {
-        key: "project",
-        label: "Project",
-        emoji: "🚀",
-        description: "Roadmap, meeting notes, decisions",
-    },
-    Template {
-        key: "research",
-        label: "Research",
-        emoji: "🔎",
-        description: "Sources, reading log, findings",
-    },
-    Template {
-        key: "course",
-        label: "Course",
-        emoji: "📚",
-        description: "Lectures, assignments, study plan",
-    },
-    Template {
-        key: "recipes",
-        label: "Recipes",
-        emoji: "🍜",
-        description: "To try, weeknight, groceries",
-    },
-    Template {
-        key: "home",
-        label: "Home",
-        emoji: "🏠",
-        description: "Improvements, quotes, warranties",
-    },
-    Template {
-        key: "empty",
-        label: "Empty",
-        emoji: "📄",
-        description: "One untitled document, nothing else",
-    },
-];
-
-fn template_is_suggested(purpose: Option<Purpose>, index: usize) -> bool {
-    matches!(
-        (purpose, index),
-        (Some(Purpose::Work), 0 | 1)
-            | (Some(Purpose::School), 1 | 2)
-            | (Some(Purpose::Personal), 3 | 4)
-    )
-}
-
-fn card_columns(width: f32) -> usize {
-    if width >= 528.0 {
-        3
-    } else if width >= 344.0 {
-        2
-    } else {
-        1
-    }
 }
 
 fn draw_text(
@@ -3487,19 +2454,19 @@ mod tests {
     }
 
     /// **With Koru Cloud hidden the first run has no account choice**
-    /// (koru-features): it opens on the local Profile form — where *Use Koru
-    /// without an account* leads — with no *Back* to an entry screen, and an
-    /// account failure (which cannot be raised from here) still lands there.
+    /// (koru-features): it opens on the setup card — where *Use Koru without
+    /// an account* leads — with no *Back* to an entry screen, and an account
+    /// failure (which cannot be raised from here) still lands there.
     #[test]
-    fn without_cloud_the_first_run_starts_on_the_local_profile_form() {
+    fn without_cloud_the_first_run_starts_on_the_card() {
         koru_features::testing::with(koru_features::Features::ALL_OFF, || {
             let mut view = a_welcome_screen();
-            assert_eq!(view.screen, Screen::Profile);
+            assert_eq!(view.screen, Screen::Setup);
             assert!(!view.connect_account);
             assert!(!view.controls().contains(&Hit::Back));
             assert!(!view.controls().contains(&Hit::Secondary));
             view.account_failed("x");
-            assert_eq!(view.screen, Screen::Profile);
+            assert_eq!(view.screen, Screen::Setup);
         });
         assert_eq!(a_welcome_screen().screen, Screen::Entry);
     }
@@ -3548,11 +2515,11 @@ mod tests {
         }
         assert_eq!(view.screen, Screen::Entry);
 
-        // The one way in still leads to the local Profile form.
+        // The one way in still leads to the setup card.
         let offline = layout.offline;
         view.mouse_down(offline.x + offline.w * 0.5, offline.y + offline.h * 0.5);
         view.mouse_up();
-        assert_eq!(view.screen, Screen::Profile);
+        assert_eq!(view.screen, Screen::Setup);
     }
 
     /// **One submit, carrying both halves.** Which journey it turns out to be
@@ -3706,18 +2673,31 @@ mod tests {
         assert_eq!(layout.sidebar.w, 0.0);
         assert_eq!(layout.right.x, 0.0);
         assert_eq!(layout.heading.x, 0.0, "the column starts at the left edge");
-        view.show_profile();
-        assert_eq!(sidebar_count(&mut view), 0, "a form screen");
-        let content = view.content();
-        assert_eq!((content.x, content.y), (0.0, 0.0));
+        view.show_setup();
+        assert_eq!(sidebar_count(&mut view), 0, "the card");
+        let card = view
+            .setup_node_rect(super::setup::KEY_CARD)
+            .expect("the card");
+        assert_eq!((card.x, card.y), (0.0, 0.0));
     }
 
+    /// The card keeps the welcome sidebar beside it (Q-B) and lies wholly to
+    /// its right.
     #[test]
     fn a_form_screen_keeps_exactly_one_welcome_sidebar() {
         let mut view = OnboardingView::default();
         view.set_viewport(1000.0, 680.0);
-        view.show_profile();
+        view.show_setup();
         assert_eq!(sidebar_count(&mut view), 1);
+        let (sidebar, _) = welcome::split(1000.0, 680.0);
+        let card = view
+            .setup_node_rect(super::setup::KEY_CARD)
+            .expect("the card");
+        assert!(sidebar.w > 0.0);
+        assert!(
+            card.x >= sidebar.x + sidebar.w,
+            "{card:?} beside {sidebar:?}"
+        );
     }
 
     /// The two email fields are the welcome surface's content in the
@@ -3758,65 +2738,71 @@ mod tests {
         capture.finish().records
     }
 
-    /// The window's caption and a form's components are siblings, never nested
-    /// inside one another: the caption is window furniture that hangs under
-    /// the window root (nothing, in this view-level capture), and a card or
-    /// field answers directly to its screen.
+    /// The window's caption is window furniture that hangs under the window
+    /// root (nothing, in this view-level capture), never under the screen;
+    /// the card's floating panel and its element tree are the screen's, and
+    /// every component of the card nests inside the card.
     #[test]
     fn the_caption_and_every_form_component_are_siblings_under_their_screen() {
-        fn assert_siblings(records: &[koru_draw::inspect::Record], components: &[&str]) {
-            let screen_index = records
-                .iter()
-                .position(|r| r.kind == "screen")
-                .expect("the screen node is captured");
-            let caption = records
-                .iter()
-                .position(|r| r.name == "Caption")
-                .expect("the custom caption is captured");
-            assert_ne!(
-                records[caption].parent,
-                Some(screen_index),
-                "the caption is window furniture, not screen content"
-            );
-            for component in components {
-                let hits: Vec<usize> = records
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, r)| (r.name == *component).then_some(i))
-                    .collect();
-                assert!(!hits.is_empty(), "{component} is captured");
-                for i in hits {
-                    assert_eq!(
-                        records[i].parent,
-                        Some(screen_index),
-                        "{component} is a sibling under the screen, not nested in another component"
-                    );
+        fn within(records: &[koru_draw::inspect::Record], mut at: usize, ancestor: usize) -> bool {
+            while let Some(parent) = records[at].parent {
+                if parent == ancestor {
+                    return true;
                 }
+                at = parent;
             }
+            false
         }
 
         let mut view = OnboardingView::default();
         view.set_viewport(1000.0, 680.0);
         view.set_custom_caption(true);
-        view.show_profile();
-        assert_siblings(
-            &capture(&mut view),
-            &[
-                "NameField",
-                "PurposeCard",
-                "ProfileIcon",
-                "ProfileNameField",
-            ],
+        view.show_setup();
+        let records = capture(&mut view);
+        let screen = records
+            .iter()
+            .position(|r| r.kind == "screen")
+            .expect("the screen node is captured");
+        let caption = records
+            .iter()
+            .position(|r| r.name == "Caption")
+            .expect("the custom caption is captured");
+        assert!(
+            !within(&records, caption, screen),
+            "the caption is window furniture, not screen content"
         );
-
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        assert_eq!(view.screen, Screen::Workspace);
-        assert_siblings(
-            &capture(&mut view),
-            &["TemplateCard", "WorkspaceIcon", "WorkspaceNameField"],
+        let panel = records
+            .iter()
+            .position(|r| r.name == "FloatingPanel")
+            .expect("the card's panel");
+        assert!(within(&records, panel, screen));
+        let card = records
+            .iter()
+            .position(|r| r.name == super::setup::CARD)
+            .expect("the card's element");
+        assert!(
+            within(&records, card, panel),
+            "the card is inside its panel"
         );
+        for component in [
+            "NameField",
+            "ColorPickerRow",
+            "KoruAvatar",
+            "Workspace tile",
+        ] {
+            let hits: Vec<usize> = records
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| (r.name == component).then_some(i))
+                .collect();
+            assert!(!hits.is_empty(), "{component} is captured");
+            for i in hits {
+                assert!(
+                    within(&records, i, card),
+                    "{component} nests inside the card"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3844,9 +2830,8 @@ mod tests {
         view.activate_account_action(confirm);
         let submission = view.account_submission().unwrap();
         view.take_action();
-        view.show_profile();
-        view.owner_name
-            .set_text(&mut view.engine, "Retained A draft");
+        view.show_setup();
+        set_field(&mut view, Hit::Name, "Retained A draft");
         view.select_account_context(&b);
         assert_eq!(view.screen, Screen::Entry);
         assert!(
@@ -3858,7 +2843,7 @@ mod tests {
         assert_eq!(view.screen, Screen::Entry);
         assert_eq!(view.account_scope(), 2);
         view.select_account_context(&a);
-        assert_eq!(view.owner_name.raw_text(), "Retained A draft");
+        assert_eq!(field(&view, Hit::Name), "Retained A draft");
         assert_eq!(view.screen, Screen::AccountStatus);
         assert!(!view.creation_waiting);
         assert_eq!(view.account_submission(), Some(submission));
@@ -3871,7 +2856,7 @@ mod tests {
         let profile = koru_core::ProfileId::new();
         let retry = koru_agent_wire::AccountCommand::CreateProfile {
             profile_id: profile.to_storage(),
-            owner_display_name: "A".into(),
+            owner_display_name: Some("A".into()),
             name: "Saved Profile".into(),
             locale: Some("en".into()),
         };
@@ -3931,11 +2916,19 @@ mod tests {
         let mut view = OnboardingView::default();
         view.account_creation_required(&AccountState::default());
         view.activate_account_action(2);
-        assert_eq!(view.screen, Screen::Profile);
-        assert!(view.controls().contains(&Hit::ResumeAccount));
-        let resume = view.resume_account_rect();
+        assert_eq!(view.screen, Screen::Setup);
+        set_field(&mut view, Hit::Name, "Ana");
+        // After the primary and *Back*, in the card's reading order.
+        let controls = view.controls();
+        let at = |hit: Hit| controls.iter().position(|control| *control == hit);
+        assert!(at(Hit::ResumeAccount) > at(Hit::Back));
+        assert!(at(Hit::Back) > at(Hit::Primary));
+        assert!(at(Hit::Primary).is_some());
+        let resume = view
+            .setup_node_rect(super::setup::KEY_RESUME)
+            .expect("the frame's resume rectangle");
         assert_eq!(
-            view.hit(resume.x + 4.0, resume.y + 4.0),
+            view.hit(resume.centre().0, resume.centre().1),
             Some(Hit::ResumeAccount)
         );
         view.activate(Hit::ResumeAccount);
@@ -4011,75 +3004,129 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------- the setup card
+
+    use super::setup::{
+        KEY_BACK, KEY_CARD, KEY_COLORS, KEY_NAME, KEY_PRIMARY, KEY_RECOVERY, KEY_WORKSPACE_NAME,
+        swatch_geometry,
+    };
+    use koru_ui::ColorPickerRow;
+
+    /// The card, account-free, in a window sized like the real one.
+    fn card() -> OnboardingView {
+        let mut view = a_welcome_screen();
+        view.show_setup();
+        view
+    }
+
+    /// Put `text` in one of the card's two name fields.
+    fn set_field(view: &mut OnboardingView, hit: Hit, text: &str) {
+        let input = match hit {
+            Hit::Name => Rc::clone(&view.owner_name),
+            Hit::WorkspaceName => Rc::clone(&view.workspace_name),
+            other => panic!("{other:?} is not a name field"),
+        };
+        input.borrow_mut().set_text(&mut view.engine, text);
+    }
+
+    fn field(view: &OnboardingView, hit: Hit) -> String {
+        match hit {
+            Hit::Name => view.owner_name.borrow().raw_text().to_owned(),
+            Hit::WorkspaceName => view.workspace_name.borrow().raw_text().to_owned(),
+            other => panic!("{other:?} is not a name field"),
+        }
+    }
+
+    fn rect_of(view: &mut OnboardingView, key: koru_draw::el::Key) -> Rect {
+        view.setup_node_rect(key)
+            .unwrap_or_else(|| panic!("{key:?} is on the card"))
+    }
+
+    /// A press and its release at the middle of `rect`.
+    fn press(view: &mut OnboardingView, rect: Rect) -> bool {
+        let (x, y) = rect.centre();
+        let pressed = view.mouse_down(x, y);
+        view.mouse_up();
+        pressed
+    }
+
+    fn focus_on(view: &mut OnboardingView, hit: Hit) {
+        view.focus = view
+            .controls()
+            .iter()
+            .position(|control| *control == hit)
+            .unwrap_or_else(|| panic!("{hit:?} is a stop"));
+    }
+
+    fn named(view: &mut OnboardingView, key: NamedKey) -> bool {
+        view.key(&Key::Named(key), None, ModifiersState::empty())
+    }
+
+    fn typed(view: &mut OnboardingView, text: &str) {
+        for character in text.chars() {
+            let value = character.to_string();
+            view.key(
+                &Key::Character(value.clone().into()),
+                Some(&value),
+                ModifiersState::empty(),
+            );
+        }
+    }
+
+    /// **The defaults a first workspace starts with** (D6): *Personal* in the
+    /// view's language, 🌱 on green — the fourth swatch — and the keyboard in
+    /// the empty name field.
     #[test]
-    fn purpose_marks_suggestions_without_reordering_templates() {
-        assert!(template_is_suggested(Some(Purpose::Work), 0));
-        assert!(template_is_suggested(Some(Purpose::Work), 1));
-        assert!(template_is_suggested(Some(Purpose::School), 2));
-        assert!(template_is_suggested(Some(Purpose::Personal), 3));
-        assert!(template_is_suggested(Some(Purpose::Personal), 4));
-        assert!(!template_is_suggested(Some(Purpose::Work), 2));
-        assert_eq!(TEMPLATES[0].key, "project");
-        assert_eq!(TEMPLATES[5].key, "empty");
-        assert_eq!(TEMPLATES[0].emoji, "🚀");
+    fn the_card_opens_with_personal_seedling_and_green() {
+        let view = card();
         assert_eq!(
-            TEMPLATES[5].description,
-            "One untitled document, nothing else"
+            view.workspace_name.borrow().value(),
+            koru_i18n::t(view.language, koru_i18n::Key::SetupWorkspaceDefaultName)
         );
+        assert_eq!(view.workspace_icon.as_deref(), Some("🌱"));
+        assert_eq!(view.workspace_color.as_deref(), Some("green"));
+        assert_eq!(view.selected_swatch(), Some(3));
+        assert_eq!(field(&view, Hit::Name), "");
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
+        assert!(!view.workspace_name_edited);
     }
 
+    /// **One name, sent twice, and no profile appearance** (D3): the trimmed
+    /// name is the owner's and the Profile's; the workspace leaves with what
+    /// the card seeded.
     #[test]
-    fn card_breakpoints_match_the_approved_appendix() {
-        assert_eq!(card_columns(528.0), 3);
-        assert_eq!(card_columns(527.0), 2);
-        assert_eq!(card_columns(344.0), 2);
-        assert_eq!(card_columns(343.0), 1);
-    }
-
-    #[test]
-    fn tab_moves_keyboard_focus_across_purpose_cards_without_changing_the_choice() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.activate(Hit::Purpose(Purpose::Work));
-        assert_eq!(view.purpose, Some(Purpose::Work));
-        view.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
-        view.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
+    fn the_card_submits_one_name_twice_and_no_profile_appearance() {
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "  Ana  ");
+        view.activate(Hit::Primary);
         assert_eq!(
-            view.controls().get(view.focus),
-            Some(&Hit::Purpose(Purpose::School))
-        );
-        assert_eq!(view.purpose, Some(Purpose::Work));
-        view.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
-        assert_eq!(view.purpose, Some(Purpose::School));
-    }
-
-    #[test]
-    fn a_typed_workspace_name_is_created_empty_without_a_card() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.workspace_name.set_text(&mut view.engine, "Notes");
-        assert!(view.controls().contains(&Hit::Primary));
-        view.activate(Hit::Primary);
-        assert!(matches!(
             view.take_action(),
-            Some(Action::CreateLocalProfile { template, .. }) if template == "empty"
-        ));
+            Some(Action::CreateLocalProfile {
+                id: view.local_creation_id,
+                owner_display_name: Some("Ana".into()),
+                name: "Ana".into(),
+                workspace_name: koru_i18n::t(
+                    view.language,
+                    koru_i18n::Key::SetupWorkspaceDefaultName
+                )
+                .into(),
+                template: "empty".into(),
+                workspace_icon: Some("🌱".into()),
+                workspace_color: Some("green".into()),
+                profile_icon: None,
+                profile_color: None,
+                connect_account: false,
+            })
+        );
     }
 
     #[test]
     fn a_creation_retry_preserves_identity_but_a_new_form_does_not() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.workspace_name.set_text(&mut view.engine, "Notes");
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
         view.activate(Hit::Primary);
         let Some(Action::CreateLocalProfile { id, .. }) = view.take_action() else {
-            panic!("complete form did not submit");
+            panic!("complete card did not submit");
         };
         view.creation_failed("response was lost");
         view.activate(Hit::Primary);
@@ -4089,92 +3136,55 @@ mod tests {
         assert_ne!(id, OnboardingView::default().local_creation_id);
     }
 
+    /// The primary is out of reach — not a stop, not a target, not an action
+    /// — until both names hold a non-space character (§9).
     #[test]
-    fn the_empty_template_constant_names_the_empty_card() {
-        assert_eq!(TEMPLATES[EMPTY_TEMPLATE].key, "empty");
-    }
-
-    #[test]
-    fn tab_moves_keyboard_focus_across_workspace_cards_without_changing_the_choice() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Steven");
-        view.activate(Hit::Purpose(Purpose::Personal));
-        view.activate(Hit::Primary);
-        assert_eq!(view.template, None);
-        view.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
-        view.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
-        view.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
-        assert_eq!(view.controls().get(view.focus), Some(&Hit::Template(1)));
-        assert_eq!(view.template, None);
-        view.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
-        assert_eq!(view.template, Some(1));
-    }
-
-    #[test]
-    fn offline_creation_requires_name_and_purpose() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        assert!(!view.controls().contains(&Hit::Primary));
-        let next = view.button("Continue", 64.0);
-        assert!(!view.mouse_down(next.x + 4.0, next.y + 4.0));
-        view.activate(Hit::Primary);
-        assert_eq!(view.take_action(), None);
-        view.owner_name.set_text(&mut view.engine, "Steven");
-        assert!(!view.controls().contains(&Hit::Primary));
-        view.activate(Hit::Purpose(Purpose::Personal));
+    fn the_primary_waits_for_both_names_with_a_non_space_character() {
+        let mut view = card();
+        let primary = rect_of(&mut view, KEY_PRIMARY);
+        let absent = |view: &mut OnboardingView| {
+            assert!(!view.controls().contains(&Hit::Primary));
+            assert!(!press(view, primary), "a press on the inert primary");
+            view.activate(Hit::Primary);
+            assert_eq!(view.take_action(), None);
+        };
+        absent(&mut view);
+        set_field(&mut view, Hit::Name, "   ");
+        absent(&mut view);
+        set_field(&mut view, Hit::Name, "Ana");
+        set_field(&mut view, Hit::WorkspaceName, "  ");
+        absent(&mut view);
+        set_field(&mut view, Hit::WorkspaceName, "Notes");
         assert!(view.controls().contains(&Hit::Primary));
         view.activate(Hit::Primary);
-        assert_eq!(view.screen, Screen::Workspace);
+        assert!(matches!(
+            view.take_action(),
+            Some(Action::CreateLocalProfile { workspace_name, .. }) if workspace_name == "Notes"
+        ));
     }
 
+    /// *Back* sits under the primary, returns to the welcome screen, and the
+    /// card comes back as it was left (F2).
     #[test]
-    fn a_typed_profile_name_continues_without_a_purpose_card() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Steven");
-        view.profile_name
-            .set_text(&mut view.engine, "Design Updates");
-        view.profile_name_edited = true;
-        assert!(view.purpose.is_none());
-        assert!(view.controls().contains(&Hit::Primary));
-        view.activate(Hit::Primary);
-        assert_eq!(view.screen, Screen::Workspace);
-    }
-
-    #[test]
-    fn profile_back_returns_to_welcome_and_sits_beside_the_primary_action() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        let (primary, back) = view.form_action_buttons("Continue");
-
-        assert_eq!(back.y, primary.y);
-        assert!(back.x >= primary.x + primary.w + BUTTON_GAP);
-        assert!(view.mouse_down(back.x + back.w * 0.5, back.y + back.h * 0.5));
+    fn back_returns_to_welcome_keeping_what_was_typed() {
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
+        set_field(&mut view, Hit::WorkspaceName, "Notes");
+        view.activate(Hit::Swatch(0));
+        let primary = rect_of(&mut view, KEY_PRIMARY);
+        let back = rect_of(&mut view, KEY_BACK);
+        assert!(back.y >= primary.y + primary.h, "Back is under the primary");
+        assert!(press(&mut view, back));
         assert_eq!(view.screen, Screen::Entry);
+        view.show_setup();
+        assert_eq!(field(&view, Hit::Name), "Ana");
+        assert_eq!(field(&view, Hit::WorkspaceName), "Notes");
+        assert_eq!(view.workspace_color.as_deref(), Some("blue"));
     }
 
     #[test]
-    fn workspace_back_uses_the_same_horizontal_action_row() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Steven");
-        view.activate(Hit::Purpose(Purpose::Personal));
-        view.activate(Hit::Primary);
-        let (primary, back) = view.form_action_buttons("Create workspace");
-
-        assert_eq!(back.y, primary.y);
-        assert!(back.x >= primary.x + primary.w + BUTTON_GAP);
-        assert!(view.mouse_down(back.x + back.w * 0.5, back.y + back.h * 0.5));
-        assert_eq!(view.screen, Screen::Profile);
-        assert_eq!(view.owner_name.raw_text(), "Steven");
-        assert_eq!(view.purpose, Some(Purpose::Personal));
-    }
-
-    #[test]
-    fn profile_name_uses_shared_text_editing_for_shift_and_control_backspace() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
+    fn the_name_field_uses_shared_text_editing_for_shift_and_control_backspace() {
+        let mut view = card();
 
         assert!(view.key(
             &Key::Character("S".into()),
@@ -4188,259 +3198,106 @@ mod tests {
                 ModifiersState::empty()
             ));
         }
-        assert_eq!(view.owner_name.raw_text(), "Steven Example");
+        assert_eq!(field(&view, Hit::Name), "Steven Example");
 
         assert!(view.key(
             &Key::Named(NamedKey::Backspace),
             None,
             ModifiersState::CONTROL
         ));
-        assert_eq!(view.owner_name.raw_text(), "Steven ");
+        assert_eq!(field(&view, Hit::Name), "Steven ");
     }
 
+    /// The pointer path end to end: the name field at its frame rectangle, a
+    /// swatch at the component's cell rectangle, the primary.
     #[test]
-    fn selected_profile_form_continues_through_the_real_pointer_path() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Steven");
-        let c = view.content();
-        let (columns, card_h, pitch, top) = view.profile_card_metrics();
-        let card_w = (c.w - CARD_GAP * (columns - 1) as f32) / columns as f32;
-        let personal = Rect::new(
-            c.x + (2 % columns) as f32 * (card_w + CARD_GAP),
-            top + (2 / columns) as f32 * pitch,
-            card_w,
-            card_h,
-        );
-        assert!(view.mouse_down(personal.x + personal.w * 0.5, personal.y + personal.h * 0.5));
-        assert_eq!(view.purpose, Some(Purpose::Personal));
-
-        let next = view.form_action_buttons("Continue").0;
-        assert!(view.mouse_down(next.x + next.w * 0.5, next.y + next.h * 0.5));
-        assert_eq!(view.screen, Screen::Workspace);
-    }
-
-    #[test]
-    fn profile_appearance_modal_blocks_cards_under_its_blank_space() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.activate(Hit::ProfileAppearance);
-        let panel = view
-            .profile_appearance
-            .as_ref()
-            .expect("profile appearance")
-            .panel(view.viewport);
-
-        // This point is in the panel below the swatches and also in the
-        // Personal card. The floating panel owns it.
-        assert!(view.mouse_down(panel.x + panel.w - 8.0, panel.y + panel.h - 4.0));
-        assert_eq!(view.purpose, None);
-    }
-
-    #[test]
-    fn profile_appearance_is_explicit_and_leaves_with_the_creation_action() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::ProfileAppearance);
-        assert!(view.profile_appearance.is_some());
-        view.settle_profile_appearance(AppearanceOutcome::Save {
-            icon: Some("🧭".into()),
-            color: Some("purple".into()),
-        });
-        assert!(view.profile_appearance.is_none());
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.workspace_name.set_text(&mut view.engine, "Project");
-        view.activate(Hit::Template(0));
-        view.activate(Hit::Primary);
+    fn the_card_creates_through_the_real_pointer_path() {
+        let mut view = card();
+        let name = rect_of(&mut view, KEY_NAME);
+        assert!(press(&mut view, name));
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
+        typed(&mut view, "Steven");
+        let cells = swatch_geometry().wrapped_swatches(rect_of(&mut view, KEY_COLORS));
+        assert!(press(&mut view, cells[1]));
+        assert_eq!(view.workspace_color.as_deref(), Some("purple"));
+        let primary = rect_of(&mut view, KEY_PRIMARY);
+        assert!(press(&mut view, primary));
         assert!(matches!(
             view.take_action(),
-            Some(Action::CreateLocalProfile {
-                profile_icon: Some(icon),
-                profile_color: Some(color),
-                ..
-            }) if icon == "🧭" && color == "purple"
+            Some(Action::CreateLocalProfile { name, workspace_color: Some(color), .. })
+                if name == "Steven" && color == "purple"
         ));
     }
 
+    /// With the tile's picker open, a press inside the picker over a swatch
+    /// of the card belongs to the picker.
     #[test]
-    fn no_card_is_chosen_initially_and_typing_locks_the_template_choice() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-
-        assert_eq!(view.template, None);
-        assert_eq!(view.workspace_icon, None);
-        assert!(!view.controls().contains(&Hit::Primary));
-        assert!(view.controls().contains(&Hit::Template(1)));
-        let (columns, card_h, _, top) = view.workspace_card_metrics();
-        let content = view.content();
-        let card_w = (content.w - CARD_GAP * (columns - 1) as f32) / columns as f32;
-        let research = Rect::new(content.x + card_w + CARD_GAP, top, card_w, card_h);
-        assert_eq!(
-            view.workspace_hit(research.centre().0, research.centre().1),
-            Some(Hit::Template(1))
-        );
-        view.activate(Hit::Template(1));
-        assert_eq!(view.template, Some(1));
-        assert_eq!(view.workspace_name.value(), "Research");
-        view.activate(Hit::Template(2));
-        assert_eq!(view.workspace_name.value(), "Course");
-        assert!(view.key(
-            &Key::Character("A".into()),
-            Some("A"),
-            ModifiersState::empty()
-        ));
-        assert!(view.workspace_name_edited);
-        assert!(!view.controls().contains(&Hit::Template(1)));
-        assert_eq!(
-            view.workspace_hit(research.centre().0, research.centre().1),
-            None
-        );
-        view.activate(Hit::Template(1));
-        assert_eq!(view.template, Some(2));
-        assert_eq!(view.workspace_name.value(), "CourseA");
-        assert_eq!(view.workspace_icon.as_deref(), Some("📚"));
-    }
-
-    #[test]
-    fn deleting_the_workspace_name_hands_the_choice_back_to_the_cards() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.activate(Hit::Template(1));
-        assert_eq!(view.workspace_name.value(), "Research");
-
-        // A manual edit makes the text authoritative and locks the cards...
-        assert!(view.key(
-            &Key::Character("A".into()),
-            Some("A"),
-            ModifiersState::empty()
-        ));
-        assert!(view.workspace_name_edited);
-        assert!(!view.controls().contains(&Hit::Template(0)));
-
-        // ...until the text is gone: an empty field holds no authoritative
-        // text, so the cards become pickable again.
-        for _ in 0.."ResearchA".len() {
-            assert!(view.key(
-                &Key::Named(NamedKey::Backspace),
-                None,
-                ModifiersState::empty()
-            ));
-        }
-        assert!(view.workspace_name.is_empty());
-        assert!(!view.workspace_name_edited);
-        assert!(view.controls().contains(&Hit::Template(2)));
-        view.activate(Hit::Template(2));
-        assert_eq!(view.template, Some(2));
-        assert_eq!(view.workspace_name.value(), "Course");
-    }
-
-    #[test]
-    fn enter_on_the_name_field_submits_a_complete_form() {
-        let enter = |view: &mut OnboardingView| {
-            view.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty())
-        };
-
-        // Profile form: Enter on Profile name does nothing while a required
-        // field is missing, and advances once everything is filled.
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.focus = view
-            .controls()
+    fn the_appearance_panel_owns_pointer_hits_over_the_card() {
+        let mut view = card();
+        view.set_viewport(452.0, 640.0);
+        let cells = swatch_geometry().wrapped_swatches(rect_of(&mut view, KEY_COLORS));
+        view.activate(Hit::WorkspaceAppearance);
+        let panel = view
+            .workspace_appearance
+            .as_ref()
+            .expect("the tile opens the picker")
+            .panel(view.viewport);
+        let under = cells
             .iter()
-            .position(|hit| *hit == Hit::ProfileName)
-            .unwrap();
-        view.profile_name.set_text(&mut view.engine, "");
-        assert!(enter(&mut view));
-        assert_eq!(view.screen, Screen::Profile);
-        view.profile_name.set_text(&mut view.engine, "Ana's things");
-        assert!(enter(&mut view));
-        assert_eq!(view.screen, Screen::Workspace);
+            .find(|cell| panel.contains(cell.centre().0, cell.centre().1))
+            .copied()
+            .expect("a swatch under the picker");
+        let (x, y) = under.centre();
+        view.mouse_down(x, y);
+        view.mouse_up();
+        assert_eq!(view.workspace_color.as_deref(), Some("green"));
+    }
 
-        // Workspace form: Enter on Workspace name, after a template pick,
-        // finishes the same way the Create workspace button does.
-        assert_eq!(view.focus, 0, "the workspace name field starts focused");
-        view.activate(Hit::Template(0));
-        assert!(enter(&mut view));
-        assert_eq!(view.screen, Screen::Finishing);
+    /// Enter in either name field is the primary; with a name missing it
+    /// does nothing.
+    #[test]
+    fn enter_in_either_name_field_submits_a_complete_card() {
+        let mut view = card();
+        focus_on(&mut view, Hit::Name);
+        assert!(named(&mut view, NamedKey::Enter));
+        assert_eq!(view.take_action(), None, "no name yet");
+        assert!(!view.setup_finishing);
+        set_field(&mut view, Hit::Name, "Ana");
+        assert!(named(&mut view, NamedKey::Enter));
+        assert!(view.setup_finishing);
         assert!(matches!(
             view.take_action(),
             Some(Action::CreateLocalProfile { .. })
         ));
+
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
+        focus_on(&mut view, Hit::WorkspaceName);
+        assert!(named(&mut view, NamedKey::Enter));
+        assert!(matches!(
+            view.take_action(),
+            Some(Action::CreateLocalProfile { .. })
+        ));
+
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
+        set_field(&mut view, Hit::WorkspaceName, "");
+        focus_on(&mut view, Hit::WorkspaceName);
+        assert!(named(&mut view, NamedKey::Enter));
+        assert_eq!(view.take_action(), None, "no workspace name");
     }
 
-    #[test]
-    fn compact_workspace_layout_keeps_cards_name_and_actions_separate() {
-        let mut view = OnboardingView::default();
-        view.set_viewport(452.0, 640.0);
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.workspace_name.set_text(&mut view.engine, "Launch");
-
-        let (columns, card_h, pitch, top) = view.workspace_card_metrics();
-        let rows = TEMPLATES.len().div_ceil(columns);
-        let last_card_bottom = top + (rows - 1) as f32 * pitch + card_h;
-        let icon = view.workspace_icon_rect();
-        let name = view.workspace_name_rect();
-        let primary = view.form_action_buttons("Create workspace").0;
-
-        assert!(last_card_bottom < icon.y);
-        assert!(icon.x + icon.w < name.x);
-        assert!(name.y + name.h < primary.y);
-        assert!(primary.y + primary.h <= view.viewport.1);
-    }
-
-    #[test]
-    fn profile_purpose_cards_precede_the_derived_name_at_minimum_size() {
-        let mut view = OnboardingView::default();
-        view.set_viewport(452.0, 640.0);
-        view.show_profile();
-
-        let (columns, card_h, pitch, top) = view.profile_card_metrics();
-        let rows = 3_usize.div_ceil(columns);
-        let last_card_bottom = top + (rows - 1) as f32 * pitch + card_h;
-        let icon = view.profile_icon_rect();
-        let name = view.profile_name_rect();
-        let primary = view.form_action_buttons("Continue").0;
-
-        assert!(last_card_bottom < icon.y);
-        assert!(icon.x + icon.w < name.x);
-        assert!(name.y + name.h < primary.y);
-        assert_eq!(
-            view.controls()[1..4],
-            [
-                Hit::Purpose(Purpose::Work),
-                Hit::Purpose(Purpose::School),
-                Hit::Purpose(Purpose::Personal),
-            ]
-        );
-    }
-
+    /// A choice saved in the full picker leaves with the action, and "no
+    /// color" rings no swatch.
     #[test]
     fn appearance_choice_leaves_with_the_workspace_creation_action() {
-        let mut view = OnboardingView::default();
-        view.show_profile();
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.workspace_name.set_text(&mut view.engine, "Launch");
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
         view.settle_workspace_appearance(AppearanceOutcome::Save {
             icon: Some("🌊".into()),
             color: Some("blue".into()),
         });
         view.activate(Hit::Primary);
-
         assert!(matches!(
             view.take_action(),
             Some(Action::CreateLocalProfile {
@@ -4448,6 +3305,193 @@ mod tests {
                 workspace_color: Some(color),
                 ..
             }) if icon == "🌊" && color == "blue"
+        ));
+
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🌱".into()),
+            color: None,
+        });
+        assert_eq!(view.selected_swatch(), None, "no color rings no swatch");
+        view.activate(Hit::Primary);
+        assert!(matches!(
+            view.take_action(),
+            Some(Action::CreateLocalProfile {
+                workspace_color: None,
+                ..
+            })
+        ));
+    }
+
+    /// A swatch chooses with one press; the tile's picker reaches what the
+    /// row does not — "no color" — and the row follows it (D5).
+    #[test]
+    fn a_swatch_chooses_the_color_and_the_full_picker_can_choose_none() {
+        let mut view = card();
+        view.activate(Hit::Swatch(0));
+        assert_eq!(view.workspace_color.as_deref(), Some("blue"));
+        assert_eq!(view.selected_swatch(), Some(0));
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Swatch(0)));
+        view.activate(Hit::WorkspaceAppearance);
+        assert!(view.workspace_appearance.is_some());
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🌱".into()),
+            color: None,
+        });
+        assert!(view.workspace_appearance.is_none());
+        assert_eq!(view.workspace_color, None);
+        assert_eq!(view.selected_swatch(), None);
+        view.activate(Hit::Swatch(9));
+        assert_eq!(view.workspace_color.as_deref(), Some("stone"));
+    }
+
+    /// **The card's order, one stop a row** (TECHNICAL.final §12 item 3);
+    /// inside the swatch row the arrows move its cursor across lines and stop
+    /// at its ends; on the tile and the buttons they move the focus as on
+    /// every other screen.
+    #[test]
+    fn tab_visits_the_card_in_its_order_and_arrows_move_inside_the_swatch_row() {
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
+        let controls = view.controls();
+        assert_eq!(controls.len(), 6);
+        assert_eq!(
+            controls[..3],
+            [Hit::Name, Hit::WorkspaceAppearance, Hit::WorkspaceName]
+        );
+        assert!(matches!(controls[3], Hit::Swatch(_)));
+        assert_eq!(controls[4..], [Hit::Primary, Hit::Back]);
+
+        // On the tile and on the primary, the arrows move the focus.
+        focus_on(&mut view, Hit::WorkspaceAppearance);
+        named(&mut view, NamedKey::ArrowRight);
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::WorkspaceName));
+        focus_on(&mut view, Hit::WorkspaceAppearance);
+        named(&mut view, NamedKey::ArrowLeft);
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
+        focus_on(&mut view, Hit::Primary);
+        named(&mut view, NamedKey::ArrowRight);
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Back));
+        named(&mut view, NamedKey::ArrowLeft);
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Primary));
+
+        // A narrow card: four swatches a line, ten on three lines.
+        let mut view = OnboardingView::default();
+        view.set_embedded(true);
+        view.show_setup();
+        view.set_viewport(140.0, 900.0);
+        let row = rect_of(&mut view, KEY_COLORS);
+        assert_eq!(ColorPickerRow::columns(row.w), 4);
+        focus_on(&mut view, Hit::Name);
+        for _ in 0..3 {
+            named(&mut view, NamedKey::Tab);
+        }
+        let stop = view.focus;
+        // Entering the row puts the cursor on the chosen cell, green.
+        assert_eq!(view.controls().get(stop), Some(&Hit::Swatch(3)));
+        let mut step = |key: NamedKey, cursor: usize| {
+            assert!(named(&mut view, key), "{key:?} is consumed");
+            assert_eq!(view.focus, stop, "{key:?} left the row");
+            assert_eq!(view.swatch_cursor, cursor, "after {key:?}");
+            assert_eq!(
+                view.workspace_color.as_deref(),
+                Some("green"),
+                "{key:?} chose"
+            );
+        };
+        step(NamedKey::ArrowRight, 4); // across lines
+        step(NamedKey::ArrowLeft, 3);
+        step(NamedKey::ArrowDown, 7);
+        step(NamedKey::ArrowDown, 9); // to the shorter line's last cell
+        step(NamedKey::ArrowDown, 9); // the last line: nothing
+        step(NamedKey::ArrowRight, 9); // the last cell: nothing
+        step(NamedKey::ArrowUp, 5);
+        step(NamedKey::ArrowUp, 1);
+        step(NamedKey::ArrowUp, 1); // the first line: nothing
+        step(NamedKey::ArrowLeft, 0);
+        step(NamedKey::ArrowLeft, 0); // the first cell: nothing
+        // Enter chooses the cursor's cell, and so does Space.
+        assert!(named(&mut view, NamedKey::Enter));
+        assert_eq!(view.workspace_color.as_deref(), Some("blue"));
+        named(&mut view, NamedKey::ArrowRight);
+        assert!(named(&mut view, NamedKey::Space));
+        assert_eq!(view.workspace_color.as_deref(), Some("purple"));
+        // Tab leaves the row.
+        named(&mut view, NamedKey::Tab);
+        assert_ne!(view.focus, stop);
+    }
+
+    /// **Replacing the default**: while the workspace name is unedited, every
+    /// focus entry selects it whole — Tab, then a press — so a typed word
+    /// replaces *Personal*; once edited, a press places the caret.
+    #[test]
+    fn focusing_the_unedited_workspace_name_selects_it_so_typing_replaces_it() {
+        let mut view = card();
+        focus_on(&mut view, Hit::Name);
+        named(&mut view, NamedKey::Tab);
+        named(&mut view, NamedKey::Tab);
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::WorkspaceName));
+        assert!(view.workspace_name.borrow().has_selection());
+        typed(&mut view, "Work");
+        assert_eq!(field(&view, Hit::WorkspaceName), "Work");
+        assert!(view.workspace_name_edited);
+
+        let mut view = card();
+        let workspace = rect_of(&mut view, KEY_WORKSPACE_NAME);
+        assert!(press(&mut view, workspace));
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::WorkspaceName));
+        assert!(view.workspace_name.borrow().has_selection());
+        typed(&mut view, "Home");
+        assert_eq!(field(&view, Hit::WorkspaceName), "Home");
+        // Edited: a press is a caret, not a selection.
+        assert!(press(&mut view, workspace));
+        assert!(!view.workspace_name.borrow().has_selection());
+        typed(&mut view, "x");
+        let text = field(&view, Hit::WorkspaceName);
+        assert_eq!(text.chars().count(), 5, "{text}");
+        assert!(text.contains('x'));
+    }
+
+    /// **Finishing is a state of the card**: nothing to press, nothing under
+    /// the pointer, no typing; a refused creation brings the card back with
+    /// the reason and the same id (F5).
+    #[test]
+    fn finishing_disables_the_card_and_a_failure_brings_it_back_with_the_same_id() {
+        let mut view = card();
+        set_field(&mut view, Hit::Name, "Ana");
+        let name = rect_of(&mut view, KEY_NAME);
+        let primary = rect_of(&mut view, KEY_PRIMARY);
+        view.activate(Hit::Primary);
+        let Some(Action::CreateLocalProfile { id, .. }) = view.take_action() else {
+            panic!("the card did not submit");
+        };
+        assert!(view.setup_finishing);
+        assert!(view.controls().is_empty());
+        assert_eq!(view.hit(name.centre().0, name.centre().1), None);
+        assert_eq!(view.hit(primary.centre().0, primary.centre().1), None);
+        assert!(!press(&mut view, name));
+        typed(&mut view, "x");
+        assert_eq!(field(&view, Hit::Name), "Ana");
+        assert_eq!(
+            view.setup_primary_label(),
+            koru_i18n::t(view.language, koru_i18n::Key::SetupFinishing)
+        );
+        assert!(rect_of(&mut view, KEY_CARD).w > 0.0);
+        assert!(
+            view.setup_node_rect(KEY_BACK).is_none(),
+            "no Back while finishing"
+        );
+
+        view.creation_failed("The Store refused the write");
+        assert!(!view.setup_finishing);
+        assert_eq!(view.screen, Screen::Setup);
+        assert_eq!(view.error.as_deref(), Some("The Store refused the write"));
+        assert!(view.controls().contains(&Hit::Primary));
+        view.activate(Hit::Primary);
+        assert!(matches!(
+            view.take_action(),
+            Some(Action::CreateLocalProfile { id: retry, .. }) if retry == id
         ));
     }
 
@@ -4486,30 +3530,30 @@ mod tests {
         assert_eq!(view.hit(30.0, theme::CAPTION_H + 16.0), None);
     }
 
+    /// The connected first-run card sends its one name as both names, and
+    /// connects; the account's name is set from it, as D3 means it to be.
     #[test]
     fn reused_connected_form_emits_only_a_connected_typed_draft() {
         let mut view = OnboardingView::default();
         view.begin_connected_profile_creation();
-        view.owner_name
-            .set_text(&mut view.engine, "New account Profile");
-        view.activate(Hit::Purpose(Purpose::Work));
-        view.activate(Hit::Primary);
-        view.workspace_name
-            .set_text(&mut view.engine, "New account Workspace");
-        view.template = Some(0);
+        set_field(&mut view, Hit::Name, "New account Profile");
         view.activate(Hit::Primary);
 
         assert_eq!(
             view.take_action(),
             Some(Action::CreateLocalProfile {
                 id: view.local_creation_id,
-                owner_display_name: "New account Profile".into(),
-                name: "New account Profile (Work)".into(),
-                workspace_name: "New account Workspace".into(),
-                template: "project".into(),
-                workspace_icon: None,
-                workspace_color: None,
-                profile_icon: Some("💼".into()),
+                owner_display_name: Some("New account Profile".into()),
+                name: "New account Profile".into(),
+                workspace_name: koru_i18n::t(
+                    view.language,
+                    koru_i18n::Key::SetupWorkspaceDefaultName
+                )
+                .into(),
+                template: "empty".into(),
+                workspace_icon: Some("🌱".into()),
+                workspace_color: Some("green".into()),
+                profile_icon: None,
                 profile_color: None,
                 connect_account: true,
             })
@@ -4564,20 +3608,22 @@ mod tests {
         )
     }
 
-    /// `NeedsProfile` recovery (root-catalog §6.3): offered from the Profile
-    /// form only while the host found something, restores by the exact
-    /// batch, and never from an embedded form.
+    /// `NeedsProfile` recovery (root-catalog §6.3): offered from the card only
+    /// while the host found something, restores by the exact batch, and
+    /// never from an embedded card.
     #[test]
     fn recovery_is_offered_only_with_something_to_recover_and_restores_by_batch() {
         let mut view = OnboardingView::default();
-        view.show_profile();
+        view.show_setup();
         assert!(!view.controls().contains(&Hit::Recovery));
+        assert!(view.setup_node_rect(KEY_RECOVERY).is_none());
         let (deleted, unassigned) = recoverable();
         view.show_recovery(vec![deleted.clone()], vec![unassigned]);
         assert!(view.controls().contains(&Hit::Recovery));
-        let link = view.recovery_link_rect();
+        // A wrapping link on the card, at its frame rectangle.
+        let link = rect_of(&mut view, KEY_RECOVERY);
         assert_eq!(
-            view.hit(link.x + link.w * 0.5, link.y + link.h * 0.5),
+            view.hit(link.centre().0, link.centre().1),
             Some(Hit::Recovery)
         );
         view.activate(Hit::Recovery);
@@ -4611,14 +3657,14 @@ mod tests {
         assert_eq!(view.screen, Screen::Recovery);
         assert_eq!(view.error.as_deref(), Some("refused"));
         view.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty());
-        assert_eq!(view.screen, Screen::Profile);
+        assert_eq!(view.screen, Screen::Setup);
         // Nothing left to recover: the offer is withdrawn.
         view.show_recovery(Vec::new(), Vec::new());
         assert!(!view.controls().contains(&Hit::Recovery));
 
         let mut embedded = OnboardingView::default();
         embedded.set_embedded(true);
-        embedded.show_profile();
+        embedded.show_setup();
         let (deleted, unassigned) = recoverable();
         embedded.show_recovery(vec![deleted], vec![unassigned]);
         assert!(
@@ -4634,7 +3680,7 @@ mod tests {
     fn the_recovery_screen_publishes_its_rows_and_routes_a_click_to_the_restore() {
         use crate::accessibility::{ControlPart, Occurrence, ViewSlot, WindowSlot};
         let mut view = OnboardingView::default();
-        view.show_profile();
+        view.show_setup();
         let (deleted, unassigned) = recoverable();
         view.show_recovery(vec![deleted.clone()], vec![unassigned.clone()]);
         view.activate(Hit::Recovery);
@@ -4839,47 +3885,141 @@ mod tests {
         let mut view = OnboardingView::default();
         view.show_account_profile_choices("Steven", Vec::new());
 
-        assert_eq!(view.screen, Screen::Profile);
+        assert_eq!(view.screen, Screen::Setup);
         assert!(view.connect_account);
-        assert_eq!(view.owner_name.value(), "Steven");
+        // First run still pre-fills from the account (D6).
+        assert_eq!(view.owner_name.borrow().value(), "Steven");
     }
 
+    /// **Connected pre-fill** (§5): the account's name fills the card's
+    /// field under the default *You* label — unless the person is keeping a
+    /// local card they already typed into.
     #[test]
-    fn purpose_prefills_profile_name_until_the_person_edits_it() {
+    fn the_account_name_fills_the_card_unless_a_local_form_is_kept() {
         let mut view = OnboardingView::default();
+        assert_eq!(view.owner_label, SetupOwnerLabel::You);
         view.show_account_profile_choices("Steven", Vec::new());
+        assert_eq!(view.screen, Screen::Setup);
+        assert_eq!(field(&view, Hit::Name), "Steven");
 
-        view.activate(Hit::Purpose(Purpose::Work));
-        assert_eq!(view.profile_name.value(), "Steven (Work)");
-        view.activate(Hit::ProfileName);
-        assert!(view.key(&Key::Character("a".into()), None, ModifiersState::CONTROL));
-        assert!(view.key(
-            &Key::Character("Custom Profile".into()),
-            Some("Custom Profile"),
-            ModifiersState::empty()
-        ));
-        assert!(view.profile_name_edited);
-
-        view.activate(Hit::Purpose(Purpose::School));
-        assert_eq!(view.profile_name.value(), "Custom Profile");
+        let row = || AccountProfileRow {
+            koru_identity_id: "00000000-0000-4000-8000-000000000099".into(),
+            profile_id: "10000000-0000-4000-8000-000000000001".into(),
+            name: Some("Steven".into()),
+            locale: Some("en".into()),
+            auth_identities: Vec::new(),
+        };
+        let mut kept = OnboardingView::default();
+        kept.show_account_profiles(vec![row()]);
+        kept.activate(Hit::ContinueOffline);
+        assert_eq!(kept.screen, Screen::Setup);
+        set_field(&mut kept, Hit::Name, "Mine");
+        kept.show_account_profile_choices(
+            "Someone else",
+            vec![AccountProfileChoice {
+                profile: row(),
+                available_on_this_device: false,
+                available_on_another_device: true,
+            }],
+        );
+        assert_eq!(kept.screen, Screen::Setup);
+        assert_eq!(field(&kept, Hit::Name), "Mine");
     }
 
+    /// **The host supplies the first label** (D8): *You* and *Your name* by
+    /// default; *Profile* and *Profile name* once Manage says so; and a form
+    /// swapped in for another account keeps what the host said.
+    #[test]
+    fn the_host_supplies_the_first_label() {
+        use crate::accessibility::{Slots, ViewSlot, WindowSlot};
+        fn labels(view: &mut OnboardingView) -> (String, String) {
+            let mut slots = Slots::default();
+            let (window, slot): (WindowSlot, ViewSlot) = (slots.window(), slots.view());
+            let tree = view.accessibility_semantics(window, slot);
+            let you = tree[0]
+                .children
+                .iter()
+                .find(|node| node.occurrence.part == accessibility::parts::YOU)
+                .expect("the first group");
+            (
+                you.label.clone().unwrap_or_default(),
+                you.children[0].label.clone().unwrap_or_default(),
+            )
+        }
+        let mut view = card();
+        let lang = view.language;
+        assert_eq!(
+            labels(&mut view),
+            (
+                koru_i18n::t(lang, koru_i18n::Key::SetupYouLabel).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::SetupNamePlaceholder).to_owned()
+            )
+        );
+        view.set_owner_label(SetupOwnerLabel::Profile);
+        assert_eq!(
+            labels(&mut view),
+            (
+                koru_i18n::t(lang, koru_i18n::Key::SetupProfileLabel).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::A11yFirstRunProfileName).to_owned()
+            )
+        );
+        assert!(view.select_account_context(&AccountState {
+            active_scope: 9,
+            ..Default::default()
+        }));
+        assert_eq!(view.owner_label, SetupOwnerLabel::Profile);
+    }
+
+    /// **Manage → New profile never renames the account** (Q-A, Q-G): under
+    /// *Profile* the account's name does not fill the field, and the card
+    /// sends no owner name, signed in or out — the primary there as soon as
+    /// both names are filled, with no account answer awaited.
+    #[test]
+    fn an_embedded_card_does_not_rename_the_account_owner() {
+        for connect in [true, false] {
+            let mut view = OnboardingView::default();
+            view.set_embedded(true);
+            view.set_owner_label(SetupOwnerLabel::Profile);
+            view.show_account_profile_choices("Steven", Vec::new());
+            assert_eq!(view.screen, Screen::Setup);
+            assert_eq!(field(&view, Hit::Name), "", "not filled from the account");
+            if !connect {
+                view.show_setup();
+            }
+            assert_eq!(view.connect_account, connect);
+            focus_on(&mut view, Hit::Name);
+            typed(&mut view, "Work");
+            assert!(view.controls().contains(&Hit::Primary));
+            view.activate(Hit::Primary);
+            assert!(matches!(
+                view.take_action(),
+                Some(Action::CreateLocalProfile {
+                    owner_display_name: None,
+                    ref name,
+                    connect_account,
+                    ..
+                }) if name == "Work" && connect_account == connect
+            ));
+        }
+    }
+
+    /// The welcome screen's choices are buffered as telemetry; nothing on the
+    /// card — typing, a swatch, the tile — is.
     #[test]
     fn first_run_choices_are_buffered_as_closed_telemetry_categories() {
         let mut view = OnboardingView::default();
         view.activate(Hit::Secondary);
         view.account_cancelled();
         view.activate(Hit::Primary);
-        view.owner_name.set_text(&mut view.engine, "Ana");
-        view.activate(Hit::Purpose(Purpose::Personal));
+        assert_eq!(view.screen, Screen::Setup);
+        typed(&mut view, "Ana");
+        view.activate(Hit::Swatch(1));
+        view.activate(Hit::WorkspaceAppearance);
+        view.settle_workspace_appearance(AppearanceOutcome::Cancel);
 
         assert_eq!(
             view.take_telemetry(),
-            vec![
-                Telemetry::EntryGoogle,
-                Telemetry::EntryOffline,
-                Telemetry::ProfilePurpose(Purpose::Personal),
-            ]
+            vec![Telemetry::EntryGoogle, Telemetry::EntryOffline]
         );
     }
 
@@ -5046,7 +4186,7 @@ mod tests {
             auth_identities: Vec::new(),
         }]);
         view.activate(Hit::ContinueOffline);
-        assert_eq!(view.screen, Screen::Profile);
+        assert_eq!(view.screen, Screen::Setup);
         assert_eq!(view.take_action(), None);
     }
     #[test]

@@ -234,7 +234,12 @@ use serde::{Deserialize, Serialize};
 /// this device's settings, blocked by a ceiling mismatch, or held by the
 /// peer for privacy — read from the daemon's receipts and admissions. Ids
 /// and states only; the window words it.
-pub const PROTOCOL_VERSION: u32 = 46;
+/// 47 lets `AccountCommand::CreateProfile` carry no owner name; the agent
+/// then does not update the account's display name (welcome step 1, Q-G: a
+/// Profile created from Manage never renames the account). A 46 agent cannot
+/// read a `CreateProfile` without `owner_display_name`; the handshake refuses
+/// it.
+pub const PROTOCOL_VERSION: u32 = 47;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -1286,7 +1291,13 @@ pub enum AccountCommand {
     ListProfileChoices,
     CreateProfile {
         profile_id: String,
-        owner_display_name: String,
+        /// The account owner's display name, set on the account before the
+        /// hosted Profile is created. **`None` leaves the account's name as
+        /// it is**: a Profile created from Manage → New profile names only
+        /// itself, so a second Profile never renames the person (protocol
+        /// 47). First run sends the one typed name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_display_name: Option<String>,
         name: String,
         locale: Option<String>,
     },

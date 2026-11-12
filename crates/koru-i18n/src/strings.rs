@@ -3223,13 +3223,48 @@ pub enum Key {
     ProfileWaitRateLimited,
     ProfileWaitCredential,
     ProfileLeaveRemovedFailed,
+    // ---- The first-run setup card (welcome step 1). One card in place of
+    // the two-step form: a name, a first workspace, its color.
+    /// The card's title, first run only.
+    SetupTitle,
+    /// The line under the title: where the two things live.
+    SetupLead,
+    /// The first label on first run: the person's own name.
+    SetupYouLabel,
+    /// The first label in Manage → New profile, where the field names only
+    /// the new Profile.
+    SetupProfileLabel,
+    /// The name field's placeholder and accessible name on first run.
+    SetupNamePlaceholder,
+    SetupWorkspaceLabel,
+    /// What the first workspace is called until the person names it. Not
+    /// `DefaultWorkspaceName` (*My Workspace*), which is a different string.
+    SetupWorkspaceDefaultName,
+    /// The swatch row's accessible name.
+    SetupColorRow,
+    SetupStart,
+    /// The primary while the Profile and workspace are being created.
+    SetupFinishing,
+    /// The connected first run's note: where the Profile and content live.
+    SetupConnectedNote,
+    /// The ten named workspace colors, as a screen reader says a swatch.
+    WorkspaceColorBlue,
+    WorkspaceColorPurple,
+    WorkspaceColorTeal,
+    WorkspaceColorGreen,
+    WorkspaceColorOlive,
+    WorkspaceColorOrange,
+    WorkspaceColorRed,
+    WorkspaceColorMagenta,
+    WorkspaceColorSlate,
+    WorkspaceColorStone,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2253] = [
+    pub const ALL: [Key; 2274] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5483,6 +5518,27 @@ impl Key {
         Key::ProfileWaitRateLimited,
         Key::ProfileWaitCredential,
         Key::ProfileLeaveRemovedFailed,
+        Key::SetupTitle,
+        Key::SetupLead,
+        Key::SetupYouLabel,
+        Key::SetupProfileLabel,
+        Key::SetupNamePlaceholder,
+        Key::SetupWorkspaceLabel,
+        Key::SetupWorkspaceDefaultName,
+        Key::SetupColorRow,
+        Key::SetupStart,
+        Key::SetupFinishing,
+        Key::SetupConnectedNote,
+        Key::WorkspaceColorBlue,
+        Key::WorkspaceColorPurple,
+        Key::WorkspaceColorTeal,
+        Key::WorkspaceColorGreen,
+        Key::WorkspaceColorOlive,
+        Key::WorkspaceColorOrange,
+        Key::WorkspaceColorRed,
+        Key::WorkspaceColorMagenta,
+        Key::WorkspaceColorSlate,
+        Key::WorkspaceColorStone,
     ];
 }
 
@@ -16904,4 +16960,26 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ProfileWaitRateLimited, en: "Koru Cloud is limiting requests. Please wait before trying again.", es: "Koru Cloud está limitando las solicitudes. Espera antes de volver a intentarlo.", pt_br: "O Koru Cloud está limitando as solicitações. Aguarde antes de tentar novamente.", de: "Koru Cloud begrenzt Anfragen. Warte vor einem erneuten Versuch.", fr: "Koru Cloud limite les demandes. Patientez avant de réessayer.", ar: "يحدّ Koru Cloud من الطلبات. يُرجى الانتظار قبل المحاولة مجددًا.", zh_hans: "Koru Cloud 正在限制请求。请稍候再试。", ja: "Koru Cloud がリクエストを制限しています。しばらく待ってから再試行してください。" },
     Row { key: Key::ProfileWaitCredential, en: "Koru needs to renew this workspace’s Cloud connection.", es: "Koru necesita renovar la conexión a la nube de este espacio de trabajo.", pt_br: "O Koru precisa renovar a conexão deste espaço de trabalho com a nuvem.", de: "Koru muss die Cloud-Verbindung dieses Arbeitsbereichs erneuern.", fr: "Koru doit renouveler la connexion cloud de cet espace de travail.", ar: "يحتاج Koru إلى تجديد اتصال مساحة العمل هذه بالسحابة.", zh_hans: "Koru 需要续期此工作区的云连接。", ja: "このワークスペースのクラウド接続を更新する必要があります。" },
     Row { key: Key::ProfileLeaveRemovedFailed, en: "Couldn't leave the removed workspace", es: "No se pudo salir del espacio de trabajo eliminado", pt_br: "Não foi possível sair do espaço de trabalho removido", de: "Der entfernte Arbeitsbereich konnte nicht verlassen werden", fr: "Impossible de quitter l’espace de travail supprimé", ar: "تعذّر مغادرة مساحة العمل المُزالة", zh_hans: "无法离开已移除的工作区", ja: "削除されたワークスペースから移動できませんでした" },
+    // ------------------------------------------- the first-run setup card
+    Row { key: Key::SetupTitle, en: "Set up your profile and workspace", es: "Configura tu perfil y tu espacio de trabajo", pt_br: "Configure seu perfil e seu espaço de trabalho", de: "Profil und Arbeitsbereich einrichten", fr: "Configurez votre profil et votre espace de travail", ar: "إعداد ملفك الشخصي ومساحة عملك", zh_hans: "设置你的个人资料和工作区", ja: "プロフィールとワークスペースを設定" },
+    Row { key: Key::SetupLead, en: "Both live on this computer, and you can change them later.", es: "Ambos se guardan en este equipo y puedes cambiarlos más adelante.", pt_br: "Os dois ficam neste computador, e você pode alterá-los depois.", de: "Beides bleibt auf diesem Computer und lässt sich später ändern.", fr: "Les deux restent sur cet ordinateur, et vous pourrez les modifier plus tard.", ar: "يُحفظ كلاهما على هذا الكمبيوتر، ويمكنك تغييرهما لاحقًا.", zh_hans: "两者都保存在这台电脑上，之后可以随时更改。", ja: "どちらもこのコンピューターに保存され、あとから変更できます。" },
+    Row { key: Key::SetupYouLabel, en: "You", es: "Tú", pt_br: "Você", de: "Sie", fr: "Vous", ar: "أنت", zh_hans: "你", ja: "あなた" },
+    Row { key: Key::SetupProfileLabel, en: "Profile", es: "Perfil", pt_br: "Perfil", de: "Profil", fr: "Profil", ar: "الملف الشخصي", zh_hans: "个人资料", ja: "プロフィール" },
+    Row { key: Key::SetupNamePlaceholder, en: "Your name", es: "Tu nombre", pt_br: "Seu nome", de: "Ihr Name", fr: "Votre nom", ar: "اسمك", zh_hans: "你的名字", ja: "お名前" },
+    Row { key: Key::SetupWorkspaceLabel, en: "First workspace", es: "Primer espacio de trabajo", pt_br: "Primeiro espaço de trabalho", de: "Erster Arbeitsbereich", fr: "Premier espace de travail", ar: "مساحة العمل الأولى", zh_hans: "第一个工作区", ja: "最初のワークスペース" },
+    Row { key: Key::SetupWorkspaceDefaultName, en: "Personal", es: "Personal", pt_br: "Pessoal", de: "Persönlich", fr: "Personnel", ar: "شخصي", zh_hans: "个人", ja: "プライベート" },
+    Row { key: Key::SetupColorRow, en: "Workspace color", es: "Color del espacio de trabajo", pt_br: "Cor do espaço de trabalho", de: "Farbe des Arbeitsbereichs", fr: "Couleur de l'espace de travail", ar: "لون مساحة العمل", zh_hans: "工作区颜色", ja: "ワークスペースの色" },
+    Row { key: Key::SetupStart, en: "Start using Koru", es: "Empezar a usar Koru", pt_br: "Começar a usar o Koru", de: "Mit Koru loslegen", fr: "Commencer à utiliser Koru", ar: "ابدأ استخدام Koru", zh_hans: "开始使用 Koru", ja: "Koru を使い始める" },
+    Row { key: Key::SetupFinishing, en: "Finishing…", es: "Terminando…", pt_br: "Finalizando…", de: "Wird abgeschlossen…", fr: "Finalisation…", ar: "جارٍ الإنهاء…", zh_hans: "正在完成…", ja: "完了処理中…" },
+    Row { key: Key::SetupConnectedNote, en: "Your Profile and content stay on your devices. Your Koru account only helps connect them.", es: "Tu perfil y tu contenido se quedan en tus dispositivos. Tu cuenta de Koru solo ayuda a conectarlos.", pt_br: "Seu perfil e seu conteúdo ficam nos seus dispositivos. Sua conta Koru só ajuda a conectá-los.", de: "Ihr Profil und Ihre Inhalte bleiben auf Ihren Geräten. Ihr Koru-Konto hilft nur dabei, sie zu verbinden.", fr: "Votre profil et votre contenu restent sur vos appareils. Votre compte Koru sert uniquement à les relier.", ar: "يبقى ملفك الشخصي ومحتواك على أجهزتك. يساعد حساب Koru فقط في ربطها.", zh_hans: "你的个人资料和内容保存在你的设备上。Koru 账户只用于连接它们。", ja: "プロフィールとコンテンツはお使いのデバイスに保存されます。Koru アカウントはそれらをつなぐためだけに使われます。" },
+    Row { key: Key::WorkspaceColorBlue, en: "Blue", es: "Azul", pt_br: "Azul", de: "Blau", fr: "Bleu", ar: "أزرق", zh_hans: "蓝色", ja: "青" },
+    Row { key: Key::WorkspaceColorPurple, en: "Purple", es: "Morado", pt_br: "Roxo", de: "Lila", fr: "Violet", ar: "بنفسجي", zh_hans: "紫色", ja: "紫" },
+    Row { key: Key::WorkspaceColorTeal, en: "Teal", es: "Verde azulado", pt_br: "Verde-azulado", de: "Petrol", fr: "Bleu canard", ar: "أخضر مزرق", zh_hans: "蓝绿色", ja: "ティール" },
+    Row { key: Key::WorkspaceColorGreen, en: "Green", es: "Verde", pt_br: "Verde", de: "Grün", fr: "Vert", ar: "أخضر", zh_hans: "绿色", ja: "緑" },
+    Row { key: Key::WorkspaceColorOlive, en: "Olive", es: "Oliva", pt_br: "Oliva", de: "Oliv", fr: "Olive", ar: "زيتوني", zh_hans: "橄榄色", ja: "オリーブ" },
+    Row { key: Key::WorkspaceColorOrange, en: "Orange", es: "Naranja", pt_br: "Laranja", de: "Orange", fr: "Orange", ar: "برتقالي", zh_hans: "橙色", ja: "オレンジ" },
+    Row { key: Key::WorkspaceColorRed, en: "Red", es: "Rojo", pt_br: "Vermelho", de: "Rot", fr: "Rouge", ar: "أحمر", zh_hans: "红色", ja: "赤" },
+    Row { key: Key::WorkspaceColorMagenta, en: "Magenta", es: "Magenta", pt_br: "Magenta", de: "Magenta", fr: "Magenta", ar: "ماجنتا", zh_hans: "洋红色", ja: "マゼンタ" },
+    Row { key: Key::WorkspaceColorSlate, en: "Slate", es: "Pizarra", pt_br: "Ardósia", de: "Schiefer", fr: "Ardoise", ar: "رمادي أردوازي", zh_hans: "石板灰", ja: "スレート" },
+    Row { key: Key::WorkspaceColorStone, en: "Stone", es: "Piedra", pt_br: "Pedra", de: "Stein", fr: "Pierre", ar: "حجري", zh_hans: "岩石灰", ja: "ストーン" },
 ];

@@ -26,6 +26,7 @@
 //! question is whether it has state or is a function of its arguments. See
 //! `README.md` in both crates.
 
+pub mod avatar;
 pub mod badge;
 pub mod button;
 pub mod button_group;
@@ -86,6 +87,7 @@ pub mod tooltip;
 mod typography;
 pub mod welcome;
 
+pub use avatar::KoruAvatar;
 pub use badge::NumericBadge;
 pub use button::{ActionButton, ActionStyle, ButtonRole, draw_button};
 pub use card::{Card, CardRow};

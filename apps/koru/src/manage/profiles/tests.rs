@@ -289,6 +289,54 @@ fn embedded_welcome_links_leave_manage_profiles_as_typed_uri_requests() {
     assert_eq!(c.take_uri_request(), Some(koru_ui::welcome::TERMS_URL));
 }
 
+/// **Manage → New profile names only the new Profile** (welcome Q-A, Q-G):
+/// the account's display name arriving with its Profile choices does not fill
+/// the card's *Profile* field, and the draft a typed *Work* leaves with sends
+/// no owner name, so the account is never renamed.
+#[test]
+fn account_choices_do_not_prefill_the_manage_profile_field() {
+    use koru_workspace_host::accessibility::{ControlPart, Slots};
+    let mut c = ProfilesController::new();
+    c.begin_profile_creation();
+    c.complete(AccountOperationResult::ProfileChoices {
+        display_name: "Steven".into(),
+        choices: Vec::new(),
+    });
+    let creation = form(&mut c);
+    let mut slots = Slots::default();
+    let (window, view) = (slots.window(), slots.view());
+    fn owner_value(nodes: &[koru_workspace_host::accessibility::SemanticNode]) -> Option<String> {
+        nodes.iter().find_map(|node| {
+            if node.occurrence.part == ControlPart::new("owner-name") {
+                node.value.clone()
+            } else {
+                owner_value(&node.children)
+            }
+        })
+    }
+    let tree = creation.accessibility_semantics(window, view);
+    assert_eq!(
+        owner_value(&tree).as_deref(),
+        Some(""),
+        "the card's field is not filled from the account"
+    );
+    for character in "Work".chars() {
+        let text = character.to_string();
+        creation.key(
+            &Key::Character(text.clone().into()),
+            Some(&text),
+            ModifiersState::empty(),
+        );
+    }
+    assert!(creation.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+    c.drain_profile_creation_action();
+    let draft = c
+        .take_profile_creation_request()
+        .expect("the card leaves with a draft");
+    assert_eq!(draft.owner_display_name, None);
+    assert_eq!(draft.profile_name, "Work");
+}
+
 #[test]
 fn signed_in_profile_creation_requests_content_availability_choices() {
     let mut c = ProfilesController::new();
@@ -675,7 +723,7 @@ fn a_creation_draft_leaves_with_its_owner_scope() {
     c.take_request();
     c.profile_creation_request = Some(ConnectedProfileDraft {
         id: koru_core::ProfileId::new(),
-        owner_display_name: "Steven".into(),
+        owner_display_name: Some("Steven".into()),
         profile_name: "Work".into(),
         workspace_name: "Notes".into(),
         template: Default::default(),

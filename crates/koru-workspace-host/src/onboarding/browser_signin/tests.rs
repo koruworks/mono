@@ -91,7 +91,7 @@ fn rejected_start_returns_to_usable_entry_instead_of_waiting_for_google() {
     assert!(view.error.is_some());
     assert!(view.browser_signin.is_none());
     view.activate(Hit::Primary);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn uncertain_start_offers_offline_escape_without_another_signin() {
     );
     assert!(view.take_action().is_none());
     view.activate_account_action(0);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     assert!(view.take_action().is_none());
 }
 

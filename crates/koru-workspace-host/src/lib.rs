@@ -2371,7 +2371,10 @@ impl Eq for MoveSelectionPayload {}
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectedProfileDraft {
     pub id: ProfileId,
-    pub owner_display_name: String,
+    /// The account owner's name to set before the hosted Profile is created.
+    /// `None` from Manage → New profile, which names only the new Profile and
+    /// never renames the account (welcome Q-G).
+    pub owner_display_name: Option<String>,
     pub profile_name: String,
     pub workspace_name: String,
     pub template: String,

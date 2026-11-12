@@ -6,8 +6,8 @@
 //! One sentence, and what it excludes: *this module turns the first-run
 //! controller's current screen into semantic nodes, and turns a request back
 //! into the same call the keyboard makes.* It excludes what a control **is** —
-//! a screen, a field, a purpose card, a template card are
-//! [`super::OnboardingView`]'s and stay there — and it excludes the window: who
+//! a screen, a field, a swatch are [`super::OnboardingView`]'s and stay there —
+//! and it excludes the window: who
 //! installs a provider, when a tree is worth building and which requests are
 //! still about something that exists belong to
 //! [`crate::accessibility`](crate::accessibility) and to
@@ -17,8 +17,9 @@
 //!
 //! ## The route this projects, and the one it does not
 //!
-//! Plan U0.1 is the **account-free** route: *Welcome → Profile → Workspace →
-//! finishing → the result*. Those five states are projected in full. The
+//! Plan U0.1 is the **account-free** route: *Welcome → the setup card →
+//! finishing → the result* (welcome step 1 made the old Profile and
+//! Workspace steps one card). Those states are projected in full. The
 //! Google route's four screens — the browser wait, the account status, the
 //! hosted-profile chooser and the restore — are named by a single empty
 //! [`Role::Group`] so an inspector shows a boundary rather than a gap, and are
@@ -30,12 +31,13 @@
 //! ## Four rules it is built on
 //!
 //! **A screen is an instance, and a transition mints a new one.** The screens
-//! are states of one window, not separate windows, and two of them have a
-//! control in the same place doing different things — the Profile step's
-//! *Continue* and the Workspace step's *Create workspace* are both
-//! [`Hit::Primary`] at the same rectangle. If both carried one locator, a
-//! request queued against the screen that just went would land on the control
-//! that replaced it. So the object every control belongs to is
+//! are states of one window, not separate windows, and a control can stay in
+//! the same place while it does a different thing — the welcome screen's
+//! *Continue without an account* and the card's *Start using Koru* are both
+//! [`Hit::Primary`], and the card's primary is a different control while the
+//! card is finishing. If both carried one locator, a request queued against
+//! what just went would land on the control that replaced it. So the object
+//! every control belongs to is
 //! [`ObjectKey::Instance`] with a number this module hands out and never
 //! reuses, exactly the mechanism ADR-338 minted for menus and tabs. Its
 //! successor holds a different number, so it cannot inherit the request;
@@ -46,18 +48,22 @@
 //! seventeen places in `onboarding.rs`, and a plan whose correctness rests on
 //! every one of them calling a helper is a plan with a hole in it. Instead
 //! [`OnboardingView::accessibility_semantics`] compares the screen it is about
-//! to publish with the screen it published last, and mints on a difference.
+//! to publish — the screen and whether the card is finishing — with the one
+//! it published last, and mints on a difference.
 //! That is not merely easier — it is *exactly* the right condition, because an
 //! identity only has to differ between two trees a client actually saw. A
 //! screen the client was never shown cannot have a request queued against it.
 //!
 //! **Geometry is never re-derived.** Every rectangle published here comes back
-//! from the function drawing and hit-testing already share — `welcome_layout`,
-//! `content`, `owner_name_rect`, `profile_name_rect`, `profile_icon_rect`,
-//! `workspace_name_rect`, `workspace_icon_rect`, `card_rect`,
-//! `form_action_buttons`, `koru_ui::caption::direct_controls`. A second copy
-//! of the arithmetic is a control a client can find somewhere other than where
-//! it answers a press.
+//! from what drawing and hit-testing already share — `welcome_layout`,
+//! `content`, `koru_ui::caption::direct_controls`, and for the setup card its
+//! **frame**: `frame.node(key).rect` for a control, and
+//! `ColorPickerRow::wrapped_swatches` inside the swatch row's leaf for a cell.
+//! `el::Frame::semantics()` and `focus_order()` are not used for the card
+//! (welcome D7): the element layer has no text-input role, value or live
+//! region yet, and this contract needs all three. A second copy of the
+//! arithmetic is a control a client can find somewhere other than where it
+//! answers a press.
 //!
 //! **An action is a keystroke.** [`OnboardingView::accessibility_action`] moves
 //! the form's own `focus` index and then hands the equivalent key to
@@ -70,13 +76,13 @@
 //!
 //! The dangerous case in this surface is not a missing label. It is a person
 //! retrying and getting two Profiles. Nothing here can do that, and it is
-//! structural rather than careful: pressing *Create workspace* moves the form
-//! to [`Screen::Finishing`], whose `controls()` is empty and whose `hit()` is
-//! `None`, so the primary is neither published as activatable nor reachable
-//! from a client; and a request queued against the Workspace screen's primary
+//! structural rather than careful: pressing *Start using Koru* puts the card
+//! into finishing, whose `controls()` is empty and whose `hit()` is `None`,
+//! so the primary is neither published as activatable nor reachable from a
+//! client; and a request queued against the card before it was finishing
 //! names an instance that is no longer on screen, so it is refused. When
-//! creation fails, `creation_failed` returns to the Workspace step with every
-//! typed value intact and a fresh instance, and the one retry is the person's.
+//! creation fails, `creation_failed` brings the card back with every typed
+//! value intact and a fresh instance, and the one retry is the person's.
 
 use accesskit::{Action, ActionData, Live, Role};
 use koru_i18n::{Key, Lang, t};
@@ -86,7 +92,12 @@ use crate::accessibility::{
     ViewSlot, WindowSlot,
 };
 
-use super::{Hit, OnboardingView, PURPOSES, Purpose, Screen, TEMPLATES, template_is_suggested};
+use super::setup::{
+    KEY_BACK, KEY_CARD, KEY_COLORS, KEY_LEAD, KEY_NAME, KEY_NOTE, KEY_PRIMARY, KEY_RECOVERY,
+    KEY_RESUME, KEY_STATUS, KEY_TILE, KEY_WORKSPACE_NAME, KEY_WORKSPACE_ROW, KEY_YOU_ROW,
+    SWATCH_COUNT, swatch_geometry,
+};
+use super::{Hit, OnboardingView, Screen};
 
 /// The object kind every first-run control belongs to. A locator reads
 /// `koru:w1/v1/onb:3#primary` — the `3` is the screen instance, and a person
@@ -133,37 +144,39 @@ pub mod parts {
     pub const NEW_PASSWORD: ControlPart = ControlPart::new("new-password");
     pub const CONFIRM_PASSWORD: ControlPart = ControlPart::new("confirm-password");
 
-    /// The Profile step.
+    /// The setup card. The parts that were the old Profile and Workspace
+    /// steps' keep their keywords, so a surviving control's locator does not
+    /// change.
     pub const RESUME_ACCOUNT: ControlPart = ControlPart::new("resume-account");
+    /// The *You* (or *Profile*) group, and the name field in it.
+    pub const YOU: ControlPart = ControlPart::new("you");
     pub const OWNER_NAME: ControlPart = ControlPart::new("owner-name");
-    pub const PURPOSES: ControlPart = ControlPart::new("purposes");
-    pub const PURPOSE_WORK: ControlPart = ControlPart::new("purpose-work");
-    pub const PURPOSE_SCHOOL: ControlPart = ControlPart::new("purpose-school");
-    pub const PURPOSE_PERSONAL: ControlPart = ControlPart::new("purpose-personal");
-    pub const PROFILE_ICON: ControlPart = ControlPart::new("profile-icon");
-    pub const PROFILE_NAME: ControlPart = ControlPart::new("profile-name");
-
-    /// The Workspace step.
+    /// The *First workspace* group: the tile and the workspace's name.
+    pub const FIRST_WORKSPACE: ControlPart = ControlPart::new("first-workspace");
     pub const WORKSPACE_NAME: ControlPart = ControlPart::new("workspace-name");
     pub const WORKSPACE_ICON: ControlPart = ControlPart::new("workspace-icon");
-    pub const TEMPLATES: ControlPart = ControlPart::new("templates");
-    /// One per starting point, in `TEMPLATES` order. A keyword rather than the
-    /// index alone so a locator reads `#template-project`, which survives a
-    /// reordering of the array — the template's own stored `key`, which a
-    /// created workspace already carries.
-    pub const TEMPLATE: [ControlPart; 6] = [
-        ControlPart::new("template-project"),
-        ControlPart::new("template-research"),
-        ControlPart::new("template-course"),
-        ControlPart::new("template-recipes"),
-        ControlPart::new("template-home"),
-        ControlPart::new("template-empty"),
+    /// The swatch row, and one cell per named color. Keyed by the color's
+    /// stored name, never its position, so a reordering keeps every locator;
+    /// in the palette's order (`theme::workspace_color_names`), which a test
+    /// holds this to.
+    pub const COLORS: ControlPart = ControlPart::new("colors");
+    pub const COLOR: [ControlPart; 10] = [
+        ControlPart::new("color-blue"),
+        ControlPart::new("color-purple"),
+        ControlPart::new("color-teal"),
+        ControlPart::new("color-green"),
+        ControlPart::new("color-olive"),
+        ControlPart::new("color-orange"),
+        ControlPart::new("color-red"),
+        ControlPart::new("color-magenta"),
+        ControlPart::new("color-slate"),
+        ControlPart::new("color-stone"),
     ];
 
-    /// The action row both steps share.
+    /// The card's primary, and the way back.
     pub const PRIMARY: ControlPart = ControlPart::new("primary");
     pub const BACK: ControlPart = ControlPart::new("back");
-    /// The Profile form's way to `NeedsProfile` recovery, and that screen's
+    /// The card's way to `NeedsProfile` recovery, and that screen's
     /// two lists. A restorable Profile's row is keyed by the Profile itself
     /// (`ObjectKey::Model`), as a workspace row is elsewhere.
     pub const RECOVERY: ControlPart = ControlPart::new("recovery");
@@ -181,9 +194,8 @@ pub mod parts {
 ///
 /// Screen-scoped because the same [`Hit`] means different things on different
 /// screens: `Hit::Primary` is *Continue offline* on the welcome screen and
-/// *Create workspace* on the Workspace step, and `Hit::Name` is the owner's
-/// name on one step and the workspace's on the next. Its inverse is
-/// [`hit_of`], and a test walks every control of every screen through both.
+/// *Start using Koru* on the card. Its inverse is [`hit_of`], and a test walks
+/// every control of every screen through both.
 fn part_of(screen: Screen, hit: Hit) -> Option<ControlPart> {
     use parts as p;
     Some(match (screen, hit) {
@@ -197,32 +209,20 @@ fn part_of(screen: Screen, hit: Hit) -> Option<ControlPart> {
         (Screen::Entry, Hit::RevealPassword) => p::REVEAL_PASSWORD,
         (Screen::Entry, Hit::Terms) => p::TERMS,
         (Screen::Entry, Hit::Privacy) => p::PRIVACY,
-        (Screen::Profile, Hit::ResumeAccount) => p::RESUME_ACCOUNT,
-        (Screen::Profile, Hit::Name) => p::OWNER_NAME,
-        (Screen::Profile, Hit::Purpose(Purpose::Work)) => p::PURPOSE_WORK,
-        (Screen::Profile, Hit::Purpose(Purpose::School)) => p::PURPOSE_SCHOOL,
-        (Screen::Profile, Hit::Purpose(Purpose::Personal)) => p::PURPOSE_PERSONAL,
-        (Screen::Profile, Hit::ProfileAppearance) => p::PROFILE_ICON,
-        (Screen::Profile, Hit::ProfileName) => p::PROFILE_NAME,
-        (Screen::Profile, Hit::Recovery) => p::RECOVERY,
+        (Screen::Setup, Hit::ResumeAccount) => p::RESUME_ACCOUNT,
+        (Screen::Setup, Hit::Name) => p::OWNER_NAME,
+        (Screen::Setup, Hit::WorkspaceAppearance) => p::WORKSPACE_ICON,
+        (Screen::Setup, Hit::WorkspaceName) => p::WORKSPACE_NAME,
+        (Screen::Setup, Hit::Swatch(index)) => *p::COLOR.get(index)?,
+        (Screen::Setup, Hit::Recovery) => p::RECOVERY,
         (Screen::Recovery, Hit::Back) => p::BACK,
-        (Screen::Workspace | Screen::Finishing, Hit::Name) => p::WORKSPACE_NAME,
-        (Screen::Workspace | Screen::Finishing, Hit::WorkspaceAppearance) => p::WORKSPACE_ICON,
-        (Screen::Workspace | Screen::Finishing, Hit::Template(index)) => *p::TEMPLATE.get(index)?,
         (Screen::EmailCode, Hit::EmailCode) => p::EMAIL_CODE,
         (Screen::EmailCode, Hit::ResendCode) => p::RESEND_CODE,
         (Screen::EmailCode, Hit::AnotherAddress) => p::ANOTHER_ADDRESS,
         (Screen::EmailPassword, Hit::NewPassword) => p::NEW_PASSWORD,
         (Screen::EmailPassword, Hit::ConfirmPassword) => p::CONFIRM_PASSWORD,
-        (
-            Screen::Profile
-            | Screen::Workspace
-            | Screen::Finishing
-            | Screen::EmailCode
-            | Screen::EmailPassword,
-            Hit::Primary,
-        ) => p::PRIMARY,
-        (Screen::Profile | Screen::Workspace | Screen::Finishing, Hit::Back) => p::BACK,
+        (Screen::Setup | Screen::EmailCode | Screen::EmailPassword, Hit::Primary) => p::PRIMARY,
+        (Screen::Setup, Hit::Back) => p::BACK,
         _ => return None,
     })
 }
@@ -244,31 +244,21 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
             x if x == p::PRIVACY => Hit::Privacy,
             _ => return None,
         },
-        Screen::Profile => match part {
+        Screen::Setup => match part {
             x if x == p::RESUME_ACCOUNT => Hit::ResumeAccount,
             x if x == p::OWNER_NAME => Hit::Name,
-            x if x == p::PURPOSE_WORK => Hit::Purpose(Purpose::Work),
-            x if x == p::PURPOSE_SCHOOL => Hit::Purpose(Purpose::School),
-            x if x == p::PURPOSE_PERSONAL => Hit::Purpose(Purpose::Personal),
-            x if x == p::PROFILE_ICON => Hit::ProfileAppearance,
-            x if x == p::PROFILE_NAME => Hit::ProfileName,
+            x if x == p::WORKSPACE_ICON => Hit::WorkspaceAppearance,
+            x if x == p::WORKSPACE_NAME => Hit::WorkspaceName,
             x if x == p::PRIMARY => Hit::Primary,
             x if x == p::BACK => Hit::Back,
             x if x == p::RECOVERY => Hit::Recovery,
-            _ => return None,
+            x => Hit::Swatch(p::COLOR.iter().position(|color| *color == x)?),
         },
         // The rows are model-keyed and routed by `accessibility_action`
         // itself; only *Back* is a form part here.
         Screen::Recovery => match part {
             x if x == p::BACK => Hit::Back,
             _ => return None,
-        },
-        Screen::Workspace | Screen::Finishing => match part {
-            x if x == p::WORKSPACE_NAME => Hit::Name,
-            x if x == p::WORKSPACE_ICON => Hit::WorkspaceAppearance,
-            x if x == p::PRIMARY => Hit::Primary,
-            x if x == p::BACK => Hit::Back,
-            x => Hit::Template(p::TEMPLATE.iter().position(|part| *part == x)?),
         },
         Screen::EmailCode => match part {
             x if x == p::EMAIL_CODE => Hit::EmailCode,
@@ -356,12 +346,10 @@ impl OnboardingView {
             Screen::ExistingProfiles => "existing",
             Screen::RestoringProfile => "restoring",
             Screen::Recovery => "recovery",
-            Screen::Profile => "profile",
-            Screen::Workspace => "workspace",
-            Screen::Finishing => "finishing",
+            Screen::Setup => "setup",
         });
         rev.str(self.language.tag());
-        // The recovery lists change the Profile form (its link) and the
+        // The recovery lists change the setup card (its link) and the
         // recovery screen (its rows).
         rev.u64(self.recovery_deleted().len() as u64);
         for row in self.recovery_deleted() {
@@ -389,20 +377,20 @@ impl OnboardingView {
         rev.u64(self.email_code.raw_text().chars().count() as u64);
         rev.u64(self.new_password.raw_text().chars().count() as u64);
         rev.u64(self.confirm_password.raw_text().chars().count() as u64);
-        rev.str(self.owner_name.raw_text());
-        rev.str(self.profile_name.raw_text());
-        rev.str(self.workspace_name.raw_text());
-        rev.byte(match self.purpose {
-            None => 0,
-            Some(Purpose::Work) => 1,
-            Some(Purpose::School) => 2,
-            Some(Purpose::Personal) => 3,
-        });
-        rev.u64(self.template.map_or(u64::MAX, |index| index as u64));
+        rev.str(self.owner_name.borrow().raw_text());
+        rev.str(self.workspace_name.borrow().raw_text());
+        // The card's choices, its row cursor, whether it is finishing and
+        // what its first field is called all change what it publishes.
+        rev.str(self.workspace_icon.as_deref().unwrap_or(""));
+        rev.str(self.workspace_color.as_deref().unwrap_or(""));
+        rev.u64(self.swatch_cursor as u64);
+        rev.bool(self.setup_finishing);
+        rev.bool(self.owner_label == super::SetupOwnerLabel::Profile);
         rev.bool(self.workspace_name_edited);
         rev.bool(self.connect_account);
+        rev.bool(self.creation_conflict);
         rev.bool(self.can_reopen_account_creation());
-        rev.bool(self.profile_appearance.is_some() || self.workspace_appearance.is_some());
+        rev.bool(self.workspace_appearance.is_some());
         match self.error.as_deref() {
             Some(error) => {
                 rev.byte(1);
@@ -434,8 +422,9 @@ impl OnboardingView {
         window: WindowSlot,
         view: ViewSlot,
     ) -> Vec<SemanticNode> {
-        if self.screen_shown != Some(self.screen) {
-            self.screen_shown = Some(self.screen);
+        let shown = (self.screen, self.setup_finishing);
+        if self.screen_shown != Some(shown) {
+            self.screen_shown = Some(shown);
             // Embedded forms can be closed and recreated in the same tab.
             // A new form must not reuse a departed form's control locators.
             self.screen_instance = if self.embedded {
@@ -456,7 +445,7 @@ impl OnboardingView {
         // form would be describing controls a person cannot reach. Escape
         // closes it, which is the route out. Its own contents are
         // `koru-appearance-ui`'s surface and are not projected here.
-        if self.profile_appearance.is_some() || self.workspace_appearance.is_some() {
+        if self.workspace_appearance.is_some() {
             return vec![
                 SemanticNode::new(cx.at(parts::APPEARANCE), Role::Dialog)
                     .with_label(t(cx.lang, Key::A11yFirstRunAppearance))
@@ -468,9 +457,8 @@ impl OnboardingView {
             Screen::Entry => vec![self.entry_semantics(&cx)],
             Screen::EmailCode => vec![self.email_code_semantics(&cx)],
             Screen::EmailPassword => vec![self.email_password_semantics(&cx)],
-            Screen::Profile => vec![self.profile_semantics(&cx)],
+            Screen::Setup => vec![self.setup_semantics(&cx)],
             Screen::Recovery => vec![self.recovery_semantics(&cx)],
-            Screen::Workspace | Screen::Finishing => vec![self.workspace_semantics(&cx)],
             // The Google route, and the wait between the welcome form and
             // whichever screen follows it: named, and left to a later plan.
             Screen::Browser
@@ -493,8 +481,9 @@ impl OnboardingView {
     /// than two fields kept in step. `None` means the window itself, which is
     /// the honest answer while a modal is up or a screen offers no controls at
     /// all.
+    /// For the swatch row, the cell its cursor is on.
     pub fn accessibility_focus(&self, window: WindowSlot, view: ViewSlot) -> Option<Occurrence> {
-        if self.profile_appearance.is_some() || self.workspace_appearance.is_some() {
+        if self.workspace_appearance.is_some() {
             return Some(
                 Context {
                     window,
@@ -543,7 +532,7 @@ impl OnboardingView {
         action: Action,
         data: Option<&ActionData>,
     ) -> bool {
-        if self.screen_shown != Some(self.screen) {
+        if self.screen_shown != Some((self.screen, self.setup_finishing)) {
             return false;
         }
         // Nothing under the icon-and-colour chooser is published while it is
@@ -551,7 +540,7 @@ impl OnboardingView {
         // refuse it anyway — the control is not in the tree on screen — and
         // giving the same answer locally keeps this module from reading as if
         // it offered a route it does not have.
-        if self.profile_appearance.is_some() || self.workspace_appearance.is_some() {
+        if self.workspace_appearance.is_some() {
             return false;
         }
         let hit = match target.object {
@@ -586,11 +575,36 @@ impl OnboardingView {
             return self.accessibility_set_value(hit, value);
         }
         let controls = self.controls();
+        // **A swatch is one of the row's options, not a stop of its own**:
+        // focusing one puts the keyboard on the row with its cursor there, and
+        // a click does that and then presses Enter, which chooses it — so a
+        // client's press is the keyboard's.
+        if let (Screen::Setup, Hit::Swatch(cell)) = (self.screen, hit) {
+            let Some(stop) = controls
+                .iter()
+                .position(|control| matches!(control, Hit::Swatch(_)))
+            else {
+                return false;
+            };
+            let before = controls.get(self.focus).copied();
+            self.focus = stop;
+            self.setup_focus_entered(before);
+            self.swatch_cursor = cell;
+            return match action {
+                Action::Focus => true,
+                Action::Click => self.key(
+                    &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter),
+                    None,
+                    winit::keyboard::ModifiersState::empty(),
+                ),
+                _ => false,
+            };
+        }
         let Some(index) = controls.iter().position(|control| *control == hit) else {
-            // Drawn but not activatable — a disabled primary, or a template
-            // card locked by a typed workspace name. Published as `disabled`,
-            // and `accesskit_windows` refuses an action on a disabled node
-            // before it reaches us; this is the belt for that brace.
+            // Drawn but not activatable — a disabled primary, or anything on
+            // a finishing card. Published as `disabled`, and
+            // `accesskit_windows` refuses an action on a disabled node before
+            // it reaches us; this is the belt for that brace.
             return false;
         };
         match action {
@@ -599,8 +613,12 @@ impl OnboardingView {
             // immediately before `Invoke` and the pair has to behave like one
             // click rather than two unrelated commands.
             Action::Focus => {
+                let before = controls.get(self.focus).copied();
                 self.focus = index;
                 self.keep_focused_existing_profile_visible(&controls);
+                // Entering the unedited workspace name selects it, whoever
+                // moved the focus there.
+                self.setup_focus_entered(before);
                 true
             }
             Action::Click => {
@@ -626,27 +644,24 @@ impl OnboardingView {
     /// test asserts the two are byte-identical.
     fn accessibility_set_value(&mut self, hit: Hit, value: &str) -> bool {
         match (self.screen, hit) {
-            (Screen::Profile, Hit::Name) => {
-                if self.owner_name.raw_text() == value {
+            // A finishing card takes nothing: a `SetValue` is routed before
+            // the controls are consulted, so it is refused here.
+            (Screen::Setup, Hit::Name) if !self.setup_finishing => {
+                if self.owner_name.borrow().raw_text() == value {
                     return true;
                 }
-                self.owner_name.set_text(&mut self.engine, value);
-                self.update_profile_name_suggestion();
+                self.owner_name
+                    .borrow_mut()
+                    .set_text(&mut self.engine, value);
                 true
             }
-            (Screen::Profile, Hit::ProfileName) => {
-                if self.profile_name.raw_text() == value {
+            (Screen::Setup, Hit::WorkspaceName) if !self.setup_finishing => {
+                if self.workspace_name.borrow().raw_text() == value {
                     return true;
                 }
-                self.profile_name.set_text(&mut self.engine, value);
-                self.profile_name_edited = true;
-                true
-            }
-            (Screen::Workspace, Hit::Name) => {
-                if self.workspace_name.raw_text() == value {
-                    return true;
-                }
-                self.workspace_name.set_text(&mut self.engine, value);
+                self.workspace_name
+                    .borrow_mut()
+                    .set_text(&mut self.engine, value);
                 self.workspace_name_edited = true;
                 true
             }
@@ -893,99 +908,161 @@ impl OnboardingView {
             .with_children(children)
     }
 
-    // ------------------------------------------------------- the Profile step
+    // ------------------------------------------------------- the setup card
 
-    fn profile_semantics(&mut self, cx: &Context) -> SemanticNode {
-        let c = self.content();
+    /// **The setup card** (welcome step 1, PLAN §9), in reading order: the
+    /// form named by the title, the lead, the *You* group with the name field,
+    /// the *First workspace* group with the tile and the workspace's name, the
+    /// swatch row as a `ListBox` of ten options, the note and the status when
+    /// drawn, the primary, then *Back*, *Resume* and recovery when offered.
+    ///
+    /// **Every rectangle is the card's frame's**, and a cell's is
+    /// `ColorPickerRow`'s wrapped geometry inside the row's leaf — the same
+    /// two answers paint and the pointer read.
+    ///
+    /// **The primary is published even when it cannot be pressed.** That is
+    /// what the pixels do: it is drawn inert while the card is incomplete, and
+    /// `setup_controls` leaves it out so neither Tab nor a pointer reaches it.
+    /// A tree that omitted it would tell a screen reader the button is absent
+    /// while a sighted person is looking straight at it. `disabled` says the
+    /// true thing, and `accesskit_windows` will not deliver an action to a
+    /// disabled node.
+    ///
+    /// **`live` on the primary while the card is finishing.** The button's
+    /// own label becomes *Finishing…*, so that is where the news is;
+    /// `accesskit_windows` raises `UIA_LiveRegionChangedEventId` when a live
+    /// node with a name is added, which entering finishing does (it mints a
+    /// new instance) — see `guide/contributing/deps/ACCESSKIT.md`.
+    ///
+    /// The chip is decorative and publishes nothing.
+    fn setup_semantics(&mut self, cx: &Context) -> SemanticNode {
+        let (_, frame) = self.setup_frame();
+        let lang = cx.lang;
+        let finishing = self.setup_finishing;
+        let none = LogicalRect::new(0.0, 0.0, 0.0, 0.0);
+        let rect = |key| frame.node(key).map_or(none, |node| node.rect);
+        let (label_key, placeholder_key) = self.setup_owner_keys();
         let mut children = Vec::new();
-        // Either the step counter or, when an account creation is parked, the
-        // button that returns to it. Exactly what is drawn in that corner.
-        if self.can_reopen_account_creation() {
-            let rect = self.resume_account_rect();
-            children.push(button(
-                cx.at(parts::RESUME_ACCOUNT),
-                t(cx.lang, Key::AccountCreationResume),
-                rect,
-            ));
-        } else {
+        if frame.node(KEY_LEAD).is_some() {
             children.push(label(
-                cx.at(parts::STEP),
-                t(cx.lang, Key::Step1Of2),
-                LogicalRect::new(c.x, c.y + 24.0, c.w, 18.0),
+                cx.at(parts::BLURB),
+                t(lang, Key::SetupLead),
+                rect(KEY_LEAD),
             ));
         }
-        children.push(label(
-            cx.at(parts::BLURB),
-            t(cx.lang, Key::A11yFirstRunOwnerBlurb),
-            LogicalRect::new(c.x, c.y + 108.0, c.w, 22.0),
-        ));
         children.push(
-            field(
-                cx.at(parts::OWNER_NAME),
-                t(cx.lang, Key::DisplayName),
-                self.owner_name.raw_text().to_owned(),
-            )
-            .with_bounds(self.owner_name_rect()),
+            SemanticNode::new(cx.at(parts::YOU), Role::Group)
+                .with_label(t(lang, label_key))
+                .with_bounds(rect(KEY_YOU_ROW))
+                .with_children(vec![
+                    field(
+                        cx.at(parts::OWNER_NAME),
+                        t(lang, placeholder_key),
+                        self.owner_name.borrow().raw_text().to_owned(),
+                    )
+                    .with_bounds(rect(KEY_NAME))
+                    .disabled(finishing),
+                ]),
         );
-
-        let metrics = self.profile_card_metrics();
-        let cards: Vec<SemanticNode> = PURPOSES
+        children.push(
+            SemanticNode::new(cx.at(parts::FIRST_WORKSPACE), Role::Group)
+                .with_label(t(lang, Key::SetupWorkspaceLabel))
+                .with_bounds(rect(KEY_WORKSPACE_ROW))
+                .with_children(vec![
+                    button(
+                        cx.at(parts::WORKSPACE_ICON),
+                        t(lang, Key::A11yFirstRunWorkspaceIcon),
+                        rect(KEY_TILE),
+                    )
+                    .disabled(finishing),
+                    field(
+                        cx.at(parts::WORKSPACE_NAME),
+                        t(lang, Key::WorkspaceName),
+                        self.workspace_name.borrow().raw_text().to_owned(),
+                    )
+                    .with_bounds(rect(KEY_WORKSPACE_NAME))
+                    .disabled(finishing),
+                ]),
+        );
+        let row = rect(KEY_COLORS);
+        let selected = self.selected_swatch();
+        let cells: Vec<SemanticNode> = swatch_geometry()
+            .wrapped_swatches(row)
             .into_iter()
+            .take(SWATCH_COUNT)
             .enumerate()
-            .map(|(index, purpose)| {
+            .map(|(index, cell)| {
                 choice(
-                    cx.at(part_of(Screen::Profile, Hit::Purpose(purpose)).expect("a purpose card")),
-                    t(cx.lang, purpose_key(purpose)),
-                    self.card_rect(index, metrics),
-                    self.purpose == Some(purpose),
+                    cx.at(parts::COLOR[index]),
+                    t(lang, COLOR_NAMES[index]),
+                    cell,
+                    selected == Some(index),
                     index,
                 )
+                .disabled(finishing)
             })
             .collect();
         children.push(
-            SemanticNode::new(cx.at(parts::PURPOSES), Role::ListBox)
-                .with_label(t(cx.lang, Key::PurposeQuestion))
-                .with_bounds(band(&cards))
+            SemanticNode::new(cx.at(parts::COLORS), Role::ListBox)
+                .with_label(t(lang, Key::SetupColorRow))
+                .with_bounds(row)
                 // On the container, because that is where an item's total is
                 // read from — see `SemanticNode::size_of_set`.
-                .with_size_of_set(cards.len())
-                .with_children(cards),
+                .with_size_of_set(cells.len())
+                .with_children(cells),
         );
-
-        let icon = self.profile_icon_rect();
-        children.push(button(
-            cx.at(parts::PROFILE_ICON),
-            t(cx.lang, Key::A11yFirstRunProfileIcon),
-            icon,
-        ));
-        children.push(
-            field(
-                cx.at(parts::PROFILE_NAME),
-                t(cx.lang, Key::A11yFirstRunProfileName),
-                self.profile_name.raw_text().to_owned(),
-            )
-            .with_bounds(self.profile_name_rect()),
-        );
-        let footer_y = icon.y + icon.h + 16.0 + super::profile_note_h(self.connect_account);
-        children.extend(self.status_semantics(cx, LogicalRect::new(c.x, footer_y, c.w, 20.0)));
-
-        let complete = self.profile_form_complete();
-        // "Continue" is the literal `draw_profile` paints and measures; the
-        // name beside it is the translated row.
-        children.extend(self.action_row_semantics(
-            cx,
-            "Continue",
-            t(cx.lang, Key::Continue),
-            complete,
-        ));
-
+        if frame.node(KEY_NOTE).is_some() {
+            children.push(label(
+                cx.at(parts::NOTE),
+                t(lang, Key::SetupConnectedNote),
+                rect(KEY_NOTE),
+            ));
+        }
+        if frame.node(KEY_STATUS).is_some() {
+            children.extend(self.status_semantics(cx, rect(KEY_STATUS)));
+        }
+        let mut primary = button(
+            cx.at(parts::PRIMARY),
+            self.setup_primary_label(),
+            rect(KEY_PRIMARY),
+        )
+        .disabled(!self.setup_primary_enabled());
+        if finishing {
+            primary = primary.with_live(Live::Polite);
+        }
+        children.push(primary);
+        // *Back*, *Resume* and recovery are in the frame exactly when they
+        // are offered and the card is not finishing.
+        if frame.node(KEY_BACK).is_some() {
+            children.push(button(
+                cx.at(parts::BACK),
+                t(lang, Key::Back),
+                rect(KEY_BACK),
+            ));
+        }
+        if frame.node(KEY_RESUME).is_some() {
+            children.push(button(
+                cx.at(parts::RESUME_ACCOUNT),
+                t(lang, Key::AccountCreationResume),
+                rect(KEY_RESUME),
+            ));
+        }
+        // Drawn as a wrapping link, but a `Button`: it opens a screen inside
+        // Koru, and `Role::Link` is kept for what leaves Koru for a web page.
+        if frame.node(KEY_RECOVERY).is_some() {
+            children.push(button(
+                cx.at(parts::RECOVERY),
+                t(lang, Key::OnboardingRecoveryLink),
+                rect(KEY_RECOVERY),
+            ));
+        }
         SemanticNode::new(cx.at(parts::FORM), Role::Group)
-            .with_label(t(cx.lang, Key::IdentityTitle))
-            .with_bounds(c)
+            .with_label(t(lang, Key::SetupTitle))
+            .with_bounds(rect(KEY_CARD))
             .with_children(children)
     }
 
-    // ----------------------------------------------------- the Workspace step
+    // ---------------------------------------------------- the recovery screen
 
     /// **The recovery screen** (root-catalog §6.3): a heading, the
     /// restorable Profiles as a list whose options are the Profiles
@@ -1086,160 +1163,6 @@ impl OnboardingView {
             .with_children(children)
     }
 
-    fn workspace_semantics(&mut self, cx: &Context) -> SemanticNode {
-        let c = self.content();
-        let finishing = self.screen == Screen::Finishing;
-        let locked = self.workspace_name_edited;
-        let mut children = vec![
-            label(
-                cx.at(parts::STEP),
-                t(cx.lang, Key::Step2Of2),
-                LogicalRect::new(c.x, c.y + 18.0, c.w, 18.0),
-            ),
-            label(
-                cx.at(parts::BLURB),
-                t(cx.lang, Key::A11yFirstRunWorkspaceBlurb),
-                LogicalRect::new(c.x, c.y + 86.0, c.w, 22.0),
-            ),
-        ];
-
-        let metrics = self.workspace_card_metrics();
-        let detailed = metrics.1 >= 100.0;
-        let purpose = self.purpose;
-        let selected = self.template;
-        let cards: Vec<SemanticNode> = (0..TEMPLATES.len())
-            .map(|index| {
-                let rect = self.card_rect(index, metrics);
-                let mut card = choice(
-                    cx.at(parts::TEMPLATE[index]),
-                    t(cx.lang, template_key(index)),
-                    rect,
-                    selected == Some(index),
-                    index,
-                )
-                // **Locked, not gone.** A typed workspace name freezes the
-                // starting points: they are still drawn, dimmed, and
-                // `form_controls` stops offering them. `disabled` is what says
-                // that, and `accesskit_windows` refuses an action on a disabled
-                // node, so the projection and the form agree without a second
-                // guard.
-                .disabled(locked);
-                if detailed {
-                    let mut inner = vec![label(
-                        cx.at(ControlPart::new(DETAIL[index])),
-                        t(cx.lang, template_detail_key(index)),
-                        LogicalRect::new(rect.x + 12.0, rect.y + 69.0, rect.w - 24.0, 32.0),
-                    )];
-                    if template_is_suggested(purpose, index) {
-                        inner.push(label(
-                            cx.at(ControlPart::new(SUGGESTED[index])),
-                            t(cx.lang, Key::Suggested),
-                            LogicalRect::new(rect.x + rect.w - 80.0, rect.y + 9.0, 74.0, 20.0),
-                        ));
-                    }
-                    card = card.with_children(inner);
-                }
-                card
-            })
-            .collect();
-        children.push(
-            SemanticNode::new(cx.at(parts::TEMPLATES), Role::ListBox)
-                .with_label(t(cx.lang, Key::A11yFirstRunStartingPoint))
-                .with_bounds(band(&cards))
-                .with_size_of_set(cards.len())
-                .with_children(cards),
-        );
-
-        children.push(button(
-            cx.at(parts::WORKSPACE_ICON),
-            t(cx.lang, Key::A11yFirstRunWorkspaceIcon),
-            self.workspace_icon_rect(),
-        ));
-        children.push(
-            field(
-                cx.at(parts::WORKSPACE_NAME),
-                t(cx.lang, Key::WorkspaceName),
-                self.workspace_name.raw_text().to_owned(),
-            )
-            .with_bounds(self.workspace_name_rect()),
-        );
-        children
-            .extend(self.status_semantics(cx, LogicalRect::new(c.x, c.y + c.h - 150.0, c.w, 20.0)));
-
-        let complete = self.workspace_form_complete();
-        // The pair `draw_workspace` uses to paint and the pair a screen reader
-        // hears. Same control, same rectangle, two languages until the drawn
-        // copy catches up.
-        let (drawn, name) = if finishing {
-            ("Finishing...", t(cx.lang, Key::A11yFirstRunCreating))
-        } else if self.creation_conflict {
-            (
-                self.workspace_action_label(),
-                t(cx.lang, Key::ProfileCreationManage),
-            )
-        } else {
-            ("Create workspace", t(cx.lang, Key::CreateWorkspace))
-        };
-        children.extend(self.action_row_semantics(cx, drawn, name, complete && !finishing));
-
-        SemanticNode::new(cx.at(parts::FORM), Role::Group)
-            .with_label(t(cx.lang, Key::WorkspaceTitle))
-            .with_bounds(c)
-            .with_children(children)
-    }
-
-    // ----------------------------------------------------------- both steps
-
-    /// The primary action and the way back, from the same two rectangles the
-    /// two steps draw them at.
-    ///
-    /// **The primary is published even when it cannot be pressed.** That is
-    /// what the pixels do: `draw_button_enabled` paints it greyed while the
-    /// form is incomplete, and `form_controls` leaves it out so neither Tab nor
-    /// a pointer reaches it. A tree that omitted it would tell a screen reader
-    /// the button is absent while a sighted person is looking straight at it,
-    /// and would leave no way to hear *why* nothing is happening. `disabled`
-    /// says the true thing, and `accesskit_windows` will not deliver an action
-    /// to a disabled node.
-    ///
-    /// **`live` on the primary while a creation is in flight.** There is no
-    /// other status text on this screen: the button's own label becomes
-    /// *Finishing…*, so that is where the news is. `accesskit_windows` raises
-    /// `UIA_LiveRegionChangedEventId` when a live node with a name is added,
-    /// which is what a transition to `Finishing` does — see
-    /// `guide/contributing/deps/ACCESSKIT.md`.
-    ///
-    /// **`drawn` and `name` are two arguments on purpose.** The button sizes
-    /// itself to the string it paints, and that string is an English literal
-    /// (`docs/contributing/techdebt/README.md`) while the accessible name is translated. If
-    /// the rectangle were measured from the translated one it would be a
-    /// different width from the button on screen, and a client would find the
-    /// control somewhere it does not answer a press. So the geometry comes from
-    /// what is drawn and the name from `koru-i18n`, and the day the drawn copy
-    /// is localized the two arguments collapse into one.
-    fn action_row_semantics(
-        &mut self,
-        cx: &Context,
-        drawn: &str,
-        name: &str,
-        enabled: bool,
-    ) -> Vec<SemanticNode> {
-        let finishing = self.screen == Screen::Finishing;
-        let (primary_rect, back_rect) = self.form_action_buttons(drawn);
-        let mut primary = button(cx.at(parts::PRIMARY), name, primary_rect).disabled(!enabled);
-        if finishing {
-            primary = primary.with_live(Live::Polite);
-        }
-        let mut out = vec![primary];
-        // The Workspace step stops drawing Back once creation has started.
-        // `form_action_buttons` already measures the ghost button from its own
-        // drawn literal, so only the primary needs the pair above.
-        if !finishing {
-            out.push(button(cx.at(parts::BACK), t(cx.lang, Key::Back), back_rect));
-        }
-        out
-    }
-
     /// The error the form is showing, if it is showing one.
     ///
     /// **Only where it is drawn**, which is why every caller hands it the
@@ -1248,7 +1171,7 @@ impl OnboardingView {
     /// painted nothing — and publishing it then would have put words in a
     /// screen reader that no sighted person was being shown. Q-U1 settled
     /// that by drawing it, so the welcome screen now has a rectangle to be
-    /// published at, exactly like the two form steps.
+    /// published at, exactly like the setup card.
     fn status_semantics(&self, cx: &Context, at: LogicalRect) -> Option<SemanticNode> {
         let error = self.error.as_deref()?;
         Some(
@@ -1381,63 +1304,20 @@ fn band(nodes: &[SemanticNode]) -> LogicalRect {
         .unwrap_or(LogicalRect::new(0.0, 0.0, 0.0, 0.0))
 }
 
-/// The parts of a template card's own two sentences. Separate arrays rather
-/// than a formatted string, because a `ControlPart` is a `&'static str` on
-/// purpose: a part cannot accidentally become a translated label.
-const DETAIL: [&str; 6] = [
-    "template-project-detail",
-    "template-research-detail",
-    "template-course-detail",
-    "template-recipes-detail",
-    "template-home-detail",
-    "template-empty-detail",
+/// What a screen reader calls each swatch: the color's name, translated, in
+/// the order of [`parts::COLOR`] and of `theme::workspace_color_names`.
+const COLOR_NAMES: [Key; 10] = [
+    Key::WorkspaceColorBlue,
+    Key::WorkspaceColorPurple,
+    Key::WorkspaceColorTeal,
+    Key::WorkspaceColorGreen,
+    Key::WorkspaceColorOlive,
+    Key::WorkspaceColorOrange,
+    Key::WorkspaceColorRed,
+    Key::WorkspaceColorMagenta,
+    Key::WorkspaceColorSlate,
+    Key::WorkspaceColorStone,
 ];
-const SUGGESTED: [&str; 6] = [
-    "template-project-suggested",
-    "template-research-suggested",
-    "template-course-suggested",
-    "template-recipes-suggested",
-    "template-home-suggested",
-    "template-empty-suggested",
-];
-
-/// The rows the forms already had and nothing read.
-///
-/// Both tables were written when these steps were built — the drawn copy is a
-/// hard-coded English literal beside them — so this is reuse rather than a new
-/// vocabulary. That the drawn copy is still English is the defect recorded in
-/// `docs/features/accessibility/README.md`; §7.2 requires the accessible name to be
-/// localized regardless, and papering over the difference by publishing the
-/// English literal would hide it.
-fn purpose_key(purpose: Purpose) -> Key {
-    match purpose {
-        Purpose::Work => Key::PurposeWork,
-        Purpose::School => Key::PurposeSchool,
-        Purpose::Personal => Key::PurposePersonal,
-    }
-}
-
-fn template_key(index: usize) -> Key {
-    [
-        Key::TemplateProject,
-        Key::TemplateResearch,
-        Key::TemplateCourse,
-        Key::TemplateRecipes,
-        Key::TemplateHome,
-        Key::TemplateEmpty,
-    ][index]
-}
-
-fn template_detail_key(index: usize) -> Key {
-    [
-        Key::TemplateProjectDetail,
-        Key::TemplateResearchDetail,
-        Key::TemplateCourseDetail,
-        Key::TemplateRecipesDetail,
-        Key::TemplateHomeDetail,
-        Key::TemplateEmptyDetail,
-    ][index]
-}
 
 #[cfg(test)]
 mod tests;

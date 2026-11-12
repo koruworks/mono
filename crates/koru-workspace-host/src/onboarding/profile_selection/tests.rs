@@ -637,19 +637,21 @@ fn local_form_and_its_return_choice_survive_late_selection_completion() {
     let mut view = view();
     let submission = submit(&mut view);
     view.activate(Hit::ContinueOffline);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     view.owner_name
+        .borrow_mut()
         .set_text(&mut view.engine, "My edited display name");
-    view.profile_name
-        .set_text(&mut view.engine, "My edited Profile name");
+    view.workspace_name
+        .borrow_mut()
+        .set_text(&mut view.engine, "My edited workspace");
     let mut progress = state(1);
     progress.stage = AccountStage::Refreshing;
     view.show_account_state(&progress);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     view.show_account_profile_choices("A refreshed provider display name", choices(1));
-    assert_eq!(view.screen, Screen::Profile);
-    assert_eq!(view.owner_name.value(), "My edited display name");
-    assert_eq!(view.profile_name.value(), "My edited Profile name");
+    assert_eq!(view.screen, Screen::Setup);
+    assert_eq!(view.owner_name.borrow().value(), "My edited display name");
+    assert_eq!(view.workspace_name.borrow().value(), "My edited workspace");
     view.account_command_admitted(crate::account_ui::CommandAdmission {
         submission,
         owner_scope: 1,
@@ -660,7 +662,7 @@ fn local_form_and_its_return_choice_survive_late_selection_completion() {
         11,
         &AccountOperationResult::ProfilesSelected { profiles: vec![] },
     );
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     assert!(view.reopen_account_creation());
     assert_eq!(view.screen, Screen::ExistingProfiles);
 }
@@ -670,11 +672,11 @@ fn separately_owned_created_profile_failure_preserves_its_retry_with_a_pending_s
     let mut view = view();
     let submission = submit(&mut view);
     view.activate(Hit::CreateNew);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     let profile = koru_core::ProfileId::new();
     let retry = AccountCommand::CreateProfile {
         profile_id: profile.to_storage(),
-        owner_display_name: "Owner".into(),
+        owner_display_name: Some("Owner".into()),
         name: "New local Profile".into(),
         locale: Some("en".into()),
     };
@@ -730,7 +732,7 @@ fn background_failed_cancelled_and_admission_failure_do_not_interrupt_local_form
                 }
             },
         );
-        assert_eq!(view.screen, Screen::Profile);
+        assert_eq!(view.screen, Screen::Setup);
         assert_eq!(
             view.error.as_deref(),
             Some("local validation remains owned by this form")
@@ -749,7 +751,7 @@ fn background_failed_cancelled_and_admission_failure_do_not_interrupt_local_form
         submission,
         uncertain: true,
     });
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     assert_eq!(
         view.selection.notice,
         Some(koru_i18n::Key::ProfileChooserUncertain)

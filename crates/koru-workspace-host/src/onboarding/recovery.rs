@@ -4,7 +4,8 @@
 //! *Create profile*, the restorable Profile deletions this device holds and
 //! the live workspaces no Profile lists.
 //!
-//! The first-run window reaches this when the Profile catalog is empty — the
+//! The first-run window reaches this from the setup card's recovery link
+//! when the Profile catalog is empty — the
 //! last usable Profile was deleted, here or on another device — so recovery
 //! must not depend on an active Profile's menu. The host reads both lists
 //! off the winit thread and pushes them in with [`OnboardingView::show_recovery`];
@@ -55,7 +56,7 @@ pub(super) struct RecoveryLayout {
 }
 
 impl OnboardingView {
-    /// The host read the recovery lists. Offered from the Profile form only
+    /// The host read the recovery lists. Offered from the setup card only
     /// while there is something in them; an empty answer offers nothing.
     pub fn show_recovery(
         &mut self,
@@ -65,7 +66,7 @@ impl OnboardingView {
         self.recovery_deleted = deleted;
         self.recovery_unassigned = unassigned;
         if self.screen == Screen::Recovery && !self.recovery_offered() {
-            self.show_profile();
+            self.show_setup();
         }
     }
 
@@ -77,8 +78,8 @@ impl OnboardingView {
         self.error = Some(message.into());
     }
 
-    /// Whether the Profile form offers the way to this screen: never in an
-    /// embedded form (Manage has its own recovery sections), and only while
+    /// Whether the setup card offers the way to this screen: never in an
+    /// embedded card (Manage has its own recovery sections), and only while
     /// there is something to recover.
     pub(super) fn recovery_offered(&self) -> bool {
         !self.embedded && !(self.recovery_deleted.is_empty() && self.recovery_unassigned.is_empty())
@@ -92,20 +93,6 @@ impl OnboardingView {
         &self.recovery_unassigned
     }
 
-    /// The link on the Profile form, beside *Back* (or where *Back* would
-    /// be when the form has none).
-    pub(super) fn recovery_link_rect(&mut self) -> Rect {
-        let (primary, back) = self.form_action_buttons("Continue");
-        let label = koru_i18n::t(self.language, koru_i18n::Key::OnboardingRecoveryLink);
-        let w = ActionButton::new(label, ActionStyle::Ghost, None).width(&mut self.engine);
-        let x = if Self::profile_has_back() {
-            back.x + back.w + BUTTON_GAP
-        } else {
-            back.x
-        };
-        Rect::new(x, primary.y, w, primary.h)
-    }
-
     pub(super) fn recovery_controls(&self) -> Vec<Hit> {
         let mut controls: Vec<Hit> = (0..self.recovery_deleted.len())
             .map(Hit::RestoreDeleted)
@@ -115,7 +102,6 @@ impl OnboardingView {
     }
 
     pub(super) fn open_recovery(&mut self) {
-        self.profile_appearance = None;
         self.screen = Screen::Recovery;
         self.focus = 0;
         self.error = None;
@@ -123,7 +109,7 @@ impl OnboardingView {
 
     pub(super) fn activate_recovery(&mut self, hit: Hit) {
         match hit {
-            Hit::Back => self.show_profile(),
+            Hit::Back => self.show_setup(),
             Hit::RestoreDeleted(index) => {
                 let Some(row) = self.recovery_deleted.get(index) else {
                     return;

@@ -269,8 +269,7 @@ impl OnboardingView {
         koru_i18n::t(self.language, key)
     }
     pub(super) fn keep_local_selection_form(&self) -> bool {
-        matches!(self.screen, Screen::Profile | Screen::Workspace)
-            || self.created_profile_retry.is_some()
+        self.screen == Screen::Setup || self.created_profile_retry.is_some()
     }
     fn selection_body(&self) -> String {
         self.selection

@@ -1107,8 +1107,8 @@ ordinary typing and saving say nothing at all. This asks about *this computer's*
 storage; it says nothing about whether another device has your change yet.
 
 **Setting Koru up.** The first window a new person sees is described as well —
-*Welcome to Koru*, the Profile step and the Workspace step, with every field,
-every choice and every error. Tab walks it, Enter presses, and the whole
+*Welcome to Koru* and the setup card, with every field, every swatch (by its
+color's name) and every error. Tab walks it, Enter presses, and the whole
 account-free route can be completed without a pointer. An account is never
 required.
 
@@ -1899,48 +1899,49 @@ The first-run chooser also lets already-connected rows be
 checked: when all selected Profiles are connected, **Open local content** opens
 the first selected Profile. A mixed selection connects only the unfinished ones.
 
-The owner-name and Workspace-name boxes behave like the document Find box:
-click to place the caret, drag to select, and use the ordinary word-delete,
-clipboard, and undo shortcuts. The first name belongs to the owner of the Koru
-Identity. After Google sign-in it is prefilled from Google's verified profile
-name when available. The purpose cards come before and fill a separate
-Profile-name box with a distinct suggestion such as `Steven (Work)`. Choosing
-💼 Work, 🎓 School, or 🏡 Personal updates that suggestion, so you normally only
-need to review it. You can replace it; after the
-first edit, changing the purpose does not overwrite it. A purpose card is only
-a shortcut to that suggestion: **Continue** is available as soon as owner name
-and Profile name are present, whether or not a card was chosen. On the
-Workspace step, choose one of the
-six template cards before naming it, or just type a name; no card is selected
-initially, and a workspace named without choosing one starts Empty. Choosing a
-card fills the name box with that template's name, and another card changes the
-suggestion. Once you type, your name becomes authoritative: the cards stop
-changing or replacing it, while the selected template remains visible. Deleting
-the name back to empty hands the choice back to the cards, so you can pick a
-template again. Enter in the Profile-name box continues once owner name
-and Profile name are present; Enter in the Workspace-name box
-creates the workspace once the name is present. Press
-the workspace tile left of the name to choose its color and
-emoji with the same picker available later from **Icon and color...**. **Create
-workspace** saves that appearance with the first Workspace. The Profile tile
-left of the Profile name opens the same Profile color-and-emoji picker used in
-the application. **Back** beside Continue returns to Welcome;
-Back beside Create workspace returns to the Profile form without clearing it.
-Choosing the unset color uses the current theme's default tile surface (white
-with a border in the light theme). A session saved by an older version with a
+Setting up takes **one card**: *Set up your profile and workspace*. Under
+**You**, type your name; the round chip beside it shows its first letter as you
+type. That one name is both yours and your first Profile's — your first Profile
+is simply called *Steven*, and you can rename it later in **Manage**. After
+Google sign-in the name is already filled from your Koru account when one is
+available. Under **First workspace**, the workspace is already called
+*Personal*, with 🌱 on green: click into the name (or Tab to it) and it is
+selected whole, so what you type replaces it. Click a swatch in the row of ten
+colors to change the workspace's color; the row wraps onto more lines in a
+narrow window rather than being cut off. Press the workspace tile left of the
+name for the full picker — every emoji, and "no color" — the same one
+available later from **Icon and color...**; the tile and the swatch row always
+agree. Choosing the unset color uses the current theme's default tile surface
+(white with a border in the light theme), and no swatch is ringed.
+
+Both name boxes behave like the document Find box: click to place the caret,
+drag to select, and use the ordinary word-delete, clipboard, and undo
+shortcuts. **Start using Koru** is available once both names hold more than
+spaces; press it, or press Enter in either name box. The card then reads
+*Finishing…* until your Profile and workspace are ready, and the app opens on
+the Welcome tab, which greets you by name. Your workspace holds one untitled
+document. If creating them is refused, the card comes back with the reason
+under the swatches and everything you typed, and trying again cannot make a
+second Profile. With the keyboard, Tab visits the name, the tile, the
+workspace name, the swatch row (one stop — the arrow keys move between swatches
+and Enter or Space chooses one), **Start using Koru**, then **Back**. **Back**
+under the button returns to Welcome, and the card comes back as you left it. A session saved by an older version with a
 separate profiles tab opens on Welcome instead; the Manage tab itself comes
 back after a restart.
 
 In the **Manage** tab, **New profile** sits under the Profiles in the nav, and
 the account you are signed in with is on the **Koru Cloud** page. A local-only
 Profile's page says **No online identity attached** instead of reporting a
-connection failure. **New profile** opens the same native first-run screens: connect it
-to the signed-in Google identity, or choose **Continue offline** and create only
-the local Profile and first Workspace. If you sign in with another Google
+connection failure. **New profile** opens the same setup card as the first run,
+with its first label reading **Profile**: the box starts empty (placeholder
+*Profile name*) and names only the new Profile, so creating a Profile there never
+changes your Koru account's name, and the Welcome tab greets you without a name.
+Connect it to the signed-in Google identity, or choose **Continue offline** and
+create only the local Profile and first Workspace. If you sign in with another Google
 Account, existing local Profiles
 stay visible and say **Connected to another account** when that exact Profile
 is not authorized for the current Google identity. You can create a new Profile
-for the signed-in email through the same native Profile and Workspace screens,
+for the signed-in email through the same setup card,
 choose another Google Account, or continue offline. Signing in never rebinds an
 existing Profile. If the account chooser names a Profile already visible on
 this device, **Open local content** leaves creation and selects that Profile; a

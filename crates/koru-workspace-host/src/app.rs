@@ -2356,7 +2356,8 @@ struct PendingConnectedProfileCreation {
     submission: Option<crate::account_ui::CommandSubmissionId>,
     generation: Option<u64>,
     source: WindowId,
-    owner_display_name: String,
+    /// `None` from Manage → New profile: the account's name is left alone.
+    owner_display_name: Option<String>,
     profile_name: String,
     workspace_name: String,
     connect_account: bool,
@@ -2856,7 +2857,9 @@ struct OnboardingApp<H: Host> {
     last_caption_click: Option<(Instant, f32, f32)>,
     creation_tx: mpsc::Sender<OnboardingCreation>,
     creation_rx: mpsc::Receiver<OnboardingCreation>,
-    first_minutes: Option<(String, String, String)>,
+    /// The owner, Profile and workspace names the Welcome tab greets with. The
+    /// first-run window always has an owner; `None` would greet plainly.
+    first_minutes: Option<(Option<String>, String, String)>,
     connect_created_profile: bool,
     open_manage_after_creation: bool,
     pending_connected_open: Option<koru_workspace::fromstore::OpenedFromStore>,
@@ -3031,7 +3034,11 @@ impl<H: Host> ContentState<H> {
                     (&mut next, first_minutes)
                     && let Some(view) = app.pending.as_mut()
                 {
-                    let _ = view.show_first_minutes(&owner, &profile, &workspace);
+                    let _ = view.show_first_minutes(
+                        owner.as_deref().unwrap_or(""),
+                        &profile,
+                        &workspace,
+                    );
                 }
                 Some(next)
             }
@@ -4013,11 +4020,13 @@ impl<H: Host> OnboardingApp<H> {
             .as_ref()
             .map(|(_, profile, _)| profile.clone())
             .unwrap_or_else(|| "Personal".into());
+        // The tuple's owner as it is; the first-run window always has one, and
+        // the fallback to the Profile name covers a tuple it cannot lack.
         let owner_display_name = self
             .first_minutes
             .as_ref()
             .map(|(owner, _, _)| owner.clone())
-            .unwrap_or_else(|| name.clone());
+            .unwrap_or_else(|| Some(name.clone()));
         self.pending_connected_open = Some(opened);
         self.connect_created_profile = false;
         self.awaiting_hosted_profile = true;
@@ -13764,9 +13773,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .then_some(source)
             .or(self.primary);
         if let Some(pane) = target.and_then(|id| self.panes.get_mut(&id)) {
-            let _ =
-                pane.view
-                    .show_first_minutes(&owner_display_name, &profile_name, &workspace_name);
+            // No owner name (Manage → New profile) greets plainly.
+            let _ = pane.view.show_first_minutes(
+                owner_display_name.as_deref().unwrap_or(""),
+                &profile_name,
+                &workspace_name,
+            );
             if connection_was_requested && !account_connected {
                 let _ = pane.view.show_notice(
                     "The Profile was created and remains available offline, but Koru could not finish its account connection.".into(),
@@ -19961,7 +19973,7 @@ mod tests {
             submission: Some(submission),
             generation: None,
             source: WindowId::from(1u64),
-            owner_display_name: "A owner".into(),
+            owner_display_name: Some("A owner".into()),
             profile_name: "Existing local Profile".into(),
             workspace_name: "Work".into(),
             connect_account: true,
@@ -19972,7 +19984,7 @@ mod tests {
         pending.stage = ConnectedProfileCreationStage::AwaitingAccountReturn(profile);
         assert_eq!(pending.retry_command(profile), original);
         assert!(
-            matches!(original,koru_agent_wire::AccountCommand::CreateProfile { ref profile_id,ref owner_display_name,.. } if *profile_id==profile.to_storage() && owner_display_name=="A owner")
+            matches!(original,koru_agent_wire::AccountCommand::CreateProfile { ref profile_id,ref owner_display_name,.. } if *profile_id==profile.to_storage() && owner_display_name.as_deref()==Some("A owner"))
         );
         assert!(
             !pending.accepts_admission(crate::account_ui::CommandAdmission {
@@ -20005,6 +20017,34 @@ mod tests {
             ConnectedProfileCreationStage::AwaitingLocalBinding(profile)
         );
         assert_eq!(pending.owner_scope, 17);
+    }
+
+    /// **A Profile created from Manage retries without an owner name**
+    /// (welcome Q-G): the parked retry is the command that was meant, so a
+    /// retry cannot rename the account either.
+    #[test]
+    fn an_embedded_creation_retries_without_an_owner_name() {
+        let profile = koru_core::ProfileId::new();
+        let pending = PendingConnectedProfileCreation {
+            owner_scope: 17,
+            submission: None,
+            generation: None,
+            source: WindowId::from(1u64),
+            owner_display_name: None,
+            profile_name: "Work".into(),
+            workspace_name: "Personal".into(),
+            connect_account: true,
+            stage: ConnectedProfileCreationStage::CreatingLocally,
+        };
+        assert!(matches!(
+            pending.retry_command(profile),
+            koru_agent_wire::AccountCommand::CreateProfile {
+                ref profile_id,
+                owner_display_name: None,
+                ref name,
+                ..
+            } if *profile_id == profile.to_storage() && name == "Work"
+        ));
     }
 
     #[test]

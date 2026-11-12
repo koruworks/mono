@@ -2751,20 +2751,28 @@ impl AccountService for ProductionAccountService {
                 name,
                 locale,
             } => {
-                validate_name(&owner_display_name)?;
+                if let Some(owner) = owner_display_name.as_deref() {
+                    validate_name(owner)?;
+                }
                 validate_name(&name)?;
                 if let Some(locale) = locale.as_deref() {
                     validate_locale(locale)?;
                 }
-                self.client
-                    .update_account(
-                        &UpdateAccountRequestV1 {
-                            version: Version1,
-                            display_name: owner_display_name,
-                        },
-                        &self.authorization()?,
-                    )
-                    .map_err(map_client_error)?;
+                // First run names the owner and the Profile with one name, and
+                // the account takes it first. A Profile created from Manage
+                // carries no owner name, so the account's name is left alone
+                // (protocol 47; welcome Q-G).
+                if let Some(display_name) = owner_display_name {
+                    self.client
+                        .update_account(
+                            &UpdateAccountRequestV1 {
+                                version: Version1,
+                                display_name,
+                            },
+                            &self.authorization()?,
+                        )
+                        .map_err(map_client_error)?;
+                }
                 let profile = self
                     .client
                     .create_profile(
@@ -3410,7 +3418,11 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
             locale,
         } => {
             parse_profile(profile_id)?;
-            validate_name(owner_display_name)?;
+            // Absent is not blank: no owner name means the account's name
+            // stays as it is. A present one is held to the name rules.
+            if let Some(owner) = owner_display_name {
+                validate_name(owner)?;
+            }
             validate_name(name)?;
             if let Some(locale) = locale {
                 validate_locale(locale)?;
