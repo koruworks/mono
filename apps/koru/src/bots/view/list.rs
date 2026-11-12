@@ -418,6 +418,30 @@ impl BotView {
         Some(handled)
     }
 
+    /// **A right-click on a row** asks for the row's menu — the one its ⋯
+    /// opens — as a right-click in the Chats view does; the window drains
+    /// it ([`take_conversation_menu`](Self::take_conversation_menu)).
+    /// `false` when it is not on a row, or the list offers no menu.
+    pub(crate) fn list_context_menu(&mut self, x: f32, y: f32) -> bool {
+        let Some((area, top)) = self.list_band() else {
+            return false;
+        };
+        if !area.contains(x, y) {
+            return false;
+        }
+        let Some(chats) = self.conversations.surface.context_menu(area, top, x, y) else {
+            return false;
+        };
+        match chats.as_slice() {
+            [chat] => {
+                self.return_focus = self.focus;
+                self.conversation_menu = Some((*chat, (x, y)));
+            }
+            _ => self.list_notice = Some(Words::BotsTrashOneAtATime),
+        }
+        true
+    }
+
     /// The pointer over the list. `true` when its hover changed.
     pub(super) fn list_move(&mut self, x: f32, y: f32) -> bool {
         let Some((area, top)) = self.list_band() else {
@@ -520,6 +544,156 @@ impl BotView {
     /// or from its first message: the list reads again to show it.
     pub(crate) fn conversation_list_moved(&mut self) {
         self.conversations.owe_read();
+    }
+
+    // ------------------------------------------------- renaming a row
+
+    /// **Why `chat` cannot be renamed now**, in the sentence the owner's
+    /// refusal is said in (`BOT_REFUSALS`): an archived Bot's conversations
+    /// are read-only (`bot_archived`), a conversation in Trash
+    /// (`bot_conversation_trashed`) or a Bot in Trash (`bot_trashed`) is
+    /// hidden, and an operation of the Bot holds it (`bot_lifecycle_pending`).
+    /// `None` when a rename may be sent. A conversation the list does not
+    /// hold is not this tab's to rename.
+    pub(crate) fn rename_refusal(&self, chat: ChatId) -> Option<Words> {
+        let facts = self.facts.as_ref()?;
+        if facts.trashed {
+            return Some(Words::BotsErrBotTrashed);
+        }
+        if facts.archived {
+            return Some(Words::BotsErrArchived);
+        }
+        if self.chat_in_trash && chat == self.chat {
+            return Some(Words::BotsErrTrashed);
+        }
+        if self.lifecycle.busy() {
+            return Some(Words::BotsErrPending);
+        }
+        None
+    }
+
+    /// Whether a rename of `chat` is offered: listed, and nothing refuses it.
+    pub(crate) fn rename_offered(&self, chat: ChatId) -> bool {
+        self.conversations
+            .listed()
+            .iter()
+            .any(|held| held.id == chat)
+            && self.rename_refusal(chat).is_none()
+    }
+
+    /// **The row `F2` renames**, as the Chats view chooses: the row under the
+    /// pointer (in the tab's coordinates), else the one the keyboard is on
+    /// while the list holds it. `None` when neither is a row.
+    pub(crate) fn rename_target(&mut self, pointer: Option<(f32, f32)>) -> Option<ChatId> {
+        let (area, top) = self.list_band()?;
+        if let Some((x, y)) = pointer
+            && area.contains(x, y)
+            && let Some(chat) = self.conversations.surface.chat_at(area, top, x, y)
+        {
+            return Some(chat);
+        }
+        if self.focus == Some(CONVERSATION_LIST) {
+            return self.conversations.surface.focused_chat();
+        }
+        None
+    }
+
+    /// The name a rename field starts from: the conversation's own title,
+    /// or — while it still carries a placeholder — what its row shows for
+    /// another conversation, and nothing for the main one, whose row says
+    /// *Main conversation* rather than a name of its own.
+    pub(crate) fn rename_start(&self, chat: ChatId) -> Option<String> {
+        let held = self
+            .conversations
+            .listed()
+            .iter()
+            .find(|held| held.id == chat)?;
+        let main = self.facts.as_ref().map(|facts| facts.main_chat) == Some(chat);
+        let shown = self.conversations.title_of(chat)?;
+        let placeholder = super::conversations::is_placeholder(held, &self.label());
+        Some(match (placeholder, main) {
+            (true, true) => String::new(),
+            (true, false) => shown,
+            (false, _) => held.title.trim().to_owned(),
+        })
+    }
+
+    /// **Where the window's rename field stands** over `chat`'s row: the
+    /// shared list's own answer (`ChatsSurface::rename_rect`), in the tab's
+    /// coordinates.
+    pub(crate) fn rename_rect(&self, chat: ChatId) -> Option<Rect> {
+        let (area, top) = self.list_band()?;
+        self.conversations
+            .surface
+            .rename_rect(area, top, chat, koru_ui::text_field::PAD)
+    }
+
+    /// The row the window's field is over stands aside (koru-ai D89).
+    pub(crate) fn set_renaming(&mut self, chat: Option<ChatId>) -> bool {
+        self.conversations.surface.set_renaming(chat)
+    }
+
+    /// **Rename `chat`** through the conversation's own chat surface — the
+    /// rename command the Chats view renames an ordinary chat through, which
+    /// the owner admits for a Bot conversation — and the list reads again
+    /// when it lands (`conversation_list_moved`). Refused in its sentence
+    /// when something holds it; an unchanged title sends nothing.
+    pub(crate) fn rename_conversation(&mut self, chat: ChatId, title: &str) -> bool {
+        let title = title.trim();
+        if let Some(refused) = self.rename_refusal(chat) {
+            self.list_notice = Some(refused);
+            return true;
+        }
+        // Unchanged: the title it holds, or the words its row shows (the
+        // field starts from those while the title is a placeholder).
+        let unchanged = self
+            .conversations
+            .listed()
+            .iter()
+            .any(|held| held.id == chat && held.title.trim() == title)
+            || self.conversations.title_of(chat).as_deref() == Some(title);
+        if title.is_empty() || unchanged {
+            return true;
+        }
+        let sent = self
+            .conversation
+            .as_mut()
+            .is_some_and(|view| view.rename_chat(chat, title));
+        if sent {
+            self.list_notice = None;
+            #[cfg(test)]
+            self.conversations.renamed.push((chat, title.to_owned()));
+        } else {
+            self.list_notice = Some(Words::BotsErrUnreachable);
+        }
+        true
+    }
+
+    /// The renames this tab handed its conversation's chat surface, in
+    /// order. The surface sends each as `Command::Rename`, which its reader
+    /// answers through `client.ai().rename_chat` (koru-ai-ui `reader.rs`);
+    /// a test's surface has no reader, so the hand-over is what it can see.
+    #[cfg(test)]
+    pub(crate) fn renames_sent(&self) -> &[(ChatId, String)] {
+        &self.conversations.renamed
+    }
+
+    /// **The list answered with `page`**, as the owner's `ListBotChats`
+    /// answers the tab's first read (`list_bot_chats`,
+    /// `apps/koru-ai-server/src/worker/bots/reads.rs`).
+    #[cfg(test)]
+    pub(crate) fn listed_for_test(&mut self, page: koru_ai_core::bots::BotChatPage) {
+        let bot = self.bot.expect("a Bot tab that knows its Bot");
+        let Some(crate::bots::link::Command::ListChats { seq, .. }) = self.conversations.read()
+        else {
+            panic!("the list owes its first read");
+        };
+        assert!(self.conversations.answer(seq, bot, Ok(page)));
+    }
+
+    /// Say why a row's rename was not started, under the list.
+    pub(crate) fn say_list_notice(&mut self, words: Words) {
+        self.list_notice = Some(words);
     }
 
     /// Every listed conversation with the title its row shows, for the

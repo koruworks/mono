@@ -50,6 +50,14 @@ pub(super) enum Target {
     Schedule(ScheduleId),
     /// A chat in the Chats navigator, renamed in its row.
     Chat(koru_ai_ui::ChatId),
+    /// **A Bot's conversation, renamed in its row of the Bot tab's list** —
+    /// the tab that asked, by its own identity (`Tab::id`), and its Bot, so
+    /// the rename reaches that tab or nothing.
+    BotChat {
+        tab: u64,
+        bot: koru_ai_core::bots::BotId,
+        chat: koru_ai_ui::ChatId,
+    },
 }
 
 pub(super) struct WorkspaceRename {
@@ -132,6 +140,20 @@ impl WorkspaceRename {
         }
     }
 
+    /// A Bot conversation's row in its tab's list: the same field, keys and
+    /// refusal of an empty name as an ordinary chat's.
+    pub(super) fn for_bot_chat(
+        engine: &mut TextEngine,
+        tab: u64,
+        bot: koru_ai_core::bots::BotId,
+        chat: koru_ai_ui::ChatId,
+        title: &str,
+    ) -> Self {
+        let mut field = Self::for_chat(engine, chat, title);
+        field.target = Target::BotChat { tab, bot, chat };
+        field
+    }
+
     pub(super) fn schedule_expected(&self) -> Option<&ScheduleName> {
         self.schedule_expected.as_ref()
     }
@@ -189,7 +211,7 @@ impl WorkspaceRename {
                 // A chat's title is trimmed when it is sent, so one that is
                 // only spaces is as empty as one that is nothing.
                 let empty = match self.target {
-                    Target::Chat(_) => name.trim().is_empty(),
+                    Target::Chat(_) | Target::BotChat { .. } => name.trim().is_empty(),
                     _ => name.is_empty(),
                 };
                 if empty {
@@ -197,7 +219,7 @@ impl WorkspaceRename {
                         Target::Workspace(_) => "A workspace needs a name".to_owned(),
                         Target::Profile(_) => "A profile needs a name".to_owned(),
                         Target::File(_) => "A file needs a name".to_owned(),
-                        Target::Chat(_) => {
+                        Target::Chat(_) | Target::BotChat { .. } => {
                             koru_i18n::t(crate::format::lang(), koru_i18n::Key::ChatsNameNeeded)
                                 .to_owned()
                         }

@@ -2750,6 +2750,14 @@ impl MainView {
         {
             return self.start_schedule_rename(schedule);
         }
+        // **A Bot tab's conversation list**: the row under the pointer, else
+        // the one the keyboard is on while the list holds it — as the Chats
+        // view chooses, below.
+        if (self.focused_view_rect().contains(px, py) || self.bot_list_holds_keyboard())
+            && let Some(started) = self.start_bot_chat_rename_here()
+        {
+            return started;
+        }
         // The Chats view: the chat under the pointer, else the one the
         // keyboard is on while the view holds it.
         if self.sidebar.is_open()
@@ -4455,12 +4463,15 @@ impl MainView {
                 MenuAction::UnarchiveBot => true,
                 _ => false,
             },
-            MenuSubject::BotConversation { bot, tab, .. } => {
-                action == MenuAction::TrashBotConversation
-                    && self
-                        .asking_bot_tab(*tab, *bot)
-                        .is_some_and(|view| !view.lifecycle_busy())
-            }
+            MenuSubject::BotConversation { bot, tab, chat } => match action {
+                MenuAction::TrashBotConversation => self
+                    .asking_bot_tab(*tab, *bot)
+                    .is_some_and(|view| !view.lifecycle_busy()),
+                MenuAction::RenameAiChat => self
+                    .asking_bot_tab(*tab, *bot)
+                    .is_some_and(|view| view.rename_offered(*chat)),
+                _ => false,
+            },
             MenuSubject::AgentSchedules { schedules } => {
                 let subjects = schedules
                     .iter()
@@ -4880,6 +4891,7 @@ impl MainView {
             MenuSubject::Bot { bot, tab } => self.choose_bot_lifecycle(bot, tab, action),
             MenuSubject::BotConversation { bot, chat, tab } => match action {
                 MenuAction::TrashBotConversation => self.ask_trash_bot_conversation(bot, tab, chat),
+                MenuAction::RenameAiChat => self.start_bot_chat_rename(bot, tab, chat),
                 _ => false,
             },
             MenuSubject::AiChat { chats } => match action {
@@ -6422,6 +6434,62 @@ impl MainView {
         true
     }
 
+    /// Whether the Bot tab in front has the keyboard in its conversation
+    /// list.
+    fn bot_list_holds_keyboard(&self) -> bool {
+        matches!(&self.tabs().active_tab().view,
+            TabView::Bot(view) if view.focus() == Some(crate::bots::view::list::CONVERSATION_LIST))
+    }
+
+    /// **`F2` over the Bot tab in front**: its row under the pointer, else
+    /// the one its list's keyboard is on. `None` when there is no such row,
+    /// so `F2` goes on to mean what it means elsewhere; `Some` when it was
+    /// answered — the field opened, or the row's refusal said.
+    fn start_bot_chat_rename_here(&mut self) -> Option<bool> {
+        let at = self.focused_view_rect();
+        let (px, py) = self.pointer;
+        let pointer = at.contains(px, py).then(|| (px - at.x, py - at.y));
+        let asking = self.tabs_mut().active_mut();
+        let tab = asking.id;
+        let TabView::Bot(view) = &mut asking.view else {
+            return None;
+        };
+        let bot = view.bot()?;
+        let chat = view.rename_target(pointer)?;
+        Some(self.start_bot_chat_rename(bot, tab, chat))
+    }
+
+    /// **Rename a Bot's conversation in its row** — the row menu's
+    /// *Rename…* and `F2`: the same inline field an ordinary chat is renamed
+    /// in, over the row the Bot tab's list draws. Refused in the owner's own
+    /// sentence, under the list, while the Bot is archived or in Trash, the
+    /// conversation is in Trash, or an operation holds the Bot.
+    fn start_bot_chat_rename(
+        &mut self,
+        bot: koru_ai_core::bots::BotId,
+        tab: u64,
+        chat: koru_ai_ui::ChatId,
+    ) -> bool {
+        let Some(view) = self.asking_bot_tab_mut(tab, bot) else {
+            return self.say_asking_tab_gone();
+        };
+        if let Some(refused) = view.rename_refusal(chat) {
+            view.say_list_notice(refused);
+            return true;
+        }
+        let Some(title) = view.rename_start(chat) else {
+            return false;
+        };
+        self.workspace_rename = Some(WorkspaceRename::for_bot_chat(
+            &mut self.engine,
+            tab,
+            bot,
+            chat,
+            &title,
+        ));
+        true
+    }
+
     /// Send a chat's new title through the chat surface's rename command —
     /// the one the chat's title row used. **An AI chat tab on the chat
     /// first**, so its tab takes the name; else the side pane's surface,
@@ -6559,6 +6627,23 @@ impl MainView {
             RenameTarget::Chat(chat) => {
                 return self.explore.chat_label_rect(self.explore_area(), chat);
             }
+            // The Bot tab's row, out of the view's coordinates into the
+            // window's — while that tab is the one in front.
+            RenameTarget::BotChat { tab, bot, chat } => {
+                let front = self.tabs().active_tab();
+                if front.id != tab {
+                    return None;
+                }
+                let TabView::Bot(view) = &front.view else {
+                    return None;
+                };
+                if view.bot() != Some(bot) {
+                    return None;
+                }
+                let local = view.rename_rect(chat)?;
+                let at = self.focused_view_rect();
+                return Some(Rect::new(at.x + local.x, at.y + local.y, local.w, local.h));
+            }
             RenameTarget::Schedule(schedule) => {
                 if let Some(row) = self
                     .explore
@@ -6645,6 +6730,13 @@ impl MainView {
                     Some(RenameTarget::Chat(chat)) => {
                         self.workspace_rename = None;
                         self.rename_ai_chat(chat, &name)
+                    }
+                    Some(RenameTarget::BotChat { tab, bot, chat }) => {
+                        self.workspace_rename = None;
+                        match self.asking_bot_tab_mut(tab, bot) {
+                            Some(view) => view.rename_conversation(chat, &name),
+                            None => self.say_asking_tab_gone(),
+                        }
                     }
                     Some(RenameTarget::Schedule(schedule)) => {
                         let expected = self
@@ -11308,7 +11400,10 @@ impl View for MainView {
                     TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => false,
                     TabView::Diff(_) => false,
                     // The AI surface draws and handles its own popovers.
-                    TabView::AiChat(_) | TabView::Bot(_) => false,
+                    TabView::AiChat(_) => false,
+                    // A Bot tab's conversation row asks for the row menu its
+                    // ⋯ opens (Rename, Move to Trash), drained just below.
+                    TabView::Bot(bot) => bot.list_context_menu(lx, ly),
                     TabView::Socials(_) => false,
                     // A session grid opens no context menu in W4.1.
                     TabView::Session(_) => false,
@@ -11338,6 +11433,7 @@ impl View for MainView {
                 // produced is not something an editor can name.
                 handled
                     | self.drain_trash_all(ws)
+                    | self.drain_bot_lifecycle_asks()
                     | self.drain_run_pill_menu((x, y))
                     | self.drain_schedule_pill_menu((x, y))
             }
@@ -15779,7 +15875,8 @@ impl MainView {
                             RenameTarget::Profile(_)
                             | RenameTarget::File(_)
                             | RenameTarget::Schedule(_)
-                            | RenameTarget::Chat(_) => Vec::new(),
+                            | RenameTarget::Chat(_)
+                            | RenameTarget::BotChat { .. } => Vec::new(),
                         })
                         .unwrap_or_default();
                     let out = field.key(&mut self.engine, key, text, mods, &taken);

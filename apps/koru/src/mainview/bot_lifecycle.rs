@@ -134,11 +134,13 @@ impl MainView {
             opened |= self.open_subject_menu(MenuSubject::Bot { bot, tab }, items, to_window(at));
         }
         if let Some((chat, at)) = row_menu {
+            // **Rename, as the Chats list offers it** for an ordinary chat —
+            // the same entry — and the conversation's Trash.
             let mut menu = ContextMenu::new(
                 &mut self.engine,
                 MenuSubject::BotConversation { bot, chat, tab },
                 to_window(at),
-                vec![MenuAction::TrashBotConversation],
+                vec![MenuAction::RenameAiChat, MenuAction::TrashBotConversation],
             );
             let enabled = self.enabled_items(&menu);
             menu.step(&enabled, 1);

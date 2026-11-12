@@ -85,6 +85,21 @@ impl MainView {
         if matches!(self.tabs().active_tab().view, TabView::Welcome(_)) {
             self.sync_welcome_lists();
         }
+        // A Bot conversation's row being renamed stands aside for the field
+        // drawn over it, as a Chats row does (koru-ai D89).
+        let renaming = match self.workspace_rename.as_ref().map(|field| field.target) {
+            Some(super::workspace_rename::Target::BotChat { tab, chat, .. }) => Some((tab, chat)),
+            _ => None,
+        };
+        let front = self.tabs_mut().active_mut();
+        let front_id = front.id;
+        if let TabView::Bot(view) = &mut front.view {
+            view.set_renaming(
+                renaming
+                    .filter(|(tab, _)| *tab == front_id)
+                    .map(|(_, chat)| chat),
+            );
+        }
         if crate::taskbar::take_new_document() {
             self.prompt_new_document();
         }

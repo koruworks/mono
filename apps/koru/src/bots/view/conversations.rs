@@ -12,13 +12,17 @@
 //!   thread (main first, then newest; Trash left out), and *Show more*
 //!   follows the page's cursor. A re-read asks again from the start for as
 //!   many rows as were shown, up to one page's bound.
-//! - **Open, and Move to Trash.** The owner refuses Rename and Pin for a
-//!   Bot conversation, so the rows have no pin; their ⋯, right-click and
-//!   Delete ask the tab for one conversation's Trash (S14), a lifecycle
-//!   operation the window confirms and the owner settles. The row leaves
-//!   only when the owner says it is done ([`Conversations::remove`]). An
-//!   archived Bot's rows only open (`ChatsSurface::set_row_actions`,
-//!   QUESTIONS O31.3).
+//! - **Open, Rename and Move to Trash.** The owner refuses Pin for a Bot
+//!   conversation, so the rows have no pin. It admits Rename as for an AI
+//!   chat (`worker/bots/tests/rename.rs`), so a row is renamed as a Chats
+//!   row is: the window's row menu (*Rename…*), `F2`, and the window's
+//!   inline field over the row (`ChatsSurface::rename_rect`), sent through
+//!   the conversation's own chat surface. Their ⋯, right-click and Delete
+//!   ask the tab for one conversation's Trash (S14), a lifecycle operation
+//!   the window confirms and the owner settles. The row leaves only when
+//!   the owner says it is done ([`Conversations::remove`]). An archived
+//!   Bot's rows only open (`ChatsSurface::set_row_actions`, QUESTIONS
+//!   O31.3), and a rename asked by `F2` there is refused in its sentence.
 //! - **New conversation** is the owner's `CreateChat`; the tab then shows the
 //!   conversation it made. Branch is the conversation's own, and the branch
 //!   joins the list on the next read.
@@ -93,6 +97,10 @@ pub(crate) struct Conversations {
     /// older additional conversation still carries as its title.
     lang: koru_i18n::Lang,
     bot_name: String,
+    /// The renames the tab handed its conversation's surface (test only:
+    /// `BotView::renames_sent`).
+    #[cfg(test)]
+    pub(crate) renamed: Vec<(ChatId, String)>,
 }
 
 /// **How a Bot's conversation is titled wherever it is shown** — its row
@@ -113,10 +121,7 @@ pub(crate) fn shown_title(
     bot_name: &str,
 ) -> String {
     let title = chat.title.trim();
-    let placeholder = title.is_empty()
-        || title == koru_ai_core::NEW_CHAT_TITLE
-        || (!bot_name.trim().is_empty() && title == bot_name.trim());
-    match (main, placeholder) {
+    match (main, is_placeholder(chat, bot_name)) {
         (true, true) => koru_i18n::t(lang, Words::BotsMainConversation).to_owned(),
         (true, false) => koru_i18n::fill(
             koru_i18n::t(lang, Words::BotsMainConversationTitled),
@@ -125,6 +130,16 @@ pub(crate) fn shown_title(
         (false, true) => koru_i18n::t(lang, Words::ChatsNew).to_owned(),
         (false, false) => title.to_owned(),
     }
+}
+
+/// Whether `chat` still carries a title it was given rather than one a
+/// person or its first message gave it: none, the new-chat placeholder, or
+/// the Bot's name, which the engine gave additional conversations before.
+pub(crate) fn is_placeholder(chat: &koru_ai_core::Chat, bot_name: &str) -> bool {
+    let title = chat.title.trim();
+    title.is_empty()
+        || title == koru_ai_core::NEW_CHAT_TITLE
+        || (!bot_name.trim().is_empty() && title == bot_name.trim())
 }
 
 impl Default for Conversations {
@@ -147,6 +162,8 @@ impl Default for Conversations {
             unanswered: None,
             lang: koru_i18n::Lang::default(),
             bot_name: String::new(),
+            #[cfg(test)]
+            renamed: Vec::new(),
         }
     }
 }

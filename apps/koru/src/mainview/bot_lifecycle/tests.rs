@@ -921,3 +921,251 @@ fn the_tabs_own_running_reply_makes_cancel_the_default_and_a_click_answers() {
         "{sent:?}"
     );
 }
+
+// ------------------------------------------------ renaming a conversation
+
+/// A page of `bot`'s conversations as `list_bot_chats` answers it
+/// (`apps/koru-ai-server/src/worker/bots/reads.rs`): the main one first,
+/// each with its title and its Bot's label.
+fn conversation_page(
+    bot: &Bot,
+    rows: &[(koru_ai_ui::ChatId, koru_ai_core::bots::BotChatPurpose, &str)],
+) -> koru_ai_core::bots::BotChatPage {
+    let mut conversations = Vec::new();
+    for (chat, purpose, title) in rows {
+        let mut listed = crate::bots::tests::trashed_chat(
+            bot.id,
+            &bot.config.name,
+            *chat,
+            title,
+            (BotRequestId::mint(), BotLifecycleKind::TrashChat),
+            koru_ai_core::bots::BotChatRestore::Conversation,
+        )
+        .conversation;
+        listed.label.purpose = *purpose;
+        conversations.push(listed);
+    }
+    koru_ai_core::bots::BotChatPage {
+        chats: conversations,
+        next_cursor: None,
+    }
+}
+
+/// A wide window with a Bot tab in front whose list holds its main
+/// conversation (titled with the Bot's name, as the owner makes it) and
+/// *Plan the launch*, laid out by a frame as the window draws one.
+fn renaming_window() -> (
+    MainView,
+    koru_workspace::Workspace,
+    Bot,
+    koru_ai_ui::ChatId,
+    u64,
+) {
+    let (mut v, workspace) = container();
+    koru_workspace_host::View::set_viewport(&mut v, 1400.0, 800.0);
+    let bot = crate::bots::tests::bot(BotId::mint(), WorkspaceId::new(), "Scout", false);
+    let other = koru_ai_ui::ChatId::new();
+    let (link, commands, answers) = BotsLink::test_pair();
+    // Both ends stay open for the test's life.
+    std::mem::forget(answers);
+    std::mem::forget(commands);
+    let mut view = BotView::with_link(bot.id, bot.main_chat, link);
+    view.know_bot_for_test(bot.clone());
+    view.listed_for_test(conversation_page(
+        &bot,
+        &[
+            (
+                bot.main_chat,
+                koru_ai_core::bots::BotChatPurpose::Main,
+                "Scout",
+            ),
+            (
+                other,
+                koru_ai_core::bots::BotChatPurpose::Additional,
+                "Plan the launch",
+            ),
+        ],
+    ));
+    let tab = Tab::bot(view);
+    let id = tab.id;
+    v.tabs_mut().push(tab);
+    lay_out(&mut v, &workspace);
+    (v, workspace, bot, other, id)
+}
+
+/// One frame of the window, as the shell draws it.
+fn lay_out(v: &mut MainView, workspace: &koru_workspace::Workspace) {
+    v.relayout();
+    v.draw_frame(
+        &mut vello::Scene::new(),
+        workspace,
+        &koru_draw::ImageCache::new(),
+        vello::kurbo::Affine::IDENTITY,
+        false,
+        (-1.0, -1.0),
+    );
+}
+
+/// The front Bot tab.
+fn front_bot(v: &mut MainView) -> &mut BotView {
+    match &mut v.tabs_mut().active_mut().view {
+        TabView::Bot(view) => view,
+        _ => panic!("a Bot tab in front"),
+    }
+}
+
+/// The centre of `chat`'s row, in the window's coordinates.
+fn row_centre(v: &mut MainView, chat: koru_ai_ui::ChatId) -> (f32, f32) {
+    let at = v.focused_view_rect();
+    let row = front_bot(v).rename_rect(chat).expect("the row is drawn");
+    (at.x + row.x + row.w * 0.5, at.y + row.y + row.h * 0.5)
+}
+
+/// Type `text` into whatever has the keyboard, as the shell hands keys.
+fn type_text(v: &mut MainView, ws: &mut koru_core::schema::WorkspaceDoc, text: &str) {
+    for c in text.chars() {
+        let s = c.to_string();
+        koru_workspace_host::View::key(
+            v,
+            ws,
+            &winit::keyboard::Key::Character(s.as_str().into()),
+            Some(&s),
+            winit::keyboard::ModifiersState::empty(),
+        );
+    }
+}
+
+/// **A Bot's conversation is renamed in its row as an ordinary chat is in
+/// the Chats list** (the third window run: its row menu offered only *Move
+/// conversation to Trash*, and `F2` did nothing). Through the window as a
+/// person reaches it: a right-click on the row (`View::context_menu`) opens
+/// the row menu with *Rename…* first and enabled, Enter on it opens the
+/// window's inline field over the row with the title selected, typing
+/// replaces it and Enter hands the new title to the conversation's chat
+/// surface; Escape cancels and sends nothing; `F2` over a row opens the same
+/// field, and the main conversation — titled with the Bot's name — starts
+/// empty and is renamed too.
+#[test]
+fn a_bot_conversation_is_renamed_in_its_row_as_a_chat_is() {
+    use winit::keyboard::NamedKey;
+    let (mut v, mut workspace, bot, other, tab) = renaming_window();
+    let ws = &mut workspace.ws;
+
+    // The row menu, from a right-click on the row.
+    let (x, y) = row_centre(&mut v, other);
+    assert!(koru_workspace_host::View::context_menu(&mut v, ws, x, y));
+    let menu = v.menu.as_ref().expect("the row's menu");
+    assert_eq!(
+        menu.subject,
+        MenuSubject::BotConversation {
+            bot: bot.id,
+            chat: other,
+            tab
+        }
+    );
+    assert_eq!(
+        menu.items(),
+        [MenuAction::RenameAiChat, MenuAction::TrashBotConversation]
+    );
+    assert_eq!(v.enabled_items(menu), [true, true]);
+
+    // Enter on *Rename…*: the field over the row, the title selected.
+    assert!(press(&mut v, ws, NamedKey::Enter));
+    assert!(v.menu.is_none());
+    let field = v.workspace_rename.as_ref().expect("the inline field");
+    assert!(matches!(
+        field.target,
+        crate::mainview::workspace_rename::Target::BotChat { chat, .. } if chat == other
+    ));
+    let at = v.focused_view_rect();
+    let local = front_bot(&mut v).rename_rect(other).expect("the row");
+    assert_eq!(
+        v.workspace_rename_row(),
+        Some(koru_draw::geometry::Rect::new(
+            at.x + local.x,
+            at.y + local.y,
+            local.w,
+            local.h
+        )),
+        "the field stands over the row"
+    );
+    type_text(&mut v, ws, "Budget review");
+    assert!(press(&mut v, ws, NamedKey::Enter));
+    assert!(v.workspace_rename.is_none(), "Enter commits");
+    assert_eq!(
+        front_bot(&mut v).renames_sent(),
+        [(other, "Budget review".to_owned())]
+    );
+
+    // F2 over the row opens the same field; Escape sends nothing.
+    koru_workspace_host::View::mouse_move(&mut v, x, y);
+    assert!(press(&mut v, ws, NamedKey::F2));
+    assert!(v.workspace_rename.is_some(), "F2 over the row");
+    type_text(&mut v, ws, "Thrown away");
+    assert!(press(&mut v, ws, NamedKey::Escape));
+    assert!(v.workspace_rename.is_none(), "Escape cancels");
+    assert_eq!(front_bot(&mut v).renames_sent().len(), 1, "nothing sent");
+
+    // The main conversation: its row reads *Main conversation*, the field
+    // starts empty, and it is renamed as any other.
+    let (mx, my) = row_centre(&mut v, bot.main_chat);
+    koru_workspace_host::View::mouse_move(&mut v, mx, my);
+    assert!(press(&mut v, ws, NamedKey::F2));
+    let field = v.workspace_rename.as_mut().expect("F2 over the main row");
+    assert_eq!(
+        field.dictation_field().value(),
+        "",
+        "no name of its own yet"
+    );
+    type_text(&mut v, ws, "Kickoff");
+    assert!(press(&mut v, ws, NamedKey::Enter));
+    assert_eq!(
+        front_bot(&mut v).renames_sent().last(),
+        Some(&(bot.main_chat, "Kickoff".to_owned()))
+    );
+}
+
+/// **Not offered, and refused in its sentence if asked**, while the owner
+/// would refuse it: an operation of the Bot moving (`bot_lifecycle_pending`
+/// — the row menu's *Rename…* dims and `F2` says why) and an archived Bot,
+/// whose conversations are read-only (`bot_archived` — its rows offer no
+/// menu at all, and `F2` says why). Nothing is sent and no field opens. The
+/// sentences are the owner's refusals' own (`BOT_REFUSALS`).
+#[test]
+fn a_rename_the_owner_would_refuse_is_not_offered_and_says_why() {
+    use winit::keyboard::NamedKey;
+    let (mut v, mut workspace, bot, other, _tab) = renaming_window();
+
+    // An operation of the Bot on its way: the main conversation's Trash.
+    // The header says so, which moves the list down: laid out again.
+    assert!(front_bot(&mut v).trash_conversation(bot.main_chat));
+    lay_out(&mut v, &workspace);
+    let ws = &mut workspace.ws;
+    let (x, y) = row_centre(&mut v, other);
+    assert!(koru_workspace_host::View::context_menu(&mut v, ws, x, y));
+    let menu = v.menu.as_ref().expect("the row's menu");
+    assert_eq!(v.enabled_items(menu), [false, false], "both wait");
+    assert!(press(&mut v, ws, NamedKey::Escape));
+    koru_workspace_host::View::mouse_move(&mut v, x, y);
+    assert!(press(&mut v, ws, NamedKey::F2));
+    assert!(v.workspace_rename.is_none(), "no field");
+    assert_eq!(front_bot(&mut v).list_notice(), Some(Words::BotsErrPending));
+
+    // An archived Bot.
+    let (mut v, mut workspace, mut bot, other, _tab) = renaming_window();
+    bot.lifecycle = koru_ai_core::bots::BotLifecycle::Archived;
+    front_bot(&mut v).know_bot_for_test(bot.clone());
+    lay_out(&mut v, &workspace);
+    let ws = &mut workspace.ws;
+    let (x, y) = row_centre(&mut v, other);
+    koru_workspace_host::View::context_menu(&mut v, ws, x, y);
+    assert!(v.menu.is_none(), "an archived Bot's rows offer no menu");
+    koru_workspace_host::View::mouse_move(&mut v, x, y);
+    assert!(press(&mut v, ws, NamedKey::F2));
+    assert!(v.workspace_rename.is_none(), "no field");
+    assert_eq!(
+        front_bot(&mut v).list_notice(),
+        Some(Words::BotsErrArchived)
+    );
+    assert!(front_bot(&mut v).renames_sent().is_empty());
+}
