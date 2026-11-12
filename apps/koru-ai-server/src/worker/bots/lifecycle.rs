@@ -2212,6 +2212,8 @@ pub(super) fn hold_refuses(command: &WorkerCommand, hold: BotHold) -> bool {
                 | WorkerCommand::BranchChat { .. }
                 | WorkerCommand::UpdateChatModel { .. }
                 | WorkerCommand::UpdateChatAgentSettings { .. }
+                // Held as the conversation's other settings are.
+                | WorkerCommand::RenameChat { .. }
                 | WorkerCommand::ApproveToolCall { .. }
                 | WorkerCommand::AttachmentAdmission { .. }
                 | WorkerCommand::WorkspaceCopyAdmission { .. }

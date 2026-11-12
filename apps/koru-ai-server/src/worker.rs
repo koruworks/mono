@@ -3044,6 +3044,25 @@ impl WorkerState {
                 false,
             ));
         }
+        // A Bot conversation (past the guard: its owner, `bots.manage`, its
+        // holds) is read through the owner's prepared proof, never the
+        // ordinary reader, which does not see it; it must be readable
+        // before anything is written.
+        let bot_access = if self
+            .repository
+            .bot_for_chat(chat_id)
+            .map_err(bots::bot_failure)?
+            .is_some()
+        {
+            let access = self.bot_read_access(&context)?;
+            self.repository
+                .chat_with_access(chat_id, &access)
+                .map_err(ai_failure)?
+                .ok_or_else(not_found)?;
+            Some(access)
+        } else {
+            None
+        };
         if !self
             .repository
             .rename_chat(chat_id, title)
@@ -3051,11 +3070,12 @@ impl WorkerState {
         {
             return Err(not_found());
         }
-        let chat = self
-            .repository
-            .chat(chat_id)
-            .map_err(ai_failure)?
-            .ok_or_else(not_found)?;
+        let chat = match &bot_access {
+            Some(access) => self.repository.chat_with_access(chat_id, access),
+            None => self.repository.chat(chat_id),
+        }
+        .map_err(ai_failure)?
+        .ok_or_else(not_found)?;
         Ok(RenameChatResponse { chat })
     }
 

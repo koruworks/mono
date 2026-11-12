@@ -530,6 +530,9 @@ fn guard_command(
                     | WorkerCommand::SteerAttempt { .. }
                     | WorkerCommand::UpdateChatModel { .. }
                     | WorkerCommand::UpdateChatAgentSettings { .. }
+                    // Its title alone, as on an AI chat (the owner's rule
+                    // for Bot conversations); never the Bot's name.
+                    | WorkerCommand::RenameChat { .. }
                     | WorkerCommand::BranchChat { .. }
                     // The ordinary chat's own attachment staging (P1.5);
                     // what a Bot Send may deliver is decided by its `admit`.

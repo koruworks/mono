@@ -8,6 +8,7 @@ mod holds;
 mod label;
 mod lifecycle;
 mod reads;
+mod rename;
 mod runs;
 mod runtimes;
 
@@ -385,7 +386,11 @@ fn bot_chat_known_id_reads_require_owner_and_mutations_never_reach_launcher() {
         )
         .is_some()
     );
-    let (reply, response) = sync_channel(1);
+    // A rename is the person's, as on an AI chat ("same as an AI chat"):
+    // past the guard for the owner with `bots.manage` (it was refused as
+    // `unsupported_capability` until window run 2). Pinning is still not a
+    // Bot conversation control.
+    let (reply, _) = sync_channel(1);
     assert!(
         guard_command(
             &repo,
@@ -394,8 +399,22 @@ fn bot_chat_known_id_reads_require_owner_and_mutations_never_reach_launcher() {
                 context: context(true).into(),
                 chat: bot.main_chat,
                 request: RenameChatRequest {
-                    title: "Forbidden".into()
+                    title: "Renamed".into()
                 },
+                reply
+            }
+        )
+        .is_some()
+    );
+    let (reply, response) = sync_channel(1);
+    assert!(
+        guard_command(
+            &repo,
+            Some(&authority),
+            WorkerCommand::PinChat {
+                context: context(true).into(),
+                chat: bot.main_chat,
+                request: koru_ai_wire::PinChatRequest { pinned: true },
                 reply
             }
         )
