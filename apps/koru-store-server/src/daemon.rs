@@ -240,6 +240,13 @@ impl WorkerConfig {
         }
     }
 
+    /// Choose whether this host supervises the read worker. The standalone
+    /// host's `--read` is the one caller (see the `reader` field).
+    pub fn with_reader(mut self, reader: crate::readings::ReaderLaunch) -> Self {
+        self.reader = reader;
+        self
+    }
+
     /// Attach the events worker the commit feed will forward into.
     pub fn with_events(mut self, events: koru_events_server::EventsHandle) -> Self {
         self.events = Some(events);

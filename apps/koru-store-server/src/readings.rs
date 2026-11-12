@@ -132,6 +132,21 @@ impl Prepared {
         let board = Arc::new(Board::new(state));
         let mut threads = Vec::new();
 
+        // `GET /v1/readings/{workspace}/{hash}`, on a mirror connection of its
+        // own so a request never waits on the applier's transaction.
+        match self.derived.mirror() {
+            Ok(mirror) => {
+                let port = ReadingPort {
+                    state: Arc::downgrade(state),
+                    mirror: Mutex::new(mirror),
+                };
+                if !state.set_reading_service(Arc::new(port)) {
+                    tracing::warn!("the readings port was already set; the first one stays");
+                }
+            }
+            Err(error) => tracing::warn!("one reading cannot be asked for: {error}"),
+        }
+
         match self.derived.mirror() {
             Ok(mirror) => {
                 let applier = applier::Applier::new(
@@ -196,8 +211,17 @@ pub fn objects_under(root: &Path) -> Box<dyn coordinator::Objects> {
     Box::new(coordinator::ObjectDir(objects_dir(root)))
 }
 
+/// `<root>/blobs/objects`, where the verified objects are filed by hash.
+///
+/// **The blob store's own answer, not the backend's.** `SqliteBackend::
+/// objects_dir` is the blob store's *root* (`<root>/blobs`, which also holds
+/// `staging`); the objects are one level down. Reading from the first made
+/// every file count `not_here` on a real store root — no stub launcher test
+/// could see it, because the stubs never open a path.
 fn objects_dir(root: &Path) -> PathBuf {
-    koru_store_sqlite::SqliteBackend::new(root).objects_dir()
+    koru_store_sqlite::SqliteBackend::new(root)
+        .objects()
+        .objects_dir()
 }
 
 fn spawn_mirror(
@@ -248,6 +272,107 @@ fn spawn_coordinator(
         tracing::info!("readings: coordinating");
     }
     handle
+}
+
+/// **One reading, for `GET /v1/readings/{workspace}/{hash}`** (TECHNICAL
+/// §10).
+///
+/// The mirror says which entry's reading wins in the workspace — the one the
+/// index finds the bytes by — and holds its words. It does not keep the
+/// reader, the confidence or how far a partial reading got, so those are read
+/// from that entry's reading document: one fork under the Store lock, decoded
+/// outside it, as the applier does. If the document cannot be forked (not yet
+/// on this device, or the Store is going away) the mirror's row and words are
+/// the answer, with those three absent.
+struct ReadingPort {
+    state: Weak<AppState>,
+    mirror: Mutex<mirror::Mirror>,
+}
+
+impl koru_store_api::routes::readings::ReadingService for ReadingPort {
+    fn reading(
+        &self,
+        workspace: WorkspaceId,
+        hash: &koru_store_core::model::BlobHash,
+    ) -> Result<Option<koru_store_wire::readings::ReadingAnswer>, String> {
+        let hash = hash.as_str();
+        let (row, words) = {
+            let mirror = self
+                .mirror
+                .lock()
+                .map_err(|_| "the readings mirror's lock is poisoned".to_owned())?;
+            let Some(row) = mirror.winner_in(workspace, hash).map_err(|e| e.0)? else {
+                return Ok(None);
+            };
+            let words = mirror.pages_of(&row.workspace, hash).map_err(|e| e.0)?;
+            (row, words)
+        };
+        let parent = koru_store_core::ids::DocumentId::parse(&row.parent)
+            .ok_or_else(|| "the readings mirror holds a malformed document id".to_owned())?;
+        let fork = self.state.upgrade().and_then(|state| {
+            let mut store = state.store.lock().ok()?;
+            store
+                .fork_document(workspace, koru_store_core::ids::reading_document_id(parent))
+                .ok()
+        });
+        let entry = fork.and_then(|fork| koru_read::ReadingDoc::from_doc(fork).reading(hash));
+        Ok(Some(answer(workspace, parent, &row, entry, words)))
+    }
+}
+
+/// The answer, from the reading document's entry when there is one and from
+/// the mirror's row and words otherwise. Pure, so both shapes are tested.
+fn answer(
+    workspace: WorkspaceId,
+    parent: koru_store_core::ids::DocumentId,
+    row: &mirror::ReadingRow,
+    entry: Option<koru_read::Reading>,
+    words: Vec<(i64, String)>,
+) -> koru_store_wire::readings::ReadingAnswer {
+    use koru_store_wire::readings::{ReadingAnswer, ReadingPage};
+    match entry {
+        Some(reading) => ReadingAnswer {
+            workspace,
+            hash: row.hash.clone(),
+            document: parent,
+            reader: reading.reader.map(|r| r.as_str().to_owned()),
+            generation: reading.generation,
+            status: reading.status.map(|s| s.as_str().to_owned()),
+            reason: reading.reason.map(|r| r.as_str().to_owned()),
+            source: reading.source.map(|s| s.as_str().to_owned()),
+            confidence: reading.confidence,
+            pages_done: reading.pages_done,
+            pages: reading
+                .pages
+                .into_iter()
+                .map(|(page, text)| ReadingPage {
+                    page,
+                    text: text.into_string(),
+                })
+                .collect(),
+        },
+        None => ReadingAnswer {
+            workspace,
+            hash: row.hash.clone(),
+            document: parent,
+            reader: None,
+            generation: u32::try_from(row.generation).unwrap_or(0),
+            status: row.status.clone(),
+            reason: row.reason.clone(),
+            source: row.source.clone(),
+            confidence: None,
+            pages_done: None,
+            pages: words
+                .into_iter()
+                .filter_map(|(page, text)| {
+                    Some(ReadingPage {
+                        page: u32::try_from(page).ok()?,
+                        text,
+                    })
+                })
+                .collect(),
+        },
+    }
 }
 
 /// **The index's source of words**, answered from the mirror.

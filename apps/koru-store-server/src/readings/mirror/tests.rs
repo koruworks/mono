@@ -33,6 +33,33 @@ fn applied(workspace: WorkspaceId, parent: DocumentId, entries: Vec<(String, Rea
     }
 }
 
+/// **The route's winner is the index's winner**: of two entries holding the
+/// same bytes, the read one beats the partial one, whichever was applied last;
+/// another workspace's reading is not this one's; nothing read is `None`.
+#[test]
+fn the_winner_in_a_workspace_is_the_best_reading_there() {
+    let (mut mirror, _name, _keeper) = memory();
+    let (ws, other) = (WorkspaceId::new(), WorkspaceId::new());
+    let (one, two) = (DocumentId::new(), DocumentId::new());
+    let h = "b3:aa".to_owned();
+    assert_eq!(mirror.winner_in(ws, &h).unwrap(), None);
+
+    let full = reading(ReadingStatus::Read, &[(1, "first"), (2, "second")]);
+    let partial = reading(ReadingStatus::Partial, &[(1, "first")]);
+    mirror
+        .apply(&applied(ws, two, vec![(h.clone(), full)]))
+        .unwrap();
+    mirror
+        .apply(&applied(ws, one, vec![(h.clone(), partial)]))
+        .unwrap();
+    let winner = mirror.winner_in(ws, &h).unwrap().expect("a winner");
+    assert_eq!(winner.parent, two.to_storage());
+    assert_eq!(winner.status.as_deref(), Some("read"));
+    assert_eq!(winner.page_count, 2);
+    assert_eq!(winner.workspace, ws.to_storage());
+    assert_eq!(mirror.winner_in(other, &h).unwrap(), None);
+}
+
 /// **The words are held once per workspace and hash**, from the best reading;
 /// a parent's rows follow its document; an application that says nothing new
 /// changes nothing.
@@ -335,6 +362,11 @@ fn the_mirror_queries_use_their_indexes() {
               WHERE workspace_id = ?1 AND hash = ?2 AND parent_document_id <> ?3"
                 .into(),
             vec![ws.clone(), "b3:aa".into(), "x".into()],
+        ),
+        (
+            "winner_in (GET /v1/readings)",
+            WINNER_IN_SQL.into(),
+            vec![ws.clone(), "b3:aa".into()],
         ),
         (
             "still held (purge)",

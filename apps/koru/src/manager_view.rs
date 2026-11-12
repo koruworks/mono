@@ -523,6 +523,10 @@ impl View for DocumentPane {
         View::take_wants_copy_image(&mut self.doc)
     }
 
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        View::take_wants_save_reading(&mut self.doc)
+    }
+
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
         View::take_wants_copy_html(&mut self.doc)
     }
@@ -2201,6 +2205,13 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.take_wants_copy_image(),
             Self::Document(v) => v.take_wants_copy_image(),
+        }
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_save_reading(),
+            Self::Document(v) => v.take_wants_save_reading(),
         }
     }
 

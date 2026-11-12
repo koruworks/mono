@@ -53,6 +53,14 @@ pub struct Invocation {
     /// all three, because a person watching a store start wants to see it
     /// start.
     pub console: bool,
+    /// Supervise `koru-read-worker` beside this executable, as the product
+    /// desktop's Store does (OCR TECHNICAL §10 "Worker launch").
+    ///
+    /// **Off unless asked.** This binary is the black-box suites' host, and
+    /// they must never start a worker beside a test binary; the flag exists so
+    /// a person or an acceptance run can drive the real reading path against
+    /// a disposable `--root` without the desktop app.
+    pub read: bool,
 }
 
 struct Flag {
@@ -78,6 +86,13 @@ const FLAGS: &[Flag] = &[
         takes_value: false,
         args: "--console",
         help: "keep the console and stay out of the notification area",
+    },
+    Flag {
+        name: "--read",
+        short: None,
+        takes_value: false,
+        args: "--read",
+        help: "read the words out of files with koru-read-worker beside this executable",
     },
     Flag {
         name: "--version",
@@ -161,6 +176,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
     let mut command: Option<Command> = None;
     let mut root: Option<PathBuf> = None;
     let mut console = false;
+    let mut read = false;
     let mut i = 0;
 
     while i < tokens.len() {
@@ -173,6 +189,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 command: Command::Help,
                 root,
                 console,
+                read,
             });
         }
         if token == "--version" || token == "-V" {
@@ -180,6 +197,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 command: Command::Version,
                 root,
                 console,
+                read,
             });
         }
 
@@ -222,6 +240,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
             } else {
                 if flag.name == "--console" {
                     console = true;
+                }
+                if flag.name == "--read" {
+                    read = true;
                 }
                 i += 1;
             }
@@ -300,6 +321,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
         command: command.unwrap_or(Command::Serve),
         root,
         console,
+        read,
     })
 }
 

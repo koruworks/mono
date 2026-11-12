@@ -65,6 +65,7 @@ mod creation;
 pub use creation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
 pub mod internal;
 pub mod profile_lifecycle;
+pub mod readings;
 pub mod search;
 pub mod tasks;
 

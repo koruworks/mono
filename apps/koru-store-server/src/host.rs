@@ -35,13 +35,16 @@ pub fn run() {
             let ready = std::env::var_os(crate::INTERNAL_READY_ENV)
                 .map(PathBuf::from)
                 .unwrap_or_else(|| root.join("standalone-ready.json"));
-            StoreWorker::new(WorkerConfig::standalone(
-                root,
-                channel::segment(),
-                invocation.console,
-                Some(ready),
-            ))
-            .serve()
+            let config =
+                WorkerConfig::standalone(root, channel::segment(), invocation.console, Some(ready));
+            // `--read` only: the black-box suites run this host and must
+            // never start a worker beside a test binary.
+            let config = if invocation.read {
+                config.with_reader(readings::ReaderLaunch::Sibling)
+            } else {
+                config
+            };
+            StoreWorker::new(config).serve()
         }),
         cli::Command::Projection(target) => root_for(&invocation)
             .and_then(|root| projection::report_to_console(&root, target.as_deref())),

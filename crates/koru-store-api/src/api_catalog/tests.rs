@@ -307,6 +307,7 @@ fn no_route_is_registered_outside_this_table() {
         ("debug.rs", include_str!("../routes/debug.rs")),
         ("workspaces.rs", include_str!("../routes/workspaces.rs")),
         ("reminders.rs", include_str!("../routes/reminders.rs")),
+        ("readings.rs", include_str!("../routes/readings.rs")),
     ] {
         assert!(
             !source.contains(".route("),
@@ -344,9 +345,10 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // waiting on another device and one document's own Cloud coverage
     // (D256, D258, rung 2's space reclaim), as is the Welcome page's
     // installation-local progress (a query path and a per-row path). The
-    // readings debug view (OCR TECHNICAL §14) is one more internal row.
-    assert_eq!(ROUTES.len(), 114, "a row was added or removed");
-    assert_eq!(paths.len(), 92, "a path was added or removed");
+    // readings debug view (OCR TECHNICAL §14) is one more internal row, and
+    // one reading's words (§10, `/v1/readings/{workspace}/{hash}`) another.
+    assert_eq!(ROUTES.len(), 115, "a row was added or removed");
+    assert_eq!(paths.len(), 93, "a path was added or removed");
 }
 
 #[test]
@@ -525,6 +527,9 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/workspaces/{id}/blobs/pause",
             "/v1/workspaces/{id}/blobs/release",
             "/v1/profiles/{id}/transport-mode",
+            // Ours: one reading's words, asked only by the debug-only *Save
+            // reading* entry until a rung that shows them to a person ships.
+            "/v1/readings/{workspace}/{hash}",
             "/v1/debug/openapi.json",
             "/v1/debug/store",
             "/v1/debug/workspaces/{id}",

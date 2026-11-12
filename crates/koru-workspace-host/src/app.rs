@@ -1193,6 +1193,11 @@ enum ImportMessage {
         destination: PathBuf,
         result: Result<(), String>,
     },
+    /// An item's reading was fetched for the debug-only *Save reading*: the
+    /// suggested file name and the text, ready for the dialog.
+    ReadingFetchedForSave {
+        result: Result<(String, String), String>,
+    },
     FileOpened {
         name: String,
         result: Result<(), String>,
@@ -1707,6 +1712,18 @@ fn workspace_file_bytes(
     file: koru_store_core::ids::DocumentId,
 ) -> Result<Vec<u8>, String> {
     let client = client_at_segment(segment, root).map_err(|e| e.to_string())?;
+    let hash = workspace_file_hash(&client, workspace, file)?;
+    client.get_blob(workspace, &hash).map_err(|e| e.to_string())
+}
+
+/// The blob address behind an opaque workspace file: its document's root
+/// node. The one reading of a file entry, shared by Save as, Open in app and
+/// the debug-only *Save reading*.
+fn workspace_file_hash(
+    client: &koru_api_client::Client,
+    workspace: koru_store_core::ids::WorkspaceId,
+    file: koru_store_core::ids::DocumentId,
+) -> Result<koru_store_core::model::BlobHash, String> {
     let snapshot = client
         .snapshot(workspace, file)
         .map_err(|e| e.to_string())?;
@@ -1722,8 +1739,41 @@ fn workspace_file_bytes(
     let koru_core::node::Content::Blob { hash, .. } = node.content else {
         return Err("the file entry does not contain blob data".into());
     };
-    let hash = koru_store_core::model::BlobHash::parse(&hash.0).map_err(|e| e.to_string())?;
-    client.get_blob(workspace, &hash).map_err(|e| e.to_string())
+    koru_store_core::model::BlobHash::parse(&hash.0).map_err(|e| e.to_string())
+}
+
+/// **Fetch one item's reading and turn it into the file's text**, on a
+/// worker: the suggested file name and the text, for the dialog the event
+/// thread then opens. `workspace` is the current one, which is where a
+/// picture lives; a file finds its own, as *Save as…* does.
+fn fetch_reading_text(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<(String, String), String> {
+    use crate::reading_file::{ReadingTarget, file_name, text};
+    let client = client_at_segment(segment, root).map_err(|e| e.to_string())?;
+    let (workspace, hash, name) = match target {
+        ReadingTarget::File(id) => {
+            let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
+            let (workspace, entry) = locate_workspace_file(segment, root, store_id)?;
+            let hash = workspace_file_hash(&client, workspace, store_id)?;
+            (workspace, hash, Some(entry.title))
+        }
+        ReadingTarget::Picture { hash } => {
+            let workspace = workspace.ok_or_else(|| "no workspace is open".to_owned())?;
+            let hash = koru_store_core::model::BlobHash::parse(hash).map_err(|e| e.to_string())?;
+            (workspace, hash, None)
+        }
+    };
+    let answer = client
+        .reading(workspace, &hash)
+        .map_err(|e| e.to_string())?;
+    Ok((
+        file_name(target, name.as_deref()),
+        text(hash.as_str(), answer.as_ref()),
+    ))
 }
 
 /// Turn a hydration failure into the sentence a person needs.
@@ -6941,6 +6991,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         for (id, request) in diagram_copies {
             self.copy_diagram(id, &request);
         }
+        // *Save reading to file…* on a picture (`KORU_READ_DEBUG` only), the
+        // same way: the view names the bytes, the shell does the rest.
+        let reading_saves: Vec<String> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(_, pane)| pane.view.take_wants_save_reading())
+            .collect();
+        for hash in reading_saves {
+            self.save_reading(crate::reading_file::ReadingTarget::Picture { hash });
+        }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
         // about_to_wait has failed silently on Windows), and only while no
@@ -9798,6 +9858,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 self.save_file(id);
             }
             PaneRequest::SaveFiles(ids) => self.save_files(ids),
+            PaneRequest::SaveReading(target) => self.save_reading(target),
             PaneRequest::SaveDiagram(request) => self.save_diagram(source, request),
             PaneRequest::CopyDiagram(request) => self.copy_diagram(source, &request),
             PaneRequest::OpenFile(id) => {
@@ -10764,6 +10825,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 Ok((workspace, entry)) => self.save_located_file(id, workspace, entry.title),
                 Err(error) => self.report(ErrorReport::new("File not found", "It may have been removed in another window.").with_details(error)),
             },
+            ImportMessage::ReadingFetchedForSave { result } => match result {
+                Ok((name, text)) => self.save_fetched_reading(name, text),
+                Err(error) => self.report(
+                    ErrorReport::new("The reading could not be fetched", "Nothing was written.")
+                        .with_details(error),
+                ),
+            },
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -10957,6 +11025,75 @@ Nothing was written. The store starts on demand, so this usually means it could 
         {
             self.report(
                 ErrorReport::new("Couldn't start saving the file", "Nothing was written.")
+                    .with_details(error),
+            );
+        }
+    }
+
+    /// **The debug-only *Save reading*** (`reading_file`): fetch on a worker,
+    /// then the dialog here, then the write on a worker — *Save as…*'s three
+    /// steps. Refused, as the menu hides it, without `KORU_READ_DEBUG`.
+    fn save_reading(&mut self, target: crate::reading_file::ReadingTarget) {
+        if !crate::reading_file::enabled() {
+            return;
+        }
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let workspace = self
+            .runtime
+            .workspace
+            .current()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-fetch-reading".into())
+            .spawn(move || {
+                let result = fetch_reading_text(&segment, root.as_deref(), &target, workspace);
+                let _ = tx.send(ImportMessage::ReadingFetchedForSave { result });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the reading", "Nothing was written.")
+                    .with_details(error),
+            );
+        }
+    }
+
+    /// The reading is here: ask where it goes, then write it off this thread.
+    fn save_fetched_reading(&mut self, name: String, text: String) {
+        let Some(destination) = crate::dialogs::pick_save_file(
+            crate::reading_file::LABEL,
+            &name,
+            &[],
+            self.runtime.settings.last_export_dir.as_deref(),
+            None,
+        ) else {
+            return;
+        };
+        if let Some(dir) = destination.parent() {
+            self.remember_export_dir(dir.to_path_buf());
+        }
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let worker_destination = destination.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-save-file".into())
+            .spawn(move || {
+                let result =
+                    koru_export_markdown::write_bytes_atomic(&worker_destination, text.as_bytes())
+                        .map_err(|error| error.to_string());
+                let _ = tx.send(ImportMessage::FileSaved {
+                    name,
+                    destination: worker_destination,
+                    result,
+                });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the reading", "Nothing was written.")
                     .with_details(error),
             );
         }

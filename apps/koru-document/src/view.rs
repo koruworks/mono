@@ -733,6 +733,10 @@ impl View for BuiltInDocument {
         self.editor.view.wants_copy_image.take()
     }
 
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        self.wants_save_reading.take()
+    }
+
     fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
         self.editor.apply_pending_cut_image(ws)
     }

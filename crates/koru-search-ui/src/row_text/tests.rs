@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Every row shape a hit can take since words are read from files: a page, no
-//! page, a file attached to one page, to none, and to several — and what each
-//! one draws, says, and opens.
+//! page, live and in the bin — and what each one draws, says, and opens.
 
 use super::*;
 use crate::{Catalog, Disposition, SearchSurface, Target};
@@ -111,70 +110,29 @@ fn the_label_never_carries_the_separator() {
 
 // ------------------------------------------------------------ the context line
 
-/// *in Tax 2023*: a file attached to exactly one page names it, after where
-/// the file is.
+/// A live result's context line is where it is, and nothing else: a file's
+/// result names no page it is attached to (withdrawn, OCR QUESTIONS Q6).
 #[test]
-fn a_file_attached_to_one_page_names_it_after_its_location() {
-    let line = context_line(
-        Lang::En,
+fn a_live_result_shows_its_location_alone() {
+    assert_eq!(
+        context_line("Acme / Files / Lease.pdf", Lifecycle::Live),
+        "Acme / Files / Lease.pdf"
+    );
+    assert_eq!(
+        context(&a_read_hit(Some(3))),
         "Acme / Files / Lease.pdf",
-        Some("Tax 2023"),
-        Lifecycle::Live,
-    );
-    assert_eq!(line, "Acme / Files / Lease.pdf · in Tax 2023");
-    for lang in Lang::ALL {
-        let line = context_line(lang, "Acme / Files", Some("Tax 2023"), Lifecycle::Live);
-        assert!(line.contains("Tax 2023"), "{}: {line}", lang.tag());
-        assert!(!line.contains("{}"), "{}: {line}", lang.tag());
-    }
-    assert_eq!(
-        context_line(Lang::De, "Acme", Some("Steuern"), Lifecycle::Live),
-        "Acme · in Steuern"
-    );
-    assert_eq!(
-        context_line(Lang::Ja, "Acme", Some("税金"), Lifecycle::Live),
-        "Acme · 税金 内"
+        "a page on the hit changes the snippet's lead, not the context line"
     );
 }
 
-/// Attached to no page, or to several, the store names none — and the line is
-/// the location alone, exactly as before.
+/// **The breadcrumb's highlight ranges stay valid**: the bin comes after it,
+/// so it is still the line's prefix, byte for byte.
 #[test]
-fn a_file_attached_to_none_or_several_pages_shows_its_location_alone() {
-    for lang in Lang::ALL {
-        assert_eq!(
-            context_line(lang, "Acme / Files / Lease.pdf", None, Lifecycle::Live),
-            "Acme / Files / Lease.pdf"
-        );
-        // An empty title is not a page to name.
-        assert_eq!(
-            context_line(lang, "Acme / Files", Some(""), Lifecycle::Live),
-            "Acme / Files"
-        );
-    }
-}
-
-/// **The breadcrumb's highlight ranges stay valid**: both additions come after
-/// it, so it is still the line's prefix, byte for byte. The bin comes last.
-#[test]
-fn additions_follow_the_location_and_the_bin_comes_last() {
+fn the_bin_follows_the_location() {
     let breadcrumb = "Acme / Tax / Lease.pdf";
-    let line = context_line(Lang::En, breadcrumb, Some("Tax 2023"), Lifecycle::Trashed);
+    let line = context_line(breadcrumb, Lifecycle::Trashed);
     assert!(line.starts_with(breadcrumb));
-    assert_eq!(line, "Acme / Tax / Lease.pdf · in Tax 2023 · In Trash");
-    assert_eq!(
-        context_line(Lang::En, breadcrumb, None, Lifecycle::Trashed),
-        "Acme / Tax / Lease.pdf · In Trash"
-    );
-}
-
-/// Today no hit says what it is attached to (the wire has no such field yet),
-/// so a hit's context is its location.
-#[test]
-fn a_hit_today_names_no_attached_page() {
-    let hit = a_read_hit(Some(3));
-    assert_eq!(attached_page(&hit), None);
-    assert_eq!(context(Lang::En, &hit), "Acme / Files / Lease.pdf");
+    assert_eq!(line, "Acme / Tax / Lease.pdf · In Trash");
 }
 
 // ------------------------------------------------------------ the screen reader

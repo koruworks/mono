@@ -324,8 +324,8 @@ pub const VARS: &[EnvVar] = &[
     ),
     switch_var(
         name::KORU_READ_DEBUG,
-        "Reading words out of files and pictures: one line per job the Store's reading coordinator runs or copies — ids, a stage, a page count and an outcome code, never a file's name or a word read from it. The unconditional lines (a reading document that could not be applied, a worker killed for memory, a backlog finished) print without it.",
-        "koru-api-gateway, koru-store-server",
+        "Reading words out of files and pictures: one line per job the Store's reading coordinator runs or copies — ids, a stage, a page count and an outcome code, never a file's name or a word read from it. The unconditional lines (a reading document that could not be applied, a worker killed for memory, a backlog finished) print without it. In the app it also shows *Save reading to file…* in the right-click menu of a file under Files and of a picture in a page, which writes what was read to a text file you choose.",
+        "koru-api-gateway, koru-store-server, koru.exe",
     ),
     switch_var(
         name::KORU_GOOGLE_DEBUG,

@@ -951,6 +951,27 @@ it ended up with is written beside *Search* in the agent's right-click menu** �
 that is the place to look, because a released Koru has no console to print it
 to. `Ctrl+P` always works while Koru is focused.
 
+### Words inside PDFs and text files
+
+A PDF that contains real text, and a `.txt`, `.md`, `.csv` or `.html` file,
+are found by the words inside them, not only by their name. Koru reads them on
+this computer when they are added — nothing is downloaded and nothing is sent
+anywhere to be read — and they are usually findable a moment later. An `.html`
+file is read without its markup.
+
+All the words of a search must be on the same page of a PDF: `termination
+notice` does not find a PDF that says *termination* on page 2 and *notice* on
+page 39. A result found inside a PDF of more than one page starts its excerpt
+with the page, *Page 3 · …*. Picking it switches Explore to **Files** with the
+file selected, as picking a file by its name does; open the file and go to that
+page.
+
+A password-protected or damaged file is found by its name only. **Pictures and
+scanned PDFs are not read yet**: a photo or a screenshot is found by its name,
+or by the document it sits in, and not by the words in it; a scanned PDF is
+found by its name, and a PDF that mixes text pages with scanned ones by its
+text pages. Deleting a file permanently removes its words from search as well.
+
 The magnifying-glass status icon at the bottom right reports local indexing
 state; it uses the accent colour while work is queued, running, or needs
 attention. Click it to open diagnostics. The panel shows the current workspace's

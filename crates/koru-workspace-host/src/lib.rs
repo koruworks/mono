@@ -69,6 +69,7 @@ mod profile_lifecycle_decision;
 mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
+pub mod reading_file;
 pub mod reveal;
 /// Who owns the keyboard, factored so the container and the built-in
 /// document cannot drift apart about it. See the module's own note.
@@ -1793,6 +1794,13 @@ pub trait View {
         None
     }
 
+    /// Blob hash of a picture whose reading the person asked to save — the
+    /// `KORU_READ_DEBUG` entry on a picture ([`reading_file`]). The shell owns
+    /// the fetch, the dialog and the write, as it does an image's *Copy*.
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        None
+    }
+
     /// Finish an image cut after the shell wrote the bitmap (delete the row).
     fn apply_pending_image_cut(&mut self, _ws: &mut WorkspaceDoc) -> bool {
         false
@@ -2850,6 +2858,9 @@ pub enum PaneRequest {
     SaveFile(koru_core::DocumentId),
     /// Save several workspace files into a user-selected folder.
     SaveFiles(Vec<koru_core::DocumentId>),
+    /// Save what was read out of one file or picture to a text file the
+    /// person chooses — the `KORU_READ_DEBUG` entry ([`reading_file`]).
+    SaveReading(reading_file::ReadingTarget),
     /// Save a drawn diagram as a PNG or an SVG at a user-selected path. Served
     /// against the window that asked: its device rasterises the PNG.
     SaveDiagram(SaveDiagram),
@@ -3034,6 +3045,7 @@ impl PaneRequest {
             Self::ReminderSnooze(..) => "request.reminder_snooze",
             Self::SaveFile(..) => "request.save_file",
             Self::SaveFiles(..) => "request.save_files",
+            Self::SaveReading(..) => "request.save_reading",
             Self::SaveDiagram(..) => "request.save_diagram",
             Self::CopyDiagram(..) => "request.copy_diagram",
             Self::OpenFile(..) => "request.open_file",

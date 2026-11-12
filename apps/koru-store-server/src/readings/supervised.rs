@@ -47,12 +47,12 @@
 //! without saying anything before the worker is taken for hung — is well past
 //! it.
 //!
-//! ## Two names this branch borrows from the worker's plan
+//! ## The worker's half of the same names
 //!
-//! The worker's plan (1.3) adds `koru_ipc::READ` and
-//! `koru_read::WorkerBootstrap` to the shared crates; neither is on this
-//! branch. [`SERVICE`] and [`Bootstrap`] are spelled here **identically**, and
-//! the integration plan replaces both with the shared ones.
+//! The endpoint is `koru_ipc::READ` qualified by the store root, and the
+//! bootstrap line is `koru_read::WorkerBootstrap` — the worker binds and reads
+//! exactly those (`apps/koru-read/src/{server,bootstrap}.rs`), so neither side
+//! spells either for itself.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -65,7 +65,10 @@ use koru_agent_worker::supervisor::{
     self, Generation, LaunchPlan, MEMORY_LIMIT_ENFORCED, Program, WorkerEventKind, WorkerHandle,
     WorkerSpec,
 };
-use koru_read::{Event, FRAME_VERSION, PROTOCOL_VERSION, Request, WorkerStatus};
+use koru_read::{
+    BOOTSTRAP_VERSION, Event, FRAME_VERSION, PROTOCOL_VERSION, Request, WorkerBootstrap,
+    WorkerStatus,
+};
 
 use super::launcher::{Availability, Interrupted, Launcher, Unavailable, WorkerReport};
 
@@ -75,6 +78,10 @@ pub const MEMORY_LIMIT_BYTES: u64 = 1 << 30;
 /// How long a job may say nothing before the worker is taken for hung. The
 /// worker's own per-page budget is 30 s (Plan 0.1); a page that runs out of
 /// it ends the worker, which this sees as the connection closing long before.
+///
+/// **Kept by [`patiently`], not by the socket**: a Windows named pipe has no
+/// read timeout, so this is the only thing that ends a job whose worker is
+/// alive and silent.
 pub const JOB_PATIENCE: Duration = Duration::from_secs(120);
 
 /// How long the coordinator keeps an idle worker before stopping its
@@ -85,7 +92,9 @@ pub const LINGER: Duration = Duration::from_secs(30);
 /// How long a freshly started worker has to answer its first `Status`.
 const READY_DEADLINE: Duration = Duration::from_secs(10);
 
-/// The deadline on connecting and on the `Status` handshake.
+/// The deadline on a job's `Status` handshake (kept by [`patiently`]), and the
+/// socket timeouts the readiness probe asks for — which apply off Windows
+/// only; there a probe that never hears back is ended by [`READY_DEADLINE`].
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long to wait, after a job's connection closed, for the supervisor to
@@ -96,27 +105,6 @@ const EXIT_REPORT_WAIT: Duration = Duration::from_secs(3);
 /// The worker's exit code when its own watchdog ends it on a file that
 /// wedged it (Plan 1.3).
 const HOSTILE_EXIT: i32 = 3;
-
-/// The worker's endpoint service token. **`koru_ipc::READ` once the worker's
-/// plan lands**, spelled identically here until it does.
-pub const SERVICE: &str = "koru-read";
-
-/// The version of [`Bootstrap`]. As `koru_read::BOOTSTRAP_VERSION`.
-pub const BOOTSTRAP_VERSION: u32 = 1;
-
-/// **The one line written on the worker's stdin.** Identical in shape to
-/// `koru_read::WorkerBootstrap` from the worker's plan, which replaces it at
-/// integration: only ids cross — no path (the root is on the command line and
-/// the endpoint is derived from it), no credential.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Bootstrap {
-    pub bootstrap_version: u32,
-    /// Echoed as `WorkerStatus::supervisor_launch_id`; printable ASCII, at
-    /// most 128 characters (a UUID).
-    pub launch_id: String,
-    /// The channel segment every endpoint name carries.
-    pub channel: String,
-}
 
 /// One child's identity, as the supervisor hands it to the probes.
 pub struct ReadChild {
@@ -163,7 +151,7 @@ impl SupervisedReader {
     }
 
     fn endpoint(&self) -> Result<koru_ipc::Endpoint, String> {
-        koru_ipc::Endpoint::for_service_root(SERVICE, &self.channel, &self.root)
+        koru_ipc::Endpoint::for_service_root(koru_ipc::READ, &self.channel, &self.root)
             .map_err(|e| e.to_string())
     }
 
@@ -193,7 +181,7 @@ impl SupervisedReader {
     fn ready_child(&mut self) -> Result<(Generation, String, koru_ipc::Endpoint), Unavailable> {
         let deadline = Instant::now() + READY_DEADLINE;
         let handle = self.start()?;
-        loop {
+        let late = loop {
             let status = handle.status();
             match status.state {
                 State::Ready => {
@@ -212,14 +200,20 @@ impl SupervisedReader {
                 _ => {}
             }
             if Instant::now() >= deadline {
-                return Err(Unavailable::NotReady(
-                    status
-                        .last_error
-                        .unwrap_or_else(|| "the worker was not ready in time".into()),
-                ));
+                break status
+                    .last_error
+                    .unwrap_or_else(|| "the worker was not ready in time".into());
             }
             std::thread::sleep(Duration::from_millis(25));
-        }
+        };
+        // **Let it go, so the next job starts a fresh one.** The supervisor's
+        // readiness probe asks the worker's `Status` over a named pipe, and a
+        // Windows named pipe has no read timeout: a worker that accepted and
+        // never answered would hold the probe — and this supervision, in
+        // `Starting` — for ever. Ending the supervision ends the child, and the
+        // probe's read with it.
+        self.stop();
+        Err(Unavailable::NotReady(late))
     }
 
     /// The child of `generation` is gone: say how it went.
@@ -281,26 +275,32 @@ impl Launcher for SupervisedReader {
         }
         let (generation, launch_id, endpoint) =
             self.ready_child().map_err(Interrupted::Unavailable)?;
-        let mut stream = match koru_ipc::connect_timed(&endpoint, HANDSHAKE_TIMEOUT) {
+        // No socket timeouts: they do not exist on a Windows named pipe (see
+        // `patiently`), so the patience is the conversation thread's, the same
+        // on every platform.
+        let stream = match koru_ipc::connect(&endpoint) {
             Ok(stream) => stream,
             Err(_) => return Err(self.ended(generation, false)),
         };
-        if let Err(refused) = handshake(&mut stream, &launch_id) {
-            return match refused {
-                Refusal::Closed { .. } => Err(self.ended(generation, false)),
-                Refusal::Wrong(why) => {
-                    // Not the process this supervision launched, or another
-                    // build's: never send it a file.
-                    self.stop();
-                    Err(Interrupted::Unavailable(Unavailable::NotReady(why)))
-                }
-            };
-        }
-        koru_ipc::set_timeouts(&stream, Some(JOB_PATIENCE));
-        match converse(&mut stream, request, events) {
+        match patiently(
+            stream,
+            launch_id,
+            request.clone(),
+            HANDSHAKE_TIMEOUT,
+            JOB_PATIENCE,
+            events,
+        ) {
             Ok(()) => Ok(()),
-            Err(Refusal::Closed { hung }) => Err(self.ended(generation, hung)),
-            Err(Refusal::Wrong(_)) => Err(self.ended(generation, false)),
+            Err(Broke::Handshake(Refusal::Wrong(why))) => {
+                // Not the process this supervision launched, or another
+                // build's: never send it a file.
+                self.stop();
+                Err(Interrupted::Unavailable(Unavailable::NotReady(why)))
+            }
+            Err(
+                Broke::Handshake(Refusal::Closed { hung }) | Broke::Job(Refusal::Closed { hung }),
+            ) => Err(self.ended(generation, hung)),
+            Err(Broke::Job(Refusal::Wrong(_))) => Err(self.ended(generation, false)),
         }
     }
 
@@ -360,7 +360,7 @@ fn spec(
         "read",
         move |_generation| {
             let launch_id = uuid::Uuid::new_v4().to_string();
-            let bootstrap = serde_json::to_vec(&Bootstrap {
+            let bootstrap = serde_json::to_vec(&WorkerBootstrap {
                 bootstrap_version: BOOTSTRAP_VERSION,
                 launch_id: launch_id.clone(),
                 channel: channel.clone(),
@@ -517,6 +517,100 @@ pub fn converse<S: Read + Write>(
         events(event);
         if terminal {
             return Ok(());
+        }
+    }
+}
+
+/// Where a conversation ended without its answer: before the worker proved
+/// itself, or during the job.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Broke {
+    Handshake(Refusal),
+    Job(Refusal),
+}
+
+/// What the conversation's own thread hands back, in order.
+enum Heard {
+    /// The handshake passed; the job's patience applies from here.
+    Handshaken,
+    Event(Event),
+    End(Result<(), Broke>),
+}
+
+/// **[`handshake`] then [`converse`], on a thread of their own, given up on
+/// after a silence.**
+///
+/// A socket timeout cannot do this on Windows: `koru_ipc::set_timeouts` is
+/// best-effort, and `interprocess`'s named-pipe stream answers every
+/// `set_recv_timeout` with `Unsupported` (`os/windows/named_pipe/local_socket/
+/// stream.rs`), which `koru-ipc` deliberately ignores. A worker that is alive
+/// and silent — wedged where its own watchdog cannot see, or suspended — would
+/// block the read, and the coordinator with it, for ever. Plan 1.8 saw exactly
+/// that on a real store root: a suspended worker held a job for over three
+/// minutes against a 5 s handshake deadline and a 120 s job patience.
+///
+/// So the reads happen here, and this thread only waits on a channel with a
+/// deadline that restarts at every frame: `handshake_patience` until the
+/// worker has answered `Status`, then `job_patience`. A silence past it is
+/// `Refusal::Closed { hung: true }` — the caller ends the worker, which closes
+/// the pipe and lets the reading thread finish on its own. Events reach
+/// `events` on the calling thread, in the order they arrived.
+pub fn patiently<S: Read + Write + Send + 'static>(
+    mut stream: S,
+    launch_id: String,
+    request: Request,
+    handshake_patience: Duration,
+    job_patience: Duration,
+    events: &mut dyn FnMut(Event),
+) -> Result<(), Broke> {
+    let (heard, hearing) = std::sync::mpsc::channel::<Heard>();
+    let talking = std::thread::Builder::new()
+        .name("koru-readings-talk".into())
+        .spawn(move || {
+            let ended = match handshake(&mut stream, &launch_id) {
+                Err(refusal) => Err(Broke::Handshake(refusal)),
+                Ok(_) => {
+                    let _ = heard.send(Heard::Handshaken);
+                    converse(&mut stream, &request, &mut |event| {
+                        let _ = heard.send(Heard::Event(event));
+                    })
+                    .map_err(Broke::Job)
+                }
+            };
+            let _ = heard.send(Heard::End(ended));
+        });
+    if talking.is_err() {
+        return Err(Broke::Handshake(Refusal::Wrong(
+            "the conversation's thread could not be started".into(),
+        )));
+    }
+    let mut patience = handshake_patience;
+    let mut handshaken = false;
+    loop {
+        match hearing.recv_timeout(patience) {
+            Ok(Heard::Handshaken) => {
+                handshaken = true;
+                patience = job_patience;
+            }
+            Ok(Heard::Event(event)) => events(event),
+            Ok(Heard::End(ended)) => return ended,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let hung = Refusal::Closed { hung: true };
+                return Err(if handshaken {
+                    Broke::Job(hung)
+                } else {
+                    Broke::Handshake(hung)
+                });
+            }
+            // The thread ended without saying how: it panicked mid-read.
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let gone = Refusal::Closed { hung: false };
+                return Err(if handshaken {
+                    Broke::Job(gone)
+                } else {
+                    Broke::Handshake(gone)
+                });
+            }
         }
     }
 }

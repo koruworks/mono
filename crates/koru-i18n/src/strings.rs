@@ -2908,9 +2908,6 @@ pub enum Key {
     /// file: *Page 12*. `{}` is the page number, already written the way the
     /// language writes numbers (`number::decimal`).
     SearchResultPage,
-    /// A file's result, attached to exactly one page: *in Tax 2023*, after its
-    /// location. `{}` is that page's title.
-    SearchResultAttachedTo,
     /// A search result as a screen reader says it, when it matched a title:
     /// its title, then where it is.
     SearchResultSpoken,
@@ -3228,7 +3225,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2247] = [
+    pub const ALL: [Key; 2246] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5269,7 +5266,6 @@ impl Key {
         Key::SearchOrTypeACommand,
         Key::SearchChordsAnywhere,
         Key::SearchResultPage,
-        Key::SearchResultAttachedTo,
         Key::SearchResultSpoken,
         Key::SearchResultSpokenExcerpt,
         Key::SearchResultSpokenOnPage,
@@ -16307,7 +16303,6 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SearchOrTypeACommand, en: "Search or type a command", es: "Buscar o escribir un comando", pt_br: "Pesquisar ou digitar um comando", de: "Suchen oder einen Befehl eingeben", fr: "Rechercher ou saisir une commande", ar: "ابحث أو اكتب أمرًا", zh_hans: "搜索或输入命令", ja: "検索またはコマンドを入力" },
     Row { key: Key::SearchChordsAnywhere, en: "{} · {} from anywhere", es: "{} · {} desde cualquier lugar", pt_br: "{} · {} de qualquer lugar", de: "{} · {} von überall", fr: "{} · {} depuis n’importe où", ar: "{} · {} من أي مكان", zh_hans: "{} · 任意位置 {}", ja: "{} · どこからでも {}" },
     Row { key: Key::SearchResultPage, en: "Page {}", es: "Página {}", pt_br: "Página {}", de: "Seite {}", fr: "Page {}", ar: "صفحة {}", zh_hans: "第 {} 页", ja: "{} ページ" },
-    Row { key: Key::SearchResultAttachedTo, en: "in {}", es: "en {}", pt_br: "em {}", de: "in {}", fr: "dans {}", ar: "في {}", zh_hans: "在 {} 中", ja: "{} 内" },
     Row { key: Key::SearchResultSpoken, en: "{}, {}", es: "{}, {}", pt_br: "{}, {}", de: "{}, {}", fr: "{}, {}", ar: "{}، {}", zh_hans: "{}，{}", ja: "{}、{}" },
     Row { key: Key::SearchResultSpokenExcerpt, en: "{}, {}, {}", es: "{}, {}, {}", pt_br: "{}, {}, {}", de: "{}, {}, {}", fr: "{}, {}, {}", ar: "{}، {}، {}", zh_hans: "{}，{}，{}", ja: "{}、{}、{}" },
     Row { key: Key::SearchResultSpokenOnPage, en: "{}, {}, page {}, {}", es: "{}, {}, página {}, {}", pt_br: "{}, {}, página {}, {}", de: "{}, {}, Seite {}, {}", fr: "{}, {}, page {}, {}", ar: "{}، {}، صفحة {}، {}", zh_hans: "{}，{}，第 {} 页，{}", ja: "{}、{}、{} ページ、{}" },

@@ -1599,6 +1599,21 @@ impl Client {
         self.get(&format!("/v1/documents/{}/outline", document.to_storage()))
     }
 
+    /// The words read out of one file or picture in `workspace` — its winning
+    /// reading, with how it was read — or `None` when nothing has been read of
+    /// those bytes there yet (OCR TECHNICAL §10).
+    pub fn reading(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<Option<koru_store_wire::readings::ReadingAnswer>> {
+        self.get(&format!(
+            "/v1/readings/{}/{}",
+            workspace.to_storage(),
+            hash.as_str()
+        ))
+    }
+
     /// The nodes matching an attribute query, across workspaces, from the
     /// store's read model.
     ///

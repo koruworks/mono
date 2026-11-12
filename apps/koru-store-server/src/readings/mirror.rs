@@ -59,6 +59,12 @@ const READINGS_SCHEMA_MIGRATION: &str =
 /// Statements carry at most this many hashes, well under SQLite's bound.
 const CHUNK: usize = 500;
 
+/// Every entry's row for one blob in one workspace ([`Mirror::winner_in`]).
+const WINNER_IN_SQL: &str =
+    "SELECT parent_document_id, generation, status, reason, source, page_count
+       FROM readings WHERE workspace_id = ?1 AND hash = ?2
+      ORDER BY parent_document_id";
+
 /// Why a mirror operation did not happen. Carries SQLite's message, which
 /// names tables and constraints and never a row's value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -768,6 +774,50 @@ impl Mirror {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// **The winning row for one blob in one workspace** — the reading the
+    /// index finds it by, which is what `GET /v1/readings/{workspace}/{hash}`
+    /// answers with: the higher generation, then the better status, then the
+    /// one that reached more pages ([`Row::rank`]). `None` when no entry in
+    /// the workspace holds a reading of it.
+    ///
+    /// One indexed read (`readings_workspace_hash`); the rank is decided here
+    /// rather than in SQL so it is the same function `apply` decides by.
+    pub fn winner_in(&self, workspace: WorkspaceId, hash: &str) -> Result<Option<ReadingRow>> {
+        let workspace = workspace.to_storage();
+        let mut q = self.db.prepare(WINNER_IN_SQL)?;
+        let rows = q.query_map(params![workspace, hash], |r| {
+            Ok(ReadingRow {
+                workspace: workspace.clone(),
+                parent: r.get(0)?,
+                hash: hash.to_owned(),
+                generation: r.get(1)?,
+                status: r.get(2)?,
+                reason: r.get(3)?,
+                source: r.get(4)?,
+                page_count: r.get(5)?,
+            })
+        })?;
+        let mut best: Option<ReadingRow> = None;
+        for row in rows {
+            let row = row?;
+            let rank = |row: &ReadingRow| {
+                Row {
+                    generation: row.generation,
+                    status: row.status.clone(),
+                    reason: row.reason.clone(),
+                    source: None,
+                    page_count: row.page_count,
+                }
+                .rank()
+            };
+            // Ties keep the first, in id order, so the answer is stable.
+            if best.as_ref().is_none_or(|held| rank(&row) > rank(held)) {
+                best = Some(row);
+            }
+        }
+        Ok(best)
     }
 
     /// One workspace's words for one hash, page by page — the subcommand's

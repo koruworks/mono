@@ -105,6 +105,7 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/tasks/query` — What is outstanding, across workspaces, from the read model (Public)
 - POST `/v1/search` — Search every workspace this store holds (Public)
 - POST `/v1/search/navigated` — Record that a search led somewhere (Public)
+- GET `/v1/readings/{workspace}/{hash}` — The words read out of one file or picture in a workspace (Internal)
 - GET `/v1/debug/openapi.json` — Every route this store serves, diagnostics included (Internal)
 - GET `/v1/debug/store` — What this store is doing, for a bug report (Internal)
 - GET `/v1/debug/workspaces/{id}` — One workspace's physical footprint, and what blob transfer is doing (Internal)

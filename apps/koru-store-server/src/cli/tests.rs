@@ -30,6 +30,18 @@ fn the_root_can_be_given_either_way() {
     }
 }
 
+/// The reader is supervised only when asked: the black-box suites run this
+/// host without the flag and must never start a worker beside a test binary.
+#[test]
+fn reading_is_off_unless_asked() {
+    assert!(!parse_args(&[]).unwrap().read);
+    assert!(!parse_args(&["serve", "--console"]).unwrap().read);
+    let i = parse_args(&["serve", "--console", "--read", "--root", "/tmp/store"]).unwrap();
+    assert!(i.read);
+    assert!(i.console);
+    assert_eq!(i.command, Command::Serve);
+}
+
 #[test]
 fn a_root_combines_with_a_subcommand() {
     let i = parse_args(&["serve", "--root", "/tmp/store"]).unwrap();

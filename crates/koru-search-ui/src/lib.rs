@@ -1810,7 +1810,7 @@ impl SearchSurface {
 
     /// The row's context line. See [`row_text::context_line`].
     fn result_context(hit: &SearchHit) -> String {
-        row_text::context(koru_i18n::current(), hit)
+        row_text::context(hit)
     }
 
     /// **What a screen reader should hear for result `index`**: its title,

@@ -62,6 +62,7 @@ use koru_store_wire::attributes::{AttributeQuery, AttributeQueryResponse};
 use koru_store_wire::internal::{
     CloudSyncStatus, DocumentReport, Metrics, StoreReport, WorkspaceReport,
 };
+use koru_store_wire::readings::ReadingAnswer;
 use koru_store_wire::reminders::{
     ActionRequest, ClearedHistory, ReminderQuery, ReminderQueryResponse, ReminderSnapshot,
     RevisionRequest, RuleRequest, SettingsPatch,
@@ -1386,6 +1387,23 @@ pub const ROUTES: &[Route] = &[
                   workspace's recency, and reaches no document and no shared profile. \
                   A query earns a place in the history only by leading somewhere, which \
                   is why the text arrives here rather than on the search",
+    },
+    Route {
+        method: "GET",
+        // Ours until a rung that reads it for a person ships (*Copy text*, an
+        // assistant's reading tool): today only the debug-only *Save reading*
+        // entry asks, and a shape that may still move promises nobody anything.
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}",
+        handler: || get(routes::readings::reading),
+        request: None,
+        response: Some(|g| g.subschema_for::<Option<ReadingAnswer>>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "The words read out of one file or picture in a workspace",
+        returns: "the winning reading of those bytes there — reader, generation, status, \
+                  reason, source, confidence, how far it got, and each page's words — or \
+                  null when nothing has been read of them yet. A file's words, so one item \
+                  at a time; `projection_unavailable` when this store runs no readings mirror",
     },
     Route {
         method: "GET",

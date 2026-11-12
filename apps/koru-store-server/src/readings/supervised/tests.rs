@@ -151,21 +151,46 @@ fn a_job_is_its_events_up_to_the_terminal_one() {
     assert_eq!(seen.len(), 1, "the page that arrived was delivered");
 }
 
-/// **The bootstrap line has exactly the worker plan's shape**:
-/// `{"bootstrap_version":1,"launch_id":…,"channel":…}`.
+/// **What a launch hands the worker is what the worker reads**: the command
+/// line `--root <root> --supervised`, and one line of the contract's
+/// `WorkerBootstrap` at its version, on this channel, carrying the launch id
+/// the readiness probe and every job's handshake then demand back.
 #[test]
-fn the_bootstrap_is_the_worker_plans_shape() {
-    let line = serde_json::to_value(Bootstrap {
-        bootstrap_version: BOOTSTRAP_VERSION,
-        launch_id: "a-launch".into(),
-        channel: "nightly".into(),
-    })
-    .unwrap();
-    assert_eq!(
-        line,
-        serde_json::json!({"bootstrap_version": 1, "launch_id": "a-launch", "channel": "nightly"})
+fn a_launch_hands_the_worker_the_contracts_bootstrap() {
+    let endpoint = koru_ipc::Endpoint::for_service("koru-read-test", "nightly").unwrap();
+    let mut spec = spec(
+        PathBuf::from("root"),
+        "nightly".into(),
+        endpoint,
+        Arc::new(Observed::default()),
     );
-    assert_eq!(SERVICE, "koru-read");
+    let plan = (spec.launch)(Generation(1)).unwrap();
+    assert_eq!(
+        plan.args,
+        vec![
+            std::ffi::OsString::from("--root"),
+            "root".into(),
+            "--supervised".into()
+        ]
+    );
+    let line: WorkerBootstrap = serde_json::from_slice(&plan.bootstrap).unwrap();
+    assert_eq!(line.bootstrap_version, BOOTSTRAP_VERSION);
+    assert_eq!(line.channel, "nightly");
+    assert_eq!(line.launch_id, plan.payload.launch_id);
+    assert!(
+        !plan.bootstrap.contains(&b'\n'),
+        "one line; the supervisor ends it"
+    );
+    let again = (spec.launch)(Generation(2)).unwrap();
+    assert_ne!(
+        again.payload.launch_id, plan.payload.launch_id,
+        "every launch is told apart"
+    );
+}
+
+/// The constants the coordinator's patience is built from.
+#[test]
+fn the_limits_sit_where_the_measurements_put_them() {
     assert_eq!(MEMORY_LIMIT_BYTES, 1 << 30, "Plan 0.1's measured ceiling");
     assert!(
         LINGER < Duration::from_secs(60),
@@ -175,6 +200,141 @@ fn the_bootstrap_is_the_worker_plans_shape() {
         JOB_PATIENCE > Duration::from_secs(30),
         "past the per-page budget"
     );
+}
+
+/// A worker that says what it was given, and then is alive and says nothing
+/// — the shape a Windows named pipe cannot time out. Its reads block until
+/// the test lets go (the worker "is ended"), then report the end.
+struct GoesSilent {
+    said: Cursor<Vec<u8>>,
+    released: std::sync::mpsc::Receiver<()>,
+}
+
+impl GoesSilent {
+    fn after(events: &[Event]) -> (GoesSilent, std::sync::mpsc::Sender<()>) {
+        let (release, released) = std::sync::mpsc::channel();
+        let said = Duplex::answering(events).from_worker;
+        (GoesSilent { said, released }, release)
+    }
+}
+
+impl Read for GoesSilent {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.said.read(buf)?;
+        if n > 0 {
+            return Ok(n);
+        }
+        let _ = self.released.recv();
+        Ok(0)
+    }
+}
+
+impl Write for GoesSilent {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+const SHORT: Duration = Duration::from_millis(100);
+
+/// A worker that answers is heard to the end, events in order, on the calling
+/// thread.
+#[test]
+fn a_patient_conversation_hears_the_whole_job() {
+    let worker = Duplex::answering(&[
+        status(Some("launch-1"), PROTOCOL_VERSION),
+        Event::Page {
+            job: JobId(3),
+            page: 1,
+            text: PageText::new("words"),
+            source: Source::TextLayer,
+            confidence: None,
+        },
+        Event::Done {
+            job: JobId(3),
+            status: ReadingStatus::Read,
+            reason: None,
+            pages_done: 1,
+        },
+    ]);
+    let mut seen = Vec::new();
+    let ended = patiently(
+        worker,
+        "launch-1".into(),
+        read(3),
+        SHORT,
+        SHORT,
+        &mut |event| seen.push(event),
+    );
+    assert_eq!(ended, Ok(()));
+    assert_eq!(seen.len(), 2);
+    assert!(seen[1].is_terminal());
+}
+
+/// **A worker that accepted and never answered `Status` is given up on at
+/// the handshake's patience** — not waited on for ever, which is what a
+/// socket timeout on a Windows named pipe amounted to.
+#[test]
+fn a_worker_silent_at_the_handshake_is_given_up_on() {
+    let (worker, release) = GoesSilent::after(&[]);
+    let started = Instant::now();
+    let ended = patiently(
+        worker,
+        "launch-1".into(),
+        read(4),
+        SHORT,
+        SHORT,
+        &mut |_| {},
+    );
+    assert_eq!(ended, Err(Broke::Handshake(Refusal::Closed { hung: true })));
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    drop(release);
+}
+
+/// A worker that goes silent mid-job is hung at the job's patience; what it
+/// said before is still delivered, and a wrong launch is refused outright.
+#[test]
+fn a_worker_silent_mid_job_is_hung_and_what_it_said_arrives() {
+    let page = Event::Page {
+        job: JobId(5),
+        page: 1,
+        text: PageText::new("words"),
+        source: Source::TextLayer,
+        confidence: None,
+    };
+    let (worker, release) = GoesSilent::after(&[status(Some("launch-1"), PROTOCOL_VERSION), page]);
+    let mut seen = Vec::new();
+    let ended = patiently(
+        worker,
+        "launch-1".into(),
+        read(5),
+        SHORT,
+        SHORT,
+        &mut |event| seen.push(event),
+    );
+    assert_eq!(ended, Err(Broke::Job(Refusal::Closed { hung: true })));
+    assert_eq!(seen.len(), 1, "the page that arrived was delivered");
+    drop(release);
+
+    let theirs = Duplex::answering(&[status(Some("launch-0"), PROTOCOL_VERSION)]);
+    assert!(matches!(
+        patiently(
+            theirs,
+            "launch-1".into(),
+            read(6),
+            SHORT,
+            SHORT,
+            &mut |_| {}
+        ),
+        Err(Broke::Handshake(Refusal::Wrong(_)))
+    ));
 }
 
 /// The launcher's spec names the sibling and its ceiling — and nothing is

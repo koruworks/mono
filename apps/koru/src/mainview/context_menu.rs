@@ -450,6 +450,10 @@ pub enum MenuAction {
     AddNote,
     /// Open the note the file already has. Shown for one file that has one.
     OpenNote,
+    /// Save what was read out of the file to a text file — OCR TECHNICAL §9's
+    /// debugging entry, **shown only with `KORU_READ_DEBUG=1`**, for one file
+    /// under Explore → Files ([`explore_file_items`]).
+    SaveReading,
     Restore,
     DeletePermanently,
     EmptyTrash,
@@ -1048,6 +1052,9 @@ impl MenuAction {
             // Socials authoring (the Agent's publisher runs regardless).
             Self::NewSocialPost => f::socials(),
             Self::NewTaskIn(_) => f::tasks(),
+            // A developer's switch rather than a product flag, gated the same
+            // way so a stale index cannot reach it either.
+            Self::SaveReading => koru_workspace_host::reading_file::enabled(),
             _ => true,
         }
     }
@@ -1335,6 +1342,9 @@ impl MenuAction {
             MenuAction::OpenFileInApp => "Open in app",
             MenuAction::SaveFileAs => "Save as\u{2026}",
             MenuAction::AddNote => "Add note",
+            // Not translated: only a developer switch reveals it, as the AI
+            // view's debug-only prompt field (`reading_file`'s note).
+            MenuAction::SaveReading => koru_workspace_host::reading_file::LABEL,
             MenuAction::OpenNote => "Open note",
             MenuAction::Restore => "Restore",
             MenuAction::DeletePermanently => "Delete permanently",
@@ -1967,6 +1977,27 @@ pub fn file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
         items.push(trash);
         items
     }
+}
+
+/// The Files view's menu: [`file_items`], and for one file under
+/// `KORU_READ_DEBUG`, *Save reading to file…* last above the rule. Only this
+/// view offers it — a page attachment's menu stays [`file_items`].
+pub fn explore_file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
+    with_reading_row(
+        file_items(count, note),
+        count == 1 && koru_workspace_host::reading_file::enabled(),
+    )
+}
+
+fn with_reading_row(mut items: Vec<MenuAction>, offered: bool) -> Vec<MenuAction> {
+    if offered {
+        let at = items
+            .iter()
+            .position(|item| *item == MenuAction::Divider)
+            .unwrap_or(items.len());
+        items.insert(at, MenuAction::SaveReading);
+    }
+    items
 }
 
 /// Formats behind *Export*. Each format is backed by its own exporter crate,

@@ -4505,6 +4505,7 @@ impl MainView {
                     || matches!(action, MenuAction::Rename if files.len() == 1)
                     || (matches!(action, MenuAction::AddNote | MenuAction::OpenNote)
                         && files.len() == 1)
+                    || matches!(action, MenuAction::SaveReading if files.len() == 1)
                     || matches!(action, MenuAction::MoveToTrash if files.len() == 1)
                     || matches!(
                         action,
@@ -5007,6 +5008,11 @@ impl MainView {
                         self.ask_pane(PaneRequest::SaveFile(files[0]))
                     }
                     MenuAction::SaveFileAs => self.ask_pane(PaneRequest::SaveFiles(files)),
+                    MenuAction::SaveReading if files.len() == 1 => {
+                        self.ask_pane(PaneRequest::SaveReading(
+                            koru_workspace_host::reading_file::ReadingTarget::File(files[0]),
+                        ))
+                    }
                     _ => false,
                 }
             }
@@ -5571,7 +5577,7 @@ impl MainView {
             },
             at,
             if files {
-                context_menu::file_items(count, note)
+                context_menu::explore_file_items(count, note)
             } else {
                 context_menu::node_items(count)
             },
@@ -14483,6 +14489,11 @@ impl View for MainView {
     fn take_wants_copy_image(&mut self) -> Option<String> {
         self.active_editing_leaf()
             .and_then(|leaf| View::take_wants_copy_image(leaf))
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_save_reading(leaf))
     }
 
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {

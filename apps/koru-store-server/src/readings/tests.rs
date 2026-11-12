@@ -1039,3 +1039,71 @@ fn the_debug_board_carries_no_word_and_no_title() {
         );
     }
 }
+
+/// **One reading's answer** carries what the reading document says when it
+/// can be read, and falls back to the mirror's row and words when it cannot,
+/// with what only the document knows left absent.
+#[test]
+fn one_readings_answer_comes_from_the_document_and_falls_back_to_the_mirror() {
+    let ws = WorkspaceId::new();
+    let parent = DocumentId::new();
+    let row = mirror::ReadingRow {
+        workspace: ws.to_storage(),
+        parent: parent.to_storage(),
+        hash: "b3:aa".into(),
+        generation: 1,
+        status: Some("partial".into()),
+        reason: Some("page-cap".into()),
+        source: Some("recognized".into()),
+        page_count: 2,
+    };
+    let words = vec![(1, "one".to_owned()), (2, "two".to_owned())];
+    let entry = Reading {
+        reader: Some(ReaderId::text()),
+        generation: 1,
+        status: Some(ReadingStatus::Partial),
+        reason: Some(Reason::PageCap),
+        source: Some(Source::Recognized),
+        confidence: Some(87),
+        pages_done: Some(2),
+        pages: [(1, PageText::new("one")), (2, PageText::new("two"))].into(),
+    };
+
+    let full = answer(ws, parent, &row, Some(entry), words.clone());
+    assert_eq!(full.reader.as_deref(), Some("text"));
+    assert_eq!(full.confidence, Some(87));
+    assert_eq!(full.pages_done, Some(2));
+    assert_eq!(full.reason.as_deref(), Some("page-cap"));
+    assert_eq!(full.document, parent);
+    assert_eq!(
+        full.pages
+            .iter()
+            .map(|p| (p.page, p.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "one"), (2, "two")]
+    );
+
+    let mirrored = answer(ws, parent, &row, None, words);
+    assert_eq!(mirrored.reader, None);
+    assert_eq!(mirrored.confidence, None);
+    assert_eq!(mirrored.status.as_deref(), Some("partial"));
+    assert_eq!(mirrored.source.as_deref(), Some("recognized"));
+    assert_eq!(mirrored.generation, 1);
+    assert_eq!(mirrored.pages, full.pages, "the same words either way");
+}
+
+/// **The worker is handed the object the blob store wrote**:
+/// `<root>/blobs/objects/<algorithm>-<digest>`. Found by the first run against
+/// a real root (OCR Plan 1.8): the path was `<root>/blobs/<…>`, one level
+/// short, so every file counted `not_here` — and nothing in memory could say
+/// so, because a stub never opens a path. Composition only; nothing is read.
+#[test]
+fn a_device_hands_the_worker_the_object_the_blob_store_wrote() {
+    let root = PathBuf::from("store-root");
+    let objects = objects_under(&root);
+    assert_eq!(
+        objects.path("b3:ab12"),
+        Some(root.join("blobs").join("objects").join("b3-ab12"))
+    );
+    assert_eq!(objects.path("not a hash"), None);
+}
