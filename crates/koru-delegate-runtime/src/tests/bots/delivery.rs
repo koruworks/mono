@@ -418,7 +418,18 @@ fn confirmed_completion_waits_for_native_fencing_before_releasing_capacity() {
         .lock()
         .unwrap()
         .lookups
-        .insert(native, (host(2), CreationLookup::NoEvidence));
+        // The host still runs the process: no proof. (A new incarnation's
+        // `NoEvidence` stood for that until window run 2; it now proves
+        // nothing survived, ADR-341.)
+        .insert(
+            native,
+            (
+                host(2),
+                CreationLookup::Known {
+                    session: summary(ManagedState::Running, None),
+                },
+            ),
+        );
     assert!(
         h.orchestrator
             .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
@@ -657,7 +668,18 @@ fn missing_summary_requires_positive_fencing_proof_without_termination() {
         .lock()
         .unwrap()
         .lookups
-        .insert(native, (host(2), CreationLookup::NoEvidence));
+        // The host still runs the process: no proof. (A new incarnation's
+        // `NoEvidence` stood for that until window run 2; it now proves
+        // nothing survived, ADR-341.)
+        .insert(
+            native,
+            (
+                host(2),
+                CreationLookup::Known {
+                    session: summary(ManagedState::Running, None),
+                },
+            ),
+        );
     assert!(
         h.orchestrator
             .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)

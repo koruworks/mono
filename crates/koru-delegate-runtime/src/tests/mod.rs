@@ -667,6 +667,13 @@ pub(crate) struct SessionScript {
     /// pins a refusal to the input's key: a repeat gets the same answer.
     pub bot_refusal: Option<&'static str>,
     pub bot_skips: Vec<(SessionId, koru_delegate_core::QuestionRequestId)>,
+    /// Sessions the host no longer has: reaped after their process ended,
+    /// or held by an earlier host incarnation. `terminate` answers
+    /// `session_not_found` for each, as the real host does
+    /// (`SessionRegistry::get` reaps an ended session before it looks, and a
+    /// new incarnation has an empty registry). Empty, `terminate` accepts
+    /// everything, as this fake always did.
+    pub reaped: BTreeSet<SessionId>,
 }
 
 impl Default for SessionScript {
@@ -703,6 +710,7 @@ impl Default for SessionScript {
             bot_reply_lost: false,
             bot_refusal: None,
             bot_skips: Vec::new(),
+            reaped: BTreeSet::new(),
         }
     }
 }
@@ -869,6 +877,15 @@ impl Sessions for ScriptedSessions {
     fn terminate_owned(&mut self, session: SessionId) -> PortResult<()> {
         let mut script = self.script.lock().unwrap();
         script.calls.push(Call::TerminateOwned(session));
+        if script.reaped.contains(&session) {
+            // `HostSessions::terminate_owned` attaches first; the host
+            // answers a session it no longer has `session_not_found`.
+            return Err(PortError::new(
+                Port::Sessions,
+                "session_not_found",
+                "attach: the session is not in the registry",
+            ));
+        }
         if script.owned_termination_refused {
             return Err(PortError::new(
                 Port::Sessions,
@@ -879,11 +896,17 @@ impl Sessions for ScriptedSessions {
         Ok(())
     }
     fn terminate(&mut self, session: SessionId) -> PortResult<()> {
-        self.script
-            .lock()
-            .unwrap()
-            .calls
-            .push(Call::Terminate(session));
+        let mut script = self.script.lock().unwrap();
+        script.calls.push(Call::Terminate(session));
+        if script.reaped.contains(&session) {
+            // `HostSessions::terminate` maps the host's
+            // `ErrorCode::SessionNotFound` to this code (`session_error`).
+            return Err(PortError::new(
+                Port::Sessions,
+                "session_not_found",
+                "terminate: the session is not in the registry",
+            ));
+        }
         Ok(())
     }
     fn resume_token(&mut self, session: SessionId) -> PortResult<Option<ProviderResumeToken>> {

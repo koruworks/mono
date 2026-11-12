@@ -373,9 +373,19 @@ impl Orchestrator {
             .is_some())
     }
 
-    /// Prove stopped/fenced through the existing session creation owner. An
-    /// accepted terminate command alone is not proof. A different incarnation
-    /// with no evidence remains uncertain.
+    /// Prove stopped/fenced through the existing session creation owner. The
+    /// proof is the host's answer to `retire_creation`, never the terminate:
+    /// an accepted terminate is not proof, and a refused one is not disproof.
+    /// The host refuses to terminate a session it no longer holds
+    /// (`session_not_found`: reaped after its process ended, or held by an
+    /// earlier host incarnation), which is exactly when its answer proves the
+    /// end; failing on that refusal left such a Run unprovable forever.
+    ///
+    /// No evidence proves the end whichever incarnation answers (ADR-341):
+    /// from the same incarnation nothing runs under the key, and the retire
+    /// just fenced it so nothing will; from a new one nothing survived, since
+    /// the host's process trees end with it (its kill-on-close jobs). A Run
+    /// whose session host restarted is therefore not running.
     pub(crate) fn bot_prove_end(&mut self, run: RunId, terminate: bool) -> Result<bool, RunError> {
         use koru_session_protocol::{CreationLookup, ProcessState};
         let Some(row) = self.ports.store.current_attempt(run)? else {
@@ -395,18 +405,19 @@ impl Orchestrator {
                     _ => None,
                 },
             };
-            if let Some(session) = session {
-                self.ports.sessions.terminate(session)?;
+            if let Some(session) = session
+                && let Err(error) = self.ports.sessions.terminate(session)
+            {
+                self.trace(run, "terminate_refused", format_args!("{}", error.code));
             }
         }
-        let (host, lookup) = self.ports.sessions.retire(key.idempotency)?;
+        let (_, lookup) = self.ports.sessions.retire(key.idempotency)?;
         Ok(match lookup {
-            CreationLookup::KnownEnded { .. } => true,
+            CreationLookup::KnownEnded { .. } | CreationLookup::NoEvidence => true,
             CreationLookup::Known { session } => matches!(
                 session.process,
                 ProcessState::Exited { .. } | ProcessState::Failed { .. }
             ),
-            CreationLookup::NoEvidence => row.host_instance == Some(host),
             CreationLookup::Creating => false,
         })
     }

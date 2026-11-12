@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod host_gone;
 mod native_results;
 
 use super::*;
@@ -593,11 +594,18 @@ fn stop_uncertainty_retains_claim_and_reservation_then_verified_stop_releases() 
         .unwrap()
         .unwrap();
     let native = row.provider_session.unwrap().idempotency;
-    h.sessions
-        .lock()
-        .unwrap()
-        .lookups
-        .insert(native, (host(2), CreationLookup::NoEvidence));
+    // The host still runs the process: no proof. (A new host incarnation's
+    // `NoEvidence` once stood for "uncertain" here; since window run 2 it is
+    // proof that nothing survived, as ADR-341 decides.)
+    h.sessions.lock().unwrap().lookups.insert(
+        native,
+        (
+            host(1),
+            CreationLookup::Known {
+                session: summary(ManagedState::Running, None),
+            },
+        ),
+    );
     assert!(
         h.orchestrator
             .bot_stop(&key(&s), fence.owner.device, Some(&fence))
@@ -862,18 +870,21 @@ fn unknown_restart_retains_reservation_across_another_restart_without_launching(
         .provider_session
         .unwrap()
         .idempotency;
-    let mut h = restarted(h, (host(2), CreationLookup::NoEvidence));
-    h.sessions.lock().unwrap().host = host(2);
+    // The host still holds the creation in flight, however often it is
+    // re-asked: unknown. (A new host incarnation's `NoEvidence` once stood
+    // for "unknown" here; since window run 2 it proves that nothing
+    // survived, as ADR-341 decides: see `host_gone`.)
+    let mut h = restarted(h, (host(1), CreationLookup::Creating));
     let report = h.orchestrator.restart().unwrap();
+    assert!(report.unresolved.contains(&s.request.run));
     assert!(report.claims.kept.len() == 1);
     assert!(!h.attempt(s.request.run).retired);
-    assert_eq!(h.attempt(s.request.run).phase, AttemptPhase::Unknown);
-    let mut h = restarted(h, (host(2), CreationLookup::NoEvidence));
+    let mut h = restarted(h, (host(1), CreationLookup::Creating));
     h.sessions
         .lock()
         .unwrap()
         .lookups
-        .insert(native, (host(2), CreationLookup::NoEvidence));
+        .insert(native, (host(1), CreationLookup::Creating));
     let report = h.orchestrator.restart().unwrap();
     assert!(report.unresolved.contains(&s.request.run));
     assert!(!h.attempt(s.request.run).retired);
