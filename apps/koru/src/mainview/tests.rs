@@ -15230,3 +15230,29 @@ fn per_workspace_tabs_replace_the_strip_on_a_switch_and_shared_keeps_it() {
     );
     assert!(matches!(v.tabs().active_tab().view, TabView::Welcome(_)));
 }
+
+/// **Show on a *could not be read* item takes the search result's route**
+/// (OCR Plan 2.5): the document, resolved through the Store to wherever it
+/// lives — Explore → Files for a file, the page for a picture in one. A token
+/// that names nothing goes nowhere.
+#[test]
+fn showing_an_unreadable_item_navigates_to_its_document() {
+    let mut v = MainView::new();
+    let workspace = koru_store_core::ids::WorkspaceId::new();
+    let document = koru_store_core::ids::DocumentId::new();
+    let key = format!("{}/{}", workspace.to_storage(), document.to_storage());
+    v.perform_settings_request(koru_settings_ui::Request::ShowReaderItem(key));
+    assert_eq!(
+        v.take_pane_request(),
+        Some(PaneRequest::Navigate {
+            target: koru_workspace_host::NavigationTarget::Document {
+                document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                node: None,
+            },
+            match_text: None,
+            disposition: koru_workspace_host::SearchTargetDisposition::SourceWindow,
+        })
+    );
+    v.perform_settings_request(koru_settings_ui::Request::ShowReaderItem("nonsense".into()));
+    assert_eq!(v.take_pane_request(), None);
+}

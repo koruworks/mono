@@ -65,6 +65,40 @@ fn only_the_unfinished_stages_are_running() {
     assert!(!InstallStage::Stopped.is_running());
 }
 
+/// **An item is ids and tokens and nothing else** — the shape the Settings
+/// list resolves names against its own listing from. Pinned field by field,
+/// so a name or a path added later is a visible change to this test.
+#[test]
+fn an_item_carries_ids_and_tokens_only() {
+    use koru_store_core::ids::{DocumentId, WorkspaceId};
+    let item = ReaderItem {
+        workspace: WorkspaceId::new(),
+        document: DocumentId::new(),
+        hash: "b3:00ff".into(),
+        kind: ReaderItemKind::CouldNotBeRead,
+        reason: "password".into(),
+    };
+    let value = serde_json::to_value(&item).unwrap();
+    let mut fields: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["document", "hash", "kind", "reason", "workspace"]);
+    assert_eq!(value["kind"], "could_not_be_read");
+    let items = ReaderItems {
+        items: vec![item],
+        truncated: false,
+    };
+    let back: ReaderItems = serde_json::from_str(&serde_json::to_string(&items).unwrap()).unwrap();
+    assert_eq!(back, items);
+    // An answer from before `truncated` existed still reads.
+    let old: ReaderItems = serde_json::from_str(r#"{"items":[]}"#).unwrap();
+    assert!(!old.truncated);
+}
+
 mod erased {
     pub trait Json {
         fn to_json(&self) -> String;

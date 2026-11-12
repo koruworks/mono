@@ -577,6 +577,13 @@ impl Client {
         self.post("/v1/readings/reader/decline", &serde_json::json!({}))
     }
 
+    /// **The items behind the Settings row's *could not be read* count**, on
+    /// this computer: ids and reason tokens, never a name (OCR Plan 2.5). A
+    /// surface names each from the workspace listing it already reads.
+    pub fn reader_items(&self) -> Result<koru_store_wire::reader::ReaderItems> {
+        self.get("/v1/readings/reader/items")
+    }
+
     /// An import through an importer finished, having brought this many
     /// pictures and scanned PDFs. A non-zero count makes Koru offer once more.
     pub fn reader_import_finished(

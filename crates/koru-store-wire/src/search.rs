@@ -172,6 +172,15 @@ pub struct SearchHit {
     /// field existed, which is why it defaults rather than being required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<u32>,
+    /// The name a person gave the picture the words were read from, when the
+    /// hit is a [`field::READ`] fragment of a picture inside a document and
+    /// somebody named it (OCR EXPERIENCE §3: the picture mark, then its name
+    /// only when a person gave it one).
+    ///
+    /// **Absent for a picture nobody named**, for a file, for every other
+    /// field, and from an answer written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

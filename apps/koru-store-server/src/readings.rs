@@ -42,6 +42,8 @@ pub(crate) mod supervised;
 // installer, the coordinator, search and the routes share (OCR Plan 2.4).
 pub(crate) mod hub;
 pub(crate) mod installer;
+// The items behind the Settings row's could-not-be-read count (OCR Plan 2.5).
+pub(crate) mod items;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -177,6 +179,7 @@ impl Prepared {
                 let port = ReadingPort {
                     state: Arc::downgrade(state),
                     mirror: Mutex::new(mirror),
+                    items: items::ItemsSource::new(self.derived.clone()),
                 };
                 if !state.set_reading_service(Arc::new(port)) {
                     tracing::warn!("the readings port was already set; the first one stays");
@@ -327,6 +330,9 @@ fn spawn_coordinator(
 struct ReadingPort {
     state: Weak<AppState>,
     mirror: Mutex<mirror::Mirror>,
+    /// `GET /v1/readings/reader/items`, on connections of its own, so a long
+    /// list never holds up one reading.
+    items: items::ItemsSource,
 }
 
 impl koru_store_api::routes::readings::ReadingService for ReadingPort {
@@ -357,6 +363,11 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
         });
         let entry = fork.and_then(|fork| koru_read::ReadingDoc::from_doc(fork).reading(hash));
         Ok(Some(answer(workspace, parent, &row, entry, words)))
+    }
+
+    fn items(&self) -> Result<koru_store_wire::reader::ReaderItems, String> {
+        self.items
+            .items(koru_store_core::model::Timestamp::now().millis())
     }
 }
 

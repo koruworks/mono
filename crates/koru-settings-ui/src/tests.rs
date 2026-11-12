@@ -163,6 +163,7 @@ fn clone_surface(surface: &SettingsSurface) -> SettingsSurface {
     copy.spelling_languages = surface.spelling_languages.clone();
     copy.spelling_note = surface.spelling_note.clone();
     copy.dictionary = surface.dictionary.clone();
+    copy.reader = surface.reader.clone();
     copy.voice = surface.voice.clone();
     copy.renderer = surface.renderer.clone();
     copy.agent_providers = surface.agent_providers.clone();

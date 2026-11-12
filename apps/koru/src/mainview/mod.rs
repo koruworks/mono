@@ -9623,6 +9623,27 @@ impl MainView {
             Request::SetAgentOrder(keys) => {
                 self.set_agent_order(keys);
             }
+            // The Settings page carries these out itself, on its own thread
+            // to the Store (`settings_view::reader_link`); none reaches here
+            // from it, and nothing else raises them.
+            Request::TurnOnReader
+            | Request::StopReaderInstall
+            | Request::TurnOffReader
+            | Request::RemoveReader => {}
+            // **The same navigation a search result takes** (OCR Plan 2.5):
+            // the document route, which the shell resolves through the Store
+            // to wherever the entry lives — Explore → Files with a file
+            // selected, or the page holding the picture.
+            Request::ShowReaderItem(key) => {
+                if let Some(target) = crate::settings_view::reader_item_target(&key) {
+                    self.ask_pane(PaneRequest::Navigate {
+                        target,
+                        match_text: None,
+                        // Owed to this window, as every gesture raised in it.
+                        disposition: koru_workspace_host::SearchTargetDisposition::SourceWindow,
+                    });
+                }
+            }
         }
     }
 

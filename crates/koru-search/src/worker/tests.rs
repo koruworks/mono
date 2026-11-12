@@ -1667,6 +1667,65 @@ fn a_picture_pasted_into_a_page_is_findable_by_words_read_elsewhere() {
     assert_eq!(found, expected);
 }
 
+/// **A picture's result carries the name somebody gave the picture**, and a
+/// picture nobody named, a file and every typed field carry none (OCR
+/// EXPERIENCE §3: the mark alone for an unnamed picture). Naming lives on the
+/// picture's own fragment, so the reading's rows never hold it.
+#[test]
+fn a_picture_hit_carries_its_name_only_when_somebody_gave_it_one() {
+    let readings = FakeReadings::answering(vec![
+        reading(PHOTO, 1, &[(1, "whiteboard sketch of the pump")]),
+        the_manual(),
+    ]);
+    let mut library = Library::new(readings);
+    settle(&mut library.indexer, 0);
+    let named = library
+        .hits("pump")
+        .into_iter()
+        .find(|hit| hit.field == crate::model::field::READ)
+        .expect("the picture's words are found");
+    assert_eq!(named.kind, "image");
+    assert_eq!(named.picture_name.as_deref(), Some("board.jpg"));
+
+    let file = library
+        .hits("gasket")
+        .into_iter()
+        .find(|hit| hit.field == crate::model::field::READ)
+        .expect("the file's words are found");
+    assert_eq!(file.picture_name, None, "a file is no picture");
+    assert!(
+        library
+            .hits("photographed")
+            .iter()
+            .all(|hit| hit.picture_name.is_none()),
+        "typed words name no picture"
+    );
+
+    // The same picture, pasted unnamed into another page.
+    let mut unnamed = blob_node("pasted", "image", "", PHOTO);
+    unnamed.name = None;
+    let projection = DocumentProjection {
+        workspace: library.workspace,
+        document: library.plain,
+        source_revision: b"r2".to_vec(),
+        nodes: vec![a_node("nothing read here"), unnamed],
+    };
+    library
+        .indexer
+        .projections
+        .replace(&projection, 2, None)
+        .unwrap();
+    Feed::new(library.indexer.queue()).projected(&projection);
+    settle(&mut library.indexer, 100);
+    let plain = library.plain.to_storage();
+    let unnamed_hit = library
+        .hits("pump")
+        .into_iter()
+        .find(|hit| hit.document.as_deref() == Some(plain.as_str()))
+        .expect("the unnamed picture is found too");
+    assert_eq!(unnamed_hit.picture_name, None);
+}
+
 /// **Read text ranks with tables and properties**, below every kind of typed
 /// text: the line somebody wrote comes before the words read out of a picture.
 #[test]

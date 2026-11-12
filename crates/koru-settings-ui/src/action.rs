@@ -151,6 +151,14 @@ pub(crate) enum Action {
     AppMenuEntry(bool),
     /// *Preview in sample document*, at the right of *Document fonts*.
     PreviewSampleDocument,
+    // ------------------------------- Text in pictures and PDFs (OCR Plan 2.5)
+    /// **Turn on**, or **Try again** after a download that did not finish.
+    ReaderTurnOn,
+    ReaderStop,
+    ReaderTurnOff,
+    ReaderRemove,
+    /// **Show** beside a *could not be read* item: the host's token for it.
+    ShowReaderItem(String),
 
     // ----------------------------------------------------------- Terminal
     TerminalTheme(ThemeChoice),
@@ -280,4 +288,19 @@ pub enum Request {
     /// Store the order the agents are listed in, on this machine: every
     /// agent's key, in the order the page now shows them.
     SetAgentOrder(Vec<String>),
+    /// **Turn on** the reader that finds words in pictures, from Settings —
+    /// which installs whatever *Not now* said (OCR Plan 2.5). The host sends
+    /// the terms the row was showing; the Store downloads.
+    TurnOnReader,
+    /// **Stop** its download. A partial download resumes next time.
+    StopReaderInstall,
+    /// **Turn off**. There is no separate switch: the Store removes the model
+    /// and keeps every reading made, exactly as **Remove** does.
+    TurnOffReader,
+    /// **Remove** the download from this computer. Readings already made stay.
+    RemoveReader,
+    /// Go to where a *could not be read* item lives, by the token the host
+    /// gave it: Explore → Files with the file selected, or the page holding
+    /// the picture — the same navigation a search result takes.
+    ShowReaderItem(String),
 }

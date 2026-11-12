@@ -278,5 +278,56 @@ pub struct ImportFinished {
     pub pictures_and_scans: u64,
 }
 
+// ------------------------------------------------- the items behind the counts
+
+/// **The items behind the Settings row's *could not be read* count**: the
+/// answer to `GET /v1/readings/reader/items` (OCR Plan 2.5).
+///
+/// **Ids and tokens only.** No file name, no title, no path crosses from the
+/// Store's reading code: a surface names each item from the workspace listing
+/// it already reads, the way a search surface names a hit's document.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReaderItems {
+    /// Every workspace on this computer, workspace by workspace, each in the
+    /// order its listing gives.
+    pub items: Vec<ReaderItem>,
+    /// More items exist than [`READER_ITEMS_LIMIT`]; the list is the first
+    /// that many. The count on the row is still the whole number.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// The most items one answer carries. A computer with thousands of files that
+/// could not be read is told the first thousand and that there are more; a
+/// list that long is not read by anybody, and the count says the rest.
+pub const READER_ITEMS_LIMIT: usize = 1_000;
+
+/// One item: an entry and the blob it holds that ended this way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReaderItem {
+    pub workspace: koru_store_core::ids::WorkspaceId,
+    /// The entry the blob belongs to: the file itself, or the page the
+    /// picture is in. Where picking the item goes.
+    pub document: koru_store_core::ids::DocumentId,
+    /// The blob's address (`b3:<hex>`).
+    pub hash: String,
+    pub kind: ReaderItemKind,
+    /// Why, as a token: `password`, `damaged` (true on every device), or a
+    /// failure true on this computer only — `unsupported`, `crashed`,
+    /// `memory-limit`, `hostile`, `internal`, `unreadable`. A surface words
+    /// the tokens it knows and says something general for one it does not.
+    pub reason: String,
+}
+
+/// How an item ended. **Room for more**: *partly read* (a long scan stopped at
+/// its page limit) joins in OCR Plan 3.2, with its own list and *Read all
+/// pages*; a surface ignores a kind it does not know.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReaderItemKind {
+    /// Found by name only.
+    CouldNotBeRead,
+}
+
 #[cfg(test)]
 mod tests;

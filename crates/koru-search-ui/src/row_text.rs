@@ -8,6 +8,10 @@
 //!
 //! - **the page** a file's words were read from (*Page 12*), drawn ahead of the
 //!   snippet;
+//! - **the picture mark** before the words read from a picture inside a
+//!   document — a small muted glyph, then the picture's name only when a
+//!   person gave it one ([`is_picture`], [`picture_name`]), drawn as its own
+//!   runs ahead of the snippet exactly as the page is;
 //! - **the context line**: where the result is, and whether it is in the bin;
 //! - **the sentence a screen reader hears** for the row, which carries the page
 //!   in words rather than leaving it to the picture of a number.
@@ -62,6 +66,35 @@ pub(crate) fn page_label(lang: Lang, hit: &SearchHit) -> Option<String> {
     hit.page.map(|page| page_words(lang, page))
 }
 
+/// **Whether a hit's words were read from a picture inside a document** —
+/// the hit that starts its snippet with the picture mark (OCR EXPERIENCE §3).
+///
+/// Decided from the store's tokens and nothing translated: the field says
+/// the words were read ([`field::READ`](koru_store_wire::search::field::READ))
+/// and the node they were read from is a picture (`image`, the stable kind
+/// token). A file's words are read too, but a file is a result of its own
+/// with its file icon, so it carries no mark.
+pub(crate) fn is_picture(hit: &SearchHit) -> bool {
+    hit.field == koru_store_wire::search::field::READ && hit.kind == PICTURE_KIND
+}
+
+/// The node kind of a picture, as documents store it (`Kind::Image`). Spelled
+/// here because this crate links no node model, as `koru-search` spells it.
+const PICTURE_KIND: &str = "image";
+
+/// What follows the picture mark: the name a person gave the picture, or
+/// `None` for a picture nobody named — which shows the mark alone. `None`
+/// for every hit that is not a picture.
+pub(crate) fn picture_name(hit: &SearchHit) -> Option<&str> {
+    if !is_picture(hit) {
+        return None;
+    }
+    hit.picture_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
 fn page_words(lang: Lang, page: u32) -> String {
     fill(
         t(lang, Key::SearchResultPage),
@@ -102,6 +135,21 @@ pub(crate) fn spoken(lang: Lang, hit: &SearchHit, title_match: bool) -> String {
     let context = context(hit);
     if title_match {
         return fill(t(lang, Key::SearchResultSpoken), &[&hit.title, &context]);
+    }
+    // **A picture says so in words**, not only with its mark (EXPERIENCE §3
+    // "without a mouse"), so nobody hearing the row takes read words for
+    // typed ones.
+    if is_picture(hit) {
+        return match picture_name(hit) {
+            Some(name) => fill(
+                t(lang, Key::SearchResultSpokenPictureNamed),
+                &[&hit.title, &context, name, &hit.snippet],
+            ),
+            None => fill(
+                t(lang, Key::SearchResultSpokenPicture),
+                &[&hit.title, &context, &hit.snippet],
+            ),
+        };
     }
     match hit.page {
         Some(page) => fill(

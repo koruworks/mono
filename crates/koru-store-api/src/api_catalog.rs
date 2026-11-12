@@ -62,7 +62,7 @@ use koru_store_wire::attributes::{AttributeQuery, AttributeQueryResponse};
 use koru_store_wire::internal::{
     CloudSyncStatus, DocumentReport, Metrics, StoreReport, WorkspaceReport,
 };
-use koru_store_wire::reader::{ImportFinished, InstallReader, ReaderState};
+use koru_store_wire::reader::{ImportFinished, InstallReader, ReaderItems, ReaderState};
 use koru_store_wire::readings::ReadingAnswer;
 use koru_store_wire::reminders::{
     ActionRequest, ClearedHistory, ReminderQuery, ReminderQueryResponse, ReminderSnapshot,
@@ -1471,6 +1471,23 @@ pub const ROUTES: &[Route] = &[
         summary: "An import finished, and this is how many pictures and scanned PDFs it brought",
         returns: "the reader's state. A non-zero count clears Not now, so Koru offers once \
                   more; adding or pasting single files never calls this",
+    },
+    Route {
+        method: "GET",
+        // Internal for the reason the reader's state is: this computer's
+        // failures, for this computer's Settings row (OCR Plan 2.5).
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/items",
+        handler: || get(routes::readings::items),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderItems>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "What could not be read on this computer, item by item",
+        returns: "each item behind the Settings row's could-not-be-read count: its workspace, \
+                  the entry it belongs to (the file, or the page holding the picture), the blob's \
+                  hash and the reason token. Ids and tokens only — a surface names each item from \
+                  the workspace listing. At most 1,000, with `truncated` when there are more; \
+                  `projection_unavailable` when this store runs no readings mirror",
     },
     Route {
         method: "GET",

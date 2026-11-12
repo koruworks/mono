@@ -111,6 +111,7 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/readings/reader/stop` — Stop the reader's download (Internal)
 - POST `/v1/readings/reader/decline` — Not now: search stops offering the reader on this computer (Internal)
 - POST `/v1/readings/reader/imported` — An import finished, and this is how many pictures and scanned PDFs it brought (Internal)
+- GET `/v1/readings/reader/items` — What could not be read on this computer, item by item (Internal)
 - GET `/v1/readings/{workspace}/{hash}` — The words read out of one file or picture in a workspace (Internal)
 - GET `/v1/debug/openapi.json` — Every route this store serves, diagnostics included (Internal)
 - GET `/v1/debug/store` — What this store is doing, for a bug report (Internal)

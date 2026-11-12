@@ -46,7 +46,166 @@ fn a_read_hit(page: Option<u32>) -> SearchHit {
         observed_modified_at_ms: None,
         workspace_last_used_at_ms: None,
         page,
+        picture_name: None,
     }
+}
+
+/// Words read out of a picture inside a page: the page is the document, the
+/// picture's own node is the node, and the kind says it is a picture.
+fn a_picture_hit(name: Option<&str>) -> SearchHit {
+    SearchHit {
+        document_kind: "page".into(),
+        mime: None,
+        kind: "image".into(),
+        title: "Site visit".into(),
+        breadcrumb: "Acme / Site visit".into(),
+        snippet: "…whiteboard sketch of the pump…".into(),
+        spans: vec![MatchSpan {
+            start: "…whiteboard sketch of the ".len(),
+            end: "…whiteboard sketch of the pump".len(),
+        }],
+        node: Some(DocumentId::new().to_storage()),
+        page: None,
+        picture_name: name.map(str::to_owned),
+        ..a_read_hit(None)
+    }
+}
+
+// ------------------------------------------------------------ the picture mark
+
+/// **The mark is decided by the store's tokens**: read words from a picture
+/// node. A file's read words are a file's result; a picture's typed name is
+/// a typed match.
+#[test]
+fn only_words_read_from_a_picture_carry_the_mark() {
+    assert!(is_picture(&a_picture_hit(None)));
+    assert!(
+        !is_picture(&a_read_hit(Some(3))),
+        "a file is its own result"
+    );
+    let mut named_by_hand = a_picture_hit(None);
+    named_by_hand.field = field::NAME.into();
+    assert!(!is_picture(&named_by_hand), "a name somebody typed");
+}
+
+/// The name follows the mark only when a person gave the picture one; a
+/// blank name is no name.
+#[test]
+fn the_name_follows_the_mark_only_when_there_is_one() {
+    assert_eq!(
+        picture_name(&a_picture_hit(Some("Pump room"))),
+        Some("Pump room")
+    );
+    assert_eq!(picture_name(&a_picture_hit(None)), None);
+    assert_eq!(picture_name(&a_picture_hit(Some("  "))), None);
+    let mut file = a_read_hit(None);
+    file.picture_name = Some("stray".into());
+    assert_eq!(
+        picture_name(&file),
+        None,
+        "only a picture has a picture's name"
+    );
+}
+
+/// **A picture hit is announced as one** (EXPERIENCE §3: "A result that came
+/// from a picture says so in words to a screen reader and not only with the
+/// picture mark"), in every language, with the whole snippet.
+#[test]
+fn a_picture_hit_is_announced_as_a_picture_in_every_language() {
+    let hit = a_picture_hit(None);
+    assert_eq!(
+        spoken(Lang::En, &hit, false),
+        "Site visit, Acme / Site visit, words read from a picture, …whiteboard sketch of the pump…"
+    );
+    let named = a_picture_hit(Some("Pump room"));
+    assert_eq!(
+        spoken(Lang::En, &named, false),
+        "Site visit, Acme / Site visit, words read from the picture Pump room, …whiteboard sketch of the pump…"
+    );
+    for lang in Lang::ALL {
+        let said = spoken(lang, &hit, false);
+        let typed = {
+            let mut typed = hit.clone();
+            typed.field = field::BODY.into();
+            spoken(lang, &typed, false)
+        };
+        assert_ne!(
+            said,
+            typed,
+            "{}: a picture sounds like a picture",
+            lang.tag()
+        );
+        assert!(said.contains(&hit.snippet), "{}: {said}", lang.tag());
+        assert!(said.contains("Site visit"), "{}: {said}", lang.tag());
+        assert!(!said.contains("{}"), "{}: {said}", lang.tag());
+        let said = spoken(lang, &named, false);
+        assert!(said.contains("Pump room"), "{}: {said}", lang.tag());
+    }
+}
+
+/// The surface's own accessible name for the row is the same sentence, so the
+/// day rows are published (OCR QUESTIONS Q11) a picture is heard as one.
+#[test]
+fn the_surface_names_a_picture_row_as_a_picture() {
+    let mut surface = SearchSurface::new();
+    surface.page.hits = vec![a_picture_hit(None)];
+    let name = koru_i18n::with_current(Lang::De, || surface.result_accessible_name(0)).unwrap();
+    assert!(name.contains("aus einem Bild gelesene Wörter"), "{name}");
+}
+
+/// **The snippet starts after the mark**, and after the name when there is
+/// one; its text and ranges are the store's, unmoved.
+#[test]
+fn the_snippet_begins_after_the_picture_mark_and_keeps_its_ranges() {
+    let unnamed = a_picture_hit(None);
+    let named = a_picture_hit(Some("Pump room"));
+    let mut surface = surface_showing(vec![unnamed.clone(), named.clone()]);
+    let mut canvas = Scene::new();
+    let root = Affine::IDENTITY;
+    let after_mark = surface.paint_snippet_line(&mut canvas, root, &unnamed, 40.0, 50.0, 500.0);
+    assert!(after_mark > 40.0, "the mark leads the snippet");
+    let after_name = surface.paint_snippet_line(&mut canvas, root, &named, 40.0, 50.0, 500.0);
+    let name_width = surface
+        .engine
+        .simple_layout("Pump room", koru_draw::theme::role::meta())
+        .full_width();
+    assert!(
+        after_name > after_mark + name_width,
+        "the name sits between"
+    );
+    assert_eq!(surface.page.hits[1].snippet, named.snippet);
+    assert_eq!(surface.page.hits[1].spans, named.spans);
+}
+
+/// The F12 tree: the mark is a part of its own result row, under the modal,
+/// and only a picture hit has one.
+#[test]
+fn the_inspector_nests_the_picture_mark_inside_its_result() {
+    use crate::SearchModal;
+    let viewport = (900.0, 650.0);
+    let modal = SearchModal::new(viewport);
+    let mut search = surface_showing(vec![a_picture_hit(Some("Pump room")), a_read_hit(Some(4))]);
+    search.set_viewport(modal.bounds().w, modal.bounds().h);
+    let root = Affine::IDENTITY;
+    let capture = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, viewport.0, viewport.1));
+    modal.draw(&mut search, &mut Scene::new(), root, true, (0.0, 0.0));
+    let snapshot = capture.finish();
+    let records = &snapshot.records;
+    let rows: Vec<usize> = (0..records.len())
+        .filter(|&i| records[i].name == "Search result")
+        .collect();
+    let marks: Vec<usize> = (0..records.len())
+        .filter(|&i| records[i].name == "Picture mark")
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(marks.len(), 1, "only the picture hit has a mark");
+    assert_eq!(records[marks[0]].parent, Some(rows[0]));
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.name == "Page prefix" && r.parent == Some(rows[0])),
+        "a picture has no page"
+    );
 }
 
 // ------------------------------------------------------------ the page label

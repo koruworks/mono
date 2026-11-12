@@ -19,6 +19,7 @@ use axum::extract::{Extension, Path, State};
 use koru_store_core::errors::Code;
 use koru_store_core::ids::WorkspaceId;
 use koru_store_core::model::{BlobHash, Scope};
+use koru_store_wire::reader::ReaderItems;
 use koru_store_wire::readings::ReadingAnswer;
 
 use crate::auth::Caller;
@@ -35,6 +36,41 @@ pub trait ReadingService: Send + Sync + 'static {
         workspace: WorkspaceId,
         hash: &BlobHash,
     ) -> Result<Option<ReadingAnswer>, String>;
+
+    /// **The items behind the Settings row's *could not be read* count**
+    /// (OCR Plan 2.5), every workspace on this computer: ids and reason
+    /// tokens, never a name. Reads the derived read models on connections of
+    /// its own and takes no Store lock. A daemon that answers nothing here
+    /// says so with an empty list.
+    fn items(&self) -> Result<ReaderItems, String> {
+        Ok(ReaderItems::default())
+    }
+}
+
+/// `GET /v1/readings/reader/items` — what could not be read on this computer,
+/// item by item.
+///
+/// **Through `spawn_blocking`**, because the answer is a walk of the
+/// projection's readable references and the mirror's outcomes — reads of
+/// SQLite that must not sit on the runtime a keystroke's search shares.
+/// `projection_unavailable` where no readings mirror runs, the same answer
+/// one reading gives.
+pub async fn items(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+) -> ApiResult<Json<ReaderItems>> {
+    caller.require(Scope::ReadDocuments)?;
+    let service = state.reading_service().ok_or_else(|| {
+        ApiError::new(
+            Code::ProjectionUnavailable,
+            "this store is not running a readings mirror",
+        )
+    })?;
+    let answer = tokio::task::spawn_blocking(move || service.items())
+        .await
+        .map_err(|_| ApiError::new(Code::Internal, "the items read did not finish"))?
+        .map_err(|error| ApiError::new(Code::StorageFailed, error))?;
+    Ok(Json(answer))
 }
 
 /// `GET /v1/readings/{workspace}/{hash}` — the winning reading, or `null`.

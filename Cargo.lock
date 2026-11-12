@@ -7173,6 +7173,7 @@ dependencies = [
  "koru-store-wire",
  "koru-tagname",
  "koru-ui",
+ "koru-voice-consent",
  "koru-when",
  "koru-window",
  "tempfile",

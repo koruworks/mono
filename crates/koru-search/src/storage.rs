@@ -824,6 +824,7 @@ impl SearchIndex {
                 observed_modified_at_ms: None,
                 workspace_last_used_at_ms: None,
                 page: None,
+                picture_name: None,
             });
         }
         let has_more = hits.len() > page_size;

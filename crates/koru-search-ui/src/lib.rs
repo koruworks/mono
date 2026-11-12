@@ -32,6 +32,7 @@ mod due_picker;
 mod entity_search;
 mod filters;
 mod modal;
+mod offer;
 mod reader;
 mod result_layout;
 mod row_text;
@@ -249,6 +250,11 @@ const PIN_CHIP_GAP: f32 = 6.0;
 const PIN_CHIP_PAD_X: f32 = 8.0;
 const PIN_ICON_SIZE: f32 = 16.0;
 const PIN_TITLE_MAX_W: f32 = 140.0;
+/// The picture mark before a snippet read from a picture: the meta line's
+/// size, so it sits in the line rather than above it, and the air before
+/// what follows it.
+const PICTURE_MARK_SIZE: f32 = 13.0;
+const PICTURE_MARK_GAP: f32 = 4.0;
 
 fn initial_session_state() -> state::SearchSessionState {
     // Unit tests construct many independent surfaces on reused worker threads;
@@ -434,6 +440,9 @@ pub struct SearchSurface {
     pending_catalog: bool,
     selection_restore: Option<state::SearchSessionSelection>,
     reader: Option<SearchReader>,
+    /// The one line about pictures and scans: the reader's state as last
+    /// fetched, and where the keyboard and pointer are on it (OCR Plan 2.5).
+    offer: offer::Offer,
     target: Option<Target>,
     window_request: Option<WindowRequest>,
 }
@@ -645,6 +654,7 @@ impl SearchSurface {
             pending_catalog: reader.is_some(),
             selection_restore: session.selection,
             reader,
+            offer: offer::Offer::default(),
             target: None,
             window_request: None,
         };
@@ -1848,7 +1858,7 @@ impl SearchSurface {
     fn profile_workspaces_rect(&self) -> Option<Rect> {
         matches!(&self.scope, SearchScope::Workspace { .. }).then_some(Rect::new(
             PAD,
-            self.results_top() + 85.0,
+            self.results_top() + 85.0 + self.offer_empty_shift(),
             170.0,
             28.0,
         ))
@@ -1860,7 +1870,12 @@ impl SearchSurface {
             && self
                 .selected_profile
                 .is_some_and(|profile| !self.catalog.archived_workspaces_of(profile).is_empty()))
-        .then_some(Rect::new(PAD, self.results_top() + 85.0, 220.0, 28.0))
+        .then_some(Rect::new(
+            PAD,
+            self.results_top() + 85.0 + self.offer_empty_shift(),
+            220.0,
+            28.0,
+        ))
     }
 
     fn deleted_pages_rect(&self) -> Rect {
@@ -1871,11 +1886,13 @@ impl SearchSurface {
         } else {
             self.results_top() + 85.0
         };
-        Rect::new(PAD, y, 190.0, 28.0)
+        Rect::new(PAD, y + self.offer_empty_shift(), 190.0, 28.0)
     }
 
     fn results_height(&self) -> f32 {
-        (self.viewport.1 - self.results_top() - FOOTER_H).max(0.0)
+        // The line about pictures and scans sits below the list and the list
+        // gives it its band, so the last row is never drawn under it.
+        (self.viewport.1 - self.results_top() - FOOTER_H - self.offer_below_results_h()).max(0.0)
     }
 
     /// The host's CREATE rows. Replacing them drops the keyboard off whatever
@@ -2302,6 +2319,7 @@ impl SearchSurface {
         let mut changed = false;
         let mut continue_selection_restore = false;
         let mut refresh_after_catalog = false;
+        let mut refresh_after_install = false;
         let Some(reader) = &self.reader else {
             return false;
         };
@@ -2323,6 +2341,11 @@ impl SearchSurface {
                     changed = true;
                     self.refresh();
                 }
+                continue;
+            }
+            if let SearchReadResult::Reader(result) = response.result {
+                refresh_after_install |= self.reader_answered(result);
+                changed = true;
                 continue;
             }
             if let SearchReadResult::Catalog(catalog) = response.result {
@@ -2381,6 +2404,7 @@ impl SearchSurface {
                         self.page.hits.append(&mut page.hits);
                         self.page.next_offset = page.next_offset;
                         self.page.updating_workspaces = page.updating_workspaces;
+                        self.page.reading = page.reading;
                         self.page.request_seq = response.seq;
                     } else {
                         self.page = page;
@@ -2464,6 +2488,9 @@ impl SearchSurface {
                     self.page.next_offset = None;
                     self.page.updating_workspaces = answer.page.updating_workspaces;
                     self.page.corrected_query = answer.page.corrected_query;
+                    // The counts are about the workspaces this query named:
+                    // the profile's, or the one workspace (OCR Plan 2.4).
+                    self.page.reading = answer.page.reading;
                     self.page.request_seq = response.seq;
                     keep_top_hit_per_document(&mut self.page.hits);
                     drop_hidden_kinds(&mut self.page.hits);
@@ -2506,14 +2533,19 @@ impl SearchSurface {
                 // Handled above, before the `seq` match, for the same reason
                 // the catalog is: it answers no query.
                 SearchReadResult::ScopeTables { .. } => {}
+                // Handled above, before the `seq` match: it answers no query.
+                SearchReadResult::Reader(_) => {}
             }
         }
         if continue_selection_restore && self.pending_read.is_none() {
             self.load_more();
         }
-        if refresh_after_catalog {
+        if refresh_after_catalog || refresh_after_install {
             self.refresh();
         }
+        // A new answer's counts may put the line on screen; it needs the
+        // reader's state to say what (its size, a download's progress).
+        self.ask_reader_state();
         changed
     }
 
@@ -3152,6 +3184,8 @@ impl SearchSurface {
         } else {
             self.paint_results(canvas, root);
         }
+        // At most one line, in whichever of its two positions fits.
+        self.paint_offer(canvas, root);
         if self.menu != SearchMenu::None {
             self.paint_popover(canvas, root);
         }
@@ -4106,7 +4140,56 @@ impl SearchSurface {
         let style = theme::role::meta();
         let mut snippet_x = x;
         let mut snippet_width = width;
-        if let Some(label) = row_text::page_label(koru_i18n::current(), hit) {
+        if row_text::is_picture(hit) {
+            // **The picture mark**: a small muted glyph, then the picture's
+            // name only when a person gave it one. Its own runs, ahead of the
+            // snippet, for the reason the page is (`row_text`'s note): the
+            // snippet's ranges stay the store's.
+            let icon = self.engine.icon_layout(icons::IMAGE, PICTURE_MARK_SIZE);
+            let named = row_text::picture_name(hit).map(str::to_owned);
+            let mark_width = icon.width() + PICTURE_MARK_GAP;
+            let name = named.as_deref().map(|name| {
+                let name = self
+                    .engine
+                    .elided(name, style, (width - mark_width).max(1.0) * 0.5);
+                (
+                    self.engine.simple_layout(&name, style),
+                    self.engine.simple_layout(row_text::SEPARATOR, style),
+                )
+            });
+            let lead = mark_width
+                + name.as_ref().map_or(0.0, |(name, separator)| {
+                    name.full_width() + separator.full_width()
+                });
+            let _mark = inspect::scope(
+                "Picture mark",
+                "part",
+                root,
+                scene::rect(x, y, lead.min(width), style.metrics.line_height),
+                |record| {
+                    record.property("named", named.is_some(), "store hit");
+                    record.property("glyph", "icons::IMAGE", "koru_draw::icons");
+                    record.property("color", "text_dim", "theme::p().text_dim");
+                    record.property("text role", "meta", "theme::role::meta()");
+                },
+            );
+            scene::draw_layout_first_line(canvas, root, &icon, x, y, Some(p.text_dim));
+            if let Some((name, separator)) = &name {
+                let name_x = x + mark_width;
+                scene::draw_layout_first_line(canvas, root, name, name_x, y, Some(p.text_dim));
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    separator,
+                    name_x + name.full_width(),
+                    y,
+                    Some(p.text_dim),
+                );
+            }
+            let lead = lead.min(width);
+            snippet_x = x + lead;
+            snippet_width = (width - lead).max(0.0);
+        } else if let Some(label) = row_text::page_label(koru_i18n::current(), hit) {
             let label = self.engine.elided(&label, style, width);
             let label = self.engine.simple_layout(&label, style);
             let separator = self.engine.simple_layout(row_text::SEPARATOR, style);
@@ -4310,6 +4393,321 @@ impl SearchSurface {
     }
 }
 
+/// The band the line about pictures and scans sits in: two meta lines and
+/// their air, the same height in both positions so nothing under it moves
+/// as its words change.
+const OFFER_BAND_H: f32 = 56.0;
+/// Below *No results*: directly under its two lines of text.
+const OFFER_EMPTY_Y: f32 = 80.0;
+const OFFER_GAP: f32 = 12.0;
+
+/// **The one line in search about pictures and scans** (OCR Plan 2.5): which
+/// line, where it sits, one geometry for drawing and hit-testing, and what
+/// pressing it asks. What it says is [`offer::view`]'s.
+impl SearchSurface {
+    /// The line this page shows, or `None`. Never over the landing page,
+    /// a warning, or a page still being replaced; below *No results* only on
+    /// the real verdict, not while a workspace is still indexing.
+    fn offer_view(&self) -> Option<offer::LineView> {
+        if self.query.is_empty() || self.warning_message().is_some() || self.replacing_results() {
+            return None;
+        }
+        let with_results = !self.page.hits.is_empty();
+        if !with_results && self.indexing_heading().is_some() {
+            return None;
+        }
+        offer::view(
+            koru_i18n::current(),
+            self.page.reading.as_ref(),
+            self.offer.reader.as_ref(),
+            with_results,
+        )
+    }
+
+    /// The band's height when the line sits below the results, which the
+    /// results give up; zero otherwise.
+    fn offer_below_results_h(&self) -> f32 {
+        if !self.page.hits.is_empty() && self.offer_view().is_some() {
+            OFFER_BAND_H
+        } else {
+            0.0
+        }
+    }
+
+    /// How far the line pushes the no-result page's links down.
+    fn offer_empty_shift(&self) -> f32 {
+        if self.page.hits.is_empty() && self.offer_view().is_some() {
+            OFFER_BAND_H
+        } else {
+            0.0
+        }
+    }
+
+    /// Where the line is: below the list, above the footer, when there are
+    /// results; directly below the no-results text when there are none.
+    fn offer_band(&self) -> Option<Rect> {
+        self.offer_view()?;
+        let y = if self.page.hits.is_empty() {
+            self.results_top() + OFFER_EMPTY_Y
+        } else {
+            self.viewport.1 - FOOTER_H - OFFER_BAND_H
+        };
+        Some(Rect::new(0.0, y, self.results_width(), OFFER_BAND_H))
+    }
+
+    /// **The line's one geometry**: the band, the sentence's box, and each
+    /// action's button, right-aligned in the band. Drawing and hit-testing
+    /// both ask this, so a button is pressable exactly where it is drawn.
+    fn offer_layout(&mut self) -> Option<(offer::LineView, Rect, Rect, Vec<Rect>)> {
+        let view = self.offer_view()?;
+        let band = self.offer_band()?;
+        let lang = koru_i18n::current();
+        let widths: Vec<f32> = view
+            .actions
+            .iter()
+            .map(|action| {
+                koru_ui::ActionButton::new(action.label(lang), offer_style(*action), None)
+                    .width(&mut self.engine)
+            })
+            .collect();
+        let right = band.x + band.w - PAD - theme::SCROLLBAR_W;
+        let button_y = band.y + (band.h - koru_ui::ActionButton::H) * 0.5;
+        let mut x = right;
+        let mut buttons: Vec<Rect> = Vec::with_capacity(widths.len());
+        for width in widths.iter().rev() {
+            x -= width;
+            buttons.push(Rect::new(x, button_y, *width, koru_ui::ActionButton::H));
+            x -= koru_ui::ActionButton::GAP;
+        }
+        buttons.reverse();
+        let text_right = buttons.first().map_or(right, |first| first.x - OFFER_GAP);
+        let text = Rect::new(PAD, band.y, (text_right - PAD).max(1.0), band.h);
+        Some((view, band, text, buttons))
+    }
+
+    /// The action under `(x, y)`, by the line's own geometry.
+    fn offer_action_at(&mut self, x: f32, y: f32) -> Option<usize> {
+        let (_, _, _, buttons) = self.offer_layout()?;
+        buttons.iter().position(|rect| rect.contains(x, y))
+    }
+
+    /// The keyboard's action on the line, while it is one the line still has.
+    fn offer_focus(&self) -> Option<usize> {
+        let focus = self.offer.focus?;
+        let count = self.offer_view().map_or(0, |view| view.actions.len());
+        (focus < count).then_some(focus)
+    }
+
+    /// **Press an action.** *Not now* takes the line away in both positions at
+    /// once; the Store's answer keeps it away. Everything goes to the Store on
+    /// the background channel and comes back as the reader's state.
+    fn press_offer(&mut self, index: usize) -> bool {
+        let Some(view) = self.offer_view() else {
+            return false;
+        };
+        let Some(&action) = view.actions.get(index) else {
+            return false;
+        };
+        if action == offer::LineAction::NotNow {
+            if let Some(reading) = self.page.reading.as_mut() {
+                reading.offer = false;
+            }
+            self.offer.focus = None;
+        }
+        if let Some(command) = self.offer.command(action)
+            && self
+                .reader
+                .as_ref()
+                .is_some_and(|reader| reader.request_reader(command))
+        {
+            self.offer.asked();
+        }
+        true
+    }
+
+    /// Ask for the reader's state when the last answer could put the line on
+    /// screen and none is in hand. Never on the frame loop's time: a send on
+    /// an unbounded channel.
+    fn ask_reader_state(&mut self) {
+        if !self
+            .offer
+            .wants_state(self.page.reading.as_ref(), Instant::now())
+        {
+            return;
+        }
+        if self
+            .reader
+            .as_ref()
+            .is_some_and(|reader| reader.request_reader(offer::ReaderCommand::Read))
+        {
+            self.offer.asked();
+        }
+    }
+
+    /// The Store answered about the reader. Returns whether the search should
+    /// be asked again, because a download just finished and the counts it
+    /// carried are no longer true.
+    fn reader_answered(
+        &mut self,
+        result: koru_store_core::errors::Result<koru_store_wire::reader::ReaderState>,
+    ) -> bool {
+        match result {
+            Ok(state) => self.offer.answered(state, Instant::now()),
+            Err(error) => {
+                self.offer.failed();
+                crate::search_debug!(
+                    "[Koru][search-reader][pid={}] the reader did not answer: {}",
+                    std::process::id(),
+                    error.code().as_str(),
+                );
+                // The terms changed under the line, or the reader cannot be
+                // used after all: read the state again and draw what it says.
+                if matches!(
+                    error.code(),
+                    koru_store_core::errors::Code::ReaderTermsChanged
+                        | koru_store_core::errors::Code::ReaderUnavailable
+                ) && self
+                    .reader
+                    .as_ref()
+                    .is_some_and(|reader| reader.request_reader(offer::ReaderCommand::Read))
+                {
+                    self.offer.asked();
+                }
+                false
+            }
+        }
+    }
+
+    /// The line's keys while the keyboard is on it. `None` hands the key
+    /// back to the surface, having left the line.
+    fn offer_key(&mut self, key: &Key, mods: ModifiersState) -> Option<bool> {
+        let focus = self.offer_focus()?;
+        let count = self.offer_view().map_or(0, |view| view.actions.len());
+        match key {
+            Key::Named(NamedKey::Tab) => {
+                let next = if mods.shift_key() {
+                    focus.checked_sub(1)
+                } else {
+                    Some(focus + 1).filter(|next| *next < count)
+                };
+                self.offer.focus = next;
+                Some(true)
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                self.offer.focus = Some((focus + 1).min(count - 1));
+                Some(true)
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                self.offer.focus = Some(focus.saturating_sub(1));
+                Some(true)
+            }
+            Key::Named(NamedKey::Enter | NamedKey::Space) => Some(self.press_offer(focus)),
+            Key::Named(NamedKey::Escape) => {
+                self.offer.focus = None;
+                Some(true)
+            }
+            _ => {
+                self.offer.focus = None;
+                None
+            }
+        }
+    }
+
+    /// Tab from the results reaches the line's first action (Shift+Tab its
+    /// last), when the line has any.
+    fn enter_offer(&mut self, backwards: bool) -> bool {
+        let count = self.offer_view().map_or(0, |view| view.actions.len());
+        if count == 0 {
+            return false;
+        }
+        self.offer.focus = Some(if backwards { count - 1 } else { 0 });
+        true
+    }
+
+    fn paint_offer(&mut self, canvas: &mut Scene, root: Affine) {
+        let Some((view, band, text_box, buttons)) = self.offer_layout() else {
+            return;
+        };
+        let p = theme::p();
+        let below_results = !self.page.hits.is_empty();
+        let _line = inspect::scope(
+            "Reading offer",
+            "component",
+            root,
+            scene::rect(band.x, band.y, band.w, band.h),
+            |record| {
+                record.property(
+                    "position",
+                    if below_results {
+                        "below results"
+                    } else {
+                        "below no results"
+                    },
+                    "SearchSurface::offer_band",
+                );
+                record.property("actions", view.actions.len(), "offer::view");
+                record.property("height", OFFER_BAND_H, "OFFER_BAND_H");
+                record.property("text role", "meta", "theme::role::meta()");
+            },
+        );
+        let style = theme::role::meta();
+        let sentence = self
+            .engine
+            .simple_layout_wrapped(&view.sentence, style, text_box.w);
+        let bar_h = if view.fraction.is_some() { 7.0 } else { 0.0 };
+        let text_h = sentence.height().min(band.h);
+        let text_y = band.y + ((band.h - text_h - bar_h) * 0.5).max(0.0);
+        canvas.push_clip_layer(
+            Fill::NonZero,
+            root,
+            &scene::rect(text_box.x, band.y, text_box.w, band.h),
+        );
+        scene::draw_layout(
+            canvas,
+            root,
+            &sentence,
+            text_box.x,
+            text_y,
+            Some(p.text_dim),
+        );
+        canvas.pop_layer();
+        if let Some(fraction) = view.fraction {
+            koru_ui::ProgressBar::new(koru_ui::ProgressMode::Determinate(fraction), Instant::now())
+                .draw(
+                    canvas,
+                    root,
+                    Rect::new(text_box.x, text_y + text_h + 4.0, text_box.w, 3.0),
+                    Instant::now(),
+                    1.0,
+                );
+        }
+        let lang = koru_i18n::current();
+        let focus = self.offer_focus();
+        for (index, (action, rect)) in view.actions.iter().zip(&buttons).enumerate() {
+            koru_ui::ActionButton::new(action.label(lang), offer_style(*action), None)
+                .draw_focused(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    *rect,
+                    self.offer.hover == Some(index),
+                    focus == Some(index),
+                );
+        }
+    }
+}
+
+/// The primary answer filled, the others quiet — the dialog convention.
+fn offer_style(action: offer::LineAction) -> koru_ui::ActionStyle {
+    if action.primary() {
+        koru_ui::ActionStyle::Primary
+    } else if action == offer::LineAction::Stop {
+        koru_ui::ActionStyle::Secondary
+    } else {
+        koru_ui::ActionStyle::Ghost
+    }
+}
+
 fn ai_display_hit(hit: &koru_ai_core::AiSearchHit) -> SearchHit {
     SearchHit {
         workspace: format!("ai:chat:{}", hit.chat_id),
@@ -4339,6 +4737,7 @@ fn ai_display_hit(hit: &koru_ai_core::AiSearchHit) -> SearchHit {
         observed_modified_at_ms: None,
         workspace_last_used_at_ms: None,
         page: None,
+        picture_name: None,
     }
 }
 
@@ -4405,6 +4804,14 @@ impl SearchSurface {
                 control_letter,
                 self.query.raw_text().len(),
             ));
+        }
+        // **The line's keys while the keyboard is on it** — before Escape's
+        // usual meaning, which would clear the query instead of leaving the
+        // line.
+        if self.menu == SearchMenu::None
+            && let Some(handled) = self.offer_key(key, mods)
+        {
+            return handled;
         }
         if matches!(key, Key::Named(NamedKey::Escape)) {
             if self.menu == SearchMenu::Tags {
@@ -4554,7 +4961,12 @@ impl SearchSurface {
                 self.request_open(disposition);
                 true
             }
-            Key::Named(NamedKey::Tab) if !command_modifier => true,
+            // Tab reaches the line's actions, the surface's only buttons a
+            // keyboard has to get to; with no line it changes nothing.
+            Key::Named(NamedKey::Tab) if !command_modifier => {
+                self.enter_offer(mods.shift_key());
+                true
+            }
             _ => {
                 self.edit_query(key, text, mods);
                 true
@@ -4634,6 +5046,10 @@ impl SearchSurface {
         let query_rect = self.query_rect();
         if self.query.click(&mut self.engine, query_rect, x, y) {
             return true;
+        }
+        if let Some(action) = self.offer_action_at(x, y) {
+            self.offer.focus = None;
+            return self.press_offer(action);
         }
         if self.lifecycle == LifecycleFilter::Live
             && !self.filters.active()
@@ -4788,12 +5204,15 @@ impl SearchSurface {
         };
         let changed = next != self.hover;
         self.hover = next;
+        let next_offer = self.offer_action_at(x, y);
+        let offer_changed = next_offer != self.offer.hover;
+        self.offer.hover = next_offer;
         let next_create = self
             .create_row_at(y)
             .filter(|row| self.create_row_rect(*row).contains(x, y));
         let create_changed = next_create != self.hover_create;
         self.hover_create = next_create;
-        changed || create_changed || tooltip_changed
+        changed || create_changed || tooltip_changed || offer_changed
     }
 
     pub fn mouse_up(&mut self) -> bool {
@@ -4882,6 +5301,9 @@ impl SearchSurface {
             sliding,
             self.exiting.deadline(),
             self.tooltip.maintenance_deadline(),
+            // A download's progress, or a catalog being read; nothing else
+            // about the line is polled.
+            self.offer.poll_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -4893,6 +5315,16 @@ impl SearchSurface {
             .temporal
             .as_ref()
             .is_some_and(|picker| picker.animating(now));
+        if self.offer.poll_deadline().is_some_and(|due| due <= now) {
+            self.offer.poll_taken();
+            if self
+                .reader
+                .as_ref()
+                .is_some_and(|reader| reader.request_reader(offer::ReaderCommand::Read))
+            {
+                self.offer.asked();
+            }
+        }
         let changed = self.apply_ready_reads() || self.tooltip.maintain(now) || sliding;
         if self.exiting.maintain(now) {
             self.exiting_hits.clear();
@@ -4967,6 +5399,7 @@ impl SearchSurface {
         if self.scroll_drag.is_some() || self.in_scrollbar_gutter(self.pointer.0, self.pointer.1) {
             CursorIcon::NsResize
         } else if (self.hover.is_some() && !self.replacing_results())
+            || self.offer.hover.is_some()
             || deleted
             || profile_workspaces
             || control
@@ -5054,6 +5487,7 @@ mod tests {
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
             page: None,
+            picture_name: None,
         }
     }
 

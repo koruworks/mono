@@ -47,7 +47,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
-use rusqlite::{Connection, params, params_from_iter, types::Value};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 
 use crate::model::{
     AttrFilter, AttrOp, Lifecycle, LifecycleFilter, SearchHit, SearchPage, SearchQuery,
@@ -567,6 +567,7 @@ pub(crate) fn search(
             }),
         );
         let (snippet_text, spans) = snippet(&row.text, &direct, 70);
+        let picture_name = picture_name(connection, &row)?;
         let breadcrumb_spans = matching_evidence_spans(
             &path,
             evidence.scope.iter().map(|t| EvidenceTerm {
@@ -603,6 +604,7 @@ pub(crate) fn search(
             // Straight from the winning row: one fragment is one page, so
             // there is nothing to decide here (TECHNICAL D13).
             page: row.page,
+            picture_name,
         });
     }
     let has_more = hits.len() > page_size;
@@ -615,6 +617,31 @@ pub(crate) fn search(
         reading: None,
         request_seq: query.request_seq,
     })
+}
+
+/// The one fragment that holds a picture's authored name: its node's primary
+/// fragment, which is a `name` field exactly when somebody named the picture
+/// (`fragments::primary_field`). One point lookup on the unique `stable_key`.
+const PICTURE_NAME_SQL: &str =
+    "SELECT text FROM fragments WHERE stable_key = ?1 AND field = 'name'";
+
+/// **The name a person gave the picture a `read` hit's words came from**, or
+/// `None` — for a file, any other field, or a picture nobody named (OCR
+/// EXPERIENCE §3). Read from the picture's own `name` fragment rather than
+/// stored beside the words, so naming a picture renames its results without
+/// re-indexing its reading, and the index's schema does not change.
+fn picture_name(connection: &Connection, row: &RawHit) -> SearchResult<Option<String>> {
+    if row.field != field::READ || row.kind != "image" {
+        return Ok(None);
+    }
+    let (Some(document), Some(node)) = (row.document.as_deref(), row.node.as_deref()) else {
+        return Ok(None);
+    };
+    let key = format!("node:{document}:{node}:primary");
+    let name: Option<String> = connection
+        .query_row(PICTURE_NAME_SQL, [key], |r| r.get(0))
+        .optional()?;
+    Ok(name.filter(|name| !name.trim().is_empty()))
 }
 
 /// How good a hit is: the lexical tier, then the field, then how well the
@@ -920,6 +947,30 @@ mod tests {
     fn split(text: &str) -> (String, Vec<String>) {
         let facets = split_tag_filters(&normalize(text.trim()).text);
         (facets.text, facets.tags)
+    }
+
+    /// **The picture's name is one point lookup**: SQLite answers
+    /// [`PICTURE_NAME_SQL`] from the unique `stable_key` index, never a scan
+    /// of `fragments` — it runs once per picture hit on a page (OCR Plan
+    /// 2.5; ROADMAP §8 "every new query states its plan").
+    #[test]
+    fn the_picture_name_lookup_uses_the_stable_key_index() {
+        let index = crate::storage::SearchIndex::in_memory().unwrap();
+        let plan: Vec<String> = index
+            .connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {PICTURE_NAME_SQL}"))
+            .unwrap()
+            .query_map(["node:d:n:primary"], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let plan = plan.join(" | ");
+        assert!(
+            plan.contains("USING INDEX sqlite_autoindex_fragments")
+                && plan.contains("stable_key=?"),
+            "{plan}"
+        );
+        assert!(!plan.contains("SCAN"), "{plan}");
     }
 
     #[test]
