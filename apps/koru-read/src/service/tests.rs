@@ -59,9 +59,25 @@ fn status_names_the_launch_and_starts_nothing() {
     assert_eq!(status.supervisor_launch_id.as_deref(), Some("launch-42"));
     assert_eq!(status.protocol_version, PROTOCOL_VERSION);
     assert_eq!(status.process_id, std::process::id());
-    assert!(!status.recognition, "this build has no recognition");
+    assert!(!status.recognition, "no model was given");
     assert_eq!(status.job, None);
     assert!(events.try_recv().is_err(), "a status starts nothing");
+}
+
+/// **`recognition` in the status is true once a usable reader is there**, and
+/// answering it loads nothing: the model is the first recognition job's.
+#[test]
+fn status_reports_recognition_without_loading_the_model() {
+    let (recognition, _) = fixtures::fake_recognition(|_, _| String::new());
+    let engine = Engine::product(lenient()).with_recognition(recognition);
+    let service = Service::new(engine, None);
+    let (sink, events) = mpsc::channel();
+    service.handle(1, Request::Status, &sink);
+    let Event::Status(status) = events.recv_timeout(WAIT).unwrap() else {
+        panic!("status answers with a status");
+    };
+    assert!(status.recognition);
+    assert_eq!(service.shared.engine.recognition.loads(), 0);
 }
 
 /// **A read streams its pages and ends with exactly one terminal event.**

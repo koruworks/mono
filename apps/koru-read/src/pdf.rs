@@ -30,6 +30,7 @@ use hayro_interpret::{Context, InterpreterCache, InterpreterSettings, interpret_
 use koru_read::Reason;
 
 use crate::accept::Layer;
+use crate::picture::{self, Pixels};
 use crate::text::Collector;
 
 /// **A document whose pages can be read for their text layers.** The seam the
@@ -40,6 +41,18 @@ pub trait Document: Send + Sync {
     /// Read pages `from..=to` (counting from 1) in order, handing each to
     /// `out` as soon as it is read; stop early when `out` answers `false`.
     fn read_pages(&self, from: u32, to: u32, out: &mut dyn FnMut(u32, Layer) -> bool);
+
+    /// **Render page `number` for the reader**, at
+    /// [`picture::page_scale`](crate::picture::page_scale), on white. `None`
+    /// when the page is not there or this document cannot render.
+    ///
+    /// The caller checks the page's declared image sizes first
+    /// ([`crate::picture::page_images_allowed`]) and runs this under the page
+    /// budget: rendering decodes every image the page draws.
+    fn render(&self, number: u32) -> Option<Pixels> {
+        let _ = number;
+        None
+    }
 }
 
 /// A PDF `hayro` opened.
@@ -102,6 +115,29 @@ impl Document for PdfDocument {
                 return;
             }
         }
+    }
+
+    fn render(&self, number: u32) -> Option<Pixels> {
+        let pages = self.pdf.pages();
+        let page = pages.get(usize::try_from(number.checked_sub(1)?).ok()?)?;
+        let (width, height) = page.render_dimensions();
+        let scale = picture::page_scale(width, height);
+        let pixmap = hayro::render(
+            page,
+            &hayro::RenderCache::new(),
+            &InterpreterSettings::default(),
+            &hayro::RenderSettings::default(),
+            &hayro::PixmapSettings {
+                x_scale: scale,
+                y_scale: scale,
+                bg_color: hayro::vello_cpu::color::palette::css::WHITE,
+            },
+        );
+        picture::rgba_to_rgb(
+            u32::from(pixmap.width()),
+            u32::from(pixmap.height()),
+            pixmap.data_as_u8_slice(),
+        )
     }
 }
 

@@ -13,7 +13,18 @@
 //! might.
 //!
 //! The worker has no verbs. It is started by the Store, as
-//! `koru-read-worker --root <store dir> --supervised`, and does one thing.
+//! `koru-read-worker --root <store dir> --supervised [--model <dir>]`, and does
+//! one thing.
+//!
+//! ## `--model`: where the reader is, told once
+//!
+//! The directory holding the installed model's `det.onnx`, `rec.onnx` and
+//! `rec_dict.txt`. The Store's installer (OCR Plan 2.4) knows where it put
+//! the model; the worker is told, and never searches. It is a launch argument
+//! rather than a message because the Store restarts the worker when the model
+//! is installed or removed, and a worker's reader then never changes under a
+//! running job. Without it the worker reads text layers and answers every
+//! recognition job `needs-reader`.
 
 use std::path::PathBuf;
 
@@ -32,6 +43,9 @@ pub struct Invocation {
     /// The Store root this worker serves, instead of the channel's own. It
     /// reaches the endpoint name, so a rooted Store and its worker meet.
     pub root: Option<PathBuf>,
+    /// The installed model's directory, or `None` when the reader is not
+    /// installed.
+    pub model: Option<PathBuf>,
     /// Read the supervisor's bootstrap line from stdin before serving, and
     /// treat the end of stdin as the parent's death.
     pub supervised: bool,
@@ -55,6 +69,13 @@ const FLAGS: &[Flag] = &[
         takes_value: true,
         args: "--root <path>",
         help: "the Store root to serve, instead of the channel's",
+    },
+    Flag {
+        name: "--model",
+        short: None,
+        takes_value: true,
+        args: "--model <dir>",
+        help: "the installed reader's model; without it, text only",
     },
     Flag {
         name: "--supervised",
@@ -125,6 +146,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
     let mut invocation = Invocation {
         command: Command::Serve,
         root: None,
+        model: None,
         supervised: false,
         console: false,
     };
@@ -181,7 +203,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                     why: Why::MissingValue,
                 });
             }
-            if invocation.root.replace(PathBuf::from(value)).is_some() {
+            let slot = match flag.name {
+                "--model" => &mut invocation.model,
+                _ => &mut invocation.root,
+            };
+            if slot.replace(PathBuf::from(value)).is_some() {
                 return Err(Rejected {
                     arg: name,
                     why: Why::Repeated,

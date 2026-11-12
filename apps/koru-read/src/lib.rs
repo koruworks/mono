@@ -23,14 +23,22 @@
 //! Store session, no network call, no knowledge of workspaces, documents or
 //! hashes — a path in, words out.
 //!
-//! ## What this build reads
+//! ## What it reads
 //!
-//! **Text only** (OCR roadmap Plan 1.3). A PDF's text layer, page by page,
+//! **Words already in the file**, always: a PDF's text layer, page by page,
 //! accepted only where it looks like text ([`accept`]); `.txt`, `.md`, `.csv`
-//! as they are and `.html` without its markup ([`plain`]). A page with no
-//! usable text layer, or a picture, needs recognition, which this build does
-//! not have: the job says so (`partial`, or `needs-reader`) and does nothing
-//! more. Recognition arrives with Plan 2.3, behind the contract's `Reader`.
+//! as they are and `.html` without its markup ([`plain`]). No model.
+//!
+//! **Words in pixels**, when the job asks for recognition and this worker has
+//! it (OCR Plan 2.3, [`recognition`]): pictures, decoded, turned upright and
+//! scaled down ([`picture`]); scanned pages and pages whose text layer cannot
+//! be trusted, rendered with `hayro` and read; and pages whose text layer is
+//! real but whose pictures cover most of the page, read as well and the two
+//! combined ([`mixed`]). The reader is `koru-read-paddle`'s, behind the
+//! contract's `Reader`; it exists only in a build with the `recognition`
+//! feature (Windows x64 today), and only once the Store passes `--model`.
+//! Everywhere else a page that needs recognition says so (`partial`, or
+//! `needs-reader`) and nothing more happens.
 //!
 //! ## The threads
 //!
@@ -40,6 +48,8 @@
 //! | accept, and one per connection | frames in, events out ([`server`]) |
 //! | one per job | runs [`job::run`] ([`service`]) |
 //! | one per run of pages | interprets pages with `hayro`, abandoned at its budget ([`budget`]) |
+//! | one per recognized page or picture | decodes or renders, then reads, abandoned at its budget |
+//! | `KORU_READ_THREADS` (4) | ONNX Runtime's and `oar-ocr`'s pools, inside a recognition |
 
 pub mod accept;
 pub mod bootstrap;
@@ -48,11 +58,15 @@ pub mod cli;
 pub mod idle;
 pub mod job;
 pub mod log;
+pub mod mixed;
 pub mod pdf;
+pub mod picture;
 pub mod plain;
+pub mod recognition;
 pub mod server;
 pub mod service;
 pub mod text;
+pub mod threads;
 
 use std::sync::mpsc;
 use std::time::Instant;
@@ -144,8 +158,13 @@ pub fn run() -> std::process::ExitCode {
     };
 
     let launch_id = bootstrap.map(|bootstrap| bootstrap.launch_id);
+    // The model directory is checked here; the model is loaded by the first
+    // job that needs it, never at start.
+    let recognition =
+        recognition::Recognition::product(invocation.model.clone(), threads::from_env());
+    let recognition_available = recognition.available();
     let service = service::Service::new(
-        job::Engine::product(budget::Abandoned::product()),
+        job::Engine::product(budget::Abandoned::product()).with_recognition(recognition),
         launch_id,
     );
     let accepting = std::thread::Builder::new()
@@ -162,6 +181,7 @@ pub fn run() -> std::process::ExitCode {
         version = env!("CARGO_PKG_VERSION"),
         pid = std::process::id(),
         supervised = invocation.supervised,
+        recognition = recognition_available,
         "the read worker started"
     );
 

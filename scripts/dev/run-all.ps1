@@ -243,11 +243,17 @@ try {
         "-p", "koru-agent",
         "-p", "koru",
         "-p", "koru-voice-worker",
-        # The Store's sibling, resolved beside koru-agent like the voice worker.
-        "-p", "koru-read-worker"
+        # The Store's sibling, resolved beside koru-agent like the voice worker,
+        # with recognition: the launcher has set ORT_LIB_PATH to the ONNX
+        # Runtime library fetch-voice-runtime extracted and verified.
+        "-p", "koru-read-worker",
+        "--features", "koru-read-worker/recognition"
     )
     if ($Mcp) {
         $packages += @("-p", "koru-mcp")
+    }
+    if (-not $env:ORT_LIB_PATH) {
+        $env:ORT_LIB_PATH = Join-Path $repo "third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib"
     }
     # Every product worker carries both runtimes. The launcher has already
     # verified sherpa's pinned native archive and the Whisper build tools.

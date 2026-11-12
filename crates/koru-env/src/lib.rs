@@ -913,6 +913,12 @@ pub const VARS: &[EnvVar] = &[
         "koru-read-worker",
     ),
     value_var(
+        name::KORU_READ_THREADS,
+        "whole number, 1 to 64; default 4",
+        "How many threads the read worker uses to recognize a picture or a scanned page: ONNX Runtime's and the recognition pipeline's own, which would otherwise take every core. Four is where Plan 0.1 measured little left to gain; fewer keeps a backlog gentler on a small machine. Text-layer reading is unaffected.",
+        "koru-read-worker",
+    ),
+    value_var(
         name::KORU_DICTIONARIES,
         "a directory path",
         "Where the spell-check dictionaries live, overriding both `--root` and the local-data default. One directory per language tag (`en-US/dictionary.aff` + `dictionary.dic`), written by `scripts/setup/fetch-dictionaries`. The corpus and benchmark tests read *only* this variable and skip when it is unset - they never perform the default-directory resolution, so a machine with dictionaries installed runs the same suite CI does.",
@@ -1116,6 +1122,7 @@ pub mod name {
     pub const KORU_SPELL_DEBUG: &str = "KORU_SPELL_DEBUG";
     pub const KORU_VOICE_IDLE_EXIT: &str = "KORU_VOICE_IDLE_EXIT";
     pub const KORU_READ_IDLE_EXIT: &str = "KORU_READ_IDLE_EXIT";
+    pub const KORU_READ_THREADS: &str = "KORU_READ_THREADS";
     pub const KORU_VERSION: &str = "KORU_VERSION";
     pub const KORU_BUILD_NUMBER: &str = "KORU_BUILD_NUMBER";
     pub const KORU_RELEASE_CHANNEL: &str = "KORU_RELEASE_CHANNEL";

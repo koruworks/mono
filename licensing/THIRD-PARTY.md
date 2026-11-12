@@ -86,7 +86,8 @@ revision we build.
 | --- | --- | --- |
 | whisper.cpp / ggml (vendored by `whisper-rs-sys` 0.15.0) | MIT, © The ggml authors | `koru-voice-worker` |
 | sherpa-onnx 1.13.6 | Apache-2.0 | `koru-voice-worker` |
-| ONNX Runtime 1.27.1 (static), with its own ThirdPartyNotices | MIT, © Microsoft | `koru-voice-worker` |
+| ONNX Runtime 1.27.1 (static), with its own ThirdPartyNotices | MIT, © Microsoft | `koru-voice-worker`; `koru-read-worker` on Windows x64 (the same library from the same archive, through `ort`, 2026-11-11) |
+| Oniguruma 6.9.10 (built from C by `onig_sys` 69.9.3, under `tokenizers` under `oar-ocr`) | BSD-2-Clause, © K.Kosako | `koru-read-worker` on Windows x64 (2026-11-11) |
 | kaldi-native-fbank 1.22.3, kaldi-decoder 0.3.0, OpenFst 1.8.5, simple-sentencepiece 0.7 | Apache-2.0 | `koru-voice-worker` |
 | KISS FFT | BSD-3-Clause | `koru-voice-worker` |
 | piper-phonemize | MIT | **Not linked on any platform** (2026-10-14) |
@@ -204,8 +205,54 @@ license files): `hayro-font`'s fourteen Foxit Type 1 fonts from PDFium, the
 substitutes for the PDF standard fonts, and `hayro-cmap`'s Adobe CMap
 resources. Both are BSD-3-Clause, which asks a binary to carry the notice, so
 each has a bundled file — `pdf-standard-fonts.txt` and `adobe-cmaps.txt`, for
-Windows, macOS and Linux ✅. The renderer (`hayro`, which brings `vello_cpu`)
-is not in the tree yet; it arrives with recognition (OCR Plan 2.3).
+Windows, macOS and Linux ✅.
+
+**The renderer** (OCR Plan 2.3, 2026-11-11): `hayro` 0.9.0, which draws a page
+that has to be read from pixels, and the crates it brings — `vello_cpu` 0.3.0,
+`vello_common`, `glifo`, `fearless_simd`, `pic-scale` (BSD-3-Clause OR
+Apache-2.0) and smaller ones — all Apache-2.0 OR MIT otherwise, with their own
+license files ✅. It shares `hayro-interpret` 0.9.0, so no second interpreter is
+in the tree. Picture files are decoded by `image` 0.25 (already a dependency of
+the app) with only the PNG, JPEG, GIF, WebP, BMP and TIFF codecs. No new license
+kind; `cargo deny check licenses` passes unchanged. In every desktop build
+(the renderer is pure Rust and compiled in whether or not recognition is).
+
+## The reader: oar-ocr on ONNX Runtime (2026-11-11)
+
+`koru-read-worker` built with its `recognition` feature — the product build on
+Windows x64, where the ONNX Runtime library is pinned — links
+`koru-read-paddle`'s runtime: `oar-ocr` 0.10.2 and `oar-ocr-core` 0.10.2
+(Apache-2.0), `ort` and `ort-sys` 2.0.0-rc.13 (MIT OR Apache-2.0), and what
+they bring: `tokenizers`, `ndarray`, `nalgebra`, `imageproc`, `clipper2-rust`,
+`rayon`, `regex`, `onig`/`onig_sys`, a second `zip` (8.6, through `oar-ocr`)
+and their small dependencies — MIT and/or Apache-2.0, Zlib, Unicode-3.0, and
+BSL-1.0 for `clipper2-rust` — with their own license files, except **`oar-ocr-core` 0.10.2**, whose record holds
+its repository's Apache-2.0 `LICENSE` at the published revision ✅. The notices
+walk turns on the same feature the package build does, so every crate
+recognition brings is attributed exactly where it ships ✅.
+
+Two native components come with it, both in `licences/bundled/`
+(`Platforms: windows`):
+
+- **ONNX Runtime 1.27.1**, the same static library from the same pinned
+  sherpa-onnx archive voice links (`onnxruntime.txt`, whose `Files` line now
+  names the read worker). One ONNX Runtime in the tree; `ort` downloads nothing
+  and the executable imports no ONNX Runtime DLL ✅.
+- **Oniguruma**, the C regular-expression library `onig_sys` compiles
+  (`oniguruma.txt`). `onig_sys`'s own MIT license arrives with the crate;
+  Oniguruma's BSD-2-Clause sits in a subdirectory the generator does not read,
+  as `hayro-font`'s fonts do ✅.
+
+**The model** (PP-OCRv6 small, Apache-2.0) is not in any package: it is
+downloaded after consent (Plan 2.2 and 2.4), and its notices travel with it.
+
+**Open (⚑ OCR):** `cargo deny check advisories` reports four advisories
+against `zip` 8.6.0 (RUSTSEC-2026-0367, -0368, -0369, -0429), reached only
+through `oar-ocr`, which requires `zip = "8.6"`. All four concern extracting
+an archive (`ZipArchive::extract`); `oar-ocr` only calls `ZipArchive::by_name`,
+in its `indra` language-model loader, which Koru does not use. Whether to
+record them as exceptions, patch `oar-ocr`, or wait for upstream is the
+maintainer's decision (Plan 2.3's report).
 
 ## Spell dictionaries (⚑2, not shipped yet)
 

@@ -31,6 +31,12 @@ pub struct Layer {
     /// The share of the page, `0.0..=1.0`, covered by drawn pictures (summed,
     /// so overlapping pictures can exceed what is visible; capped at 1).
     pub picture_share: f64,
+    /// The most pixels any one picture the page draws **declares** (its
+    /// width times its height, as its dictionary says; nothing is decoded).
+    /// What rendering the page would make `hayro` decode at once.
+    pub largest_image: u64,
+    /// The pixels every picture the page draws declares, together.
+    pub image_pixels: u64,
 }
 
 /// At least this many mapped, non-space characters make a text layer worth
@@ -46,6 +52,35 @@ pub const MAX_UNMAPPED_PERMILLE: usize = 100;
 /// layer is short, is treated as a scan. A small logo beside a page number is
 /// not. *Not measured: this plan's guess.*
 pub const MIN_PICTURE_SHARE: f64 = 0.10;
+
+/// A page whose text layer is taken **and** whose pictures cover more than
+/// this share of it is also recognized, and keeps both sets of words
+/// (decided after the design was signed off, from Plan 0.1: 2% of real pages
+/// have a usable layer and pictures over half the page, and on a third of
+/// those recognition found more than one and a half times the layer's text —
+/// screenshots and scans inside a typed document).
+pub const MIXED_PICTURE_SHARE: f64 = 0.5;
+
+/// What recognition a page asks for, when the reader is there.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Ask {
+    /// None: its text layer, or its emptiness, is the whole page.
+    Nothing,
+    /// Instead of its text layer, which is missing or cannot be trusted.
+    Instead,
+    /// As well as its text layer, which is real but sits beside pictures that
+    /// cover most of the page.
+    AsWell,
+}
+
+/// What recognition `layer`, judged `verdict`, asks for.
+pub fn ask(layer: &Layer, verdict: Verdict) -> Ask {
+    match verdict {
+        Verdict::NeedsReader => Ask::Instead,
+        Verdict::Text if layer.picture_share > MIXED_PICTURE_SHARE => Ask::AsWell,
+        Verdict::Text | Verdict::Nothing => Ask::Nothing,
+    }
+}
 
 /// What to do with one page.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

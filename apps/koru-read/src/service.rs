@@ -83,8 +83,9 @@ impl Service {
             protocol_version: PROTOCOL_VERSION,
             process_id: std::process::id(),
             supervisor_launch_id: self.shared.launch_id.clone(),
-            // This build has no recognition.
-            recognition: false,
+            // Built with it, a model given that checks, and no failed load.
+            // Nothing is loaded to answer this.
+            recognition: self.shared.engine.recognition.available(),
             job: state.running.as_ref().map(|running| running.job),
             pages_read: state.pages_read,
         }
@@ -117,7 +118,7 @@ impl Service {
                 mime,
                 from_page,
                 max_text_pages,
-                max_read_pages: _,
+                max_read_pages,
                 want,
             } => self.start(
                 connection,
@@ -127,6 +128,7 @@ impl Service {
                     mime,
                     from_page,
                     max_text_pages,
+                    max_read_pages,
                     want,
                 },
                 sink.clone(),

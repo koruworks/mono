@@ -164,7 +164,9 @@ pub enum Event {
         /// Counting from 1. A picture and a plain file are page 1.
         page: u32,
         text: PageText,
-        /// `text-layer`, `recognized` or `plain`; never `mixed`.
+        /// `text-layer`, `recognized`, `plain`, or `mixed` for a page whose
+        /// text layer was taken and whose pictures, covering more than half
+        /// of it, were recognized as well.
         source: Source,
         /// `0..=100` for a recognized page; `None` for text.
         confidence: Option<u8>,

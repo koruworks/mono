@@ -18,12 +18,46 @@ fn the_supervised_launch_parses() {
         Invocation {
             command: Command::Serve,
             root: Some(PathBuf::from("C:/store")),
+            model: None,
             supervised: true,
             console: false,
         }
     );
     let inline = parse(args(&["--root=C:/store", "--supervised"])).unwrap();
     assert_eq!(inline, invocation);
+}
+
+/// **With the reader installed**, the Store adds where its model is.
+#[test]
+fn the_launch_with_a_model_parses_and_keeps_the_root_apart() {
+    let invocation = parse(args(&[
+        "--root",
+        "C:/store",
+        "--supervised",
+        "--model",
+        "C:/store/models/reader",
+    ]))
+    .unwrap();
+    assert_eq!(invocation.root, Some(PathBuf::from("C:/store")));
+    assert_eq!(
+        invocation.model,
+        Some(PathBuf::from("C:/store/models/reader"))
+    );
+    let inline = parse(args(&["--model=m", "--root=r"])).unwrap();
+    assert_eq!(
+        (inline.root, inline.model),
+        (Some(PathBuf::from("r")), Some(PathBuf::from("m")))
+    );
+    assert_eq!(
+        parse(args(&["--model", "a", "--model", "b"]))
+            .unwrap_err()
+            .why,
+        Why::Repeated
+    );
+    assert_eq!(
+        parse(args(&["--model"])).unwrap_err().why,
+        Why::MissingValue
+    );
 }
 
 #[test]

@@ -1051,6 +1051,11 @@ exit /b %ERRORLEVEL%
 
 :ensure_voice_runtime
 if not defined SHERPA_ONNX_ARCHIVE_DIR set "SHERPA_ONNX_ARCHIVE_DIR=%CD%\third-party\sherpa-onnx\1.13.6"
+rem The read worker's recognition links the ONNX Runtime static library the
+rem fetch below extracts from the same verified archive (koru-read-paddle's
+rem artifacts module). Only a build with koru-read-worker's `recognition`
+rem feature reads it; every other build ignores it.
+if not defined ORT_LIB_PATH set "ORT_LIB_PATH=%CD%\third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib"
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup\fetch-voice-runtime.ps1"
 if errorlevel 1 exit /b 1
 where cmake >nul 2>&1 || (

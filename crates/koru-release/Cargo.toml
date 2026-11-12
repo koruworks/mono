@@ -50,6 +50,10 @@ koru-voice-consent = { path = "../koru-voice-consent" }
 # copied — so `dist-cloud` can refuse a release that linked a non-canonical
 # archive. Without the `runtime` feature this links no native code.
 koru-voice-sherpa = { path = "../koru-voice-sherpa" }
+# The pinned ONNX Runtime library the read worker's recognition links
+# (`artifacts::ONNXRUNTIME`), read for the same check. Without the `runtime`
+# feature this links no native code.
+koru-read-paddle = { path = "../koru-read-paddle" }
 minisign.workspace = true
 pulldown-cmark.workspace = true
 reqwest.workspace = true

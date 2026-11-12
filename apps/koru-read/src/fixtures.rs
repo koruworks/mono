@@ -56,6 +56,73 @@ pub enum Script {
     /// Blocks until the test lets it go, then has words nobody waits for.
     Stuck(std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>),
     Panics,
+    /// A scanned page: no text layer, one picture over all of it.
+    Scan,
+    /// A real text layer, with pictures over most of the page.
+    Mixed(&'static str),
+    /// A scan whose picture declares 20,000 x 20,000 pixels.
+    HugeScan,
+}
+
+/// **A reader that is not a model.** It answers what it was built to, names
+/// the size of every picture it was handed in `seen`, and counts nothing
+/// else. `words(width, height)` is its answer.
+pub struct FakeReader {
+    pub seen: std::sync::Arc<std::sync::Mutex<Vec<(u32, u32)>>>,
+    pub words: std::sync::Arc<dyn Fn(u32, u32) -> String + Send + Sync>,
+    pub confidence: u8,
+}
+
+impl koru_read::Reader for FakeReader {
+    fn describe(&self) -> koru_read::ReaderInfo {
+        koru_read::ReaderInfo {
+            reader: koru_read_paddle::reader_id(),
+            version: "fake".into(),
+        }
+    }
+
+    fn read(
+        &mut self,
+        picture: &koru_read::Picture<'_>,
+    ) -> Result<koru_read::Recognized, koru_read::ReadError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((picture.width(), picture.height()));
+        Ok(koru_read::Recognized {
+            text: koru_read::PageText::new((self.words)(picture.width(), picture.height())),
+            confidence: self.confidence,
+        })
+    }
+}
+
+/// What a fake recognition saw, and how often it was loaded.
+pub struct Seen {
+    pub pictures: std::sync::Arc<std::sync::Mutex<Vec<(u32, u32)>>>,
+}
+
+impl Seen {
+    pub fn sizes(&self) -> Vec<(u32, u32)> {
+        self.pictures.lock().unwrap().clone()
+    }
+}
+
+/// Recognition through a [`FakeReader`] answering `words`, confidence 77.
+pub fn fake_recognition(
+    words: impl Fn(u32, u32) -> String + Send + Sync + 'static,
+) -> (crate::recognition::Recognition, Seen) {
+    let pictures = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let words: std::sync::Arc<dyn Fn(u32, u32) -> String + Send + Sync> =
+        std::sync::Arc::new(words);
+    let seen = std::sync::Arc::clone(&pictures);
+    let recognition = crate::recognition::Recognition::with_loader(move || {
+        Ok(Box::new(FakeReader {
+            seen: std::sync::Arc::clone(&seen),
+            words: std::sync::Arc::clone(&words),
+            confidence: 77,
+        }) as Box<dyn koru_read::Reader>)
+    });
+    (recognition, Seen { pictures })
 }
 
 /// **A document whose pages misbehave on cue**: one that never finishes, one
@@ -74,27 +141,45 @@ impl crate::pdf::Document for Scripted {
         out: &mut dyn FnMut(u32, crate::accept::Layer) -> bool,
     ) {
         for number in from..=to {
-            let text = match &self.0[number as usize - 1] {
-                Script::Words(text) => *text,
+            let (text, picture_share, largest_image) = match &self.0[number as usize - 1] {
+                Script::Words(text) => (*text, 0.0, 0),
                 Script::Stuck(release) => {
                     let wait = release.lock().unwrap().take();
                     if let Some(wait) = wait {
                         let _ = wait.recv();
                     }
-                    "late words nobody waits for"
+                    ("late words nobody waits for", 0.0, 0)
                 }
                 Script::Panics => panic!("a page the parser could not survive"),
+                Script::Scan => ("", 1.0, 2_500 * 3_300),
+                Script::Mixed(text) => (*text, 0.8, 1_000 * 1_000),
+                Script::HugeScan => ("", 1.0, 20_000 * 20_000),
             };
             let layer = crate::accept::Layer {
                 text: text.into(),
                 chars: text.chars().filter(|c| !c.is_whitespace()).count(),
                 unmapped: 0,
-                picture_share: 0.0,
+                picture_share,
+                largest_image,
+                image_pixels: largest_image,
             };
             if !out(number, layer) {
                 return;
             }
         }
+    }
+
+    /// A rendered page is a strip **as wide as its page number**, so the fake
+    /// reader can say which page it was handed.
+    fn render(&self, number: u32) -> Option<crate::picture::Pixels> {
+        if number == 0 || number as usize > self.0.len() {
+            return None;
+        }
+        Some(crate::picture::Pixels {
+            width: number,
+            height: 1,
+            rgb: vec![255; number as usize * 3],
+        })
     }
 }
 
@@ -118,6 +203,7 @@ pub fn scripted_engine(
         page_budget,
         load_budget: std::time::Duration::from_secs(30),
         abandoned,
+        recognition: std::sync::Arc::new(crate::recognition::Recognition::none(false)),
     }
 }
 
@@ -403,6 +489,157 @@ pub fn text_then_scan() -> Vec<u8> {
 /// A single scanned page and nothing else.
 pub fn scan() -> Vec<u8> {
     plain(&["q 612 0 0 792 0 0 cm /Im1 Do Q\n".to_string()])
+}
+
+/// **A decompression bomb, by its declaration**: a page of text, then a page
+/// drawing a picture whose dictionary says 20,000 x 20,000 pixels, over a few
+/// bytes of data. Rendering it would make `hayro` decode it at full size;
+/// reading its text layer decodes nothing.
+pub fn bomb() -> Vec<u8> {
+    let mut writer = Writer::new();
+    let font = writer
+        .add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+    let huge = writer.stream(
+        "/Type /XObject /Subtype /Image /Width 20000 /Height 20000 /ColorSpace /DeviceGray /BitsPerComponent 8",
+        &[0x00, 0xFF, 0xFF, 0x00],
+    );
+    let tree = writer.next() + 4;
+    let mut kids = Vec::new();
+    for content in [
+        lines(&["typed words on the first page"]),
+        "q 612 0 0 792 0 0 cm /Im1 Do Q\n".to_string(),
+    ] {
+        let stream = writer.stream("", content.as_bytes());
+        let page = writer.add(&format!(
+            "<< /Type /Page /Parent {tree} 0 R /MediaBox [0 0 612 792] /Contents {stream} 0 R \
+             /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {huge} 0 R >> >> >>"
+        ));
+        kids.push(format!("{page} 0 R"));
+    }
+    let made = writer.add(&format!(
+        "<< /Type /Pages /Kids [{}] /Count 2 >>",
+        kids.join(" ")
+    ));
+    assert_eq!(
+        made, tree,
+        "the page tree must be the object the pages name"
+    );
+    let catalog = writer.add(&format!("<< /Type /Catalog /Pages {tree} 0 R >>"));
+    writer.finish(catalog)
+}
+
+/// **Pictures, encoded here, in memory**: a PNG (optionally carrying an EXIF
+/// orientation), a two-frame GIF, from pixels a test chose.
+pub mod pictures {
+    use image::{ImageEncoder, Rgb, RgbImage, Rgba, RgbaImage};
+
+    /// A `width` x `height` picture whose every pixel says where it is: red is
+    /// x, green is y (both times 40), blue 7.
+    pub fn grid(width: u32, height: u32) -> RgbImage {
+        RgbImage::from_fn(width, height, |x, y| {
+            Rgb([(x * 40) as u8, (y * 40) as u8, 7])
+        })
+    }
+
+    pub fn png(image: &RgbImage) -> Vec<u8> {
+        png_with_exif(image, None)
+    }
+
+    /// A PNG with an `eXIf` chunk whose only entry is the orientation tag.
+    pub fn png_with_exif(image: &RgbImage, orientation: Option<u16>) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut encoder = image::codecs::png::PngEncoder::new(&mut out);
+        if let Some(value) = orientation {
+            encoder.set_exif_metadata(exif_orientation(value)).unwrap();
+        }
+        encoder
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        out
+    }
+
+    pub fn png_rgba(image: &RgbaImage) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut out)
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        out
+    }
+
+    /// A little-endian TIFF block with one IFD entry: orientation (0x0112),
+    /// SHORT, count 1.
+    fn exif_orientation(value: u16) -> Vec<u8> {
+        let mut exif = b"II*\0".to_vec();
+        exif.extend_from_slice(&8u32.to_le_bytes());
+        exif.extend_from_slice(&1u16.to_le_bytes());
+        exif.extend_from_slice(&0x0112u16.to_le_bytes());
+        exif.extend_from_slice(&3u16.to_le_bytes());
+        exif.extend_from_slice(&1u32.to_le_bytes());
+        exif.extend_from_slice(&value.to_le_bytes());
+        exif.extend_from_slice(&[0, 0]);
+        exif.extend_from_slice(&0u32.to_le_bytes());
+        exif
+    }
+
+    /// A two-frame animation: the first frame all `first`, the second all
+    /// `second`.
+    pub fn gif(first: [u8; 3], second: [u8; 3]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut out);
+            for color in [first, second] {
+                let frame = RgbaImage::from_pixel(4, 4, Rgba([color[0], color[1], color[2], 255]));
+                encoder.encode_frame(image::Frame::new(frame)).unwrap();
+            }
+        }
+        out
+    }
+
+    /// A PNG whose header declares `width` x `height` and whose data is a few
+    /// bytes: what a decompression bomb looks like before it is decoded.
+    pub fn png_declaring(width: u32, height: u32) -> Vec<u8> {
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        chunk(&mut out, b"IHDR", &ihdr);
+        chunk(
+            &mut out,
+            b"IDAT",
+            &[0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+        );
+        chunk(&mut out, b"IEND", &[]);
+        out
+    }
+
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let mut crc = 0xFFFF_FFFFu32;
+        for &byte in kind.iter().chain(data) {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        out.extend_from_slice(&(!crc).to_be_bytes());
+    }
 }
 
 /// **A font that maps nothing**: a Type3 font whose glyph names are in no

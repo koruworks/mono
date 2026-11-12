@@ -24,10 +24,35 @@ path = "src/main.rs"
 name = "koru_read_worker"
 path = "src/lib.rs"
 
+# **Recognition is a feature, off by default, and the product turns it on.**
+#
+# It turns on `koru-read-paddle`'s `runtime`: `oar-ocr` on `ort`, linked
+# statically against the ONNX Runtime library `ORT_LIB_PATH` names. That
+# library is extracted from voice's pinned sherpa-onnx archive by
+# `scripts/setup/fetch-voice-runtime.*` and nowhere else, so a binary linked
+# with the feature on a machine that never ran that script fails to link — and
+# `cargo test --workspace` on a fresh clone must not. So the feature is off for
+# every ordinary build and test (which compile and test everything around the
+# model with a stand-in reader), and on where a real worker is built:
+# `scripts/dev/run-all.ps1`, `koru-release`'s package build, and by hand with
+# `--features recognition`, each after the launcher has placed the library.
+# `cargo check` with it on needs no library at all: `ort-sys` defers the
+# missing library to the link.
+#
+# On a target with no pinned library (Linux, Windows on ARM) the feature
+# compiles to nothing more than it is off: the worker reads text layers and
+# reports `recognition: false`.
+[features]
+default = []
+recognition = ["koru-read-paddle/runtime"]
+
 [dependencies]
 # The messages, the page caps and the reading tokens. This binary speaks them
 # and redefines none of them.
 koru-read = { path = "../../crates/koru-read" }
+# The reader: the model directory's checks, the measured settings and, with
+# `recognition`, the pipeline. Without the feature it links nothing native.
+koru-read-paddle = { path = "../../crates/koru-read-paddle" }
 # The supervised-child mechanism the Store launches this through: the bounded
 # bootstrap line on stdin, and the pipe behind it as the parent-death signal.
 koru-agent-worker = { path = "../../crates/koru-agent-worker" }
@@ -44,6 +69,14 @@ koru-log = { path = "../../crates/koru-log" }
 # The PDF parser and interpreter. A page's glyphs arrive at `text::Collector`,
 # which this crate writes; there is no "give me the text" call to lean on.
 hayro-interpret = { workspace = true }
+# The renderer, for a page that has to be read from pixels: `hayro-interpret`
+# drawn by `vello_cpu`. Pure Rust, so it builds everywhere; it is only called
+# when recognition is.
+hayro = { workspace = true }
+# Picture files for the reader: the six formats this worker reads, the EXIF
+# orientation a photograph carries, and the scaling down. No AVIF (native
+# dav1d), no format a phone's camera roll would not hold.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 

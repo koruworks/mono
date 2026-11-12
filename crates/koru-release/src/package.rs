@@ -540,6 +540,8 @@ pub fn build(
     // hash still links; an official release links the canonical one or is not
     // packaged.
     crate::native::check_this_build(root, native_rule)?;
+    // The same question for the ONNX Runtime library the read worker linked.
+    crate::read_runtime::check_this_build(root, native_rule)?;
     let channel_binaries = CHANNEL_BINARIES
         .iter()
         .map(|(_, executable)| (*executable, root.join("target/release").join(*executable)))
@@ -894,6 +896,15 @@ fn run_cargo(
         .args(["build", "--release", "--locked"]);
     for package in packages {
         command.args(["-p", package]);
+    }
+    // **The read worker recognizes where its ONNX Runtime is pinned**, linked
+    // from the library fetch-voice-runtime extracted and verified, and checked
+    // again after the build (`read_runtime::check_this_build`).
+    if let Some(features) = crate::read_runtime::features_for_this_build(packages) {
+        command.args(["--features", features]);
+        if let Some(dir) = crate::read_runtime::lib_dir(root) {
+            command.env(koru_read_paddle::artifacts::ORT_LIB_PATH, dir);
+        }
     }
     command
         .env("KORU_VERSION", version)

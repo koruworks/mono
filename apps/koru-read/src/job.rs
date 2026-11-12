@@ -2,8 +2,8 @@
 
 //! **One `Read`, from a path to its last message.**
 //!
-//! The job opens the path read-only, decides what the bytes are, and either
-//! reads a PDF's text layers page by page, decodes a plain-text file, or says
+//! The job opens the path read-only, decides what the bytes are, and reads a
+//! PDF page by page, decodes a plain-text file, recognizes a picture, or says
 //! why it cannot. It speaks only through `emit` and its return value, and the
 //! rules it keeps are the contract's (`koru_read::wire`):
 //!
@@ -21,15 +21,32 @@
 //! | --- | --- |
 //! | a user password, or a certificate lock | `Done failed/password` |
 //! | nothing a parser can make a document of | `Done failed/damaged` |
-//! | a page whose text layer fails the acceptance check | that page empty, and the job `partial` with no reason: it waits for the reader |
+//! | a page whose text layer fails the acceptance check, no reader | that page empty, and the job `partial` with no reason: it waits for the reader |
+//! | the same page, with the reader | the page rendered and recognized: `recognized`, with a confidence |
+//! | a page with a usable layer and pictures over half of it, with the reader | both, combined ([`crate::mixed`]): `mixed`, with the recognized part's confidence |
+//! | a page that would be the job's `max_read_pages + 1`-th recognized | the job stops before it: `partial/page-cap`, `pages_done` the page before |
 //! | more pages than `max_text_pages` | `partial/page-cap` |
 //! | words on any page | `read` |
 //! | no words anywhere | `empty` |
 //! | every page abandoned at its budget or panicking | `Failed internal` — a local fact, retried elsewhere |
+//! | the model would not load | `Failed needs-reader` |
 //!
-//! "Waits for the reader" wins over "page cap": a reading that still needs
+//! "Waits for the reader" wins over the text cap: a reading that still needs
 //! recognition is not finished, and when the reader is installed it is read
-//! again and capped then.
+//! again and capped then. **Text-layer pages never count against the reading
+//! cap**; a page recognized as well as its layer does, because it was sent to
+//! the reader.
+//!
+//! ## What a picture job answers
+//!
+//! | Found | Answer |
+//! | --- | --- |
+//! | asked for text only | `Failed needs-reader`, as before |
+//! | no reader here | `Failed needs-reader` (a build with recognition, no model) or `Failed unsupported` (a build without) |
+//! | not PNG, JPEG, GIF, WebP, BMP or TIFF, or past the size bounds | `Failed unsupported` |
+//! | one of those whose bytes do not decode | `Done failed/damaged` |
+//! | words | page 1, `recognized`, then `Done read` |
+//! | none | page 1 empty, then `Done empty` |
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -37,12 +54,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use koru_read::{Event, FailureCode, JobId, PageText, ReadingStatus, Reason, Source, Want};
+use koru_read::{
+    Event, FailureCode, JobId, PageText, ReadingStatus, Reason, Recognized, Source, Want,
+};
 
-use crate::accept::{Layer, Verdict, judge};
+use crate::accept::{Ask, Layer, Verdict, ask, judge};
 use crate::budget::{self, Abandoned, Outcome, Waited};
+use crate::mixed;
 use crate::pdf::{self, Document};
+use crate::picture::{self, DecodeError};
 use crate::plain;
+use crate::recognition::Recognition;
 
 /// How much of a file is looked at to decide what it is.
 const SNIFF_BYTES: u64 = 1024;
@@ -78,10 +100,13 @@ pub struct Engine {
     pub page_budget: Duration,
     pub load_budget: Duration,
     pub abandoned: Arc<Abandoned>,
+    /// The reader, or why there is none.
+    pub recognition: Arc<Recognition>,
 }
 
 impl Engine {
-    /// The worker's own: the disk, `hayro`, the product budgets.
+    /// The worker's own: the disk, `hayro`, the product budgets — and no
+    /// recognition until [`Engine::with_recognition`] gives it some.
     pub fn product(abandoned: Arc<Abandoned>) -> Engine {
         Engine {
             files: Arc::new(Disk),
@@ -91,7 +116,13 @@ impl Engine {
             page_budget: budget::PAGE_BUDGET,
             load_budget: budget::LOAD_BUDGET,
             abandoned,
+            recognition: Arc::new(Recognition::none(koru_read_paddle::RECOGNITION_BUILT)),
         }
+    }
+
+    pub fn with_recognition(mut self, recognition: Recognition) -> Engine {
+        self.recognition = Arc::new(recognition);
+        self
     }
 }
 
@@ -103,6 +134,8 @@ pub struct ReadJob {
     pub mime: String,
     pub from_page: u32,
     pub max_text_pages: Option<u32>,
+    /// At most this many pages recognized; `None` for every page.
+    pub max_read_pages: Option<u32>,
     pub want: Want,
 }
 
@@ -114,7 +147,7 @@ pub enum Kind {
     Plain {
         html: bool,
     },
-    /// A picture: recognition's, which this build does not have.
+    /// A picture: recognition's.
     Picture,
     Unknown,
 }
@@ -179,11 +212,23 @@ pub fn run(
             read_plain(job, bytes, html, cancel, emit)
         }
         // A picture needs recognition. Asked for text only, that is the
-        // reader's absence; asked to recognize, it is this build's.
-        Kind::Picture => failed(match job.want {
-            Want::Text => FailureCode::NeedsReader,
-            Want::Recognize => FailureCode::Unsupported,
-        }),
+        // reader's absence, and nothing more is read.
+        Kind::Picture => match job.want {
+            Want::Text => failed(FailureCode::NeedsReader),
+            Want::Recognize if !engine.recognition.available() => {
+                failed(engine.recognition.absent())
+            }
+            Want::Recognize => {
+                let rest = picture::MAX_PICTURE_FILE_BYTES.saturating_sub(bytes.len() as u64);
+                if file.take(rest + 1).read_to_end(&mut bytes).is_err() {
+                    return failed(FailureCode::Unreadable);
+                }
+                if bytes.len() as u64 > picture::MAX_PICTURE_FILE_BYTES {
+                    return failed(FailureCode::Unsupported);
+                }
+                read_picture(engine, job, bytes, cancel, emit)
+            }
+        },
         Kind::Unknown => failed(FailureCode::Unsupported),
     }
 }
@@ -244,6 +289,88 @@ fn read_plain(
     }
 }
 
+/// How one picture's read went, inside its budget.
+type PictureRead = Result<Result<Recognized, FailureCode>, DecodeError>;
+
+fn read_picture(
+    engine: &Engine,
+    job: &ReadJob,
+    bytes: Vec<u8>,
+    cancel: &AtomicBool,
+    emit: &mut dyn FnMut(Event) -> bool,
+) -> Event {
+    let id = job.job;
+    let failed = |code| Event::Failed { job: id, code };
+    let reader = match engine.recognition.take() {
+        Ok(reader) => reader,
+        Err(code) => return failed(code),
+    };
+    // Decoding is untrusted work too, so it runs inside the page budget with
+    // the read.
+    let outcome = budget::bounded(
+        "koru-read-picture",
+        engine.page_budget,
+        cancel,
+        &engine.abandoned,
+        move || {
+            let mut reader = reader;
+            let result: PictureRead = picture::decode(&bytes).and_then(|pixels| {
+                let picture = pixels.picture().ok_or(DecodeError::Damaged)?;
+                Ok(reader.read(&picture).map_err(|error| error.code))
+            });
+            (reader, result)
+        },
+    );
+    let result = match outcome {
+        Outcome::Done((reader, result)) => {
+            engine.recognition.give_back(reader);
+            result
+        }
+        Outcome::TimedOut => {
+            tracing::warn!(job = %id, "a picture ran past its time budget and was abandoned");
+            return failed(FailureCode::Internal);
+        }
+        Outcome::Failed => return failed(FailureCode::Internal),
+        Outcome::Cancelled => return failed(FailureCode::Cancelled),
+    };
+    let recognized = match result {
+        Ok(Ok(recognized)) => recognized,
+        Ok(Err(code)) => return failed(code),
+        Err(DecodeError::Damaged) => {
+            return Event::Done {
+                job: id,
+                status: ReadingStatus::Failed,
+                reason: Some(Reason::Damaged),
+                pages_done: 0,
+            };
+        }
+        Err(DecodeError::Unsupported | DecodeError::TooLarge) => {
+            return failed(FailureCode::Unsupported);
+        }
+    };
+    let words = !recognized.text.as_str().trim().is_empty();
+    let event = Event::Page {
+        job: id,
+        page: 1,
+        text: recognized.text,
+        source: Source::Recognized,
+        confidence: Some(recognized.confidence),
+    };
+    if !emit(event) {
+        return failed(FailureCode::Cancelled);
+    }
+    Event::Done {
+        job: id,
+        status: if words {
+            ReadingStatus::Read
+        } else {
+            ReadingStatus::Empty
+        },
+        reason: None,
+        pages_done: 1,
+    }
+}
+
 /// How the pages of one PDF job went.
 #[derive(Default)]
 struct Tally {
@@ -252,6 +379,78 @@ struct Tally {
     needs_reader: u32,
     /// Abandoned at the page budget, or the page panicked.
     lost: u32,
+    /// Pages sent to the reader, against `max_read_pages`.
+    recognized: u32,
+}
+
+/// How recognizing one page went.
+enum Step {
+    Read(Recognized),
+    /// Rendering or reading failed, panicked or ran past the budget; or the
+    /// page's images are too large to render.
+    Lost,
+    Cancelled,
+    /// The model would not load.
+    NoReader(FailureCode),
+}
+
+/// Render page `number` and read it, under the page budget.
+fn recognize_page(
+    engine: &Engine,
+    document: &Arc<dyn Document>,
+    number: u32,
+    layer: &Layer,
+    job: JobId,
+    cancel: &AtomicBool,
+) -> Step {
+    if !picture::page_images_allowed(layer) {
+        // Rendering decodes every image at full size; this page's declared
+        // sizes would make that larger than the worker may be.
+        tracing::warn!(
+            job = %job,
+            page = number,
+            "a page draws images too large to render and was not recognized"
+        );
+        return Step::Lost;
+    }
+    let reader = match engine.recognition.take() {
+        Ok(reader) => reader,
+        Err(code) => return Step::NoReader(code),
+    };
+    let document = Arc::clone(document);
+    let outcome = budget::bounded(
+        "koru-read-render",
+        engine.page_budget,
+        cancel,
+        &engine.abandoned,
+        move || {
+            let mut reader = reader;
+            let result = document.render(number).and_then(|pixels| {
+                let picture = pixels.picture()?;
+                reader.read(&picture).ok()
+            });
+            (reader, result)
+        },
+    );
+    match outcome {
+        Outcome::Done((reader, result)) => {
+            engine.recognition.give_back(reader);
+            match result {
+                Some(recognized) => Step::Read(recognized),
+                None => Step::Lost,
+            }
+        }
+        Outcome::TimedOut => {
+            tracing::warn!(
+                job = %job,
+                page = number,
+                "recognizing a page ran past its time budget and was abandoned"
+            );
+            Step::Lost
+        }
+        Outcome::Failed => Step::Lost,
+        Outcome::Cancelled => Step::Cancelled,
+    }
 }
 
 fn read_pdf(
@@ -288,6 +487,9 @@ fn read_pdf(
         Outcome::Cancelled => return failed(FailureCode::Cancelled),
     };
 
+    // Recognition only when it was asked for and is here: a text job never
+    // takes the reader, so it never loads the model.
+    let recognize = job.want == Want::Recognize && engine.recognition.available();
     let count = document.page_count();
     let first = job.from_page.max(1);
     let last = match job.max_text_pages {
@@ -296,11 +498,13 @@ fn read_pdf(
     };
     let capped = last < count;
     let mut tally = Tally::default();
+    // Where the reading cap stopped the job: the last page it finished.
+    let mut stopped_at: Option<u32> = None;
     let mut next = first;
     // One reader thread at a time, reading on from `next`. A page that runs
     // past its budget, or panics, costs that reader; the next one starts
     // after the lost page.
-    while next <= last {
+    'pages: while next <= last {
         let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, Layer)>(0);
         let stop = Arc::new(AtomicBool::new(false));
         let finished = Arc::new(AtomicBool::new(false));
@@ -328,20 +532,88 @@ fn read_pdf(
             match budget::wait(&rx, engine.page_budget, cancel) {
                 Waited::Got((number, layer)) if number == next => {
                     tally.examined += 1;
-                    let text = match judge(&layer) {
-                        Verdict::Text => {
+                    let verdict = judge(&layer);
+                    let wanted = if recognize {
+                        ask(&layer, verdict)
+                    } else {
+                        Ask::Nothing
+                    };
+                    let step = if wanted == Ask::Nothing {
+                        None
+                    } else if job
+                        .max_read_pages
+                        .is_some_and(|cap| tally.recognized >= cap)
+                    {
+                        // **The reading cap.** This page would be one more
+                        // than the job may send to the reader: stop before
+                        // it, so a resume at `pages_done + 1` starts here.
+                        stop.store(true, Ordering::Release);
+                        tally.examined -= 1;
+                        stopped_at = Some(number - 1);
+                        break 'pages;
+                    } else {
+                        tally.recognized += 1;
+                        Some(recognize_page(
+                            engine, &document, number, &layer, id, cancel,
+                        ))
+                    };
+                    let event = match (verdict, step) {
+                        (_, Some(Step::Cancelled)) => {
+                            stop.store(true, Ordering::Release);
+                            return failed(FailureCode::Cancelled);
+                        }
+                        (_, Some(Step::NoReader(code))) => {
+                            stop.store(true, Ordering::Release);
+                            return failed(code);
+                        }
+                        // Recognized instead of an unusable layer.
+                        (_, Some(Step::Read(recognized))) if wanted == Ask::Instead => {
+                            if !recognized.text.as_str().trim().is_empty() {
+                                tally.with_words += 1;
+                            }
+                            Event::Page {
+                                job: id,
+                                page: number,
+                                text: recognized.text,
+                                source: Source::Recognized,
+                                confidence: Some(recognized.confidence),
+                            }
+                        }
+                        // Recognized as well as a real layer: both, once.
+                        (_, Some(Step::Read(recognized))) => {
+                            tally.with_words += 1;
+                            Event::Page {
+                                job: id,
+                                page: number,
+                                text: PageText::new(mixed::combine(
+                                    &layer.text,
+                                    recognized.text.as_str(),
+                                )),
+                                source: Source::Mixed,
+                                confidence: Some(recognized.confidence),
+                            }
+                        }
+                        // The page could not be recognized: an unusable
+                        // layer gives nothing, a real one is kept.
+                        (_, Some(Step::Lost)) if wanted == Ask::Instead => {
+                            tally.lost += 1;
+                            page(id, number, String::new(), Source::Recognized)
+                        }
+                        (_, Some(Step::Lost)) | (Verdict::Text, None) => {
                             if !layer.text.is_empty() {
                                 tally.with_words += 1;
                             }
-                            layer.text
+                            page(id, number, layer.text, Source::TextLayer)
                         }
-                        Verdict::Nothing => String::new(),
-                        Verdict::NeedsReader => {
+                        (Verdict::Nothing, None) => {
+                            page(id, number, String::new(), Source::TextLayer)
+                        }
+                        (Verdict::NeedsReader, None) => {
                             tally.needs_reader += 1;
-                            String::new()
+                            page(id, number, String::new(), Source::TextLayer)
                         }
                     };
-                    if !emit(page(id, number, text, Source::TextLayer)) {
+                    if !emit(event) {
                         stop.store(true, Ordering::Release);
                         return failed(FailureCode::Cancelled);
                     }
@@ -391,7 +663,9 @@ fn read_pdf(
     if tally.examined > 0 && tally.lost == tally.examined {
         return failed(FailureCode::Internal);
     }
-    let (status, reason) = if tally.needs_reader > 0 {
+    let (status, reason) = if stopped_at.is_some() {
+        (ReadingStatus::Partial, Some(Reason::PageCap))
+    } else if tally.needs_reader > 0 {
         (ReadingStatus::Partial, None)
     } else if capped {
         (ReadingStatus::Partial, Some(Reason::PageCap))
@@ -405,17 +679,18 @@ fn read_pdf(
         pages = tally.examined,
         with_words = tally.with_words,
         needs_reader = tally.needs_reader,
+        recognized = tally.recognized,
         lost = tally.lost,
         status = status.as_str(),
         "a PDF was read"
     );
-    // How far the reading has got: the last page this job reached, or, when
-    // it reached none (a resume past the end, or a cap of nothing), where it
-    // would have started.
-    let pages_done = if tally.examined > 0 {
-        last
-    } else {
-        count.min(first - 1)
+    // How far the reading has got: where the reading cap stopped it, the
+    // last page this job reached, or, when it reached none (a resume past the
+    // end, or a cap of nothing), where it would have started.
+    let pages_done = match stopped_at {
+        Some(page) => page.max(first - 1),
+        None if tally.examined > 0 => last,
+        None => count.min(first - 1),
     };
     Event::Done {
         job: id,

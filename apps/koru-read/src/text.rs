@@ -208,6 +208,8 @@ pub struct Collector {
     unmapped: usize,
     picture_area: f64,
     page_area: f64,
+    largest_image: u64,
+    image_pixels: u64,
 }
 
 impl Collector {
@@ -219,6 +221,8 @@ impl Collector {
             unmapped: 0,
             picture_area: 0.0,
             page_area,
+            largest_image: 0,
+            image_pixels: 0,
         }
     }
 
@@ -236,6 +240,8 @@ impl Collector {
             chars,
             unmapped: self.unmapped,
             picture_share,
+            largest_image: self.largest_image,
+            image_pixels: self.image_pixels,
         }
     }
 
@@ -347,7 +353,15 @@ impl<'a> Device<'a> for Collector {
     /// it, and the tests hold), so the area is that transform's scale times
     /// the pixel count. `width`/`height` are public but hidden from its docs;
     /// if they go, this is where the fixture test fails.
+    ///
+    /// The same declared size is what rendering the page would make `hayro`
+    /// decode — it decodes every image at full size — so it is recorded here,
+    /// where nothing has been decoded yet, for the bound in
+    /// [`crate::picture::page_images_allowed`].
     fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
+        let declared = u64::from(image.width()) * u64::from(image.height());
+        self.largest_image = self.largest_image.max(declared);
+        self.image_pixels = self.image_pixels.saturating_add(declared);
         let pixels = f64::from(image.width()) * f64::from(image.height());
         let area = props.transform.determinant().abs() * pixels;
         if area.is_finite() {

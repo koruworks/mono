@@ -8,7 +8,27 @@ fn layer(chars: usize, unmapped: usize, picture_share: f64) -> Layer {
         chars,
         unmapped,
         picture_share,
+        ..Layer::default()
     }
+}
+
+/// **The fall-through and the mixed page.** An unusable layer is read
+/// instead; a real layer over pictures covering more than half the page is
+/// read as well; a real layer otherwise, and a blank page, are not read.
+#[test]
+fn what_recognition_a_page_asks_for() {
+    let ask_for = |layer: Layer| ask(&layer, judge(&layer));
+    assert_eq!(ask_for(layer(0, 40, 0.0)), Ask::Instead, "unmapped");
+    assert_eq!(ask_for(layer(0, 0, 0.9)), Ask::Instead, "a scan");
+    assert_eq!(ask_for(layer(500, 0, 0.51)), Ask::AsWell, "mixed");
+    assert_eq!(
+        ask_for(layer(500, 0, 0.5)),
+        Ask::Nothing,
+        "exactly half is not more than half"
+    );
+    assert_eq!(ask_for(layer(500, 0, 0.1)), Ask::Nothing);
+    assert_eq!(ask_for(layer(0, 0, 0.0)), Ask::Nothing, "a blank page");
+    assert!((MIXED_PICTURE_SHARE - 0.5).abs() < f64::EPSILON);
 }
 
 #[test]
