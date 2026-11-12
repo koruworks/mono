@@ -86,6 +86,60 @@ pub mod bot_creation_codes {
     pub const FOLDER_RESERVED: &str = "folder_reserved";
 }
 
+/// **Why a local agent cannot run, as far as its readiness check knows**
+/// (Bots P1.8), carried as `details.reason` beside a failure's own code. It
+/// is additive: the code stays the contract, a reader that does not know the
+/// field or a value reads the code alone, and a failure's `retryable` is
+/// unchanged by it.
+///
+/// It appears on an agent's readiness (`ProviderValidationResponse.failure`,
+/// beside its `agent_*` code, where a reason can be finer than the code: an
+/// `agent_check_failed` that timed out, an `agent_unsupported_version` that
+/// is simply too old) and on a Bot `create`, `update` or
+/// `create_bot_with_role` refused because its agent cannot run (beside
+/// `agent_models_failed` or `runtime_unavailable`). It is absent when
+/// nothing more is known than the code says (an unanswered readiness
+/// question, `agent_models_listing`).
+pub mod agent_readiness_reasons {
+    /// No session host answers in this AI service.
+    pub const SERVICE_UNAVAILABLE: &str = "agent_service_unavailable";
+    /// The session host is still checking the agent.
+    pub const CHECKING: &str = "agent_checking";
+    /// The agent's program is not on this computer, or the session host knows
+    /// no such agent; the two are not told apart.
+    pub const NOT_INSTALLED: &str = "agent_not_installed";
+    /// The agent's own program is here but the program its chats run (an
+    /// adapter such as `claude-agent-acp`) is not.
+    pub const ADAPTER_MISSING: &str = "agent_adapter_missing";
+    /// A part the agent's adapter needs to run is missing (Claude's native
+    /// binary for its SDK wrapper).
+    pub const RUNTIME_MISSING: &str = "agent_runtime_missing";
+    /// The agent needs signing in.
+    pub const SIGNED_OUT: &str = "agent_signed_out";
+    /// The agent printed a version older than the release Koru accepts;
+    /// updating fixes it.
+    pub const VERSION_TOO_OLD: &str = "agent_version_too_old";
+    /// The agent printed a version that is not on the reviewed list Koru
+    /// accepts (usually newer than the newest reviewed release).
+    pub const VERSION_NOT_REVIEWED: &str = "agent_version_not_reviewed";
+    /// Refused for its version or its handshake with no version to compare
+    /// (none could be read, or the refusal was the protocol).
+    pub const UNSUPPORTED_VERSION: &str = "agent_unsupported_version";
+    /// The agent's program did not start on this computer: it could not be
+    /// spawned, or it exited before printing its version.
+    pub const FAILED_TO_START: &str = "agent_failed_to_start";
+    /// The check ran out of time.
+    pub const CHECK_TIMED_OUT: &str = "agent_check_timed_out";
+    /// The check failed in another way (the handshake was refused, the
+    /// program exited mid-handshake, an I/O or framing failure).
+    pub const CHECK_FAILED: &str = "agent_check_failed";
+    /// The agent is ready, but listing its models failed.
+    pub const LISTING_FAILED: &str = "agent_listing_failed";
+    /// The agent is ready and listed its models; the chosen one is not
+    /// among them.
+    pub const MODEL_NOT_OFFERED: &str = "agent_model_not_offered";
+}
+
 pub const AI_WIRE_VERSION: u32 = 1;
 pub const AI_STREAM_VERSION: u32 = 1;
 pub const MODEL_PULL_STREAM_VERSION: u32 = 1;

@@ -196,14 +196,19 @@ fn validate_model_evidence(
     config: &BotConfig,
     require_fast: bool,
 ) -> ApiResult<Option<ReasoningControl>> {
+    use koru_ai_wire::agent_readiness_reasons as reason;
     let agent = agents.ok_or_else(|| {
-        failure(
-            "runtime_unavailable",
-            "The selected runtime is unavailable.",
-            true,
+        agents::with_reason(
+            failure(
+                "runtime_unavailable",
+                "The selected runtime is unavailable.",
+                true,
+            ),
+            Some(reason::SERVICE_UNAVAILABLE),
         )
     })?;
-    let catalog = agents::agent_models(agent, config.model.provider.clone(), false)?;
+    let catalog = agents::agent_models(agent, config.model.provider.clone(), false)
+        .map_err(|refusal| agents::explain_agent_refusal(agent, &config.model.provider, refusal))?;
     validate_model_catalog(config, &catalog, require_fast)
 }
 
@@ -220,10 +225,13 @@ fn validate_model_catalog(
         .iter()
         .find(|model| model.id == config.model.requested_model)
         .ok_or_else(|| {
-            failure(
-                "runtime_unavailable",
-                "The selected model is unavailable.",
-                false,
+            agents::with_reason(
+                failure(
+                    "runtime_unavailable",
+                    "The selected model is unavailable.",
+                    false,
+                ),
+                Some(koru_ai_wire::agent_readiness_reasons::MODEL_NOT_OFFERED),
             )
         })?;
     koru_ai_core::validate_reasoning(

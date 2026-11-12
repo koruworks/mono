@@ -105,3 +105,33 @@ fn catalog_validation_keeps_default_and_explicit_effort_and_refuses_unsupported_
         "runtime_unavailable"
     );
 }
+
+/// **A Bot refused for its agent says why beside the code it always had**
+/// (P1.8, the first window run's note under finding 3). With no session
+/// host, and with a model the agent does not list, the code and
+/// `retryable` are the ones an older client already reads; the reason is
+/// added beside them in `details`.
+#[test]
+fn a_refusal_for_the_agent_keeps_its_code_and_says_why_in_details() {
+    use koru_ai_wire::agent_readiness_reasons as reason;
+    let mut config = config();
+    let refused = validate_model_evidence(None, &config, false).unwrap_err();
+    assert_eq!(
+        (refused.code.as_str(), refused.retryable),
+        ("runtime_unavailable", true)
+    );
+    assert_eq!(
+        refused.details.get("reason"),
+        Some(&serde_json::json!(reason::SERVICE_UNAVAILABLE))
+    );
+    config.model.requested_model = "absent".into();
+    let refused = validate_model_catalog(&config, &catalog("fixture"), false).unwrap_err();
+    assert_eq!(
+        (refused.code.as_str(), refused.retryable),
+        ("runtime_unavailable", false)
+    );
+    assert_eq!(
+        refused.details.get("reason"),
+        Some(&serde_json::json!(reason::MODEL_NOT_OFFERED))
+    );
+}

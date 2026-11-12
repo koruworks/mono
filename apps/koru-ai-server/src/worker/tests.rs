@@ -3916,3 +3916,120 @@ fn live_command_listings_keep_chat_and_session_generations_separate() {
     assert!(listings[&first_chat].2.is_none());
     assert_eq!(listings[&second_chat].2.as_ref().unwrap()[0].name, "other");
 }
+
+/// **What the session host's readiness row knows, said as a reason**
+/// (`koru_ai_wire::agent_readiness_reasons`): exactly as fine as the row —
+/// the version the agent printed against what the route accepts, and the
+/// stage and diagnostic of a failed check — and no finer. A ready agent has
+/// none; a missing row reads as not installed, as its code does.
+#[test]
+fn an_agent_readiness_row_is_said_as_its_finest_known_reason() {
+    use super::agents::{readiness_reason as reason_of, with_reason};
+    use koru_ai_wire::agent_readiness_reasons as reason;
+    use koru_session_protocol::{
+        ErrorCode, ExecutableAvailability as A, ProviderDiagnostic as D, ProviderReadiness,
+        ProviderReadinessFailure, ProviderStage as S, VersionNeed,
+    };
+    let row = |availability: A, failure: Option<(S, D)>| ProviderReadiness {
+        kind: "codex".parse().unwrap(),
+        availability,
+        capabilities: Default::default(),
+        failure: failure.map(|(stage, diagnostic)| ProviderReadinessFailure { stage, diagnostic }),
+    };
+    let said = |row: ProviderReadiness, present: bool| reason_of(Some(&row), || present);
+    let never = || -> bool { panic!("only a missing route searches for the program") };
+    assert_eq!(reason_of(None, never), Some(reason::NOT_INSTALLED));
+    assert_eq!(
+        reason_of(Some(&row(A::Available { version: None }, None)), never),
+        None
+    );
+    assert_eq!(said(row(A::Checking, None), false), Some(reason::CHECKING));
+    assert_eq!(
+        said(row(A::Missing, None), false),
+        Some(reason::NOT_INSTALLED)
+    );
+    assert_eq!(
+        said(row(A::Missing, None), true),
+        Some(reason::ADAPTER_MISSING)
+    );
+    let signed_out = A::SignedOut {
+        code: ErrorCode::ProviderUnavailable,
+    };
+    assert_eq!(said(row(signed_out, None), false), Some(reason::SIGNED_OUT));
+    let refused = |found: Option<&str>, needed: Option<VersionNeed>| A::Incompatible {
+        code: ErrorCode::ProviderIncompatible,
+        found: found.map(str::to_owned),
+        needed,
+    };
+    assert_eq!(
+        said(
+            row(
+                refused(Some("0.9.0"), Some(VersionNeed::AtLeast("1.0.0".into()))),
+                None
+            ),
+            false
+        ),
+        Some(reason::VERSION_TOO_OLD)
+    );
+    assert_eq!(
+        said(
+            row(
+                refused(Some("2.0.0"), Some(VersionNeed::Reviewed("1.4.0".into()))),
+                None
+            ),
+            false
+        ),
+        Some(reason::VERSION_NOT_REVIEWED)
+    );
+    // No version printed, or no need said: only "unsupported" is known.
+    assert_eq!(
+        said(
+            row(
+                refused(None, Some(VersionNeed::AtLeast("1.0.0".into()))),
+                None
+            ),
+            false
+        ),
+        Some(reason::UNSUPPORTED_VERSION)
+    );
+    assert_eq!(
+        said(row(refused(Some("1.0.0"), None), None), false),
+        Some(reason::UNSUPPORTED_VERSION)
+    );
+    let failed = || A::Failed {
+        code: ErrorCode::ProviderFailed,
+    };
+    for (stage, diagnostic, expected) in [
+        (S::Initialize, D::Timeout, reason::CHECK_TIMED_OUT),
+        (S::Version, D::Timeout, reason::CHECK_TIMED_OUT),
+        (S::Spawn, D::Spawn, reason::FAILED_TO_START),
+        (S::Version, D::UnexpectedExit, reason::FAILED_TO_START),
+        (S::Initialize, D::UnexpectedExit, reason::CHECK_FAILED),
+        (
+            S::Initialize,
+            D::RuntimeUnavailable,
+            reason::RUNTIME_MISSING,
+        ),
+        (S::Initialize, D::HandshakeRejected, reason::CHECK_FAILED),
+        (S::Discovery, D::UnexpectedExit, reason::CHECK_FAILED),
+        (S::Read, D::Io, reason::CHECK_FAILED),
+    ] {
+        assert_eq!(
+            said(row(failed(), Some((stage, diagnostic))), false),
+            Some(expected),
+            "{stage:?} {diagnostic:?}"
+        );
+    }
+    assert_eq!(said(row(failed(), None), false), Some(reason::CHECK_FAILED));
+    // The reason goes beside the code; the code and `retryable` stay.
+    let failure = with_reason(
+        failure("agent_models_failed", "x", true),
+        Some(reason::SIGNED_OUT),
+    );
+    assert_eq!(
+        (failure.code.as_str(), failure.retryable),
+        ("agent_models_failed", true)
+    );
+    assert_eq!(failure.details["reason"], reason::SIGNED_OUT);
+    assert!(with_reason(failure.clone(), None).details.len() == 1);
+}

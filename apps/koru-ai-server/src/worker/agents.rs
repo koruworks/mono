@@ -1697,16 +1697,103 @@ pub(super) fn agent_validation(
         });
     };
     let readiness = agents.readiness(&kind.kind).map_err(ai_failure)?;
-    let (status, code) = readiness_status(readiness.map(|row| row.availability), || {
-        koru_ai_provider_agent::agent_program_present(&kind)
-    });
+    // `Missing` asks the disk once, and both answers share it.
+    let present = std::cell::OnceCell::new();
+    let program_present =
+        || *present.get_or_init(|| koru_ai_provider_agent::agent_program_present(&kind));
+    let (status, code) = readiness_status(
+        readiness.as_ref().map(|row| row.availability.clone()),
+        program_present,
+    );
+    let reason = readiness_reason(readiness.as_ref(), program_present);
     Ok(ProviderValidationResponse {
         provider,
         status,
         models: Vec::new(),
         selected_model: None,
-        failure: code.map(|code| failure(code, "The agent is not ready.", true)),
+        failure: code
+            .map(|code| with_reason(failure(code, "The agent is not ready.", true), reason)),
     })
+}
+
+/// **Why an agent cannot run, as far as its readiness row says**
+/// (`koru_ai_wire::agent_readiness_reasons`); `None` when it is ready. It is
+/// finer than [`readiness_status`]'s code only where the session host's row
+/// is: the version the agent printed against what the route accepts, and the
+/// stage and diagnostic of a failed check. A missing row reads as not
+/// installed, as the code does: the two are not told apart.
+pub(super) fn readiness_reason(
+    readiness: Option<&koru_session_protocol::ProviderReadiness>,
+    program_present: impl FnOnce() -> bool,
+) -> Option<&'static str> {
+    use koru_ai_wire::agent_readiness_reasons as reason;
+    use koru_session_protocol::{ProviderDiagnostic as D, ProviderStage as S, VersionNeed};
+    let Some(row) = readiness else {
+        return Some(reason::NOT_INSTALLED);
+    };
+    Some(match &row.availability {
+        ExecutableAvailability::Available { .. } => return None,
+        ExecutableAvailability::Checking => reason::CHECKING,
+        ExecutableAvailability::Missing if program_present() => reason::ADAPTER_MISSING,
+        ExecutableAvailability::Missing => reason::NOT_INSTALLED,
+        ExecutableAvailability::SignedOut { .. } => reason::SIGNED_OUT,
+        ExecutableAvailability::Incompatible {
+            found: Some(_),
+            needed: Some(VersionNeed::AtLeast(_)),
+            ..
+        } => reason::VERSION_TOO_OLD,
+        ExecutableAvailability::Incompatible {
+            found: Some(_),
+            needed: Some(VersionNeed::Reviewed(_)),
+            ..
+        } => reason::VERSION_NOT_REVIEWED,
+        ExecutableAvailability::Incompatible { .. } => reason::UNSUPPORTED_VERSION,
+        ExecutableAvailability::Failed { .. } => match row.failure.as_ref() {
+            Some(failure) => match (failure.stage, failure.diagnostic) {
+                (_, D::Timeout) => reason::CHECK_TIMED_OUT,
+                (_, D::Spawn) | (S::Spawn | S::Version, D::UnexpectedExit) => {
+                    reason::FAILED_TO_START
+                }
+                (_, D::RuntimeUnavailable) => reason::RUNTIME_MISSING,
+                _ => reason::CHECK_FAILED,
+            },
+            None => reason::CHECK_FAILED,
+        },
+    })
+}
+
+/// `failure` with `reason` as its `details.reason`, when one is known.
+pub(super) fn with_reason(mut failure: Failure, reason: Option<&str>) -> Failure {
+    if let Some(reason) = reason {
+        failure.details.insert("reason".into(), reason.into());
+    }
+    failure
+}
+
+/// A Bot command refused because its agent cannot run
+/// (`agent_models_failed` from the model discovery it asks first), with why
+/// as far as the session host's readiness row says now. The code and
+/// `retryable` stay as they were. An agent the row calls ready failed its
+/// listing; a readiness question that is not answered adds nothing.
+pub(super) fn explain_agent_refusal(
+    agents: &AgentSessions,
+    provider: &AiProviderId,
+    refusal: Failure,
+) -> Failure {
+    if refusal.code != "agent_models_failed" {
+        return refusal;
+    }
+    let Some(kind) = agent_kind_of(provider) else {
+        return refusal;
+    };
+    let Ok(readiness) = agents.readiness(&kind.kind) else {
+        return refusal;
+    };
+    let reason = readiness_reason(readiness.as_ref(), || {
+        koru_ai_provider_agent::agent_program_present(&kind)
+    })
+    .unwrap_or(koru_ai_wire::agent_readiness_reasons::LISTING_FAILED);
+    with_reason(refusal, Some(reason))
 }
 
 /// **A readiness row as a validation status and its closed code.**

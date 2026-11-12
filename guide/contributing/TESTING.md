@@ -645,6 +645,12 @@ it received and how many of those files existed (`native:images:<n>`,
 that the Run's session attachment directory holds one file while the turn is
 open, and that the session host has removed that directory once the provider
 exits.
+For its whole run the journey also holds a gateway WebSocket joined to the
+workspace's manifest room, as a window's sync session is, and never rejoins
+it: a second Bot created with an authored Role page (`create_bot_with_role`)
+and the page the native tool creates must each be announced there. A page
+an owner creates inside the Store worker reaches an open window only through
+such an announcement (`with_store_announcing`).
 A separate supervised ordinary-client case checks
 the specific missing-scope refusal. This composition does not prove trusted
 first-party executable admission, production model discovery, GUI behavior or
