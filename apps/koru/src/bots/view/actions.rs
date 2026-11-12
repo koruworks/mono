@@ -245,16 +245,25 @@ impl BotView {
 
     /// **One conversation's Trash confirmation**, in the person's words:
     /// the main conversation's says the Bot keeps working without it.
+    ///
+    /// **That its running work is stopped is said only where it can be
+    /// true** — work runs in it, or the window does not know — from the
+    /// facts the question's default answer is chosen by (`bots::stops`).
+    /// A conversation the window knows is idle is not told its running
+    /// work is stopped (the third window run).
     pub(crate) fn conversation_trash_words(
         &self,
         chat: ChatId,
+        work: WorkNow,
     ) -> Option<(String, String, String)> {
         let facts = self.facts.as_ref()?;
         let title = self.conversation_title(chat);
-        let body = if chat == facts.main_chat {
-            Words::BotsTrashMainBody
-        } else {
-            Words::BotsTrashConversationBody
+        let idle = work == WorkNow::Idle;
+        let body = match (chat == facts.main_chat, idle) {
+            (true, false) => Words::BotsTrashMainBody,
+            (true, true) => Words::BotsTrashMainBodyIdle,
+            (false, false) => Words::BotsTrashConversationBody,
+            (false, true) => Words::BotsTrashConversationBodyIdle,
         };
         Some((
             // **Named as a conversation of its Bot**, so it cannot be read
@@ -599,7 +608,7 @@ impl BotView {
         };
         if let Some(op) = self.lifecycle.op() {
             return match op.stage {
-                Stage::Parked => fact(parked_words(op.kind)),
+                Stage::Parked => fact(parked_words(op.kind, op.refusal)),
                 // Koru AI did not answer the last ask: said, rather than
                 // that the Bot's work is finishing. Still asked on the clock.
                 Stage::Moving if op.unanswered => fact(Words::BotsLifecycleUnanswered),

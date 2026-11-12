@@ -1322,7 +1322,10 @@ fn a_bots_conversations_are_titled_as_ai_chats_are() {
     );
     assert_eq!(drawn(named), "Builder forums");
     // The Trash question names it as a conversation of its Bot.
-    let (title, _, _) = f.view.conversation_trash_words(new).expect("asked");
+    let (title, _, _) = f
+        .view
+        .conversation_trash_words(new, crate::bots::stops::WorkNow::Unknown)
+        .expect("asked");
     let (bot_title, _, _) = f
         .view
         .confirm_words(crate::bots::lifecycle::Ask::Trash)
@@ -2024,5 +2027,40 @@ fn compact_the_list_leaves_for_the_conversation_and_the_keyboard_goes_with_it() 
     assert!(
         f.view.take_conversation_trash().is_some(),
         "Delete on the list's row asks for its Trash"
+    );
+}
+
+/// ***No other conversations yet* is drawn below the row it is about**,
+/// where the others would be listed (the third window run: drawn above the
+/// main conversation's row). Laid out as the tab draws.
+#[test]
+fn the_only_main_sentence_is_drawn_below_the_row() {
+    let mut f = listed(&[]);
+    f.view.set_viewport(1000.0, 600.0);
+    f.view.shown_pass(None);
+    let (notice, area) = f.view.with_frame(|_, frame| {
+        (
+            frame.node(list::CONVERSATIONS_NOTICE).map(|node| node.rect),
+            BotView::list_area(frame),
+        )
+    });
+    let notice = notice.expect("the sentence is drawn");
+    let area = area.expect("the list is drawn");
+    let row = f
+        .view
+        .conversations
+        .surface
+        .chat_rects(area, area.y)
+        .into_iter()
+        .find(|(chat, _)| *chat == f.bot.main_chat)
+        .map(|(_, rect)| rect)
+        .expect("the main conversation's row");
+    assert!(
+        notice.y >= row.y + row.h,
+        "below the row: {notice:?} under {row:?}"
+    );
+    assert!(
+        notice.y - (row.y + row.h) < 48.0,
+        "right under the rows, not at the column's foot: {notice:?} {row:?}"
     );
 }

@@ -218,12 +218,15 @@ impl MainView {
         if view.lifecycle_busy() {
             return false;
         }
-        let Some((title, body, verb)) = view.conversation_trash_words(chat) else {
-            return false;
-        };
         // A row's Delete opens this question: Delete then Enter must not
         // stop a reply running in that conversation.
         let work = self.bot_work_now(tab, Scope::Conversation(bot, chat));
+        let Some(view) = self.asking_bot_tab(tab, bot) else {
+            return self.say_asking_tab_gone();
+        };
+        let Some((title, body, verb)) = view.conversation_trash_words(chat, work) else {
+            return false;
+        };
         let lead = view.stops_words(work, true);
         self.confirm = Some((
             bot_question(title, body, verb, lead, work),

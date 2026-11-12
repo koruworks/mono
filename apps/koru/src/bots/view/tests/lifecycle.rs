@@ -369,7 +369,10 @@ fn a_conversation_leaves_only_on_the_owners_word_and_the_tab_moves_off_it() {
     f.view.shown_pass(None);
     assert_eq!(f.view.take_conversation_trash(), Some(other));
     nothing_sent(&f);
-    let (_, body, _) = f.view.conversation_trash_words(other).unwrap();
+    let (_, body, _) = f
+        .view
+        .conversation_trash_words(other, crate::bots::stops::WorkNow::Unknown)
+        .unwrap();
     assert!(body.contains("other conversations keep running"), "{body}");
     assert!(f.view.trash_conversation(other));
     let (request, command) = f.wrote();
@@ -409,7 +412,10 @@ fn a_conversation_leaves_only_on_the_owners_word_and_the_tab_moves_off_it() {
 fn the_main_conversation_in_trash_leaves_the_bot_working() {
     let mut f = listed(&[]);
     let main = f.bot.main_chat;
-    let (_, body, _) = f.view.conversation_trash_words(main).unwrap();
+    let (_, body, _) = f
+        .view
+        .conversation_trash_words(main, crate::bots::stops::WorkNow::Unknown)
+        .unwrap();
     assert!(body.contains("keeps working without it"), "{body}");
     assert!(f.view.trash_conversation(main));
     let (request, _) = f.wrote();
@@ -975,6 +981,82 @@ fn a_tab_in_front_of_a_parked_archive_sees_the_owner_finish_it() {
     );
     assert!(keys.contains(&actions::UNARCHIVE), "Unarchive names it");
     assert_eq!(f.view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
+}
+
+/// **A parked operation says the one true sentence for why the owner parked
+/// it** (the third window run: a paused, idle Bot whose execution owner did
+/// not answer was told some of its *work couldn't be confirmed as
+/// stopped*). The reason is the owner's (`BotOpenLifecycle::refusal` on the
+/// Bot's read, `BotLifecycleProgress::refusal` on the operation's, as
+/// `park_bot_lifecycle` records it): `owner_unavailable` says what runs the
+/// Bot did not answer; `member_conflict` that the Bot changed under it;
+/// `work_running` keeps the sentence about the work; none claims no cause.
+/// The tab's published line says the same words.
+#[test]
+fn a_parked_operation_says_why_the_owner_parked_it() {
+    for (kind, refusal, words) in [
+        (
+            BotLifecycleKind::Archive,
+            Some(BotLifecycleRefusal::OwnerUnavailable),
+            Words::BotsLifecycleIncompleteOwner,
+        ),
+        (
+            BotLifecycleKind::Trash,
+            Some(BotLifecycleRefusal::MemberConflict),
+            Words::BotsLifecycleIncompleteChanged,
+        ),
+        (
+            BotLifecycleKind::Archive,
+            Some(BotLifecycleRefusal::WorkRunning),
+            Words::BotsLifecycleIncomplete,
+        ),
+        (
+            BotLifecycleKind::Archive,
+            None,
+            Words::BotsLifecycleIncompleteOther,
+        ),
+        (
+            BotLifecycleKind::TrashChat,
+            Some(BotLifecycleRefusal::OwnerUnavailable),
+            Words::BotsChatTrashIncompleteOwner,
+        ),
+        (
+            BotLifecycleKind::TrashChat,
+            Some(BotLifecycleRefusal::RevisionChanged),
+            Words::BotsChatTrashIncompleteChanged,
+        ),
+    ] {
+        let case = format!("{kind:?} {refusal:?}");
+        let mut held = unpaused();
+        held.paused = true;
+        let chat_id = (kind == BotLifecycleKind::TrashChat).then_some(held.main_chat);
+        held.open_operation = Some(koru_ai_core::bots::BotOpenLifecycle {
+            request_id: BotRequestId::mint(),
+            kind,
+            chat_id,
+            stage: BotLifecycleStage::Incomplete,
+            refusal,
+        });
+        let mut f = Fixture::opened(held);
+        f.view.set_settings_open(false);
+        assert_eq!(
+            f.view.lifecycle_said().map(|said| said.words),
+            Some(words),
+            "{case}"
+        );
+        // The header's line, as the window publishes it (`header_lines`).
+        let line = f
+            .view
+            .header_lines()
+            .into_iter()
+            .find(|(key, _, _)| *key == actions::LIFECYCLE_NOTICE)
+            .map(|(_, _, words)| words)
+            .expect("the line is published");
+        assert_eq!(line, t(Lang::En, words), "{case}");
+        for lang in Lang::ALL {
+            assert!(!t(lang, words).trim().is_empty(), "{lang:?} {words:?}");
+        }
+    }
 }
 
 /// **An older Bot read drained with the Archive's answer never drops it** —

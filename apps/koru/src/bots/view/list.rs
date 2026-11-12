@@ -164,21 +164,43 @@ impl BotView {
                 &[self.label().as_str()],
             ))
             .child(heading);
-        if let Some(notice) = list.notice() {
-            column = column.child(
-                text(t(self.lang, notice))
-                    .named("Bot conversations notice")
-                    .id(CONVERSATIONS_NOTICE)
-                    .role(roles::META)
-                    .ink(Ink::Hint)
-                    .wrap(),
-            );
+        let notice = list.notice().map(|notice| {
+            text(t(self.lang, notice))
+                .named("Bot conversations notice")
+                .id(CONVERSATIONS_NOTICE)
+                .role(roles::META)
+                .ink(Ink::Hint)
+                .wrap()
+        });
+        // **Only the main conversation listed is said below its row**, where
+        // the other conversations would be (the third window run: *No other
+        // conversations yet* stood above the row). The list is then as tall
+        // as its rows; loading and unavailable are said above, as before.
+        let below = list.notice() == Some(Words::BotsConversationsOnlyMain) && list.shows_rows();
+        let (above, after) = if below {
+            (None, notice)
+        } else {
+            (notice, None)
+        };
+        if let Some(above) = above {
+            column = column.child(above);
         }
-        let mut area = boxed("Bot conversation list").id(CONVERSATION_LIST).fill();
+        let area = boxed("Bot conversation list").id(CONVERSATION_LIST);
+        let mut area = if below {
+            area.h(koru_draw::el::Length::Runtime(
+                self.rows_height(),
+                "the conversation list's rows",
+            ))
+        } else {
+            area.fill()
+        };
         if list.shows_rows() {
             area = area.hit().focusable();
         }
         column = column.child(area);
+        if let Some(after) = after {
+            column = column.child(after);
+        }
         if list.has_more() {
             column = column.child(self.list_button(
                 engine,
@@ -210,6 +232,20 @@ impl BotView {
             );
         }
         column
+    }
+
+    /// **How tall the shared list's rows stand**, its footer's air
+    /// included: the list's own geometry over a tall probe, so the column
+    /// can end the list where its rows end.
+    fn rows_height(&self) -> f32 {
+        let probe = Rect::new(0.0, 0.0, koru_draw::theme::PANEL_W, 10_000.0);
+        let surface = &self.conversations.surface;
+        let air = probe.h - surface.band(probe, 0.0).h;
+        surface
+            .chat_rects(probe, 0.0)
+            .last()
+            .map_or(0.0, |(_, row)| row.y + row.h)
+            + air
     }
 
     fn list_button(

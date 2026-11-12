@@ -386,6 +386,11 @@ pub(crate) struct BotsRoster {
     creation_refused: Option<Words>,
     /// The creation abandoned from here last: what it left, said once.
     abandoned: Option<BotCreation>,
+    /// The listing's sequence when [`Self::abandoned`] was said: the next
+    /// listing asked after it takes the note away (the third window run: it
+    /// stayed under an empty *Unfinished* heading after a Bot of that name
+    /// was made).
+    abandoned_at: u64,
     /// *Create a bot* was pressed: the window opens the form. Taken once.
     wants_create: bool,
     /// An Abandon pressed: the request and the name, for the window to ask
@@ -1064,6 +1069,12 @@ impl BotsRoster {
                         continue;
                     }
                     self.creations_in_flight = false;
+                    // **What was abandoned here was said once**: a listing
+                    // asked after it lists the workspace without it, and the
+                    // note goes with it.
+                    if seq != self.abandoned_at {
+                        self.abandoned = None;
+                    }
                     // A failed read keeps what was listed.
                     if let Ok(listed) = result {
                         self.creations_more = listed.more;
@@ -1748,14 +1759,20 @@ impl BotsRoster {
             .pad_x(alias::ROW_PLATE_INSET)
             .pad_top(Space::S2)
             .gap(Space::S1);
-        section = section.child(
-            text(t(self.lang, Words::BotsUnfinished))
-                .named("Bots unfinished heading")
-                .id(UNFINISHED_HEADING)
-                .role(roles::META)
-                .ink(Ink::Secondary)
-                .truncate(),
-        );
+        // **The heading heads unfinished creations only**: a group holding
+        // none — only what an Abandon left, or a Retry's word — draws no
+        // *Unfinished* over it (the third window run: an empty heading over
+        // an abandoned note).
+        if !self.creations.is_empty() {
+            section = section.child(
+                text(t(self.lang, Words::BotsUnfinished))
+                    .named("Bots unfinished heading")
+                    .id(UNFINISHED_HEADING)
+                    .role(roles::META)
+                    .ink(Ink::Secondary)
+                    .truncate(),
+            );
+        }
         if let Some(words) = self.creation_refused {
             section = section.child(
                 text(t(self.lang, words))
@@ -2085,6 +2102,7 @@ impl BotsRoster {
                     BotCreationStage::Abandoned => {
                         self.creations.retain(|row| row.request_id != request);
                         self.abandoned = Some(creation);
+                        self.abandoned_at = self.seq;
                     }
                     // The owner's stage speaks: made, or refused before it
                     // made anything.

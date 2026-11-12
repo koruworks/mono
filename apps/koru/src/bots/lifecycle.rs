@@ -47,7 +47,7 @@ use std::time::{Duration, Instant};
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
     Bot, BotCommand, BotId, BotLifecycle, BotLifecycleKind, BotLifecycleProgress,
-    BotLifecycleStage, BotOpenLifecycle, BotRequestId, BotResponse,
+    BotLifecycleRefusal, BotLifecycleStage, BotOpenLifecycle, BotRequestId, BotResponse,
 };
 use koru_i18n::Key as Words;
 use koru_store_core::ids::WorkspaceId;
@@ -129,6 +129,10 @@ pub(crate) struct Op {
     /// still asked about on the clock; the tab says Koru AI is not
     /// answering rather than that the Bot's work is finishing.
     pub unanswered: bool,
+    /// **Why the owner parked it** (`BotOpenLifecycle::refusal`, a
+    /// progress's `refusal`): what its parked sentence says. `None` while
+    /// it moves, or when the owner named no reason.
+    pub refusal: Option<BotLifecycleRefusal>,
     next_read: Option<Instant>,
     backoff: Duration,
     /// What the window records when it finishes: the Bot's name and home,
@@ -311,6 +315,7 @@ impl Lifecycle {
             // read on the slower clock.
             (Some(open), Some(op)) if op.request == open.request_id => {
                 let parked = open.stage == BotLifecycleStage::Incomplete;
+                op.refusal = open.refusal.filter(|_| parked);
                 match (op.stage, parked) {
                     (Stage::Parked, false) => {
                         op.stage = Stage::Moving;
@@ -437,6 +442,7 @@ impl Lifecycle {
             read_refused: false,
             answered: false,
             unanswered: false,
+            refusal: None,
             next_read: None,
             backoff: READ_FIRST,
             name: bot.config.name.clone(),
@@ -475,6 +481,7 @@ impl Lifecycle {
             read_refused: false,
             answered: false,
             unanswered: false,
+            refusal: None,
             next_read: None,
             backoff: READ_FIRST,
             name: bot.config.name.clone(),
@@ -562,6 +569,7 @@ impl Lifecycle {
             read_refused: false,
             answered: false,
             unanswered: false,
+            refusal: None,
             next_read: None,
             backoff: READ_FIRST,
             name,
@@ -745,6 +753,10 @@ impl Lifecycle {
         if flight == Flight::Read && !op.flights.is_empty() {
             return;
         }
+        // Why it is parked, as this answer says, for its sentence.
+        op.refusal = progress
+            .refusal
+            .filter(|_| progress.stage == BotLifecycleStage::Incomplete);
         match progress.stage {
             BotLifecycleStage::Completed => self.finish(),
             // Still parked: read again on the slower clock, each time a
@@ -861,6 +873,7 @@ fn adopted(open: &BotOpenLifecycle, bot: &Bot, now: Instant) -> Op {
         read_refused: false,
         answered: true,
         unanswered: false,
+        refusal: open.refusal,
         next_read: Some(now),
         backoff: READ_FIRST,
         name: bot.config.name.clone(),
@@ -978,11 +991,35 @@ fn words_for(kind: BotLifecycleKind, code: &str) -> Words {
     }
 }
 
-/// The sentence a parked operation says, by what it is.
-pub(crate) fn parked_words(kind: BotLifecycleKind) -> Words {
-    match kind {
-        BotLifecycleKind::TrashChat => Words::BotsChatTrashIncomplete,
-        _ => Words::BotsLifecycleIncomplete,
+/// **The sentence a parked operation says**, by what it is and why the
+/// owner parked it — one true sentence per reason (the third window run: a
+/// paused, idle Bot whose execution owner did not answer was told its *work
+/// couldn't be confirmed as stopped*).
+///
+/// - `work_running` — work the owner had not admitted was still running —
+///   and `person_holding` (reserved, never parked for now) keep the
+///   sentence about the work;
+/// - `owner_unavailable`: what runs the Bot on this computer did not answer;
+/// - `member_conflict`, `revision_changed`: the Bot changed under it (its
+///   pause was refused, or it left the lifecycle it was captured in);
+/// - no reason, or `store_unavailable` (which the owner does not park with
+///   today): that it did not finish, and no cause is claimed.
+pub(crate) fn parked_words(kind: BotLifecycleKind, refusal: Option<BotLifecycleRefusal>) -> Words {
+    use BotLifecycleRefusal as Why;
+    let chat = kind == BotLifecycleKind::TrashChat;
+    match (refusal, chat) {
+        (Some(Why::WorkRunning | Why::PersonHolding), false) => Words::BotsLifecycleIncomplete,
+        (Some(Why::WorkRunning | Why::PersonHolding), true) => Words::BotsChatTrashIncomplete,
+        (Some(Why::OwnerUnavailable), false) => Words::BotsLifecycleIncompleteOwner,
+        (Some(Why::OwnerUnavailable), true) => Words::BotsChatTrashIncompleteOwner,
+        (Some(Why::MemberConflict | Why::RevisionChanged), false) => {
+            Words::BotsLifecycleIncompleteChanged
+        }
+        (Some(Why::MemberConflict | Why::RevisionChanged), true) => {
+            Words::BotsChatTrashIncompleteChanged
+        }
+        (Some(Why::StoreUnavailable) | None, false) => Words::BotsLifecycleIncompleteOther,
+        (Some(Why::StoreUnavailable) | None, true) => Words::BotsChatTrashIncompleteOther,
     }
 }
 

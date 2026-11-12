@@ -2079,6 +2079,12 @@ pub enum Key {
     BotsRestoring,
     /// A whole-Bot Archive or Trash the owner parked as incomplete: it is never retried on its own. Continue repeats the command; Cancel is the Restore naming it.
     BotsLifecycleIncomplete,
+    /// A parked Archive or Trash whose execution owner did not answer (`owner_unavailable`).
+    BotsLifecycleIncompleteOwner,
+    /// A parked Archive or Trash the Bot changed under (`member_conflict`, `revision_changed`).
+    BotsLifecycleIncompleteChanged,
+    /// A parked Archive or Trash whose reason is not said (none, `store_unavailable`).
+    BotsLifecycleIncompleteOther,
     /// Continues a parked lifecycle operation: the same command again, by its request.
     BotsContinue,
     /// Cancels a parked lifecycle operation: the Restore naming it.
@@ -2105,8 +2111,12 @@ pub enum Key {
     BotsTrashConversationTitle,
     /// What one conversation's Trash does: only its work is stopped, its siblings keep running, nothing else moves.
     BotsTrashConversationBody,
+    /// A conversation's Trash question when the window knows nothing runs in it.
+    BotsTrashConversationBodyIdle,
     /// The main conversation's Trash (O7): the Bot keeps working, nothing replaces it, and restoring brings the same one back.
     BotsTrashMainBody,
+    /// The main conversation's Trash question when the window knows nothing runs in it.
+    BotsTrashMainBodyIdle,
     /// One conversation's Trash the owner holds as moving: the row stays until the owner says it is done.
     BotsTrashingConversation,
     /// The tab's conversation went to Trash and the Bot has no other conversation to show.
@@ -2117,6 +2127,12 @@ pub enum Key {
     BotsTrashOneAtATime,
     /// One conversation's Trash the owner parked as incomplete. Continue repeats it; Cancel is its RestoreChat.
     BotsChatTrashIncomplete,
+    /// A conversation's parked Trash whose execution owner did not answer.
+    BotsChatTrashIncompleteOwner,
+    /// A conversation's parked Trash the Bot changed under.
+    BotsChatTrashIncompleteChanged,
+    /// A conversation's parked Trash whose reason is not said.
+    BotsChatTrashIncompleteOther,
     /// The roster's Archived filter before its first answer. Never a zero claimed early.
     BotsArchivedLoading,
     /// The owner answered the Archived filter with none.
@@ -3707,7 +3723,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2488] = [
+    pub const ALL: [Key; 2496] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5123,6 +5139,9 @@ impl Key {
         Key::BotsSettling,
         Key::BotsRestoring,
         Key::BotsLifecycleIncomplete,
+        Key::BotsLifecycleIncompleteOwner,
+        Key::BotsLifecycleIncompleteChanged,
+        Key::BotsLifecycleIncompleteOther,
         Key::BotsContinue,
         Key::BotsCancelOperation,
         Key::BotsUnarchive,
@@ -5136,12 +5155,17 @@ impl Key {
         Key::BotsTrashConversation,
         Key::BotsTrashConversationTitle,
         Key::BotsTrashConversationBody,
+        Key::BotsTrashConversationBodyIdle,
         Key::BotsTrashMainBody,
+        Key::BotsTrashMainBodyIdle,
         Key::BotsTrashingConversation,
         Key::BotsConversationInTrash,
         Key::BotsMainInTrash,
         Key::BotsTrashOneAtATime,
         Key::BotsChatTrashIncomplete,
+        Key::BotsChatTrashIncompleteOwner,
+        Key::BotsChatTrashIncompleteChanged,
+        Key::BotsChatTrashIncompleteOther,
         Key::BotsArchivedLoading,
         Key::BotsArchivedEmpty,
         Key::BotsArchivedUnavailable,
@@ -17065,6 +17089,39 @@ pub const ROWS: &[Row] = &[
         ja: "完了しませんでした。Bot の作業の一部が停止したことを確認できませんでした。続行するともう一度試します。キャンセルすると Bot は一時停止のまま元の状態に戻ります。",
     },
     Row {
+        key: Key::BotsLifecycleIncompleteOwner,
+        en: "This didn't finish: what runs the bot on this computer didn't answer. Continue to try again, or Cancel to put the bot back as it was, paused.",
+        es: "Esto no terminó: lo que ejecuta el bot en este equipo no respondió. Continúa para intentarlo de nuevo, o cancela para dejar el bot como estaba, en pausa.",
+        pt_br: "Isso não terminou: o que executa o bot neste computador não respondeu. Continue para tentar de novo ou cancele para deixar o bot como estava, pausado.",
+        de: "Das wurde nicht abgeschlossen: Was den Bot auf diesem Computer ausführt, hat nicht geantwortet. Fortsetzen versucht es erneut, Abbrechen stellt den Bot pausiert so wieder her, wie er war.",
+        fr: "Cela n'a pas abouti : ce qui exécute le bot sur cet ordinateur n'a pas répondu. Continuez pour réessayer, ou annulez pour remettre le bot tel qu'il était, en pause.",
+        ar: "لم يكتمل هذا: لم يستجب ما يشغّل البوت على هذا الكمبيوتر. تابِع للمحاولة مجددًا، أو ألغِ لإعادة البوت كما كان، متوقفًا مؤقتًا.",
+        zh_hans: "此操作未完成：此电脑上运行 Bot 的程序没有响应。选择继续可重试，选择取消可将 Bot 恢复原状并保持暂停。",
+        ja: "完了しませんでした。このコンピューターで Bot を実行しているものが応答しませんでした。続行するともう一度試します。キャンセルすると Bot は一時停止のまま元の状態に戻ります。",
+    },
+    Row {
+        key: Key::BotsLifecycleIncompleteChanged,
+        en: "This didn't finish: the bot changed while it was being done. Continue to try again, or Cancel to put the bot back as it was, paused.",
+        es: "Esto no terminó: el bot cambió mientras se hacía. Continúa para intentarlo de nuevo, o cancela para dejar el bot como estaba, en pausa.",
+        pt_br: "Isso não terminou: o bot mudou enquanto isso era feito. Continue para tentar de novo ou cancele para deixar o bot como estava, pausado.",
+        de: "Das wurde nicht abgeschlossen: Der Bot hat sich währenddessen geändert. Fortsetzen versucht es erneut, Abbrechen stellt den Bot pausiert so wieder her, wie er war.",
+        fr: "Cela n'a pas abouti : le bot a changé pendant l'opération. Continuez pour réessayer, ou annulez pour remettre le bot tel qu'il était, en pause.",
+        ar: "لم يكتمل هذا: تغيّر البوت أثناء التنفيذ. تابِع للمحاولة مجددًا، أو ألغِ لإعادة البوت كما كان، متوقفًا مؤقتًا.",
+        zh_hans: "此操作未完成：Bot 在执行期间发生了变化。选择继续可重试，选择取消可将 Bot 恢复原状并保持暂停。",
+        ja: "完了しませんでした。処理中に Bot が変更されました。続行するともう一度試します。キャンセルすると Bot は一時停止のまま元の状態に戻ります。",
+    },
+    Row {
+        key: Key::BotsLifecycleIncompleteOther,
+        en: "This didn't finish. Continue to try again, or Cancel to put the bot back as it was, paused.",
+        es: "Esto no terminó. Continúa para intentarlo de nuevo, o cancela para dejar el bot como estaba, en pausa.",
+        pt_br: "Isso não terminou. Continue para tentar de novo ou cancele para deixar o bot como estava, pausado.",
+        de: "Das wurde nicht abgeschlossen. Fortsetzen versucht es erneut, Abbrechen stellt den Bot pausiert so wieder her, wie er war.",
+        fr: "Cela n'a pas abouti. Continuez pour réessayer, ou annulez pour remettre le bot tel qu'il était, en pause.",
+        ar: "لم يكتمل هذا. تابِع للمحاولة مجددًا، أو ألغِ لإعادة البوت كما كان، متوقفًا مؤقتًا.",
+        zh_hans: "此操作未完成。选择继续可重试，选择取消可将 Bot 恢复原状并保持暂停。",
+        ja: "完了しませんでした。続行するともう一度試します。キャンセルすると Bot は一時停止のまま元の状態に戻ります。",
+    },
+    Row {
         key: Key::BotsContinue,
         en: "Continue",
         es: "Continuar",
@@ -17208,6 +17265,17 @@ pub const ROWS: &[Row] = &[
         ja: "実行中の作業は停止されます。あなたが引き継いだセッションも含みます。Bot のほかの会話は動き続け、ページと結果はそのまま残ります。ごみ箱から復元できます。",
     },
     Row {
+        key: Key::BotsTrashConversationBodyIdle,
+        en: "The bot's other conversations keep running, and pages and results stay where they are. You can restore it from the Trash.",
+        es: "Las demás conversaciones del bot siguen en marcha, y las páginas y los resultados se quedan donde están. Puedes restaurarla desde la papelera.",
+        pt_br: "As outras conversas do bot continuam rodando, e páginas e resultados ficam onde estão. Você pode restaurá-la pela lixeira.",
+        de: "Die anderen Unterhaltungen des Bots laufen weiter, und Seiten und Ergebnisse bleiben, wo sie sind. Sie können sie aus dem Papierkorb wiederherstellen.",
+        fr: "Les autres conversations du bot continuent, et les pages et résultats restent où ils sont. Vous pourrez la restaurer depuis la corbeille.",
+        ar: "تستمر محادثات البوت الأخرى، وتبقى الصفحات والنتائج في أماكنها. يمكنك استعادتها من سلة المهملات.",
+        zh_hans: "Bot 的其他对话会继续运行，页面和结果保留在原处。你可以从回收站恢复它。",
+        ja: "Bot のほかの会話は動き続け、ページと結果はそのまま残ります。ごみ箱から復元できます。",
+    },
+    Row {
         key: Key::BotsTrashMainBody,
         en: "This is the bot's main conversation. Its running work is stopped, including a session you have taken over. The bot keeps working without it and nothing replaces it. You can restore it from the Trash.",
         es: "Esta es la conversación principal del bot. Se detiene su trabajo en curso, incluida una sesión que hayas tomado. El bot sigue funcionando sin ella y nada la sustituye. Puedes restaurarla desde la papelera.",
@@ -17217,6 +17285,17 @@ pub const ROWS: &[Row] = &[
         ar: "هذه هي المحادثة الرئيسية للبوت. يُوقَف عملها الجاري، بما في ذلك جلسة توليتها أنت. يواصل البوت العمل من دونها ولا يحل محلها شيء. يمكنك استعادتها من سلة المهملات.",
         zh_hans: "这是 Bot 的主对话。它正在进行的工作会被停止，包括你接管的会话。Bot 会在没有它的情况下继续工作，也不会有新的对话取代它。你可以从回收站恢复它。",
         ja: "これは Bot のメインの会話です。実行中の作業は停止されます。あなたが引き継いだセッションも含みます。Bot はこの会話なしで動き続け、代わりの会話は作られません。ごみ箱から復元できます。",
+    },
+    Row {
+        key: Key::BotsTrashMainBodyIdle,
+        en: "This is the bot's main conversation. The bot keeps working without it and nothing replaces it. You can restore it from the Trash.",
+        es: "Esta es la conversación principal del bot. El bot sigue funcionando sin ella y nada la sustituye. Puedes restaurarla desde la papelera.",
+        pt_br: "Esta é a conversa principal do bot. O bot continua funcionando sem ela e nada a substitui. Você pode restaurá-la pela lixeira.",
+        de: "Das ist die Hauptunterhaltung des Bots. Der Bot arbeitet ohne sie weiter, und nichts ersetzt sie. Sie können sie aus dem Papierkorb wiederherstellen.",
+        fr: "C'est la conversation principale du bot. Le bot continue sans elle et rien ne la remplace. Vous pourrez la restaurer depuis la corbeille.",
+        ar: "هذه هي المحادثة الرئيسية للبوت. يواصل البوت العمل من دونها ولا يحل محلها شيء. يمكنك استعادتها من سلة المهملات.",
+        zh_hans: "这是 Bot 的主对话。Bot 会在没有它的情况下继续工作，也不会有新的对话取代它。你可以从回收站恢复它。",
+        ja: "これは Bot のメインの会話です。Bot はこの会話なしで動き続け、代わりの会話は作られません。ごみ箱から復元できます。",
     },
     Row {
         key: Key::BotsTrashingConversation,
@@ -17272,6 +17351,39 @@ pub const ROWS: &[Row] = &[
         ar: "لم يكتمل هذا: تعذّر التأكد من توقف عمل المحادثة. تابِع للمحاولة مجددًا، أو ألغِ للاحتفاظ بالمحادثة.",
         zh_hans: "此操作未完成：无法确认该对话的工作已停止。选择继续可重试，选择取消可保留该对话。",
         ja: "完了しませんでした。会話の作業が停止したことを確認できませんでした。続行するともう一度試します。キャンセルすると会話を残します。",
+    },
+    Row {
+        key: Key::BotsChatTrashIncompleteOwner,
+        en: "This didn't finish: what runs the bot on this computer didn't answer. Continue to try again, or Cancel to keep the conversation.",
+        es: "Esto no terminó: lo que ejecuta el bot en este equipo no respondió. Continúa para intentarlo de nuevo, o cancela para conservar la conversación.",
+        pt_br: "Isso não terminou: o que executa o bot neste computador não respondeu. Continue para tentar de novo ou cancele para manter a conversa.",
+        de: "Das wurde nicht abgeschlossen: Was den Bot auf diesem Computer ausführt, hat nicht geantwortet. Fortsetzen versucht es erneut, Abbrechen behält die Unterhaltung.",
+        fr: "Cela n'a pas abouti : ce qui exécute le bot sur cet ordinateur n'a pas répondu. Continuez pour réessayer, ou annulez pour garder la conversation.",
+        ar: "لم يكتمل هذا: لم يستجب ما يشغّل البوت على هذا الكمبيوتر. تابِع للمحاولة مجددًا، أو ألغِ للاحتفاظ بالمحادثة.",
+        zh_hans: "此操作未完成：此电脑上运行 Bot 的程序没有响应。选择继续可重试，选择取消可保留该对话。",
+        ja: "完了しませんでした。このコンピューターで Bot を実行しているものが応答しませんでした。続行するともう一度試します。キャンセルすると会話を残します。",
+    },
+    Row {
+        key: Key::BotsChatTrashIncompleteChanged,
+        en: "This didn't finish: the bot changed while it was being done. Continue to try again, or Cancel to keep the conversation.",
+        es: "Esto no terminó: el bot cambió mientras se hacía. Continúa para intentarlo de nuevo, o cancela para conservar la conversación.",
+        pt_br: "Isso não terminou: o bot mudou enquanto isso era feito. Continue para tentar de novo ou cancele para manter a conversa.",
+        de: "Das wurde nicht abgeschlossen: Der Bot hat sich währenddessen geändert. Fortsetzen versucht es erneut, Abbrechen behält die Unterhaltung.",
+        fr: "Cela n'a pas abouti : le bot a changé pendant l'opération. Continuez pour réessayer, ou annulez pour garder la conversation.",
+        ar: "لم يكتمل هذا: تغيّر البوت أثناء التنفيذ. تابِع للمحاولة مجددًا، أو ألغِ للاحتفاظ بالمحادثة.",
+        zh_hans: "此操作未完成：Bot 在执行期间发生了变化。选择继续可重试，选择取消可保留该对话。",
+        ja: "完了しませんでした。処理中に Bot が変更されました。続行するともう一度試します。キャンセルすると会話を残します。",
+    },
+    Row {
+        key: Key::BotsChatTrashIncompleteOther,
+        en: "This didn't finish. Continue to try again, or Cancel to keep the conversation.",
+        es: "Esto no terminó. Continúa para intentarlo de nuevo, o cancela para conservar la conversación.",
+        pt_br: "Isso não terminou. Continue para tentar de novo ou cancele para manter a conversa.",
+        de: "Das wurde nicht abgeschlossen. Fortsetzen versucht es erneut, Abbrechen behält die Unterhaltung.",
+        fr: "Cela n'a pas abouti. Continuez pour réessayer, ou annulez pour garder la conversation.",
+        ar: "لم يكتمل هذا. تابِع للمحاولة مجددًا، أو ألغِ للاحتفاظ بالمحادثة.",
+        zh_hans: "此操作未完成。选择继续可重试，选择取消可保留该对话。",
+        ja: "完了しませんでした。続行するともう一度試します。キャンセルすると会話を残します。",
     },
     Row {
         key: Key::BotsArchivedLoading,

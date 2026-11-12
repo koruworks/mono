@@ -1192,6 +1192,49 @@ fn unfinished_creations_are_listed_after_a_restart_and_acted_on_by_id() {
     assert!(frame.contains(OPEN_LEFT_PAGE));
     assert!(f.roster.press_unfinished(OPEN_LEFT_PAGE));
     assert_eq!(f.roster.take_open_page(), Some(page));
+
+    // **The heading heads unfinished creations only, and an abandoned
+    // creation's note goes with the next listing** (the third window run:
+    // the note stayed under an empty *Unfinished* heading, beside a Bot of
+    // that name made since). The last unfinished one's Retry finishes it,
+    // as `retry_bot_creation` answers: the note, and no heading over it.
+    let mut made = stuck.clone();
+    made.stage = BotCreationStage::Completed;
+    f.answers
+        .send(Answer::Wrote {
+            bot: stuck.bot_id,
+            request: stuck.request_id,
+            result: Ok(BotResponse::Creation { creation: made }),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert!(f.roster.creations().is_empty());
+    let frame = frame_of(&f.roster);
+    assert!(
+        frame.contains(ABANDONED_LINES[0]),
+        "what it came to is said"
+    );
+    assert!(!frame.contains(UNFINISHED_HEADING), "no empty heading");
+    // The roster lists again — a Bot made, a re-show: the workspace without
+    // it, and the note leaves.
+    f.roster.owe_lifecycle_refresh();
+    f.roster.maintain();
+    // The latest listing asked: a made Bot is listed again too.
+    let next = f
+        .commands
+        .try_iter()
+        .filter_map(|command| match command {
+            Command::List { seq, .. } => Some(seq),
+            _ => None,
+        })
+        .last()
+        .expect("the roster lists again");
+    // The Bots and the creations, as `List` answers both.
+    assert!(f.answer(next, Ok(Vec::new())));
+    assert!(f.roster.abandoned().is_none(), "said once");
+    let frame = frame_of(&f.roster);
+    assert!(!frame.contains(ABANDONED_LINES[0]));
+    assert!(!frame.contains(UNFINISHED_HEADING));
 }
 
 /// **A failed read of the unfinished creations keeps what was listed**, and

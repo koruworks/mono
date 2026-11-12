@@ -731,12 +731,25 @@ fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
                     dialog.body()
                 ),
             }
-            assert!(
-                dialog
-                    .body()
-                    .contains("including a session you have taken over"),
-                "{case}: what always happens is still said"
+            // **That running work is stopped is said where it can be true**:
+            // a conversation the window knows is idle is not told so (the
+            // third window run); a whole Bot's question says what always
+            // happens to work that runs, as it did.
+            let says_stop = dialog
+                .body()
+                .contains("including a session you have taken over");
+            assert_eq!(
+                says_stop,
+                !(conversation && known == Known::Idle),
+                "{case}: {}",
+                dialog.body()
             );
+            if conversation {
+                assert!(
+                    dialog.body().contains("keeps working without it"),
+                    "{case}: what always happens is still said"
+                );
+            }
             // The tree marks the default answer, and only it.
             v.seat_accessibility(koru_workspace_host::accessibility::WindowSlot::from_raw(1));
             let node = dialog_node(&v);
