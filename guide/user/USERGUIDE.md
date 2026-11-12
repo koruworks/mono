@@ -1937,6 +1937,8 @@ In the **Manage** tab, **New profile** sits under the Profiles in the nav, and
 the account you are signed in with is on the **Koru Cloud** page. A local-only
 Profile's page says **No online identity attached** instead of reporting a
 connection failure. **New profile** opens the same setup card as the first run,
+right under the page's own *New profile* heading — so the card has no title or
+lead of its own, and in a narrow pane its color and emoji rows wrap to fit —
 with its first label reading **Profile**: the box starts empty (placeholder
 *Profile name*) and names only the new Profile, so creating a Profile there never
 changes your Koru account's name, and the Welcome tab greets you without a name.

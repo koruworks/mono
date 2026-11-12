@@ -4029,6 +4029,48 @@ mod tests {
         assert_eq!(field(&kept, Hit::Name), "Mine");
     }
 
+    /// **Embedded, the card has no title or lead** (Q-C): Manage's page head
+    /// already says *New profile* with its own lead, so the card's first line
+    /// is its label. No `setup/title` or `setup/lead` node is in the frame and
+    /// no `blurb` in the tree, while the form group keeps the title as its
+    /// name; on first run both are there.
+    #[test]
+    fn the_embedded_card_has_no_title_or_lead() {
+        use super::setup::{KEY_LEAD, KEY_TITLE, KEY_YOU_LABEL};
+        use crate::accessibility::{Slots, ViewSlot, WindowSlot};
+        fn has_blurb(view: &mut OnboardingView) -> (bool, Option<String>) {
+            let mut slots = Slots::default();
+            let (window, slot): (WindowSlot, ViewSlot) = (slots.window(), slots.view());
+            let tree = view.accessibility_semantics(window, slot);
+            let blurb = tree[0]
+                .children
+                .iter()
+                .any(|node| node.occurrence.part == accessibility::parts::BLURB);
+            (blurb, tree[0].label.clone())
+        }
+        let title = koru_i18n::t(
+            OnboardingView::default().language,
+            koru_i18n::Key::SetupTitle,
+        );
+
+        let mut embedded = OnboardingView::default();
+        embedded.set_embedded(true);
+        embedded.show_setup();
+        embedded.set_viewport(480.0, 900.0);
+        assert!(embedded.setup_node_rect(KEY_TITLE).is_none());
+        assert!(embedded.setup_node_rect(KEY_LEAD).is_none());
+        // The first line is the label, at the card's top.
+        let frame_card = rect_of(&mut embedded, KEY_CARD);
+        let label = rect_of(&mut embedded, KEY_YOU_LABEL);
+        assert_eq!(label.y, frame_card.y, "the label is the card's first line");
+        assert_eq!(has_blurb(&mut embedded), (false, Some(title.to_owned())));
+
+        let mut window = card();
+        assert!(window.setup_node_rect(KEY_TITLE).is_some());
+        assert!(window.setup_node_rect(KEY_LEAD).is_some());
+        assert_eq!(has_blurb(&mut window), (true, Some(title.to_owned())));
+    }
+
     /// **The host supplies the first label** (D8): *You* and *Your name* by
     /// default; *Profile* and *Profile name* once Manage says so; and a form
     /// swapped in for another account keeps what the host said.

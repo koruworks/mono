@@ -8,7 +8,7 @@
 //! col  Setup window          the area beside the welcome sidebar, below the caption
 //!   spacer
 //!   col  Setup card          at most 540, never wider than the area less 32
-//!     text  title, lead                        setup/title, setup/lead
+//!     text  title, lead      not when embedded setup/title, setup/lead
 //!     text  "You" / "Profile"                  setup/you
 //!     row   You              chip, name field  setup/avatar, setup/name
 //!     text  "First workspace"
@@ -447,22 +447,29 @@ impl OnboardingView {
             .w(width)
             .max_w(SETUP_CARD_MAX_W)
             .pad(pad)
-            .gap(SETUP_ROW_GAP)
-            .child(
-                text(t(lang, T::SetupTitle))
-                    .named("Setup title")
-                    .role(roles::SUBTITLE)
-                    .wrap()
-                    .id(KEY_TITLE),
-            )
-            .child(
-                text(t(lang, T::SetupLead))
-                    .named("Setup lead")
-                    .role(roles::UI)
-                    .ink(Ink::Secondary)
-                    .wrap()
-                    .id(KEY_LEAD),
-            )
+            .gap(SETUP_ROW_GAP);
+        // Embedded, the host page's head already says *New profile* with its
+        // own lead, so the card has neither (Q-C): its first line is the
+        // *Profile* label, directly under the page head.
+        if !self.embedded {
+            card = card
+                .child(
+                    text(t(lang, T::SetupTitle))
+                        .named("Setup title")
+                        .role(roles::SUBTITLE)
+                        .wrap()
+                        .id(KEY_TITLE),
+                )
+                .child(
+                    text(t(lang, T::SetupLead))
+                        .named("Setup lead")
+                        .role(roles::UI)
+                        .ink(Ink::Secondary)
+                        .wrap()
+                        .id(KEY_LEAD),
+                );
+        }
+        card = card
             .child(label(label_key).id(KEY_YOU_LABEL))
             .child(
                 row("You")

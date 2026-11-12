@@ -973,6 +973,8 @@ impl OnboardingView {
         let rect = |key| frame.node(key).map_or(none, |node| node.rect);
         let (label_key, placeholder_key) = self.setup_owner_keys();
         let mut children = Vec::new();
+        // Embedded in Manage the card has no lead (Q-C), so none is
+        // published; the group keeps the title as its name either way.
         if frame.node(KEY_LEAD).is_some() {
             children.push(label(
                 cx.at(parts::BLURB),

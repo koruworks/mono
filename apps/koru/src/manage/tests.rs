@@ -389,6 +389,13 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
         let owner = find(&tree, "owner-name").expect("embedded owner field");
         let name = find(&tree, "workspace-name").expect("embedded workspace field");
         assert!(find(&tree, "workspace-icon").is_some());
+        // Under the page head the card has no lead of its own (Q-C); the
+        // form group still carries the card's title as its name.
+        assert!(
+            find(&tree, "blurb").is_none(),
+            "no lead under the page head"
+        );
+        assert!(find(&tree, "form").and_then(|form| form.label).is_some());
         let primary = find(&tree, "primary").unwrap();
         // The host said *Profile* (D8): the field names the new Profile.
         assert_eq!(
@@ -481,6 +488,61 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
             Action::SetValue,
             Some(&ActionData::Value("Stale".into()))
         ));
+    }
+}
+
+/// **In a narrow pane the card's rows wrap to the column** (F6): both the
+/// swatch row and the emoji row lie inside the page's column, each on more
+/// than one line, with every cell inside the column — none clipped, nothing
+/// scrolled sideways.
+#[test]
+fn embedded_rows_wrap_to_a_narrow_column() {
+    use koru_workspace_host::accessibility::{ControlPart, SemanticNode};
+    fn find(node: &SemanticNode, part: &'static str) -> Option<SemanticNode> {
+        if node.occurrence.part == ControlPart::new(part) {
+            return Some(node.clone());
+        }
+        node.children.iter().find_map(|child| find(child, part))
+    }
+    let (mut view, _, _) = manage();
+    View::set_viewport(&mut view, 330.0, 700.0);
+    view.show(Page::NewProfile);
+    view.c.with_creation_form(|form| form.show_setup());
+    view.size_creation_form();
+    let form = view.form_rect();
+    assert!(
+        form.w < 310.0,
+        "the pane must be narrower than ten swatches for this to test anything: {form:?}"
+    );
+    let mut cx = context();
+    cx.area.w = 330.0;
+    cx.area.h = 700.0;
+    let tree = view.semantics(&cx);
+    let (left, right) = (cx.area.x + form.x, cx.area.x + form.x + form.w);
+    for part in ["colors", "emoji"] {
+        let row = find(&tree, part).unwrap_or_else(|| panic!("the {part} row"));
+        let bounds = row.bounds.expect("a row has a rectangle");
+        assert!(
+            bounds.x >= left - 0.01 && bounds.x + bounds.w <= right + 0.01,
+            "the {part} row leaves the column: {bounds:?} in {left}..{right}"
+        );
+        assert_eq!(row.children.len(), 10, "{part}");
+        let mut lines: Vec<f32> = Vec::new();
+        for cell in &row.children {
+            let cell = cell.bounds.expect("a cell has a rectangle");
+            assert!(
+                cell.x >= left - 0.01 && cell.x + cell.w <= right + 0.01,
+                "a {part} cell leaves the column: {cell:?} in {left}..{right}"
+            );
+            assert!(
+                cell.y >= bounds.y - 0.01 && cell.y + cell.h <= bounds.y + bounds.h + 0.01,
+                "a {part} cell leaves its row: {cell:?} in {bounds:?}"
+            );
+            if !lines.iter().any(|y| (y - cell.y).abs() < 0.5) {
+                lines.push(cell.y);
+            }
+        }
+        assert!(lines.len() > 1, "the {part} row did not wrap: {lines:?}");
     }
 }
 
