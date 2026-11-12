@@ -230,6 +230,8 @@ struct Device {
     queue: koru_search::Queue,
     present: Arc<Mutex<HashSet<String>>>,
     requests: Arc<Mutex<Vec<Request>>>,
+    /// What the readings route wakes the coordinator through (OCR Plan 3.2).
+    inbox: Arc<Inbox>,
     now: i64,
 }
 
@@ -297,6 +299,7 @@ impl Device {
             queue,
             present,
             requests,
+            inbox,
             now: 0,
         }
     }
@@ -1527,3 +1530,7 @@ fn a_device_hands_the_worker_the_object_the_blob_store_wrote() {
 // --------------------------------------------- the backlog (OCR Plan 3.1)
 
 mod backlog;
+
+// ------------------------------------------------- long files (OCR Plan 3.2)
+
+mod long_files;

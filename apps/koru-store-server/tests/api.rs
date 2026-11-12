@@ -1432,4 +1432,34 @@ fn the_reader_routes_and_one_reading_reach_their_own_handlers() {
     assert_eq!(crossed.status().as_u16(), 405);
     let wrong = daemon.post(&format!("/v1/readings/{ws}/{hash}"), &serde_json::json!({}));
     assert_eq!(wrong.status().as_u16(), 405);
+
+    // A person's two requests (OCR Plan 3.2) reach the reading port, which
+    // answers for nothing read here with its own refusal — never the reader's
+    // routes, never a 404 for an unknown path. A GET on them is refused.
+    for verb in ["read-all", "read-again"] {
+        let asked = daemon.post(
+            &format!("/v1/readings/{ws}/{hash}/{verb}"),
+            &serde_json::json!({}),
+        );
+        assert_eq!(asked.status().as_u16(), 400, "{verb}");
+        let body: serde_json::Value = asked.json().unwrap();
+        assert_eq!(body["code"], "invalid_request", "{verb}: {body}");
+        let got = daemon.get(&format!("/v1/readings/{ws}/{hash}/{verb}"));
+        assert_eq!(got.status().as_u16(), 405, "{verb}");
+    }
+    // Still a reading's answer, with nothing offered: nothing was read.
+    let one = daemon.get(&format!("/v1/readings/{ws}/{hash}"));
+    assert_eq!(
+        one.json::<serde_json::Value>().unwrap(),
+        serde_json::Value::Null
+    );
+    // An unknown workspace is the catalog's 404, as for the reading itself.
+    let nowhere = daemon.post(
+        &format!(
+            "/v1/readings/{}/{hash}/read-all",
+            koru_store_core::ids::WorkspaceId::new()
+        ),
+        &serde_json::json!({}),
+    );
+    assert_eq!(nowhere.status().as_u16(), 404);
 }

@@ -1198,6 +1198,12 @@ enum ImportMessage {
     ReadingFetchedForSave {
         result: Result<(String, String), String>,
     },
+    /// What the Store says may be asked of one item's reading now, for its
+    /// right-click menu (OCR Plan 3.2). `None`: nothing offered.
+    ReadingOffers {
+        target: crate::reading_file::ReadingTarget,
+        offers: Option<crate::reading_requests::ReadingOffers>,
+    },
     FileOpened {
         name: String,
         result: Result<(), String>,
@@ -1742,17 +1748,24 @@ fn workspace_file_hash(
     koru_store_core::model::BlobHash::parse(&hash.0).map_err(|e| e.to_string())
 }
 
-/// **Fetch one item's reading and turn it into the file's text**, on a
-/// worker: the suggested file name and the text, for the dialog the event
-/// thread then opens. `workspace` is the current one, which is where a
-/// picture lives; a file finds its own, as *Save as…* does.
-fn fetch_reading_text(
+/// **Which workspace and bytes a reading's item names**, on a worker: a file
+/// finds its own workspace, as *Save as…* does; a picture is in `workspace`,
+/// the current one. With the client that answered, and a file's title.
+fn locate_reading_item(
     segment: &str,
     root: Option<&std::path::Path>,
     target: &crate::reading_file::ReadingTarget,
     workspace: Option<koru_store_core::ids::WorkspaceId>,
-) -> Result<(String, String), String> {
-    use crate::reading_file::{ReadingTarget, file_name, text};
+) -> Result<
+    (
+        koru_api_client::Client,
+        koru_store_core::ids::WorkspaceId,
+        koru_store_core::model::BlobHash,
+        Option<String>,
+    ),
+    String,
+> {
+    use crate::reading_file::ReadingTarget;
     let client = client_at_segment(segment, root).map_err(|e| e.to_string())?;
     let (workspace, hash, name) = match target {
         ReadingTarget::File(id) => {
@@ -1767,6 +1780,39 @@ fn fetch_reading_text(
             (workspace, hash, None)
         }
     };
+    Ok((client, workspace, hash, name))
+}
+
+/// **What may be asked of one item's reading now** (OCR Plan 3.2), on a
+/// worker. `None` when nothing has been read of it, or anything on the way
+/// failed: a menu then offers nothing, which is the honest answer.
+fn fetch_offers(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Option<crate::reading_requests::ReadingOffers> {
+    let (client, workspace, hash, _) =
+        locate_reading_item(segment, root, target, workspace).ok()?;
+    client
+        .reading(workspace, &hash)
+        .ok()
+        .flatten()
+        .map(|answer| answer.offers)
+}
+
+/// **Fetch one item's reading and turn it into the file's text**, on a
+/// worker: the suggested file name and the text, for the dialog the event
+/// thread then opens. `workspace` is the current one, which is where a
+/// picture lives; a file finds its own, as *Save as…* does.
+fn fetch_reading_text(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<(String, String), String> {
+    use crate::reading_file::{file_name, text};
+    let (client, workspace, hash, name) = locate_reading_item(segment, root, target, workspace)?;
     let answer = client
         .reading(workspace, &hash)
         .map_err(|e| e.to_string())?;
@@ -7001,6 +7047,28 @@ Nothing was written. The store starts on demand, so this usually means it could 
         for hash in reading_saves {
             self.save_reading(crate::reading_file::ReadingTarget::Picture { hash });
         }
+        // A picture's menu opened, or *Read again* was chosen on one (OCR
+        // Plan 3.2): the view names the bytes, the shell asks the Store off
+        // this thread.
+        let offer_asks: Vec<String> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(_, pane)| pane.view.take_wants_reading_offers())
+            .collect();
+        for hash in offer_asks {
+            self.fetch_reading_offers(crate::reading_file::ReadingTarget::Picture { hash });
+        }
+        let read_agains: Vec<String> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(_, pane)| pane.view.take_wants_read_again())
+            .collect();
+        for hash in read_agains {
+            self.request_reading(
+                crate::reading_file::ReadingTarget::Picture { hash },
+                crate::reading_requests::ReadRequestKind::ReadAgain,
+            );
+        }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
         // about_to_wait has failed silently on Windows), and only while no
@@ -9859,6 +9927,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::SaveFiles(ids) => self.save_files(ids),
             PaneRequest::SaveReading(target) => self.save_reading(target),
+            PaneRequest::ReadingOffers(target) => self.fetch_reading_offers(target),
+            PaneRequest::ReadRequest(target, kind) => self.request_reading(target, kind),
             PaneRequest::SaveDiagram(request) => self.save_diagram(source, request),
             PaneRequest::CopyDiagram(request) => self.copy_diagram(source, &request),
             PaneRequest::OpenFile(id) => {
@@ -10832,6 +10902,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .with_details(error),
                 ),
             },
+            ImportMessage::ReadingOffers { target, offers } => {
+                for pane in self.panes.values_mut() {
+                    if pane.view.set_reading_offers(&target, offers) {
+                        pane.needs_frame.set(true);
+                        pane.window.request_redraw();
+                    }
+                }
+            }
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -11059,6 +11137,77 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     .with_details(error),
             );
         }
+    }
+
+    /// **Ask the Store what may be asked of one item's reading** — for its
+    /// right-click menu (OCR Plan 3.2, `reading_requests`). On a worker, as
+    /// *Save reading* fetches; the answer reaches every view through
+    /// `View::set_reading_offers`.
+    fn fetch_reading_offers(&mut self, target: crate::reading_file::ReadingTarget) {
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let workspace = self.current_store_workspace();
+        let spawned = std::thread::Builder::new()
+            .name("koru-reading-offers".into())
+            .spawn(move || {
+                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
+                let _ = proxy.send_event(Wake::Import);
+            });
+        if let Err(error) = spawned {
+            // Nothing is offered, which is what an unanswered question shows.
+            tracing::debug!(%error, "the reading offers could not be asked for");
+        }
+    }
+
+    /// **Send *Read all pages* or *Read again*** (OCR Plan 3.2) on a worker,
+    /// then ask again what is offered, so the next menu does not offer the
+    /// same request twice. A refusal says nothing to the person: the entry was
+    /// offered because the Store would accept it, and a refusal now is a
+    /// moment's race (the bytes or the reader went), which the next menu
+    /// reflects by not offering it.
+    fn request_reading(
+        &mut self,
+        target: crate::reading_file::ReadingTarget,
+        kind: crate::reading_requests::ReadRequestKind,
+    ) {
+        use crate::reading_requests::ReadRequestKind;
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let workspace = self.current_store_workspace();
+        let spawned = std::thread::Builder::new()
+            .name("koru-read-request".into())
+            .spawn(move || {
+                if let Ok((client, ws, hash, _)) =
+                    locate_reading_item(&segment, root.as_deref(), &target, workspace)
+                {
+                    let sent = match kind {
+                        ReadRequestKind::ReadAll => client.read_all(ws, &hash).map(|_| ()),
+                        ReadRequestKind::ReadAgain => client.read_again(ws, &hash).map(|_| ()),
+                    };
+                    if let Err(error) = sent {
+                        tracing::debug!(code = %error.code(), "a reading request was refused");
+                    }
+                }
+                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
+                let _ = proxy.send_event(Wake::Import);
+            });
+        if let Err(error) = spawned {
+            tracing::debug!(%error, "a reading request could not be sent");
+        }
+    }
+
+    /// The current workspace, as the Store names it: where a picture lives.
+    fn current_store_workspace(&self) -> Option<koru_store_core::ids::WorkspaceId> {
+        self.runtime
+            .workspace
+            .current()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
     }
 
     /// The reading is here: ask where it goes, then write it off this thread.

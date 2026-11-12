@@ -312,6 +312,16 @@ fn file_rows_offer_open_in_app_and_save_as() {
         v.menu.as_ref().unwrap().items(),
         context_menu::file_items(1, None)
     );
+    // Opening a file's menu asks the shell what its reading offers (OCR Plan
+    // 3.2); nothing was fetched to open it.
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadingOffers(
+            koru_workspace_host::reading_file::ReadingTarget::File(
+                koru_core::DocumentId::from_uuid(file.as_uuid())
+            )
+        ))
+    );
 
     assert!(v.run_menu_action(MenuSubject::Files(vec![file]), MenuAction::OpenFileInApp,));
     assert_eq!(
@@ -353,6 +363,13 @@ fn a_files_note_goes_through_the_shell_either_way() {
         context_menu::file_items(1, Some(true)),
         "the entry says the file has a note, so the menu offers to open it"
     );
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadingOffers(
+            koru_workspace_host::reading_file::ReadingTarget::File(file_doc)
+        )),
+        "the menu's reading offers are asked for, off this thread"
+    );
 
     assert!(v.run_menu_action(MenuSubject::Files(vec![file]), MenuAction::OpenNote));
     assert_eq!(
@@ -363,6 +380,89 @@ fn a_files_note_goes_through_the_shell_either_way() {
     assert_eq!(
         View::take_pane_request(&mut v),
         Some(PaneRequest::OpenFileNote(file_doc))
+    );
+}
+
+/// ***Read all pages* in a file's menu, from what the Store said** (OCR Plan
+/// 3.2): the first menu opens from nothing known and asks; the answer reopens
+/// it where it was with the entry added at its end and the pointer's row
+/// kept; choosing it sends the request and the next menu does not offer it
+/// again; a picture's answer is not the Files menu's.
+#[test]
+fn a_files_reading_offers_reach_its_menu_without_a_fetch_on_open() {
+    use koru_workspace_host::reading_file::ReadingTarget;
+    use koru_workspace_host::reading_requests::{ReadRequestKind, ReadingOffers};
+    let (mut v, _workspace) = on_document();
+    let file = koru_core::NodeId::new();
+    let file_doc = koru_core::DocumentId::from_uuid(file.as_uuid());
+    v.explore.show_files();
+
+    assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    let first = v.menu.as_ref().unwrap().items().to_vec();
+    assert!(
+        !first.contains(&MenuAction::ReadAllPages),
+        "nothing known yet"
+    );
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadingOffers(ReadingTarget::File(file_doc)))
+    );
+    v.menu.as_mut().unwrap().hover = Some(1);
+
+    // The answer: stopped at the page limit, can be finished here.
+    let capped = Some(ReadingOffers {
+        read_all: true,
+        read_again: false,
+    });
+    assert!(View::set_reading_offers(
+        &mut v,
+        &ReadingTarget::File(file_doc),
+        capped
+    ));
+    let items = v.menu.as_ref().unwrap().items().to_vec();
+    assert_eq!(items[..first.len()], first[..], "nothing above moved");
+    assert_eq!(
+        items[first.len()..],
+        [MenuAction::Divider, MenuAction::ReadAllPages]
+    );
+    assert_eq!(v.menu.as_ref().unwrap().hover, Some(1), "the pointer's row");
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        None,
+        "one question per opening"
+    );
+    // The same answer again changes nothing.
+    assert!(!View::set_reading_offers(
+        &mut v,
+        &ReadingTarget::File(file_doc),
+        capped
+    ));
+    // A picture's answer is not this menu's.
+    assert!(!View::set_reading_offers(
+        &mut v,
+        &ReadingTarget::Picture {
+            hash: "b3:ab".into()
+        },
+        capped
+    ));
+
+    assert!(v.run_menu_action(MenuSubject::Files(vec![file]), MenuAction::ReadAllPages));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadRequest(
+            ReadingTarget::File(file_doc),
+            ReadRequestKind::ReadAll
+        ))
+    );
+    v.menu = None;
+    assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    assert!(
+        !v.menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .contains(&MenuAction::ReadAllPages),
+        "asked once: not offered twice"
     );
 }
 

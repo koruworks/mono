@@ -979,6 +979,17 @@ pub struct MainView {
     /// What the workspace holds, pushed by the shell. `None` before the first
     /// push; empty is a real answer meaning a workspace with no documents.
     entries: Option<Vec<koru_core::explore::ExploreEntry>>,
+    /// What the Store last said may be asked of each file's reading (*Read all
+    /// pages*, *Read again*; OCR Plan 3.2), pushed by the shell through
+    /// `View::set_reading_offers`. A file's menu opens from this and never
+    /// fetches; opening it asks the shell for a fresh answer.
+    reading_offers: std::collections::HashMap<
+        koru_core::DocumentId,
+        koru_workspace_host::reading_requests::ReadingOffers,
+    >,
+    /// Where the open single-file menu was opened, so a fresh answer can
+    /// correct it in place: its file, the anchor and whether from the `…`.
+    file_menu_opened: Option<(NodeId, (f32, f32), bool)>,
     /// Why this window is not reaching the store, pushed by the shell.
     ///
     /// `None` — the overwhelmingly common case — is what the chip's absence
@@ -1958,6 +1969,8 @@ impl MainView {
             )),
             preferences: Settings::default(),
             entries: None,
+            reading_offers: std::collections::HashMap::new(),
+            file_menu_opened: None,
             store_trouble: None,
             trashed_documents: None,
             branch_pill_w: 0.0,
@@ -4506,6 +4519,10 @@ impl MainView {
                     || (matches!(action, MenuAction::AddNote | MenuAction::OpenNote)
                         && files.len() == 1)
                     || matches!(action, MenuAction::SaveReading if files.len() == 1)
+                    || matches!(
+                        action,
+                        MenuAction::ReadAllPages | MenuAction::ReadAgain if files.len() == 1
+                    )
                     || matches!(action, MenuAction::MoveToTrash if files.len() == 1)
                     || matches!(
                         action,
@@ -5011,6 +5028,26 @@ impl MainView {
                     MenuAction::SaveReading if files.len() == 1 => {
                         self.ask_pane(PaneRequest::SaveReading(
                             koru_workspace_host::reading_file::ReadingTarget::File(files[0]),
+                        ))
+                    }
+                    // *Read all pages*, *Read again* (OCR Plan 3.2): the shell
+                    // sends the request; the next menu does not offer it again
+                    // until the Store says so.
+                    MenuAction::ReadAllPages | MenuAction::ReadAgain if files.len() == 1 => {
+                        use koru_workspace_host::reading_requests::{
+                            ReadRequestKind, after_request,
+                        };
+                        let kind = if action == MenuAction::ReadAllPages {
+                            ReadRequestKind::ReadAll
+                        } else {
+                            ReadRequestKind::ReadAgain
+                        };
+                        if let Some(offers) = self.reading_offers.get_mut(&files[0]) {
+                            *offers = after_request(*offers, kind);
+                        }
+                        self.ask_pane(PaneRequest::ReadRequest(
+                            koru_workspace_host::reading_file::ReadingTarget::File(files[0]),
+                            kind,
                         ))
                     }
                     _ => false,
@@ -5568,6 +5605,17 @@ impl MainView {
         } else {
             None
         };
+        // *Read all pages* and *Read again* (OCR Plan 3.2): from the Store's
+        // last answer for the file, held here — nothing is fetched while the
+        // menu opens. The shell is asked afresh, off this thread, and a
+        // different answer corrects the menu in place (`set_reading_offers`).
+        let single_file = (files && count == 1).then(|| nodes[0]);
+        let offers = single_file.and_then(|node| {
+            self.reading_offers
+                .get(&koru_core::DocumentId::from_uuid(node.as_uuid()))
+                .copied()
+        });
+        self.file_menu_opened = single_file.map(|node| (node, at, from_button));
         let mut m = ContextMenu::aligned(
             &mut self.engine,
             if files {
@@ -5577,7 +5625,7 @@ impl MainView {
             },
             at,
             if files {
-                context_menu::explore_file_items(count, note)
+                context_menu::explore_file_items(count, note, offers)
             } else {
                 context_menu::node_items(count)
             },
@@ -5586,6 +5634,66 @@ impl MainView {
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
         self.menu = Some(m);
+        if let Some(node) = single_file {
+            self.ask_pane(PaneRequest::ReadingOffers(
+                koru_workspace_host::reading_file::ReadingTarget::File(
+                    koru_core::DocumentId::from_uuid(node.as_uuid()),
+                ),
+            ));
+        }
+        true
+    }
+
+    /// **The Store's answer for one file's reading** (OCR Plan 3.2): kept for
+    /// the file's next menu, and — when a menu on that file is open and the
+    /// answer changes what it offers — the menu is opened again where it was,
+    /// with the corrected entries. They are the menu's last group, so every
+    /// row above them stays where the pointer left it. Returns whether
+    /// anything drawn changed.
+    fn take_file_reading_offers(
+        &mut self,
+        file: koru_core::DocumentId,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        let before = self.reading_offers.get(&file).copied();
+        match offers {
+            Some(offers) => {
+                self.reading_offers.insert(file, offers);
+            }
+            None => {
+                self.reading_offers.remove(&file);
+            }
+        }
+        let entries = |offers| koru_workspace_host::reading_requests::entries(offers, false);
+        if entries(before) == entries(offers) {
+            return false;
+        }
+        let Some((node, at, from_button)) = self.file_menu_opened else {
+            return false;
+        };
+        let open_on_it = node.as_uuid() == file.as_uuid()
+            && self.submenu.is_none()
+            && self
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.subject == MenuSubject::Files(vec![node]));
+        if !open_on_it {
+            return false;
+        }
+        // A row the pointer is on survives only when no row was taken away.
+        let hover = self
+            .menu
+            .as_ref()
+            .and_then(|m| m.hover)
+            .filter(|_| entries(offers).len() >= entries(before).len());
+        self.open_node_menu(vec![node], at, from_button);
+        // The pointer's row is where it was: only rows below it can change.
+        if let Some(m) = self.menu.as_mut() {
+            m.hover = hover;
+        }
+        // Opening asked the shell again; one answer per opening is enough.
+        self.pane_requests
+            .retain(|request| !matches!(request, PaneRequest::ReadingOffers(_)));
         true
     }
 
@@ -14515,6 +14623,33 @@ impl View for MainView {
     fn take_wants_save_reading(&mut self) -> Option<String> {
         self.active_editing_leaf()
             .and_then(|leaf| View::take_wants_save_reading(leaf))
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_reading_offers(leaf))
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_read_again(leaf))
+    }
+
+    /// A file's answer is this view's own (the Files menu); a picture's goes
+    /// to the document whose menu asked.
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match target {
+            koru_workspace_host::reading_file::ReadingTarget::File(file) => {
+                self.take_file_reading_offers(*file, offers)
+            }
+            koru_workspace_host::reading_file::ReadingTarget::Picture { .. } => self
+                .active_editing_leaf()
+                .is_some_and(|leaf| View::set_reading_offers(leaf, target, offers)),
+        }
     }
 
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {

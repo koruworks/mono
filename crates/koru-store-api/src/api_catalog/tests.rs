@@ -350,8 +350,10 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // The reader's installer (OCR Plan 2.4) adds six internal rows over five
     // paths: its state and Remove share `/v1/readings/reader`. The items
     // behind the Settings row's could-not-be-read count (Plan 2.5) one more.
-    assert_eq!(ROUTES.len(), 122, "a row was added or removed");
-    assert_eq!(paths.len(), 99, "a path was added or removed");
+    // A person's two requests on one item (OCR Plan 3.2, `…/read-all` and
+    // `…/read-again`) add two internal rows over two paths.
+    assert_eq!(ROUTES.len(), 124, "a row was added or removed");
+    assert_eq!(paths.len(), 101, "a path was added or removed");
 }
 
 #[test]
@@ -544,6 +546,10 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             // Ours: one reading's words, asked only by the debug-only *Save
             // reading* entry until a rung that shows them to a person ships.
             "/v1/readings/{workspace}/{hash}",
+            // Ours: a person's request on one item, a fact about this
+            // computer (OCR Plan 3.2).
+            "/v1/readings/{workspace}/{hash}/read-all",
+            "/v1/readings/{workspace}/{hash}/read-again",
             "/v1/debug/openapi.json",
             "/v1/debug/store",
             "/v1/debug/workspaces/{id}",

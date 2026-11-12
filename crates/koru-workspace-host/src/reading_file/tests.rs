@@ -25,6 +25,7 @@ fn answer() -> ReadingAnswer {
                 text: "third page\n".into(),
             },
         ],
+        offers: Default::default(),
     }
 }
 

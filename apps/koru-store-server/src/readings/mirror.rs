@@ -24,6 +24,10 @@
 //! - `read_attempts` — failures that are true **only on this computer** (a
 //!   crash, an exhausted worker, a format it cannot decode, a file that needs
 //!   the reader), and their backoff. Never synced: another device may succeed.
+//! - `read_requests` — what a person asked for on this computer: *Read all
+//!   pages* or *Read again* on one item (OCR TECHNICAL §7, §9; Plan 3.2). One
+//!   row per workspace and hash, removed when the request has been met. The
+//!   request is machine-local; its result, the reading, is not.
 //!
 //! ## A schema bump is a rebuild
 //!
@@ -47,14 +51,25 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 /// The shape of everything below. A change is a rebuild.
 ///
 /// 1 is the first: `readings`, `reading_pages`, `reading_sources`,
-/// `read_attempts`.
-pub const READINGS_SCHEMA_VERSION: i64 = 1;
+/// `read_attempts`. 2 adds `read_requests` (OCR Plan 3.2).
+pub const READINGS_SCHEMA_VERSION: i64 = 2;
 
 /// The name in the log, so the file that ran is the file on disk.
-const MIGRATION_NAME: &str = "027_readings_mirror_migration.sql";
+const MIGRATION_NAME: &str = "028_readings_requests_migration.sql";
 
 const READINGS_SCHEMA_MIGRATION: &str =
-    include_str!("../../migrations/027_readings_mirror_migration.sql");
+    include_str!("../../migrations/028_readings_requests_migration.sql");
+
+/// The items stopped at a page limit, everywhere on this store root
+/// ([`Mirror::partly_read`]): what the Settings row's *partly read* list
+/// shows. `generation >= ?1` because an entry a newer build wrote is settled
+/// for this one too, and counted as partly read with the rest.
+// Wired into the Settings row's route by Plan 2.5; until then only its tests
+// and the query-plan pin read it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const PARTLY_READ_SQL: &str =
+    "SELECT workspace_id, parent_document_id, hash, page_count FROM readings
+      WHERE status = 'partial' AND reason = 'page-cap' AND generation >= ?1";
 
 /// Statements carry at most this many hashes, well under SQLite's bound.
 const CHUNK: usize = 500;
@@ -541,7 +556,7 @@ impl Mirror {
         workspace: WorkspaceId,
     ) -> Result<HashMap<(DocumentId, String), Outcome>> {
         let mut q = self.db.prepare(
-            "SELECT parent_document_id, hash, generation, status, reason, page_count
+            "SELECT parent_document_id, hash, generation, status, reason, page_count, source
                FROM readings WHERE workspace_id = ?1",
         )?;
         let rows = q.query_map(params![workspace.to_storage()], |r| {
@@ -553,6 +568,7 @@ impl Mirror {
                     status: r.get(3)?,
                     reason: r.get(4)?,
                     page_count: r.get(5)?,
+                    source: r.get(6)?,
                 },
             ))
         })?;
@@ -715,6 +731,113 @@ impl Mirror {
         self.db
             .execute("DELETE FROM read_attempts WHERE hash = ?1", params![hash])?;
         Ok(())
+    }
+
+    // ---------------------------------------------------- requests (Plan 3.2)
+
+    /// **A person asked for `hash` in `workspace` to be read in full or read
+    /// again** (OCR TECHNICAL §7 "The local requests table", §9). Asking
+    /// again while a request stands keeps the first one's time, so a request
+    /// keeps its place among the others. Returns whether a row was added.
+    pub fn request(&mut self, workspace: WorkspaceId, hash: &str, at: i64) -> Result<bool> {
+        let added = self.db.execute(
+            "INSERT INTO read_requests (workspace_id, hash, requested_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (workspace_id, hash) DO NOTHING",
+            params![workspace.to_storage(), hash, at],
+        )?;
+        Ok(added > 0)
+    }
+
+    /// Whether a request for `hash` in `workspace` stands.
+    pub fn requested(&self, workspace: WorkspaceId, hash: &str) -> Result<bool> {
+        Ok(self.db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM read_requests WHERE workspace_id = ?1 AND hash = ?2)",
+            params![workspace.to_storage(), hash],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// The hashes a person asked for in one workspace, oldest request first.
+    pub fn requests_in(&self, workspace: WorkspaceId) -> Result<Vec<String>> {
+        let mut q = self.db.prepare(
+            "SELECT hash FROM read_requests WHERE workspace_id = ?1
+              ORDER BY requested_at, hash",
+        )?;
+        let rows = q.query_map(params![workspace.to_storage()], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Every request on this store root, oldest first: the order the queue
+    /// meets them in, and the list the recompute drops gone items from.
+    pub fn all_requests(&self) -> Result<Vec<(WorkspaceId, String)>> {
+        let mut q = self.db.prepare(
+            "SELECT workspace_id, hash FROM read_requests
+              ORDER BY requested_at, workspace_id, hash",
+        )?;
+        let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (workspace, hash) = row?;
+            if let Some(workspace) = WorkspaceId::parse(&workspace) {
+                out.push((workspace, hash));
+            }
+        }
+        Ok(out)
+    }
+
+    /// **The request has been met** — the item was read to its end, read
+    /// again, or given a fuller reading by copy — or its item is gone.
+    pub fn request_met(&mut self, workspace: WorkspaceId, hash: &str) -> Result<()> {
+        self.db.execute(
+            "DELETE FROM read_requests WHERE workspace_id = ?1 AND hash = ?2",
+            params![workspace.to_storage(), hash],
+        )?;
+        Ok(())
+    }
+
+    /// **Every item stopped at a page limit, as ids** — what the Settings
+    /// row's *partly read* list needs (EXPERIENCE §3 "When it goes wrong",
+    /// §4; Plan 2.5 shows it). One statement ([`PARTLY_READ_SQL`]), sorted by
+    /// workspace, entry and hash. No title, no name, no word: the surface
+    /// names each item from its own listing.
+    ///
+    /// `pages_done` is the mirror's `page_count` for the row: the larger of
+    /// the entry's `pages_done` and its highest page, which for a capped
+    /// reading is where it stopped.
+    // Plan 2.5 wires this into the Settings row's list (see PARTLY_READ_SQL).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn partly_read(&self) -> Result<Vec<PartlyRead>> {
+        let mut q = self.db.prepare(PARTLY_READ_SQL)?;
+        let rows = q.query_map(params![i64::from(GENERATION)], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (workspace, parent, hash, pages) = row?;
+            if let (Some(workspace), Some(entry)) =
+                (WorkspaceId::parse(&workspace), DocumentId::parse(&parent))
+            {
+                out.push(PartlyRead {
+                    workspace,
+                    entry,
+                    hash,
+                    pages_done: u32::try_from(pages).unwrap_or(0),
+                });
+            }
+        }
+        out.sort_by(|a, b| {
+            (a.workspace.to_storage(), a.entry.to_storage(), &a.hash).cmp(&(
+                b.workspace.to_storage(),
+                b.entry.to_storage(),
+                &b.hash,
+            ))
+        });
+        Ok(out)
     }
 
     // ------------------------------------------------------------ the index
@@ -930,6 +1053,23 @@ pub struct Outcome {
     pub status: Option<String>,
     pub reason: Option<String>,
     pub page_count: i64,
+    /// `text-layer`, `recognized`, `mixed`, `plain`: whether finishing this
+    /// reading would need the reader (OCR Plan 3.2).
+    pub source: Option<String>,
+}
+
+/// One item stopped at a page limit ([`Mirror::partly_read`]). Ids and a
+/// count only.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartlyRead {
+    pub workspace: WorkspaceId,
+    /// The file (or the page holding the picture) whose reading document
+    /// holds it.
+    pub entry: DocumentId,
+    pub hash: String,
+    /// Where it stopped.
+    pub pages_done: u32,
 }
 
 /// What a settled reading counts as, for a person.
@@ -1168,6 +1308,17 @@ CREATE TABLE IF NOT EXISTS read_attempts (
     -- Epoch milliseconds UTC, for backoff only; nothing displays it.
     last_at    INTEGER NOT NULL,
     PRIMARY KEY (hash, reader, generation)
+) WITHOUT ROWID;
+
+-- What a person asked for on this computer (OCR Plan 3.2): Read all pages, or
+-- Read again. Removed when met. Keyed for the coordinator's question (this
+-- workspace's requests) and the route's (does this one stand).
+CREATE TABLE IF NOT EXISTS read_requests (
+    workspace_id TEXT NOT NULL,
+    hash         TEXT NOT NULL,
+    -- Epoch milliseconds UTC: the order requests are met in; nothing displays it.
+    requested_at INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, hash)
 ) WITHOUT ROWID;
 ";
 

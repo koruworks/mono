@@ -9,7 +9,8 @@ fn every_code_is_in_all() {
     // code missing from it is a code no client is told about. There is no
     // reflection over enum variants in Rust, so this is the guard: add a
     // variant, forget `ALL`, and the count assertion below fails.
-    assert_eq!(Code::ALL.len(), 54, "a new Code was not added to Code::ALL");
+    // 55: `blob_not_here` (OCR Plan 3.2).
+    assert_eq!(Code::ALL.len(), 55, "a new Code was not added to Code::ALL");
 }
 
 #[test]

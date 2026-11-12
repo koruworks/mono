@@ -527,6 +527,22 @@ impl View for DocumentPane {
         View::take_wants_save_reading(&mut self.doc)
     }
 
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        View::take_wants_reading_offers(&mut self.doc)
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        View::take_wants_read_again(&mut self.doc)
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        View::set_reading_offers(&mut self.doc, target, offers)
+    }
+
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
         View::take_wants_copy_html(&mut self.doc)
     }
@@ -2212,6 +2228,31 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.take_wants_save_reading(),
             Self::Document(v) => v.take_wants_save_reading(),
+        }
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_reading_offers(),
+            Self::Document(v) => v.take_wants_reading_offers(),
+        }
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_read_again(),
+            Self::Document(v) => v.take_wants_read_again(),
+        }
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match self {
+            Self::Container(v) => v.set_reading_offers(target, offers),
+            Self::Document(v) => v.set_reading_offers(target, offers),
         }
     }
 

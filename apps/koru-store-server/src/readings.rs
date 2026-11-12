@@ -152,6 +152,9 @@ impl Prepared {
     ) -> Vec<std::thread::JoinHandle<()>> {
         let board = Arc::new(Board::new(state));
         let mut threads = Vec::new();
+        // Where the bytes are: the coordinator's, and the readings route's own
+        // question before it accepts a request (OCR Plan 3.2).
+        let objects: Option<Arc<dyn coordinator::Objects>> = objects.map(Arc::from);
 
         // The reader's installer, before the coordinator, so the model it
         // finds on the disk is what the first worker is launched with.
@@ -179,6 +182,10 @@ impl Prepared {
                 let port = ReadingPort {
                     state: Arc::downgrade(state),
                     mirror: Mutex::new(mirror),
+                    hub: Arc::clone(&self.hub),
+                    inbox: Arc::clone(&self.inbox),
+                    // Requests are met only where a coordinator runs.
+                    objects: objects.clone().filter(|_| launcher.is_some()),
                     items: items::ItemsSource::new(self.derived.clone()),
                 };
                 if !state.set_reading_service(Arc::new(port)) {
@@ -221,7 +228,7 @@ impl Prepared {
             tracing::error!("the reading coordinator has no read model to query; nothing is read");
             return threads;
         };
-        let mut coordinator = coordinator::Coordinator::new(
+        let mut coordinator = coordinator::Coordinator::shared(
             state,
             projections,
             mirror,
@@ -330,9 +337,95 @@ fn spawn_coordinator(
 struct ReadingPort {
     state: Weak<AppState>,
     mirror: Mutex<mirror::Mirror>,
+    /// Whether the reader is installed, for the requests (OCR Plan 3.2).
+    hub: Arc<ReaderHub>,
+    /// Wakes the coordinator when a request is recorded.
+    inbox: Arc<Inbox>,
+    /// Where the bytes are; `None` on a host that reads nothing, which then
+    /// offers and accepts no request.
+    objects: Option<Arc<dyn coordinator::Objects>>,
     /// `GET /v1/readings/reader/items`, on connections of its own, so a long
     /// list never holds up one reading.
     items: items::ItemsSource,
+}
+
+impl ReadingPort {
+    /// The winning row, its words, and the entry it comes from.
+    #[allow(clippy::type_complexity)]
+    fn winner(
+        &self,
+        workspace: WorkspaceId,
+        hash: &str,
+    ) -> Result<
+        Option<(
+            koru_store_core::ids::DocumentId,
+            mirror::ReadingRow,
+            Option<koru_read::Reading>,
+            Vec<(i64, String)>,
+            Facts,
+        )>,
+        String,
+    > {
+        let (row, words, pending) = {
+            let mirror = self
+                .mirror
+                .lock()
+                .map_err(|_| "the readings mirror's lock is poisoned".to_owned())?;
+            let Some(row) = mirror.winner_in(workspace, hash).map_err(|e| e.0)? else {
+                return Ok(None);
+            };
+            let words = mirror.pages_of(&row.workspace, hash).map_err(|e| e.0)?;
+            let pending = mirror.requested(workspace, hash).map_err(|e| e.0)?;
+            (row, words, pending)
+        };
+        let parent = koru_store_core::ids::DocumentId::parse(&row.parent)
+            .ok_or_else(|| "the readings mirror holds a malformed document id".to_owned())?;
+        // One Store lock: the entry's fork and the Workspace's blob row.
+        let (fork, mime) = match self.state.upgrade() {
+            Some(state) => match state.store.lock() {
+                Ok(mut store) => (
+                    store
+                        .fork_document(workspace, koru_store_core::ids::reading_document_id(parent))
+                        .ok(),
+                    koru_store_core::model::BlobHash::parse(hash)
+                        .ok()
+                        .and_then(|blob| store.blob(workspace, &blob).ok())
+                        .map(|blob| blob.mime),
+                ),
+                Err(_) => (None, None),
+            },
+            None => (None, None),
+        };
+        let entry = fork.and_then(|fork| koru_read::ReadingDoc::from_doc(fork).reading(hash));
+        // The disk, outside every lock.
+        let here = mime.is_some()
+            && self
+                .objects
+                .as_ref()
+                .is_some_and(|objects| objects.here(hash));
+        let facts = Facts {
+            status: entry
+                .as_ref()
+                .and_then(|e| e.status.map(|s| s.as_str().to_owned()))
+                .or_else(|| row.status.clone()),
+            reason: entry
+                .as_ref()
+                .map(|e| e.reason.map(|r| r.as_str().to_owned()))
+                .unwrap_or_else(|| row.reason.clone()),
+            source: entry
+                .as_ref()
+                .and_then(|e| e.source.map(|s| s.as_str().to_owned()))
+                .or_else(|| row.source.clone()),
+            reader: entry
+                .as_ref()
+                .and_then(|e| e.reader.as_ref().map(|r| r.as_str().to_owned())),
+            mime,
+            here,
+            reader_ready: self.hub.installed().is_some() && self.hub.unavailable().is_none(),
+            pending,
+        };
+        Ok(Some((parent, row, entry, words, facts)))
+    }
 }
 
 impl koru_store_api::routes::readings::ReadingService for ReadingPort {
@@ -342,32 +435,157 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
         hash: &koru_store_core::model::BlobHash,
     ) -> Result<Option<koru_store_wire::readings::ReadingAnswer>, String> {
         let hash = hash.as_str();
-        let (row, words) = {
-            let mirror = self
-                .mirror
-                .lock()
-                .map_err(|_| "the readings mirror's lock is poisoned".to_owned())?;
-            let Some(row) = mirror.winner_in(workspace, hash).map_err(|e| e.0)? else {
-                return Ok(None);
-            };
-            let words = mirror.pages_of(&row.workspace, hash).map_err(|e| e.0)?;
-            (row, words)
+        let Some((parent, row, entry, words, facts)) = self.winner(workspace, hash)? else {
+            return Ok(None);
         };
-        let parent = koru_store_core::ids::DocumentId::parse(&row.parent)
-            .ok_or_else(|| "the readings mirror holds a malformed document id".to_owned())?;
-        let fork = self.state.upgrade().and_then(|state| {
-            let mut store = state.store.lock().ok()?;
-            store
-                .fork_document(workspace, koru_store_core::ids::reading_document_id(parent))
-                .ok()
-        });
-        let entry = fork.and_then(|fork| koru_read::ReadingDoc::from_doc(fork).reading(hash));
-        Ok(Some(answer(workspace, parent, &row, entry, words)))
+        let mut answer = answer(workspace, parent, &row, entry, words);
+        answer.offers = facts.offers();
+        Ok(Some(answer))
+    }
+
+    /// **Record a request** (OCR Plan 3.2): the same facts the offers are
+    /// made from, so a request is refused exactly where it was not offered.
+    fn request(
+        &self,
+        workspace: WorkspaceId,
+        hash: &koru_store_core::model::BlobHash,
+        kind: koru_store_wire::readings::ReadRequestKind,
+    ) -> Result<koru_store_wire::readings::ReadRequested, koru_store_core::errors::Error> {
+        use koru_store_core::errors::{Code, Error};
+        let storage = |error: String| Error::new(Code::StorageFailed, error);
+        let found = self.winner(workspace, hash.as_str()).map_err(storage)?;
+        let facts = match found {
+            Some((.., facts)) => facts,
+            None => Facts::default(),
+        };
+        if let Some(refused) = facts.refusal(kind) {
+            return Err(refused);
+        }
+        self.mirror
+            .lock()
+            .map_err(|_| storage("the readings mirror's lock is poisoned".to_owned()))?
+            .request(
+                workspace,
+                hash.as_str(),
+                koru_store_core::model::Timestamp::now().millis(),
+            )
+            .map_err(|e| storage(e.0))?;
+        self.inbox.read_requested(workspace, hash.as_str());
+        Ok(koru_store_wire::readings::ReadRequested {
+            workspace,
+            hash: hash.as_str().to_owned(),
+            kind,
+        })
     }
 
     fn items(&self) -> Result<koru_store_wire::reader::ReaderItems, String> {
         self.items
             .items(koru_store_core::model::Timestamp::now().millis())
+    }
+}
+
+/// **What decides whether a request is offered and accepted** (OCR Plan 3.2),
+/// gathered once per question. Pure from here on, so every case is tested.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Facts {
+    status: Option<String>,
+    reason: Option<String>,
+    source: Option<String>,
+    /// The reader's token, when the entry itself could be read.
+    reader: Option<String>,
+    /// The Workspace's blob row's media type; `None` when it has no row.
+    mime: Option<String>,
+    /// The Workspace may read the bytes **and** they are on this computer.
+    here: bool,
+    /// A reader is installed and nothing says this computer cannot use it.
+    reader_ready: bool,
+    /// A request for this item is already waiting.
+    pending: bool,
+}
+
+impl Facts {
+    fn recognized_some(&self) -> bool {
+        matches!(self.source.as_deref(), Some("recognized" | "mixed"))
+            || self
+                .reader
+                .as_deref()
+                .is_some_and(|r| r != koru_read::READER_TEXT)
+    }
+
+    fn picture(&self) -> bool {
+        self.mime
+            .as_deref()
+            .is_some_and(|m| coordinator::readable(m) == Some(coordinator::Readable::Picture))
+    }
+
+    /// *Read all pages*: a PDF stopped at a page limit. **One stopped at the
+    /// text-layer cap whose words all came from text layers needs no reader**
+    /// (TECHNICAL §18): the worker finishes it alone.
+    fn read_all_needs_reader(&self) -> bool {
+        self.recognized_some()
+    }
+
+    /// *Read again*: a picture always needs the reader; a reading made with
+    /// it does too.
+    fn read_again_needs_reader(&self) -> bool {
+        self.picture() || self.recognized_some()
+    }
+
+    fn refusal(
+        &self,
+        kind: koru_store_wire::readings::ReadRequestKind,
+    ) -> Option<koru_store_core::errors::Error> {
+        use koru_store_core::errors::{Code, Error};
+        use koru_store_wire::readings::ReadRequestKind;
+        let status = self.status.as_deref();
+        let applies = match kind {
+            ReadRequestKind::ReadAll => {
+                status == Some("partial")
+                    && self.reason.as_deref() == Some("page-cap")
+                    && self.mime.as_deref().is_some_and(coordinator::is_pdf)
+            }
+            ReadRequestKind::ReadAgain => matches!(status, Some("read" | "empty" | "failed")),
+        };
+        if !applies {
+            return Some(Error::new(
+                Code::InvalidRequest,
+                match kind {
+                    ReadRequestKind::ReadAll => "this item did not stop at a page limit",
+                    ReadRequestKind::ReadAgain => "this item has not been read and has not failed",
+                },
+            ));
+        }
+        if self.pending {
+            return Some(Error::new(
+                Code::InvalidRequest,
+                "a request for this item is already waiting",
+            ));
+        }
+        if !self.here {
+            return Some(Error::new(
+                Code::BlobNotHere,
+                "this item's bytes are not on this computer",
+            ));
+        }
+        let needs_reader = match kind {
+            ReadRequestKind::ReadAll => self.read_all_needs_reader(),
+            ReadRequestKind::ReadAgain => self.read_again_needs_reader(),
+        };
+        if needs_reader && !self.reader_ready {
+            return Some(Error::new(
+                Code::ReaderUnavailable,
+                "this needs the reader, and it is not installed here",
+            ));
+        }
+        None
+    }
+
+    fn offers(&self) -> koru_store_wire::readings::ReadingOffers {
+        use koru_store_wire::readings::{ReadRequestKind, ReadingOffers};
+        ReadingOffers {
+            read_all: self.refusal(ReadRequestKind::ReadAll).is_none(),
+            read_again: self.refusal(ReadRequestKind::ReadAgain).is_none(),
+        }
     }
 }
 
@@ -401,6 +619,7 @@ fn answer(
                     text: text.into_string(),
                 })
                 .collect(),
+            offers: Default::default(),
         },
         None => ReadingAnswer {
             workspace,
@@ -422,6 +641,7 @@ fn answer(
                     })
                 })
                 .collect(),
+            offers: Default::default(),
         },
     }
 }

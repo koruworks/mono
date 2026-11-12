@@ -25,10 +25,38 @@
 //! Smallest first, by the blob row's size, with a freshly added file ahead of
 //! everything. A restart computes the same queue from the same state.
 //!
-//! A settled entry is queued again for one reason only: another entry on this
+//! A settled entry is queued again for two reasons only: another entry on this
 //! store root holds a **fuller** reading of the same bytes (a capped
 //! `partial` read to the end, a higher generation), which is copied to it —
-//! never read (TECHNICAL §18, the review's note; OCR Plan 3.1).
+//! never read (TECHNICAL §18, the review's note; OCR Plan 3.1); or **a person
+//! asked** for it (below).
+//!
+//! ## What a person asked for (OCR Plan 3.2; TECHNICAL D12, §9)
+//!
+//! *Read all pages* and *Read again* are rows of the mirror's
+//! `read_requests`, one per workspace and hash. A requested item is queued
+//! **behind anything freshly added and ahead of the backlog**, in the order
+//! the requests were made, and one entry per requested hash carries it (the
+//! one already being read, else the first): the others holding the same
+//! bytes receive the result by the copy rule above.
+//!
+//! - A PDF is read **in windows**: from where its reading stands (`pages_done`
+//!   + 1, or page 1 for *Read again* on a finished reading), at most
+//!   [`REQUEST_READ_WINDOW`] page sent to the reader and [`REQUEST_TEXT_WINDOW`]
+//!   text-layer pages per job. The worker ends a window as it ends any capped
+//!   job, `partial/page-cap`; for a requested PDF that means *the window is
+//!   done*, and the coordinator writes it as `partial` with no reason and puts
+//!   the item back at the end of the requested lane. **That is how it yields
+//!   between pages**: a file added meanwhile is in the fresh lane, ahead of
+//!   the next window. No contract change: `from_page` and the two caps were
+//!   always per job.
+//! - The last window writes `read` (or `empty`, `failed`), and the request is
+//!   met. So is one whose item got a fuller reading by copy, or whose item is
+//!   gone.
+//! - A picture or a plain-text file is one page: one ordinary job, from the
+//!   start.
+//!
+//! A request never pauses for battery saver: a person asked for it.
 //!
 //! ## Out of the way (TECHNICAL §14, OCR Plan 3.1)
 //!
@@ -97,6 +125,18 @@ pub const REGISTER_BATCH: usize = 200;
 /// commits are what costs, and a typical file (two pages) is one commit.
 pub const FLUSH_PAGES: usize = 64;
 
+/// **Pages sent to the reader per job while a person's request is met**
+/// (OCR Plan 3.2): one, so a file added while a long scan is read in full is
+/// read before the scan's next page (TECHNICAL §9 "It yields between pages").
+/// A window costs a worker round trip and one commit; a recognized page costs
+/// about a second, so the commit is the small part.
+pub const REQUEST_READ_WINDOW: u32 = 1;
+
+/// **Text-layer pages per job while a request is met.** Plan 0.1 measured
+/// 182–440 text pages a second, so a window is about a second of work, the
+/// same yield as one recognized page.
+pub const REQUEST_TEXT_WINDOW: u32 = 200;
+
 /// Local failures that are retried at all, before the file is left until the
 /// next generation.
 const MAX_RETRIES: u32 = 3;
@@ -146,7 +186,7 @@ pub fn readable(mime: &str) -> Option<Readable> {
 /// Workspace's `blobs` row first, and only then whether the object is on the
 /// disk. This seam answers the second half, outside the Store lock — a file's
 /// existence is I/O the Store lock must not wait on.
-pub trait Objects: Send {
+pub trait Objects: Send + Sync {
     /// Whether the verified object for `hash` is on this device.
     fn here(&self, hash: &str) -> bool;
     /// The object the worker opens — content-addressed, never a file's name.
@@ -184,9 +224,13 @@ pub struct Pair {
     /// In the counts the last recompute published, so finishing it moves
     /// them. A fresh pair is counted by the recompute it makes owed.
     pub counted: bool,
+    /// A person asked for it: *Read all pages* or *Read again* (OCR Plan
+    /// 3.2). Queued behind the fresh pairs and ahead of the backlog; never
+    /// also `fresh`.
+    pub requested: bool,
 }
 
-fn is_pdf(mime: &str) -> bool {
+pub(crate) fn is_pdf(mime: &str) -> bool {
     mime.split(';')
         .next()
         .is_some_and(|m| m.trim().eq_ignore_ascii_case("application/pdf"))
@@ -262,6 +306,8 @@ impl Pair {
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct QueueCounts {
     pub fresh: u64,
+    /// Asked for by a person, between the fresh pairs and the backlog.
+    pub requested: u64,
     pub backlog: u64,
     pub needs_reader: u64,
     pub not_here: u64,
@@ -286,6 +332,11 @@ pub struct CoordinatorStats {
     pub refreshed: u64,
     pub skipped: u64,
     pub pages: u64,
+    /// Windows of a requested PDF written as `partial` with no reason, each
+    /// followed by a yield to whatever was added meanwhile (OCR Plan 3.2).
+    pub windows: u64,
+    /// Requests met: read to the end, read again, or given a fuller reading.
+    pub requests_met: u64,
     pub registered: u64,
     /// Manifest commits made registering reading documents — what batching
     /// keeps to a handful during a backlog (TECHNICAL §9).
@@ -321,7 +372,9 @@ pub struct Coordinator {
     projections: Projections,
     mirror: Mirror,
     launcher: Box<dyn Launcher>,
-    objects: Box<dyn Objects>,
+    /// Shared with the readings route, which asks whether the bytes are here
+    /// before it accepts a request (OCR Plan 3.2).
+    objects: Arc<dyn Objects>,
     inbox: Arc<Inbox>,
     plan: VecDeque<Pair>,
     waiting: Vec<Pair>,
@@ -384,12 +437,33 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
+    /// A coordinator over objects of its own (the tests' composition).
+    #[cfg(test)]
     pub fn new(
         state: &Arc<AppState>,
         projections: Projections,
         mirror: Mirror,
         launcher: Box<dyn Launcher>,
         objects: Box<dyn Objects>,
+        inbox: Arc<Inbox>,
+    ) -> Self {
+        Self::shared(
+            state,
+            projections,
+            mirror,
+            launcher,
+            Arc::from(objects),
+            inbox,
+        )
+    }
+
+    /// [`Self::new`], with the objects shared with the readings route.
+    pub fn shared(
+        state: &Arc<AppState>,
+        projections: Projections,
+        mirror: Mirror,
+        launcher: Box<dyn Launcher>,
+        objects: Arc<dyn Objects>,
         inbox: Arc<Inbox>,
     ) -> Self {
         Self {
@@ -602,7 +676,6 @@ impl Coordinator {
     pub fn launcher_report(&self) -> super::launcher::WorkerReport {
         self.launcher.report()
     }
-
     /// The queue as it stands, front first.
     #[cfg(test)]
     pub fn queued(&self) -> Vec<Pair> {
@@ -655,8 +728,9 @@ impl Coordinator {
         // backlog pair at the head asks. Paused, this step does nothing and
         // the thread waits as it does when idle: a trigger or the linger
         // brings it back to ask again.
+        // A person's request does not wait either: they asked for it.
         match self.plan.front() {
-            Some(next) if !next.fresh => {
+            Some(next) if !next.fresh && !next.requested => {
                 let saving = self.power.saving();
                 self.set_paused(saving);
                 if saving {
@@ -675,6 +749,8 @@ impl Coordinator {
         };
         if pair.fresh {
             self.counts.fresh = self.counts.fresh.saturating_sub(1);
+        } else if pair.requested {
+            self.counts.requested = self.counts.requested.saturating_sub(1);
         } else {
             self.counts.backlog = self.counts.backlog.saturating_sub(1);
             self.backlog_seen += 1;
@@ -682,7 +758,12 @@ impl Coordinator {
         self.settled_last = None;
         match self.process(&pair, now) {
             Processed::Done => {
-                if let Some(settled) = self.settled_last.take() {
+                if pair.requested {
+                    // Counted as settled (or unread, mid-window) by the last
+                    // recompute: the next one, at its cadence, moves it.
+                    self.settled_last = None;
+                    self.recount = true;
+                } else if let Some(settled) = self.settled_last.take() {
                     self.count_settled(&pair, &settled);
                 } else {
                     // Waiting, failed here, or skipped: the recompute says
@@ -749,10 +830,15 @@ impl Coordinator {
         let mut plan = Vec::new();
         let attempts = self.mirror.attempts(READER_TEXT).unwrap_or_default();
         self.fuller = self.mirror.best_shared().unwrap_or_default();
+        // Every item the listing still holds, trashed or not: a request for
+        // anything else is for an item that is gone (OCR Plan 3.2).
+        let mut held: HashSet<(WorkspaceId, String)> = HashSet::new();
+        let mut complete = true;
         let workspaces = match self.projections.listings() {
             Ok(listings) => listings.into_iter().map(|(w, _)| w).collect::<Vec<_>>(),
             Err(error) => {
                 self.stats.last_error = Some(error.0);
+                complete = false;
                 Vec::new()
             }
         };
@@ -764,9 +850,11 @@ impl Coordinator {
                 Ok(references) => references,
                 Err(error) => {
                     self.stats.last_error = Some(error.0);
+                    complete = false;
                     continue;
                 }
             };
+            held.extend(references.iter().map(|r| (workspace, r.blob.clone())));
             self.classify(
                 workspace,
                 references,
@@ -777,6 +865,9 @@ impl Coordinator {
                 &mut tally,
                 &mut recognize,
             );
+        }
+        if complete {
+            self.forget_requests_for_gone_items(&held);
         }
         plan.sort_by_key(Pair::key);
         // **Fresh stays fresh.** A file added since the last pass keeps its
@@ -790,16 +881,32 @@ impl Coordinator {
             .map(|p| (p.parent, p.hash.clone()))
             .collect();
         for pair in &mut plan {
-            pair.fresh = fresh.contains(&(pair.parent, pair.hash.clone()));
+            pair.fresh = !pair.requested && fresh.contains(&(pair.parent, pair.hash.clone()));
         }
-        plan.sort_by_key(|p| (!p.fresh, p.key()));
+        // Fresh, then what a person asked for in the order they asked, then
+        // the backlog smallest first (OCR Plan 3.2).
+        let order: HashMap<(WorkspaceId, String), usize> = self
+            .requests_in_order()
+            .into_iter()
+            .enumerate()
+            .map(|(at, request)| (request, at))
+            .collect();
+        plan.sort_by_key(|p| {
+            let asked = p
+                .requested
+                .then(|| order.get(&(p.workspace, p.hash.clone())).copied())
+                .flatten()
+                .unwrap_or(usize::MAX);
+            (!p.fresh, !p.requested, asked, p.key())
+        });
         let Tally {
             queue: mut counts,
             per_workspace,
             machine,
         } = tally;
         counts.fresh = plan.iter().filter(|p| p.fresh).count() as u64;
-        counts.backlog = plan.len() as u64 - counts.fresh;
+        counts.requested = plan.iter().filter(|p| p.requested).count() as u64;
+        counts.backlog = plan.len() as u64 - counts.fresh - counts.requested;
         // What is waiting for a reader is in the plan again; it waits again
         // the moment it is reached if none is back.
         self.waiting.clear();
@@ -825,6 +932,48 @@ impl Coordinator {
         } else {
             self.publish();
         }
+    }
+
+    /// Every request, oldest first.
+    fn requests_in_order(&self) -> Vec<(WorkspaceId, String)> {
+        self.mirror.all_requests().unwrap_or_default()
+    }
+
+    /// A request whose item the listing no longer holds — purged, or its
+    /// workspace gone — can never be met: it goes. A trashed item keeps its
+    /// request, and is read when it is restored.
+    fn forget_requests_for_gone_items(&mut self, held: &HashSet<(WorkspaceId, String)>) {
+        for (workspace, hash) in self.requests_in_order() {
+            if !held.contains(&(workspace, hash.clone()))
+                && let Err(error) = self.mirror.request_met(workspace, &hash)
+            {
+                self.stats.last_error = Some(error.0);
+            }
+        }
+    }
+
+    /// The request for this pair's bytes has been met.
+    fn request_met(&mut self, pair: &Pair) {
+        match self.mirror.request_met(pair.workspace, &pair.hash) {
+            Ok(()) => self.stats.requests_met += 1,
+            Err(error) => self.stats.last_error = Some(error.0),
+        }
+    }
+
+    /// A window of a requested PDF is written: the item goes to the end of
+    /// the requested lane, so whatever was added meanwhile — and any other
+    /// request — goes before its next window.
+    fn requeue(&mut self, pair: &Pair) {
+        let at = self
+            .plan
+            .iter()
+            .take_while(|p| p.fresh || p.requested)
+            .count();
+        let mut again = pair.clone();
+        again.fresh = false;
+        again.requested = true;
+        self.plan.insert(at, again);
+        self.counts.requested += 1;
     }
 
     /// Turn the two triggers into fresh pairs at the front.
@@ -895,6 +1044,39 @@ impl Coordinator {
         // Behind the fresh pairs already queued, ahead of the backlog.
         let mut at = self.plan.iter().take_while(|p| p.fresh).count();
         for pair in fresh {
+            if pair.requested {
+                // **A request just made** (OCR Plan 3.2): behind every fresh
+                // pair and every earlier request. A backlog pair of the same
+                // item is lifted into the requested lane rather than queued
+                // twice.
+                if self
+                    .waiting
+                    .iter()
+                    .any(|p| p.parent == pair.parent && p.hash == pair.hash)
+                {
+                    continue;
+                }
+                if let Some(i) = self
+                    .plan
+                    .iter()
+                    .position(|p| p.parent == pair.parent && p.hash == pair.hash)
+                {
+                    if self.plan[i].requested || self.plan[i].fresh {
+                        continue;
+                    }
+                    self.plan.remove(i);
+                    self.counts.backlog = self.counts.backlog.saturating_sub(1);
+                }
+                let requested_at = self
+                    .plan
+                    .iter()
+                    .take_while(|p| p.fresh || p.requested)
+                    .count();
+                self.plan.insert(requested_at, pair);
+                self.counts.requested += 1;
+                self.recount = true;
+                continue;
+            }
             if known.contains(&(pair.parent, pair.hash.clone())) {
                 continue;
             }
@@ -923,9 +1105,17 @@ impl Coordinator {
         }
         // One read of the workspace's rows: what is settled, and how.
         let outcomes = self.mirror.outcomes_in(workspace).unwrap_or_default();
+        // What a person asked for here, and which entry carries each request:
+        // the one already being read, else the first (OCR Plan 3.2).
+        let requests: HashSet<String> = self
+            .mirror
+            .requests_in(workspace)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let carriers = carriers(&references, &requests, &outcomes);
         let mut seen: HashSet<(DocumentId, String)> = HashSet::new();
-        // (reference, needs the reader, read again from page 1)
-        let mut candidates = Vec::new();
+        let mut candidates: Vec<Candidate> = Vec::new();
         // Settled entries another entry holds a fuller reading of the same
         // bytes for: copied, never read (TECHNICAL §18, the review's note).
         let mut fuller_elsewhere = Vec::new();
@@ -942,19 +1132,27 @@ impl Coordinator {
             if matches!(hinted, Some(None)) {
                 continue;
             }
+            let requested = carriers.get(&reference.blob) == Some(&reference.document);
             let outcome = outcomes.get(&(reference.document, reference.blob.clone()));
-            if let Some(settled) = outcome.and_then(super::mirror::Outcome::settled) {
-                tally.settled(workspace, &settled);
-                if outcome.is_some_and(|held| {
-                    self.fuller
-                        .get(&reference.blob)
-                        .is_some_and(|best| *best > held.rank())
-                }) {
-                    fuller_elsewhere.push(reference);
+            let settled = outcome.and_then(super::mirror::Outcome::settled);
+            if let Some(settled) = &settled {
+                tally.settled(workspace, settled);
+                if !requested {
+                    if outcome.is_some_and(|held| {
+                        self.fuller
+                            .get(&reference.blob)
+                            .is_some_and(|best| *best > held.rank())
+                    }) {
+                        fuller_elsewhere.push(reference);
+                    }
+                    continue;
                 }
-                continue;
             }
-            let mut needs_reader = matches!(hinted, Some(Some(Readable::Picture)));
+            // A settled item a person asked for is already in the counts as
+            // settled; nothing below counts it again.
+            let counted_settled = settled.is_some();
+            let mut needs_reader = matches!(hinted, Some(Some(Readable::Picture)))
+                || (requested && outcome.is_some_and(needs_reader_to_go_on));
             let mut restart = false;
             if let Some(attempt) = attempts.get(&reference.blob) {
                 match verdict(attempt, now) {
@@ -967,12 +1165,23 @@ impl Coordinator {
                     }
                     Verdict::Backoff => {
                         tally.queue.backoff += 1;
-                        tally.unread(workspace);
+                        if !counted_settled {
+                            tally.unread(workspace);
+                        }
                         continue;
                     }
                     Verdict::Failed => {
                         tally.queue.failed += 1;
-                        tally.failed_here(workspace, attempt.code.as_str());
+                        if !counted_settled {
+                            tally.failed_here(workspace, attempt.code.as_str());
+                        }
+                        // A request this computer cannot meet at this
+                        // generation is not left standing.
+                        if requested
+                            && let Err(error) = self.mirror.request_met(workspace, &reference.blob)
+                        {
+                            self.stats.last_error = Some(error.0);
+                        }
                         continue;
                     }
                 }
@@ -983,10 +1192,18 @@ impl Coordinator {
                 .is_some_and(|after| now < *after)
             {
                 tally.queue.backoff += 1;
-                tally.unread(workspace);
+                if !counted_settled {
+                    tally.unread(workspace);
+                }
                 continue;
             }
-            candidates.push((reference, needs_reader, restart));
+            candidates.push(Candidate {
+                reference,
+                needs_reader,
+                restart,
+                requested,
+                counted_settled,
+            });
         }
         if candidates.is_empty() && fuller_elsewhere.is_empty() {
             return;
@@ -1026,9 +1243,24 @@ impl Coordinator {
                 want: Want::Text,
                 restart: false,
                 counted: false,
+                requested: false,
             });
         }
-        for (reference, needs_reader, restart) in candidates {
+        for candidate in candidates {
+            let Candidate {
+                reference,
+                needs_reader,
+                restart,
+                requested,
+                counted_settled,
+            } = candidate;
+            // Counts for an item not already counted as settled.
+            let mut scratch = Tally::default();
+            let tally: &mut Tally = if counted_settled {
+                &mut scratch
+            } else {
+                &mut *tally
+            };
             let Some((size, row_mime)) = rows.get(&reference.blob) else {
                 tally.not_here(workspace);
                 continue;
@@ -1076,10 +1308,12 @@ impl Coordinator {
                 hash: reference.blob,
                 mime,
                 size: *size,
-                fresh,
+                // A request has its own lane, between the two.
+                fresh: fresh && !requested,
                 want,
                 restart: restart && want == Want::Recognize,
-                counted: !fresh,
+                counted: !fresh && !counted_settled,
+                requested,
             });
         }
     }
@@ -1109,27 +1343,44 @@ impl Coordinator {
         let held = prior
             .as_ref()
             .filter(|reading| reading.is_settled_for_this_build());
+        // The request still stands: the plan may be a moment old, and a
+        // sibling's copy may have met it (OCR Plan 3.2).
+        let requested = pair.requested
+            && self
+                .mirror
+                .requested(pair.workspace, &pair.hash)
+                .unwrap_or(false);
 
         // **Copy, don't read again**, when this store root already holds the
         // words for these bytes (TECHNICAL §9) — and give an entry that is
         // already settled the reading another entry holds when that one is
         // fuller (a capped `partial` read to the end, a higher generation),
-        // by the same comparison the mirror picks a winner with (§18).
+        // by the same comparison the mirror picks a winner with (§18). A
+        // request already under way reads on to its end: *Read again* means
+        // reading, and its first window is what made it unsettled.
         if let Some(reading) = self.words_here(&state, pair)
             && held.is_none_or(|held| rank_of(&reading) > rank_of(held))
+            && !(requested && held.is_none() && prior.is_some())
         {
             let refresh = held.is_some();
             self.set_stage(0, "copying", 1, 0);
             let outcome = self.copy(&state, pair, &reading);
             self.clear_stage();
             match outcome {
-                Ok(true) if refresh => self.stats.refreshed += 1,
-                Ok(_) => {}
+                Ok(true) => {
+                    if refresh {
+                        self.stats.refreshed += 1;
+                    }
+                    if requested {
+                        self.request_met(pair);
+                    }
+                }
+                Ok(false) => {}
                 Err(why) => self.commit_failed(pair, now, why),
             }
             return Processed::Done;
         }
-        if held.is_some() {
+        if held.is_some() && !requested {
             self.stats.skipped += 1;
             return Processed::Done;
         }
@@ -1153,7 +1404,7 @@ impl Coordinator {
             return Processed::Done;
         };
         drop(state);
-        self.read(pair, base, prior, now)
+        self.read(pair, requested, base, prior, now)
     }
 
     /// **The best words this store root holds for the pair's bytes**, in any
@@ -1216,6 +1467,7 @@ impl Coordinator {
     fn read(
         &mut self,
         pair: &Pair,
+        requested: bool,
         base: loro::LoroDoc,
         prior: Option<Reading>,
         now: i64,
@@ -1226,17 +1478,23 @@ impl Coordinator {
         };
         let reading_id = reading_document_id(pair.parent);
         let mut writer = Writer::new(pair.workspace, reading_id, base);
+        // **A requested PDF is read in windows, with no cap overall** (OCR
+        // Plan 3.2): a window that ends `partial/page-cap` is the window, not
+        // the file.
+        let windowed = requested && is_pdf(&pair.mime);
         // A `partial` with no reason at this generation is a reading that was
         // interrupted: resume after the last page it reached. **Unless this
         // is the reader reading what a text-only pass left** (OCR Plan 2.4):
         // that pass reached the last page, and the reader starts at the first.
+        // A requested PDF also resumes a capped `partial` — that is *Read all
+        // pages* — and starts a finished one again at page 1 (*Read again*).
         let prior = prior.filter(|_| !pair.restart);
         let resume = prior
             .as_ref()
             .filter(|r| {
                 r.generation == GENERATION
                     && r.status == Some(ReadingStatus::Partial)
-                    && r.reason.is_none()
+                    && (r.reason.is_none() || (windowed && r.reason == Some(Reason::PageCap)))
             })
             .and_then(|r| r.pages_done);
         let from_page = resume.map_or(1, |done| done.saturating_add(1));
@@ -1275,8 +1533,16 @@ impl Coordinator {
             path,
             mime: pair.mime.clone(),
             from_page,
-            max_text_pages: Some(TEXT_PAGE_CAP),
-            max_read_pages: Some(koru_read::READ_PAGE_CAP),
+            max_text_pages: Some(if windowed {
+                REQUEST_TEXT_WINDOW
+            } else {
+                TEXT_PAGE_CAP
+            }),
+            max_read_pages: Some(if windowed {
+                REQUEST_READ_WINDOW
+            } else {
+                koru_read::READ_PAGE_CAP
+            }),
             want: pair.want,
         };
         self.set_stage(job.0, "reading", from_page, 0);
@@ -1355,6 +1621,56 @@ impl Coordinator {
         self.stats.pages += u64::from(seen);
 
         let result: Result<&'static str, String> = match (outcome, terminal) {
+            // **A window of a requested PDF is done** (OCR Plan 3.2): written
+            // as progress — `partial`, no reason, how far it got — and the
+            // item goes back in its lane, behind whatever arrived meanwhile.
+            (
+                Ok(()),
+                Some(Event::Done {
+                    status: ReadingStatus::Partial,
+                    reason: Some(Reason::PageCap),
+                    pages_done,
+                    ..
+                }),
+            ) if windowed => {
+                let pages_done = pages_done.max(last_page.unwrap_or(0));
+                if pages_done < from_page {
+                    // Nothing moved: never loop on a window that reads no
+                    // page. A local failure, retried after its backoff.
+                    self.record(&pair.hash, AttemptCode::Internal, now);
+                    Ok("window-stalled")
+                } else {
+                    let confidence = mean(&confidences).or_else(|| {
+                        prior
+                            .as_ref()
+                            .filter(|r| r.generation == GENERATION)
+                            .and_then(|r| r.confidence)
+                    });
+                    let outcome = Outcome {
+                        status: ReadingStatus::Partial,
+                        reason: None,
+                        source,
+                        confidence,
+                        pages_done: Some(pages_done),
+                    };
+                    writer
+                        .put(&pair.hash, &mut buffer, Some(pages_done))
+                        .and_then(|()| {
+                            writer
+                                .doc
+                                .finish(&pair.hash, GENERATION, &outcome)
+                                .map(|_| ())
+                                .map_err(|e| e.to_string())
+                        })
+                        .and_then(|()| writer.commit(&state))
+                        .map(|()| {
+                            self.stats.commits += 1;
+                            self.stats.windows += 1;
+                            self.requeue(pair);
+                            "window"
+                        })
+                }
+            }
             (
                 Ok(()),
                 Some(Event::Done {
@@ -1419,6 +1735,9 @@ impl Coordinator {
                         }
                     } else if let Err(error) = self.mirror.clear_attempts(&pair.hash) {
                         self.stats.last_error = Some(error.0);
+                    }
+                    if requested && status.is_finished(reason) {
+                        self.request_met(pair);
                     }
                     self.settled_last = settled_of(Some(status), reason);
                     status.as_str()
@@ -1732,6 +2051,57 @@ impl Writer {
         }
         Ok(())
     }
+}
+
+/// One reference the queue may take, and what it knows of it so far.
+struct Candidate {
+    reference: ReadableReference,
+    needs_reader: bool,
+    /// Read again from page 1: a text-only pass left pages for the reader.
+    restart: bool,
+    /// A person asked for it, and this entry carries the request.
+    requested: bool,
+    /// Already counted as settled by this pass.
+    counted_settled: bool,
+}
+
+/// **Which entry carries each request** (OCR Plan 3.2): of the live entries
+/// holding a requested hash, the one already being read (its reading is a
+/// `partial` with no reason), else the first by id. One reading of the bytes
+/// is made; the others receive it by the copy rule.
+fn carriers(
+    references: &[ReadableReference],
+    requests: &HashSet<String>,
+    outcomes: &HashMap<(DocumentId, String), super::mirror::Outcome>,
+) -> HashMap<String, DocumentId> {
+    let mut out: HashMap<String, (bool, DocumentId)> = HashMap::new();
+    for reference in references {
+        if reference.trashed || !requests.contains(&reference.blob) {
+            continue;
+        }
+        let going = outcomes
+            .get(&(reference.document, reference.blob.clone()))
+            .is_some_and(|o| o.status.as_deref() == Some("partial") && o.reason.is_none());
+        let candidate = (!going, reference.document);
+        out.entry(reference.blob.clone())
+            .and_modify(|held| {
+                if (candidate.0, candidate.1.to_storage()) < (held.0, held.1.to_storage()) {
+                    *held = candidate;
+                }
+            })
+            .or_insert(candidate);
+    }
+    out.into_iter()
+        .map(|(hash, (_, doc))| (hash, doc))
+        .collect()
+}
+
+/// Whether going on with this reading needs the reader: some of what it holds
+/// was recognized, so the pages after it may be scans too. A reading that
+/// came from text layers alone does not — *Read all pages* on a PDF stopped at
+/// the text-layer cap is finished by the worker alone (TECHNICAL §18).
+fn needs_reader_to_go_on(outcome: &super::mirror::Outcome) -> bool {
+    matches!(outcome.source.as_deref(), Some("recognized" | "mixed"))
 }
 
 /// What a finished reading counts as for a person, or `None` while it is not

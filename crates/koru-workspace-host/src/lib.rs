@@ -70,6 +70,7 @@ mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
 pub mod reading_file;
+pub mod reading_requests;
 pub mod reveal;
 /// Who owns the keyboard, factored so the container and the built-in
 /// document cannot drift apart about it. See the module's own note.
@@ -1801,6 +1802,34 @@ pub trait View {
         None
     }
 
+    /// Blob hash of a picture whose right-click menu just opened, for the
+    /// shell to ask the Store what may be asked of it (*Read again*,
+    /// [`reading_requests`]). Fetched on a worker; the answer comes back
+    /// through [`View::set_reading_offers`].
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Blob hash of a picture the person chose *Read again* on
+    /// ([`reading_requests`]). The shell sends the request.
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        None
+    }
+
+    /// **What the Store says may be asked of one item now** — the answer to a
+    /// [`PaneRequest::ReadingOffers`] or a
+    /// [`View::take_wants_reading_offers`]. `None` when nothing has been read
+    /// of it, or the Store could not be asked: nothing is offered. A view keeps
+    /// it for the item's next menu and corrects a menu open on that item.
+    /// Returns whether anything drawn changed.
+    fn set_reading_offers(
+        &mut self,
+        _target: &reading_file::ReadingTarget,
+        _offers: Option<reading_requests::ReadingOffers>,
+    ) -> bool {
+        false
+    }
+
     /// Finish an image cut after the shell wrote the bitmap (delete the row).
     fn apply_pending_image_cut(&mut self, _ws: &mut WorkspaceDoc) -> bool {
         false
@@ -2861,6 +2890,15 @@ pub enum PaneRequest {
     /// Save what was read out of one file or picture to a text file the
     /// person chooses — the `KORU_READ_DEBUG` entry ([`reading_file`]).
     SaveReading(reading_file::ReadingTarget),
+    /// Ask the Store what may be asked of one item's reading now (*Read all
+    /// pages*, *Read again*), for its right-click menu. The answer comes back
+    /// through [`View::set_reading_offers`] (OCR Plan 3.2).
+    ReadingOffers(reading_file::ReadingTarget),
+    /// The person chose *Read all pages* or *Read again* on one item.
+    ReadRequest(
+        reading_file::ReadingTarget,
+        reading_requests::ReadRequestKind,
+    ),
     /// Save a drawn diagram as a PNG or an SVG at a user-selected path. Served
     /// against the window that asked: its device rasterises the PNG.
     SaveDiagram(SaveDiagram),
@@ -3046,6 +3084,8 @@ impl PaneRequest {
             Self::SaveFile(..) => "request.save_file",
             Self::SaveFiles(..) => "request.save_files",
             Self::SaveReading(..) => "request.save_reading",
+            Self::ReadingOffers(..) => "request.reading_offers",
+            Self::ReadRequest(..) => "request.read_request",
             Self::SaveDiagram(..) => "request.save_diagram",
             Self::CopyDiagram(..) => "request.copy_diagram",
             Self::OpenFile(..) => "request.open_file",

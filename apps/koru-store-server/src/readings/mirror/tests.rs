@@ -350,8 +350,8 @@ fn the_mirror_queries_use_their_indexes() {
             vec![ws.clone()],
         ),
         (
-            "outcomes_in (the queue, OCR Plan 3.1: with page_count)",
-            "SELECT parent_document_id, hash, generation, status, reason, page_count
+            "outcomes_in (the queue, OCR Plan 3.1: with page_count; 3.2: source)",
+            "SELECT parent_document_id, hash, generation, status, reason, page_count, source
                FROM readings WHERE workspace_id = ?1"
                 .into(),
             vec![ws.clone()],
@@ -552,4 +552,291 @@ fn outcomes_say_how_each_entry_ended() {
     assert_eq!(of(locked), Some(Settled::Failed("password".into())));
     assert_eq!(of(going), None);
     assert!(mirror.outcomes_in(WorkspaceId::new()).unwrap().is_empty());
+}
+
+// ------------------------------------------------ requests (OCR Plan 3.2)
+
+/// Version 1's tables exactly as that build created them: no `read_requests`.
+const VERSION_1_SCHEMA: &str = "
+CREATE TABLE readings (
+    workspace_id TEXT NOT NULL, parent_document_id TEXT NOT NULL, hash TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    status TEXT CHECK (status IN ('read', 'empty', 'partial', 'failed')),
+    reason TEXT CHECK (reason IN ('password', 'damaged', 'page-cap')),
+    source TEXT CHECK (source IN ('text-layer', 'recognized', 'mixed', 'plain')),
+    page_count INTEGER NOT NULL CHECK (page_count >= 0),
+    PRIMARY KEY (parent_document_id, hash)
+) WITHOUT ROWID;
+CREATE INDEX readings_workspace_hash ON readings(workspace_id, hash);
+CREATE INDEX readings_hash ON readings(hash);
+CREATE TABLE reading_pages (
+    workspace_id TEXT NOT NULL, hash TEXT NOT NULL,
+    page INTEGER NOT NULL CHECK (page >= 1), text TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, hash, page)
+) WITHOUT ROWID;
+CREATE TABLE reading_sources (
+    document_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL,
+    parent_document_id TEXT NOT NULL, revision BLOB NOT NULL
+);
+CREATE INDEX reading_sources_workspace ON reading_sources(workspace_id);
+CREATE TABLE read_attempts (
+    hash TEXT NOT NULL, reader TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    code TEXT NOT NULL, attempts INTEGER NOT NULL CHECK (attempts >= 1),
+    last_at INTEGER NOT NULL,
+    PRIMARY KEY (hash, reader, generation)
+) WITHOUT ROWID;
+PRAGMA user_version = 1;
+";
+
+/// **A version 1 mirror becomes version 2**: rebuilt, as every bump is — its
+/// rows go and the catch-up brings them back from the reading documents —
+/// and it now holds `read_requests`.
+#[test]
+fn a_version_one_mirror_is_rebuilt_at_version_two_with_the_requests_table() {
+    assert_eq!(READINGS_SCHEMA_VERSION, 2);
+    let name = koru_sqlite::MemoryName::fresh("readings.db");
+    let keeper = koru_sqlite::open_memory(&name).unwrap();
+    keeper.execute_batch(VERSION_1_SCHEMA).unwrap();
+    keeper
+        .execute(
+            "INSERT INTO readings VALUES ('w', 'p', 'b3:aa', 1, 'read', NULL, 'text-layer', 1)",
+            [],
+        )
+        .unwrap();
+    keeper
+        .execute(
+            "INSERT INTO read_attempts VALUES ('b3:aa', 'text', 1, 'crashed', 1, 0)",
+            [],
+        )
+        .unwrap();
+    let had_requests: bool = keeper
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'read_requests')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(!had_requests, "version 1 has no requests table");
+
+    let mut mirror = Mirror::in_named_memory(&name).unwrap();
+    let version: i64 = mirror
+        .connection()
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    assert_eq!(mirror.counts().unwrap().by_status.len(), 0, "rebuilt");
+    assert!(
+        mirror.attempts("text").unwrap().is_empty(),
+        "local state too"
+    );
+    let ws = WorkspaceId::new();
+    assert!(mirror.request(ws, "b3:aa", 5).unwrap());
+    assert!(mirror.requested(ws, "b3:aa").unwrap());
+
+    // Opened again at version 2: nothing is rebuilt, the request stands.
+    drop(mirror);
+    let again = Mirror::in_named_memory(&name).unwrap();
+    assert!(again.requested(ws, "b3:aa").unwrap());
+}
+
+/// **A request is one row per workspace and hash**: asking twice keeps the
+/// first time; they are met oldest first; met, the row goes; another
+/// workspace's request is its own.
+#[test]
+fn requests_are_one_row_each_oldest_first_and_go_when_met() {
+    let (mut mirror, _name, _keeper) = memory();
+    let (ws, other) = (WorkspaceId::new(), WorkspaceId::new());
+    assert!(mirror.request(ws, "b3:bb", 20).unwrap());
+    assert!(mirror.request(ws, "b3:aa", 30).unwrap());
+    assert!(!mirror.request(ws, "b3:bb", 40).unwrap(), "already asked");
+    assert!(mirror.request(other, "b3:aa", 10).unwrap());
+    assert_eq!(mirror.requests_in(ws).unwrap(), vec!["b3:bb", "b3:aa"]);
+    assert_eq!(
+        mirror.all_requests().unwrap(),
+        vec![
+            (other, "b3:aa".to_owned()),
+            (ws, "b3:bb".to_owned()),
+            (ws, "b3:aa".to_owned())
+        ],
+        "oldest first, across workspaces"
+    );
+    mirror.request_met(ws, "b3:bb").unwrap();
+    assert!(!mirror.requested(ws, "b3:bb").unwrap());
+    assert!(mirror.requested(other, "b3:aa").unwrap(), "its own");
+    assert_eq!(mirror.requests_in(ws).unwrap(), vec!["b3:aa"]);
+}
+
+/// **The partly-read items, as ids, by one statement** (for Plan 2.5's list):
+/// every capped `partial` on the root with where it stopped, and nothing
+/// else — not a read one, not one still being read, not a failure.
+#[test]
+fn partly_read_lists_the_capped_items_as_ids() {
+    let (mut mirror, _name, _keeper) = memory();
+    let (ws, other) = (WorkspaceId::new(), WorkspaceId::new());
+    let (a, b, c, d) = (
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+    );
+    let mut capped = reading(ReadingStatus::Partial, &[(1, "one"), (2, "two")]);
+    capped.reason = Some(Reason::PageCap);
+    capped.pages_done = Some(200);
+    let mut newer = capped.clone();
+    newer.generation = GENERATION + 1;
+    let mut failed = reading(ReadingStatus::Failed, &[]);
+    failed.reason = Some(Reason::Password);
+    for (workspace, parent, entries) in [
+        (ws, a, vec![("b3:aa".to_owned(), capped.clone())]),
+        (
+            ws,
+            b,
+            vec![
+                (
+                    "b3:bb".to_owned(),
+                    reading(ReadingStatus::Read, &[(1, "x")]),
+                ),
+                (
+                    "b3:cc".to_owned(),
+                    reading(ReadingStatus::Partial, &[(1, "x")]),
+                ),
+            ],
+        ),
+        (other, c, vec![("b3:dd".to_owned(), newer)]),
+        (other, d, vec![("b3:ee".to_owned(), failed)]),
+    ] {
+        mirror.apply(&applied(workspace, parent, entries)).unwrap();
+    }
+    let mut expected = vec![
+        PartlyRead {
+            workspace: ws,
+            entry: a,
+            hash: "b3:aa".into(),
+            pages_done: 200,
+        },
+        PartlyRead {
+            workspace: other,
+            entry: c,
+            hash: "b3:dd".into(),
+            pages_done: 200,
+        },
+    ];
+    expected.sort_by_key(|p| p.workspace.to_storage());
+    assert_eq!(mirror.partly_read().unwrap(), expected);
+}
+
+/// **The requests' and the partly-read list's plans, pinned** on a mirror of
+/// realistic size (20,000 readings, 2,000 capped; 500 requests). The
+/// requests are read through their primary key. The partly-read list is one
+/// pass over `readings` with no sort — the question is "every capped item on
+/// the root", and no index narrows it without a schema change this plan does
+/// not make — and it stays a few milliseconds at this size.
+#[test]
+fn the_request_and_partly_read_queries_state_their_plans() {
+    let (mut mirror, _name, _keeper) = memory();
+    let workspaces: Vec<WorkspaceId> = (0..40).map(|_| WorkspaceId::new()).collect();
+    {
+        let db = mirror.connection();
+        db.execute_batch("BEGIN").unwrap();
+        for i in 0..20_000_u32 {
+            let ws = workspaces[(i % 40) as usize].to_storage();
+            let h = format!("b3:{i:064x}");
+            let (status, reason) = if i % 10 == 0 {
+                ("partial", Some("page-cap"))
+            } else {
+                ("read", None)
+            };
+            db.execute(
+                "INSERT INTO readings VALUES (?1, ?2, ?3, 1, ?4, ?5, 'recognized', 200)",
+                params![ws, DocumentId::new().to_storage(), h, status, reason],
+            )
+            .unwrap();
+        }
+        db.execute_batch("COMMIT").unwrap();
+    }
+    for i in 0..500_u32 {
+        mirror
+            .request(
+                workspaces[(i % 40) as usize],
+                &format!("b3:{i:064x}"),
+                i64::from(i),
+            )
+            .unwrap();
+    }
+    let plan = |sql: &str, parameters: Vec<String>| -> String {
+        let rows: Vec<String> = mirror
+            .connection()
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map(params_from_iter(parameters.iter()), |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        rows.join(" | ")
+    };
+    let ws = workspaces[0].to_storage();
+    for (name, sql, parameters) in [
+        (
+            "requested",
+            "SELECT EXISTS (SELECT 1 FROM read_requests WHERE workspace_id = ?1 AND hash = ?2)",
+            vec![ws.clone(), "b3:aa".to_owned()],
+        ),
+        (
+            "requests_in",
+            "SELECT hash FROM read_requests WHERE workspace_id = ?1
+              ORDER BY requested_at, hash",
+            vec![ws.clone()],
+        ),
+        (
+            "request_met",
+            "DELETE FROM read_requests WHERE workspace_id = ?1 AND hash = ?2",
+            vec![ws.clone(), "b3:aa".to_owned()],
+        ),
+    ] {
+        let plan = plan(sql, parameters);
+        println!("{name}: {plan}");
+        assert!(
+            plan.contains("USING PRIMARY KEY") || plan.contains("USING INDEX"),
+            "{name} does not use the key: {plan}"
+        );
+        assert!(!plan.contains("SCAN read_requests"), "{name}: {plan}");
+    }
+    let partly = plan(PARTLY_READ_SQL, vec![GENERATION.to_string()]);
+    println!("partly_read: {partly}");
+    assert!(!partly.contains("TEMP B-TREE"), "no sort: {partly}");
+    let started = std::time::Instant::now();
+    let found = mirror.partly_read().unwrap();
+    println!(
+        "partly_read over 20,000 rows: {} items in {:?}",
+        found.len(),
+        started.elapsed()
+    );
+    assert_eq!(found.len(), 2_000);
+}
+
+/// The outcome carries the source, so the queue knows whether going on needs
+/// the reader.
+#[test]
+fn an_outcome_says_where_its_words_came_from() {
+    let (mut mirror, _name, _keeper) = memory();
+    let ws = WorkspaceId::new();
+    let parent = DocumentId::new();
+    let mut capped = reading(ReadingStatus::Partial, &[(1, "x")]);
+    capped.reason = Some(Reason::PageCap);
+    capped.source = Some(Source::Recognized);
+    mirror
+        .apply(&applied(ws, parent, vec![("b3:aa".into(), capped)]))
+        .unwrap();
+    let outcomes = mirror.outcomes_in(ws).unwrap();
+    assert_eq!(
+        outcomes
+            .get(&(parent, "b3:aa".to_owned()))
+            .unwrap()
+            .source
+            .as_deref(),
+        Some("recognized")
+    );
 }

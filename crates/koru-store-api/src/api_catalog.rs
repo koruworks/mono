@@ -63,7 +63,7 @@ use koru_store_wire::internal::{
     CloudSyncStatus, DocumentReport, Metrics, StoreReport, WorkspaceReport,
 };
 use koru_store_wire::reader::{ImportFinished, InstallReader, ReaderItems, ReaderState};
-use koru_store_wire::readings::ReadingAnswer;
+use koru_store_wire::readings::{ReadRequested, ReadingAnswer};
 use koru_store_wire::reminders::{
     ActionRequest, ClearedHistory, ReminderQuery, ReminderQueryResponse, ReminderSnapshot,
     RevisionRequest, RuleRequest, SettingsPatch,
@@ -1503,8 +1503,41 @@ pub const ROUTES: &[Route] = &[
         summary: "The words read out of one file or picture in a workspace",
         returns: "the winning reading of those bytes there — reader, generation, status, \
                   reason, source, confidence, how far it got, and each page's words — or \
-                  null when nothing has been read of them yet. A file's words, so one item \
-                  at a time; `projection_unavailable` when this store runs no readings mirror",
+                  null when nothing has been read of them yet, with what a person may ask \
+                  of it on this computer now (offers: read_all, read_again). A file's \
+                  words, so one item at a time; `projection_unavailable` when this store \
+                  runs no readings mirror",
+    },
+    // ---- a person's requests on one item (OCR Plan 3.2). Internal, like the
+    // reading they act on: a request is a fact about this computer, and the
+    // surfaces asking are ours.
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/read-all",
+        handler: || post(routes::readings::read_all),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReadRequested>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Read all pages: finish a file that stopped at a page limit",
+        returns: "the request, recorded on this computer and met behind anything freshly \
+                  added, a page at a time, until the file is read to its end. Refused \
+                  blob_not_here when its bytes are not on this computer, reader_unavailable \
+                  when finishing it needs recognition and the reader is not installed, and \
+                  invalid_request when it did not stop at a limit or a request is waiting",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/read-again",
+        handler: || post(routes::readings::read_again),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReadRequested>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Read again: read a file or picture that was read, or failed, once more",
+        returns: "the request, recorded on this computer; the item is read again and its \
+                  reading written again at the same generation. Refused as read-all is, and \
+                  invalid_request when it has not been read and has not failed",
     },
     Route {
         method: "GET",

@@ -3302,13 +3302,20 @@ pub enum Key {
     ProfileWaitRateLimited,
     ProfileWaitCredential,
     ProfileLeaveRemovedFailed,
+    // **Text in pictures and PDFs: long files** (OCR Plan 3.2, EXPERIENCE §4).
+    /// A file's right-click entry: read the rest of a file that stopped at
+    /// the page limit.
+    ReadingReadAllPages,
+    /// The right-click entry of a file, and of a picture in a page: read it
+    /// again.
+    ReadingReadAgain,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2301] = [
+    pub const ALL: [Key; 2303] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5610,6 +5617,8 @@ impl Key {
         Key::ProfileWaitRateLimited,
         Key::ProfileWaitCredential,
         Key::ProfileLeaveRemovedFailed,
+        Key::ReadingReadAllPages,
+        Key::ReadingReadAgain,
     ];
 }
 
@@ -17079,4 +17088,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ProfileWaitRateLimited, en: "Koru Cloud is limiting requests. Please wait before trying again.", es: "Koru Cloud está limitando las solicitudes. Espera antes de volver a intentarlo.", pt_br: "O Koru Cloud está limitando as solicitações. Aguarde antes de tentar novamente.", de: "Koru Cloud begrenzt Anfragen. Warte vor einem erneuten Versuch.", fr: "Koru Cloud limite les demandes. Patientez avant de réessayer.", ar: "يحدّ Koru Cloud من الطلبات. يُرجى الانتظار قبل المحاولة مجددًا.", zh_hans: "Koru Cloud 正在限制请求。请稍候再试。", ja: "Koru Cloud がリクエストを制限しています。しばらく待ってから再試行してください。" },
     Row { key: Key::ProfileWaitCredential, en: "Koru needs to renew this workspace’s Cloud connection.", es: "Koru necesita renovar la conexión a la nube de este espacio de trabajo.", pt_br: "O Koru precisa renovar a conexão deste espaço de trabalho com a nuvem.", de: "Koru muss die Cloud-Verbindung dieses Arbeitsbereichs erneuern.", fr: "Koru doit renouveler la connexion cloud de cet espace de travail.", ar: "يحتاج Koru إلى تجديد اتصال مساحة العمل هذه بالسحابة.", zh_hans: "Koru 需要续期此工作区的云连接。", ja: "このワークスペースのクラウド接続を更新する必要があります。" },
     Row { key: Key::ProfileLeaveRemovedFailed, en: "Couldn't leave the removed workspace", es: "No se pudo salir del espacio de trabajo eliminado", pt_br: "Não foi possível sair do espaço de trabalho removido", de: "Der entfernte Arbeitsbereich konnte nicht verlassen werden", fr: "Impossible de quitter l’espace de travail supprimé", ar: "تعذّر مغادرة مساحة العمل المُزالة", zh_hans: "无法离开已移除的工作区", ja: "削除されたワークスペースから移動できませんでした" },
+    // Text in pictures and PDFs: long files (OCR Plan 3.2). The wording is
+    // EXPERIENCE §4's own.
+    Row { key: Key::ReadingReadAllPages, en: "Read all pages", es: "Leer todas las páginas", pt_br: "Ler todas as páginas", de: "Alle Seiten lesen", fr: "Lire toutes les pages", ar: "قراءة كل الصفحات", zh_hans: "读取所有页面", ja: "すべてのページを読み取る" },
+    Row { key: Key::ReadingReadAgain, en: "Read again", es: "Volver a leer", pt_br: "Ler novamente", de: "Erneut lesen", fr: "Relire", ar: "القراءة مرة أخرى", zh_hans: "重新读取", ja: "もう一度読み取る" },
 ];

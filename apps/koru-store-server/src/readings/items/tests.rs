@@ -22,6 +22,7 @@ fn outcome(status: &str, reason: Option<&str>) -> Outcome {
         status: Some(status.into()),
         reason: reason.map(str::to_owned),
         page_count: 1,
+        source: None,
     }
 }
 

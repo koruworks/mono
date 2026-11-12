@@ -143,6 +143,21 @@ impl Inbox {
         self.coordinator.notify_all();
     }
 
+    /// **A person asked for these bytes to be read in full or again** (OCR
+    /// Plan 3.2). The request is already a row of the mirror; this only wakes
+    /// the coordinator with the hash, which it resolves as it does bytes that
+    /// landed — and finds the row, which puts the item in the requested lane.
+    pub fn read_requested(&self, workspace: WorkspaceId, hash: &str) {
+        let mut state = self.lock();
+        state
+            .hint_hashes
+            .entry(workspace)
+            .or_default()
+            .insert(hash.to_owned());
+        Self::cap(&mut state);
+        self.coordinator.notify_all();
+    }
+
     /// A document with a blob in it was projected.
     pub fn document_projected(&self, workspace: WorkspaceId, document: DocumentId) {
         let mut state = self.lock();

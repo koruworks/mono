@@ -1666,6 +1666,43 @@ impl Client {
         ))
     }
 
+    /// **Read all pages** of a file that stopped at a page limit (OCR Plan
+    /// 3.2). Recorded on this computer and met behind anything freshly added.
+    /// Refused `blob_not_here`, `reader_unavailable` or `invalid_request`;
+    /// [`ReadingAnswer::offers`](koru_store_wire::readings::ReadingAnswer::offers)
+    /// says beforehand whether it would be accepted.
+    pub fn read_all(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<koru_store_wire::readings::ReadRequested> {
+        self.post(
+            &format!(
+                "/v1/readings/{}/{}/read-all",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            &serde_json::json!({}),
+        )
+    }
+
+    /// **Read again** a file or picture that was read or failed (OCR Plan
+    /// 3.2). Refused as [`Self::read_all`] is.
+    pub fn read_again(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<koru_store_wire::readings::ReadRequested> {
+        self.post(
+            &format!(
+                "/v1/readings/{}/{}/read-again",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            &serde_json::json!({}),
+        )
+    }
+
     /// The nodes matching an attribute query, across workspaces, from the
     /// store's read model.
     ///

@@ -454,6 +454,13 @@ pub enum MenuAction {
     /// debugging entry, **shown only with `KORU_READ_DEBUG=1`**, for one file
     /// under Explore → Files ([`explore_file_items`]).
     SaveReading,
+    /// *Read all pages* (OCR Plan 3.2, EXPERIENCE §4): read the rest of a
+    /// file that stopped at the page limit. Shown for one file under Explore
+    /// → Files where the Store offers it ([`explore_file_items`]).
+    ReadAllPages,
+    /// *Read again*: read one file's words once more. Shown where the Store
+    /// offers it — the file has been read, or reading it failed.
+    ReadAgain,
     Restore,
     DeletePermanently,
     EmptyTrash,
@@ -1072,6 +1079,18 @@ impl MenuAction {
                 });
             }
             MenuAction::MoveNodesToTrash(_) => return Cow::Borrowed("Move to trash"),
+            MenuAction::ReadAllPages => {
+                return Cow::Borrowed(koru_workspace_host::reading_requests::label(
+                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAll,
+                    crate::format::lang(),
+                ));
+            }
+            MenuAction::ReadAgain => {
+                return Cow::Borrowed(koru_workspace_host::reading_requests::label(
+                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain,
+                    crate::format::lang(),
+                ));
+            }
             // The token as it is written in the swatch set, with its first
             // letter raised. One source, so a colour added to `ACCENT_TOKENS`
             // gets a row here without a second table to keep in step.
@@ -1982,11 +2001,37 @@ pub fn file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
 /// The Files view's menu: [`file_items`], and for one file under
 /// `KORU_READ_DEBUG`, *Save reading to file…* last above the rule. Only this
 /// view offers it — a page attachment's menu stays [`file_items`].
-pub fn explore_file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
-    with_reading_row(
+///
+/// **Then, for one file, *Read all pages* and *Read again* where the Store
+/// offers them** (OCR Plan 3.2; `koru_workspace_host::reading_requests`):
+/// `offers` is the Store's last answer for the file, kept by the view —
+/// `None` when nothing is known yet, which shows neither. They are a group of
+/// their own at the menu's very end, so a menu corrected in place when a
+/// fresh answer arrives moves no row above them.
+pub fn explore_file_items(
+    count: usize,
+    note: Option<bool>,
+    offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+) -> Vec<MenuAction> {
+    let mut items = with_reading_row(
         file_items(count, note),
         count == 1 && koru_workspace_host::reading_file::enabled(),
-    )
+    );
+    if count == 1 {
+        let entries = koru_workspace_host::reading_requests::entries(offers, false);
+        if !entries.is_empty() {
+            items.push(MenuAction::Divider);
+            items.extend(entries.into_iter().map(|kind| match kind {
+                koru_workspace_host::reading_requests::ReadRequestKind::ReadAll => {
+                    MenuAction::ReadAllPages
+                }
+                koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain => {
+                    MenuAction::ReadAgain
+                }
+            }));
+        }
+    }
+    items
 }
 
 fn with_reading_row(mut items: Vec<MenuAction>, offered: bool) -> Vec<MenuAction> {
