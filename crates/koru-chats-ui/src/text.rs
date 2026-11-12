@@ -60,11 +60,15 @@ pub fn when(lang: Lang, then_ms: i64, now_ms: i64) -> String {
 }
 
 /// A chat's title as a row draws it. An empty title is *Untitled chat*,
-/// never a blank row.
+/// never a blank row; a chat still carrying the placeholder a new chat is
+/// made with (`koru_ai_core::NEW_CHAT_TITLE`, stored in English until its
+/// first message names it) reads *New chat* in the reader's language.
 pub fn title(lang: Lang, chat: &Chat) -> &str {
     let title = chat.title.trim();
     if title.is_empty() {
         t(lang, Key::ChatsUntitled)
+    } else if title == koru_ai_core::NEW_CHAT_TITLE {
+        t(lang, Key::ChatsNew)
     } else {
         title
     }

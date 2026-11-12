@@ -232,8 +232,10 @@ const STOP_ESCAPE_WINDOW: Duration = Duration::from_millis(1500);
 const GREETING_GAP: f32 = 20.0;
 /// Where the setup fields start: below four provider cards.
 const SETUP_FIELDS_Y: f32 = 330.0;
-/// The title a chat is made with, until its first message names it.
-const DEFAULT_CHAT_TITLE: &str = "New chat";
+/// The title a chat is made with, until its first message names it: the
+/// shared placeholder (`koru_ai_core::NEW_CHAT_TITLE`) the engine also gives
+/// a Bot's new conversation, so both title themselves the same way.
+const DEFAULT_CHAT_TITLE: &str = koru_ai_core::NEW_CHAT_TITLE;
 /// The greetings an empty chat opens on, one picked at random per chat.
 const GREETINGS: [koru_i18n::Key; 20] = [
     koru_i18n::Key::AiGreeting01,

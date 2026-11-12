@@ -164,6 +164,9 @@ pub(crate) struct Settings {
     /// **Why the owner refused a save for its agent**, by the save's
     /// request (`Answer::Reason`, just before the refusal).
     agent_reason: Option<(BotRequestId, String)>,
+    /// The agent card's last save was answered, and nothing has been chosen
+    /// since: it says *Saved* where *Save* stood.
+    model_saved: bool,
 }
 
 impl Settings {
@@ -224,6 +227,13 @@ impl Settings {
     #[cfg(test)]
     pub(crate) fn notice(&self) -> Option<Notice> {
         self.notice
+    }
+
+    /// **Whether the agent card's last save was answered** and nothing has
+    /// been chosen since: it says *Saved* where *Save* stood, as a save
+    /// whose result shows nowhere else should.
+    pub(crate) fn model_saved(&self) -> bool {
+        self.model_saved && !self.model_edited()
     }
 
     /// Whether `change` is on its way: shown as pending, its control inert.
@@ -394,6 +404,7 @@ impl Settings {
         if self.is_pending(Change::Model) {
             return;
         }
+        self.model_saved = false;
         let Some(bot) = &self.bot else {
             return;
         };
@@ -707,10 +718,14 @@ impl Settings {
                     Change::Name | Change::Folder | Change::Model
                 ) && self.bot.as_ref().is_none_or(|known| known.id == bot.id) =>
             {
-                self.pending.remove(index);
+                let saved = self.pending.remove(index);
                 self.unanswered = None;
                 self.notice = None;
                 self.know(bot.clone());
+                // **The agent card says it was saved**: a mode or a model
+                // chosen shows on its chip before *Save*, so the save itself
+                // changed nothing a person could see (the second window run).
+                self.model_saved = saved.change == Change::Model;
                 settled.bot = Some(bot);
             }
             Ok(BotResponse::Operation { operation })

@@ -131,11 +131,15 @@ pub(crate) const MAIN_MARK: Key = Key::surface(SURFACE, "main-conversation");
 /// **What a Bot's conversation offers beyond the conversation itself.**
 /// Files and folders on this computer attached by their path: the Bot owner
 /// delivers them to the agent as an ordinary chat's are (QUESTIONS O30), and
-/// a path reference grants nothing Koru controls. Everything else the owner
-/// refuses — rename, pin, privacy, the chat's own working folder and
-/// workspace access — stays absent.
+/// a path reference grants nothing Koru controls. Rename, as an AI chat's.
+/// Everything else the owner refuses — pin, privacy, the chat's own working
+/// folder and workspace access — stays absent.
 pub(crate) const BOT_OFFERS: koru_ai_ui::OwnedOffers = koru_ai_ui::OwnedOffers {
-    rename: false,
+    // **Renamed as an AI chat is** — by hand, and from its first message
+    // while it still carries the new-chat placeholder (the owner's decision
+    // for Bots conversations, "same as an AI chat"; the engine admits
+    // `RenameChat` on a Bot conversation).
+    rename: true,
     pin: false,
     privacy: false,
     working_folder: false,
@@ -298,6 +302,10 @@ pub(crate) struct BotView {
     // -------------------------------------------- the settings (S5)
     settings: Box<Settings>,
     settings_open: bool,
+    /// **The conversation list, opened from the header while the tab is
+    /// compact**: it takes the conversation's place until a row is chosen
+    /// or it is closed.
+    list_open: bool,
     /// The control the keyboard is on: the header's *Settings*, or one of
     /// the region's. `None` gives the keyboard to the conversation.
     focus: Option<Key>,
@@ -439,6 +447,7 @@ impl BotView {
             header_bottom: Cell::new(f32::INFINITY),
             settings: Box::default(),
             settings_open: false,
+            list_open: false,
             focus: None,
             settings_return: false,
             hot: None,
@@ -586,6 +595,22 @@ impl BotView {
         }
         self.bot = Some(bot);
         self.label_name = Some(name.to_owned()).filter(|name| !name.trim().is_empty());
+    }
+
+    /// **The window knows this Bot's name** — the roster lists it — while
+    /// the tab has read nothing yet: a tab restored behind another wears
+    /// the Bot's name rather than *Bot* until it is opened (the second
+    /// window run). The tab's own read wins once it has one. `true` when
+    /// the label moved.
+    pub(crate) fn know_name(&mut self, name: &str) -> bool {
+        if self.facts.is_some() || self.create.is_some() || name.trim().is_empty() {
+            return false;
+        }
+        if self.label_name.as_deref() == Some(name) {
+            return false;
+        }
+        self.label_name = Some(name.to_owned());
+        true
     }
 
     /// Whether this tab is still finding out whose its conversation is.
@@ -1244,6 +1269,11 @@ impl BotView {
                 title = title.child(self.actions_button());
             }
             if !facts.trashed {
+                // Compact, the conversation column has left: its list is
+                // one press away (EXPERIENCE: a reachable disclosure).
+                if self.compact() {
+                    title = title.child(self.conversations_button(engine));
+                }
                 title = title.child(self.settings_button(engine));
             }
             header = header.child(title);
@@ -1345,6 +1375,13 @@ impl BotView {
         let conversation = boxed("Bot conversation").id(CONVERSATION).fill();
         if self.settings_open {
             tab.child(self.region(engine))
+        } else if self.list_covers() {
+            // Compact, the list opened: it takes the conversation's place.
+            tab.child(
+                koru_draw::el::row("Bot body")
+                    .fill()
+                    .child(self.conversation_column(engine)),
+            )
         } else if self.shows_column() {
             // The Bot's conversations beside the one shown (S8).
             tab.child(
@@ -1665,7 +1702,7 @@ impl View for BotView {
         // with the settings open and nothing of theirs focused, typing went
         // to the hidden composer (the second window run: a message sent
         // doubled). The conversation takes keys only while it is shown.
-        if self.form_open() || !self.shows_conversation() {
+        if self.form_open() || self.list_covers() || !self.shows_conversation() {
             return false;
         }
         self.conversation_mut()
@@ -1687,7 +1724,7 @@ impl View for BotView {
         if let Some(handled) = self.region_press(x, y) {
             return handled;
         }
-        if !self.shows_conversation() || !self.on_conversation(x, y) {
+        if !self.shows_conversation() || self.list_covers() || !self.on_conversation(x, y) {
             return false;
         }
         self.focus = None;
@@ -1918,8 +1955,9 @@ impl View for BotView {
             return;
         }
         // Nothing of a conversation the tab cannot show: a trashed Bot's, or
-        // one that went to Trash with nothing to take its place (S14).
-        if !self.shows_conversation() {
+        // one that went to Trash with nothing to take its place (S14) — nor
+        // one the compact list covers.
+        if !self.shows_conversation() || self.list_covers() {
             return;
         }
         if let Some(conversation) = &mut self.conversation {

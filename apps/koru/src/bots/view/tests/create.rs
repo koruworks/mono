@@ -590,44 +590,54 @@ fn abandon_is_asked_first_and_names_what_it_left() {
     assert!(c.keys_include(CREATE_BUTTON));
 }
 
-/// **An abandoned creation whose folder was never made claims no folder**
-/// (the second window run: *Its folder stays at C:\…\work.* for a path
-/// that did not exist — the managed folder could not be made). The owner's
-/// answer is as `BotCreationReceipt::view` gives it: `left_behind` names
-/// the folder from the moment it *may* have been made, and `folder_binding`
-/// is set only once it was (`folder_ready`). The roster says the same lines.
+/// **What an abandoned creation left is said as the owner's answer gives
+/// it, and a folder is never asserted to be there** (the second window run:
+/// *Its folder stays at C:\…\work.* for a path that did not exist). The
+/// answer is as `BotCreationReceipt::view` gives it since the engine's fix:
+/// the managed folder is named only when the owner looked and found it, or
+/// when it may be there (a step under way, a look that failed), and the
+/// wire does not tell those apart — so the sentence says where to look. An
+/// answer naming no folder says nothing of one. The roster says the same
+/// lines (`abandoned_lines`).
 #[test]
 fn an_abandoned_creation_claims_no_folder_it_never_made() {
     let mut c = shown();
     c.fill();
     assert!(c.view.perform(Act::Create));
     let _ = c.sent();
+    let lang = c.view.lang;
+    let path = "C:\\smoke\\root-02\\ai\\bots\\f3409910\\work";
+    // The folder could not be made: the owner looked and names none.
     let mut abandoned = c.creation(BotCreationStage::Abandoned);
     abandoned.reason = Some(BotCreationReason::FolderUnavailable);
     abandoned.phase = BotCreationPhase::FolderPending;
-    abandoned.folder_binding = None;
-    let path = "C:\\smoke\\root-02\\ai\\bots\\f3409910\\work";
     abandoned.left_behind = Some(BotCreationLeftovers {
         role_page: None,
-        folder: Some(path.into()),
+        folder: None,
     });
-    let lang = c.view.lang;
     let lines = abandoned_lines(lang, &abandoned);
-    let folder = koru_i18n::fill(t(lang, Words::BotsLeftFolder), &[path]);
-    assert!(!lines.contains(&folder), "no folder claimed: {lines:?}");
     assert!(
-        !lines.contains(&t(lang, Words::BotsLeftNothing).to_owned()),
-        "nor that nothing was made: the folder may have been"
+        !lines.iter().any(|line| line.contains(path)),
+        "no folder mentioned: {lines:?}"
     );
     c.reply(abandoned.clone());
     let labels: Vec<String> = all_controls(&c.view).into_iter().map(|c| c.label).collect();
     assert!(
-        !labels.contains(&folder),
+        !labels.iter().any(|label| label.contains(path)),
         "not in the tab either: {labels:?}"
     );
-    // Made and bound: said.
-    abandoned.folder_binding = Some(path.into());
-    assert!(abandoned_lines(lang, &abandoned).contains(&folder));
+    // Named, as there or as maybe there: where to look, nothing more.
+    abandoned.left_behind = Some(BotCreationLeftovers {
+        role_page: None,
+        folder: Some(path.into()),
+    });
+    let lines = abandoned_lines(lang, &abandoned);
+    let look = koru_i18n::fill(t(lang, Words::BotsLeftFolder), &[path]);
+    assert!(lines.contains(&look), "{lines:?}");
+    assert!(
+        !look.contains("stays"),
+        "never asserted to be there: {look}"
+    );
 }
 
 /// **On completion the tab becomes the Bot's tab on its main conversation**,

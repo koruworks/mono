@@ -233,6 +233,8 @@ fn the_bots_refusal_words_are_handed_to_the_chat_and_match_the_settings() {
 #[test]
 fn the_header_is_words_in_its_tree_and_no_control() {
     let mut f = fixture();
+    // Wide enough for the conversation column: no *Conversations* button.
+    f.view.set_viewport(800.0, 480.0);
     f.view.shown_pass(None);
     let words: Vec<String> = f.view.header_lines().into_iter().map(|l| l.2).collect();
     assert_eq!(
@@ -304,6 +306,8 @@ fn the_header_is_words_in_its_tree_and_no_control() {
 #[test]
 fn the_conversation_sits_below_the_header_in_the_tabs_coordinates() {
     let mut f = fixture();
+    // Wide enough for the conversation column beside it.
+    f.view.set_viewport(800.0, 480.0);
     f.view.shown_pass(None);
     let seq = f.asked();
     f.answer(seq, f.bot.id, Ok(f.bot.clone()));
@@ -334,8 +338,9 @@ fn the_conversation_sits_below_the_header_in_the_tabs_coordinates() {
 /// **A Bot's conversation offers local path references and nothing else
 /// the owner refuses.** The Bot owner delivers a file or folder attached by
 /// its path as an ordinary chat's (QUESTIONS O30), so the tab admits that
-/// choice; rename, pin, privacy, the chat's own working folder and its
-/// workspace access stay absent. What each offer does to the surface — the
+/// choice, and rename, as an AI chat's (the owner's decision); pin,
+/// privacy, the chat's own working folder and its workspace access stay
+/// absent. What each offer does to the surface — the
 /// `+` menu's *Add folder*, the stored-or-reference choice for a file — is
 /// pinned beside the seam in `koru-ai-ui`'s `owned/tests.rs`.
 #[test]
@@ -353,6 +358,7 @@ fn a_bot_tab_offers_path_references_and_nothing_else_the_owner_refuses() {
         offers,
         koru_ai_ui::OwnedOffers {
             path_references: true,
+            rename: true,
             ..koru_ai_ui::OwnedOffers::default()
         },
         "and nothing else beyond the conversation"
@@ -1240,11 +1246,100 @@ fn the_tab_lists_its_conversations_and_shows_the_one_chosen() {
         !f.view.with_frame(|_, frame| frame.contains(MAIN_MARK)),
         "not the main one now"
     );
+    // The main conversation is marked in the words its row shows.
     let named = f.view.conversation_name(main);
-    assert!(
-        named.ends_with(t(Lang::En, Words::BotsMainConversation)),
-        "{named}"
+    let shown = koru_i18n::fill(
+        t(Lang::En, Words::BotsMainConversationTitled),
+        &["Conversation 0"],
     );
+    assert!(named.starts_with(&shown), "{named}");
+}
+
+/// **A Bot's conversations are titled as AI chats are, one vocabulary
+/// everywhere** (the second window run: a new conversation read as the
+/// Bot's name, so two rows read the same; the main one was marked only for
+/// a screen reader; the roster called it *Another conversation*; its Trash
+/// question read exactly as the Bot's own). Titles as the owner lists
+/// them (`list_bot_chats`): the main conversation carries the Bot's name;
+/// a new one `koru_ai_core::NEW_CHAT_TITLE`, as the engine now makes it; an
+/// older one the Bot's name; one renamed, its own.
+#[test]
+fn a_bots_conversations_are_titled_as_ai_chats_are() {
+    let (new, older, named) = (ChatId::new(), ChatId::new(), ChatId::new());
+    let mut f = Fixture::opened(unpaused());
+    f.view.set_settings_open(false);
+    f.view.shown_pass(None);
+    let seq = f.listed();
+    let mut page = bot_page(
+        &f.bot,
+        &[
+            (f.bot.main_chat, koru_ai_core::bots::BotChatPurpose::Main),
+            (new, koru_ai_core::bots::BotChatPurpose::Additional),
+            (older, koru_ai_core::bots::BotChatPurpose::Additional),
+            (named, koru_ai_core::bots::BotChatPurpose::Additional),
+        ],
+    );
+    let name = f.bot.config.name.clone();
+    page.chats[0].chat.title = name.clone();
+    page.chats[1].chat.title = koru_ai_core::NEW_CHAT_TITLE.into();
+    page.chats[2].chat.title = name.clone();
+    page.chats[3].chat.title = "Builder forums".into();
+    f.answers
+        .send(Answer::Chats {
+            seq,
+            bot: f.bot.id,
+            result: Ok(page),
+        })
+        .unwrap();
+    f.view.poll();
+    f.view.shown_pass(None);
+    let lang = f.view.lang;
+    // The rows the shared list draws.
+    let drawn = |chat: ChatId| {
+        f.view
+            .conversations
+            .surface
+            .chats()
+            .iter()
+            .find(|row| row.id == chat)
+            .map(|row| koru_chats_ui::text::title(lang, row).to_owned())
+            .expect("listed")
+    };
+    assert_eq!(
+        drawn(f.bot.main_chat),
+        t(lang, Words::BotsMainConversation),
+        "the main one, marked where a person sees it"
+    );
+    assert_eq!(
+        drawn(new),
+        t(lang, Words::ChatsNew),
+        "new, in the reader's words"
+    );
+    assert_eq!(
+        drawn(older),
+        t(lang, Words::ChatsNew),
+        "never the Bot's name twice"
+    );
+    assert_eq!(drawn(named), "Builder forums");
+    // The Trash question names it as a conversation of its Bot.
+    let (title, _, _) = f.view.conversation_trash_words(new).expect("asked");
+    let (bot_title, _, _) = f
+        .view
+        .confirm_words(crate::bots::lifecycle::Ask::Trash)
+        .expect("asked");
+    assert_eq!(
+        title,
+        koru_i18n::fill(
+            t(lang, Words::BotsTrashConversationTitle),
+            &[t(lang, Words::ChatsNew), name.as_str()]
+        )
+    );
+    assert_ne!(title, bot_title, "never the Bot's own question");
+    // The roster's activity row says the same words.
+    let titles: std::collections::HashMap<ChatId, String> =
+        f.view.conversation_titles().into_iter().collect();
+    assert_eq!(titles[&named], "Builder forums");
+    assert_eq!(titles[&new], t(lang, Words::ChatsNew));
 }
 
 /// ***New conversation* asks the owner and shows what it made**; the list
@@ -1751,4 +1846,55 @@ fn a_click_on_a_conversation_row_gives_the_list_the_keyboard() {
         Some(other),
         "Delete asks for the clicked row's Trash"
     );
+}
+
+/// **At the default window the conversation has the tab, and the other
+/// conversations are one press away** (the second window run: at 940 × 620
+/// the column left the chat about 350 px, its placeholder and model chip
+/// cut; below the compact width nothing reached the other conversations).
+/// A tab of the default window's width (about 628 px) is compact: the
+/// header's *Conversations* opens the list in the conversation's place,
+/// pressed through the tab's pointer path, and choosing a row brings the
+/// conversation back on it. Wide enough for both, the column stays.
+#[test]
+fn the_default_window_gives_the_chat_the_tab_and_a_way_to_the_list() {
+    let other = ChatId::new();
+    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
+    f.view.set_viewport(628.0, 600.0);
+    f.view.shown_pass(None);
+    let (column, chat) = f.view.with_frame(|_, frame| {
+        (
+            frame.node(list::CONVERSATIONS).map(|node| node.rect),
+            f.view.conversation_area(frame),
+        )
+    });
+    assert!(column.is_none(), "no column beside the chat");
+    assert!(chat.w >= 600.0, "the chat has the tab: {chat:?}");
+    assert!(
+        f.keys().contains(&list::CONVERSATIONS_BUTTON),
+        "a way to the list"
+    );
+    assert!(f.press(list::CONVERSATIONS_BUTTON));
+    let column = f
+        .view
+        .with_frame(|_, frame| frame.node(list::CONVERSATIONS).map(|node| node.rect))
+        .expect("the list, opened");
+    assert!(column.w >= 600.0, "in the conversation's place: {column:?}");
+    assert!(
+        !f.view.with_frame(|_, frame| frame.contains(CONVERSATION)),
+        "the conversation is covered"
+    );
+    // A row chosen: the conversation is back, on it.
+    f.view.conversations.surface.ask_open(other);
+    f.view.shown_pass(None);
+    assert_eq!(f.view.chat_id(), other);
+    assert!(
+        f.view
+            .with_frame(|_, frame| frame.node(list::CONVERSATIONS).is_none()),
+        "the list closed"
+    );
+    // Wide enough for both: the column, and no disclosure.
+    f.view.set_viewport(1000.0, 600.0);
+    assert!(f.keys().contains(&list::CONVERSATIONS));
+    assert!(!f.keys().contains(&list::CONVERSATIONS_BUTTON));
 }

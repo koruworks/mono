@@ -262,7 +262,11 @@ pub(crate) fn is_agent_row(activity: &ToolActivity) -> bool {
 pub(crate) fn agent_row_title(activity: &ToolActivity, lang: Lang) -> String {
     let kind = AgentToolKind::parse(&activity.tool_name).unwrap_or(AgentToolKind::Other);
     if let Some(summary) = activity.agent_summary.as_deref() {
-        return format!("{} — {summary}", t(lang, Key::AiAgentAsks));
+        return format!(
+            "{} — {}",
+            t(lang, Key::AiAgentAsks),
+            summary_words(lang, summary)
+        );
     }
     if let Some(label) = activity.agent_label.as_deref() {
         if activity.status == ToolActivityStatus::Running {
@@ -279,6 +283,67 @@ pub(crate) fn agent_row_title(activity: &ToolActivity, lang: Lang) -> String {
         AgentToolKind::Approval => Key::AiAgentAskedPermission,
     };
     t(lang, key).to_owned()
+}
+
+/// **A permission's summary in words**: an agent adapter may summarize a
+/// request by its kind's token alone (`command_execution`, the Codex
+/// adapter's approvals); a token Koru knows is said in the person's
+/// language, anything else is the agent's own wording, shown as it is.
+pub(crate) fn summary_words(lang: Lang, summary: &str) -> String {
+    let key = match summary.trim() {
+        "command_execution" => Key::AiAgentAsksRunCommand,
+        "file_change" => Key::AiAgentAsksChangeFiles,
+        "mcp_tool" | "dynamic_tool" => Key::AiAgentAsksUseTool,
+        "web_search" => Key::AiAgentAsksWebSearch,
+        _ => return summary.to_owned(),
+    };
+    t(lang, key).to_owned()
+}
+
+/// **What an offered choice says**: the agent's own words, or — when its
+/// label is empty, which by the adapters' contract asks the surface for
+/// its intent's words (the Codex adapter's one-time approval choices) — its
+/// intent's, in the person's language. Never a button with no words.
+pub(crate) fn choice_words(lang: Lang, choice: &koru_ai_core::OfferedChoice) -> String {
+    let label = choice.label.trim();
+    if !label.is_empty() {
+        return label.to_owned();
+    }
+    let key = match choice.intent {
+        koru_ai_core::ChoiceIntent::AllowOnce => Key::AiAgentAllowOnce,
+        koru_ai_core::ChoiceIntent::AllowAlways => Key::AiAgentAllowAlways,
+        koru_ai_core::ChoiceIntent::RejectOnce => Key::AiAgentReject,
+        koru_ai_core::ChoiceIntent::RejectAlways => Key::AiAgentRejectAlways,
+        koru_ai_core::ChoiceIntent::Unknown => Key::AiAgentChoiceOther,
+    };
+    t(lang, key).to_owned()
+}
+
+/// **The buttons a permission request offers**, in order: each choice's
+/// words and whether it allows — the agent's choices, or the legacy Allow
+/// and Reject when it offered none. What the card draws, and the words an
+/// assistive technology is given for each.
+pub(crate) fn agent_choice_labels(lang: Lang, activity: &ToolActivity) -> Vec<(String, bool)> {
+    match activity.live.as_ref() {
+        Some(live) if !live.choices.is_empty() => live
+            .choices
+            .iter()
+            .map(|choice| {
+                (
+                    choice_words(lang, choice),
+                    matches!(
+                        choice.intent,
+                        koru_ai_core::ChoiceIntent::AllowOnce
+                            | koru_ai_core::ChoiceIntent::AllowAlways
+                    ),
+                )
+            })
+            .collect(),
+        _ => vec![
+            (t(lang, Key::AiAgentAllow).to_owned(), true),
+            (t(lang, Key::AiAgentReject).to_owned(), false),
+        ],
+    }
 }
 
 /// The row's detail: its outcome in the person's language, and, for a
@@ -559,6 +624,74 @@ mod tests {
             agent_chip_label(&agents, &claude, "opus", &listed),
             "Claude Opus 4.7",
             "the brand is not said twice"
+        );
+    }
+
+    /// **A permission card never offers a button with no words** (the
+    /// second window run: *Permission — command_execution · waiting for
+    /// you*, its action a solid bar with no label). An adapter may send its
+    /// choices with empty labels by contract — they ask the surface for the
+    /// intent's words (the Codex adapter's `one_time_approval_choices`) —
+    /// and summarize the request by its kind's token: each choice is drawn
+    /// in its intent's words, in every language, and a known token is said
+    /// in words; the agent's own wording is kept as it is.
+    #[test]
+    fn empty_choice_labels_say_their_intent_and_a_kind_token_is_said_in_words() {
+        let mut asks = row(
+            "agent.approval",
+            ToolActivityStatus::ApprovalRequired,
+            ToolApproval::Pending,
+        );
+        asks.agent_summary = Some("command_execution".into());
+        let choice = |intent, label: &str| koru_ai_core::OfferedChoice {
+            id: format!("{intent:?}"),
+            intent,
+            label: label.into(),
+        };
+        asks.live = Some(koru_ai_core::AgentActivityLive {
+            choices: vec![
+                choice(koru_ai_core::ChoiceIntent::AllowOnce, ""),
+                choice(koru_ai_core::ChoiceIntent::AllowAlways, " "),
+                choice(koru_ai_core::ChoiceIntent::RejectOnce, ""),
+                choice(koru_ai_core::ChoiceIntent::RejectAlways, ""),
+                choice(koru_ai_core::ChoiceIntent::Unknown, ""),
+            ],
+            ..Default::default()
+        });
+        for lang in Lang::ALL {
+            let labels = agent_choice_labels(lang, &asks);
+            assert_eq!(
+                labels,
+                vec![
+                    (t(lang, Key::AiAgentAllowOnce).to_owned(), true),
+                    (t(lang, Key::AiAgentAllowAlways).to_owned(), true),
+                    (t(lang, Key::AiAgentReject).to_owned(), false),
+                    (t(lang, Key::AiAgentRejectAlways).to_owned(), false),
+                    (t(lang, Key::AiAgentChoiceOther).to_owned(), false),
+                ],
+                "{lang:?}"
+            );
+            assert!(labels.iter().all(|(words, _)| !words.trim().is_empty()));
+            assert_eq!(
+                agent_row_title(&asks, lang),
+                format!(
+                    "{} — {}",
+                    t(lang, Key::AiAgentAsks),
+                    t(lang, Key::AiAgentAsksRunCommand)
+                ),
+                "{lang:?}"
+            );
+        }
+        // The agent's own words, when it gave them, are drawn as they are.
+        asks.live = Some(koru_ai_core::AgentActivityLive {
+            choices: vec![choice(koru_ai_core::ChoiceIntent::AllowOnce, "Yes, run it")],
+            ..Default::default()
+        });
+        assert_eq!(agent_choice_labels(Lang::En, &asks)[0].0, "Yes, run it");
+        asks.agent_summary = Some("Run git status?".into());
+        assert_eq!(
+            agent_row_title(&asks, Lang::En),
+            "Permission — Run git status?"
         );
     }
 
@@ -1275,26 +1408,7 @@ pub(crate) fn draw_agent_choices(
     activity: &ToolActivity,
 ) {
     let rects = agent_choice_rects(row, activity);
-    let choices: Vec<(String, bool)> = match activity.live.as_ref() {
-        Some(live) if !live.choices.is_empty() => live
-            .choices
-            .iter()
-            .map(|choice| {
-                (
-                    choice.label.clone(),
-                    matches!(
-                        choice.intent,
-                        koru_ai_core::ChoiceIntent::AllowOnce
-                            | koru_ai_core::ChoiceIntent::AllowAlways
-                    ),
-                )
-            })
-            .collect(),
-        _ => vec![
-            (t(lang, Key::AiAgentAllow).to_owned(), true),
-            (t(lang, Key::AiAgentReject).to_owned(), false),
-        ],
-    };
+    let choices = agent_choice_labels(lang, activity);
     for (rect, (label, allows)) in rects.into_iter().zip(choices) {
         crate::draw_surface_button(
             canvas,

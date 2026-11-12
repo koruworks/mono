@@ -6140,8 +6140,16 @@ impl MainView {
                 // Read here, on the pass every chat's news already arrives
                 // on, and a comparison of a few strings until one moves.
                 group_relabeled |= tab.refresh_ai_chat_face();
-                if let Some(view) = tab.view.chat_view_mut() {
-                    list_changed |= view.take_chat_list_changed();
+                let moved = tab
+                    .view
+                    .chat_view_mut()
+                    .is_some_and(|view| view.take_chat_list_changed());
+                list_changed |= moved;
+                // **A Bot's conversation renamed itself** — by hand, or from
+                // its first message, as an ordinary chat does: its tab's
+                // list reads again to show the title.
+                if moved && let TabView::Bot(view) = &mut tab.view {
+                    view.conversation_list_moved();
                 }
             }
             // Its own strip, whichever column it is in: the window-level

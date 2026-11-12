@@ -829,6 +829,7 @@ impl MainView {
         let mut created = false;
         let mut news = Vec::new();
         let mut creations = Vec::new();
+        let mut conversation_titles = Vec::new();
         for (_, group) in self.panes.iter_groups_mut() {
             let mut relabeled = false;
             let active = group.active();
@@ -850,6 +851,13 @@ impl MainView {
                         // roster last read it (S8, S10).
                         moved |= view.set_activity(&roster.activity_of(bot));
                     }
+                    // A tab restored behind another has read nothing yet:
+                    // it wears its Bot's name as the roster lists it.
+                    if let Some(bot) = view.bot()
+                        && let Some(listed) = roster.bots().iter().find(|row| row.id == bot)
+                    {
+                        view.know_name(&listed.name);
+                    }
                     if let Some(home) = view.home()
                         && let Some((_, name)) = names.iter().find(|(id, _)| *id == home)
                     {
@@ -868,6 +876,9 @@ impl MainView {
                     if let Some(creation) = view.take_creation_news() {
                         creations.push(creation);
                     }
+                    // Its conversations' titles, so the roster's activity
+                    // rows say the same words as the list's rows.
+                    conversation_titles.extend(view.conversation_titles());
                     if index == active {
                         let mine = view
                             .listed_pages()
@@ -913,6 +924,7 @@ impl MainView {
         for creation in creations {
             moved |= self.explore.bots_mut().know_creation(creation);
         }
+        moved |= self.explore.bots_mut().know_titles(conversation_titles);
         moved || placed || recorded
     }
 }

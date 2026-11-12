@@ -208,3 +208,27 @@ fn every_line_fits_its_row_in_every_language_at_a_narrow_width() {
         }
     }
 }
+
+/// **A chat still carrying the new-chat placeholder reads "New chat" in the
+/// reader's language**, never the English word it is stored with
+/// (`koru_ai_core::NEW_CHAT_TITLE`, what a chat — and since the engine's
+/// fix a Bot's additional conversation — is made with until its first
+/// message names it). An empty title stays *Untitled chat*; a real one is
+/// itself.
+#[test]
+fn the_new_chat_placeholder_reads_in_the_readers_language() {
+    for lang in Lang::ALL {
+        let placeholder = chat(1, koru_ai_core::NEW_CHAT_TITLE, 0);
+        assert_eq!(
+            crate::text::title(lang, &placeholder),
+            t(lang, Key::ChatsNew),
+            "{}",
+            lang.tag()
+        );
+        assert_eq!(
+            crate::text::title(lang, &chat(2, "  ", 0)),
+            t(lang, Key::ChatsUntitled)
+        );
+        assert_eq!(crate::text::title(lang, &chat(3, "Notes", 0)), "Notes");
+    }
+}

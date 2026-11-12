@@ -108,6 +108,8 @@ pub(crate) const MODEL_CHIP: Key = Key::surface(SURFACE, "model-chip");
 pub(crate) const MODE_CHIP: Key = Key::surface(SURFACE, "mode-chip");
 pub(crate) const SAVE_MODEL: Key = Key::surface(SURFACE, "save-model");
 pub(crate) const MODEL_PENDING: Key = Key::surface(SURFACE, "model-pending");
+/// *Saved*, where the agent card's *Save* stood once its save was answered.
+pub(crate) const MODEL_SAVED: Key = Key::surface(SURFACE, "model-saved");
 pub(crate) const MODEL_NOTE: Key = Key::surface(SURFACE, "model-note");
 pub(crate) const AGENT_READINESS: Key = Key::surface(SURFACE, "agent-readiness");
 
@@ -132,6 +134,9 @@ pub(crate) const CHOICES: [BotAccess; 2] = [BotAccess::Default, BotAccess::Works
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Act {
     ToggleSettings,
+    /// The header's *Conversations*, while the tab is compact: the list in
+    /// the conversation's place, or back.
+    ToggleConversations,
     SaveName,
     OpenRole,
     Choose(BotAccess),
@@ -777,6 +782,14 @@ impl BotView {
                     self.words(Words::BotsSaving),
                     Ink::Hint,
                 )
+            } else if self.settings.model_saved() {
+                // Saved, and nothing chosen since: said where *Save* stood.
+                line(
+                    "Bot model saved",
+                    MODEL_SAVED,
+                    self.words(Words::BotsSaved),
+                    Ink::Hint,
+                )
             } else {
                 self.button(
                     engine,
@@ -964,6 +977,7 @@ impl BotView {
         }
         let act = match key {
             k if k == SETTINGS_BUTTON => Act::ToggleSettings,
+            k if k == super::list::CONVERSATIONS_BUTTON => Act::ToggleConversations,
             k if k == SAVE_NAME => Act::SaveName,
             k if k == OPEN_ROLE => Act::OpenRole,
             k if k == ADD_PAGE => Act::AddPage,
@@ -1006,6 +1020,7 @@ impl BotView {
                 self.set_settings_open(!self.settings_open);
                 return true;
             }
+            Act::ToggleConversations => return self.toggle_conversation_list(),
             Act::OpenRole => {
                 let Some(bot) = self.settings.bot() else {
                     return false;
@@ -1643,6 +1658,7 @@ impl BotView {
             k if k == RUNS_HERE => self.words(Words::BotsRunsOnThisComputer),
             k if k == MODEL_NOTE => self.words(Words::BotsAppliesToNewConversations),
             k if k == AGENT_READINESS => return self.agent_readiness_words(),
+            k if k == MODEL_SAVED => self.words(Words::BotsSaved),
             k if k == NAME_PENDING
                 || k == ACCESS_PENDING
                 || k == FOLDER_PENDING

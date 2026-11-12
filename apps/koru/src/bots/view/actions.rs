@@ -257,19 +257,24 @@ impl BotView {
             Words::BotsTrashConversationBody
         };
         Some((
-            koru_i18n::fill(t(self.lang, Words::BotsTrashConversationTitle), &[&title]),
+            // **Named as a conversation of its Bot**, so it cannot be read
+            // as trashing the Bot (the second window run: both questions
+            // read *Move “Scout Smoke” to Trash?*).
+            koru_i18n::fill(
+                t(self.lang, Words::BotsTrashConversationTitle),
+                &[&title, &self.label()],
+            ),
             t(self.lang, body).to_owned(),
             t(self.lang, Words::BotsTrashConfirm).to_owned(),
         ))
     }
 
-    /// A listed conversation's title as the list shows it.
+    /// A listed conversation's title as its row shows it
+    /// (`conversations::shown_title`): the same words in the list, the
+    /// roster and the Trash question.
     fn conversation_title(&self, chat: ChatId) -> String {
         self.conversations
-            .listed()
-            .iter()
-            .find(|listed| listed.id == chat)
-            .map(|listed| koru_chats_ui::text::title(self.lang, listed).to_owned())
+            .title_of(chat)
             .unwrap_or_else(|| t(self.lang, Words::BotsMainConversation).to_owned())
     }
 

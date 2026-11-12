@@ -89,6 +89,42 @@ pub(crate) struct Conversations {
     /// owner may have made it, so the next press is the same request
     /// (`create_bot_chat` replays its receipt) rather than a second one.
     unanswered: Option<BotRequestId>,
+    /// The words the rows are titled in, and the Bot's name, which an
+    /// older additional conversation still carries as its title.
+    lang: koru_i18n::Lang,
+    bot_name: String,
+}
+
+/// **How a Bot's conversation is titled wherever it is shown** — its row
+/// in the tab's list, the roster's activity row, the Trash question: one
+/// vocabulary for the same conversation.
+///
+/// - The main conversation is marked so, visibly: *Main conversation*, or
+///   its own title and that it is the main one once it has one.
+/// - Another conversation is titled as an ordinary chat is: its own title,
+///   or *New chat* in the reader's language while it still carries the
+///   placeholder it is made with (`koru_ai_core::NEW_CHAT_TITLE`) — or the
+///   Bot's name, which the engine gave it before (the second window run:
+///   two rows both read *Scout Smoke*).
+pub(crate) fn shown_title(
+    lang: koru_i18n::Lang,
+    chat: &koru_ai_core::Chat,
+    main: bool,
+    bot_name: &str,
+) -> String {
+    let title = chat.title.trim();
+    let placeholder = title.is_empty()
+        || title == koru_ai_core::NEW_CHAT_TITLE
+        || (!bot_name.trim().is_empty() && title == bot_name.trim());
+    match (main, placeholder) {
+        (true, true) => koru_i18n::t(lang, Words::BotsMainConversation).to_owned(),
+        (true, false) => koru_i18n::fill(
+            koru_i18n::t(lang, Words::BotsMainConversationTitled),
+            &[title],
+        ),
+        (false, true) => koru_i18n::t(lang, Words::ChatsNew).to_owned(),
+        (false, false) => title.to_owned(),
+    }
 }
 
 impl Default for Conversations {
@@ -109,6 +145,8 @@ impl Default for Conversations {
             create_refused: None,
             made: None,
             unanswered: None,
+            lang: koru_i18n::Lang::default(),
+            bot_name: String::new(),
         }
     }
 }
@@ -126,6 +164,69 @@ impl Conversations {
     /// The Bot's main conversation, as the list says.
     pub(crate) fn main(&self) -> Option<ChatId> {
         self.main
+    }
+
+    /// **The words the rows are titled in, and the Bot's name**: shown
+    /// again when either moved. `true` when the rows changed.
+    pub(crate) fn set_words(&mut self, lang: koru_i18n::Lang, bot_name: &str) -> bool {
+        if self.lang == lang && self.bot_name == bot_name {
+            return false;
+        }
+        self.lang = lang;
+        self.bot_name = bot_name.to_owned();
+        if !self.listed.is_empty() {
+            self.feed();
+        }
+        true
+    }
+
+    /// `chat`'s title as its row shows it ([`shown_title`]).
+    pub(crate) fn title_of(&self, chat: ChatId) -> Option<String> {
+        self.listed
+            .iter()
+            .find(|listed| listed.id == chat)
+            .map(|listed| shown_title(self.lang, listed, self.main == Some(chat), &self.bot_name))
+    }
+
+    /// Every listed conversation with its shown title, for the window to
+    /// hand the roster's activity rows.
+    pub(crate) fn titles(&self) -> Vec<(ChatId, String)> {
+        self.listed
+            .iter()
+            .map(|listed| {
+                (
+                    listed.id,
+                    shown_title(
+                        self.lang,
+                        listed,
+                        self.main == Some(listed.id),
+                        &self.bot_name,
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// Hand the shared list its rows, each titled as it is shown.
+    fn feed(&mut self) {
+        let chats = self
+            .listed
+            .iter()
+            .map(|listed| {
+                let mut shown = listed.clone();
+                shown.title = shown_title(
+                    self.lang,
+                    listed,
+                    self.main == Some(listed.id),
+                    &self.bot_name,
+                );
+                shown
+            })
+            .collect();
+        self.surface.take_listing(Ok(Listing {
+            chats,
+            agents: Vec::new(),
+        }));
     }
 
     /// **Whether the Bot's main conversation is in Trash**, as the owner's
@@ -193,6 +294,8 @@ impl Conversations {
         *self = Self {
             bot: Some(bot),
             seq: self.seq.wrapping_add(1),
+            lang: self.lang,
+            bot_name: std::mem::take(&mut self.bot_name),
             ..Self::default()
         };
     }
@@ -303,10 +406,7 @@ impl Conversations {
                 }
                 self.next = page.next_cursor;
                 self.load = Load::Ready;
-                self.surface.take_listing(Ok(Listing {
-                    chats: self.listed.clone(),
-                    agents: Vec::new(),
-                }));
+                self.feed();
             }
             // What was listed stays; the sentence says it may be old.
             Err(_) => self.load = Load::Unavailable,

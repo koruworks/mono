@@ -396,6 +396,8 @@ pub(crate) struct BotsRoster {
     /// Creations a Retry or an Abandon from here answered for, by request:
     /// a create tab holding one reads it again. Taken once.
     creations_moved: Vec<BotRequestId>,
+    /// Conversation titles as open Bot tabs show them (`know_titles`).
+    titles: std::collections::HashMap<koru_ai_core::ChatId, String>,
 }
 
 impl BotsRoster {
@@ -916,15 +918,52 @@ impl BotsRoster {
     /// A sub-row's accessible name: which conversation, then its state's
     /// words — the Chats list's.
     pub(crate) fn activity_name(&self, bot: &RosterBot, entry: &BotActivity) -> String {
-        let which = if entry.chat_id == bot.main_chat {
-            t(self.lang, Words::BotsMainConversation)
-        } else {
-            t(self.lang, Words::BotsOtherConversation)
-        };
+        let which = self.conversation_words(bot, entry.chat_id);
         match activity_status(entry.state).spoken(self.lang) {
             Some(state) => format!("{which}, {state}"),
             None => which.to_owned(),
         }
+    }
+
+    /// **Which conversation an activity row is**, in the words its Bot
+    /// tab's list titles it with (`conversations::shown_title`), when an
+    /// open tab has listed it; else the main one by that name and another
+    /// by what it is — the activity read names no title.
+    fn conversation_words(&self, bot: &RosterBot, chat: koru_ai_core::ChatId) -> String {
+        if let Some(title) = self.titles.get(&chat) {
+            return title.clone();
+        }
+        t(
+            self.lang,
+            if chat == bot.main_chat {
+                Words::BotsMainConversation
+            } else {
+                Words::BotsOtherConversation
+            },
+        )
+        .to_owned()
+    }
+
+    /// The title an open Bot tab shows for `chat`, when one has listed it.
+    pub(crate) fn known_title(&self, chat: koru_ai_core::ChatId) -> Option<&str> {
+        self.titles.get(&chat).map(String::as_str)
+    }
+
+    /// **The titles open Bot tabs show for their conversations**, so an
+    /// activity row says the same words as the conversation's row. `true`
+    /// when one moved.
+    pub(crate) fn know_titles(
+        &mut self,
+        titles: impl IntoIterator<Item = (koru_ai_core::ChatId, String)>,
+    ) -> bool {
+        let mut moved = false;
+        for (chat, title) in titles {
+            if self.titles.get(&chat) != Some(&title) {
+                self.titles.insert(chat, title);
+                moved = true;
+            }
+        }
+        moved
     }
 
     /// Ask the service again, when there is a workspace to ask about and a
@@ -1564,11 +1603,7 @@ impl BotsRoster {
     fn activity_row(&self, bot: &RosterBot, entry: &BotActivity) -> El {
         let key = activity_key(entry.chat_id);
         let status = activity_status(entry.state);
-        let which = if entry.chat_id == bot.main_chat {
-            Words::BotsMainConversation
-        } else {
-            Words::BotsOtherConversation
-        };
+        let which = self.conversation_words(bot, entry.chat_id);
         let primary = row("Bot activity")
             .id(key)
             .fill()
@@ -1590,7 +1625,7 @@ impl BotsRoster {
                     .w(metrics::TRAILING_LANE_W),
             )
             .child(
-                text(t(self.lang, which))
+                text(which)
                     .named("Bot activity conversation")
                     .role(roles::META)
                     .ink(Ink::Secondary)

@@ -466,7 +466,10 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     rev.bool(roster.activity_truncated())
         .u64(roster.activity().len() as u64);
     for entry in roster.activity() {
-        rev.uuid(entry.chat_id.as_uuid()).byte(entry.state as u8);
+        rev.uuid(entry.chat_id.as_uuid())
+            .byte(entry.state as u8)
+            // The title an open tab shows for it: the row's words.
+            .str(roster.known_title(entry.chat_id).unwrap_or_default());
     }
     // Creating one (S8).
     rev.u64(roster.creations().len() as u64);

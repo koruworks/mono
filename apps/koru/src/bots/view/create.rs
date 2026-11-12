@@ -1587,19 +1587,13 @@ pub(crate) fn abandoned_lines(lang: koru_i18n::Lang, ended: &BotCreation) -> Vec
             .to_owned(),
         );
     }
-    // **A folder is said to stay only where it was made.** The owner names
-    // the managed folder in `left_behind` from the moment it *may* have been
-    // made (`BotCreationRecord::left_behind`, phase `folder_pending`); it is
-    // known made only once the creation bound it (`folder_binding`, from
-    // `folder_ready`). The second window run: a creation whose folder could
-    // not be made was abandoned, and the roster said *Its folder stays at
-    // C:\…\work* — a path that did not exist. Where it may never have been
-    // made, nothing is claimed about it.
-    if let Some(folder) = left
-        .folder
-        .as_ref()
-        .filter(|_| ended.folder_binding.is_some())
-    {
+    // **Where to look, asserting no more than the answer does.** The owner
+    // names the managed folder only when it looked and found it there, or
+    // when it may be there (a step was under way, or the look failed); the
+    // wire does not tell the two apart (`BotCreationLeftovers`). The second
+    // window run: *Its folder stays at C:\…\work.* for a folder that was
+    // never made. A folder the answer does not name is not mentioned.
+    if let Some(folder) = &left.folder {
         lines.push(koru_i18n::fill(
             t(lang, Words::BotsLeftFolder),
             &[folder.as_str()],

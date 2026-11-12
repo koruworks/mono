@@ -426,6 +426,29 @@ fn an_answer_about_another_request_settles_nothing() {
     assert_eq!(settings.bot().unwrap().config.name, "Scout");
 }
 
+/// **A mode or model save says it was saved** once the owner answers with
+/// the Bot (`update` → `BotResponse::Bot`), until something is chosen
+/// again: the choice shows on its chip before *Save*, so the save changed
+/// nothing a person could see (the second window run).
+#[test]
+fn a_model_save_says_saved_until_something_is_chosen_again() {
+    let (mut settings, bot) = known();
+    let mut draft = settings.model_shown().unwrap();
+    draft.mode = Some("full-access".into());
+    settings.edit_model(draft.clone());
+    assert!(!settings.model_saved());
+    let (request, _) = write(settings.save_model().unwrap());
+    assert!(!settings.model_saved(), "not before the owner answers");
+    let mut saved = bot.clone();
+    saved.config.mode = draft.mode.clone();
+    saved.revision += 1;
+    settings.answer(request, Ok(BotResponse::Bot { bot: saved }), Instant::now());
+    assert!(settings.model_saved(), "said once answered");
+    draft.mode = Some("auto-review".into());
+    settings.edit_model(draft);
+    assert!(!settings.model_saved(), "a new choice: Save again");
+}
+
 /// **A model save refused because its agent cannot run says why**, naming
 /// the agent at draw time — never only *That wasn't saved*.
 #[test]

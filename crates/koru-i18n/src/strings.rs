@@ -281,6 +281,22 @@ pub enum Key {
     AiAttachmentUnreadable,
     AiAgentAllow,
     AiAgentReject,
+    /// An agent's permission choice offered with no words of its own (the adapter asks the surface for its intent's words): allow this once.
+    AiAgentAllowOnce,
+    /// An agent's permission choice with no words of its own: allow it from now on.
+    AiAgentAllowAlways,
+    /// An agent's permission choice with no words of its own: reject it from now on.
+    AiAgentRejectAlways,
+    /// An agent's permission choice with no words of its own and no intent Koru knows.
+    AiAgentChoiceOther,
+    /// What an agent asks permission for, when it names only the kind `command_execution`.
+    AiAgentAsksRunCommand,
+    /// What an agent asks permission for, when it names only the kind `file_change`.
+    AiAgentAsksChangeFiles,
+    /// What an agent asks permission for, when it names only the kind `mcp_tool` or `dynamic_tool`.
+    AiAgentAsksUseTool,
+    /// What an agent asks permission for, when it names only the kind `web_search`.
+    AiAgentAsksWebSearch,
     AiAgentModelsLoading,
     AiAgentModelsFailed,
     AiModelAgentDefault,
@@ -1813,6 +1829,8 @@ pub enum Key {
     BotsSave,
     /// A Bot setting on its way to the Bot owner, shown until it answers.
     BotsSaving,
+    /// A Bot's agent card once its save was answered and nothing has been chosen since: said where Save stood.
+    BotsSaved,
     /// The Bot settings card that holds its agent, model, effort, mode and Fast (Bots P1.8 S7). Non-English columns machine-written, awaiting a native read.
     BotsAgent,
     /// What a Bot's agent-and-model defaults apply to: new conversations only, never an existing one (QUESTIONS O23, Bots P1.8 S7). Non-English columns machine-written, awaiting a native read.
@@ -1933,7 +1951,7 @@ pub enum Key {
     BotsLeftPage,
     /// An abandoned creation's role page that may or may not have been made (S8). Non-English columns machine-written, awaiting a native read.
     BotsLeftPageUnconfirmed,
-    /// An abandoned creation's managed folder, left in place: `{}` is its path (S8). Non-English columns machine-written, awaiting a native read.
+    /// An abandoned creation's managed folder: `{}` is its path (S8). The engine names it when it is there or may be (a step was under way, or its look failed) and the wire does not tell the two apart, so the sentence says where to look and asserts no more. Non-English columns machine-written, awaiting a native read.
     BotsLeftFolder,
     /// A creation's authored role page that may already exist while the Store's answer is not confirmed (S8). Non-English columns machine-written, awaiting a native read.
     BotsRolePageUnconfirmed,
@@ -2083,7 +2101,7 @@ pub enum Key {
     BotsErrPending,
     /// A Bot conversation row's menu row: one conversation's Trash (`TrashChat`).
     BotsTrashConversation,
-    /// One conversation's Move to Trash confirmation's title: `{}` is its title.
+    /// One conversation's Move to Trash confirmation's title: the first `{}` is its title as its row shows it, the second its Bot's name — named as a conversation of the Bot, so it cannot be read as trashing the Bot. Keep the two in this order.
     BotsTrashConversationTitle,
     /// What one conversation's Trash does: only its work is stopped, its siblings keep running, nothing else moves.
     BotsTrashConversationBody,
@@ -2153,6 +2171,8 @@ pub enum Key {
     BotsConversationsOnlyMain,
     /// Marks a Bot's main conversation: in the tab's header while it is the one shown, after its row's name in the list, and on the roster's activity row.
     BotsMainConversation,
+    /// A Bot's main conversation that has a title of its own: `{}` is the title; marked as the main one in words a person sees.
+    BotsMainConversationTitled,
     /// A roster sub-row for a running or Needs-you conversation that is not the Bot's main one: the activity read names no title (Bots P1.8 S10). Non-English columns machine-written, awaiting a native read.
     BotsOtherConversation,
     /// The owner's activity read stopped at its bound: more conversations are running or need the person than the roster lists. Never a claim that the rest are idle.
@@ -3687,7 +3707,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2478] = [
+    pub const ALL: [Key; 2488] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3864,6 +3884,14 @@ impl Key {
         Key::AiAttachmentUnreadable,
         Key::AiAgentAllow,
         Key::AiAgentReject,
+        Key::AiAgentAllowOnce,
+        Key::AiAgentAllowAlways,
+        Key::AiAgentRejectAlways,
+        Key::AiAgentChoiceOther,
+        Key::AiAgentAsksRunCommand,
+        Key::AiAgentAsksChangeFiles,
+        Key::AiAgentAsksUseTool,
+        Key::AiAgentAsksWebSearch,
         Key::AiAgentModelsLoading,
         Key::AiAgentModelsFailed,
         Key::AiModelAgentDefault,
@@ -4970,6 +4998,7 @@ impl Key {
         Key::BotsName,
         Key::BotsSave,
         Key::BotsSaving,
+        Key::BotsSaved,
         Key::BotsAgent,
         Key::BotsAppliesToNewConversations,
         Key::BotsAgentNotReady,
@@ -5140,6 +5169,7 @@ impl Key {
         Key::BotsConversationsUnavailable,
         Key::BotsConversationsOnlyMain,
         Key::BotsMainConversation,
+        Key::BotsMainConversationTitled,
         Key::BotsOtherConversation,
         Key::BotsMoreWork,
         Key::BotsPicturesRefused,
@@ -8149,6 +8179,94 @@ pub const ROWS: &[Row] = &[
         ar: "رفض",
         zh_hans: "拒绝",
         ja: "拒否",
+    },
+    Row {
+        key: Key::AiAgentAllowOnce,
+        en: "Allow once",
+        es: "Permitir una vez",
+        pt_br: "Permitir uma vez",
+        de: "Einmal erlauben",
+        fr: "Autoriser une fois",
+        ar: "السماح مرة واحدة",
+        zh_hans: "允许一次",
+        ja: "今回だけ許可",
+    },
+    Row {
+        key: Key::AiAgentAllowAlways,
+        en: "Always allow",
+        es: "Permitir siempre",
+        pt_br: "Sempre permitir",
+        de: "Immer erlauben",
+        fr: "Toujours autoriser",
+        ar: "السماح دائمًا",
+        zh_hans: "始终允许",
+        ja: "常に許可",
+    },
+    Row {
+        key: Key::AiAgentRejectAlways,
+        en: "Always reject",
+        es: "Rechazar siempre",
+        pt_br: "Sempre recusar",
+        de: "Immer ablehnen",
+        fr: "Toujours refuser",
+        ar: "الرفض دائمًا",
+        zh_hans: "始终拒绝",
+        ja: "常に拒否",
+    },
+    Row {
+        key: Key::AiAgentChoiceOther,
+        en: "Other option",
+        es: "Otra opción",
+        pt_br: "Outra opção",
+        de: "Andere Option",
+        fr: "Autre option",
+        ar: "خيار آخر",
+        zh_hans: "其他选项",
+        ja: "その他の選択肢",
+    },
+    Row {
+        key: Key::AiAgentAsksRunCommand,
+        en: "Run a command",
+        es: "Ejecutar un comando",
+        pt_br: "Executar um comando",
+        de: "Einen Befehl ausführen",
+        fr: "Exécuter une commande",
+        ar: "تشغيل أمر",
+        zh_hans: "运行命令",
+        ja: "コマンドを実行",
+    },
+    Row {
+        key: Key::AiAgentAsksChangeFiles,
+        en: "Change files",
+        es: "Cambiar archivos",
+        pt_br: "Alterar arquivos",
+        de: "Dateien ändern",
+        fr: "Modifier des fichiers",
+        ar: "تغيير الملفات",
+        zh_hans: "更改文件",
+        ja: "ファイルを変更",
+    },
+    Row {
+        key: Key::AiAgentAsksUseTool,
+        en: "Use a tool",
+        es: "Usar una herramienta",
+        pt_br: "Usar uma ferramenta",
+        de: "Ein Werkzeug verwenden",
+        fr: "Utiliser un outil",
+        ar: "استخدام أداة",
+        zh_hans: "使用工具",
+        ja: "ツールを使用",
+    },
+    Row {
+        key: Key::AiAgentAsksWebSearch,
+        en: "Search the web",
+        es: "Buscar en la web",
+        pt_br: "Pesquisar na web",
+        de: "Im Web suchen",
+        fr: "Rechercher sur le Web",
+        ar: "البحث في الويب",
+        zh_hans: "搜索网页",
+        ja: "ウェブを検索",
     },
     Row {
         key: Key::AiAgentModelsLoading,
@@ -15572,6 +15690,17 @@ pub const ROWS: &[Row] = &[
         ja: "保存しています…",
     },
     Row {
+        key: Key::BotsSaved,
+        en: "Saved",
+        es: "Guardado",
+        pt_br: "Salvo",
+        de: "Gespeichert",
+        fr: "Enregistré",
+        ar: "تم الحفظ",
+        zh_hans: "已保存",
+        ja: "保存しました",
+    },
+    Row {
         key: Key::BotsAgent,
         en: "Agent and model",
         es: "Agente y modelo",
@@ -16233,14 +16362,14 @@ pub const ROWS: &[Row] = &[
     },
     Row {
         key: Key::BotsLeftFolder,
-        en: "Its folder stays at {}.",
-        es: "Su carpeta se queda en {}.",
-        pt_br: "A pasta fica em {}.",
-        de: "Sein Ordner bleibt unter {}.",
-        fr: "Son dossier reste à l’emplacement {}.",
-        ar: "يبقى مجلده في {}.",
-        zh_hans: "它的文件夹保留在 {}。",
-        ja: "フォルダーは {} に残ります。",
+        en: "Look for its folder at {}.",
+        es: "Busca su carpeta en {}.",
+        pt_br: "Procure a pasta em {}.",
+        de: "Suche seinen Ordner unter {}.",
+        fr: "Cherchez son dossier à l’emplacement {}.",
+        ar: "ابحث عن مجلده في {}.",
+        zh_hans: "请在 {} 查找它的文件夹。",
+        ja: "フォルダーは {} を確認してください。",
     },
     Row {
         key: Key::BotsRolePageUnconfirmed,
@@ -17058,14 +17187,14 @@ pub const ROWS: &[Row] = &[
     },
     Row {
         key: Key::BotsTrashConversationTitle,
-        en: "Move “{}” to Trash?",
-        es: "¿Mover «{}» a la papelera?",
-        pt_br: "Mover “{}” para a lixeira?",
-        de: "„{}“ in den Papierkorb verschieben?",
-        fr: "Placer « {} » dans la corbeille ?",
-        ar: "نقل «{}» إلى سلة المهملات؟",
-        zh_hans: "将“{}”移到回收站？",
-        ja: "「{}」をごみ箱に移動しますか？",
+        en: "Move the conversation “{}” from {} to Trash?",
+        es: "¿Mover la conversación «{}» de {} a la papelera?",
+        pt_br: "Mover a conversa “{}” de {} para a lixeira?",
+        de: "Die Unterhaltung „{}“ von {} in den Papierkorb verschieben?",
+        fr: "Placer la conversation « {} » de {} dans la corbeille ?",
+        ar: "نقل المحادثة «{}» من {} إلى سلة المهملات؟",
+        zh_hans: "将对话“{}”从 {} 移到回收站？",
+        ja: "会話「{}」を {} からごみ箱に移動しますか？",
     },
     Row {
         key: Key::BotsTrashConversationBody,
@@ -17440,6 +17569,17 @@ pub const ROWS: &[Row] = &[
         ar: "المحادثة الرئيسية",
         zh_hans: "主对话",
         ja: "メインの会話",
+    },
+    Row {
+        key: Key::BotsMainConversationTitled,
+        en: "{} (main conversation)",
+        es: "{} (conversación principal)",
+        pt_br: "{} (conversa principal)",
+        de: "{} (Hauptunterhaltung)",
+        fr: "{} (conversation principale)",
+        ar: "{} (المحادثة الرئيسية)",
+        zh_hans: "{}（主对话）",
+        ja: "{}（メインの会話）",
     },
     Row {
         key: Key::BotsOtherConversation,

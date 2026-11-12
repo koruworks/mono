@@ -749,6 +749,16 @@ fn running_and_needs_you_conversations_sit_under_their_bot() {
             ),
         ]
     );
+    // **Once an open tab has listed it, the row says the conversation's own
+    // title** — the words its row in the tab shows (the second window run:
+    // the roster said *Another conversation* for a conversation the list
+    // titled otherwise).
+    assert!(f.roster.know_titles([(other, "Builder forums".to_owned())]));
+    assert_eq!(
+        f.roster.activity_name(&listed, &f.roster.activity()[1]),
+        format!("Builder forums, {}", t(Lang::En, Words::ChatsStatusWorking))
+    );
+    assert!(!f.roster.know_titles([(other, "Builder forums".to_owned())]));
     let statuses = f.roster.activity_of(scout.id);
     assert_eq!(statuses.get(&other), Some(&ChatStatus::Working));
     assert!(f.roster.activity_of(quiet.id).is_empty(), "nothing claimed");

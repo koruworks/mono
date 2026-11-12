@@ -53,6 +53,14 @@ pub(crate) const CREATE_REFUSED: Key = Key::surface(SURFACE, "create-refused");
 pub(crate) const TRASH_NOTICE: Key = Key::surface(SURFACE, "conversation-trash-notice");
 /// A conversation row's part, under the conversation's own id.
 pub(crate) const CONVERSATION_PART: &str = "bot-conversation";
+/// The header's *Conversations*, while the tab is compact.
+pub(crate) const CONVERSATIONS_BUTTON: Key = Key::surface(SURFACE, "conversations-button");
+
+/// **The narrowest the conversation is comfortable at** beside the column:
+/// its composer's placeholder and its model chip whole. At the default
+/// window (940 x 620, a tab about 628 px wide) the column left the chat
+/// about 350 px, its placeholder and chip cut (the second window run).
+const CHAT_MIN_W: f32 = 480.0;
 
 /// A conversation row's key, as the accessibility tree names it.
 pub(crate) fn conversation_key(chat: ChatId) -> Key {
@@ -63,7 +71,40 @@ impl BotView {
     /// Whether the conversation column is part of the tab: once the tab
     /// knows its Bot, with the settings closed.
     pub(super) fn shows_column(&self) -> bool {
-        self.facts.is_some() && !self.settings_open && !self.compact()
+        self.facts.is_some() && !self.settings_open && (!self.compact() || self.list_open)
+    }
+
+    /// **Compact, with the list opened from the header**: the list takes
+    /// the conversation's place, which takes no keys or presses meanwhile.
+    pub(super) fn list_covers(&self) -> bool {
+        self.list_open && self.compact() && self.facts.is_some() && !self.settings_open
+    }
+
+    /// The header's *Conversations*: the list in the conversation's place,
+    /// or the conversation back. Only while compact. `true` when it moved.
+    pub(super) fn toggle_conversation_list(&mut self) -> bool {
+        if !self.compact() {
+            return false;
+        }
+        self.list_open = !self.list_open;
+        if self.list_open {
+            self.set_settings_open(false);
+        }
+        true
+    }
+
+    /// The header's *Conversations* button, selected while the list is
+    /// open.
+    pub(super) fn conversations_button(&self, engine: &mut TextEngine) -> El {
+        self.button(
+            engine,
+            "Bot conversations button",
+            CONVERSATIONS_BUTTON,
+            t(self.lang, Words::BotsConversations).to_owned(),
+            ActionStyle::Ghost,
+            false,
+        )
+        .selected(self.list_covers())
     }
 
     /// **Narrower than a page's compact width**, the conversation column
@@ -73,8 +114,11 @@ impl BotView {
     /// its 258 px at any width, and at 720 × 600 the chat was left about
     /// 120 px: a word per line, its composer clipped (the first window run's
     /// finding 9).
+    ///
+    /// **And sooner, where the column would squeeze the conversation**
+    /// below [`CHAT_MIN_W`]: the column is kept only where both fit.
     pub(super) fn compact(&self) -> bool {
-        self.size.0 < koru_ui::PageShell::COMPACT_BELOW
+        self.size.0 < koru_ui::PageShell::COMPACT_BELOW.max(koru_draw::theme::PANEL_W + CHAT_MIN_W)
     }
 
     /// The column as elements.
@@ -103,9 +147,14 @@ impl BotView {
                 new_label,
                 list.creating(),
             ));
-        let mut column = col("Bot conversations")
-            .id(CONVERSATIONS)
-            .w(metrics::PANEL_W)
+        let column = col("Bot conversations").id(CONVERSATIONS);
+        // Compact and opened, the list takes the tab's width.
+        let column = if self.list_covers() {
+            column.fill()
+        } else {
+            column.w(metrics::PANEL_W)
+        };
+        let mut column = column
             .pad_x(alias::NAV_PAD)
             .pad_top(Space::S2)
             .gap(Space::S1)
@@ -199,7 +248,13 @@ impl BotView {
     /// **The list's own pass**: the read it owes and the row it was asked
     /// to open. `true` when anything changed.
     pub(super) fn list_pass(&mut self) -> bool {
-        let mut changed = false;
+        // The rows are titled in the tab's words, by the Bot's name.
+        let name = self
+            .facts
+            .as_ref()
+            .map(|facts| facts.name.clone())
+            .unwrap_or_default();
+        let mut changed = self.conversations.set_words(self.lang, &name);
         // A Branch in the conversation moves it to the branch: the tab is on
         // the branch now, and the list reads again to show it.
         if let Some(bound) = self
@@ -217,6 +272,8 @@ impl BotView {
             changed |= self.show_conversation(made);
         }
         if let Some(chat) = self.conversations.surface.take_wants_open() {
+            // A row chosen from the compact list: the conversation is back.
+            self.list_open = false;
             changed |= self.show_conversation(chat);
         }
         // A row's ⋯ or Delete asked for one conversation's Trash (S14).
@@ -449,17 +506,26 @@ impl BotView {
 
     /// A row's accessible name: the Chats view's, and *Main conversation*
     /// for the Bot's main one.
+    /// A row's accessible name: the shared list's, from the title the row
+    /// shows — which marks the main conversation in words a person sees,
+    /// not only in what a screen reader hears.
     pub(crate) fn conversation_name(&self, chat: ChatId) -> String {
-        let name = self
-            .conversations
+        self.conversations
             .surface
             .accessible_name(chat)
-            .unwrap_or_default();
-        if self.conversations.main() == Some(chat) {
-            format!("{name}, {}", t(self.lang, Words::BotsMainConversation))
-        } else {
-            name
-        }
+            .unwrap_or_default()
+    }
+
+    /// **A conversation of this Bot changed in the chat** — renamed by hand
+    /// or from its first message: the list reads again to show it.
+    pub(crate) fn conversation_list_moved(&mut self) {
+        self.conversations.owe_read();
+    }
+
+    /// Every listed conversation with the title its row shows, for the
+    /// roster's activity rows.
+    pub(crate) fn conversation_titles(&self) -> Vec<(ChatId, String)> {
+        self.conversations.titles()
     }
 
     /// An accessibility client's press on a row: it opens, as a click does.
