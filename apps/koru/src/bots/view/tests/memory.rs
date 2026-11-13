@@ -5,7 +5,7 @@ use crate::bots::view::memory::Action;
 use koru_ai_core::bots::*;
 
 fn ready() -> Fixture {
-    let mut f = Fixture::opened(unpaused());
+    let f = Fixture::opened(unpaused());
     while f.commands.try_recv().is_ok() {}
     f
 }
