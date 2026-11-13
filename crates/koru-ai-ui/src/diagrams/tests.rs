@@ -49,6 +49,70 @@ fn prepared() -> Arc<PreparedDiagram> {
 }
 
 #[test]
+fn clicking_a_drawn_chat_diagram_uses_the_shared_viewer_and_export_requests() {
+    use koru_draw::geometry::Rect;
+    use koru_ui::media_viewer::{Action, ZoomKey};
+    let mut surface = ChatSurface::new();
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+    surface.conversation_rect();
+    let id = MessageBlockId::new();
+    rebuild(&mut surface, id, &markdown(), 260.0);
+    let request = surface.take_diagram_requests().pop().unwrap();
+    let prepared = prepared();
+    surface.diagram_result(request.node, request.text_hash, Ok(prepared.clone()));
+    rebuild(&mut surface, id, &markdown(), 260.0);
+    let message = &surface.message_layouts[0];
+    let card = crate::message_card(
+        surface.conversation_hit_rect,
+        surface.conversation_hit_rect.y + message.top,
+        crate::message_height(message),
+        message,
+    );
+    let point = (card.x + crate::PAD + 2.0, card.y + crate::PAD + 2.0);
+    // Clipped content cannot open a viewer, even when its layout is present.
+    assert!(surface.chat_diagram_at(point.0, 0.0).is_none());
+    assert!(surface.mouse_down(point.0, point.1));
+    let viewer = &surface.viewer.as_ref().unwrap().viewer;
+    assert!(Arc::ptr_eq(viewer.diagram().unwrap(), &prepared));
+    assert_eq!(viewer.viewport(), (900.0, 600.0));
+    let actions: Vec<_> = surface
+        .viewer_semantics(koru_i18n::Lang::En)
+        .unwrap()
+        .buttons
+        .into_iter()
+        .map(|b| b.action)
+        .collect();
+    assert!(actions.contains(&Action::Copy));
+    assert!(actions.contains(&Action::SaveAs));
+    assert!(!actions.contains(&Action::OpenExternally));
+    let zoom = viewer.zoom();
+    assert!(surface.viewer_zoom_key(ZoomKey::In));
+    assert!(surface.viewer.as_ref().unwrap().viewer.zoom() > zoom);
+    assert!(surface.viewer_act(Action::Copy));
+    assert!(Arc::ptr_eq(
+        &surface.take_diagram_copy().unwrap(),
+        &prepared
+    ));
+    assert!(surface.take_diagram_copy().is_none());
+    assert!(surface.viewer_act(Action::SaveAs));
+    assert!(Arc::ptr_eq(
+        &surface.take_diagram_save().unwrap(),
+        &prepared
+    ));
+    assert!(surface.take_diagram_save().is_none());
+    assert!(surface.key(
+        &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape),
+        None,
+        winit::keyboard::ModifiersState::empty()
+    ));
+    assert!(!surface.viewer_open());
+    rebuild(&mut surface, id, "```mermaid\ninvalid\n```", 260.0);
+    assert!(surface.chat_diagram_at(point.0, point.1).is_none());
+    rebuild(&mut surface, id, "ordinary text", 260.0);
+    assert!(surface.chat_diagram_at(point.0, point.1).is_none());
+}
+
+#[test]
 fn closed_mermaid_uses_document_geometry_and_keeps_original_markdown() {
     let mut surface = ChatSurface::new();
     let id = MessageBlockId::new();

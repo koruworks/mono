@@ -1,5 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+
+#[test]
+fn mini_app_managed_bridge_follows_registered_providers() {
+    for kind in koru_ai_provider_agent::agent_provider_kinds() {
+        assert!(
+            managed_tools_available(&kind.id, true),
+            "{}",
+            kind.id.as_str()
+        );
+        assert!(!managed_tools_available(&kind.id, false));
+    }
+    for id in ["agent-nobody", "agent-agy", "openai", "grok"] {
+        assert!(!managed_tools_available(
+            &AiProviderId::parse(id).unwrap(),
+            true
+        ));
+    }
+}
+
 fn host() -> HostContext {
     HostContext {
         renderer_id: Uuid::new_v4(),

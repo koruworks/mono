@@ -47,8 +47,11 @@ arrangement. A named empty list can be found too. The same experimental host
 opens after validation; changing its list, completing tasks, searching and
 editing then work locally without more model calls.
 
-Claude and Codex managed AI chats use Koru's installed tools to create and
-refine mini apps. Tool-capable direct providers are also supported. If the
+Managed AI chats use Koru's installed MCP tools to create and refine mini apps:
+Codex, Claude, OpenCode, Kimi, Grok, Antigravity and Devin use their registered
+managed routes. Antigravity uses its ACP server, rather than a raw `agy` terminal.
+The agent's supported runtime and the installed desktop bridge must be available.
+Tool-capable direct providers are also supported. If the
 required tools are unavailable or opening is interrupted, chat says so;
 ordinary chat remains available.
 History and reconnect do not recreate tabs. If no app opened, use **Retry** on

@@ -114,8 +114,7 @@ impl WorkerState {
         provider: &AiProviderId,
         host: Option<HostContext>,
     ) -> Vec<AiToolDefinition> {
-        let managed =
-            matches!(provider.as_str(), "agent-codex" | "agent-claude") && self.managed_mini_apps;
+        let managed = managed_tools_available(provider, self.managed_mini_apps);
         let supported = managed
             || matches!(
                 provider.as_str(),
@@ -191,6 +190,10 @@ impl WorkerState {
         // arbitrary tool payload. Stream failure is not a tab acknowledgement.
         publish_validated(&mut self.streams, &mut self.mini_apps, &context, result)
     }
+}
+
+fn managed_tools_available(provider: &AiProviderId, bridge_present: bool) -> bool {
+    bridge_present && koru_ai_provider_agent::is_agent_provider(provider)
 }
 
 fn publish_validated(

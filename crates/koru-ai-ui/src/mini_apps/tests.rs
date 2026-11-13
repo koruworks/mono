@@ -3,8 +3,17 @@ use super::*;
 
 #[test]
 fn mini_app_managed_chat_offers_host_context_without_changing_ordinary_chat() {
-    for provider in ["agent-codex", "agent-claude"] {
+    for provider in [
+        "agent-codex",
+        "agent-claude",
+        "agent-opencode",
+        "agent-kimi",
+        "agent-grok",
+        "agent-antigravity",
+        "agent-devin",
+    ] {
         let (mut surface, host, accepted, _) = fixture();
+        surface.settings = Some(managed_settings(provider));
         surface
             .transcript
             .as_mut()
@@ -30,6 +39,54 @@ fn mini_app_managed_chat_offers_host_context_without_changing_ordinary_chat() {
         assert!(surface.native_apps.unavailable);
         assert!(surface.take_mini_app_creation().is_none());
     }
+}
+
+fn managed_settings(provider: &str) -> koru_ai_wire::ProviderSettingsResponse {
+    koru_ai_wire::ProviderSettingsResponse {
+        selected_provider: None,
+        openai: koru_ai_wire::OpenAiSettingsView {
+            model: None,
+            reasoning: ReasoningChoice::Default,
+            credential_configured: false,
+        },
+        ollama: koru_ai_wire::OllamaSettingsView {
+            endpoint: "http://localhost:11434".into(),
+            model: None,
+            reasoning: ReasoningChoice::Default,
+        },
+        agents: vec![koru_ai_wire::AgentProviderView {
+            id: AiProviderId::parse(provider).unwrap(),
+            label: provider.into(),
+            steers: false,
+        }],
+    }
+}
+
+#[test]
+fn mini_app_managed_scope_requires_the_services_catalog() {
+    let (mut surface, _, _, _) = fixture();
+    let chat = surface.current_chat_id().unwrap();
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .chat
+        .current_model
+        .provider = AiProviderId::parse("agent-grok").unwrap();
+    // Settings have not arrived yet.
+    assert!(surface.settings.is_none());
+    assert!(surface.begin_mini_app_request(chat).is_none());
+    surface.settings = Some(managed_settings("agent-claude"));
+    assert!(surface.begin_mini_app_request(chat).is_none());
+    surface
+        .transcript
+        .as_mut()
+        .unwrap()
+        .chat
+        .current_model
+        .provider = AiProviderId::parse("agent-nobody").unwrap();
+    assert!(surface.begin_mini_app_request(chat).is_none());
+    assert!(surface.native_apps.pending.is_none());
 }
 
 fn refinement_fixture() -> (

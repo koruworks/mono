@@ -14823,13 +14823,21 @@ impl View for MainView {
         &mut self,
         ws: &WorkspaceDoc,
     ) -> Option<koru_workspace_host::SaveDiagram> {
-        let request = match self.active_view() {
-            TabView::MiniApp(app) if app.owns(ws) => app
-                .focused_leaf()
-                .and_then(|leaf| View::take_wants_save_diagram_as(leaf, ws)),
-            TabView::Leaf(l) => View::take_wants_save_diagram_as(l, ws),
-            _ => None,
-        }?;
+        let request = self
+            .ai_chat
+            .take_diagram_save()
+            .map(|prepared| koru_workspace_host::SaveDiagram {
+                title: prepared.scene().acc_title.clone().unwrap_or_default(),
+                prepared,
+            })
+            .or_else(|| match self.active_view() {
+                TabView::MiniApp(app) if app.owns(ws) => app
+                    .focused_leaf()
+                    .and_then(|leaf| View::take_wants_save_diagram_as(leaf, ws)),
+                TabView::Leaf(l) => View::take_wants_save_diagram_as(l, ws),
+                TabView::AiChat(chat) => View::take_wants_save_diagram_as(chat, ws),
+                _ => None,
+            })?;
         // The route a file's Save takes: a pane request the shell serves
         // against this window, whose device rasterises the PNG. Converted
         // here and `None` returned, so the shell's own drain finds nothing.
@@ -14838,11 +14846,16 @@ impl View for MainView {
     }
 
     fn take_wants_copy_diagram(&mut self) -> Option<koru_workspace_host::CopyDiagram> {
-        let request = match self.active_view() {
-            TabView::MiniApp(app) => app.focused_leaf().and_then(View::take_wants_copy_diagram),
-            TabView::Leaf(l) => View::take_wants_copy_diagram(l),
-            _ => None,
-        }?;
+        let request = self
+            .ai_chat
+            .take_diagram_copy()
+            .map(|prepared| koru_workspace_host::CopyDiagram { prepared })
+            .or_else(|| match self.active_view() {
+                TabView::MiniApp(app) => app.focused_leaf().and_then(View::take_wants_copy_diagram),
+                TabView::Leaf(l) => View::take_wants_copy_diagram(l),
+                TabView::AiChat(chat) => View::take_wants_copy_diagram(chat),
+                _ => None,
+            })?;
         // The save's route, for the same reason: this window's device
         // rasterises the bitmap.
         self.ask_pane(PaneRequest::CopyDiagram(request));

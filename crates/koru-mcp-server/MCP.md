@@ -182,7 +182,11 @@ section: [Creating a complete document](#creating-a-complete-document),
 `update_task_document_app` use the provisional bounded catalog
 `koru:task-document:0.1-proposal1`. They are native Koru host tools, distinct
 from the browser-based MCP Apps document view described under Views.
-They use the existing desktop stdio bridge in Claude and Codex Koru chats.
+They use the existing desktop stdio bridge in registered managed Koru chats:
+Codex, Claude, OpenCode, Kimi, Grok, Antigravity and Devin. The service's managed
+provider registry determines eligibility; an arbitrary `agent-` id does not.
+The installed bridge and a supported managed runtime are required. Antigravity
+uses `agy_acp_server`, not a raw `agy` terminal session.
 For Codex launches Koru disables the inherited `koru` server entry and supplies
 the same bridge under the reserved, explicitly enabled `koru_desktop` alias.
 This avoids merging an inherited HTTP `koru.url` with stdio command fields.

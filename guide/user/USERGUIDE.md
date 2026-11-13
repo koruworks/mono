@@ -4779,6 +4779,10 @@ clipboard and its save control saves one; `Esc`, the `×`, or a click
 anywhere on the dimmed window closes it. A screen reader hears the
 drawing's title (or *Diagram*), the zoom, and each control's name.
 
+A rendered Mermaid diagram in an AI chat opens the same viewer with a single
+click, in either a chat tab or the AI pane. Zoom, pan, copy, save and dismissal
+work as above. A diagram that has not rendered keeps its readable source.
+
 **Copying and saving.** Copy on a selected drawing copies the whole block;
 it arrives as a diagram wherever it is pasted in Koru, and as a fenced
 `mermaid` block in other applications. *Copy image* in the right-click

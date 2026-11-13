@@ -185,8 +185,18 @@ impl ChatSurface {
         else {
             return false;
         };
+        // The service's managed-provider catalog owns this list. A prefix
+        // alone does not establish that a runtime can carry the MCP bridge.
+        if self.settings.as_ref().is_some_and(|settings| {
+            settings
+                .agents
+                .iter()
+                .any(|agent| agent.id == model.provider)
+        }) {
+            return true;
+        }
         match model.provider.as_str() {
-            AiProviderId::OPENAI | AiProviderId::KORU | "agent-codex" | "agent-claude" => true,
+            AiProviderId::OPENAI | AiProviderId::KORU => true,
             AiProviderId::OLLAMA => self
                 .validation
                 .as_ref()

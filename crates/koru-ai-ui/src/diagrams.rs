@@ -51,6 +51,8 @@ struct Entry {
 pub(crate) struct Diagrams {
     entries: HashMap<u64, Entry>,
     pending: Vec<DiagramRequest>,
+    pub copy: Option<Arc<PreparedDiagram>>,
+    pub save: Option<Arc<PreparedDiagram>>,
 }
 
 impl Diagrams {
@@ -86,6 +88,67 @@ impl Diagrams {
 }
 
 impl ChatSurface {
+    /// The already prepared drawing the shared viewer asked the host to copy.
+    pub fn take_diagram_copy(&mut self) -> Option<Arc<PreparedDiagram>> {
+        self.diagrams.copy.take()
+    }
+
+    /// The drawing to save through the host's existing diagram export route.
+    pub fn take_diagram_save(&mut self) -> Option<Arc<PreparedDiagram>> {
+        self.diagrams.save.take()
+    }
+
+    pub(super) fn open_chat_diagram_at(&mut self, x: f32, y: f32) -> bool {
+        let Some(prepared) = self.chat_diagram_at(x, y) else {
+            return false;
+        };
+        let title = prepared.scene().acc_title.clone().unwrap_or_default();
+        self.viewer_opening = None;
+        self.response_selection = None;
+        self.viewer = Some(crate::attachments::ChatViewer {
+            viewer: koru_ui::media_viewer::MediaViewer::open(
+                koru_ui::media_viewer::Stage::Diagram(prepared),
+                koru_ui::media_viewer::ViewerOptions {
+                    actions: koru_ui::media_viewer::ActionSet::DIAGRAM,
+                    title,
+                },
+                self.viewer_viewport(),
+            ),
+            attachment: None,
+        });
+        true
+    }
+
+    fn chat_diagram_at(&self, x: f32, y: f32) -> Option<Arc<PreparedDiagram>> {
+        let area = self.conversation_hit_rect;
+        if !area.contains(x, y) {
+            return None;
+        }
+        for message in &self.message_layouts {
+            if message.role != crate::ChatRole::Assistant {
+                continue;
+            }
+            let card = crate::message_card(
+                area,
+                area.y - self.conversation_scroll + message.top,
+                crate::message_height(message),
+                message,
+            );
+            let mut block_y = card.y + crate::PAD;
+            for block in &message.blocks {
+                if let Some(diagram) = &block.diagram
+                    && let Some((width, height)) = diagram.size(block.wrap_width)
+                    && koru_draw::geometry::Rect::new(card.x + crate::PAD, block_y, width, height)
+                        .contains(x, y)
+                {
+                    return diagram.prepared.clone();
+                }
+                block_y += block.height() + crate::BLOCK_GAP;
+            }
+        }
+        None
+    }
+
     /// Pending closed Mermaid blocks, for the host's existing diagram worker.
     /// A host without that worker leaves the source visible.
     pub fn take_diagram_requests(&mut self) -> Vec<DiagramRequest> {

@@ -2614,6 +2614,9 @@ impl ChatSurface {
         if let Some(url) = self.user_link_at(x, y) {
             return self.follow_link(&url);
         }
+        if self.open_chat_diagram_at(x, y) {
+            return true;
+        }
         if let Some(hit) = self.response_text_hit(x, y) {
             self.focus = Focus::None;
             let position = hit.position;

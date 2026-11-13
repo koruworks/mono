@@ -563,6 +563,24 @@ impl AiChatView {
 }
 
 impl View for AiChatView {
+    fn take_wants_copy_diagram(&mut self) -> Option<koru_workspace_host::CopyDiagram> {
+        self.surface
+            .take_diagram_copy()
+            .map(|prepared| koru_workspace_host::CopyDiagram { prepared })
+    }
+
+    fn take_wants_save_diagram_as(
+        &mut self,
+        _ws: &WorkspaceDoc,
+    ) -> Option<koru_workspace_host::SaveDiagram> {
+        self.surface
+            .take_diagram_save()
+            .map(|prepared| koru_workspace_host::SaveDiagram {
+                title: prepared.scene().acc_title.clone().unwrap_or_default(),
+                prepared,
+            })
+    }
+
     fn set_mods(&mut self, mods: ModifiersState) {
         self.surface.set_mods(mods);
     }
