@@ -70,6 +70,9 @@ pub(super) fn definitions() -> Vec<Tool> {
     if koru_ai_core::bots::memory::BOT_MEMORY_AVAILABLE {
         tools.extend(memory::definitions());
     }
+    if koru_ai_core::bots::memory::BOT_MEMORY_WRITES_AVAILABLE {
+        tools.extend(memory::write_definitions());
+    }
     tools
 }
 

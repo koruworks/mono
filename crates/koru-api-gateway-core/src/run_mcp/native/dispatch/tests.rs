@@ -319,6 +319,43 @@ fn native_create_registers_and_exact_retry_never_executes_again() {
 }
 
 #[test]
+fn ordinary_native_write_rejects_retained_memory_purpose_before_store_effect() {
+    let f = Fixture::new();
+    let arguments = f.arguments();
+    f.retain_prepared("create_document", arguments.clone(), false);
+    {
+        let mut state = f.owner.state.lock().unwrap();
+        let intent = state.intent.as_mut().unwrap();
+        intent.purpose = NativeEffectPurpose::Memory {
+            authority: MemoryEditAuthorityV1 {
+                version: 1,
+                owner: f.provenance.owner,
+                bot: f.provenance.bot,
+                submission: f.provenance.submission,
+                captured_config_revision: f.provenance.config_revision,
+                creation_request: BotRequestId::mint(),
+                workspace: intent.destination,
+                memory_document: intent.target,
+                action: MemoryEditAction::Remember,
+            },
+        };
+    }
+    assert_eq!(
+        f.call("create_document", arguments).unwrap_err().code,
+        "native_operation_conflict"
+    );
+    let state = f.owner.state.lock().unwrap();
+    assert_eq!((state.leases, state.prepares, state.confirms), (0, 0, 0));
+    let workspace = f.record.workspace;
+    assert!(
+        f.memory
+            .with_store(move |store| store.documents(workspace).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn prepared_none_can_lease_but_held_missing_candidate_never_reexecutes() {
     for held in [false, true] {
         let f = Fixture::new();
