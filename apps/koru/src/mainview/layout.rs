@@ -464,6 +464,7 @@ impl MainView {
         if !self.tab_widths().is_empty() {
             self.ensure_tab_visible(active);
         }
+        self.sync_mini_app_refinement_target();
     }
 
     /// `Ctrl+Shift+E`: **focus the tree, or toggle the pane.**

@@ -4,6 +4,21 @@ use super::*;
 use koru_ai_core::mini_apps::{Declaration, Envelope, HostContext};
 
 #[derive(Clone, Debug)]
+pub struct MiniAppRefinement {
+    pub host: HostContext,
+    pub profile: ProfileId,
+    pub chat: ChatId,
+    pub envelope: koru_ai_core::mini_apps::UpdateEnvelope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct QueuedTarget {
+    profile: Option<ProfileId>,
+    workspace: Option<WorkspaceId>,
+    target: Option<koru_ai_core::mini_apps::RefinementTarget>,
+}
+
+#[derive(Clone, Debug)]
 pub struct MiniAppCreation {
     pub host: HostContext,
     pub profile: ProfileId,
@@ -25,8 +40,11 @@ pub(crate) struct NativeApps {
     pub(super) enabled: bool,
     pending: Option<Pending>,
     ready: Option<MiniAppCreation>,
+    update: Option<MiniAppRefinement>,
+    target: Option<koru_ai_core::mini_apps::RefinementTarget>,
     pub(super) unavailable: bool,
     interrupted: bool,
+    refinement_refused: bool,
 }
 impl Default for NativeApps {
     fn default() -> Self {
@@ -35,8 +53,11 @@ impl Default for NativeApps {
             enabled: false,
             pending: None,
             ready: None,
+            update: None,
+            target: None,
             unavailable: false,
             interrupted: false,
+            refinement_refused: false,
         }
     }
 }
@@ -44,12 +65,63 @@ impl NativeApps {
     pub(super) fn clear(&mut self) {
         self.pending = None;
         self.ready = None;
+        self.update = None;
         self.unavailable = false;
         self.interrupted = false;
+        self.refinement_refused = false;
     }
 }
 
 impl ChatSurface {
+    pub(crate) fn queued_mini_app_target(&self) -> QueuedTarget {
+        QueuedTarget {
+            profile: self.profile,
+            workspace: self.context_workspace,
+            target: self.native_apps.target,
+        }
+    }
+    pub(crate) fn accepts_queued_mini_app_target(&mut self, captured: QueuedTarget) -> bool {
+        let current = self.queued_mini_app_target();
+        if (captured.target.is_some() || current.target.is_some()) && captured != current {
+            self.native_apps.refinement_refused = true;
+            self.refresh_mini_app_status();
+            return false;
+        }
+        true
+    }
+    /// The containing native host supplies only its currently visible mini app.
+    /// A request captures this value; later refreshes cannot retarget it.
+    pub fn set_mini_app_refinement_target(
+        &mut self,
+        target: Option<koru_ai_core::mini_apps::RefinementTarget>,
+    ) {
+        if self.native_apps.pending.as_ref().is_some_and(|pending| {
+            !pending.applied
+                && pending.host.refinement.is_some_and(|old| {
+                    target.is_none_or(|new| {
+                        old.tab_id != new.tab_id || old.surface_id != new.surface_id
+                    })
+                })
+        }) {
+            self.interrupt_mini_app();
+            self.native_apps.refinement_refused = true;
+            self.refresh_mini_app_status();
+        }
+        self.native_apps.target = target;
+    }
+    pub fn mini_app_refined(&mut self, request: uuid::Uuid, applied: bool) {
+        self.mini_app_opened(request, applied);
+        self.native_apps.refinement_refused = !applied;
+        self.refresh_mini_app_status();
+    }
+    pub fn take_mini_app_refinement(&mut self) -> Option<MiniAppRefinement> {
+        let update = self.native_apps.update.take()?;
+        (self.native_apps.enabled
+            && self.profile == Some(update.profile)
+            && self.context_workspace == Some(update.host.workspace_id)
+            && self.current_chat_id() == Some(update.chat))
+        .then_some(update)
+    }
     /// Explicit opt-in by the native tab host; remote/other hosts default off.
     pub fn offer_mini_apps(&mut self, enabled: bool) {
         if self.native_apps.enabled != enabled {
@@ -78,6 +150,22 @@ impl ChatSurface {
         {
             pending.applied |= opened;
             self.native_apps.interrupted = !opened;
+            if opened {
+                self.native_apps.refinement_refused = false;
+                // Selecting a just-created tab can retire the previous target
+                // during relayout before this matching local receipt arrives.
+                // Remove only our outcome wording, not an unrelated status.
+                if self.status.as_deref().is_some_and(|status| {
+                    [
+                        koru_i18n::Key::MiniAppRefinementRefused,
+                        koru_i18n::Key::MiniAppGenerationInterrupted,
+                    ]
+                    .into_iter()
+                    .any(|key| status == koru_i18n::t(self.lang, key))
+                }) {
+                    self.status = None;
+                }
+            }
             if !opened {
                 self.status = Some(
                     koru_i18n::t(self.lang, koru_i18n::Key::MiniAppGenerationInterrupted).into(),
@@ -120,6 +208,7 @@ impl ChatSurface {
             renderer_id: self.native_apps.renderer,
             request_id: uuid::Uuid::new_v4(),
             workspace_id: self.context_workspace?,
+            refinement: self.native_apps.target,
         };
         self.native_apps.pending = Some(Pending {
             host,
@@ -140,6 +229,9 @@ impl ChatSurface {
         if !self.mini_app_available() {
             return None;
         }
+        if !self.can_retry_mini_app_request(chat, message) {
+            return None;
+        }
         let pending = self.native_apps.pending.as_mut()?;
         if pending.chat != chat || pending.message != Some(message) || pending.applied {
             return None;
@@ -152,9 +244,25 @@ impl ChatSurface {
         pending.received = false;
         pending.retired = false;
         self.native_apps.ready = None;
+        self.native_apps.update = None;
         self.native_apps.interrupted = false;
+        self.native_apps.refinement_refused = false;
         self.native_apps.unavailable = false;
         Some(pending.host)
+    }
+    pub(super) fn can_retry_mini_app_request(&mut self, chat: ChatId, message: MessageId) -> bool {
+        let changed = self.native_apps.pending.as_ref().is_some_and(|pending| {
+            pending.chat == chat
+                && pending.message == Some(message)
+                && pending.host.refinement.is_some()
+                && (pending.host.refinement != self.native_apps.target
+                    || self.context_workspace != Some(pending.host.workspace_id))
+        });
+        if changed {
+            self.native_apps.refinement_refused = true;
+            self.refresh_mini_app_status();
+        }
+        !changed
     }
     pub(super) fn accept_mini_app_attempt(
         &mut self,
@@ -173,6 +281,7 @@ impl ChatSurface {
                 pending.retired = true;
                 pending.attempt = None;
                 self.native_apps.ready = None;
+                self.native_apps.update = None;
                 return;
             }
             if pending.retired
@@ -186,6 +295,51 @@ impl ChatSurface {
         }
     }
     pub(super) fn receive_mini_app(&mut self, event: &PublicAiEvent) {
+        if let PublicAiEvent::MiniAppUpdated {
+            attempt_id,
+            chat_id,
+            profile_id,
+            call_id,
+            host,
+            envelope,
+            ..
+        } = event
+        {
+            let Some(pending) = &mut self.native_apps.pending else {
+                return;
+            };
+            if pending.host != *host
+                || !self.native_apps.enabled
+                || pending.retired
+                || pending.chat != *chat_id
+                || pending.attempt != Some(*attempt_id)
+                || pending.received
+                || pending.applied
+                || self.profile != Some(*profile_id)
+                || self.context_workspace != Some(host.workspace_id)
+                || call_id.is_empty()
+                || call_id.len() > 256
+                || host.refinement.is_none_or(|target| {
+                    target.surface_id.is_nil()
+                        || envelope.update.surface_id != target.surface_name()
+                })
+                || self
+                    .transcript
+                    .as_ref()
+                    .is_none_or(|t| t.chat.id != *chat_id)
+                || envelope.arrangement().is_err()
+            {
+                return;
+            }
+            pending.received = true;
+            self.native_apps.update = Some(MiniAppRefinement {
+                host: *host,
+                profile: *profile_id,
+                chat: *chat_id,
+                envelope: envelope.clone(),
+            });
+            return;
+        }
         let PublicAiEvent::MiniAppCreated {
             attempt_id,
             chat_id,
@@ -239,6 +393,7 @@ impl ChatSurface {
         {
             self.native_apps.interrupted = true;
             self.native_apps.ready = None;
+            self.native_apps.update = None;
             // Keep only local message ownership, for an explicit retry.
             if let Some(pending) = &mut self.native_apps.pending {
                 pending.attempt = None;
@@ -280,7 +435,9 @@ impl ChatSurface {
         }
     }
     pub(super) fn refresh_mini_app_status(&mut self) {
-        let key = if self.native_apps.unavailable {
+        let key = if self.native_apps.refinement_refused {
+            Some(koru_i18n::Key::MiniAppRefinementRefused)
+        } else if self.native_apps.unavailable {
             Some(koru_i18n::Key::MiniAppToolsUnavailable)
         } else if self.native_apps.interrupted {
             Some(koru_i18n::Key::MiniAppGenerationInterrupted)

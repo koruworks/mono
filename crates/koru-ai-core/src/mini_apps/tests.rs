@@ -1,5 +1,35 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+
+#[test]
+fn refinement_accepts_only_a_complete_root_replacement_without_upstream_revision() {
+    let mut root = Declaration::parse(FIXTURE.as_bytes())
+        .unwrap()
+        .envelope
+        .surface
+        .components
+        .remove(0);
+    root.arrangement = Some("document-first".into());
+    let valid = json!({"version":"1.0","updateComponents":{"surfaceId":"mini-app-fixture","components":[root]}});
+    assert!(
+        UpdateEnvelope::from_value(&valid)
+            .unwrap()
+            .arrangement()
+            .unwrap()
+    );
+    for value in [
+        json!({"version":"1.0","baseRevision":1,"updateComponents":valid["updateComponents"]}),
+        json!({"version":"1.0","updateComponents":{"surfaceId":"mini-app-fixture","components":[]}}),
+        json!({"version":"1.0","updateComponents":{"surfaceId":"mini-app-fixture","components":[{"id":"document","component":"DocumentHost"}]}}),
+        json!({"version":"1.0","updateComponents":{"surfaceId":"mini-app-fixture","components":[{"id":"root","component":"TaskDocument","children":["tasks"],"arrangement":"document-first"}]}}),
+        json!({"version":"1.0","deleteSurface":{"surfaceId":"mini-app-fixture"}}),
+    ] {
+        assert!(UpdateEnvelope::from_value(&value).is_err());
+    }
+    let mut too_large = valid;
+    too_large["updateComponents"]["surfaceId"] = "x".repeat(MAX_BYTES + 1).into();
+    assert!(UpdateEnvelope::from_value(&too_large).is_err());
+}
 #[test]
 fn strict_catalog_accepts_order_independent_reference_only_components() {
     let mut value: Value = serde_json::from_str(FIXTURE).unwrap();
@@ -31,6 +61,7 @@ fn authority_allows_one_success_and_revokes_in_flight_jobs() {
         renderer_id: Uuid::new_v4(),
         request_id: Uuid::new_v4(),
         workspace_id: WorkspaceId::new(),
+        refinement: None,
     };
     let authority = Authority::new(host);
     assert!(authority.begin());

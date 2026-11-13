@@ -15,9 +15,11 @@ use uuid::Uuid;
 
 pub const CATALOG_ID: &str = "koru:task-document:0.1-proposal1";
 pub const CREATE_TOOL: &str = "create_task_document_app";
+pub const UPDATE_TOOL: &str = "update_task_document_app";
 pub const LIST_TOOL: &str = "find_task_app_lists";
 pub const MAX_BYTES: usize = 4096;
 pub const FIXTURE: &str = include_str!("mini_apps/fixture.json");
+pub const REFINEMENT_FIXTURE: &str = include_str!("mini_apps/refinement.fixture.json");
 
 /// Serialize an already parsed value without allocating its unbounded JSON
 /// representation merely to discover that it exceeds this catalog's limit.
@@ -51,6 +53,62 @@ pub struct HostContext {
     pub renderer_id: Uuid,
     pub request_id: Uuid,
     pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refinement: Option<RefinementTarget>,
+}
+
+/// Native lifetime and optimistic revision, deliberately outside A2UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RefinementTarget {
+    pub tab_id: u64,
+    pub surface_id: Uuid,
+    pub base_revision: u64,
+}
+impl RefinementTarget {
+    pub fn surface_name(self) -> String {
+        format!("mini-app-{}", self.surface_id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct UpdateEnvelope {
+    pub version: String,
+    #[serde(rename = "updateComponents")]
+    pub update: ComponentUpdate,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ComponentUpdate {
+    pub surface_id: String,
+    pub components: Vec<Component>,
+}
+impl UpdateEnvelope {
+    pub fn from_value(value: &Value) -> Result<Self, &'static str> {
+        let bytes = bounded_json(value)?;
+        let result: Self = serde_json::from_slice(&bytes).map_err(|_| "unsupported refinement")?;
+        result.arrangement()?;
+        Ok(result)
+    }
+    /// Only replacing the fixed root's arrangement is supported. In particular,
+    /// missing children cannot remove an editor, selector or search control.
+    pub fn arrangement(&self) -> Result<bool, &'static str> {
+        bounded_json(self)?;
+        if self.version != "1.0" || self.update.components.len() != 1 {
+            return Err("refinement must preserve the active editor and controls");
+        }
+        let mut fixture = Declaration::parse(FIXTURE.as_bytes())?.envelope;
+        fixture.surface.surface_id = self.update.surface_id.clone();
+        if self.update.components[0].id != "root" {
+            return Err("only the named arrangement can be refined");
+        }
+        fixture.surface.components[0] = self.update.components[0].clone();
+        Ok(Declaration::validate(fixture)?.swapped)
+    }
 }
 
 /// Shared between one live worker attempt and its tool jobs. Revocation also
@@ -270,8 +328,13 @@ pub fn definitions() -> Vec<AiToolDefinition> {
     let mut schema: Value =
         serde_json::from_str(include_str!("mini_apps/create.schema.json")).expect("owned schema");
     schema["properties"]["createSurface"]["properties"]["catalogId"]["const"] = CATALOG_ID.into();
+    let root = schema["properties"]["createSurface"]["properties"]["components"]["items"]["oneOf"]
+        [0]
+    .clone();
+    let update_schema = json!({"type":"object","additionalProperties":false,"required":["version","updateComponents"],"properties":{"version":{"const":"1.0"},"updateComponents":{"type":"object","additionalProperties":false,"required":["surfaceId","components"],"properties":{"surfaceId":{"type":"string","minLength":1,"maxLength":96},"components":{"type":"array","minItems":1,"maxItems":1,"items":root}}}}});
     [ (CREATE_TOOL, "Create a task/document mini app", "Propose one native task/document mini app for this live host. Supply the complete A2UI 1.0 envelope. Use find_task_app_lists for named/empty lists and list_documents for document IDs. Only references and the named arrangement belong here; never task rows, task titles, document text or search results. A successful result is validated and offered to the native host; it does not acknowledge that a tab opened.", schema),
-      (LIST_TOOL, "Find task lists", "Find list ID/name metadata, including empty lists, in this host's current workspace. Explicit lookup only; no task content is returned.", json!({"type":"object","properties":{"query":{"type":"string","maxLength":128},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["query"],"additionalProperties":false})) ]
+      (LIST_TOOL, "Find task lists", "Find list ID/name metadata, including empty lists, in this host's current workspace. Explicit lookup only; no task content is returned.", json!({"type":"object","properties":{"query":{"type":"string","maxLength":128},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":20}},"required":["query"],"additionalProperties":false})),
+      (UPDATE_TOOL, "Rearrange the current mini app", "Change the current live mini app's named arrangement using one A2UI 1.0 updateComponents envelope. Replace only the root TaskDocument component, retaining its children selector, tasks, search, document. document-first puts the document on the left and tasks on the right; tasks-first reverses that. Removing controls or changing bindings is unsupported. A validated result is offered to the native host, which may refuse a stale revision; tool success does not acknowledge local application.", update_schema) ]
       .into_iter().map(|(name,title,description,input_schema)| AiToolDefinition {
           name: name.into(), title: title.into(), description: description.into(), input_schema,
           output_schema: json!({"type":"object"}),

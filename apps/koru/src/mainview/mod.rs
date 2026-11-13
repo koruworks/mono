@@ -5195,8 +5195,7 @@ impl MainView {
                     let list = self.task_row(document, node).and_then(|row| row.list);
                     list.is_some_and(|list| {
                         if let TabView::MiniApp(app) = self.active_view() {
-                            app.tasks
-                                .set_target(crate::panes::explore::rail::RailTarget::List(list));
+                            app.select_tasks(crate::panes::explore::rail::RailTarget::List(list));
                             app.focus_region(crate::mini_app::Region::Tasks);
                             true
                         } else {
@@ -6132,6 +6131,8 @@ impl MainView {
     /// happens whether or not the view is showing, and the view is asked to
     /// refresh only when it is: **told, never polled**.
     fn maintain_chats(&mut self) -> bool {
+        // A completed reply may dispatch queued input during step_chats.
+        self.sync_mini_app_refinement_target();
         // Which chats work, wait or hold something unseen (D83), before the
         // Chats view is asked again below.
         let status_changed = self.maintain_chat_status();
@@ -10023,6 +10024,7 @@ impl MainView {
 }
 impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        self.sync_mini_app_refinement_target();
         self.tooltip.clear();
         self.pointer = (x, y);
         if self.file_preview.is_some() {
@@ -15924,6 +15926,7 @@ impl MainView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        self.sync_mini_app_refinement_target();
         if self.file_preview.is_some() {
             return self.file_preview_key(key);
         }

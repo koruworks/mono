@@ -16,6 +16,39 @@ use super::*;
 use crate::attachments;
 use crate::reader::{Reader, Update};
 
+#[test]
+fn mini_app_queued_prompt_cannot_recapture_another_surface_at_dispatch() {
+    let (mut surface, transcript, commands) = agent_surface(AiProviderId::OPENAI, &[]);
+    let first = koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 1,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 3,
+    };
+    surface.set_mini_app_refinement_target(Some(first));
+    let attempt = send_and_accept(&mut surface, &commands, "First request");
+    let prompt = "Put the document on the left and tasks on the right";
+    type_into(&mut surface, prompt);
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(queued_texts(&surface), [prompt]);
+    surface.set_mini_app_refinement_target(Some(koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 2,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 0,
+    }));
+    end_reply(&mut surface, &transcript, completed(attempt));
+    assert!(sends(&drain(&commands)).is_empty());
+    assert_eq!(queued_texts(&surface), [prompt]);
+    assert!(surface.queues.is_paused(transcript.chat.id));
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(t(surface.lang, Key::MiniAppRefinementRefused))
+    );
+    // Returning to the exact captured target permits an explicit Send next.
+    surface.set_mini_app_refinement_target(Some(first));
+    assert!(surface.send_queue_head());
+    assert_eq!(sends(&drain(&commands)), [prompt]);
+}
+
 /// A surface on a new agent chat, with the agents the settings list:
 /// `(id, steers)`.
 fn agent_surface(

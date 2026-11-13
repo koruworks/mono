@@ -5,6 +5,7 @@ fn host() -> HostContext {
         renderer_id: Uuid::new_v4(),
         request_id: Uuid::new_v4(),
         workspace_id: WorkspaceId::new(),
+        refinement: None,
     }
 }
 
@@ -14,6 +15,32 @@ fn mini_app_descriptors_name_only_the_request_local_workspace() {
     let original = global.clone();
     let h = host();
     let scoped = scoped_definitions(&global, Some(h));
+    assert!(!scoped.iter().any(|d| d.name == mini_apps::UPDATE_TOOL));
+    let target = mini_apps::RefinementTarget {
+        tab_id: 23,
+        surface_id: Uuid::new_v4(),
+        base_revision: 7,
+    };
+    let refined = scoped_definitions(
+        &global,
+        Some(HostContext {
+            refinement: Some(target),
+            ..h
+        }),
+    );
+    let update = refined
+        .iter()
+        .find(|d| d.name == mini_apps::UPDATE_TOOL)
+        .unwrap();
+    assert_eq!(
+        update.input_schema["properties"]["updateComponents"]["properties"]["surfaceId"]["const"],
+        target.surface_name()
+    );
+    assert!(
+        update.input_schema["properties"]
+            .get("baseRevision")
+            .is_none()
+    );
     assert!(
         scoped
             .iter()

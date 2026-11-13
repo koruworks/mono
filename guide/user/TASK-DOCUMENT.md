@@ -59,7 +59,24 @@ another copy. Switching workspace/profile, hiding the originating chat, or
 closing it retires pending delivery. Keep the requesting chat visible until
 the mini-app tab opens.
 
-Saving, pinning and conversational refinement are later stages. The proposed
+To rearrange an open mini app, keep its tab selected and open the AI side pane.
+Ask **“Put the document on the left and tasks on the right.”** The model's
+validated update swaps the same two regions. Selection, scroll, search and
+native editing state stay with their existing controls. This route currently
+uses the side pane beside the selected mini app; a separate chat tab has no
+refinement target. Changing or closing the target before the result arrives
+refuses the update and keeps the arrangement. A request cannot remove the
+editor or its controls. Choosing a different list or document also makes an
+older pending arrangement update stale; send a new request for the current view.
+
+A message queued while another reply runs retains its original mini-app target
+and revision. If that target changed before dispatch, the queue pauses and keeps
+the message. Return to the unchanged target to send it, or use **Edit** and send
+a new request for the currently selected view. Historical replies never apply
+arrangement updates again. **Retry** also retains the original target and
+revision; a changed view needs a new request.
+
+Saving and pinning are later stages. The proposed
 catalog is experimental and pending maintainer approval. Native input and
 accessibility acceptance is still being completed; this is not a declaration
 of platform parity.

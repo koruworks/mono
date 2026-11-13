@@ -5,6 +5,95 @@ use koru_core::{DocumentId, node::Node, schema::Parent};
 use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot, WindowSlot};
 
 #[test]
+fn mini_app_scripted_refinement_reaches_retained_host_and_refuses_stale_or_closed_target() {
+    use koru_ai_core::{
+        AiToolExecutionContext, ChatId, InferenceAttemptId, ToolInvocationId, mini_apps,
+    };
+    let (mut view, workspace, document, task) = fixture();
+    view.handle_tasks_request_for_test(crate::tasks_view::Request::Open {
+        document,
+        node: task,
+        new_tab: false,
+    });
+    let request = View::child_document_request(&view).unwrap();
+    assert!(view.land_mini_app_document(request, &workspace.ws));
+    view.ai_panel.set_immediately(true);
+    view.sync_mini_app_refinement_target();
+    let (_, profile, _, Some(workspace_id)) = view.pane_context.as_ref().unwrap() else {
+        panic!()
+    };
+    let profile = koru_ai_core::ProfileId::from_uuid(profile.as_uuid());
+    let workspace_id = koru_ai_core::WorkspaceId::from_uuid(workspace_id.as_uuid());
+    let chat = ChatId::new();
+    let attempt = InferenceAttemptId::new();
+    let host = view
+        .ai_chat
+        .arm_mini_app_for_test(profile, workspace_id, chat, attempt);
+    let mut recorded: serde_json::Value =
+        serde_json::from_str(mini_apps::REFINEMENT_FIXTURE).unwrap();
+    assert_eq!(
+        recorded["prompt"],
+        "Put the document on the left and tasks on the right"
+    );
+    recorded["result"]["updateComponents"]["surfaceId"] =
+        host.refinement.unwrap().surface_name().into();
+    let TabView::MiniApp(app) = &view.tabs().active_tab().view else {
+        panic!()
+    };
+    let leaf_owner = app.leaf().unwrap().native_ime_owner();
+    let task_owner = &app.tasks as *const crate::tasks_view::TasksView;
+    let count = view.tabs().len();
+    let events = koru_ai_server::scripted_native_refinement(
+        AiToolExecutionContext {
+            chat_id: chat,
+            attempt_id: attempt,
+            invocation_id: ToolInvocationId::new(),
+            profile_id: Some(profile),
+            workspace_ids: vec![workspace_id],
+            mini_app: Some(mini_apps::Authority::new(host)),
+        },
+        recorded["result"].clone(),
+    )
+    .unwrap();
+    for event in events.clone() {
+        let wire = serde_json::to_vec(&event).unwrap();
+        view.ai_chat
+            .receive_mini_app_event_for_test(serde_json::from_slice(&wire).unwrap());
+    }
+    assert!(view.open_pending_mini_apps());
+    let TabView::MiniApp(app) = &view.tabs().active_tab().view else {
+        panic!()
+    };
+    assert_eq!(app.leaf().unwrap().native_ime_owner(), leaf_owner);
+    assert_eq!(
+        &app.tasks as *const crate::tasks_view::TasksView,
+        task_owner
+    );
+    assert!(app.regions.document.x < app.regions.tasks.x);
+    assert_eq!(view.tabs().len(), count);
+    assert!(
+        !view
+            .pane_requests
+            .iter()
+            .any(|r| matches!(r, PaneRequest::Navigate { .. }))
+    );
+    let stale = koru_ai_ui::MiniAppRefinement {
+        host,
+        profile,
+        chat,
+        envelope: mini_apps::UpdateEnvelope::from_value(&recorded["result"]).unwrap(),
+    };
+    assert!(!view.apply_mini_app_refinement(&stale));
+    for event in events {
+        view.ai_chat.receive_mini_app_event_for_test(event);
+    }
+    assert!(!view.open_pending_mini_apps());
+    // Closing/replacing the selected native host cannot retarget the old result.
+    view.tabs_mut().push(Tab::welcome());
+    assert!(!view.apply_mini_app_refinement(&stale));
+}
+
+#[test]
 fn mini_app_scripted_model_dispatches_references_through_stream_and_same_native_host() {
     use koru_ai_core::mini_apps::{self, Authority};
     use koru_ai_core::{AiToolExecutionContext, ChatId, InferenceAttemptId, ToolInvocationId};

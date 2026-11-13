@@ -1,5 +1,54 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+
+#[test]
+fn mini_app_refinement_requires_exact_live_target_and_has_one_delivery() {
+    let (tools, registry, mut context, mut call) = fixture();
+    let mut host = context.mini_app.as_ref().unwrap().host;
+    host.refinement = Some(mini_apps::RefinementTarget {
+        tab_id: 17,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 8,
+    });
+    context.mini_app = Some(mini_apps::Authority::new(host));
+    let mut root = Declaration::parse(mini_apps::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope
+        .surface
+        .components
+        .remove(0);
+    root.arrangement = Some("document-first".into());
+    call.name = mini_apps::UPDATE_TOOL.into();
+    call.arguments = json!({"version":"1.0","updateComponents":{"surfaceId":host.refinement.unwrap().surface_name(),"components":[root]}});
+    let mut wrong = call.clone();
+    wrong.arguments["updateComponents"]["surfaceId"] = "wrong-surface".into();
+    assert!(
+        tools
+            .invoke(&context, &wrong, &Cancellation::default())
+            .is_err()
+    );
+    let result = tools
+        .invoke(&context, &call, &Cancellation::default())
+        .unwrap();
+    assert_eq!(result.content, call.arguments);
+    assert!(
+        matches!(creation_event(&context, &result).unwrap(), koru_ai_wire::PublicAiEvent::MiniAppUpdated {host: event_host, ..} if event_host == host)
+    );
+    assert!(creation_event(&context, &result).is_err());
+    assert!(
+        tools
+            .invoke(&context, &call, &Cancellation::default())
+            .is_err()
+    );
+    assert!(registry.reads.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    host.refinement = None;
+    context.mini_app = Some(mini_apps::Authority::new(host));
+    assert!(
+        tools
+            .invoke(&context, &call, &Cancellation::default())
+            .is_err()
+    );
+}
 use koru_ai_core::{ChatId, InferenceAttemptId, ProfileId, ToolInvocationId, WorkspaceId};
 use std::sync::atomic::{AtomicUsize, Ordering};
 struct Fake {
@@ -46,6 +95,7 @@ fn fixture() -> (MiniAppTools, Arc<Fake>, AiToolExecutionContext, AiToolCall) {
         renderer_id: uuid::Uuid::new_v4(),
         request_id: uuid::Uuid::new_v4(),
         workspace_id: registry.workspace,
+        refinement: None,
     };
     let context = AiToolExecutionContext {
         chat_id: ChatId::new(),

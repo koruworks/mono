@@ -110,7 +110,7 @@ mod approval_modes;
 mod attachments;
 mod chat_status;
 mod mini_apps;
-pub use mini_apps::MiniAppCreation;
+pub use mini_apps::{MiniAppCreation, MiniAppRefinement};
 mod chats;
 mod composer;
 mod composer_band;
@@ -431,6 +431,7 @@ struct ResponseTextHit {
 /// A message sent and not yet accepted: everything the composer held —
 /// its text with its chips, quotes and undo, and its attachments.
 struct SentMessage {
+    mini_app_target: mini_apps::QueuedTarget,
     chat: ChatId,
     composer: composer::Draft,
     attachments: Vec<attachments::Draft>,
@@ -3951,7 +3952,9 @@ impl ChatSurface {
             Update::Event(event) => {
                 let terminal = event.event.is_terminal();
                 match &event.event {
-                    PublicAiEvent::MiniAppCreated { .. } => self.receive_mini_app(&event.event),
+                    PublicAiEvent::MiniAppCreated { .. } | PublicAiEvent::MiniAppUpdated { .. } => {
+                        self.receive_mini_app(&event.event)
+                    }
                     PublicAiEvent::TextDelta { text, .. } => {
                         self.pulse = None;
                         self.draft.push_str(text);
@@ -5197,6 +5200,7 @@ impl ChatSurface {
             markdown: markdown.clone(),
             documents: !chips.is_empty() || !message.skills.is_empty(),
             from_queue: self.sending_queued,
+            mini_app_target: self.queued_mini_app_target(),
             recalled_from,
         });
         self.forget_input_walk();
@@ -5312,6 +5316,7 @@ impl ChatSurface {
             self.requeue_refused(
                 sent.chat,
                 queue::Queued {
+                    mini_app_target: sent.mini_app_target,
                     composer: sent.composer,
                     attachments: sent.attachments,
                     markdown: sent.markdown,
@@ -9397,6 +9402,9 @@ impl ChatSurface {
                 true
             }
             ResponseAction::Retry(message) => {
+                if !self.can_retry_mini_app_request(chat.id, message) {
+                    return true;
+                }
                 let (explicit_refs, _) = self.turn_refs(&[]);
                 let mini_app_host = self.retry_mini_app_request(chat.id, message);
                 self.send_command(Command::Retry(

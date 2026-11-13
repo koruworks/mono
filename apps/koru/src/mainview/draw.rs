@@ -488,6 +488,7 @@ impl MainView {
                 (id, title)
             });
             self.ai_chat.set_context_workspace(current_workspace);
+            self.sync_mini_app_refinement_target();
             self.ai_chat.set_context_document(document_context);
             self.ai_chat
                 .set_recent_documents(recent_chat_documents.clone());

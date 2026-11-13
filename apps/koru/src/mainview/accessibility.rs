@@ -556,6 +556,7 @@ impl MainView {
         action: Action,
         data: Option<&ActionData>,
     ) -> bool {
+        self.sync_mini_app_refinement_target();
         // **A blocker owns everything beneath it here too.** A request that
         // named a control under an open menu is refused rather than performed,
         // which is the same answer the keyboard gives.

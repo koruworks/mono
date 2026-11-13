@@ -45,6 +45,7 @@ fn page_limit() -> usize {
 }
 enum Arguments {
     Create(Declaration),
+    Update(mini_apps::UpdateEnvelope),
     Find(FindLists),
 }
 fn arguments(call: &AiToolCall) -> Result<Arguments, AiError> {
@@ -52,6 +53,9 @@ fn arguments(call: &AiToolCall) -> Result<Arguments, AiError> {
     match call.name.as_str() {
         mini_apps::CREATE_TOOL => Ok(Arguments::Create(
             Declaration::parse(&bytes).map_err(|_| invalid())?,
+        )),
+        mini_apps::UPDATE_TOOL => Ok(Arguments::Update(
+            mini_apps::UpdateEnvelope::from_value(&call.arguments).map_err(|_| invalid())?,
         )),
         mini_apps::LIST_TOOL => {
             let request: FindLists =
@@ -96,6 +100,7 @@ impl AiToolExecutor for MiniAppTools {
         let needs_lists = match &args {
             Arguments::Find(_) => true,
             Arguments::Create(d) => matches!(d.selection, TaskSelection::List(_)),
+            Arguments::Update(_) => false,
         };
         let needs_document = matches!(&args, Arguments::Create(d) if d.document.is_some());
         let registry = self.registry.read(context, needs_lists, needs_document)?;
@@ -107,6 +112,24 @@ impl AiToolExecutor for MiniAppTools {
             return Err(unavailable());
         }
         let content = match args {
+            Arguments::Update(update) => {
+                let target = authority.host.refinement.ok_or_else(unavailable)?;
+                if target.surface_id.is_nil() || update.update.surface_id != target.surface_name() {
+                    return Err(invalid());
+                }
+                if !authority.begin() {
+                    return Err(unavailable());
+                }
+                let result = serde_json::to_value(update).map_err(|_| invalid());
+                if cancellation.is_cancelled() {
+                    authority.revoke();
+                    return Err(unavailable());
+                }
+                if !authority.finish(result.is_ok()) {
+                    return Err(unavailable());
+                }
+                result?
+            }
             Arguments::Find(request) => {
                 let query = request.query.to_lowercase();
                 let matching: Vec<_> = registry
@@ -164,12 +187,29 @@ pub(crate) fn creation_event(
         .as_ref()
         .filter(|a| a.live())
         .ok_or_else(unavailable)?;
-    if result.name != mini_apps::CREATE_TOOL
+    if ![mini_apps::CREATE_TOOL, mini_apps::UPDATE_TOOL].contains(&result.name.as_str())
         || result.is_error
         || result.call_id.is_empty()
         || result.call_id.len() > 256
     {
         return Err(invalid());
+    }
+    if result.name == mini_apps::UPDATE_TOOL {
+        let target = authority.host.refinement.ok_or_else(unavailable)?;
+        let envelope =
+            mini_apps::UpdateEnvelope::from_value(&result.content).map_err(|_| invalid())?;
+        if envelope.update.surface_id != target.surface_name() || !authority.claim_delivery() {
+            return Err(unavailable());
+        }
+        return Ok(koru_ai_wire::PublicAiEvent::MiniAppUpdated {
+            attempt_id: context.attempt_id,
+            chat_id: context.chat_id,
+            profile_id: context.profile_id.ok_or_else(unavailable)?,
+            invocation_id: context.invocation_id,
+            call_id: result.call_id.clone(),
+            host: authority.host,
+            envelope,
+        });
     }
     let declaration = Declaration::from_value(&result.content).map_err(|_| invalid())?;
     if declaration.envelope.surface.surface_id != format!("mini-app-{}", context.invocation_id)

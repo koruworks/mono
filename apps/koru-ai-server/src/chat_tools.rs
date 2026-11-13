@@ -163,6 +163,40 @@ pub fn scripted_native_creation(
     lists: Vec<(uuid::Uuid, String)>,
     documents: Vec<koru_ai_core::DocumentId>,
 ) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
+    scripted_native_result(
+        context,
+        koru_ai_core::mini_apps::CREATE_TOOL,
+        "Create a task/document app",
+        declaration,
+        lists,
+        documents,
+    )
+}
+
+#[cfg(feature = "test-support")]
+pub fn scripted_native_refinement(
+    context: AiToolExecutionContext,
+    update: serde_json::Value,
+) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
+    scripted_native_result(
+        context,
+        koru_ai_core::mini_apps::UPDATE_TOOL,
+        "Put the document on the left and tasks on the right",
+        update,
+        vec![],
+        vec![],
+    )
+}
+
+#[cfg(feature = "test-support")]
+fn scripted_native_result(
+    context: AiToolExecutionContext,
+    tool: &str,
+    prompt: &str,
+    declaration: serde_json::Value,
+    lists: Vec<(uuid::Uuid, String)>,
+    documents: Vec<koru_ai_core::DocumentId>,
+) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
     use koru_ai_core::{
         AiEvent, AiProvider, AiRequest, AiRequestOptions, AiToolLoop, AiToolLoopLimits,
         ReasoningChoice, Timestamp,
@@ -226,7 +260,7 @@ pub fn scripted_native_creation(
     let provider = koru_ai_provider::DeterministicMockProvider::new(
         "The declaration was offered to the native host.",
     )
-    .with_tool_call(koru_ai_core::mini_apps::CREATE_TOOL, declaration);
+    .with_tool_call(tool, declaration);
     let request = AiRequest {
         attempt_id: context.attempt_id,
         provider: koru_ai_core::AiProviderId::parse("mock").unwrap(),
@@ -234,7 +268,11 @@ pub fn scripted_native_creation(
         reasoning: ReasoningChoice::Default,
         prompt_template_version: "fixture".into(),
         system: String::new(),
-        messages: Vec::new(),
+        messages: vec![koru_ai_core::AiRequestMessage {
+            role: koru_ai_core::ChatRole::User,
+            markdown: prompt.into(),
+            attachments: vec![],
+        }],
         context: Vec::new(),
         tools: dispatcher.definitions(),
         tool_history: Vec::new(),
@@ -300,6 +338,7 @@ impl AiToolExecutor for AiToolDispatcher {
     ) -> Result<AiToolResult, AiError> {
         if [
             koru_ai_core::mini_apps::CREATE_TOOL,
+            koru_ai_core::mini_apps::UPDATE_TOOL,
             koru_ai_core::mini_apps::LIST_TOOL,
         ]
         .contains(&call.name.as_str())

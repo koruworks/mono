@@ -19,6 +19,7 @@ use crate::{leaf::Leaf, panes::explore::rail::RailTarget, tasks_view::TasksView}
 
 mod chrome;
 mod declaration;
+mod refinement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Region {
@@ -97,6 +98,9 @@ impl Regions {
 pub(crate) struct MiniApp {
     pub workspace: WorkspaceId,
     pub surface: u64,
+    live_id: uuid::Uuid,
+    revision: u64,
+    tasks_viewport: Option<(f32, f32)>,
     generation: u64,
     reactivating: bool,
     window_focused: bool,
@@ -117,6 +121,9 @@ impl MiniApp {
         Self {
             workspace,
             surface,
+            live_id: uuid::Uuid::new_v4(),
+            revision: 0,
+            tasks_viewport: None,
             generation: 0,
             reactivating: false,
             window_focused: true,
@@ -221,6 +228,7 @@ impl MiniApp {
         if self.document != Some(document) {
             self.leaf = Some(Leaf::document(ws, root));
             self.document = Some(document);
+            self.revision += 1;
         }
         if !self.reactivating {
             self.focus = Region::Document;
@@ -233,8 +241,9 @@ impl MiniApp {
     fn layout(&mut self) {
         self.regions = self.chrome.layout(self.viewport, self.swapped, self.focus);
         let tasks = self.regions.tasks;
-        if tasks.w > 0.0 {
+        if tasks.w > 0.0 && self.tasks_viewport != Some((tasks.w, tasks.h)) {
             View::set_viewport(&mut self.tasks, tasks.w, tasks.h);
+            self.tasks_viewport = Some((tasks.w, tasks.h));
         }
         let doc = self.regions.document;
         if doc.w > 0.0
@@ -504,6 +513,7 @@ impl View for MiniApp {
         self.catch_up(ws);
     }
     fn invalidate(&mut self) {
+        self.tasks_viewport = None;
         View::invalidate(&mut self.tasks);
         if let Some(leaf) = &mut self.leaf {
             View::invalidate(leaf);

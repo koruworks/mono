@@ -60,6 +60,8 @@ const TOOLTIP_BASE: u64 = 0x5155_0000;
 
 /// One message set aside whole, as the composer held it.
 pub(crate) struct Queued {
+    /// Native target captured with the person's intent, never persisted.
+    pub(crate) mini_app_target: crate::mini_apps::QueuedTarget,
     /// The composer's document, quote chips (D88) and all.
     pub(crate) composer: composer::Draft,
     pub(crate) attachments: Vec<attachments::Draft>,
@@ -276,6 +278,7 @@ impl ChatSurface {
             }
         }
         let item = Queued {
+            mini_app_target: self.queued_mini_app_target(),
             composer: self.composer.stash(),
             attachments,
             markdown: message.markdown.trim().to_owned(),
@@ -320,6 +323,10 @@ impl ChatSurface {
     /// [`Self::send_queued`]'s body, also what a granted workspace calls to
     /// send the item that was waiting on it.
     pub(crate) fn send_queued_item(&mut self, chat: ChatId, item: Queued) -> bool {
+        if !self.accepts_queued_mini_app_target(item.mini_app_target) {
+            self.queue_back_paused(chat, item);
+            return true;
+        }
         let typing = self.composer.stash();
         let walk = (self.history_cursor.take(), self.history_draft.take());
         self.composer.unstash(item.composer);
@@ -332,6 +339,7 @@ impl ChatSurface {
         self.sending_queued = false;
         if self.composer_has_content() {
             let item = Queued {
+                mini_app_target: item.mini_app_target,
                 composer: self.composer.stash(),
                 attachments: self.strips.take(chat),
                 markdown: item.markdown,
@@ -445,6 +453,7 @@ impl ChatSurface {
         if self.composer_has_content() {
             let message = self.composer.message();
             let displaced = Queued {
+                mini_app_target: self.queued_mini_app_target(),
                 markdown: message.markdown.trim().to_owned(),
                 documents: !message.documents.is_empty() || !message.skills.is_empty(),
                 composer: self.composer.stash(),

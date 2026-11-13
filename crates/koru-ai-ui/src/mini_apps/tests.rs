@@ -1,5 +1,189 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+
+fn refinement_fixture() -> (
+    ChatSurface,
+    HostContext,
+    koru_ai_wire::SendTurnAccepted,
+    PublicAiEvent,
+) {
+    let (mut surface, mut host, accepted, created) = fixture();
+    let target = koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 9,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 4,
+    };
+    surface.set_mini_app_refinement_target(Some(target));
+    host.refinement = Some(target);
+    surface.native_apps.pending.as_mut().unwrap().host = host;
+    let PublicAiEvent::MiniAppCreated {
+        attempt_id,
+        chat_id,
+        profile_id,
+        invocation_id,
+        call_id,
+        ..
+    } = created
+    else {
+        panic!()
+    };
+    let mut root = Declaration::parse(koru_ai_core::mini_apps::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope
+        .surface
+        .components
+        .remove(0);
+    root.arrangement = Some("document-first".into());
+    let envelope = koru_ai_core::mini_apps::UpdateEnvelope {
+        version: "1.0".into(),
+        update: koru_ai_core::mini_apps::ComponentUpdate {
+            surface_id: target.surface_name(),
+            components: vec![root],
+        },
+    };
+    (
+        surface,
+        host,
+        accepted,
+        PublicAiEvent::MiniAppUpdated {
+            attempt_id,
+            chat_id,
+            profile_id,
+            invocation_id,
+            call_id,
+            host,
+            envelope,
+        },
+    )
+}
+
+#[test]
+fn mini_app_refinement_completed_same_batch_is_delivered_once_and_replay_cannot_command() {
+    let (mut surface, host, accepted, event) = refinement_fixture();
+    stream(&mut surface, event.clone());
+    stream(
+        &mut surface,
+        PublicAiEvent::Completed {
+            attempt_id: accepted.attempt_id,
+            stop_reason: None,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    assert!(surface.take_mini_app_refinement().is_some());
+    surface.mini_app_refined(host.request_id, true);
+    stream(&mut surface, event);
+    assert!(surface.take_mini_app_refinement().is_none());
+    assert!(surface.take_mini_app_creation().is_none());
+    let (mut surface, host, mut accepted, event) = refinement_fixture();
+    stream(&mut surface, event);
+    accepted.replayed = true;
+    surface.accept_mini_app_attempt(&accepted, host);
+    assert!(surface.take_mini_app_refinement().is_none());
+}
+
+#[test]
+fn mini_app_creation_from_existing_app_clears_only_owned_retirement_status_on_open() {
+    for unrelated in [false, true] {
+        let (mut surface, mut host, _, mut event) = fixture();
+        let old = koru_ai_core::mini_apps::RefinementTarget {
+            tab_id: 1,
+            surface_id: uuid::Uuid::new_v4(),
+            base_revision: 0,
+        };
+        surface.set_mini_app_refinement_target(Some(old));
+        host.refinement = Some(old);
+        surface.native_apps.pending.as_mut().unwrap().host = host;
+        let PublicAiEvent::MiniAppCreated {
+            host: event_host, ..
+        } = &mut event
+        else {
+            panic!()
+        };
+        *event_host = host;
+        stream(&mut surface, event);
+        assert!(surface.take_mini_app_creation().is_some());
+        surface.set_mini_app_refinement_target(Some(koru_ai_core::mini_apps::RefinementTarget {
+            tab_id: 2,
+            surface_id: uuid::Uuid::new_v4(),
+            base_revision: 0,
+        }));
+        assert_eq!(
+            surface.status.as_deref(),
+            Some(koru_i18n::t(
+                surface.lang,
+                koru_i18n::Key::MiniAppRefinementRefused
+            ))
+        );
+        if unrelated {
+            surface.status = Some("Other status".into());
+        }
+        surface.mini_app_opened(host.request_id, true);
+        assert_eq!(
+            surface.status.as_deref(),
+            unrelated.then_some("Other status")
+        );
+        assert!(!surface.native_apps.refinement_refused);
+        assert!(!surface.native_apps.interrupted);
+    }
+}
+
+#[test]
+fn mini_app_refinement_target_hide_switch_and_wrong_scope_retire_delivery() {
+    for change in 0..4 {
+        let (mut surface, host, _, event) = refinement_fixture();
+        match change {
+            0 => surface.offer_mini_apps(false),
+            1 => surface.set_mini_app_refinement_target(None),
+            2 => surface.set_mini_app_refinement_target(Some(
+                koru_ai_core::mini_apps::RefinementTarget {
+                    surface_id: uuid::Uuid::new_v4(),
+                    ..host.refinement.unwrap()
+                },
+            )),
+            _ => surface.context_workspace = Some(WorkspaceId::new()),
+        }
+        stream(&mut surface, event);
+        assert!(surface.take_mini_app_refinement().is_none());
+    }
+}
+
+#[test]
+fn mini_app_failed_refinement_retry_never_recaptures_a_different_target_or_revision() {
+    for changed_revision in [false, true] {
+        let (mut surface, host, accepted, _) = refinement_fixture();
+        let (reader, commands, _updates) = crate::reader::Reader::test_pair();
+        surface.reader = Some(reader);
+        stream(
+            &mut surface,
+            PublicAiEvent::Failed {
+                attempt_id: accepted.attempt_id,
+                error: koru_ai_core::AiError::new(
+                    koru_ai_core::AiErrorClass::Provider,
+                    "fixture",
+                    true,
+                ),
+                at: koru_ai_core::Timestamp::now(),
+            },
+        );
+        let mut different = host.refinement.unwrap();
+        if changed_revision {
+            different.base_revision += 1;
+        } else {
+            different.surface_id = uuid::Uuid::new_v4();
+        }
+        surface.set_mini_app_refinement_target(Some(different));
+        assert!(
+            surface.perform_response_action(ResponseAction::Retry(accepted.assistant_message_id))
+        );
+        assert!(
+            !commands
+                .try_iter()
+                .any(|command| matches!(command, Command::Retry(..)))
+        );
+        assert_eq!(surface.native_apps.pending.as_ref().unwrap().host, host);
+        assert!(surface.native_apps.refinement_refused);
+    }
+}
 #[test]
 fn a_transcript_cannot_create_a_native_app() {
     let mut surface = ChatSurface::new();

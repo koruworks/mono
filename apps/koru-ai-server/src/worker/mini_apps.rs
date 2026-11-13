@@ -8,11 +8,16 @@ fn scoped_definitions(
     host: Option<HostContext>,
 ) -> Vec<AiToolDefinition> {
     definitions.iter().filter_map(|definition| {
-        let native=[mini_apps::CREATE_TOOL,mini_apps::LIST_TOOL].contains(&definition.name.as_str());
+        let native=[mini_apps::CREATE_TOOL,mini_apps::LIST_TOOL,mini_apps::UPDATE_TOOL].contains(&definition.name.as_str());
         if native && host.is_none() { return None; }
+        if definition.name == mini_apps::UPDATE_TOOL && host.and_then(|h| h.refinement).is_none() { return None; }
         let mut definition=definition.clone();
         if native && let Some(host)=host {
             definition.description.push_str(&format!(" This live host's current workspace_id is {}. Use that identity for existing document discovery tools.",host.workspace_id));
+            if definition.name == mini_apps::UPDATE_TOOL && let Some(target) = host.refinement {
+                definition.input_schema["properties"]["updateComponents"]["properties"]["surfaceId"] = serde_json::json!({"const":target.surface_name()});
+                definition.description.push_str(&format!(" The current live surfaceId is {}.",target.surface_name()));
+            }
         }
         Some(definition)
     }).collect()
@@ -119,7 +124,9 @@ impl WorkerState {
         invocation_id: ToolInvocationId,
         result: &AiToolResult,
     ) -> Result<(), AiError> {
-        if result.name != mini_apps::CREATE_TOOL || result.is_error {
+        if ![mini_apps::CREATE_TOOL, mini_apps::UPDATE_TOOL].contains(&result.name.as_str())
+            || result.is_error
+        {
             return Ok(());
         }
         let Some(authority) = self

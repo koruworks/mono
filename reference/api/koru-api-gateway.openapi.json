@@ -3635,6 +3635,25 @@
         ],
         "type": "object"
       },
+      "ComponentUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/Component"
+            },
+            "type": "array"
+          },
+          "surfaceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "surfaceId",
+          "components"
+        ],
+        "type": "object"
+      },
       "ContentEncoding": {
         "description": "How `read` spells the bytes it returns.",
         "oneOf": [
@@ -7129,6 +7148,19 @@
         "additionalProperties": false,
         "description": "UI-minted, live-only provenance. None of this is a provider argument.",
         "properties": {
+          "refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementTarget"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "renderer_id": {
             "format": "uuid",
             "type": "string"
@@ -9775,6 +9807,49 @@
         "description": "An event safe to expose across Koru's public AI boundary.\n\nProvider tool calls are deliberately absent: their arguments and reasoning\ncontinuity data remain inside the worker. Clients observe only the minimal\n[`ToolActivity`] projection: stable target ids and a bounded public failure\nsummary, never raw tool arguments or general tool results. The registered\nreference-only mini-app result has a separate bounded, transient variant.",
         "oneOf": [
           {
+            "description": "A live-only arrangement proposal. Native revision ownership is external\nto the upstream A2UI envelope and must be rechecked before application.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "call_id": {
+                "type": "string"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "envelope": {
+                "$ref": "#/components/schemas/UpdateEnvelope"
+              },
+              "host": {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              "invocation_id": {
+                "$ref": "#/components/schemas/ToolInvocationId"
+              },
+              "profile_id": {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              "type": {
+                "enum": [
+                  "mini_app_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "chat_id",
+              "profile_id",
+              "invocation_id",
+              "call_id",
+              "host",
+              "envelope"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Only the registered, validated mini-app result crosses this boundary.\nIt is transient, never reconstructed from transcript or tool activity.",
             "properties": {
               "attempt_id": {
@@ -10679,6 +10754,32 @@
           "id",
           "kind",
           "path"
+        ],
+        "type": "object"
+      },
+      "RefinementTarget": {
+        "additionalProperties": false,
+        "description": "Native lifetime and optimistic revision, deliberately outside A2UI.",
+        "properties": {
+          "base_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "surface_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tab_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id",
+          "surface_id",
+          "base_revision"
         ],
         "type": "object"
       },
@@ -17613,6 +17714,22 @@
         "required": [
           "mode",
           "workspace_ids"
+        ],
+        "type": "object"
+      },
+      "UpdateEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "updateComponents": {
+            "$ref": "#/components/schemas/ComponentUpdate"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "updateComponents"
         ],
         "type": "object"
       },

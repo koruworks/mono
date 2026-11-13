@@ -531,6 +531,17 @@ pub struct StreamEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PublicAiEvent {
+    /// A live-only arrangement proposal. Native revision ownership is external
+    /// to the upstream A2UI envelope and must be rechecked before application.
+    MiniAppUpdated {
+        attempt_id: InferenceAttemptId,
+        chat_id: ChatId,
+        profile_id: ProfileId,
+        invocation_id: koru_ai_core::ToolInvocationId,
+        call_id: String,
+        host: koru_ai_core::mini_apps::HostContext,
+        envelope: koru_ai_core::mini_apps::UpdateEnvelope,
+    },
     /// Only the registered, validated mini-app result crosses this boundary.
     /// It is transient, never reconstructed from transcript or tool activity.
     MiniAppCreated {
@@ -624,7 +635,9 @@ pub enum PublicAiEvent {
 impl PublicAiEvent {
     pub const fn attempt_id(&self) -> InferenceAttemptId {
         match self {
-            Self::MiniAppCreated { attempt_id, .. } => *attempt_id,
+            Self::MiniAppCreated { attempt_id, .. } | Self::MiniAppUpdated { attempt_id, .. } => {
+                *attempt_id
+            }
             Self::Started { attempt_id, .. }
             | Self::Notice { attempt_id, .. }
             | Self::TextDelta { attempt_id, .. }

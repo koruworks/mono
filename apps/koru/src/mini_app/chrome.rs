@@ -170,6 +170,13 @@ impl Chrome {
         self.tree = tree;
         if resized && self.menu.is_some() {
             self.show_page(self.list_page);
+        } else if let Some(menu) = &mut self.menu {
+            let anchor = if self.selector_menu {
+                self.selector
+            } else {
+                self.search
+            };
+            menu.set_anchor((anchor.x, anchor.y + anchor.h));
         }
         regions
     }
@@ -636,7 +643,7 @@ impl MiniApp {
         self.chrome.menu = None;
         match choice {
             Choice::Query(target, _) => {
-                self.tasks.set_target(target);
+                self.select_tasks(target);
                 self.focus_region(Region::Tasks);
             }
             Choice::Document(document, _) => {
