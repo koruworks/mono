@@ -9,7 +9,7 @@
 //! with the next — so `export_updates_since` after each is exactly the delta
 //! a replica imports (proposal §1.6: 205–248 bytes a step).
 //!
-//! **The gate is the run's own.** `adopt` reads `run.schema` and compares it
+//! **The gate is the run's own.** Reads and writes compare current `run.schema`
 //! with [`RUN_DOCUMENT_SCHEMA_VERSION`] through the store's `Compatibility`;
 //! a newer run opens read-only and every write refuses. `meta.schema_version`
 //! — the node model's key, which the projection reads on every commit — is
@@ -24,11 +24,14 @@ use koru_delegate_core::{
 use koru_store_core::version::Compatibility;
 use loro::{ExportMode, LoroDoc, LoroList, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 
-use crate::RUN_DOCUMENT_SCHEMA_VERSION;
 use crate::codec::{
     K_ECONOMICS, K_MODELS, K_RATING, K_RESULTS, K_SCHEMA, K_STATUS, Part, ROOT_RUN, ROOT_TIMELINE,
     RunDocumentError, StoredItem, TimelineItem, from_stored, header_from_map, header_to_keys,
     to_stored,
+};
+use crate::{
+    RUN_DOCUMENT_SCHEMA_VERSION, RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION,
+    RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION,
 };
 
 type Result<T> = std::result::Result<T, RunDocumentError>;
@@ -36,7 +39,6 @@ type Result<T> = std::result::Result<T, RunDocumentError>;
 /// A run as one Loro document. See the crate docs for the shape.
 pub struct RunDocument {
     doc: LoroDoc,
-    compatibility: Compatibility,
 }
 
 impl RunDocument {
@@ -45,12 +47,11 @@ impl RunDocument {
     /// Adopt a document the store forked or served. Refuses anything that
     /// is not a run; a run from a newer build adopts read-only.
     pub fn adopt(doc: LoroDoc) -> Result<Self> {
-        let found = match doc.get_map(ROOT_RUN).get(K_SCHEMA) {
-            Some(ValueOrContainer::Value(LoroValue::I64(version))) => version,
+        match doc.get_map(ROOT_RUN).get(K_SCHEMA) {
+            Some(ValueOrContainer::Value(LoroValue::I64(_))) => {}
             _ => return Err(RunDocumentError::NotARun),
         };
-        let compatibility = Compatibility::against(Some(found), RUN_DOCUMENT_SCHEMA_VERSION);
-        Ok(Self { doc, compatibility })
+        Ok(Self { doc })
     }
 
     /// Adopt the bytes `Store::snapshot` served.
@@ -71,16 +72,19 @@ impl RunDocument {
         if run.get(K_SCHEMA).is_some() {
             return Err(RunDocumentError::AlreadyInitialized);
         }
-        run.insert(K_SCHEMA, RUN_DOCUMENT_SCHEMA_VERSION)?;
-        for (key, value) in header_to_keys(header)? {
+        let keys = header_to_keys(header)?;
+        let schema = if header.bot.as_ref().is_some_and(|bot| bot.routine.is_some()) {
+            RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION
+        } else {
+            RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION
+        };
+        run.insert(K_SCHEMA, schema)?;
+        for (key, value) in keys {
             run.insert(&key, value)?;
         }
         run.insert_container(K_MODELS, LoroMap::new())?;
         doc.commit();
-        Ok(Self {
-            doc,
-            compatibility: Compatibility::Writable,
-        })
+        Ok(Self { doc })
     }
 
     /// [`initialize`](Self::initialize) on a fresh document.
@@ -91,7 +95,7 @@ impl RunDocument {
     // ------------------------------------------------------------ the gate
 
     pub fn compatibility(&self) -> Compatibility {
-        self.compatibility
+        Compatibility::against(self.schema_version(), RUN_DOCUMENT_SCHEMA_VERSION)
     }
 
     /// `run.schema` as stored.
@@ -103,8 +107,8 @@ impl RunDocument {
     }
 
     fn writable(&self) -> Result<()> {
-        match self.compatibility {
-            Compatibility::Writable => Ok(()),
+        match self.compatibility() {
+            Compatibility::Writable => self.validate_subject_cohort(),
             Compatibility::TooNew { found, understood } => {
                 Err(RunDocumentError::ReadOnly { found, understood })
             }
@@ -129,7 +133,51 @@ impl RunDocument {
     /// Status, device, agent, results, economics summary, rating: the
     /// header as a device reads it. O(1) map reads.
     pub fn header(&self) -> Result<RunHeader> {
+        self.validate_subject_cohort()?;
         header_from_map(&self.run().get_deep_value())
+    }
+
+    /// Check only the current identity fields on the hot write path; do not
+    /// decode task context or walk retained models/timeline for each step.
+    fn validate_subject_cohort(&self) -> Result<()> {
+        let schema = self.schema_version().ok_or(RunDocumentError::NotARun)?;
+        if schema < 1 {
+            return Err(RunDocumentError::Malformed { part: Part::Header });
+        }
+        let root = self.run();
+        let bot: Option<koru_delegate_core::BotProvenance> = match root.get("bot") {
+            None | Some(ValueOrContainer::Value(LoroValue::Null)) => None,
+            Some(ValueOrContainer::Value(value)) => Some(from_stored(value, Part::Header)?),
+            _ => return Err(RunDocumentError::Malformed { part: Part::Header }),
+        };
+        let origin: koru_delegate_core::RunOrigin = match root.get("origin") {
+            None => koru_delegate_core::RunOrigin::Manual,
+            Some(ValueOrContainer::Value(value)) => from_stored(value, Part::Header)?,
+            _ => return Err(RunDocumentError::Malformed { part: Part::Header }),
+        };
+        let scope: koru_delegate_core::WorkspaceScope = match root.get("scope") {
+            Some(ValueOrContainer::Value(value)) => from_stored(value, Part::Header)?,
+            _ => return Err(RunDocumentError::Malformed { part: Part::Header }),
+        };
+        let routine = bot.as_ref().and_then(|bot| bot.routine.as_ref());
+        let known_cohort = match schema {
+            1..=RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION => routine.is_none(),
+            RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION => routine.is_some(),
+            _ => true, // A newer readable header remains read-only at writable().
+        };
+        if !known_cohort
+            || bot.is_some()
+                != matches!(scope, koru_delegate_core::WorkspaceScope::BotFolder { .. })
+            || bot.as_ref().is_some_and(|bot| {
+                !bot.valid()
+                    || (bot.routine.is_none()
+                        && !matches!(origin, koru_delegate_core::RunOrigin::Manual))
+            })
+            || routine.is_some_and(|routine| !routine.matches_origin(&origin))
+        {
+            return Err(RunDocumentError::Malformed { part: Part::Header });
+        }
+        Ok(())
     }
 
     /// The retained model metadata, by the reference a usage fact names

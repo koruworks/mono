@@ -11,6 +11,7 @@ fn submission() -> BotSubmission {
     };
     BotSubmission {
         provenance: BotProvenance {
+            routine: None,
             owner,
             bot: BotId::mint(),
             submission: BotRequestId::mint(),

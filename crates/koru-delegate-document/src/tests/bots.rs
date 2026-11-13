@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod routine;
 
 fn bot_header() -> RunHeader {
     let mut value = header();
@@ -7,6 +8,7 @@ fn bot_header() -> RunHeader {
         folder: BotWorkingFolder::new("D:/owner/bot".into()).unwrap(),
     };
     value.bot = Some(BotProvenance {
+        routine: None,
         owner: BotOwner {
             user_scope: koru_store_core::UserScopeId::new(),
             device: device(9),

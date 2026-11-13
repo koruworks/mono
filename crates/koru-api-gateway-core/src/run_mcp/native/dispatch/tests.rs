@@ -179,6 +179,7 @@ impl Fixture {
             selected_pages: Default::default(),
         };
         let provenance = BotProvenance {
+            routine: None,
             owner,
             bot,
             submission: BotRequestId::mint(),
