@@ -500,6 +500,7 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
     matches!(
         request,
         BotCommand::Read { .. }
+            | BotCommand::ReadLibrary { .. }
             | BotCommand::ReadTaskAnswer { .. }
             | BotCommand::ListTaskBots { .. }
             | BotCommand::ReadOperation { .. }
@@ -535,6 +536,7 @@ pub(super) fn archived_change(
         WorkerCommand::Bots { request, .. } => match request {
             _ if bot_read_command(request) || request.lifecycle_kind().is_some() => None,
             BotCommand::CreateChat { bot_id, .. }
+            | BotCommand::SetKnowledge { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Pause { bot_id, .. }
@@ -716,6 +718,7 @@ impl WorkerState {
         let id = match command {
             _ if bot_read_command(command) => return Ok(()),
             BotCommand::CreateChat { bot_id, .. }
+            | BotCommand::SetKnowledge { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Pause { bot_id, .. }
@@ -2121,6 +2124,7 @@ impl WorkerState {
                 bot_id, chat_id, ..
             } => (*bot_id, Some(*chat_id), false),
             BotCommand::CreateChat { bot_id, .. }
+            | BotCommand::SetKnowledge { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Pause { bot_id, .. }

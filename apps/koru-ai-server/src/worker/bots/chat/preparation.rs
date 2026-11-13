@@ -76,6 +76,7 @@ pub(in crate::worker) struct ChatCapture {
     pub owner: BotOwner,
     pub destination: WorkspaceId,
     pub pages: Vec<BotPage>,
+    pub library_sources: super::super::library::LibrarySources,
     pub chat: Chat,
 }
 
@@ -149,15 +150,15 @@ pub(in crate::worker) fn chat_capture(
     }
     model.mode = chat.agent_mode.clone();
     model.fast = chat.agent_fast;
-    let mut pages = vec![bot.config.role.clone()];
+    let mut task_documents = Vec::new();
     for reference in refs {
         if let ContextRef::Document { document_id } = reference {
             let page = BotPage {
                 workspace: destination,
                 document: *document_id,
             };
-            if !pages.contains(&page) {
-                pages.push(page);
+            if !task_documents.contains(&page) {
+                task_documents.push(page);
             }
         }
     }
@@ -168,15 +169,18 @@ pub(in crate::worker) fn chat_capture(
                     workspace: destination,
                     document: pin.document_id,
                 };
-                if !pages.contains(&page) {
-                    pages.push(page);
+                if !task_documents.contains(&page) {
+                    task_documents.push(page);
                 }
             }
         }
     }
-    if pages.len() > 17 {
+    if task_documents.len() > 16 {
         return Err(bot_failure(BotError::Invalid));
     }
+    let library_sources =
+        super::super::library::LibrarySources::read(repository, &bot, task_documents)?;
+    let pages = library_sources.pages();
     Ok(Some(ChatCapture {
         model,
         owner: BotOwner {
@@ -185,6 +189,7 @@ pub(in crate::worker) fn chat_capture(
         },
         destination,
         pages,
+        library_sources,
         chat,
     }))
 }
@@ -328,26 +333,15 @@ impl WorkerState {
                 .encode_lossless()
                 .ok_or_else(|| bot_failure(BotError::Invalid))?,
         };
-        let documents = proof
-            .pins
-            .iter()
-            .filter_map(|pin| match pin {
-                koru_delegate_core::RunContextItem::Document {
-                    workspace,
-                    document,
-                    ..
-                } => Some(BotPage {
-                    workspace: *workspace,
-                    document: *document,
-                }),
-                _ => None,
-            })
-            .filter(|page| page != &bot.config.role)
-            .collect();
+        let sources = proof
+            .library_sources
+            .as_ref()
+            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+        let documents = sources.task_documents.clone();
         let task = BotTask { text, documents };
         task.validate(destination).map_err(bot_failure)?;
         let request_id = BotRequestId::mint();
-        let mut intent = super::super::admission::make_intent(
+        let mut intent = super::super::admission::make_library_intent(
             &bot,
             request_id,
             chat.id,
@@ -355,6 +349,7 @@ impl WorkerState {
             &task,
             previous,
             &proof.pins,
+            sources,
             proof
                 .authority
                 .workspace(destination)
@@ -365,10 +360,12 @@ impl WorkerState {
             Some(preparation.assistant().id.as_uuid());
         intent.submission.input.skills = skills.to_vec();
         intent.validate().map_err(bot_failure)?;
+        let capture = sources.capture(&intent)?;
         self.repository
-            .prepare_bot_chat(
+            .prepare_bot_chat_with_library(
                 &preparation,
                 &intent,
+                &capture,
                 &fingerprint(kind, request)?,
                 bot.revision,
                 Timestamp::now(),

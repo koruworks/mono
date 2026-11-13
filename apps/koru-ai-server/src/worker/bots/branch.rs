@@ -280,6 +280,7 @@ impl WorkerState {
                 chats,
                 runtime: Ok(()),
                 pins: vec![],
+                library_sources: None,
                 chat_snapshot: None,
                 settings: None,
                 terminal_question: None,

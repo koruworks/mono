@@ -611,6 +611,7 @@ fn conversation_proof(running: &Running, chat: &Chat) -> CommandContext {
             chats: vec![(bot, chat.id, revision, policy)],
             runtime: Ok(()),
             pins: prepared.pins.clone(),
+            library_sources: prepared.library_sources.clone(),
             chat_snapshot: Some(chat.clone()),
             settings: None,
             terminal_question: None,

@@ -24,7 +24,7 @@ impl BotAuthority for BotAuthorityAdapter {
     ) -> Result<Vec<koru_delegate_core::RunContextItem>, BotError> {
         if owner.device != self.device
             || pages.is_empty()
-            || pages.len() > 17
+            || pages.len() > 33
             || pages.iter().any(|p| p.workspace != workspace)
         {
             return Err(BotError::Forbidden);

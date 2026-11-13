@@ -19,6 +19,7 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
 mod admission;
 mod branch;
 pub(in crate::worker) mod chat;
+mod library;
 mod lifecycle;
 pub(crate) mod policy;
 mod preparation;
@@ -92,6 +93,9 @@ impl WorkerState {
             return result;
         }
         if let Some(result) = self.bot_creation_command(&context, &request) {
+            return result;
+        }
+        if let Some(result) = self.bot_library_command(&context, &request) {
             return result;
         }
         if let BotCommand::CreateChat { request_id, bot_id } = &request {
@@ -294,6 +298,8 @@ fn execute_bot_command(
         | BotCommand::AbandonBotCreation { .. }
         | BotCommand::ReadRun { .. }
         | BotCommand::ReadTaskAnswer { .. }
+        | BotCommand::ReadLibrary { .. }
+        | BotCommand::SetKnowledge { .. }
         | BotCommand::ListTaskBots { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {

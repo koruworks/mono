@@ -333,6 +333,7 @@ fn answer_context_at(f: &Fixture, sequence: u64) -> CommandContext {
             chats: old.chats.clone(),
             runtime: Ok(()),
             pins: old.pins.clone(),
+            library_sources: old.library_sources.clone(),
             chat_snapshot: old.chat_snapshot.clone(),
             settings: None,
             terminal_question: Some(crate::worker::bots::chat::TerminalQuestionProof::fixture(

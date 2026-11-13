@@ -327,6 +327,13 @@ fn proof(authority: Arc<Authority>, bot: &Bot, chat: Chat) -> CommandContext {
                 document: bot.config.role.document,
                 version: d::DocumentVersionId::new(),
             }],
+            library_sources: Some(crate::worker::bots::library::LibrarySources {
+                config_revision: bot.revision,
+                policy_revision: bot.policy_revision,
+                role: bot.config.role.clone(),
+                knowledge: vec![],
+                task_documents: vec![],
+            }),
             chat_snapshot: Some(chat),
             settings: None,
             terminal_question: None,

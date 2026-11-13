@@ -48,6 +48,7 @@ pub(in crate::worker) struct PreparedBotCommand {
     pub(in crate::worker) chats: Vec<(BotId, ChatId, u64, u64)>,
     pub(in crate::worker) runtime: ApiResult<()>,
     pub(in crate::worker) pins: Vec<koru_delegate_core::RunContextItem>,
+    pub(in crate::worker) library_sources: Option<library::LibrarySources>,
     pub(in crate::worker) chat_snapshot: Option<Chat>,
     pub(in crate::worker) settings: Option<chat::SettingsProof>,
     pub(in crate::worker) terminal_question: Option<chat::TerminalQuestionProof>,
@@ -60,6 +61,7 @@ pub(in crate::worker) struct BotPreparationJob {
     chats: Vec<(BotId, ChatId, u64, u64)>,
     model: Option<BotConfig>,
     capture: Option<(BotOwner, WorkspaceId, Vec<BotPage>)>,
+    library_sources: Option<library::LibrarySources>,
     chat_snapshot: Option<Chat>,
     terminal_question: Option<chat::TerminalQuestionProof>,
     delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
@@ -146,6 +148,7 @@ impl BotPreparationJob {
                     chats: self.chats.clone(),
                     runtime,
                     pins,
+                    library_sources: self.library_sources.clone(),
                     chat_snapshot: self.chat_snapshot.clone(),
                     settings,
                     terminal_question: self.terminal_question.clone(),
@@ -231,6 +234,7 @@ impl WorkerState {
             }
             let mut model = None;
             let mut capture = None;
+            let mut library_sources = None;
             let mut chat_snapshot = None;
             if let WorkerCommand::Bots { request, .. } = &command
                 && !archived
@@ -253,6 +257,36 @@ impl WorkerState {
                     }
                     BotCommand::UpdateAccess { selected_pages, .. } => {
                         pages.extend(selected_pages.clone())
+                    }
+                    BotCommand::SetKnowledge {
+                        bot_id,
+                        request_id,
+                        expected_revision,
+                        pages: knowledge,
+                    } => {
+                        let bot = self
+                            .repository
+                            .bot(*bot_id)
+                            .map_err(bot_failure)?
+                            .ok_or_else(not_found)?;
+                        let input = PreparedBotKnowledge {
+                            owner: BotOwner {
+                                user_scope: bot.user_scope,
+                                device: bot.owner_device,
+                            },
+                            bot: *bot_id,
+                            request: *request_id,
+                            expected_revision: *expected_revision,
+                            pages: knowledge.clone(),
+                        };
+                        if self
+                            .repository
+                            .bot_knowledge_receipt(&input, &library::command_fingerprint(request)?)
+                            .map_err(bot_failure)?
+                            .is_none()
+                        {
+                            pages.extend(knowledge.clone());
+                        }
                     }
                     BotCommand::List { workspace } => {
                         workspaces.insert(*workspace);
@@ -316,19 +350,21 @@ impl WorkerState {
                             .map_err(bot_failure)?
                             .is_none()
                         {
-                            let mut captured = vec![bot.config.role.clone()];
-                            for page in &task.documents {
-                                if !captured.contains(page) {
-                                    captured.push(page.clone());
-                                }
-                            }
+                            let sources = library::LibrarySources::read(
+                                &self.repository,
+                                &bot,
+                                task.documents.clone(),
+                            )?;
+                            let captured = sources.pages();
                             pages.extend(captured.clone());
                             model = Some(bot.config.clone());
                             capture = Some((owner, *destination, captured));
+                            library_sources = Some(sources);
                         }
                     }
                     BotCommand::CreateChat { .. }
                     | BotCommand::Read { .. }
+                    | BotCommand::ReadLibrary { .. }
                     | BotCommand::Pause { .. }
                     | BotCommand::Resume { .. }
                     | BotCommand::ReadOperation { .. }
@@ -370,6 +406,7 @@ impl WorkerState {
                 pages.extend(chat.pages.clone());
                 model = Some(chat.model);
                 capture = Some((chat.owner, chat.destination, chat.pages));
+                library_sources = Some(chat.library_sources);
                 chat_snapshot = Some(chat.chat);
             }
             if !held
@@ -391,18 +428,27 @@ impl WorkerState {
                 chats,
                 model,
                 capture,
+                library_sources,
                 chat_snapshot,
                 terminal_question,
             ))
         })();
-        let (workspaces, pages, chats, model, capture, chat_snapshot, terminal_question) =
-            match snapshot {
-                Ok(value) => value,
-                Err(error) => {
-                    command.refuse(error);
-                    return None;
-                }
-            };
+        let (
+            workspaces,
+            pages,
+            chats,
+            model,
+            capture,
+            library_sources,
+            chat_snapshot,
+            terminal_question,
+        ) = match snapshot {
+            Ok(value) => value,
+            Err(error) => {
+                command.refuse(error);
+                return None;
+            }
+        };
         // A read failure refuses: the folder check is never skipped by an
         // error. An archived Bot's change is refused at dispatch, and a
         // trashed or missing one reads as not found there.
@@ -438,6 +484,7 @@ impl WorkerState {
             chats,
             model,
             capture,
+            library_sources,
             chat_snapshot,
             terminal_question,
             delegate: self.bot_delegate.clone(),
@@ -560,6 +607,8 @@ pub(super) fn bot_targets(
             BotCommand::Create { bot_id, .. }
             | BotCommand::CreateChat { bot_id, .. }
             | BotCommand::Read { bot_id }
+            | BotCommand::ReadLibrary { bot_id }
+            | BotCommand::SetKnowledge { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Start { bot_id, .. }

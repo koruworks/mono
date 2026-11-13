@@ -7,6 +7,34 @@ use koru_ai_core::{AgentAnswerValue, AnswersRecord, QuestionsRecord};
 use rusqlite::TransactionBehavior;
 
 impl Repository {
+    /// A new shared turn includes its exact Library capture in the same
+    /// transaction as admission, folder reservation and transcript association.
+    pub fn prepare_bot_chat_with_library(
+        &mut self,
+        preparation: &BotChatPreparation,
+        intent: &BotSubmissionIntent,
+        capture: &koru_ai_core::bots::BotLibraryCapture,
+        fingerprint: &str,
+        expected_revision: u64,
+        now: Timestamp,
+    ) -> Result<InferenceAttempt, BotPreparationError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_failed)?;
+        super::super::bots::library::prepare_library_submission_tx(
+            &tx,
+            intent,
+            capture,
+            fingerprint,
+            expected_revision,
+            now.millis(),
+        )?;
+        let attempt = prepare_association_on(&tx, preparation, &intent.submission, now)?;
+        tx.commit().map_err(storage_failed)?;
+        Ok(attempt)
+    }
+
     /// Whether an attempt is a Bot task's, from its association alone, in
     /// any lifecycle of its Bot. This decides the route an attempt takes; a
     /// receipt read (which refuses an archived or trashed Bot) never does.
