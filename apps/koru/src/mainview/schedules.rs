@@ -192,6 +192,7 @@ mod tests {
                 created_at_ms: 1,
                 initial_owner: owner,
                 definition: ScheduleDefinition {
+                    routine: None,
                     revision: 1,
                     effective_at_ms: 0,
                     template: DelegationTemplate {

@@ -673,6 +673,7 @@ mod tests {
             created_at_ms: 10,
             initial_owner: koru_delegate_core::DeviceId::new(),
             definition: koru_delegate_schedule::ScheduleDefinition {
+                routine: None,
                 revision: 1,
                 effective_at_ms: 10,
                 template: koru_delegate_schedule::DelegationTemplate {

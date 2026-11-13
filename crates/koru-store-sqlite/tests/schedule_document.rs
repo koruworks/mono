@@ -89,6 +89,7 @@ fn header(owner: DeviceId) -> ScheduleHeader {
         created_at_ms: at(1).millis(),
         initial_owner: owner,
         definition: ScheduleDefinition {
+            routine: None,
             revision: 1,
             effective_at_ms: at(1).millis(),
             template: DelegationTemplate {

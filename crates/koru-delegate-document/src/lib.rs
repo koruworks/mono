@@ -87,7 +87,11 @@ pub const SCHEDULE_KIND: &str = "koru-schedule";
 pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 
 /// The schedule document's own local gate, stored at `schedule.schema`.
-pub const SCHEDULE_DOCUMENT_SCHEMA_VERSION: i64 = 1;
+pub const SCHEDULE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
+/// Ordinary schedules keep writing their original compatible format.
+pub const ORDINARY_SCHEDULE_DOCUMENT_SCHEMA_VERSION: i64 = 1;
+/// Bot association is mandatory in this format; ordinary execution refuses it.
+pub const BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
 
 #[cfg(test)]
 mod tests;

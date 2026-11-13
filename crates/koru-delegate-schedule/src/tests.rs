@@ -46,6 +46,7 @@ fn dependency_direction_is_domain_only() {
 
 fn definition() -> ScheduleDefinition {
     ScheduleDefinition {
+        routine: None,
         revision: 1,
         effective_at_ms: 1_000,
         template: DelegationTemplate {
@@ -74,6 +75,55 @@ fn template_round_trips_with_multilingual_text_and_selected_model() {
     assert_eq!(round_trip, definition());
     assert!(format!("{round_trip:?}").contains("Objective(<redacted>)"));
     assert!(!format!("{round_trip:?}").contains("ملخصًا"));
+}
+
+#[test]
+fn routine_addition_preserves_ordinary_definition_json_bytes() {
+    let legacy = concat!(
+        r#"{"revision":1,"effective_at_ms":1000,"template":{"requested_by":{"kind":"person","profile":"00000000-0000-4000-8000-000000000001"},"objective":"毎朝 ملخصًا do the work","agent":{"kind":"built_in","value":"codex"},"requested_model":"gpt-5.4","scope":{"kind":"temporary"},"grants":["00000000-0000-4000-8000-000000000002"],"context":[{"kind":"document","workspace":"00000000-0000-4000-8000-000000000002","document":"00000000-0000-4000-8000-000000000003"}]},"recurrence":{"type":"floating","cron":"0 9 * * Mon,Tue,Wed,Thu,Fri"},"lifecycle":"active"}"#
+    );
+    assert_eq!(serde_json::to_string(&definition()).unwrap(), legacy);
+    let decoded: ScheduleDefinition = serde_json::from_str(legacy).unwrap();
+    assert_eq!(decoded, definition());
+    assert!(decoded.routine.is_none());
+}
+
+#[test]
+fn routine_association_has_strict_identity_and_no_authority_fields() {
+    use koru_delegate_core::{BotId, BotOwner, BotRequestId};
+    let association = RoutineAssociation::new(
+        BotOwner {
+            user_scope: serde_json::from_value(serde_json::json!(v4(4).to_string())).unwrap(),
+            device: device_id(5),
+        },
+        BotId::from_uuid(v4(6)),
+        WorkspaceId::from_uuid(v4(2)),
+        BotRequestId::from_uuid(v4(7)),
+    )
+    .unwrap();
+    let encoded = serde_json::to_value(association).unwrap();
+    assert_eq!(encoded.as_object().unwrap().len(), 4);
+    assert_eq!(
+        serde_json::from_value::<RoutineAssociation>(encoded.clone()).unwrap(),
+        association
+    );
+    let mut extra = encoded;
+    extra["grant_revision"] = serde_json::json!(1);
+    assert!(serde_json::from_value::<RoutineAssociation>(extra).is_err());
+    let invalid = RoutineAssociation {
+        bot: BotId::from_uuid(Uuid::nil()),
+        ..association
+    };
+    assert!(!invalid.valid());
+    assert!(
+        RoutineAssociation::new(
+            invalid.owner,
+            invalid.bot,
+            invalid.home,
+            invalid.creation_request
+        )
+        .is_none()
+    );
 }
 
 #[test]

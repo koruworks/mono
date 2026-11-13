@@ -88,6 +88,7 @@ fn schedule_header(
         created_at_ms: BASE_MINUTE,
         initial_owner: owner,
         definition: ScheduleDefinition {
+            routine: None,
             revision: 1,
             effective_at_ms: BASE_MINUTE,
             template: DelegationTemplate {

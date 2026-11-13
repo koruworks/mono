@@ -99,6 +99,7 @@ fn schedule(n: u128, state: ScheduleState) -> ScheduleView {
             created_at_ms: n as i64,
             initial_owner: owner,
             definition: ScheduleDefinition {
+                routine: None,
                 revision: 1,
                 effective_at_ms: 0,
                 template: DelegationTemplate {

@@ -370,6 +370,7 @@ impl ScheduleCoordinator {
             created_at_ms: now_ms,
             initial_owner: self.device,
             definition: ScheduleDefinition {
+                routine: None,
                 revision: 1,
                 effective_at_ms: now_ms,
                 template,
@@ -455,6 +456,13 @@ impl ScheduleCoordinator {
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
         let current = handle.document().header()?.definition;
+        if current.routine.is_some() {
+            return Err(PortError::new(
+                Port::Schedules,
+                "bot_routine_unavailable",
+                "Bot routine edits require their Bot execution owner.",
+            ));
+        }
         let successor = expected_revision
             .checked_add(1)
             .ok_or(ScheduleDocumentError::RevisionExhausted)?;
@@ -464,6 +472,7 @@ impl ScheduleCoordinator {
             now_ms.max(current.effective_at_ms.saturating_add(1))
         };
         let definition = ScheduleDefinition {
+            routine: None,
             revision: successor,
             effective_at_ms,
             template,
@@ -541,6 +550,13 @@ impl ScheduleCoordinator {
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
         let current = handle.document().header()?.definition;
+        if current.routine.is_some() && matches!(lifecycle, ScheduleLifecycle::Active) {
+            return Err(PortError::new(
+                Port::Schedules,
+                "bot_routine_unavailable",
+                "Bot routine activation requires its Bot execution owner.",
+            ));
+        }
         let successor = expected_revision
             .checked_add(1)
             .ok_or(ScheduleDocumentError::RevisionExhausted)?;
@@ -550,6 +566,7 @@ impl ScheduleCoordinator {
             now_ms.max(current.effective_at_ms.saturating_add(1))
         };
         let definition = ScheduleDefinition {
+            routine: current.routine,
             revision: successor,
             effective_at_ms,
             template: current.template.clone(),
@@ -828,6 +845,13 @@ impl ScheduleCoordinator {
         let mut handle = self.schedules.open(listed.workspace, listed.document)?;
         handle.absorb()?;
         let authoritative_header = handle.document().header()?;
+        if authoritative_header.definition.routine.is_some() {
+            return Err(PortError::new(
+                Port::Schedules,
+                "bot_routine_unavailable",
+                "Bot routines require their Bot execution owner.",
+            ));
+        }
         let schedule_ref = ScheduleEventRef {
             schedule: authoritative_header.schedule,
             workspace: listed.workspace,
@@ -1678,6 +1702,7 @@ mod tests {
 
     fn definition(effective_at_ms: i64) -> ScheduleDefinition {
         ScheduleDefinition {
+            routine: None,
             revision: 1,
             effective_at_ms,
             template: DelegationTemplate {

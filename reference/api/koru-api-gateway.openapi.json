@@ -15654,6 +15654,30 @@
         "pattern": "^#[0-9A-Fa-f]{6}$",
         "type": "string"
       },
+      "RoutineAssociation": {
+        "additionalProperties": false,
+        "properties": {
+          "bot": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "creation_request": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "home": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/BotOwner"
+          }
+        },
+        "required": [
+          "owner",
+          "bot",
+          "home",
+          "creation_request"
+        ],
+        "type": "object"
+      },
       "RowRange": {
         "properties": {
           "count": {
@@ -16597,6 +16621,20 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "routine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutineAssociation"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Present only in Bot Schedule2. Identity alone grants no execution or\npage access; the AI owner retains the independent Routine policy."
           },
           "template": {
             "$ref": "#/components/schemas/DelegationTemplate"
