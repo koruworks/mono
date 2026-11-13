@@ -16,7 +16,10 @@ use koru_store_core::version::Compatibility;
 use loro::{ExportMode, LoroDoc, LoroList, LoroMap, LoroValue, ValueOrContainer, VersionVector};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::SCHEDULE_DOCUMENT_SCHEMA_VERSION;
+use crate::{
+    BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION, ORDINARY_SCHEDULE_DOCUMENT_SCHEMA_VERSION,
+    SCHEDULE_DOCUMENT_SCHEMA_VERSION,
+};
 
 const ROOT: &str = "schedule";
 const K_SCHEMA: &str = "schema";
@@ -154,6 +157,9 @@ impl ScheduleClaimAuthority {
     }
 
     pub fn into_run(self) -> Result<ScheduleRunClaim> {
+        if self.definition.routine.is_some() {
+            return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
+        }
         self.validate_current()?;
         match self.binding {
             BoundScheduleClaim::Run {
@@ -216,6 +222,9 @@ pub enum ScheduleDocumentError {
     HandoffPending,
     LifecycleConflict,
     ClaimBindingMismatch,
+    RoutineAssociationChanged,
+    RoutineTemplateChanged,
+    RoutineRequiresBotClaim,
     StaleClaimAuthority,
     UnknownHandoff,
     HandoffConflict,
@@ -252,6 +261,15 @@ impl fmt::Display for ScheduleDocumentError {
                 f.write_str("schedule lifecycle cannot make the requested transition")
             }
             Self::ClaimBindingMismatch => f.write_str("schedule claim binding does not match"),
+            Self::RoutineAssociationChanged => {
+                f.write_str("a schedule's Bot association cannot be changed")
+            }
+            Self::RoutineTemplateChanged => {
+                f.write_str("a Bot routine inherits its execution settings and access")
+            }
+            Self::RoutineRequiresBotClaim => {
+                f.write_str("a Bot routine requires its Bot execution owner")
+            }
             Self::StaleClaimAuthority => f.write_str("schedule claim authority is stale"),
             Self::UnknownHandoff => f.write_str("handoff request is unknown"),
             Self::HandoffConflict => f.write_str("handoff id already names another fact"),
@@ -306,11 +324,25 @@ impl ScheduleDocument {
         if header.definition.effective_at_ms < header.created_at_ms {
             return Err(ScheduleDocumentError::EffectiveTimeBeforeCreation);
         }
+        let schema = if let Some(routine) = &header.definition.routine {
+            if !routine.valid() || routine.owner.device != header.initial_owner {
+                return Err(ScheduleDocumentError::Malformed("routine"));
+            }
+            if !matches!(
+                header.definition.lifecycle,
+                ScheduleLifecycle::Paused { .. }
+            ) {
+                return Err(ScheduleDocumentError::LifecycleConflict);
+            }
+            BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION
+        } else {
+            ORDINARY_SCHEDULE_DOCUMENT_SCHEMA_VERSION
+        };
         let root = doc.get_map(ROOT);
         if root.get(K_SCHEMA).is_some() {
             return Err(ScheduleDocumentError::AlreadyInitialized);
         }
-        root.insert(K_SCHEMA, SCHEDULE_DOCUMENT_SCHEMA_VERSION)?;
+        root.insert(K_SCHEMA, schema)?;
         root.insert(K_ID, encode(&header.schedule, K_ID)?)?;
         root.insert(K_CREATED, header.created_at_ms)?;
         root.insert(K_OWNER, encode(&header.initial_owner, K_OWNER)?)?;
@@ -354,7 +386,7 @@ impl ScheduleDocument {
         }
     }
     pub fn is_writable(&self) -> bool {
-        matches!(self.compatibility(), Compatibility::Writable)
+        matches!(self.compatibility(), Compatibility::Writable) && self.header().is_ok()
     }
     pub fn version(&self) -> VersionVector {
         self.doc.oplog_vv()
@@ -372,7 +404,7 @@ impl ScheduleDocument {
 
     fn writable(&self) -> Result<()> {
         match self.compatibility() {
-            Compatibility::Writable => Ok(()),
+            Compatibility::Writable => self.header().map(|_| ()),
             Compatibility::TooNew { found, understood } => {
                 Err(ScheduleDocumentError::ReadOnly { found, understood })
             }
@@ -381,15 +413,50 @@ impl ScheduleDocument {
 
     pub fn header(&self) -> Result<ScheduleHeader> {
         let root = self.root();
-        Ok(ScheduleHeader {
+        let schema = value(&root, K_SCHEMA)?;
+        let definition: serde_json::Value = value(&root, K_DEFINITION)?.into();
+        // Only the new coherent definition envelope is closed. Existing nested
+        // template/recurrence decoders and all schema-1 decoding stay unchanged.
+        if matches!(schema, LoroValue::I64(BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION))
+            && definition.as_object().is_none_or(|fields| {
+                fields.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "revision"
+                            | "effective_at_ms"
+                            | "template"
+                            | "recurrence"
+                            | "lifecycle"
+                            | "routine"
+                    )
+                })
+            })
+        {
+            return Err(ScheduleDocumentError::Malformed(K_DEFINITION));
+        }
+        let header = ScheduleHeader {
             schedule: decode(value(&root, K_ID)?, K_ID)?,
             created_at_ms: match value(&root, K_CREATED)? {
                 LoroValue::I64(at) => at,
                 _ => return Err(ScheduleDocumentError::Malformed(K_CREATED)),
             },
             initial_owner: decode(value(&root, K_OWNER)?, K_OWNER)?,
-            definition: decode(value(&root, K_DEFINITION)?, K_DEFINITION)?,
-        })
+            definition: serde_json::from_value(definition)
+                .map_err(|_| ScheduleDocumentError::Malformed(K_DEFINITION))?,
+        };
+        match (schema, &header.definition.routine) {
+            (LoroValue::I64(ORDINARY_SCHEDULE_DOCUMENT_SCHEMA_VERSION), None) => {}
+            (LoroValue::I64(BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION), Some(routine))
+                if routine.valid() && routine.owner.device == header.initial_owner => {}
+            (LoroValue::I64(found), _) if found > SCHEDULE_DOCUMENT_SCHEMA_VERSION => {
+                return Err(ScheduleDocumentError::ReadOnly {
+                    found,
+                    understood: SCHEDULE_DOCUMENT_SCHEMA_VERSION,
+                });
+            }
+            _ => return Err(ScheduleDocumentError::Malformed("routine_schema")),
+        }
+        Ok(header)
     }
 
     /// The independently mutable display name. Schema-1 documents written by
@@ -477,10 +544,13 @@ impl ScheduleDocument {
     ) -> Result<Option<ScheduleClaimAuthority>> {
         self.writable()?;
         self.firings()?;
+        let header = self.header()?;
+        if header.definition.routine.is_some() {
+            return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
+        }
         if !self.may_claim(device)? {
             return Ok(None);
         }
-        let header = self.header()?;
         let binding = bind_plan(&header.definition.template, device, plan)?;
         let handoff = self.handoff_state()?;
         Ok(Some(ScheduleClaimAuthority {
@@ -505,6 +575,7 @@ impl ScheduleDocument {
             return Err(ScheduleDocumentError::NotOwner);
         }
         let current_definition = self.header()?.definition;
+        preserve_routine(&current_definition, definition)?;
         let current = current_definition.revision;
         if definition.revision == 0 {
             return Err(ScheduleDocumentError::RevisionZero);
@@ -582,6 +653,7 @@ impl ScheduleDocument {
         }
         let current_name = self.name()?;
         let current_definition = self.header()?.definition;
+        preserve_routine(&current_definition, definition)?;
         let successor = expected_revision
             .checked_add(1)
             .ok_or(ScheduleDocumentError::RevisionExhausted)?;
@@ -675,6 +747,7 @@ impl ScheduleDocument {
             template: current.template,
             recurrence: current.recurrence,
             lifecycle,
+            routine: current.routine,
         };
         self.root()
             .insert(K_DEFINITION, encode(&definition, K_DEFINITION)?)?;
@@ -910,6 +983,24 @@ fn bind_plan(
         }
         _ => Err(ScheduleDocumentError::ClaimBindingMismatch),
     }
+}
+
+fn preserve_routine(current: &ScheduleDefinition, offered: &ScheduleDefinition) -> Result<()> {
+    if current.routine != offered.routine {
+        return Err(ScheduleDocumentError::RoutineAssociationChanged);
+    }
+    if current.routine.is_some() {
+        let (before, after) = (&current.template, &offered.template);
+        if before.requested_by != after.requested_by
+            || before.agent != after.agent
+            || before.requested_model != after.requested_model
+            || before.scope != after.scope
+            || before.grants != after.grants
+        {
+            return Err(ScheduleDocumentError::RoutineTemplateChanged);
+        }
+    }
+    Ok(())
 }
 
 fn context_matches(

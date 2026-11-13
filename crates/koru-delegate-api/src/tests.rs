@@ -341,6 +341,7 @@ fn schedule_view() -> ScheduleView {
             created_at_ms: 10,
             initial_owner: DeviceId::from_uuid(v4(8)),
             definition: ScheduleDefinition {
+                routine: None,
                 revision: 1,
                 effective_at_ms: 10,
                 template: request.template,

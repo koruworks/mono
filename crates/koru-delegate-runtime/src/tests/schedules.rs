@@ -16,6 +16,8 @@ use koru_delegate_schedule::{
 use koru_delegate_scope::ScopeIdentity;
 use koru_delegate_sqlite::SlotOutcome;
 
+mod routine;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ScheduleEventCall {
     ExistingCreated,
@@ -30,6 +32,7 @@ enum ScheduleEventCall {
 #[derive(Default)]
 struct ScheduleEventScript {
     calls: Vec<ScheduleEventCall>,
+    definitions: Vec<koru_delegate_schedule::ScheduleDefinition>,
     fail_definition_prepare: bool,
     fail_occurrence_reconcile: bool,
 }
@@ -99,6 +102,7 @@ impl ScheduleEvents for RecordingScheduleEvents {
             ));
         }
         let event = EventId::mint();
+        script.definitions.push(definition.clone());
         script.calls.push(ScheduleEventCall::PrepareDefinition(
             event,
             schedule_definition_event(definition),
@@ -956,6 +960,7 @@ fn active_schedule(owner: DeviceId) -> koru_delegate_schedule::ScheduleHeader {
         created_at_ms: 1,
         initial_owner: owner,
         definition: koru_delegate_schedule::ScheduleDefinition {
+            routine: None,
             revision: 1,
             effective_at_ms: 1,
             template: koru_delegate_schedule::DelegationTemplate {

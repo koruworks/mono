@@ -20,6 +20,9 @@ use koru_delegate_core::{
     RunContextItem, RunId, ScheduleId, SessionProfileKey, TextError, WorkspaceId, WorkspaceScope,
 };
 
+mod routine;
+pub use routine::RoutineAssociation;
+
 /// The longest authored schedule name, in Unicode scalar values.
 pub const MAX_SCHEDULE_NAME_CHARS: usize = 128;
 
@@ -190,6 +193,10 @@ pub struct ScheduleDefinition {
     pub template: DelegationTemplate,
     pub recurrence: RecurrenceRule,
     pub lifecycle: ScheduleLifecycle,
+    /// Present only in Bot Schedule2. Identity alone grants no execution or
+    /// page access; the AI owner retains the independent Routine policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine: Option<RoutineAssociation>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

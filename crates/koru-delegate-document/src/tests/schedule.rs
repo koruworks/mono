@@ -5,8 +5,11 @@ use koru_delegate_schedule::*;
 use koru_recurrence::{CronExpression, RecurrenceRule};
 use loro::{LoroValue, ValueOrContainer, VersionVector};
 
+mod routine;
+
 fn definition(revision: u32) -> ScheduleDefinition {
     ScheduleDefinition {
+        routine: None,
         revision,
         effective_at_ms: revision as i64 * 1_000,
         template: DelegationTemplate {
@@ -84,7 +87,7 @@ fn shape_round_trip_and_newer_gate_are_local_to_the_schedule() {
     reopened
         .doc()
         .get_map("schedule")
-        .insert("schema", 2)
+        .insert("schema", SCHEDULE_DOCUMENT_SCHEMA_VERSION + 1)
         .unwrap();
     reopened.doc().commit();
     let newer = ScheduleDocument::from_snapshot(&reopened.export_snapshot().unwrap()).unwrap();
@@ -112,7 +115,7 @@ fn shape_round_trip_and_newer_gate_are_local_to_the_schedule() {
     replica
         .doc()
         .get_map("schedule")
-        .insert("schema", 2)
+        .insert("schema", SCHEDULE_DOCUMENT_SCHEMA_VERSION + 1)
         .unwrap();
     replica.doc().commit();
     schedule

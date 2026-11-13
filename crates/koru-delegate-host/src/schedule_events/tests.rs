@@ -42,6 +42,7 @@ fn header(schedule: ScheduleId, profile: ProfileId) -> ScheduleHeader {
         created_at_ms: 17,
         initial_owner: DeviceId::new(),
         definition: ScheduleDefinition {
+            routine: None,
             revision: 1,
             effective_at_ms: 17,
             template: DelegationTemplate {
