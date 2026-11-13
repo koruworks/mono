@@ -194,14 +194,17 @@ jobs:
   # this release's version, after the release is published. The registry keeps
   # metadata only: the hosted server at https://mcp.koru.do/mcp. Ownership is
   # proven by the `v=MCPv1` TXT record on koru.do, whose private key is the
-  # `MCP_REGISTRY_PRIVATE_KEY` secret. A failure here leaves the release as it
-  # is; re-run this job alone. A version already listed is skipped, because the
-  # registry refuses to publish the same version twice.
+  # `MCP_REGISTRY_PRIVATE_KEY` secret of the `mcp-registry` environment. A
+  # failure here leaves the release as it is; re-run this job alone. A version
+  # already listed is skipped, because the registry refuses to publish the same
+  # version twice.
   mcp-registry:
     name: mcp-registry
     needs: [plan, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The key is an environment secret; the environment admits `v*` tags only.
+    environment: mcp-registry
     permissions:
       contents: read
     env:
