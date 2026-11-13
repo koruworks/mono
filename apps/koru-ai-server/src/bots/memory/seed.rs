@@ -46,6 +46,15 @@ pub(in crate::bots) fn validate_seed_update(
     identity: &BotMemoryIdentity,
     update: &[u8],
 ) -> Result<Vec<u8>> {
+    Ok(validate_seed_document(identity, update)?.version().encode())
+}
+
+/// The adapter compares semantic VVs before producing one shared encoding for
+/// the repository confirmation. Loro's map encoding order is not canonical.
+pub(in crate::bots) fn validate_seed_document(
+    identity: &BotMemoryIdentity,
+    update: &[u8],
+) -> Result<WorkspaceDoc> {
     validate(identity)?;
     let doc = bounded_import(update)?;
     let vv = doc.version().encode();
@@ -58,5 +67,5 @@ pub(in crate::bots) fn validate_seed_update(
     if vv.is_empty() || vv.len() > 64 * 1024 {
         return Err(MemoryCodecError::InvalidSeed);
     }
-    Ok(vv)
+    Ok(doc)
 }

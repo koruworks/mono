@@ -215,7 +215,7 @@ impl BotView {
                 ActionStyle::Ghost,
                 !editable || !self.library.dirty(),
             ));
-        content
+        let content = content
             .child(actions)
             .child(row("Library refresh").child(self.button(
                 engine,
@@ -224,7 +224,12 @@ impl BotView {
                 self.words(Words::BotsRefreshLibrary),
                 ActionStyle::Ghost,
                 self.library.loading(),
-            )))
+            )));
+        if self.memory_available() {
+            content.child(self.memory_section(engine))
+        } else {
+            content
+        }
     }
 
     pub(super) fn library_action(&self, key: Key) -> Option<Action> {

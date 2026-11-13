@@ -20,6 +20,58 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn prepare_memory_page(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotMemoryIdentity,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<PreparedMemoryPage, MemoryAuthorityError> {
+        memory::adapter::prepare(self, owner, reader, identity, cancellation)
+    }
+
+    fn capture_memory(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        binding: &BotMemoryBinding,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<PreparedMemoryCapture, MemoryAuthorityError> {
+        memory::adapter::capture(self, owner, reader, binding, cancellation)
+    }
+
+    fn replay_memory_index(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        home: WorkspaceId,
+        capture: &BotLibraryCapture,
+        binding: Option<&BotMemoryBinding>,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        memory::adapter::replay(self, owner, reader, home, capture, binding, cancellation)
+    }
+
+    fn read_memory_page(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        binding: &BotMemoryBinding,
+        snapshot: MemorySnapshot,
+        position: MemoryReadPosition,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<MemoryPageResult, MemoryAuthorityError> {
+        memory::adapter::read(
+            self,
+            owner,
+            reader,
+            binding,
+            snapshot,
+            position,
+            cancellation,
+        )
+    }
+
     fn pinned_document_revision(
         &self,
         owner: BotOwner,

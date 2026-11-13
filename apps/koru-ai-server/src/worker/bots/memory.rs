@@ -6,6 +6,11 @@ use koru_ai_core::Cancellation;
 use koru_ai_core::bots::{BotMemoryDetailPage, BotMemoryListPage, MemoryReadOperation};
 use koru_delegate_core::{AttemptGeneration, BotProvenance, CapturedBotPolicy, RunId};
 
+// The issuer is compiled during D1's staged worker wiring; no public gate opens
+// until its caller performs the canonical/delegate checks around each read.
+#[allow(dead_code)]
+mod cursor;
+
 /// A trusted composition request, never an HTTP/provider-owned principal.
 /// The future read job must independently verify its canonical association,
 /// current Store authority and delegate generation before and after reading.

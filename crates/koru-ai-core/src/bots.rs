@@ -187,6 +187,52 @@ pub trait BotAuthority: Send + Sync {
     fn create_role_page(&self, _seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         Err(BotError::Unavailable)
     }
+
+    /// Off-writer ordinary Memory creation/reconciliation under current Store
+    /// authority. A cancellation does not prove an earlier write was undone.
+    fn prepare_memory_page(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotMemoryIdentity,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<PreparedMemoryPage, MemoryAuthorityError> {
+        Err(BotError::Unavailable.into())
+    }
+
+    fn capture_memory(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _binding: &BotMemoryBinding,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<PreparedMemoryCapture, MemoryAuthorityError> {
+        Err(BotError::Unavailable.into())
+    }
+
+    fn replay_memory_index(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _home: WorkspaceId,
+        _capture: &BotLibraryCapture,
+        _binding: Option<&BotMemoryBinding>,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        Err(BotError::Unavailable.into())
+    }
+
+    fn read_memory_page(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _binding: &BotMemoryBinding,
+        _snapshot: MemorySnapshot,
+        _position: MemoryReadPosition,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<MemoryPageResult, MemoryAuthorityError> {
+        Err(BotError::Unavailable.into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

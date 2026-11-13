@@ -10,9 +10,82 @@ use koru_delegate_core::DocumentVersionId;
 /// checkpoint may enable it; this is not an environment or user setting.
 pub const BOT_MEMORY_AVAILABLE: bool = false;
 pub const BOT_MEMORY_CURSOR_BYTES: usize = 2048;
+/// Issued canonical typed tokens are smaller than the accepted input ceiling.
+/// The issuer's maximum-shape test proves this bound; projections reserve it.
+pub const BOT_MEMORY_ISSUED_CURSOR_BYTES: usize = 1024;
 pub const BOT_MEMORY_LIST_LIMIT: u16 = 20;
 pub const BOT_MEMORY_INDEX_BYTES: usize = 8192;
 pub const BOT_MEMORY_RESPONSE_BYTES: usize = 16 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryAuthorityError {
+    Authority(BotError),
+    CaptureUnavailable,
+    HistoryUnavailable,
+    DetailUnsupported,
+    DetailTooLarge,
+    FactNotFound,
+}
+impl From<BotError> for MemoryAuthorityError {
+    fn from(value: BotError) -> Self {
+        Self::Authority(value)
+    }
+}
+impl MemoryAuthorityError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Authority(error) => error.code(),
+            Self::CaptureUnavailable => "memory_capture_unavailable",
+            Self::HistoryUnavailable => "memory_history_unavailable",
+            Self::DetailUnsupported => "memory_detail_unsupported",
+            Self::DetailTooLarge => "memory_detail_too_large",
+            Self::FactNotFound => "memory_fact_not_found",
+        }
+    }
+}
+
+/// A definite creation observation. Transport/cancellation failures remain an
+/// error: they cannot establish whether an already queued Store write happened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PreparedMemoryPage {
+    Confirmed(BotMemoryConfirmation),
+    Disagreement(BotMemoryRefusal),
+}
+
+/// Trusted adapter input. An exact version is supplied only by a durable
+/// capture or a successfully authenticated continuation, never a public ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemorySnapshot {
+    Current,
+    Exact(DocumentVersionId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemoryReadPosition {
+    List {
+        after: u32,
+        limit: u16,
+    },
+    Detail {
+        fact_id: BotMemoryNodeId,
+        node_ordinal: u32,
+        start_utf8: u32,
+    },
+}
+
+/// Cursor-free adapter output. Only the worker can sign the next position;
+/// public continuations in these data pages are always initially None.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemoryPageResult {
+    List {
+        page: BotMemoryListPage,
+        next: Option<MemoryReadPosition>,
+    },
+    Detail {
+        page: BotMemoryDetailPage,
+        next: Option<MemoryReadPosition>,
+    },
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
