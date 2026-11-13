@@ -7,7 +7,7 @@ fn id(n: u8) -> Uuid {
         .parse()
         .unwrap()
 }
-fn prepared() -> RoutinePrepared {
+pub(super) fn prepared() -> RoutinePrepared {
     let ids = RoutineExecutionIds {
         submission: BotRequestId::from_uuid(id(1)),
         run: RunId::from_uuid(id(2)),
