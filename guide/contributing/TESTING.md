@@ -1,5 +1,10 @@
 # Test architecture
 
+The provider catalog serves background model listings before persisting its
+cache. Persistence assertions must wait for the expected stored value with a
+bounded deadline; a successful `serve` or a write count is not a save barrier.
+Version invalidation can write an empty catalog before the refreshed entry.
+
 The workspace host's native-menu queue tests share `QUEUE_TEST_LOCK` across
 each ingest/drain sequence. Distinct fixture ids do not isolate the tests:
 the production drain consumes every queued id, including another test's.

@@ -185,6 +185,30 @@ fn ids(models: &ProviderModels) -> Vec<&str> {
         .collect()
 }
 
+/// Serving a background result does not wait for its cache write. Check the
+/// persisted value itself, rather than racing the worker or counting writes
+/// (version invalidation can also write an empty catalog).
+fn await_written(
+    store: &MemoryCatalogStore,
+    expected: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let written = store
+            .bytes()
+            .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+            .unwrap_or(serde_json::Value::Null);
+        if expected(&written) {
+            return written;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "cache write never landed: {written}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn a_persisted_list_is_served_while_checking_and_fresh_again_on_the_same_version() {
     let world = World::new(true);
@@ -220,7 +244,9 @@ fn a_new_agent_version_drops_its_entry_and_lists_it_again() {
         "the request waits on the background listing"
     );
     assert_eq!(world.calls(), 1);
-    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    let written = await_written(&store, |written| {
+        written["providers"]["opencode"]["version"] == "1.19.5"
+    });
     assert_eq!(written["providers"]["opencode"]["version"], "1.19.5");
     assert_eq!(written["providers"]["opencode"]["source"], "listing");
 }
@@ -635,7 +661,9 @@ fn a_walking_agent_is_walked_once_per_version_and_keeps_its_levels() {
 
     observe(&cache, &available("claude", "0.76.0"), Some(captured()));
     assert!(opus_has_levels(&cache), "a fresh capture keeps them");
-    let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
+    let written = await_written(&store, |written| {
+        written["providers"]["claude"]["source"] == "probe+walk"
+    });
     assert_eq!(written["providers"]["claude"]["source"], "probe+walk");
 
     let reopened = walking_cache(
@@ -814,17 +842,6 @@ fn a_format_2_cache_is_listed_again() {
         "the agent is listed again"
     );
     assert_eq!(world.calls(), 1);
-    // The listing thread publishes what it found and only then writes the
-    // file, so the answer above can arrive before the write does. Reading
-    // the store at once failed on a slow runner (CI, 2026-11-11: format 2
-    // still there); wait for the write, with a bound.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let written = loop {
-        let written: serde_json::Value = serde_json::from_slice(&store.bytes().unwrap()).unwrap();
-        if written["format"] == CATALOG_FORMAT || std::time::Instant::now() >= deadline {
-            break written;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    };
+    let written = await_written(&store, |written| written["format"] == CATALOG_FORMAT);
     assert_eq!(written["format"], CATALOG_FORMAT);
 }
