@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 
 use super::*;
+mod library;
 
 #[test]
 fn fresh_database_applies_all_numbered_ai_migrations() {

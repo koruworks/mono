@@ -317,7 +317,17 @@ fn populated_ai17_survives_18_value_for_value_and_repeated_preparation() {
     let before = snapshot(&repo.connection);
     assert!(before.values().map(|(_, rows)| rows.len()).sum::<usize>() > 40);
     for _ in 0..2 {
-        crate::db::prepare(&mut repo.connection).unwrap();
+        // This fixture proves the historical ai18 step independently of later
+        // migrations; ai19 has its own populated parent-rebuild fixtures.
+        koru_sqlite::prepare(
+            &koru_sqlite::Schema {
+                database: crate::DATABASE_FILE,
+                understood: 18,
+                migrations: &crate::db::MIGRATIONS[..18],
+            },
+            &mut repo.connection,
+        )
+        .unwrap();
         assert_eq!(repo.schema_version().unwrap(), 18);
         let after = snapshot(&repo.connection);
         for (name, kept) in &before {
@@ -402,16 +412,16 @@ fn a_database_left_at_the_unamended_18_is_refused_by_name_and_left_untouched() {
 fn a_newer_stamp_is_refused_without_touching_rows() {
     let mut repo = Repository::in_memory().unwrap();
     repo.connection
-        .execute_batch("PRAGMA user_version = 19;")
+        .pragma_update(None, "user_version", crate::SCHEMA_VERSION + 1)
         .unwrap();
     let before = snapshot(&repo.connection);
     assert!(matches!(
         crate::db::prepare(&mut repo.connection),
         Err(OpenError::SchemaTooNew {
-            discovered: 19,
-            supported: 18,
+            discovered,
+            supported,
             ..
-        })
+        }) if discovered == crate::SCHEMA_VERSION + 1 && supported == crate::SCHEMA_VERSION
     ));
     assert_eq!(snapshot(&repo.connection), before);
 }

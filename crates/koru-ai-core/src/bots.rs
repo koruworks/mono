@@ -16,6 +16,8 @@ pub use lifecycle::*;
 pub use policy::*;
 pub mod creation;
 pub use creation::*;
+pub mod library;
+pub use library::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

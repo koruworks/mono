@@ -11,7 +11,7 @@ use rusqlite::Connection;
 
 pub use koru_sqlite::OpenError;
 
-pub const SCHEMA_VERSION: i64 = 18;
+pub const SCHEMA_VERSION: i64 = 19;
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -122,6 +122,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/018_ai_bot_lifecycle.sql"),
         columns: &[],
     },
+    Migration {
+        to: 19,
+        name: "019_ai_bot_library.sql",
+        sql: include_str!("../migrations/019_ai_bot_library.sql"),
+        columns: &[],
+    },
 ];
 
 const SCHEMA: Schema = Schema {
@@ -131,7 +137,7 @@ const SCHEMA: Schema = Schema {
 };
 
 pub(crate) fn open(path: &Path) -> Result<Connection, OpenError> {
-    let connection = koru_sqlite::open(&SCHEMA, path)?;
+    let connection = koru_sqlite::open_with_preflight(&SCHEMA, path, refuse_superseded_18)?;
     refuse_superseded_18(&connection)?;
     Ok(connection)
 }
@@ -146,15 +152,15 @@ pub(crate) fn open_in_memory() -> Result<Connection, OpenError> {
 /// The whole open sequence on a connection already opened.
 #[cfg(test)]
 pub(crate) fn prepare(connection: &mut Connection) -> Result<(), OpenError> {
-    koru_sqlite::prepare(&SCHEMA, connection)?;
+    koru_sqlite::prepare_with_preflight(&SCHEMA, connection, refuse_superseded_18)?;
     refuse_superseded_18(connection)
 }
 
 /// The `operation` of the [`OpenError::Storage`] that refuses an `ai.db` an
 /// unreleased development build left at schema 18 before that migration was
-/// amended. Its stamp is the current one, so the migrator (which tracks the
-/// version alone) would apply nothing and the older shape would fail only
-/// later, at a CHECK, the first time a Restore marked its source `reversed`.
+/// amended. The migrator tracks versions alone; the read-only preflight keeps
+/// this unsupported shape from advancing to schema 19 before refusal. Without
+/// it a Restore could later fail its CHECK when marking a source `reversed`.
 /// No released build ever wrote schema 18, so this is never a user's
 /// database: it is refused by this name, untouched, and recreated (delete
 /// the file with its `-wal` and `-shm` while Koru is stopped). Nothing

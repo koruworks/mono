@@ -24,6 +24,71 @@ const SCHEMA: Schema = Schema {
 };
 
 #[test]
+fn preflight_refusal_precedes_configuration_and_migration() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF; CREATE TABLE retained(value TEXT); INSERT INTO retained VALUES('kept');").unwrap();
+    let refusal = OpenError::Storage {
+        database: "things.db",
+        operation: "check historical shape of",
+        detail: "refused fixture".into(),
+    };
+    assert_eq!(
+        prepare_with_preflight(&SCHEMA, &mut connection, |c| {
+            assert_eq!(user_version("things.db", c).unwrap(), 0);
+            Err(refusal.clone())
+        }),
+        Err(refusal)
+    );
+    assert_eq!(user_version("things.db", &connection).unwrap(), 0);
+    assert_eq!(
+        connection
+            .query_row("PRAGMA foreign_keys", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        connection
+            .query_row("PRAGMA synchronous", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        0
+    );
+    assert!(!has_column("things.db", &connection, "things", "size").unwrap());
+    assert_eq!(
+        connection
+            .query_row("SELECT value FROM retained", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "kept"
+    );
+}
+
+#[test]
+fn newer_schema_refusal_precedes_owner_preflight() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch("PRAGMA user_version=3; PRAGMA foreign_keys=OFF;")
+        .unwrap();
+    let called = std::cell::Cell::new(false);
+    assert!(matches!(
+        prepare_with_preflight(&SCHEMA, &mut connection, |_| {
+            called.set(true);
+            Ok(())
+        }),
+        Err(OpenError::SchemaTooNew {
+            discovered: 3,
+            supported: 2,
+            ..
+        })
+    ));
+    assert!(!called.get());
+    assert_eq!(
+        connection
+            .query_row("PRAGMA foreign_keys", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
 #[ignore = "uses a real filesystem; run explicitly with --ignored"]
 fn a_fresh_file_reaches_the_schema_and_reopens_at_it() {
     let dir = tempfile::tempdir().unwrap();
