@@ -183,6 +183,16 @@ impl WorkerState {
         let Some(context) = command.bot_context() else {
             return Some(command);
         };
+        // D0's additive contract stays closed before any Store/preparation hop.
+        if let WorkerCommand::Bots { request, .. } = &command
+            && let Some(error) = super::closed_memory_failure(request)
+        {
+            let error = authorize(context, AiScope::ManageBots)
+                .err()
+                .unwrap_or(error);
+            command.refuse(error);
+            return None;
+        }
         if context.prepared.is_some()
             || !context.principal.scopes.contains(&AiScope::ManageBots)
             || self.bot_authority.is_none()
@@ -240,6 +250,20 @@ impl WorkerState {
                 && !archived
             {
                 match request {
+                    // D0 has no Memory adapter/preparation path, even if a caller
+                    // reaches this exhaustive match without the early gate.
+                    BotCommand::ReadMemory { .. }
+                    | BotCommand::EnsureMemory { .. }
+                    | BotCommand::RetryMemory { .. }
+                    | BotCommand::AbandonMemory { .. }
+                    | BotCommand::ListMemory { .. }
+                    | BotCommand::ReadMemoryFact { .. } => {
+                        return Err(failure(
+                            "unsupported_capability",
+                            "Bot Memory is not available yet.",
+                            false,
+                        ));
+                    }
                     BotCommand::Create {
                         home_workspace,
                         config,
@@ -609,6 +633,12 @@ pub(super) fn bot_targets(
             | BotCommand::Read { bot_id }
             | BotCommand::ReadLibrary { bot_id }
             | BotCommand::SetKnowledge { bot_id, .. }
+            | BotCommand::ReadMemory { bot_id }
+            | BotCommand::EnsureMemory { bot_id, .. }
+            | BotCommand::RetryMemory { bot_id, .. }
+            | BotCommand::AbandonMemory { bot_id, .. }
+            | BotCommand::ListMemory { bot_id, .. }
+            | BotCommand::ReadMemoryFact { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Start { bot_id, .. }

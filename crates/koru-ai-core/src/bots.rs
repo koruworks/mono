@@ -18,6 +18,8 @@ pub mod creation;
 pub use creation::*;
 pub mod library;
 pub use library::*;
+pub mod memory;
+pub use memory::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -191,6 +193,39 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// Staged Memory status contract; unavailable until complete Memory integration.
+    ReadMemory {
+        bot_id: BotId,
+    },
+    EnsureMemory {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+        title: String,
+    },
+    RetryMemory {
+        bot_id: BotId,
+        creation_request: BotRequestId,
+        observed_state: BotMemoryState,
+        observed_updated_at_ms: i64,
+    },
+    AbandonMemory {
+        bot_id: BotId,
+        creation_request: BotRequestId,
+        observed_state: BotMemoryState,
+        observed_updated_at_ms: i64,
+    },
+    ListMemory {
+        bot_id: BotId,
+        cursor: Option<String>,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 20)))]
+        limit: u16,
+    },
+    ReadMemoryFact {
+        bot_id: BotId,
+        fact_id: BotMemoryNodeId,
+        cursor: Option<String>,
+    },
     /// Read Role and ordered Knowledge references under current owner authority.
     ReadLibrary {
         bot_id: BotId,
@@ -440,6 +475,19 @@ pub enum BotCommand {
 pub const BOT_RUN_WINDOW_LIMIT: u32 = 500;
 
 impl BotCommand {
+    /// The shared staged Memory capability, independent of command mutation/read.
+    pub fn is_memory(&self) -> bool {
+        matches!(
+            self,
+            Self::ReadMemory { .. }
+                | Self::EnsureMemory { .. }
+                | Self::RetryMemory { .. }
+                | Self::AbandonMemory { .. }
+                | Self::ListMemory { .. }
+                | Self::ReadMemoryFact { .. }
+        )
+    }
+
     /// The lifecycle operation a command asks for, if it is one.
     pub fn lifecycle_kind(&self) -> Option<BotLifecycleKind> {
         Some(match self {
@@ -459,6 +507,9 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    MemoryStatus { status: BotMemoryStatus },
+    MemoryList { page: BotMemoryListPage },
+    MemoryDetail { page: BotMemoryDetailPage },
     Library { library: BotLibraryView },
     KnowledgeSaved { receipt: BotKnowledgeReceipt },
     TaskBots { page: BotSummaryPage },

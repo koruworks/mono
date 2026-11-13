@@ -2935,6 +2935,180 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "description": "Staged Memory status contract; unavailable until complete Memory integration.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read_memory"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "ensure_memory"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_revision",
+              "title"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "retry_memory"
+                ],
+                "type": "string"
+              },
+              "creation_request": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "observed_state": {
+                "$ref": "#/components/schemas/BotMemoryState"
+              },
+              "observed_updated_at_ms": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "creation_request",
+              "observed_state",
+              "observed_updated_at_ms"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "abandon_memory"
+                ],
+                "type": "string"
+              },
+              "creation_request": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "observed_state": {
+                "$ref": "#/components/schemas/BotMemoryState"
+              },
+              "observed_updated_at_ms": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "creation_request",
+              "observed_state",
+              "observed_updated_at_ms"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "list_memory"
+                ],
+                "type": "string"
+              },
+              "cursor": {
+                "nullable": true,
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint16",
+                "maximum": 20,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read_memory_fact"
+                ],
+                "type": "string"
+              },
+              "cursor": {
+                "nullable": true,
+                "type": "string"
+              },
+              "fact_id": {
+                "$ref": "#/components/schemas/BotMemoryNodeId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "fact_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Read Role and ordered Knowledge references under current owner authority.",
             "properties": {
               "bot_id": {
@@ -5008,6 +5182,368 @@
           }
         ]
       },
+      "BotMemoryCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "invalid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "not_indexed": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "omitted_from_prompt": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "valid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "valid",
+          "omitted_from_prompt",
+          "invalid",
+          "not_indexed"
+        ],
+        "type": "object"
+      },
+      "BotMemoryDetailChunk": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "The shared MCP content projection, including typed attributes and runs.\nIt is not an editable complete node or a source of execution authority."
+          },
+          "kind": {
+            "type": "string"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/BotMemoryNodeId"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotMemoryNodeId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotMemoryTextRange"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "node_id",
+          "kind",
+          "content"
+        ],
+        "type": "object"
+      },
+      "BotMemoryDetailPage": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "absent"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "chunks": {
+                "items": {
+                  "$ref": "#/components/schemas/BotMemoryDetailChunk"
+                },
+                "type": "array"
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "continuation": {
+                "nullable": true,
+                "type": "string"
+              },
+              "fact_id": {
+                "$ref": "#/components/schemas/BotMemoryNodeId"
+              },
+              "page": {
+                "$ref": "#/components/schemas/BotPage"
+              },
+              "status": {
+                "enum": [
+                  "observed"
+                ],
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/components/schemas/DocumentVersionId"
+              }
+            },
+            "required": [
+              "status",
+              "page",
+              "version",
+              "fact_id",
+              "chunks",
+              "complete"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotMemoryFactSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "fact_id": {
+            "$ref": "#/components/schemas/BotMemoryNodeId"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fact_id",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "BotMemoryListPage": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "absent"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "complete": {
+                "type": "boolean"
+              },
+              "continuation": {
+                "nullable": true,
+                "type": "string"
+              },
+              "counts": {
+                "$ref": "#/components/schemas/BotMemoryCounts"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/BotMemoryFactSummary"
+                },
+                "type": "array"
+              },
+              "page": {
+                "$ref": "#/components/schemas/BotPage"
+              },
+              "status": {
+                "enum": [
+                  "observed"
+                ],
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/components/schemas/DocumentVersionId"
+              }
+            },
+            "required": [
+              "status",
+              "page",
+              "version",
+              "counts",
+              "items",
+              "complete"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotMemoryNodeId": {
+        "description": "An ordinary Memory node's canonical UUID, preserving its original value and version.",
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "BotMemoryRefusal": {
+        "enum": [
+          "owner_unavailable",
+          "store_unavailable",
+          "document_changed",
+          "document_moved",
+          "document_trashed",
+          "lifecycle_changed",
+          "origin_mismatch"
+        ],
+        "type": "string"
+      },
+      "BotMemoryState": {
+        "enum": [
+          "prepared",
+          "unconfirmed",
+          "bound",
+          "conflict",
+          "abandoned"
+        ],
+        "type": "string"
+      },
+      "BotMemoryStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BotMemoryStatusState"
+          }
+        },
+        "required": [
+          "bot_id",
+          "revision",
+          "state"
+        ],
+        "type": "object"
+      },
+      "BotMemoryStatusState": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "can_create": {
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "not_started"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "can_create"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "can_abandon": {
+                "type": "boolean"
+              },
+              "can_retry": {
+                "type": "boolean"
+              },
+              "candidate": {
+                "$ref": "#/components/schemas/BotPage"
+              },
+              "creation_request": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "observed_updated_at_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "refusal": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotMemoryRefusal"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "state": {
+                "$ref": "#/components/schemas/BotMemoryState"
+              },
+              "status": {
+                "enum": [
+                  "candidate"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "creation_request",
+              "candidate",
+              "state",
+              "observed_updated_at_ms",
+              "can_retry",
+              "can_abandon"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotMemoryTextRange": {
+        "additionalProperties": false,
+        "properties": {
+          "end_utf8": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start_utf8": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_utf8",
+          "end_utf8"
+        ],
+        "type": "object"
+      },
       "BotOpenLifecycle": {
         "additionalProperties": false,
         "description": "A Bot's unfinished lifecycle operation as its read reports it: enough to\nresume it (the same command kind with this `request_id`) or to reverse it\n(a Restore naming it), with why it stopped when it is parked.",
@@ -5248,6 +5784,60 @@
       },
       "BotResponse": {
         "oneOf": [
+          {
+            "properties": {
+              "result": {
+                "enum": [
+                  "memory_status"
+                ],
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/BotMemoryStatus"
+              }
+            },
+            "required": [
+              "result",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotMemoryListPage"
+              },
+              "result": {
+                "enum": [
+                  "memory_list"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotMemoryDetailPage"
+              },
+              "result": {
+                "enum": [
+                  "memory_detail"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "library": {
