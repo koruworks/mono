@@ -6,6 +6,15 @@ use crate::{RunsDb, WriteOp, attempts};
 use koru_delegate_core::DeviceId;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::str::FromStr;
+mod boot;
+
+pub(super) const BOT_BOOT_ROWS_SQL: &str = "SELECT run_id,bot_id,queue_sequence
+    FROM bot_admissions INDEXED BY bot_admissions_queue
+    WHERE state=?1 AND user_scope=?2 AND device_id=?3
+    AND queue_sequence>?4 AND queue_sequence<=?5 ORDER BY queue_sequence LIMIT ?6";
+pub(super) const BOT_BOOT_HIGH_WATER_SQL: &str = "SELECT COALESCE(MAX(queue_sequence),0)
+    FROM bot_admissions INDEXED BY bot_admissions_queue
+    WHERE state=?1 AND user_scope=?2 AND device_id=?3";
 
 fn sql(error: rusqlite::Error) -> LedgerError {
     LedgerError::sql("access the Bot ledger", error)
@@ -254,6 +263,20 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn bot_boot_inventory(
+        &self,
+        owner: BotOwner,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError> {
+        boot::inventory(self, owner, after, through)
+    }
+    fn bot_has_unsettled(&self, owner: BotOwner, bot: BotId) -> Result<bool, BotLedgerError> {
+        boot::has_unsettled(self, owner, bot)
+    }
+    fn recover_bot_reservation(&mut self, key: &BotRunKey) -> Result<bool, BotLedgerError> {
+        boot::recover(self, key)
+    }
     fn active_bot_executions(
         &self,
         device: koru_delegate_core::DeviceId,

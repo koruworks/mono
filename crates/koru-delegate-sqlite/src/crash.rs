@@ -32,6 +32,7 @@ pub enum WriteOp {
     AdmitBot,
     ApplyBotBarrier,
     ReserveBot,
+    RecoverBotReservation,
     ActivateBot,
     SetBotActive,
     SettleBot,
@@ -68,7 +69,7 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 39] = [
+    pub const ALL: [Self; 40] = [
         Self::InstallNativePolicy,
         Self::SettleNativePolicy,
         Self::PrepareNativeResult,
@@ -79,6 +80,7 @@ impl WriteOp {
         Self::AdmitBot,
         Self::ApplyBotBarrier,
         Self::ReserveBot,
+        Self::RecoverBotReservation,
         Self::ActivateBot,
         Self::SetBotActive,
         Self::SettleBot,

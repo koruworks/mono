@@ -100,6 +100,9 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
+            BotCommand::Hello { .. } | BotCommand::SynchronizeBootBot { .. } => {
+                return Err(unavailable("bot_boot_unavailable"));
+            }
             BotCommand::PendingNativeEffects {
                 owner,
                 bot,

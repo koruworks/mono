@@ -2,8 +2,10 @@
 
 //! Bot admission and result identities. Authority is supplied by the trusted AI
 //! owner, never inferred from these serializable values or a caller label.
+mod boot;
 mod native;
 mod refusal;
+pub use boot::*;
 pub use native::*;
 pub use refusal::BotInputRefusal;
 
