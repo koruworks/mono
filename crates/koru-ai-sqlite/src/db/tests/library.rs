@@ -4,7 +4,7 @@ use super::*;
 use rusqlite::{params, types::Value};
 use std::collections::BTreeMap;
 
-fn populated_v18() -> Connection {
+pub(super) fn populated_v18() -> Connection {
     let schema = Schema {
         database: crate::DATABASE_FILE,
         understood: 18,
@@ -39,8 +39,8 @@ fn populated_v18() -> Connection {
     c
 }
 
-type Snapshot = BTreeMap<String, (String, Vec<String>)>;
-fn snapshot(c: &Connection) -> Snapshot {
+pub(super) type Snapshot = BTreeMap<String, (String, Vec<String>)>;
+pub(super) fn snapshot(c: &Connection) -> Snapshot {
     let objects:Vec<(String,String,String)> = c.prepare("SELECT type,name,coalesce(sql,'') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").unwrap().query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap().map(Result::unwrap).collect();
     let mut result = Snapshot::new();
     for (kind, name, sql) in objects {
@@ -67,7 +67,7 @@ fn snapshot(c: &Connection) -> Snapshot {
     result
 }
 
-fn foreign_keys_held(c: &Connection) {
+pub(super) fn foreign_keys_held(c: &Connection) {
     assert_eq!(
         c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, u32>(0))
             .unwrap(),
@@ -106,7 +106,12 @@ fn ai19_preserves_populated_parent_and_children() {
     let mut c = populated_v18();
     println!("Rust-linked SQLite {}", rusqlite::version());
     let before = snapshot(&c);
-    prepare(&mut c).unwrap();
+    let ai19 = Schema {
+        database: crate::DATABASE_FILE,
+        understood: 19,
+        migrations: &MIGRATIONS[..19],
+    };
+    koru_sqlite::prepare_with_preflight(&ai19, &mut c, refuse_superseded_18).unwrap();
     assert_eq!(user_version(&c).unwrap(), 19);
     let after = snapshot(&c);
     for (name, (sql, rows)) in before {

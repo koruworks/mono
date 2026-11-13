@@ -2,6 +2,158 @@
 use super::*;
 
 #[test]
+fn memory_node_capture_roundtrips_genesis_and_imported_uuid_values() {
+    let (mut repo, bot, owner, intent, mut capture) = capture_fixture(true);
+    let expected = vec![
+        "12345678-1234-5123-8123-123456789abc",
+        "00000000-0000-0000-0000-000000000000",
+        "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    ]
+    .into_iter()
+    .map(|value| value.parse::<BotMemoryNodeId>().unwrap())
+    .collect::<Vec<_>>();
+    let BotCapturedMemory::Captured { nodes, .. } = &mut capture.memory else {
+        unreachable!()
+    };
+    *nodes = expected;
+    repo.prepare_bot_submission_with_library(&intent, &capture, HASH, bot.revision, 4)
+        .unwrap();
+    assert_eq!(
+        repo.bot_library_capture(owner, bot.id, capture.submission)
+            .unwrap(),
+        Some(capture.clone())
+    );
+    assert_eq!(
+        serde_json::from_str::<BotLibraryCapture>(&serde_json::to_string(&capture).unwrap())
+            .unwrap(),
+        capture
+    );
+    repo.connection
+        .execute(
+            "UPDATE bot_memory_index_nodes SET node_id=upper(node_id) WHERE ordinal=0",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.bot_library_capture(owner, bot.id, capture.submission),
+        Err(BotError::Storage)
+    );
+}
+
+#[test]
+fn new_submission_cannot_pin_bound_memory_on_any_admission_route() {
+    for route in ["direct", "api", "chat"] {
+        for block in [false, true] {
+            let (mut repo, bot, owner, mut intent, capture) = capture_fixture(true);
+            let binding = repo.bot_library(owner, bot.id).unwrap().binding.unwrap();
+            let version = d::DocumentVersionId::new();
+            intent.submission.request.context.push(if block {
+                d::RunContextItem::Block {
+                    workspace: binding.page.workspace,
+                    document: binding.page.document,
+                    version,
+                    node: d::BlockNodeId::mint(),
+                }
+            } else {
+                d::RunContextItem::Document {
+                    workspace: binding.page.workspace,
+                    document: binding.page.document,
+                    version,
+                }
+            });
+            let before = receipt_count(&repo);
+            if route == "chat" {
+                let turn = crate::repository::tests::turn(bot.main_chat, uuid::Uuid::new_v4(), 4);
+                intent.submission.provenance.ai_attempt_id = Some(turn.attempt.id.as_uuid());
+                intent.submission.provenance.assistant_message_id =
+                    Some(turn.assistant_message.id.as_uuid());
+                intent.submission.input.text = turn.user_message.markdown.clone();
+                let result = repo.prepare_bot_chat_with_library(
+                    &koru_ai_core::bots::replay::BotChatPreparation::Turn(turn.clone()),
+                    &intent,
+                    &capture,
+                    HASH,
+                    bot.revision,
+                    turn.attempt.queued_at,
+                );
+                assert!(result.is_err());
+                assert!(repo.attempt(turn.attempt.id).unwrap().is_none());
+                assert!(repo.messages(bot.main_chat).unwrap().is_empty());
+            } else if route == "api" {
+                assert_eq!(
+                    repo.prepare_bot_submission_with_library(
+                        &intent,
+                        &capture,
+                        HASH,
+                        bot.revision,
+                        4
+                    ),
+                    Err(BotError::Forbidden)
+                );
+            } else {
+                assert_eq!(
+                    repo.prepare_bot_submission(&intent, HASH, bot.revision, 4),
+                    Err(BotError::Forbidden)
+                );
+            }
+            assert_eq!(receipt_count(&repo), before);
+            assert!(
+                repo.bot(bot.id)
+                    .unwrap()
+                    .unwrap()
+                    .folder_lock_request
+                    .is_none()
+            );
+            assert!(
+                repo.bot_library_capture(owner, bot.id, capture.submission)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[test]
+fn exact_receipt_keeps_prebinding_document_pin_without_new_admission() {
+    let (mut repo, bot, owner) = fixture();
+    let c = prepared(&mut repo, &bot, owner);
+    let mut task = intent(&bot);
+    task.submission
+        .request
+        .context
+        .push(d::RunContextItem::Document {
+            workspace: bot.home_workspace,
+            document: c.identity.candidate,
+            version: d::DocumentVersionId::new(),
+        });
+    let capture = BotLibraryCapture {
+        version: 1,
+        owner,
+        bot: bot.id,
+        submission: task.submission.provenance.submission,
+        config_revision: bot.revision,
+        knowledge: vec![],
+        memory: BotCapturedMemory::Absent {},
+        index_digest: [0; 32],
+    };
+    let saved = repo
+        .prepare_bot_submission_with_library(&task, &capture, HASH, bot.revision, 3)
+        .unwrap();
+    repo.bind_bot_memory(&confirmation(&c), c.observed(), 4)
+        .unwrap();
+    assert_eq!(
+        repo.prepare_bot_submission_with_library(&task, &capture, HASH, bot.revision, 5)
+            .unwrap(),
+        saved
+    );
+    assert_eq!(
+        repo.bot_library_capture(owner, bot.id, capture.submission)
+            .unwrap(),
+        Some(capture)
+    );
+}
+
+#[test]
 fn api_submission_and_library_capture_commit_or_rollback_together() {
     let (mut repo, bot, owner, intent, capture) = capture_fixture(false);
     let before = receipt_count(&repo);
@@ -203,14 +355,17 @@ fn capture_fixture(
     let memory = if bound {
         let c = prepared(&mut repo, &bot, owner);
         let b = repo
-            .bind_bot_memory(&confirmation(&c), BotMemoryState::Prepared, 3)
+            .bind_bot_memory(&confirmation(&c), c.observed(), 3)
             .unwrap();
         bot = repo.bot(bot.id).unwrap().unwrap();
         BotCapturedMemory::Captured {
             page: b.page,
             version: d::DocumentVersionId::new(),
             creation_request: b.creation_request,
-            nodes: vec![d::BlockNodeId::mint(), d::BlockNodeId::mint()],
+            nodes: vec![
+                BotMemoryNodeId::from_uuid(uuid::Uuid::new_v4()),
+                BotMemoryNodeId::from_uuid(uuid::Uuid::new_v4()),
+            ],
             omitted_count: 2,
             invalid_count: 1,
         }
@@ -333,7 +488,7 @@ fn library_capture_is_atomic_immutable_and_exact() {
         if !bound {
             let current = repo.bot(bot.id).unwrap().unwrap();
             let c = prepared(&mut repo, &current, owner);
-            repo.bind_bot_memory(&confirmation(&c), BotMemoryState::Prepared, 7)
+            repo.bind_bot_memory(&confirmation(&c), c.observed(), 7)
                 .unwrap();
             assert_eq!(
                 repo.bot_library_capture(owner, bot.id, capture.submission)

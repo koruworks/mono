@@ -42,6 +42,53 @@ pub(crate) use capture::insert_library_capture_tx;
 #[cfg(test)]
 mod tests;
 
+/// Current canonical binding, never an inference from a missing/corrupt row.
+pub(super) fn bound_memory_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    home: WorkspaceId,
+) -> Result<Option<BotMemoryBinding>, BotError> {
+    let creation = memory::creation_on(conn, owner, bot, home)?;
+    let binding = memory::binding_on(conn, owner, bot, home, creation.as_ref())?;
+    if let Some(binding) = &binding {
+        let role: (String, String) = conn
+            .query_row(
+                "SELECT role_workspace_id,role_document_id FROM bots WHERE bot_id=?1",
+                [bot.to_storage()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(bad)?;
+        if role
+            == (
+                binding.page.workspace.to_storage(),
+                binding.page.document.to_storage(),
+            )
+            || knowledge_on(conn, bot, home)?.contains(&binding.page)
+        {
+            return Err(BotError::Storage);
+        }
+    }
+    Ok(binding)
+}
+
+pub(super) fn refuse_memory_pins(
+    binding: Option<&BotMemoryBinding>,
+    pins: &[koru_delegate_core::RunContextItem],
+) -> Result<(), BotError> {
+    if binding.is_some_and(|binding| {
+        pins.iter().any(|pin| {
+            pin.workspace() == binding.page.workspace
+                && pin
+                    .document_version()
+                    .is_some_and(|(document, _)| document == binding.page.document)
+        })
+    }) {
+        return Err(BotError::Forbidden);
+    }
+    Ok(())
+}
+
 fn visible(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<admission::Guard, BotError> {
     let (guard, state) = admission::guard_any_lifecycle(conn, owner, bot)?;
     if state == BotLifecycle::Trashed {
@@ -212,7 +259,7 @@ impl Repository {
         let g = visible(&self.connection, owner, bot)?;
         let knowledge = knowledge_on(&self.connection, bot, g.home)?;
         let creation = memory::creation_on(&self.connection, owner, bot, g.home)?;
-        let binding = memory::binding_on(&self.connection, owner, bot, g.home, creation.as_ref())?;
+        let binding = bound_memory_on(&self.connection, owner, bot, g.home)?;
         if binding
             .as_ref()
             .is_some_and(|b| knowledge.contains(&b.page))
@@ -273,8 +320,7 @@ impl Repository {
         if input.expected_revision != g.revision {
             return Err(BotError::RevisionConflict);
         }
-        let creation = memory::creation_on(&tx, input.owner, input.bot, g.home)?;
-        let binding = memory::binding_on(&tx, input.owner, input.bot, g.home, creation.as_ref())?;
+        let binding = bound_memory_on(&tx, input.owner, input.bot, g.home)?;
         if binding.is_some_and(|b| input.pages.contains(&b.page)) {
             return Err(BotError::Forbidden);
         }

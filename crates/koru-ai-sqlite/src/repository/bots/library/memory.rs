@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+fn next_token(creation: &BotMemoryCreation, now: i64) -> Result<i64, BotError> {
+    Ok(now.max(
+        creation
+            .updated_at_ms
+            .checked_add(1)
+            .ok_or(BotError::Storage)?,
+    ))
+}
+
 pub(super) fn creation_on(
     conn: &Connection,
     owner: BotOwner,
@@ -150,7 +159,7 @@ impl Repository {
         let g = admission::guard(&tx, owner, bot)?;
         let receipt = receipt_on(&tx, owner, bot, request, fingerprint, "ensure_memory")?;
         let existing = creation_on(&tx, owner, bot, g.home)?;
-        binding_on(&tx, owner, bot, g.home, existing.as_ref())?;
+        bound_memory_on(&tx, owner, bot, g.home)?;
         if let Some(receipt) = receipt {
             let creation = existing.ok_or(BotError::Storage)?;
             validate_pointer(&receipt, &creation)?;
@@ -236,7 +245,7 @@ impl Repository {
     pub fn transition_bot_memory_creation(
         &mut self,
         identity: &BotMemoryIdentity,
-        expected: BotMemoryState,
+        observed: BotMemoryObserved,
         transition: BotMemoryTransition,
         now: i64,
     ) -> Result<BotMemoryCreation, BotError> {
@@ -255,8 +264,8 @@ impl Repository {
         let g = settled(&tx, identity.owner, identity.bot)?;
         let c =
             creation_on(&tx, identity.owner, identity.bot, g.home)?.ok_or(BotError::NotFound)?;
-        binding_on(&tx, identity.owner, identity.bot, g.home, Some(&c))?;
-        if c.identity != *identity || c.state != expected {
+        bound_memory_on(&tx, identity.owner, identity.bot, g.home)?;
+        if c.identity != *identity || c.observed() != observed {
             return Err(BotError::Conflict);
         }
         use BotMemoryState as S;
@@ -269,8 +278,15 @@ impl Repository {
             (S::Abandoned | S::Conflict, T::Retry) => (S::Prepared, None),
             _ => return Err(BotError::Conflict),
         };
-        tx.execute("UPDATE bot_memory_creation_intents SET state=?3,refusal=?4,updated_at_ms=?5 WHERE user_scope_id=?1 AND request_id=?2",params![identity.owner.user_scope.to_storage(),identity.creation_request.to_storage(),state.as_str(),refusal.map(BotMemoryRefusal::as_str),now]).map_err(bad)?;
-        original_stage(&tx, &c, state, now)?;
+        if state == c.state && refusal == c.refusal {
+            return Ok(c);
+        }
+        let next = next_token(&c, now)?;
+        let changed = tx.execute("UPDATE bot_memory_creation_intents SET state=?3,refusal=?4,updated_at_ms=?5 WHERE user_scope_id=?1 AND request_id=?2 AND state=?6 AND updated_at_ms=?7",params![identity.owner.user_scope.to_storage(),identity.creation_request.to_storage(),state.as_str(),refusal.map(BotMemoryRefusal::as_str),next,observed.state.as_str(),observed.updated_at_ms]).map_err(bad)?;
+        if changed != 1 {
+            return Err(BotError::Conflict);
+        }
+        original_stage(&tx, &c, state, next)?;
         let result =
             creation_on(&tx, identity.owner, identity.bot, g.home)?.ok_or(BotError::Storage)?;
         tx.commit().map_err(bad)?;
@@ -280,7 +296,7 @@ impl Repository {
     pub fn bind_bot_memory(
         &mut self,
         evidence: &BotMemoryConfirmation,
-        expected: BotMemoryState,
+        observed: BotMemoryObserved,
         now: i64,
     ) -> Result<BotMemoryBinding, BotError> {
         evidence.validate()?;
@@ -289,21 +305,19 @@ impl Repository {
         let g = admission::guard(&tx, identity.owner, identity.bot)?;
         let c =
             creation_on(&tx, identity.owner, identity.bot, g.home)?.ok_or(BotError::NotFound)?;
-        if c.identity != *identity {
+        if c.identity != *identity || c.observed() != observed {
             return Err(BotError::Conflict);
         }
-        if let Some(binding) = binding_on(&tx, identity.owner, identity.bot, g.home, Some(&c))? {
+        if let Some(binding) = bound_memory_on(&tx, identity.owner, identity.bot, g.home)? {
             if c.origin_edit_revision.as_ref() != Some(&evidence.original_edit_revision) {
                 return Err(BotError::Conflict);
             }
             return Ok(binding);
         }
-        if c.state != expected
-            || !matches!(
-                c.state,
-                BotMemoryState::Prepared | BotMemoryState::Unconfirmed
-            )
-        {
+        if !matches!(
+            c.state,
+            BotMemoryState::Prepared | BotMemoryState::Unconfirmed
+        ) {
             return Err(BotError::Conflict);
         }
         let g = settled(&tx, identity.owner, identity.bot)?;
@@ -323,14 +337,18 @@ impl Repository {
         {
             return Err(BotError::Forbidden);
         }
-        tx.execute("UPDATE bot_memory_creation_intents SET state='bound',origin_edit_revision=?3,refusal=NULL,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![identity.owner.user_scope.to_storage(),identity.creation_request.to_storage(),evidence.original_edit_revision,now]).map_err(bad)?;
-        tx.execute("INSERT INTO bot_memory_bindings(bot_id,user_scope_id,workspace_id,document_id,creation_request_id,bound_at_ms) VALUES(?1,?2,?3,?4,?5,?6)",params![identity.bot.to_storage(),identity.owner.user_scope.to_storage(),identity.workspace.to_storage(),identity.candidate.to_storage(),identity.creation_request.to_storage(),now]).map_err(bad)?;
+        let next = next_token(&c, now)?;
+        let changed = tx.execute("UPDATE bot_memory_creation_intents SET state='bound',origin_edit_revision=?3,refusal=NULL,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2 AND state=?5 AND updated_at_ms=?6",params![identity.owner.user_scope.to_storage(),identity.creation_request.to_storage(),evidence.original_edit_revision,next,observed.state.as_str(),observed.updated_at_ms]).map_err(bad)?;
+        if changed != 1 {
+            return Err(BotError::Conflict);
+        }
+        tx.execute("INSERT INTO bot_memory_bindings(bot_id,user_scope_id,workspace_id,document_id,creation_request_id,bound_at_ms) VALUES(?1,?2,?3,?4,?5,?6)",params![identity.bot.to_storage(),identity.owner.user_scope.to_storage(),identity.workspace.to_storage(),identity.candidate.to_storage(),identity.creation_request.to_storage(),next]).map_err(bad)?;
         tx.execute(
-            "UPDATE bots SET revision=revision+1,updated_at_ms=?2 WHERE bot_id=?1",
-            params![identity.bot.to_storage(), now],
+            "UPDATE bots SET revision=revision+1,updated_at_ms=max(updated_at_ms,?2) WHERE bot_id=?1",
+            params![identity.bot.to_storage(), next],
         )
         .map_err(bad)?;
-        original_stage(&tx, &c, BotMemoryState::Bound, now)?;
+        original_stage(&tx, &c, BotMemoryState::Bound, next)?;
         let c = creation_on(&tx, identity.owner, identity.bot, g.home)?.ok_or(BotError::Storage)?;
         let binding = binding_on(&tx, identity.owner, identity.bot, g.home, Some(&c))?
             .ok_or(BotError::Storage)?;

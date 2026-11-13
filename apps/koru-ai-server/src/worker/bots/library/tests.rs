@@ -404,11 +404,11 @@ fn unexpected_memory_binding_refuses_new_task_without_false_absent_capture() {
         .unwrap();
     repo.bind_bot_memory(
         &BotMemoryConfirmation {
-            identity: creation.identity,
+            identity: creation.identity.clone(),
             original_edit_revision: vec![1],
             live_edit_revision: vec![1],
         },
-        BotMemoryState::Prepared,
+        creation.observed(),
         3,
     )
     .unwrap();

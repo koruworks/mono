@@ -11,7 +11,7 @@ use rusqlite::Connection;
 
 pub use koru_sqlite::OpenError;
 
-pub const SCHEMA_VERSION: i64 = 19;
+pub const SCHEMA_VERSION: i64 = 20;
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -126,6 +126,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         to: 19,
         name: "019_ai_bot_library.sql",
         sql: include_str!("../migrations/019_ai_bot_library.sql"),
+        columns: &[],
+    },
+    Migration {
+        to: 20,
+        name: "020_ai_bot_memory_identity.sql",
+        sql: include_str!("../migrations/020_ai_bot_memory_identity.sql"),
         columns: &[],
     },
 ];

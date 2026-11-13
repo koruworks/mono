@@ -27,6 +27,9 @@ use loro::{
 };
 use uuid::Uuid;
 
+mod read_validation;
+pub use read_validation::{DocumentReadIdentity, DocumentReadValidationError, NodeReadEvidence};
+
 use crate::change::ChangeTracker;
 
 use crate::ids::{AttrId, DocRef, DocumentId, NodeId, ProfileId, Ref, WorkspaceId, genesis_peer};
