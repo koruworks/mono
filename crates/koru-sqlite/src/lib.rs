@@ -125,6 +125,17 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 /// Open the file — creating its directory — and bring it to the schema:
 /// refuse a newer stamp, then configure, then migrate.
 pub fn open(schema: &Schema, path: &Path) -> Result<Connection, OpenError> {
+    open_with_preflight(schema, path, |_| Ok(()))
+}
+
+/// Open with an owner's read-only compatibility check on the same connection.
+/// A newer schema is refused first; the check runs before persistent pragmas or
+/// migrations. It must neither mutate the database nor open another connection.
+pub fn open_with_preflight(
+    schema: &Schema,
+    path: &Path,
+    preflight: impl FnOnce(&Connection) -> Result<(), OpenError>,
+) -> Result<Connection, OpenError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| OpenError::Storage {
             database: schema.database,
@@ -134,7 +145,7 @@ pub fn open(schema: &Schema, path: &Path) -> Result<Connection, OpenError> {
     }
     let mut connection =
         Connection::open(path).map_err(|error| OpenError::sql(schema.database, "open", error))?;
-    prepare(schema, &mut connection)?;
+    prepare_with_preflight(schema, &mut connection, preflight)?;
     Ok(connection)
 }
 
@@ -151,6 +162,16 @@ pub fn open_in_memory(schema: &Schema) -> Result<Connection, OpenError> {
 /// The whole open sequence on a connection already opened: the stamp first,
 /// so a refusal is harmless; then the pragmas; then the steps.
 pub fn prepare(schema: &Schema, connection: &mut Connection) -> Result<(), OpenError> {
+    prepare_with_preflight(schema, connection, |_| Ok(()))
+}
+
+/// The compatibility check cannot supersede newer-version refusal, and a
+/// refusal cannot leave durability pragmas or migrations partially applied.
+pub fn prepare_with_preflight(
+    schema: &Schema,
+    connection: &mut Connection,
+    preflight: impl FnOnce(&Connection) -> Result<(), OpenError>,
+) -> Result<(), OpenError> {
     connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|error| OpenError::sql(schema.database, "set the busy timeout of", error))?;
@@ -162,6 +183,7 @@ pub fn prepare(schema: &Schema, connection: &mut Connection) -> Result<(), OpenE
             supported: schema.understood,
         });
     }
+    preflight(connection)?;
     configure(schema.database, connection)?;
     migrate(
         schema.database,

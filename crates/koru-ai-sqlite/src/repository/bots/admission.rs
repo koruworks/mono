@@ -230,7 +230,7 @@ pub(super) fn prepare_bot_pause_on(
     tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,desired_pause,expected_revision,pause_ack_stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'prepared',?6,?7,'pending',?8,?9,?9)",params![owner.user_scope.to_storage(),request.to_storage(),bot.to_storage(),fingerprint_value,if paused {"pause"}else{"resume"},paused,expected,serde_json::to_string(&intent).map_err(bad)?,now]).map_err(bad)?;
     pause_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)
 }
-fn fingerprint(value: &str) -> Result<(), BotError> {
+pub(super) fn fingerprint(value: &str) -> Result<(), BotError> {
     if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(BotError::Invalid);
     }
