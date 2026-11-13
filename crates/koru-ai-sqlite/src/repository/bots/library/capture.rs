@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
-use koru_delegate_core::{BlockNodeId, DocumentVersionId, RunContextItem};
+use koru_delegate_core::{DocumentVersionId, RunContextItem};
 
 fn validate_links(
     conn: &Connection,
@@ -100,7 +100,7 @@ fn capture_on(
         if ordinal != nodes.len() {
             return Err(BotError::Storage);
         }
-        nodes.push(node.parse::<BlockNodeId>().map_err(bad)?);
+        nodes.push(node.parse::<BotMemoryNodeId>().map_err(bad)?);
     }
     if r.9 != nodes.len() {
         return Err(BotError::Storage);
@@ -181,6 +181,14 @@ pub(crate) fn insert_library_capture_tx(
     if matches!(capture.memory, BotCapturedMemory::Absent {}) != current_binding.is_none() {
         return Err(BotError::Conflict);
     }
+    let binding = bound_memory_on(tx, capture.owner, capture.bot, g.home)?;
+    let submission =
+        admission::read_bot_submission_on(tx, capture.owner.user_scope, capture.submission)?
+            .ok_or(BotError::Storage)?;
+    refuse_memory_pins(
+        binding.as_ref(),
+        &submission.intent.submission.request.context,
+    )?;
     validate_links(tx, capture, g.home)?;
     let (state, workspace, document, version, request, nodes, omitted, invalid) =
         match &capture.memory {
