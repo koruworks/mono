@@ -829,7 +829,10 @@ fn the_wheel_over_the_column_scrolls_the_tree() {
 
 #[test]
 fn the_context_column_starts_shut_and_ctrl_j_opens_it() {
-    let (mut v, mut workspace) = container();
+    let (mut v, mut workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     assert_eq!(v.regions.context.w, 0.0);
     let full = v.content().w;
 
@@ -870,7 +873,10 @@ fn the_ai_pane_uses_the_right_slot_and_clamps_its_drag_width() {
 
 #[test]
 fn ai_and_context_replace_each_other_in_the_right_slot() {
-    let (mut v, _) = container();
+    let (mut v, _) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     v.toggle_context();
     assert!(v.context.is_open());
 
@@ -903,6 +909,9 @@ fn visible_ai_pane_claims_alt_question_navigation_without_focus() {
 #[test]
 fn both_columns_open_together_and_the_offset_still_holds() {
     let (mut v, mut workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     let ws = &mut workspace.ws;
     let doc = fill(&v, ws, 6);
     v.toggle_sidebar();
@@ -942,6 +951,9 @@ fn both_columns_open_together_and_the_offset_still_holds() {
 fn clicking_a_section_switches_it_without_reaching_the_document() {
     use crate::panes::context::{ContextView as CV, Section};
     let (mut v, mut workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     v.toggle_context();
     let area = v.regions.context;
     let sections = CV::section_rects(area);
@@ -984,6 +996,9 @@ fn clicking_a_section_switches_it_without_reaching_the_document() {
 fn the_context_sections_and_the_cloud_action_are_reachable_from_the_keyboard() {
     use crate::panes::context::{CloudLine, Section};
     let (mut v, _workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
 
     // The first press opens the column rather than skipping past a section
     // nobody has seen yet.
@@ -1031,10 +1046,17 @@ fn the_context_sections_and_the_cloud_action_are_reachable_from_the_keyboard() {
 fn the_context_column_follows_the_active_tab() {
     let (mut v, mut workspace) = container();
     let doc = a_document(&mut workspace.ws, "Brief");
-    v.toggle_context();
+    assert!(
+        !v.toggle_context(),
+        "the Welcome tab has no context sections"
+    );
     assert_eq!(v.document_root(), None, "a welcome tab is not a node");
 
     v.open_node(&workspace.ws, doc);
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
+    assert!(v.toggle_context());
     assert_eq!(v.document_root(), Some(doc), "now it has a subject");
 }
 
@@ -1321,6 +1343,9 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
 #[test]
 fn the_window_keeps_an_edge_lane() {
     let (mut v, mut workspace) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     let edge = v.regions.edge;
     assert_eq!(edge.w, theme::EDGE_LANE_W);
     assert_eq!(edge.x + edge.w, v.viewport.0);

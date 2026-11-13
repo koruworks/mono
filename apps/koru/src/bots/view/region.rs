@@ -1165,7 +1165,7 @@ impl BotView {
     }
 
     /// Scroll the region so the focused control shows.
-    fn reveal_focus(&mut self) {
+    pub(super) fn reveal_focus(&mut self) {
         let Some(key) = self.focus else {
             return;
         };
@@ -1462,6 +1462,16 @@ impl BotView {
         for page in self.library.pages() {
             if !pages.contains(page) {
                 pages.push(page.clone());
+            }
+        }
+        if let Some(held) = self.library.held() {
+            for page in std::iter::once(&held.role)
+                .chain(held.knowledge.iter())
+                .chain(held.memory.iter())
+            {
+                if !pages.contains(page) {
+                    pages.push(page.clone());
+                }
             }
         }
         // The create form's existing role page too (S8), so its title shows.

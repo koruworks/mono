@@ -49,6 +49,80 @@ fn focus(f: &mut Fixture, wanted: Key) {
 }
 
 #[test]
+fn context_library_saved_projection_preserves_pending_draft() {
+    use crate::bots::view::context_library::Action;
+    let bot = unpaused();
+    let saved = page(&bot);
+    let draft = page(&bot);
+    let mut f = ready(bot, vec![saved.clone()]);
+    assert!(f.view.library.add(&f.bot, draft.clone()));
+    let before = f.view.context_library_data(41).unwrap();
+    assert!(before.pages.iter().any(|p| p.page == saved));
+    assert!(!before.pages.iter().any(|p| p.page == draft));
+    assert!(!before.notices.is_empty());
+    assert!(f.press(ui::SAVE));
+    let (request, body) = f.wrote();
+    f.view.library.unsent(request);
+    assert!(f.view.perform_context_library(Action::Manage));
+    assert!(f.view.library.retrying());
+    assert_eq!(f.view.library.pages(), [saved, draft]);
+    assert!(f.press(ui::SAVE));
+    assert_eq!(f.wrote(), (request, body));
+}
+
+#[test]
+fn context_library_all_locales_have_bounded_rows_and_readonly_lifecycle() {
+    use crate::bots::view::context_library::{Action, BODY, Surface};
+    for lang in Lang::ALL {
+        let bot = unpaused();
+        let pages: Vec<_> = (0..16).map(|_| page(&bot)).collect();
+        let mut f = ready(bot, pages.clone());
+        f.view.lang = lang;
+        for p in &pages {
+            f.view
+                .page_titles
+                .insert(p.document, "日本語 العربية résumé ".repeat(12));
+        }
+        let mut surface = Surface::default();
+        surface.update(
+            f.view.context_library_data(7),
+            Rect::new(0.0, 0.0, 252.0, 340.0),
+            true,
+        );
+        surface.focus_first();
+        for _ in 0..17 {
+            surface.key(&named(NamedKey::Tab), ModifiersState::empty());
+        }
+        assert!(surface.scroll > 0.0);
+        surface
+            .with_frame(|frame| {
+                assert!(frame.node(BODY).unwrap().viewport.is_some());
+                for node in frame.nodes.iter().filter(|n| n.focusable) {
+                    assert!(node.label.is_some());
+                    assert!(
+                        node.rect.x >= 0.0 && node.rect.x + node.rect.w <= 252.5,
+                        "{}: {:?}",
+                        lang.tag(),
+                        node.rect
+                    );
+                }
+            })
+            .unwrap();
+        let mut archived = f.bot.clone();
+        archived.lifecycle = BotLifecycle::Archived;
+        f.view.settings.know(archived.clone());
+        assert!(f.view.context_library_data(7).is_some());
+        assert!(
+            f.view
+                .perform_context_library(Action::Open(pages[0].clone()))
+        );
+        archived.lifecycle = BotLifecycle::Trashed;
+        f.view.settings.know(archived);
+        assert!(f.view.context_library_data(7).is_none());
+    }
+}
+
+#[test]
 fn library_picker_edits_knowledge_without_editing_access() {
     use koru_editor::components::entity_picker::{DocumentChoice, WorkspaceChoice};
     let mut f = ready(unpaused(), vec![]);
