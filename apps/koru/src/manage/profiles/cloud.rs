@@ -384,24 +384,20 @@ impl ProfilesController {
             Status::Unknown | Status::Loading => TextKey::CloudLoading,
             Status::Unavailable => TextKey::CloudUnavailable,
             Status::Subscribe => TextKey::CloudSubscribeIntro,
-            Status::Active if self.cloud_profile_counts().is_some() => TextKey::CloudActiveSyncing,
-            Status::Active => TextKey::CloudActive,
             Status::Manage if self.cloud_access() == Some(false) => TextKey::CloudAccessInactive,
-            Status::Manage if self.cloud_profile_counts().is_some() => {
+            Status::Manage | Status::Active if self.cloud_profile_counts().is_some() => {
                 TextKey::CloudSubscribedSyncing
             }
-            Status::Manage => TextKey::CloudSubscribed,
+            Status::Manage | Status::Active => TextKey::CloudSubscribed,
         }
     }
     pub fn cloud_body_text(&self, lang: Lang) -> String {
         let key = self.cloud_message();
         match (key, self.cloud_profile_counts()) {
-            (TextKey::CloudSubscribedSyncing | TextKey::CloudActiveSyncing, Some((on, total))) => {
-                koru_i18n::fill(
-                    koru_i18n::t(lang, key),
-                    &[&on.to_string(), &total.to_string()],
-                )
-            }
+            (TextKey::CloudSubscribedSyncing, Some((on, total))) => koru_i18n::fill(
+                koru_i18n::t(lang, key),
+                &[&on.to_string(), &total.to_string()],
+            ),
             _ => koru_i18n::t(lang, key).to_owned(),
         }
     }

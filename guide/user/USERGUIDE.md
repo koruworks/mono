@@ -174,8 +174,8 @@ Google, or Apple. From top to bottom:
   profiles*, and **Manage subscription**, which opens the website's dashboard,
   where you can sign in and manage the plan. A scheduled cancellation remains
   manageable until it ends.
-- **Complimentary access:** *Cloud active · syncing 1 of 2 profiles*. An active
-  grant enables desktop sync without a paid subscription. There is no
+- **Complimentary access:** *Subscribed · syncing 1 of 2 profiles*, just like a paid
+  account. An active grant enables desktop sync without a paid subscription. There is no
   **Manage subscription** button unless you also have a subscription to manage.
   An unpaid current subscription remains manageable but says *Cloud access is
   inactive* when neither paid access nor a complimentary grant applies.
