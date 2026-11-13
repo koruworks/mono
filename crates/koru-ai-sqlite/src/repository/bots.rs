@@ -16,6 +16,7 @@ pub use lifecycle::{
 };
 mod creation;
 pub use creation::BotCreationScan;
+pub(crate) mod library;
 mod reads;
 
 fn bad(_: impl std::fmt::Display) -> BotError {
@@ -392,11 +393,15 @@ impl BotRepository for Repository {
         request: BotRequestId,
         fingerprint: &str,
     ) -> Result<Option<Bot>, BotError> {
-        let row:Option<(String,String)>=self.connection.query_row("SELECT fingerprint,outcome_json FROM bot_command_receipts WHERE user_scope_id=?1 AND request_id=?2",
-            params![scope.to_storage(),request.to_storage()],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(bad)?;
+        let row:Option<(String,Option<String>,String)>=self.connection.query_row("SELECT fingerprint,outcome_json,command_kind FROM bot_command_receipts WHERE user_scope_id=?1 AND request_id=?2",
+            params![scope.to_storage(),request.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(bad)?;
         match row {
             None => Ok(None),
-            Some((f, b)) if f == fingerprint => {
+            Some((_, _, kind)) if matches!(kind.as_str(), "set_knowledge" | "ensure_memory") => {
+                Err(BotError::Conflict)
+            }
+            Some((f, b, _)) if f == fingerprint => {
+                let b = b.ok_or(BotError::Storage)?;
                 let outcome: BotReceiptOutcome = serde_json::from_str(&b).map_err(bad)?;
                 outcome.validate()?;
                 match outcome {
