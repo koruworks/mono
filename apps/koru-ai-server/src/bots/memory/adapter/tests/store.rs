@@ -3,6 +3,7 @@
 use super::*;
 use koru_ai_core::Timestamp;
 use koru_store_server::memory::MemoryStore;
+mod write;
 
 struct Fixture {
     memory: MemoryStore,

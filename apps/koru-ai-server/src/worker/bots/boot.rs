@@ -361,6 +361,7 @@ impl WorkerState {
                     self.bot_boot.observed = None;
                     self.memory_recovery.invalidate_owner();
                     self.memory_reads.invalidate();
+                    self.memory_writes.invalidate();
                     self.bot_boot.page.clear();
                     self.bot_boot.begin();
                 }
@@ -401,6 +402,7 @@ impl WorkerState {
                 self.bot_boot.observed = Some(observed);
                 if changed {
                     self.memory_reads.invalidate();
+                    self.memory_writes.invalidate();
                     self.memory_recovery.observe(BotOwner {
                         user_scope: owner.user_scope,
                         device: owner.device,

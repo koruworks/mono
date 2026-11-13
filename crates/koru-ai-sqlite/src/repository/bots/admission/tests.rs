@@ -4,6 +4,54 @@ use koru_delegate_core as d;
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
+fn readable_submission_for_run_retains_archived_receipt_and_refuses_trash_and_foreign_owner() {
+    let (mut repo, bot, owner, intent) = fixture();
+    let saved = repo.prepare_bot_submission(&intent, HASH, 1, 2).unwrap();
+    let run = intent.submission.request.run;
+    repo.connection
+        .execute(
+            "UPDATE bots SET lifecycle='archived' WHERE bot_id=?1",
+            [bot.id.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.bot_readable_submission_for_run(owner, bot.id, run)
+            .unwrap(),
+        Some(saved)
+    );
+    assert!(
+        repo.bot_submission_for_run(owner, bot.id, run).is_err(),
+        "ordinary active-only route is unchanged"
+    );
+    assert!(
+        repo.bot_readable_submission_for_run(
+            BotOwner {
+                device: DeviceId::new(),
+                ..owner
+            },
+            bot.id,
+            run
+        )
+        .is_err()
+    );
+    assert!(
+        repo.bot_readable_submission_for_run(owner, bot.id, d::RunId::mint())
+            .unwrap()
+            .is_none()
+    );
+    repo.connection
+        .execute(
+            "UPDATE bots SET lifecycle='trashed' WHERE bot_id=?1",
+            [bot.id.to_storage()],
+        )
+        .unwrap();
+    assert!(
+        repo.bot_readable_submission_for_run(owner, bot.id, run)
+            .is_err()
+    );
+}
+
+#[test]
 fn boot_refusal_projection_bounds_prepared_rows_and_requires_one_exact_identity() {
     let (mut repo, bot, owner, intent) = fixture();
     let request = intent.submission.provenance.submission;

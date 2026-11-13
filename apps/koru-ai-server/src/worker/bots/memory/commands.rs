@@ -2,7 +2,51 @@
 //! Metadata-only owner controls; Store effects are scheduled after durable intent.
 use super::super::*;
 
+pub(super) fn ensure_body(
+    bot: &Bot,
+    request: BotRequestId,
+    expected_revision: u64,
+    title: &str,
+) -> ApiResult<(BotMemorySeed, String)> {
+    let command = BotCommand::EnsureMemory {
+        request_id: request,
+        bot_id: bot.id,
+        expected_revision,
+        title: title.to_owned(),
+    };
+    let seed = crate::bots::memory_seed(bot.home_workspace, title).map_err(bot_failure)?;
+    Ok((seed, library::command_fingerprint(&command)?))
+}
+
 impl WorkerState {
+    /// Both authorization shells call this exact durable preparation block.
+    /// It performs no Store effect; the existing recovery controller owns that.
+    pub(in crate::worker) fn prepare_memory_creation_intent(
+        &mut self,
+        owner: BotOwner,
+        bot: &Bot,
+        request: BotRequestId,
+        expected_revision: u64,
+        title: &str,
+    ) -> ApiResult<BotMemoryCreation> {
+        let (seed, fingerprint) = ensure_body(bot, request, expected_revision, title)?;
+        let creation = self
+            .repository
+            .prepare_bot_memory_creation(
+                owner,
+                bot.id,
+                request,
+                expected_revision,
+                &seed,
+                &fingerprint,
+                Timestamp::now().millis(),
+            )
+            .map_err(bot_failure)?;
+        self.memory_recovery.observe(owner);
+        self.memory_recovery.wake();
+        Ok(creation)
+    }
+
     pub(in crate::worker) fn bot_memory_command(
         &mut self,
         context: &CommandContext,
@@ -38,21 +82,13 @@ impl WorkerState {
                     title,
                     ..
                 } => {
-                    let seed =
-                        crate::bots::memory_seed(bot.home_workspace, title).map_err(bot_failure)?;
-                    let fingerprint = library::command_fingerprint(command)?;
-                    self.repository
-                        .prepare_bot_memory_creation(
-                            owner,
-                            id,
-                            *request_id,
-                            *expected_revision,
-                            &seed,
-                            &fingerprint,
-                            Timestamp::now().millis(),
-                        )
-                        .map_err(bot_failure)?;
-                    self.memory_recovery.wake();
+                    self.prepare_memory_creation_intent(
+                        owner,
+                        &bot,
+                        *request_id,
+                        *expected_revision,
+                        title,
+                    )?;
                 }
                 BotCommand::RetryMemory {
                     creation_request,
