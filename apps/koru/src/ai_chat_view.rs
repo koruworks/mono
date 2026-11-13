@@ -26,6 +26,7 @@ pub struct AiChatView {
     /// stacked enough copies to overflow the window thread's 1 MB stack
     /// (2026-11-02). One pointer here keeps every tab small.
     surface: Box<ChatSurface>,
+    diagrams: crate::chat_diagrams::ChatDiagrams,
     /// What the tab strip last read off the chat (D22), kept so the
     /// container's pass is a comparison and nothing more until it changes.
     face: ChatFace,
@@ -66,6 +67,7 @@ impl AiChatView {
         surface.offer_microphone_choice(koru_dictation::available());
         Self {
             surface,
+            diagrams: Default::default(),
             face: ChatFace::default(),
             status: koru_chats_ui::ChatStatus::Idle,
             still: false,
@@ -626,6 +628,7 @@ impl View for AiChatView {
     }
 
     fn maintain(&mut self, _ws: &mut WorkspaceDoc, now: std::time::Instant) -> bool {
-        self.surface.maintain(now)
+        let changed = self.surface.maintain(now);
+        self.diagrams.maintain(&mut self.surface) || changed
     }
 }

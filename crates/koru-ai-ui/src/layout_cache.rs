@@ -43,6 +43,7 @@ pub(crate) struct BlockLayout {
     pub links: Vec<koru_markdown::LinkSpan>,
     pub table: Option<koru_markdown::table::TableGrid>,
     pub image: Option<ImageSpec>,
+    pub diagram: Option<crate::diagrams::Diagram>,
 }
 
 /// How tall a reply's picture box is; the picture is fitted inside it. A
@@ -50,7 +51,14 @@ pub(crate) struct BlockLayout {
 pub(crate) const IMAGE_BOX_H: f32 = 260.0;
 
 impl BlockLayout {
+    pub fn diagram_drawn(&self) -> bool {
+        self.diagram.as_ref().is_some_and(|d| d.prepared.is_some())
+    }
+
     pub fn height(&self) -> f32 {
+        if let Some((_, height)) = self.diagram.as_ref().and_then(|d| d.size(self.wrap_width)) {
+            return height;
+        }
         if self.image.is_some() {
             return IMAGE_BOX_H;
         }
@@ -60,6 +68,9 @@ impl BlockLayout {
     }
 
     pub fn width(&self) -> f32 {
+        if let Some((width, _)) = self.diagram.as_ref().and_then(|d| d.size(self.wrap_width)) {
+            return width;
+        }
         if self.image.is_some() {
             return 420.0;
         }
@@ -72,7 +83,7 @@ impl BlockLayout {
     /// text, or in one of its table's cells (koru-ai D95). Both answer
     /// through `koru_markdown`, so no kind of block finds links its own way.
     pub fn link_at(&self, x: f32, y: f32) -> Option<koru_markdown::LinkHit<'_>> {
-        if self.image.is_some() {
+        if self.image.is_some() || self.diagram_drawn() {
             return None;
         }
         match &self.table {

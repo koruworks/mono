@@ -691,6 +691,7 @@ pub struct MainView {
     /// lifetime.
     ai_panel: Panel,
     ai_chat: ChatSurface,
+    ai_diagrams: crate::chat_diagrams::ChatDiagrams,
     file_preview: Option<file_preview::FilePreview>,
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
@@ -1844,6 +1845,7 @@ impl MainView {
             ai_chat_folder_ask: None,
             ai_computer_ask: None,
             ai_import_asks: std::collections::HashMap::new(),
+            ai_diagrams: Default::default(),
             ai_chat: {
                 let mut chat = ChatSurface::new_at(koru_workspace_host::cli::root_from_args());
                 // Koru has a Settings tab: the picker's + opens *Agent
@@ -15484,7 +15486,8 @@ impl View for MainView {
         let chats_before =
             plus_menu_open.then(|| self.ai_chat.recent_chats(context_menu::PLUS_RECENT_MAX));
         let ai_changed = if self.ai_visible() {
-            self.ai_chat.maintain(now)
+            let changed = self.ai_chat.maintain(now);
+            self.ai_diagrams.maintain(&mut self.ai_chat) || changed
         } else {
             self.ai_chat.drain_updates()
         };

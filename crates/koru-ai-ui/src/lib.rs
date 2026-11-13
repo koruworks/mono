@@ -115,6 +115,7 @@ mod composer_band;
 mod composer_plus;
 mod composer_shell;
 mod context_window;
+mod diagrams;
 mod dictation;
 mod doc_links;
 mod effort;
@@ -735,6 +736,7 @@ pub struct ChatSurface {
     /// Pictures by where they come from: a reply's web address, or the
     /// resolved path of a picture a call read (D38).
     images: HashMap<String, ImageLoad>,
+    diagrams: diagrams::Diagrams,
     pending_model_prefetch: Option<AiProviderId>,
     retry_link: Option<Rect>,
     ollama_search_link: Option<Rect>,
@@ -1140,6 +1142,7 @@ impl ChatSurface {
             response_selection: None,
             response_menu: None,
             images: HashMap::new(),
+            diagrams: Default::default(),
             pending_model_prefetch: None,
             retry_link: None,
             ollama_search_link: None,
@@ -7792,6 +7795,7 @@ impl ChatSurface {
                 tile.measure_chip(&mut self.engine, message.wrap_width);
             }
         }
+        self.diagrams.sync(&mut messages);
         self.message_layouts = messages;
         self.position_conversation_items();
         self.message_width = width;
@@ -8162,7 +8166,20 @@ impl ChatSurface {
                             .iter()
                             .position(|candidate| candidate.id == block.id)
                             .unwrap_or(0);
-                        if let Some(table) = &block.table {
+                        if let Some(diagram) =
+                            block.diagram.as_ref().filter(|d| d.prepared.is_some())
+                        {
+                            koru_draw::diagram::paint(
+                                diagram.prepared.as_ref().unwrap(),
+                                p,
+                                root * Affine::translate((
+                                    f64::from(card.x + PAD),
+                                    f64::from(block_y),
+                                )) * Affine::scale(diagram.scale(block.wrap_width)),
+                                diagram.scale(block.wrap_width),
+                                canvas,
+                            );
+                        } else if let Some(table) = &block.table {
                             koru_markdown::table::draw_grid(
                                 canvas,
                                 root,
@@ -8784,7 +8801,7 @@ impl ChatSurface {
                                 });
                             }
                         }
-                        if block.table.is_none() && rect.contains(x, y) {
+                        if block.table.is_none() && !block.diagram_drawn() && rect.contains(x, y) {
                             let selection =
                                 Selection::from_point(&block.layout, x - origin.0, y - origin.1);
                             let link = block
@@ -8932,7 +8949,8 @@ impl ChatSurface {
         match block {
             None if message.blocks.is_empty() => Some(&message.markdown),
             Some(index) => message.blocks.get(index).and_then(|block| {
-                (block.table.is_none() && block.image.is_none()).then_some(block.text.as_str())
+                (block.table.is_none() && block.image.is_none() && !block.diagram_drawn())
+                    .then_some(block.text.as_str())
             }),
             None => None,
         }
@@ -8952,7 +8970,9 @@ impl ChatSurface {
                         .blocks
                         .iter()
                         .enumerate()
-                        .filter(|(_, block)| block.table.is_none() && block.image.is_none())
+                        .filter(|(_, block)| {
+                            block.table.is_none() && block.image.is_none() && !block.diagram_drawn()
+                        })
                         .map(|(index, _)| (message_index, Some(index))),
                 );
             }
@@ -10162,12 +10182,26 @@ fn render_chat_block(
             links: Vec::new(),
             table: None,
             image: Some(image),
+            diagram: None,
         };
     }
     // A bare `https://…` in a reply is a link (D95): the chat follows
     // what it draws as one.
     let styles = koru_markdown::Styles::chat().with_bare_links();
-    match koru_markdown::render_block(engine, shown_markdown, max_w, &styles) {
+    let parsed = koru_import_markdown::parse(shown_markdown)
+        .into_iter()
+        .next();
+    let diagram = match &parsed {
+        Some(koru_import_markdown::Block::Text(block)) if matches!(&block.kind, koru_import_markdown::TextKind::Code { language: Some(language) } if language == koru_editor::diagram::LANGUAGE) => {
+            Some(diagrams::Diagram::new(&block.text))
+        }
+        _ => None,
+    };
+    let rendered = match parsed {
+        Some(block) => koru_markdown::render_parsed(engine, block, max_w, &styles),
+        None => koru_markdown::render_block(engine, "", max_w, &styles),
+    };
+    match rendered {
         koru_markdown::Rendered::Text {
             text,
             layout,
@@ -10181,6 +10215,7 @@ fn render_chat_block(
             links,
             table: None,
             image: None,
+            diagram,
         },
         koru_markdown::Rendered::Table(table) => BlockLayout {
             id,
@@ -10191,6 +10226,7 @@ fn render_chat_block(
             links: Vec::new(),
             table: Some(table),
             image: None,
+            diagram: None,
         },
         koru_markdown::Rendered::Image { url, alt } => BlockLayout {
             id,
@@ -10201,6 +10237,7 @@ fn render_chat_block(
             links: Vec::new(),
             table: None,
             image: Some(ImageSpec { url, alt }),
+            diagram: None,
         },
         koru_markdown::Rendered::Rule => {
             let text = "\u{2500}".repeat(12);
@@ -10213,6 +10250,7 @@ fn render_chat_block(
                 links: Vec::new(),
                 table: None,
                 image: None,
+                diagram: None,
             }
         }
     }

@@ -4700,6 +4700,12 @@ it is never stored, so it follows the theme and never bloats a sync.
 
 ### Diagrams
 
+AI chat replies also draw fenced `mermaid` blocks inline, in both chat tabs
+and the side pane. While a reply is streaming, the code stays visible until
+the fence closes. A diagram that is loading or cannot be drawn keeps its
+readable source. **Copy as Markdown** and **Save as document** preserve the
+original Mermaid text.
+
 A code block whose language is **Mermaid** is a diagram: Koru draws it in
 place of the text. Write a flowchart or a sequence diagram in
 [Mermaid](https://mermaid.js.org) notation inside a fence that opens with

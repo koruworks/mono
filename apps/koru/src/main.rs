@@ -32,6 +32,7 @@ mod ai_chat_view;
 mod app_menu;
 mod build_stamp;
 mod canvas_view;
+mod chat_diagrams;
 mod console;
 mod diff;
 mod feedback;
