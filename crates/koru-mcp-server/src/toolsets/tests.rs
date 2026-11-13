@@ -73,7 +73,7 @@ fn toolsets_parse_strictly_and_always_include_core() {
         1
     );
     assert!(
-        Toolsets::parse("core,docs,files,versions,tasks,chat")
+        Toolsets::parse("core,docs,files,versions,tasks,chat,bots")
             .expect("every name")
             .is_all()
     );
@@ -125,7 +125,10 @@ fn the_note_says_which_toolsets_are_on_only_when_some_are_off() {
         .note()
         .expect("narrowed");
     assert!(note.contains("core, docs, tasks"), "{note}");
-    assert!(note.contains("files, versions, chat are off"), "{note}");
+    assert!(
+        note.contains("files, versions, chat, bots are off"),
+        "{note}"
+    );
 }
 
 /// Each toolset's share of `tools/list` stays within its budget, so growth
