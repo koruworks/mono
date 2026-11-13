@@ -94,6 +94,56 @@ fn prepare(
 }
 
 #[test]
+fn routine_memory_replays_remain_readable_without_fresh_resolution_or_preparation() {
+    for already_resolved in [false, true] {
+        let mut h = Harness::new();
+        let request = request(&h, true);
+        let mut retained = allocate(&mut h, &request);
+        let resolution = resolution(&request);
+        if already_resolved {
+            retained = resolve(&mut h, &request, &resolution);
+        }
+        let mut submission = h.db.bot_admission(h.fence.run).unwrap().unwrap().submission;
+        crate::bots::routines::tests::convert(&mut h.db, &mut submission, true);
+        assert_eq!(allocate(&mut h, &request), retained);
+        let replay = h.db.resolve_memory_edit_base(
+            &request.key,
+            request.caller_fingerprint,
+            &resolution,
+            &h.fence,
+            &h.policy,
+        );
+        if already_resolved {
+            assert_eq!(replay.unwrap(), retained);
+            let MemoryBaseResolution::Resolved {
+                authority,
+                expected_revision,
+                ..
+            } = &resolution
+            else {
+                panic!()
+            };
+            h.request.kind = NativeResultOperation::EditPage;
+            h.request.target = Some(authority.memory_document);
+            h.request.expected_revision = Some(expected_revision.clone());
+            assert_eq!(
+                h.db.prepare_memory_edit(&h.request, request.caller_fingerprint, authority),
+                Err(BotLedgerError::Fenced)
+            );
+        } else {
+            assert_eq!(replay, Err(BotLedgerError::Fenced));
+        }
+        assert_eq!(
+            h.db.conn()
+                .query_row("SELECT count(*) FROM native_result_intents", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
 fn allocation_replay_preserves_ids_before_live_fences_and_rejects_namespace_collisions() {
     let mut h = Harness::new();
     let r = request(&h, true);
