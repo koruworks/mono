@@ -232,7 +232,8 @@ impl WorkerState {
                     else {
                         return Err(bot_failure(BotError::Storage));
                     };
-                    // Boot refresh is wired after the IPC owner's committed hook lands.
+                    // The enclosing bots() route coalesces a boot refresh after
+                    // this successful mutation returns; reads never schedule it.
                     Ok(BotResponse::KnowledgeSaved {
                         receipt: BotKnowledgeReceipt {
                             bot_id: id,

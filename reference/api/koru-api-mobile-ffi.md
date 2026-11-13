@@ -58,7 +58,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.discover_agent_commands` | `client.ai().discover_agent_commands` | POST /v1/ai/providers/{provider}/commands | Local agents run on the desktop that installed them |
 | `ai.pull_ollama_model` | `client.ai().pull_ollama_model` | POST /v1/ai/providers/ollama/pulls | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.cancel_ollama_pull` | `client.ai().cancel_ollama_pull` | POST /v1/ai/providers/ollama/pulls/cancel | Desktop-local Ollama lifecycle is unavailable on mobile |
-| `ai.bot_command` | `client.ai().bots` | POST /v1/ai/bots | Bot configuration currently requires the vouched desktop owner |
+| `ai.bot_command` | `client.ai().bots` | POST /v1/ai/bots | Bot configuration and Knowledge Library commands require the vouched desktop owner |
 | `ai.list_bots` | `client.ai().list_bots` | POST /v1/ai/bots/list | External Bot tasks currently run on the desktop owner |
 | `ai.start_bot_task` | `client.ai().start_bot_task` | POST /v1/ai/bots/tasks/start | External Bot tasks currently run on the desktop owner |
 | `ai.read_bot_task` | `client.ai().read_bot_task` | POST /v1/ai/bots/tasks/read | External Bot tasks currently run on the desktop owner |
