@@ -89,7 +89,7 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
         // admission.rs pending_bot_operations
         (
             "bot_unresolved_coordination",
-            "SELECT rowid,bot_id,user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_unresolved_coordination WHERE rowid>?1 AND stage IN ('prepared','accepted') AND command_kind IN ('start','continue','pause','resume') ORDER BY rowid LIMIT ?2",
+            admission::BOT_PENDING_OPERATIONS_SQL,
             vec![&0i64, &64i64],
         ),
         // policy.rs pending_bot_access
@@ -101,7 +101,7 @@ fn every_lifecycle_and_recovery_lookup_reads_its_index() {
         // admission.rs: the 50-intent bound keeps using ai17's guard index.
         (
             "bot_command_guard",
-            "SELECT COUNT(*) FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND command_kind IN ('start','continue') AND stage='prepared'",
+            "SELECT COUNT(*) FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND command_kind IN ('start','continue','routine_occurrence') AND stage='prepared'",
             vec![&scope, &id],
         ),
         (

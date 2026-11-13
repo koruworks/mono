@@ -542,7 +542,7 @@ impl Repository {
         .collect()
     }
 
-    /// Up to `limit` of one Bot's Start/Continue receipts its owner has not
+    /// Up to `limit` of one Bot's finalized submission receipts its owner has not
     /// settled yet, through ai17's per-Bot `bot_command_guard` index.
     pub fn bot_unresolved_submissions(
         &self,
@@ -553,7 +553,7 @@ impl Repository {
             .connection
             .prepare(
                 "SELECT user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_command_guard
-                 WHERE bot_id=?1 AND command_kind IN ('start','continue') AND stage IN ('prepared','accepted')
+                 WHERE bot_id=?1 AND command_kind IN ('start','continue','routine_occurrence') AND stage IN ('prepared','accepted')
                  LIMIT ?2",
             )
             .map_err(bad)?;
