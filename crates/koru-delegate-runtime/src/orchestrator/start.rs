@@ -197,6 +197,20 @@ impl Orchestrator {
                 {
                     return Err(super::bots::refused("bot_fenced"));
                 }
+                // Public start variants share this last attempt boundary. A
+                // retained reservation alone is never a current-boot grant.
+                if !self.bot_boot_ack_current(
+                    bot.owner,
+                    bot.bot,
+                    bot.config_revision,
+                    bot.policy_revision,
+                )? || self
+                    .bot_ledger()?
+                    .bot_barrier(bot.owner, bot.bot)?
+                    .is_none_or(|barrier| barrier.paused)
+                {
+                    return Err(super::bots::refused("bot_boot_pending"));
+                }
             }
             (None, StartOrigin::Bot { .. }) | (Some(_), _) => {
                 return Err(super::bots::refused("bot_admission_required"));

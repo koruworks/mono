@@ -7,6 +7,7 @@
 //! an interruption, `usage.rs` §17.2, `restart.rs` §7.6 — and `record.rs`
 //! is the one path every fact takes into the document and out to the bus.
 
+mod bot_boot;
 mod bot_controls;
 mod bot_delivery;
 mod bots;
@@ -345,6 +346,7 @@ pub struct Orchestrator {
     pub(crate) runs: HashMap<RunId, RunState>,
     // Bounded transient current-policy proofs; never reconstructed from ledger hashes.
     native_policies: Vec<koru_delegate_core::BotPolicyBarrier>,
+    bot_boot: bot_boot::BootCoordination,
 }
 
 impl Orchestrator {
@@ -355,6 +357,7 @@ impl Orchestrator {
             claims: ScopeClaims::new(),
             runs: HashMap::new(),
             native_policies: Vec::new(),
+            bot_boot: bot_boot::BootCoordination::new(),
         }
     }
 

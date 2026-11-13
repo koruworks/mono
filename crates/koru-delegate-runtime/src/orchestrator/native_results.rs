@@ -14,7 +14,7 @@ impl Orchestrator {
         Ok(self.native_ledger()?.native_effects_pending(run)?)
     }
 
-    fn native_ledger(&mut self) -> Result<&mut dyn NativeResultLedger, RunError> {
+    pub(super) fn native_ledger(&mut self) -> Result<&mut dyn NativeResultLedger, RunError> {
         self.ports
             .store
             .native_results()

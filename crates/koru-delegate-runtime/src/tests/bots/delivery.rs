@@ -550,7 +550,7 @@ fn a_held_native_effect_blocks_chat_success_until_definitively_reconciled() {
         key: BotPolicyBarrierKey {
             owner: fence.owner,
             bot: fence.bot,
-            request: BotRequestId::mint().into(),
+            request: BotRequestId::from_uuid(v4(90)).into(),
         },
         config_revision: 1,
         policy_revision: 1,

@@ -45,11 +45,11 @@ fn ipc13_boot_commands_roundtrip_and_ipc12_is_rejected() {
     for command in [
         BotCommand::Hello {
             owner,
-            scan: BotBootScan::Probe,
+            scan: BotBootScan::Probe {},
         },
         BotCommand::Hello {
             owner,
-            scan: BotBootScan::Start,
+            scan: BotBootScan::Start {},
         },
         BotCommand::Hello {
             owner,
@@ -67,6 +67,11 @@ fn ipc13_boot_commands_roundtrip_and_ipc12_is_rejected() {
             koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
         assert_eq!(version, 13);
         assert_eq!(decoded, command);
+        if matches!(command, BotCommand::Hello { .. }) {
+            let mut nested = serde_json::to_value(&command).unwrap();
+            nested["scan"]["force"] = true.into();
+            assert!(serde_json::from_value::<BotCommand>(nested).is_err());
+        }
         let mut json = serde_json::to_value(&command).unwrap();
         json["force"] = true.into();
         assert!(serde_json::from_value::<BotCommand>(json).is_err());

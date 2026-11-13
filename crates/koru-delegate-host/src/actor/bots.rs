@@ -100,8 +100,25 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
-            BotCommand::Hello { .. } | BotCommand::SynchronizeBootBot { .. } => {
-                return Err(unavailable("bot_boot_unavailable"));
+            BotCommand::Hello { owner, scan } => BotReply::Hello {
+                hello: self
+                    .orchestrator
+                    .bot_hello(owner, scan, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::SynchronizeBootBot {
+                boot,
+                barrier,
+                policy,
+            } => {
+                let receipt = self
+                    .orchestrator
+                    .synchronize_boot_bot(boot, barrier, policy, device)
+                    .map_err(bot_failure)?;
+                if receipt.state == koru_delegate_core::BotBootState::Ready {
+                    self.wake_bots_after_replay();
+                }
+                BotReply::BootSynchronized { receipt }
             }
             BotCommand::PendingNativeEffects {
                 owner,
@@ -329,6 +346,15 @@ impl Actor {
             self.bot_drain_pending = self.commands.send(Command::BotDrain).is_ok();
         }
     }
+    fn wake_bots_after_replay(&mut self) {
+        if self.bot_drain_pending {
+            // Finish the current sweep first: resetting its cursor for every
+            // replay would starve later entries. One additional pass is enough.
+            self.bot_drain_again = true;
+        } else {
+            self.wake_bots();
+        }
+    }
     pub(super) fn drain_one_bot(&mut self) {
         // One lightweight candidate and at most its one selected payload per
         // mailbox turn. Paused/busy entries advance the cursor, never starve
@@ -339,6 +365,9 @@ impl Actor {
         };
         let Some(candidate) = candidate else {
             self.bot_drain_pending = false;
+            if std::mem::take(&mut self.bot_drain_again) {
+                self.wake_bots();
+            }
             return;
         };
         self.bot_queue_cursor = candidate.sequence;
