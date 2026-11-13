@@ -250,20 +250,15 @@ impl WorkerState {
                 && !archived
             {
                 match request {
-                    // D0 has no Memory adapter/preparation path, even if a caller
-                    // reaches this exhaustive match without the early gate.
+                    // Only owner/workspace metadata is prepared here. Memory
+                    // body reads and creation use their specialized lanes;
+                    // the shared early gate stays closed until full integration.
                     BotCommand::ReadMemory { .. }
                     | BotCommand::EnsureMemory { .. }
                     | BotCommand::RetryMemory { .. }
                     | BotCommand::AbandonMemory { .. }
                     | BotCommand::ListMemory { .. }
-                    | BotCommand::ReadMemoryFact { .. } => {
-                        return Err(failure(
-                            "unsupported_capability",
-                            "Bot Memory is not available yet.",
-                            false,
-                        ));
-                    }
+                    | BotCommand::ReadMemoryFact { .. } => {}
                     BotCommand::Create {
                         home_workspace,
                         config,
