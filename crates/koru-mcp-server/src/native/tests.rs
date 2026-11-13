@@ -8,6 +8,8 @@ use koru_store_core::{
 use koru_store_sqlite::{SqliteBackend, SqliteCatalog};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod memory;
+
 type MemoryStore = Store<SqliteCatalog, SqliteBackend>;
 struct Embedded {
     store: Mutex<MemoryStore>,
@@ -17,6 +19,7 @@ struct Embedded {
     lose_edit_reply: AtomicBool,
     lose_history_reply: AtomicBool,
     race_edit: AtomicBool,
+    snapshot_override: Mutex<Option<Vec<u8>>>,
 }
 fn at() -> Timestamp {
     Timestamp::from_millis(1_800_000_000_000)
@@ -40,6 +43,7 @@ impl Embedded {
             lose_edit_reply: AtomicBool::new(false),
             lose_history_reply: AtomicBool::new(false),
             race_edit: AtomicBool::new(false),
+            snapshot_override: Mutex::new(None),
         })
     }
     fn backend(self: &Arc<Self>) -> LocalBackend {
@@ -72,6 +76,9 @@ impl EmbeddedStore for Embedded {
         Ok(self.store.lock().unwrap().documents(ws)?)
     }
     fn snapshot(&self, ws: StoreWorkspaceId, id: StoreDocumentId) -> Result<Vec<u8>, ToolError> {
+        if let Some(snapshot) = self.snapshot_override.lock().unwrap().as_ref() {
+            return Ok(snapshot.clone());
+        }
         Ok(self.store.lock().unwrap().snapshot(ws, id)?)
     }
     fn creation_origin(

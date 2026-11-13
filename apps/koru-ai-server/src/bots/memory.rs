@@ -11,6 +11,7 @@ pub(super) mod detail;
 pub(super) mod history;
 pub(super) mod index;
 mod observe;
+pub(super) mod recipe;
 pub(super) mod seed;
 pub(super) use observe::observe;
 
@@ -34,6 +35,7 @@ pub(super) enum MemoryBudget {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MemoryCodecError {
+    InvalidWriteInput,
     InvalidSeed,
     InvalidSnapshot,
     UnsupportedSchema,
