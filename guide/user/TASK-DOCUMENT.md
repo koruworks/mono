@@ -16,7 +16,7 @@ The menus page their choices to fit the window. Search results offer
 find documents outside the first twenty matches.
 
 Complete a task using its checkbox. Open its source through the task's ordinary
-open gesture or **Go to origin**. The document opens inside the right region of
+open gesture or **Open document**. The document opens inside the right region of
 this tab. Search above that region to replace the displayed document, then use
 the ordinary document editor, including its find and replace controls.
 
@@ -94,6 +94,35 @@ Saved apps open only in their original workspace. A missing linked list or
 document, an unsupported format, or unavailable artifact data produces a
 visible refusal and leaves the saved artifact unchanged. Opening a saved
 version preserves any already-open mini app with different unsaved choices.
+
+Use **Pin mini app** above the regions to keep a saved version in this device's
+apps rail. Pinning an unsaved arrangement first saves it. The pin appears only
+after both steps succeed. If the pin change fails after saving, the artifact
+remains in **Artifacts**; **Retry pin change** retries that exact saved version.
+Changes made after requesting Pin do not change its capture. A new Pin request
+waits if an earlier save still owns different choices or a document is opening.
+
+Pins form their own group after the built-in apps. Click a square to open its
+saved arrangement with current source data, without asking a model. Use F6 and
+the arrow keys to focus a square, then Enter or Space to open it. Drag squares
+within the pin group, or use Ctrl+Shift+Up/Down while focused there. These keys
+stop at the pin group's ends. Built-in Alt+number shortcuts retain their targets;
+pins have no Alt+number shortcut.
+
+The **Pinned mini apps** square after the pins opens their menu. It includes all
+pins across **Previous pins** / **More pins** pages; short windows keep this
+menu while folding pin squares. Highlight an app and use
+Ctrl+Shift+Up/Down to reorder it while keeping the menu open, including across
+pages. The menu also has an **Unpin mini app** action beside each app, so a pin
+whose artifact cannot currently open can still be removed. Failed rail changes
+offer **Retry pin change** with their original placement. Escape returns focus
+to the pin square or its overflow control.
+
+**Unpin mini app** removes the local reference and keeps the saved artifact,
+documents and tasks. A pin keeps its exact immutable version; later saves do
+not silently retarget it. Unpin and explicitly pin the new saved version to
+change it. Pins are separate for each profile/workspace on this device and do
+not travel when copying a profile. They are not restored mini-app tabs.
 
 The proposed catalog is experimental and pending maintainer approval. Native
 input and accessibility acceptance is still being completed; this is not a

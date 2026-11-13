@@ -1162,6 +1162,22 @@ Returns: The section as it stands after the change, read back from the authority
 
 Requires: `settings.write`.
 
+## GET `/v1/mini-app-pins`
+
+Read this device's mini-app pins for a profile/workspace
+
+Returns: Requires settings.read and store.read_documents. Ordered immutable artifact references. Unknown or unreadable files are refused and preserved.
+
+Requires: `settings.read`.
+
+## PATCH `/v1/mini-app-pins`
+
+Add, remove or place one device-local mini-app pin
+
+Returns: Requires settings.write and store.read_documents; Add also requires artifacts.read. The authoritative ordered references after an idempotent mutation. Unpin never deletes artifacts.
+
+Requires: `settings.write`.
+
 ## POST `/v1/workspaces/{id}/lifecycle/confirmation`
 
 Compute what an action would close, and issue the token that proves it was shown

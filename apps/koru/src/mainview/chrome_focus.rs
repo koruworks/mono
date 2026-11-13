@@ -168,6 +168,14 @@ impl MainView {
         let Some(stop) = self.chrome_focus else {
             return false;
         };
+        if let ChromeStop::Apps(i) = stop
+            && let ExploreChromeFocus::Pin(id) = self.rail_focus(i)
+            && let Some(up) = move_chord(key, text, mods)
+        {
+            self.explore.nudge_pin(self.rail_area(), id, up);
+            self.retain_pin_focus(id);
+            return true;
+        }
         // An open switcher owns the keyboard (its own Esc, arrows and Enter)
         // until it shuts; the stop takes over again after.
         if self.explore.popover_open() {
@@ -318,6 +326,12 @@ impl MainView {
                     self.open_rail_overflow();
                 }
                 ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
+                ExploreChromeFocus::Pin(id) => {
+                    self.open_mini_app_pin(id);
+                }
+                ExploreChromeFocus::PinOverflow => {
+                    self.open_mini_app_pins(None);
+                }
             },
         }
         let _ = ws;

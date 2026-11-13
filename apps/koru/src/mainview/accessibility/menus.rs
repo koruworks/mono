@@ -62,6 +62,11 @@ const ITEM: ControlPart = ControlPart::new("item");
 impl MainView {
     /// The blocking surface, alone.
     pub(super) fn blocker_semantics(&self, cx: &Shell, blockers: Blockers) -> SemanticNode {
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::ContextMenu)
+            && let Some(menu) = self.pin_menu_semantics(cx)
+        {
+            return menu;
+        }
         if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
             && let Some(dialog) = self.workspace_controller.borrow().dialog()
         {
@@ -141,6 +146,11 @@ impl MainView {
     /// The menu's own highlight — the thing its arrows move and its rows are
     /// drawn from — rather than a second idea of focus.
     pub(super) fn blocker_focus(&self, cx: &Shell, blockers: Blockers) -> Occurrence {
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::ContextMenu)
+            && let Some(focus) = self.pin_menu_focus(cx)
+        {
+            return focus;
+        }
         // Innermost first: the flyout has the keys while it is up.
         for (_, menu) in self.live_menus().into_iter().rev() {
             let Some(menu) = menu else { continue };
@@ -386,6 +396,11 @@ fn prompt_keyword(kind: koru_workspace_host::routing::PromptKind) -> &'static st
 /// id from before the menu opened, and performing it would be the shell acting
 /// on a control the keyboard cannot currently reach.
 pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
+    if view.blockers() == Blockers::Modal(koru_workspace_host::routing::ModalKind::ContextMenu)
+        && view.pin_menu_is_target(target)
+    {
+        return true;
+    }
     if let Some(id) = instance_of(target, MENU) {
         return view.menu_row_at(id).is_some() || view.names_a_live_menu(id);
     }
@@ -419,6 +434,9 @@ fn is_reminder_popover(blockers: Blockers) -> bool {
 
 /// Route a request at an open menu, through the menu's own keys.
 pub(super) fn action(view: &mut MainView, target: Occurrence, action: Action) -> bool {
+    if view.pin_menu_action(target, action) {
+        return true;
+    }
     use winit::keyboard::{Key as WKey, NamedKey};
 
     let Some(id) = instance_of(target, MENU) else {

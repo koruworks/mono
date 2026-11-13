@@ -953,6 +953,15 @@ fn settings_changed(name: &'static str, section: SettingsSection) -> Draft {
 }
 
 pub struct SettingsGlobalChanged;
+pub struct SettingsMiniAppPinsChanged;
+payload!(
+    SettingsMiniAppPinsChanged,
+    "settings.mini_app_pins_changed",
+    |self| {
+        let _ = self;
+        Draft::new(EventName::from_static(Self::NAME))
+    }
+);
 
 payload!(SettingsGlobalChanged, "settings.global_changed", |self| {
     let _ = self;

@@ -2798,7 +2798,7 @@ pub struct ContextMenu {
 /// Monotonic and never reused: a number that could come round again is the bug
 /// this exists to prevent. The counter only moves forward, and a process would
 /// have to open menus for longer than the universe has existed to wrap it.
-fn mint_menu_instance(rows: usize) -> u64 {
+pub(super) fn mint_menu_instance(rows: usize) -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(rows as u64 + 1, Ordering::Relaxed)

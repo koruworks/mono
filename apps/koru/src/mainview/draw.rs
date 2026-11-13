@@ -723,6 +723,25 @@ impl MainView {
     }
 
     fn draw_menu(&mut self, scene: &mut Scene, root: Affine) {
+        if let Some(menu) = self.mini_app_pins.menu.clone() {
+            let rows = (0..menu.items().len())
+                .map(|i| self.pin_menu_row_instance(i))
+                .collect::<Vec<_>>();
+            let row = |i| rows[i];
+            menu.draw_with_inspection(
+                scene,
+                root,
+                &mut self.engine,
+                self.viewport,
+                &vec![true; menu.items().len()],
+                koru_ui::menu::KoruMenuInspection {
+                    occurrence: Some(self.mini_app_pins.menu_instance),
+                    row_occurrence: Some(&row),
+                    owner_row: None,
+                    trigger: None,
+                },
+            );
+        }
         if let Some(menu) = self.menu.clone() {
             let enabled = self.enabled_items(&menu);
             menu.draw_inspected(scene, root, &mut self.engine, self.viewport, &enabled, None);

@@ -446,6 +446,7 @@ impl MainView {
 
     /// Everything the window publishes **except** the document body.
     fn revise_chrome(&self, rev: &mut Revision) {
+        self.revise_pin_menu(rev);
         // A focus-only F6/arrow move still needs a native focus update. The
         // host publishes only after this fingerprint changes.
         use super::chrome_focus::{ChromeStop, LaneControl};

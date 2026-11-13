@@ -7,9 +7,9 @@ use crate::mini_app::artifact::{self, Answer, Command, Opened, Saved};
 
 impl MainView {
     pub(super) fn mini_app_save_close_veto(&mut self, selected: Option<&[u64]>) -> bool {
-        let pending = self.panes.iter_groups().flat_map(|(_, group)| group.tabs().iter()).any(|tab| {
+        let pending = self.mini_app_pins.pending_writes>0 || self.panes.iter_groups().flat_map(|(_, group)| group.tabs().iter()).any(|tab| {
             selected.is_none_or(|ids| ids.contains(&tab.id))
-                && matches!(&tab.view, TabView::MiniApp(app) if app.artifact.requested || app.artifact.in_flight)
+                && matches!(&tab.view, TabView::MiniApp(app) if app.artifact.requested || app.artifact.in_flight || app.pin.pending())
         });
         if pending {
             self.artifact_notice(koru_i18n::Key::MiniAppSaveClosingPending);
@@ -81,7 +81,17 @@ impl MainView {
                                     && scope.is_some_and(|(p, w)| {
                                         p == profile && w.as_uuid() == workspace.as_uuid()
                                     });
+                                let pin_waiting = app.pin.saving == Some(registration);
                                 app.artifact.finish(result.clone());
+                                if pin_waiting {
+                                    if result.is_ok() {
+                                        if let Some(saved) = &app.artifact.saved {
+                                            app.pin.saved(saved, &app.artifact.title);
+                                        }
+                                    } else {
+                                        app.pin.failed = true;
+                                    }
+                                }
                                 changed = true;
                             }
                         }
@@ -165,6 +175,9 @@ impl MainView {
                         {
                             app.artifact.in_flight = false;
                             app.artifact.failed = true;
+                            if app.pin.saving.is_some() {
+                                app.pin.failed = true;
+                            }
                         }
                     }
                 }

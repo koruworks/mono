@@ -222,6 +222,8 @@ Generated from the route catalog. Do not edit.
 - GET `/v1/schedules/stream` — Watch a schedule list for changes (runs.read)
 - GET `/v1/settings/{section}` — Read one settings section (settings.read)
 - PATCH `/v1/settings/{section}` — Change named fields of one settings section (settings.write)
+- GET `/v1/mini-app-pins` — Read this device's mini-app pins for a profile/workspace (settings.read)
+- PATCH `/v1/mini-app-pins` — Add, remove or place one device-local mini-app pin (settings.write)
 - POST `/v1/workspaces/{id}/lifecycle/confirmation` — Compute what an action would close, and issue the token that proves it was shown (workspace.destroy)
 - POST `/v1/workspaces/{id}/lifecycle` — Archive, soft-delete or restore a workspace, closing its terminals first (workspace.destroy)
 - POST `/v1/workspaces/{id}/migration/confirmation` — Compute what moving a workspace to a profile would close, and issue the token that proves it was shown (workspace.migrate)

@@ -79,6 +79,8 @@ pub enum Outcome {
     OpenHelp,
     Help(explore::help::Action),
     OpenRailOverflow,
+    OpenMiniAppPin(koru_settings::pins::PinId),
+    OpenMiniAppPins,
 
     // ---------------------------------------------------------------- panels
     /// A row in the explore tree, or a recent on the welcome screen.

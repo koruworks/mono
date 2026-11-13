@@ -56,6 +56,7 @@ pub(super) struct Chrome {
     tasks_switch: Rect,
     document_switch: Rect,
     save: Rect,
+    pin: Rect,
     pub tree: el::El,
     pub frame: el::Frame,
     cache: el::TextCache,
@@ -105,6 +106,7 @@ impl Chrome {
             tasks_switch: zero,
             document_switch: zero,
             save: zero,
+            pin: zero,
             tree,
             frame,
             cache,
@@ -146,7 +148,10 @@ impl Chrome {
             })
         };
         let mut tree = el::col("Task document surface");
-        tree = tree.child(header("Artifact actions").child(el::row("Save mini app").fill()));
+        tree = tree.child(header("Artifact actions").children([
+            el::row("Save mini app").fill(),
+            el::row("Pin mini app").fill(),
+        ]));
         if narrow {
             tree = tree.child(header("Region switch").children([
                 el::row("Show tasks").fill(),
@@ -166,6 +171,7 @@ impl Chrome {
         self.tasks_switch = frame.rect_of("Show tasks").unwrap_or(zero);
         self.document_switch = frame.rect_of("Show document").unwrap_or(zero);
         self.save = frame.rect_of("Save mini app").unwrap_or(zero);
+        self.pin = frame.rect_of("Pin mini app").unwrap_or(zero);
         let regions = Regions {
             tasks: frame.rect_of("Task child").unwrap_or(zero),
             document: frame.rect_of("Document child").unwrap_or(zero),
@@ -411,6 +417,7 @@ impl MiniApp {
             ("selector", self.chrome.selector),
             ("search", self.chrome.search),
             ("save", self.chrome.save),
+            ("pin", self.chrome.pin),
         ]
         .into_iter()
         .filter(|(_, rect)| rect.w > 0.0)
@@ -432,6 +439,7 @@ impl MiniApp {
         }
         rev.str(self.chrome.input.raw_text());
         rev.str(self.save_label());
+        rev.str(self.pin_label());
         rev.u64(
             self.chrome
                 .menu
@@ -465,6 +473,12 @@ impl MiniApp {
         let moved = |rect: Rect| Rect::new(pane.x + rect.x, pane.y + rect.y, rect.w, rect.h);
         let mut nodes = Vec::new();
         for (part, rect, name, role) in [
+            (
+                "pin",
+                self.chrome.pin,
+                self.pin_label().into(),
+                Role::Button,
+            ),
             (
                 "save",
                 self.chrome.save,
@@ -644,6 +658,8 @@ impl MiniApp {
             self.chrome.document_switch
         } else if target.part == ControlPart::new("save") {
             self.chrome.save
+        } else if target.part == ControlPart::new("pin") {
+            self.chrome.pin
         } else {
             return false;
         };
@@ -672,6 +688,11 @@ impl MiniApp {
     }
 
     pub(super) fn chrome_down(&mut self, x: f32, y: f32) -> bool {
+        if self.chrome.pin.w > 0.0 && self.chrome.pin.contains(x, y) {
+            self.set_header("pin");
+            self.request_pin();
+            return true;
+        }
         if self.chrome.save.w > 0.0 && self.chrome.save.contains(x, y) {
             self.set_header("save");
             self.request_artifact_save();
@@ -824,12 +845,22 @@ impl MiniApp {
     ) {
         let target_label = self.chrome.query_label(self.tasks.target());
         let save_label = self.save_label();
+        let pin_label = self.pin_label();
         let chrome = &mut self.chrome;
         let regions = self.regions;
         chrome
             .frame
             .paint_host(&chrome.tree, scene, root, |node, scene, root| {
                 match node.name {
+                    "Pin mini app" => {
+                        ActionButton::new(pin_label, ActionStyle::Ghost, None).draw(
+                            scene,
+                            root,
+                            &mut chrome.engine,
+                            node.rect,
+                            node.rect.contains(pointer.0, pointer.1),
+                        );
+                    }
                     "Save mini app" => {
                         ActionButton::new(save_label, ActionStyle::Ghost, None).draw(
                             scene,
@@ -932,6 +963,7 @@ impl MiniApp {
                     "Show tasks" => Some("tasks"),
                     "Show document" => Some("document"),
                     "Save mini app" => Some("save"),
+                    "Pin mini app" => Some("pin"),
                     _ => None,
                 };
                 if focused.is_some() && focused == chrome.header_focus {

@@ -20,6 +20,7 @@ use crate::{leaf::Leaf, panes::explore::rail::RailTarget, tasks_view::TasksView}
 pub(crate) mod artifact;
 mod chrome;
 mod declaration;
+pub(crate) mod pin;
 mod refinement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +117,7 @@ pub(crate) struct MiniApp {
     swapped: bool,
     chrome: chrome::Chrome,
     pub artifact: artifact::SaveState,
+    pub pin: pin::State,
 }
 
 impl MiniApp {
@@ -140,6 +142,7 @@ impl MiniApp {
             swapped: false,
             chrome: chrome::Chrome::new(),
             artifact: artifact::SaveState::default(),
+            pin: pin::State::default(),
         }
     }
 

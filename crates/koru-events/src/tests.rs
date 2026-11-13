@@ -1317,6 +1317,14 @@ fn the_serialization_vectors_are_current() {
             .build(&ctx, fixed_event_id(), FIXED_TIME),
         ),
         (
+            "settings.mini_app_pins_changed",
+            Draft::from(crate::SettingsMiniAppPinsChanged).build(
+                &ctx,
+                fixed_event_id(),
+                FIXED_TIME,
+            ),
+        ),
+        (
             "settings.global_changed",
             Draft::from(crate::SettingsGlobalChanged).build(&ctx, fixed_event_id(), FIXED_TIME),
         ),

@@ -228,7 +228,7 @@ impl MainView {
             Layer::Recording => self.recording_modal.is_some(),
             Layer::PlaceChooser => self.place_chooser.is_some(),
             Layer::Launcher => self.launcher.is_some(),
-            Layer::Menu => self.menu.is_some(),
+            Layer::Menu => self.menu.is_some() || self.mini_app_pins.menu.is_some(),
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),

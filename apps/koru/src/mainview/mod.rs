@@ -93,6 +93,7 @@ mod link_device;
 pub(crate) mod linked_devices;
 mod mini_app;
 mod mini_app_artifacts;
+mod mini_app_pins;
 mod move_to;
 mod nav;
 mod nav_debug;
@@ -1374,6 +1375,7 @@ pub struct MainView {
     /// holds it; it asks nothing until a workspace is named.
     run_index: koru_runs_ui::RunIndex,
     mini_app_artifacts: crate::mini_app::artifact::Io,
+    mini_app_pins: mini_app_pins::State,
     /// The workspace's repeating delegations. Its worker blocks on the typed
     /// schedule watch; no timer is attached to this field.
     schedule_index: crate::schedule_index::ScheduleIndex,
@@ -2067,6 +2069,7 @@ impl MainView {
             // keeps this binary's suite from listing runs off whatever
             // gateway the machine has running.
             mini_app_artifacts: crate::mini_app::artifact::Io::default(),
+            mini_app_pins: mini_app_pins::State::default(),
             run_index: match cfg!(test) {
                 true => koru_runs_ui::RunIndex::inert(),
                 false => koru_runs_ui::RunIndex::open(
@@ -2138,6 +2141,12 @@ impl MainView {
         proxy: winit::event_loop::EventLoopProxy<koru_workspace_host::app::Wake>,
     ) {
         self.mini_app_artifacts.set_waker(std::sync::Arc::new({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        }));
+        self.mini_app_pins.set_waker(std::sync::Arc::new({
             let proxy = proxy.clone();
             move || {
                 let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
@@ -7982,6 +7991,8 @@ impl MainView {
             Outcome::OpenHelp => self.open_help_beside(),
             Outcome::Help(action) => self.help_action(action),
             Outcome::OpenRailOverflow => self.open_rail_overflow(),
+            Outcome::OpenMiniAppPin(id) => self.open_mini_app_pin(id),
+            Outcome::OpenMiniAppPins => self.open_mini_app_pins(None),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -10253,6 +10264,9 @@ impl MainView {
             }
             return true;
         }
+        if self.pin_menu_press(x, y) {
+            return true;
+        }
         if let Some(menu) = self.menu.clone() {
             // **A stepper is pressed, not chosen, and the menu stays up.**
             // Zooming out from 100% to 70% is three presses of one button, so
@@ -11133,6 +11147,7 @@ impl View for MainView {
         self.link_device = None;
         self.sidebar_drag = None;
         self.mini_app_artifacts.invalidate_scope();
+        self.invalidate_mini_app_pin_scope();
         self.pane_context = None;
         self.relayout();
     }
@@ -11262,6 +11277,9 @@ impl View for MainView {
     }
 
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+        // A context press replaces the existing group menu; two menus must
+        // never compete for painting, native publication or keyboard input.
+        self.mini_app_pins.menu = None;
         if self.file_preview.is_some() {
             return true;
         }
@@ -12703,6 +12721,9 @@ impl View for MainView {
     }
 
     fn set_window_focused(&mut self, focused: bool) {
+        if focused {
+            self.refresh_mini_app_pins();
+        }
         self.each_tab_mut(|tab| {
             if let TabView::MiniApp(app) = &mut tab.view {
                 View::set_window_focused(app.as_mut(), focused);
@@ -13689,6 +13710,7 @@ impl View for MainView {
                 .is_none_or(|(_, profile, _, workspace)| *profile != next.1 || *workspace != next.3)
             {
                 self.mini_app_artifacts.invalidate_scope();
+                self.invalidate_mini_app_pin_scope();
             }
             if self
                 .pane_context
@@ -15678,7 +15700,9 @@ impl View for MainView {
         // as a tab. Nothing here reaches a run: that is another thread's,
         // and it is the only one there is. The result tabs are folded in on
         // the same pass, for the same reason.
-        let runs_changed = self.maintain_runs() | self.maintain_mini_app_artifacts();
+        let runs_changed = self.maintain_runs()
+            | self.maintain_mini_app_artifacts()
+            | self.maintain_mini_app_pins();
         // Schedule invalidations are pushed by the gateway watch. This pass
         // joins their fired RunIds against the run index just maintained above;
         // it starts no poll and performs no I/O on the window thread.
@@ -16052,7 +16076,13 @@ impl MainView {
             // An open context menu takes the keys it cares about (Esc, the
             // arrows, Enter) and lets nothing else through — a chord must not,
             // say, close a tab under a menu that is itself about to dismiss.
-            Blockers::Modal(ModalKind::ContextMenu) => return self.menu_key(key),
+            Blockers::Modal(ModalKind::ContextMenu) => {
+                return if self.mini_app_pins.menu.is_some() {
+                    self.pin_menu_key(key, text, mods)
+                } else {
+                    self.menu_key(key)
+                };
+            }
             // The place chooser, on the menu's terms: its arrows, Enter and
             // Escape, and nothing else gets past it.
             Blockers::Modal(ModalKind::PlaceChooser) => return self.place_chooser_key(ws, key),
@@ -18435,6 +18465,9 @@ impl MainView {
         }
         // While the context menu is up it tracks its own hover; nothing under it
         // is hovered, so a row does not stay lit behind the menu.
+        if self.pin_menu_move(x, y) {
+            return true;
+        }
         if let Some(menu) = self.menu.as_mut() {
             let new = menu.item_at(self.viewport, x, y);
             // A stepper's cells light one at a time, so the control under the

@@ -139,6 +139,13 @@ fn header_tab_returns_to_child_and_status_is_not_an_action() {
     app.chrome_key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
     assert_eq!(app.chrome.header_focus, Some("save"));
     app.chrome_key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
+    assert_eq!(app.chrome.header_focus, Some("pin"));
+    assert!(
+        app.chrome_semantics(window, view, Rect::new(0.0, 0.0, 1000.0, 600.0))
+            .iter()
+            .any(|n| n.occurrence.part == ControlPart::new("pin") && n.role == Role::Button)
+    );
+    app.chrome_key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
     assert!(!app.header_focused());
     assert!(app.document_focused());
 }

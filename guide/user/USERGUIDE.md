@@ -6158,7 +6158,10 @@ If Koru opens empty when it should not, check that the Koru Store is running and
 that you are in the profile and workspace you expect (the explore pane's
 switchers). Content lives in the store, not in a profile folder you once picked.
 
-Everything saves continuously; there is no save command.
+Document edits and task changes save continuously. A
+[task/document mini app](TASK-DOCUMENT.md) has a separate **Save mini app**
+action for its arrangement and linked choices; source content keeps saving
+normally whether or not that arrangement is saved or pinned.
 
 ## Usage data
 

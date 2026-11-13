@@ -41,6 +41,7 @@ pub use events::{
     CatalogChange, CatalogFlags, CatalogWatch, Cursor, EventsClient, Filter, Receipt, Subscription,
     catalog_change,
 };
+pub mod mini_app_pins;
 pub mod settings;
 pub use settings::link::{
     ConfirmedFailure, ConfirmedOutcome, ConfirmedWrite, GlobalLink, LINK_SCOPES, PatchReply,

@@ -8159,6 +8159,203 @@
         ],
         "type": "object"
       },
+      "MiniAppPin": {
+        "additionalProperties": false,
+        "properties": {
+          "family": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/MiniAppPinId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "family",
+          "version",
+          "title"
+        ],
+        "type": "object"
+      },
+      "MiniAppPinId": {
+        "description": "Stable opaque UUID, represented without bringing another authority into\nthis leaf crate. The gateway also validates domain identifiers.",
+        "type": "string"
+      },
+      "MiniAppPinMutation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "enum": [
+                  "add"
+                ],
+                "type": "string"
+              },
+              "pin": {
+                "$ref": "#/components/schemas/MiniAppPin"
+              }
+            },
+            "required": [
+              "operation",
+              "pin"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "operation": {
+                "enum": [
+                  "remove"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "operation": {
+                "enum": [
+                  "move"
+                ],
+                "type": "string"
+              },
+              "to": {
+                "$ref": "#/components/schemas/MiniAppPinPlacement"
+              }
+            },
+            "required": [
+              "operation",
+              "id",
+              "to"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MiniAppPinPlacement": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "placement": {
+                "enum": [
+                  "first"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "placement": {
+                "enum": [
+                  "last"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "neighbor": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "placement": {
+                "enum": [
+                  "before"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement",
+              "neighbor"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "neighbor": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "placement": {
+                "enum": [
+                  "after"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement",
+              "neighbor"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MiniAppPinsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mutation": {
+            "$ref": "#/components/schemas/MiniAppPinMutation"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/MiniAppPinsScope"
+          }
+        },
+        "required": [
+          "scope",
+          "mutation"
+        ],
+        "type": "object"
+      },
+      "MiniAppPinsScope": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "workspace"
+        ],
+        "type": "object"
+      },
       "ModelCapabilities": {
         "properties": {
           "context_window": {
@@ -26081,6 +26278,110 @@
           }
         ],
         "summary": "Take a .koru bundle in. ?mode=restore or ?mode=duplicate, and ?owner=<profile>"
+      }
+    },
+    "/v1/mini-app-pins": {
+      "get": {
+        "description": "Requires settings.read and store.read_documents. Ordered immutable artifact references. Unknown or unreadable files are refused and preserved.",
+        "operationId": "mini_app_pins_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MiniAppPin"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Requires settings.read and store.read_documents. Ordered immutable artifact references. Unknown or unreadable files are refused and preserved."
+          },
+          "400": {
+            "description": "Unsupported pin file or invalid mutation; bytes preserved"
+          },
+          "403": {
+            "description": "Scope or workspace authority refused"
+          },
+          "503": {
+            "description": "Authority unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "settings.read",
+              "store.read_documents"
+            ]
+          }
+        ],
+        "summary": "Read this device's mini-app pins for a profile/workspace"
+      },
+      "patch": {
+        "description": "Requires settings.write and store.read_documents; Add also requires artifacts.read. The authoritative ordered references after an idempotent mutation. Unpin never deletes artifacts.",
+        "operationId": "mini_app_pins_mutate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MiniAppPinsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MiniAppPin"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Requires settings.write and store.read_documents; Add also requires artifacts.read. The authoritative ordered references after an idempotent mutation. Unpin never deletes artifacts."
+          },
+          "400": {
+            "description": "Unsupported pin file or invalid mutation; bytes preserved"
+          },
+          "403": {
+            "description": "Scope or workspace authority refused"
+          },
+          "503": {
+            "description": "Authority unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "settings.write",
+              "store.read_documents"
+            ]
+          }
+        ],
+        "summary": "Add, remove or place one device-local mini-app pin"
       }
     },
     "/v1/openapi.json": {

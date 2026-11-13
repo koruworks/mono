@@ -634,6 +634,8 @@ pub enum ExploreChromeFocus {
     /// The `…` under the workspace squares.
     WorkspaceMenu,
     App(usize),
+    Pin(koru_settings::pins::PinId),
+    PinOverflow,
     RailHelp,
     RailSettings,
     RailProfile,
@@ -723,6 +725,12 @@ pub struct ExploreView {
     rail_order: RailOrder,
     /// A view's square held by the pointer.
     rail_drag: Option<apps_rail_drag::RailDrag>,
+    pub(crate) mini_app_pins: Vec<koru_settings::pins::Pin>,
+    pub(crate) pins_busy: bool,
+    pub(crate) pins_menu_needed: bool,
+    pin_drag: Option<apps_rail_drag::PinDrag>,
+    pin_slides: TabSlides,
+    pin_move: Option<(koru_settings::pins::PinId, koru_settings::pins::Placement)>,
     workspace_drag: Option<apps_rail_drag::workspaces::WorkspaceDrag>,
     workspace_slides: TabSlides,
     /// The slide the rail's views ride when the order changes under them —
@@ -4637,6 +4645,13 @@ impl ExploreView {
                     Outcome::Consumed
                 }
             }
+            Some(apps_rail::Hit::Pin(id)) => {
+                if let Some((_, square)) = rects.pins.iter().find(|(pin, _)| *pin == id) {
+                    self.begin_pin_drag(id, *square, y);
+                }
+                Outcome::OpenMiniAppPin(id)
+            }
+            Some(apps_rail::Hit::PinOverflow) => Outcome::OpenMiniAppPins,
             Some(apps_rail::Hit::Overflow) => Outcome::OpenRailOverflow,
             Some(apps_rail::Hit::Help) => Outcome::OpenHelp,
             Some(apps_rail::Hit::Settings) => {
@@ -6054,6 +6069,7 @@ impl ExploreView {
             || self.hold_reveal_pending()
             || self.rail.animating()
             || self.rail_slides.animating()
+            || self.pin_slides.animating()
             || self.workspace_slides.animating()
             || self.runs_turning()
     }
@@ -6108,6 +6124,7 @@ impl ExploreView {
         let mut moved = self.slides.advance(now)
             | self.rail.advance(now)
             | self.rail_slides.advance(now)
+            | self.pin_slides.advance(now)
             | self.workspace_slides.advance(now);
         if !self.drag_armed() {
             self.drag_tick = Some(now);
