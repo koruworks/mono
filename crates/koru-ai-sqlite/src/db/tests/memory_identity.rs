@@ -11,7 +11,7 @@ fn ai19() -> Schema {
         migrations: &MIGRATIONS[..19],
     }
 }
-fn populated_v19() -> Connection {
+pub(super) fn populated_v19() -> Connection {
     let mut c = populated_v18();
     koru_sqlite::prepare_with_preflight(&ai19(), &mut c, refuse_superseded_18).unwrap();
     for state in ["prepared", "unconfirmed", "conflict", "abandoned", "bound"] {
@@ -52,12 +52,20 @@ fn populated_v19() -> Connection {
     c
 }
 
+pub(super) fn ai20() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 20,
+        migrations: &MIGRATIONS[..20],
+    }
+}
+
 #[test]
 fn ai20_preserves_populated_ai19() {
     let mut c = populated_v19();
     println!("Rust-linked SQLite {}", rusqlite::version());
     let before = snapshot(&c);
-    prepare(&mut c).unwrap();
+    koru_sqlite::prepare_with_preflight(&ai20(), &mut c, refuse_superseded_18).unwrap();
     assert_eq!(user_version(&c).unwrap(), 20);
     assert_eq!(snapshot(&c), before);
     foreign_keys_held(&c);
@@ -80,7 +88,7 @@ fn ai20_preserves_populated_ai19() {
 #[test]
 fn ai19_refuses_ai20_before_callbacks_or_writes() {
     let mut c = populated_v19();
-    prepare(&mut c).unwrap();
+    koru_sqlite::prepare_with_preflight(&ai20(), &mut c, refuse_superseded_18).unwrap();
     let before = snapshot(&c);
     c.pragma_update(None, "foreign_keys", false).unwrap();
     c.pragma_update(None, "synchronous", 0).unwrap();
