@@ -92,6 +92,7 @@ pub(crate) mod layout;
 mod link_device;
 pub(crate) mod linked_devices;
 mod mini_app;
+mod mini_app_artifacts;
 mod move_to;
 mod nav;
 mod nav_debug;
@@ -1372,6 +1373,7 @@ pub struct MainView {
     /// thread of its own. A window that never opens the Agents mode still
     /// holds it; it asks nothing until a workspace is named.
     run_index: koru_runs_ui::RunIndex,
+    mini_app_artifacts: crate::mini_app::artifact::Io,
     /// The workspace's repeating delegations. Its worker blocks on the typed
     /// schedule watch; no timer is attached to this field.
     schedule_index: crate::schedule_index::ScheduleIndex,
@@ -2064,6 +2066,7 @@ impl MainView {
             // compiled with `cfg(test)`, so an inert index here is what
             // keeps this binary's suite from listing runs off whatever
             // gateway the machine has running.
+            mini_app_artifacts: crate::mini_app::artifact::Io::default(),
             run_index: match cfg!(test) {
                 true => koru_runs_ui::RunIndex::inert(),
                 false => koru_runs_ui::RunIndex::open(
@@ -2134,6 +2137,12 @@ impl MainView {
         &mut self,
         proxy: winit::event_loop::EventLoopProxy<koru_workspace_host::app::Wake>,
     ) {
+        self.mini_app_artifacts.set_waker(std::sync::Arc::new({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        }));
         self.reminders.set_waker(std::sync::Arc::new({
             let proxy = proxy.clone();
             move || {
@@ -3911,7 +3920,7 @@ impl MainView {
             .enumerate()
             .filter_map(|(index, tab)| selected(index).then_some(tab.id))
             .collect();
-        self.guard_private_drafts(Some(&ids))
+        self.mini_app_save_close_veto(Some(&ids)) || self.guard_private_drafts(Some(&ids))
     }
 
     /// Push the active document onto the recents, most recent first and without
@@ -11123,6 +11132,7 @@ impl View for MainView {
         self.workspace_icon = None;
         self.link_device = None;
         self.sidebar_drag = None;
+        self.mini_app_artifacts.invalidate_scope();
         self.pane_context = None;
         self.relayout();
     }
@@ -12862,7 +12872,7 @@ impl View for MainView {
     }
 
     fn prepare_document_creation_close(&mut self) -> bool {
-        !self.guard_private_drafts(None)
+        !self.mini_app_save_close_veto(None) && !self.guard_private_drafts(None)
     }
 
     fn request_close(&mut self) -> bool {
@@ -13673,6 +13683,13 @@ impl View for MainView {
         let next = (profiles, current_profile, workspaces, current);
         let changed = self.pane_context.as_ref() != Some(&next);
         if changed {
+            if self
+                .pane_context
+                .as_ref()
+                .is_none_or(|(_, profile, _, workspace)| *profile != next.1 || *workspace != next.3)
+            {
+                self.mini_app_artifacts.invalidate_scope();
+            }
             if self
                 .pane_context
                 .as_ref()
@@ -15661,7 +15678,7 @@ impl View for MainView {
         // as a tab. Nothing here reaches a run: that is another thread's,
         // and it is the only one there is. The result tabs are folded in on
         // the same pass, for the same reason.
-        let runs_changed = self.maintain_runs();
+        let runs_changed = self.maintain_runs() | self.maintain_mini_app_artifacts();
         // Schedule invalidations are pushed by the gateway watch. This pass
         // joins their fired RunIds against the run index just maintained above;
         // it starts no poll and performs no I/O on the window thread.

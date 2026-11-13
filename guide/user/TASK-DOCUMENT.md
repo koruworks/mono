@@ -30,7 +30,7 @@ Use the ordinary F6 chrome rotation to reach the tab's header. Tab moves
 between its visible controls and then returns to the child. Enter opens a
 selector or activates a region button; Escape dismisses suggestions.
 
-This arrangement is transient. Closing its tab or quitting discards the
+An unsaved arrangement is transient. Closing its tab or quitting discards the
 arrangement, and it is not restored as a generated tab after restart. Task
 changes and document edits belong to their ordinary documents and save through
 the existing workspace. A failed source opening leaves the current editor in
@@ -76,7 +76,25 @@ a new request for the currently selected view. Historical replies never apply
 arrangement updates again. **Retry** also retains the original target and
 revision; a changed view needs a new request.
 
-Saving and pinning are later stages. The proposed
-catalog is experimental and pending maintainer approval. Native input and
-accessibility acceptance is still being completed; this is not a declaration
-of platform parity.
+Use **Save mini app** above the regions to save an immutable artifact version.
+The artifact stores the arrangement and its linked list/document choices;
+tasks and document text stay in their ordinary documents. Wait for an opening
+document to settle before saving. A saved arrangement can be opened from the
+workspace's **Artifacts** list, with current source data and no model call.
+It does not automatically reopen at startup. Saving again after changing the
+arrangement or its choices creates another version; earlier versions remain.
+
+While saving, closing waits for the result. If saving fails, **Retry mini-app
+save** finishes that earlier save with the same choices. Save again afterward
+to include newer changes. A failed save never means the arrangement is saved;
+source document edits and completed tasks still follow their ordinary save
+paths. Closing after a failed save discards the transient arrangement.
+
+Saved apps open only in their original workspace. A missing linked list or
+document, an unsupported format, or unavailable artifact data produces a
+visible refusal and leaves the saved artifact unchanged. Opening a saved
+version preserves any already-open mini app with different unsaved choices.
+
+The proposed catalog is experimental and pending maintainer approval. Native
+input and accessibility acceptance is still being completed; this is not a
+declaration of platform parity.

@@ -55,6 +55,7 @@ pub(super) struct Chrome {
     pub search: Rect,
     tasks_switch: Rect,
     document_switch: Rect,
+    save: Rect,
     pub tree: el::El,
     pub frame: el::Frame,
     cache: el::TextCache,
@@ -103,6 +104,7 @@ impl Chrome {
             search: zero,
             tasks_switch: zero,
             document_switch: zero,
+            save: zero,
             tree,
             frame,
             cache,
@@ -144,6 +146,7 @@ impl Chrome {
             })
         };
         let mut tree = el::col("Task document surface");
+        tree = tree.child(header("Artifact actions").child(el::row("Save mini app").fill()));
         if narrow {
             tree = tree.child(header("Region switch").children([
                 el::row("Show tasks").fill(),
@@ -162,6 +165,7 @@ impl Chrome {
         self.search = frame.rect_of("Document search").unwrap_or(zero);
         self.tasks_switch = frame.rect_of("Show tasks").unwrap_or(zero);
         self.document_switch = frame.rect_of("Show document").unwrap_or(zero);
+        self.save = frame.rect_of("Save mini app").unwrap_or(zero);
         let regions = Regions {
             tasks: frame.rect_of("Task child").unwrap_or(zero),
             document: frame.rect_of("Document child").unwrap_or(zero),
@@ -406,6 +410,7 @@ impl MiniApp {
             ("document", self.chrome.document_switch),
             ("selector", self.chrome.selector),
             ("search", self.chrome.search),
+            ("save", self.chrome.save),
         ]
         .into_iter()
         .filter(|(_, rect)| rect.w > 0.0)
@@ -426,6 +431,7 @@ impl MiniApp {
             rev.uuid(document.as_uuid());
         }
         rev.str(self.chrome.input.raw_text());
+        rev.str(self.save_label());
         rev.u64(
             self.chrome
                 .menu
@@ -459,6 +465,12 @@ impl MiniApp {
         let moved = |rect: Rect| Rect::new(pane.x + rect.x, pane.y + rect.y, rect.w, rect.h);
         let mut nodes = Vec::new();
         for (part, rect, name, role) in [
+            (
+                "save",
+                self.chrome.save,
+                self.save_label().into(),
+                Role::Button,
+            ),
             (
                 "selector",
                 self.chrome.selector,
@@ -630,6 +642,8 @@ impl MiniApp {
             self.chrome.tasks_switch
         } else if target.part == ControlPart::new("document") {
             self.chrome.document_switch
+        } else if target.part == ControlPart::new("save") {
+            self.chrome.save
         } else {
             return false;
         };
@@ -658,6 +672,11 @@ impl MiniApp {
     }
 
     pub(super) fn chrome_down(&mut self, x: f32, y: f32) -> bool {
+        if self.chrome.save.w > 0.0 && self.chrome.save.contains(x, y) {
+            self.set_header("save");
+            self.request_artifact_save();
+            return true;
+        }
         if let Some(menu) = &self.chrome.menu {
             let choice = menu
                 .item_at(self.viewport, x, y)
@@ -804,12 +823,22 @@ impl MiniApp {
         pointer: (f32, f32),
     ) {
         let target_label = self.chrome.query_label(self.tasks.target());
+        let save_label = self.save_label();
         let chrome = &mut self.chrome;
         let regions = self.regions;
         chrome
             .frame
             .paint_host(&chrome.tree, scene, root, |node, scene, root| {
                 match node.name {
+                    "Save mini app" => {
+                        ActionButton::new(save_label, ActionStyle::Ghost, None).draw(
+                            scene,
+                            root,
+                            &mut chrome.engine,
+                            node.rect,
+                            node.rect.contains(pointer.0, pointer.1),
+                        );
+                    }
                     "Task selector" => Dropdown::new(&target_label)
                         .open(chrome.menu.is_some() && chrome.selector_menu)
                         .draw(
@@ -902,6 +931,7 @@ impl MiniApp {
                     "Task selector" => Some("selector"),
                     "Show tasks" => Some("tasks"),
                     "Show document" => Some("document"),
+                    "Save mini app" => Some("save"),
                     _ => None,
                 };
                 if focused.is_some() && focused == chrome.header_focus {

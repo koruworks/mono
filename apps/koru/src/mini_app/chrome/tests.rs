@@ -137,6 +137,8 @@ fn header_tab_returns_to_child_and_status_is_not_an_action() {
     assert_eq!(status.role, Role::Label);
     assert!(!app.chrome_accessibility_action(status.occurrence, Action::Click));
     app.chrome_key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
+    assert_eq!(app.chrome.header_focus, Some("save"));
+    app.chrome_key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
     assert!(!app.header_focused());
     assert!(app.document_focused());
 }

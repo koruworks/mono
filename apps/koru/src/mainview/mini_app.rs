@@ -125,6 +125,8 @@ impl MainView {
         }
         tab.home = Some(workspace);
         tab.label = koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle).into();
+        app.artifact.owner = Some(*profile);
+        app.artifact.title = tab.label.clone();
         tab.view = TabView::MiniApp(Box::new(app));
         self.tabs_mut().push(tab);
         self.slides_mut().clear();
@@ -140,9 +142,14 @@ impl MainView {
         let mut tab = Tab::welcome();
         tab.home = Some(workspace);
         tab.label = koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle).to_owned();
-        let Ok(app) = crate::mini_app::MiniApp::fixture(workspace, tab.id) else {
+        let Ok(mut app) = crate::mini_app::MiniApp::fixture(workspace, tab.id) else {
             return false;
         };
+        app.artifact.owner = self
+            .pane_context
+            .as_ref()
+            .map(|(_, profile, _, _)| *profile);
+        app.artifact.title = tab.label.clone();
         tab.view = TabView::MiniApp(Box::new(app));
         self.tabs_mut().push(tab);
         self.slides_mut().clear();

@@ -4783,6 +4783,7 @@ name = "koru"
 version = "0.0.3"
 dependencies = [
  "accesskit",
+ "blake3",
  "chrono",
  "emojis",
  "image",
@@ -4795,6 +4796,7 @@ dependencies = [
  "koru-api-client",
  "koru-app-shell",
  "koru-appearance-ui",
+ "koru-artifact-wire",
  "koru-artifacts-ui",
  "koru-autostart",
  "koru-canvas-flow",

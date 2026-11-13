@@ -21,6 +21,8 @@ pub const MAX_BYTES: usize = 4096;
 pub const FIXTURE: &str = include_str!("mini_apps/fixture.json");
 pub const REFINEMENT_FIXTURE: &str = include_str!("mini_apps/refinement.fixture.json");
 
+pub mod artifact;
+
 /// Serialize an already parsed value without allocating its unbounded JSON
 /// representation merely to discover that it exceeds this catalog's limit.
 pub fn bounded_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, &'static str> {

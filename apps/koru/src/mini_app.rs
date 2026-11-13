@@ -17,6 +17,7 @@ use winit::{
 
 use crate::{leaf::Leaf, panes::explore::rail::RailTarget, tasks_view::TasksView};
 
+pub(crate) mod artifact;
 mod chrome;
 mod declaration;
 mod refinement;
@@ -114,6 +115,7 @@ pub(crate) struct MiniApp {
     viewport: (f32, f32),
     swapped: bool,
     chrome: chrome::Chrome,
+    pub artifact: artifact::SaveState,
 }
 
 impl MiniApp {
@@ -137,6 +139,7 @@ impl MiniApp {
             viewport: (0.0, 0.0),
             swapped: false,
             chrome: chrome::Chrome::new(),
+            artifact: artifact::SaveState::default(),
         }
     }
 
