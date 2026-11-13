@@ -6,8 +6,8 @@ use koru_device::{DeviceSigningKey, ReplicationEndpointSecret, SignatureBytes};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
-    Arc, Mutex,
     atomic::{AtomicI64, AtomicU64, Ordering},
+    Arc, Mutex,
 };
 
 impl koru_account_core::workspace_lifecycle::WorkspaceCloudLifecycleRepository for Repository {
@@ -2455,7 +2455,6 @@ impl koru_account_core::cloud_selection::CloudSelectionRepository for Repository
                     request.authenticated_by,
                     request.profile_id,
                 )
-                || !state.cloud_eligible(request.profile_id, request.workspace_id)
             {
                 return Err(CloudSelectionError::PermissionDenied);
             }
