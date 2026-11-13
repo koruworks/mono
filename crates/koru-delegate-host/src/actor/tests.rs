@@ -497,6 +497,7 @@ fn bot_submission() -> koru_delegate_core::BotSubmission {
     };
     BotSubmission {
         provenance: BotProvenance {
+            routine: None,
             owner,
             bot: BotId::mint(),
             submission: BotRequestId::mint(),

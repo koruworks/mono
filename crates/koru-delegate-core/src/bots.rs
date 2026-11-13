@@ -6,10 +6,12 @@ mod boot;
 mod memory;
 mod native;
 mod refusal;
+mod routine;
 pub use boot::*;
 pub use memory::*;
 pub use native::*;
 pub use refusal::BotInputRefusal;
+pub use routine::*;
 
 use crate::{
     AgentTurnId, AttemptGeneration, BotId, BotRequestId, DeviceId, DocumentId, RunAttemptId, RunId,
@@ -44,6 +46,10 @@ pub struct BotProvenance {
     pub config_revision: u64,
     pub policy_revision: u64,
     pub continued_from: Option<RunId>,
+    /// Absent for the original Interactive payload. Retained identity alone
+    /// never authorizes a Routine claim or changes its current access policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine: Option<RoutineProvenance>,
 }
 impl BotProvenance {
     pub fn valid(&self) -> bool {
@@ -55,6 +61,13 @@ impl BotProvenance {
             && self.ai_attempt_id.is_none_or(v4)
             && self.assistant_message_id.is_none_or(v4)
             && self.ai_attempt_id.is_some() == self.assistant_message_id.is_some()
+            && self.routine.is_none_or(|routine| {
+                routine.valid()
+                    && self.ai_attempt_id.is_some()
+                    && self.continued_from.is_none()
+                    && v4(self.bot.as_uuid())
+                    && v4(self.submission.as_uuid())
+            })
     }
 }
 fn v4(id: Uuid) -> bool {
@@ -93,11 +106,32 @@ impl std::fmt::Debug for BotSubmission {
 }
 impl BotSubmission {
     pub fn valid(&self) -> bool {
+        self.valid_for_version(INTERACTIVE_BOT_SUBMISSION_VERSION)
+    }
+
+    /// Shape validation for an explicit envelope owner. Existing ordinary
+    /// admission keeps calling `valid`, which never admits Routine work.
+    pub fn valid_for_version(&self, version: u32) -> bool {
+        let cohort = match (version, &self.provenance.routine) {
+            (INTERACTIVE_BOT_SUBMISSION_VERSION, None) => {
+                matches!(self.request.origin, crate::RunOrigin::Manual)
+            }
+            (ROUTINE_BOT_SUBMISSION_VERSION, Some(routine)) => {
+                routine.matches_origin(&self.request.origin)
+                    && v4(self.request.run.as_uuid())
+                    && self
+                        .request
+                        .context
+                        .iter()
+                        .all(|pin| pin.workspace() == self.workspace)
+            }
+            _ => false,
+        };
         self.provenance.valid()
             && self.policy.valid()
             && self.workspace == self.policy.workspace
             && self.request.executing_device == self.provenance.owner.device
-            && matches!(self.request.origin, crate::RunOrigin::Manual)
+            && cohort
             && matches!(self.request.scope, crate::WorkspaceScope::BotFolder { .. })
             && self.request.grants.len() == 1
             && self.request.grants.contains(&self.workspace)

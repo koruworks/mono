@@ -118,6 +118,11 @@ pub use view::{RunExecution, RunView, TimelineItem, TimelineWindow};
 
 // The vocabulary this crate speaks but does not own, re-exported so a
 // dependant names one crate for a run and its parts.
+pub use bots::{
+    INTERACTIVE_BOT_SUBMISSION_VERSION, ROUTINE_BOT_SUBMISSION_VERSION, RoutineClaimIdentity,
+    RoutineDefinitionIdentity, RoutineDigest32, RoutineExecutionIds, RoutinePrepared,
+    RoutineProvenance, RoutineSlot,
+};
 pub use koru_device::DeviceId;
 pub use koru_events::EventId;
 pub use koru_session_protocol::{
