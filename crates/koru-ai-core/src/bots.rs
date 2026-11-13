@@ -233,6 +233,33 @@ pub trait BotAuthority: Send + Sync {
     ) -> Result<MemoryPageResult, MemoryAuthorityError> {
         Err(BotError::Unavailable.into())
     }
+
+    /// Encoded evidence for a trusted off-writer Memory edit job only. The job
+    /// must validate P3c history integrity before deriving a bounded recipe;
+    /// these bytes must never enter the AI writer or gateway.
+    fn memory_edit_history(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _binding: &BotMemoryBinding,
+        _version: koru_delegate_core::DocumentVersionId,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<koru_store_core::ports::BoundedDocumentVersion, MemoryAuthorityError> {
+        Err(BotError::Unavailable.into())
+    }
+
+    /// Read-only exact creation-origin proof, never creation or latest-state
+    /// fallback. Only an unchanged original seed can supply this edit base.
+    fn memory_original_seed_history(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotMemoryIdentity,
+        _binding: &BotMemoryBinding,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<koru_store_core::ports::BoundedDocumentVersion, MemoryAuthorityError> {
+        Err(BotError::Unavailable.into())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

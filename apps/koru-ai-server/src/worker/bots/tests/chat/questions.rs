@@ -357,6 +357,8 @@ fn answer_context_at(f: &Fixture, sequence: u64) -> CommandContext {
     let submission = state.submission.as_ref().unwrap();
     let p = &submission.provenance;
     CommandContext {
+        #[cfg(test)]
+        memory_for_fixture: None,
         request: f.context.request.clone(),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: old.authority.clone(),

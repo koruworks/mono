@@ -11,6 +11,31 @@ fn next_token(creation: &BotMemoryCreation, now: i64) -> Result<i64, BotError> {
     ))
 }
 
+fn check_ensure_receipt(
+    conn: &Connection,
+    owner: BotOwner,
+    request: BotRequestId,
+    expected: u64,
+    seed: &BotMemorySeed,
+    receipt: &BotLibraryReceiptV1,
+    creation: &BotMemoryCreation,
+) -> Result<(), BotError> {
+    validate_pointer(receipt, creation)?;
+    if request == creation.identity.creation_request
+        && (seed.title != creation.identity.seed_title || seed.hash != creation.identity.seed_hash)
+    {
+        return Err(BotError::Conflict);
+    }
+    let original_expected: u64 = conn.query_row(
+        "SELECT expected_revision FROM bot_command_receipts WHERE user_scope_id=?1 AND request_id=?2",
+        params![owner.user_scope.to_storage(), request.to_storage()], |row| row.get(0),
+    ).map_err(bad)?;
+    if expected != original_expected {
+        return Err(BotError::Conflict);
+    }
+    Ok(())
+}
+
 pub(super) fn creation_on(
     conn: &Connection,
     owner: BotOwner,
@@ -157,6 +182,46 @@ fn original_stage(
 }
 
 impl Repository {
+    /// Prove an already retained exact Ensure body/alias without creating or
+    /// reserving anything. Used before OriginalSeed history preparation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bot_memory_creation_receipt(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+        expected: u64,
+        seed: &BotMemorySeed,
+        fingerprint: &str,
+    ) -> Result<Option<BotMemoryCreation>, BotError> {
+        validate_library_request(owner, bot, request, expected)?;
+        admission::fingerprint(fingerprint)?;
+        let g = visible(&self.connection, owner, bot)?;
+        let Some(receipt) = receipt_on(
+            &self.connection,
+            owner,
+            bot,
+            request,
+            fingerprint,
+            "ensure_memory",
+        )?
+        else {
+            return Ok(None);
+        };
+        let creation =
+            creation_on(&self.connection, owner, bot, g.home)?.ok_or(BotError::Storage)?;
+        check_ensure_receipt(
+            &self.connection,
+            owner,
+            request,
+            expected,
+            seed,
+            &receipt,
+            &creation,
+        )?;
+        Ok(Some(creation))
+    }
+
     /// First creation allocates identity inside this transaction. Later caller
     /// requests reserve aliases in the same shared namespace, never new candidates.
     #[allow(clippy::too_many_arguments)]
@@ -182,20 +247,7 @@ impl Repository {
         bound_memory_on(&tx, owner, bot, g.home)?;
         if let Some(receipt) = receipt {
             let creation = existing.ok_or(BotError::Storage)?;
-            validate_pointer(&receipt, &creation)?;
-            // The original request's immutable body can be checked directly.
-            // Alias fingerprints are computed by the trusted preparer from its
-            // request body; an alias is intentionally only a resolution pointer.
-            if request == creation.identity.creation_request
-                && (seed.title != creation.identity.seed_title
-                    || seed.hash != creation.identity.seed_hash)
-            {
-                return Err(BotError::Conflict);
-            }
-            let original_expected: u64 = tx.query_row("SELECT expected_revision FROM bot_command_receipts WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage()],|r|r.get(0)).map_err(bad)?;
-            if expected != original_expected {
-                return Err(BotError::Conflict);
-            }
+            check_ensure_receipt(&tx, owner, request, expected, seed, &receipt, &creation)?;
             return Ok(creation);
         }
         let g = settled(&tx, owner, bot)?;

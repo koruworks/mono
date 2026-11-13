@@ -421,6 +421,8 @@ impl WorkerState {
             authorize(&result.context, AiScope::Chat)?;
             let old = result.context.prepared.as_ref().ok_or_else(not_found)?;
             let context = CommandContext {
+                #[cfg(test)]
+                memory_for_fixture: None,
                 request: result.context.request.clone(),
                 prepared: Some(Arc::new(PreparedBotCommand {
                     authority: checked.authority?,

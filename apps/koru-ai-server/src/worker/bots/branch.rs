@@ -274,6 +274,8 @@ impl WorkerState {
             .map(|chat| (bot.id, chat, bot.revision, bot.policy_revision))
             .collect();
         Ok(CommandContext {
+            #[cfg(test)]
+            memory_for_fixture: None,
             request: pending.context.request.clone(),
             prepared: Some(Arc::new(PreparedBotCommand {
                 authority,

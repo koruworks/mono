@@ -20,6 +20,11 @@ pub use store_context::StoreContextAdapter;
 pub use store_tools::{
     NativeStoreAuthority, StoreToolAdapter, native_document_title, native_store_backend,
 };
+pub use worker::bots::memory::{
+    MemoryBaseEvidence, MemoryBaseSelection, MemoryEditBaseRequest, MemoryWriteAuthorityEvidence,
+    MemoryWriteAuthorityRequest, MemoryWriteSubjectEvidence, RunMemoryEnsureRequest,
+    RunMemoryEnsureResult, RunMemoryWriteSubjectRequest, memory_write_fingerprint,
+};
 pub use worker::bots::memory::{RunMemoryReadRequest, RunMemoryReadResult};
 pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
 pub use worker::native_recovery::{
