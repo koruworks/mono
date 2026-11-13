@@ -6,6 +6,8 @@ use koru_ai_core::bots::{BotMemoryIdentity, BotPage};
 use koru_core::NodeId;
 use koru_delegate_core::DocumentVersionId;
 
+pub(super) mod detail;
+pub(super) mod history;
 pub(super) mod index;
 mod observe;
 pub(super) mod seed;
@@ -26,6 +28,7 @@ pub(super) enum MemoryBudget {
     Depth,
     Text,
     Index,
+    HistoryMetadata,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +38,9 @@ pub(super) enum MemoryCodecError {
     UnsupportedSchema,
     TooLarge(MemoryBudget),
     InvalidCapture,
+    UnsupportedDetail,
+    InvalidDetailPosition,
+    DetailTooLarge,
 }
 type Result<T> = std::result::Result<T, MemoryCodecError>;
 

@@ -42,6 +42,9 @@ use crate::ids::DocumentId;
 use crate::model::Timestamp;
 use crate::ports::{Checkpoint, UpdateBatch, UpdateOrigin};
 
+mod history;
+pub use history::validate_history_evidence;
+
 /// A `LoroDoc` the store is holding open.
 ///
 /// Opaque by design: the store validates that an update applies and records

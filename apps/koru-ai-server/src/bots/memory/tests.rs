@@ -27,7 +27,7 @@ fn identity() -> BotMemoryIdentity {
     value
 }
 
-fn fixture() -> (WorkspaceDoc, BotPage, DocumentVersionId, NodeId, NodeId) {
+pub(super) fn fixture() -> (WorkspaceDoc, BotPage, DocumentVersionId, NodeId, NodeId) {
     let identity = identity();
     let page = BotPage {
         workspace: identity.workspace,
@@ -48,7 +48,7 @@ fn source(doc: &WorkspaceDoc, page: BotPage, version: DocumentVersionId) -> Memo
     observe(page, version, &doc.export_snapshot().unwrap()).unwrap()
 }
 
-fn add_fact(doc: &mut WorkspaceDoc, root: NodeId, text: &str) -> NodeId {
+pub(super) fn add_fact(doc: &mut WorkspaceDoc, root: NodeId, text: &str) -> NodeId {
     let mut node = Node::paragraph(text).unwrap();
     node.meta.heading = Some(Heading::H2);
     doc.insert(Parent::Node(root), node).unwrap()

@@ -1024,6 +1024,33 @@ pub struct DocumentVersionRevision {
 
 pub const MAX_HISTORY_REVISION_BYTES: u32 = 65_536;
 
+pub const MAX_BOUNDED_HISTORY_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_BOUNDED_HISTORY_POSITION_BYTES: usize = 64 * 1024;
+pub const MAX_CREATION_SCOPE_BYTES: usize = 256;
+pub const MAX_CREATION_KEY_BYTES: usize = 128;
+pub const MAX_CREATION_HASH_BYTES: usize = 128;
+
+/// Size/type-checked encoded history, not integrity proof or read authority.
+/// Validate checksum, imported position and current authority before consuming.
+#[derive(Clone, PartialEq, Eq)]
+pub struct BoundedDocumentVersion {
+    pub id: DocumentVersionId,
+    pub document: DocumentId,
+    pub snapshot: Vec<u8>,
+    pub version_vector: Vec<u8>,
+    pub frontiers: Vec<u8>,
+    pub checksum: String,
+    pub captured_at: Timestamp,
+}
+impl std::fmt::Debug for BoundedDocumentVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundedDocumentVersion")
+            .field("id", &self.id)
+            .field("document", &self.document)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A user-visible marker referring to immutable state.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HistoryEntry {
@@ -1156,6 +1183,13 @@ pub trait WorkspaceRepo {
             "creation origin is not implemented by this repository",
         ))
     }
+    /// Bounded encoded origin evidence. Unsupported is never proof of absence.
+    fn bounded_creation_origin(&self, _document: DocumentId) -> Result<CreationOriginLookup> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "bounded creation origin is not implemented by this repository",
+        ))
+    }
     /// Drop a document's rows entirely. Separate from unregistering it in the
     /// manifest, and always the later of the two.
     fn drop_document(&mut self, id: DocumentId) -> Result<()>;
@@ -1253,6 +1287,16 @@ pub trait WorkspaceRepo {
         Err(crate::errors::Error::new(
             crate::errors::Code::StorageFailed,
             "history is not implemented by this repository",
+        ))
+    }
+    /// Exact keyed encoded evidence, bounded before transfer; no current-body fallback.
+    fn bounded_document_version(
+        &self,
+        _id: DocumentVersionId,
+    ) -> Result<Option<BoundedDocumentVersion>> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "bounded history is not implemented by this repository",
         ))
     }
     /// Exact history metadata only. No fallback to a snapshot read; a missing

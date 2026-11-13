@@ -6472,14 +6472,9 @@ fn semantic_node_json(node: &koru_history::SemanticNode) -> Value {
     )
 }
 
-fn node_json(
-    node: &Node,
-    parent: Parent,
-    ordinal: usize,
-    depth: usize,
-    runs: &[koru_core::TextRun],
-) -> Value {
-    let content = match &node.content {
+/// Shared typed content projection. Does not resolve references or load blobs.
+pub fn project_node_content(content: &Content, runs: &[koru_core::TextRun]) -> Value {
+    match content {
         Content::Text { text, attrs } => json!({
             "type":"text",
             "text":text,
@@ -6501,7 +6496,17 @@ fn node_json(
             "attributes":attrs.iter().map(attr_json).collect::<Vec<_>>(),
         }),
         Content::Embed { target } => json!({"type":"embed", "target":ref_json(target)}),
-    };
+    }
+}
+
+fn node_json(
+    node: &Node,
+    parent: Parent,
+    ordinal: usize,
+    depth: usize,
+    runs: &[koru_core::TextRun],
+) -> Value {
+    let content = project_node_content(&node.content, runs);
     let mut value = json!({
         "node_id":node.id.to_storage(),
         "parent_id":match parent { Parent::Root => None, Parent::Node(p) => Some(p.to_storage()) },
@@ -14896,3 +14901,6 @@ mod tests {
 
 /// Owner-scoped semantic page operations for embedded native clients.
 pub mod native;
+
+#[cfg(test)]
+mod content_projection_tests;

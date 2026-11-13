@@ -374,6 +374,12 @@ When on (`crates/koru-mcp-server/src/tool_pages.rs`):
 
 ### Results
 
+Internal bounded consumers reuse `project_node_content` for the same typed
+text/attribute/run, blob-metadata and embed-target JSON that ordinary node reads
+emit. This helper performs no target fetch and changes no tool or result shape.
+An internal strict reader may refuse unsupported detail; ordinary MCP readers
+retain their existing compatibility behavior.
+
 What each tool answers, as the output schemas published until ADR-433 said
 and as a test held them against real values. A failure is
 `{ "code", "message", "details"? }` under `isError`.

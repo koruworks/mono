@@ -1,24 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
-fn state(
-    snapshot: &[u8],
-    vv: &[u8],
-    frontiers: &[u8],
-) -> Result<(loro::VersionVector, loro::Frontiers)> {
-    let invalid = || Error::new(Code::CorruptState, "invalid immutable history evidence");
-    let version = loro::VersionVector::decode(vv).map_err(|_| invalid())?;
-    let frontier = loro::Frontiers::decode(frontiers).map_err(|_| invalid())?;
-    let doc = loro::LoroDoc::new();
-    let imported = doc.import(snapshot).map_err(|_| invalid())?;
-    if imported.pending.is_some() || doc.oplog_vv() != version || doc.oplog_frontiers() != frontier
-    {
-        return Err(invalid());
-    }
-    Ok((version, frontier))
-}
+use koru_store_core::lifecycle::validate_history_evidence;
+
 fn validate_capture(capture: &HistoryCapture<'_>) -> Result<()> {
-    state(capture.snapshot, capture.version_vector, capture.frontiers)?;
+    validate_history_evidence(
+        capture.snapshot,
+        capture.version_vector,
+        capture.frontiers,
+        capture.checksum,
+    )?;
     Ok(())
 }
 fn validate_once(
@@ -26,22 +17,26 @@ fn validate_once(
     entry: &HistoryEntry,
     version: &DocumentVersion,
 ) -> Result<()> {
-    if checksum(&version.snapshot) != version.checksum {
-        return Err(Error::new(Code::CorruptState, "history checksum differs"));
-    }
-    let actual = state(
+    let actual = validate_history_evidence(
         &version.snapshot,
         &version.version_vector,
         &version.frontiers,
+        &version.checksum,
     )?;
-    let expected = state(capture.snapshot, capture.version_vector, capture.frontiers)?;
+    let expected = validate_history_evidence(
+        capture.snapshot,
+        capture.version_vector,
+        capture.frontiers,
+        capture.checksum,
+    )?;
     if entry.document != capture.document
         || version.document != capture.document
         || entry.version != version.id
         || entry.reason != capture.reason
         || entry.pinned != capture.reason.pinned()
         || entry.boundary.as_deref() != capture.boundary
-        || actual != expected
+        || actual.oplog_vv() != expected.oplog_vv()
+        || actual.oplog_frontiers() != expected.oplog_frontiers()
     {
         return Err(Error::new(
             Code::IdempotencyConflict,

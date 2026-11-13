@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 mod read_validation;
 pub use read_validation::{DocumentReadIdentity, DocumentReadValidationError, NodeReadEvidence};
+pub use read_validation::{NodeContentRead, NodeContentReadError};
 
 use crate::change::ChangeTracker;
 
@@ -4743,30 +4744,13 @@ fn read_attr_value(record: &LoroMap, role: &str) -> Option<AttrValue> {
         "text" => AttrValue::Text(raw),
         "ref" => {
             let node = NodeId::parse(&raw)?;
-            let home = record.get(K_ATTR_HOME).and_then(as_string).and_then(|h| {
-                let (kind, id) = h.split_once(':')?;
-                match kind {
-                    "profile" => ProfileId::parse(id).map(DocRef::Profile),
-                    "workspace" => WorkspaceId::parse(id).map(DocRef::Workspace),
-                    "document" => DocumentId::parse(id).map(DocRef::Document),
-                    "document-at" => {
-                        let mut ids = id.split('/');
-                        let profile = ProfileId::parse(ids.next()?)?;
-                        let workspace = WorkspaceId::parse(ids.next()?)?;
-                        let document = DocumentId::parse(ids.next()?)?;
-                        ids.next().is_none().then_some(DocRef::DocumentAt {
-                            profile,
-                            workspace,
-                            document,
-                        })
-                    }
-                    // An unknown prefix drops the *cache*, not the
-                    // reference: `home` is a hint, so an older build reading
-                    // a newer home still resolves through the index rather
-                    // than reporting a dangling pill.
-                    _ => None,
-                }
-            });
+            // Ordinary readers may discard an unknown cache hint; strict
+            // projections validate the same decoder's result before this call.
+            let home = record
+                .get(K_ATTR_HOME)
+                .and_then(as_string)
+                .as_deref()
+                .and_then(read_ref_home);
             // **Which roles mean "a document"** — `document`, and the
             // delegated run's `koru.run` (`attributes::DOCUMENT_REFERENCE_ROLES`).
             // The record is byte-identical either way; this decides only what
@@ -4808,6 +4792,27 @@ fn read_attr_value(record: &LoroMap, role: &str) -> Option<AttrValue> {
         }
         _ => return None,
     })
+}
+
+fn read_ref_home(raw: &str) -> Option<DocRef> {
+    let (kind, id) = raw.split_once(':')?;
+    match kind {
+        "profile" => ProfileId::parse(id).map(DocRef::Profile),
+        "workspace" => WorkspaceId::parse(id).map(DocRef::Workspace),
+        "document" => DocumentId::parse(id).map(DocRef::Document),
+        "document-at" => {
+            let mut ids = id.split('/');
+            let profile = ProfileId::parse(ids.next()?)?;
+            let workspace = WorkspaceId::parse(ids.next()?)?;
+            let document = DocumentId::parse(ids.next()?)?;
+            ids.next().is_none().then_some(DocRef::DocumentAt {
+                profile,
+                workspace,
+                document,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Write a string key, or remove it — **guarded**, so clearing a key that is

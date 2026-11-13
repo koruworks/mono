@@ -11,10 +11,18 @@ pub(in crate::bots) fn observe(
     snapshot: &[u8],
 ) -> Result<MemoryIndexSource> {
     let doc = bounded_import(snapshot)?;
+    observe_document(page, version, &doc)
+}
+
+pub(in crate::bots) fn observe_document(
+    page: BotPage,
+    version: DocumentVersionId,
+    doc: &WorkspaceDoc,
+) -> Result<MemoryIndexSource> {
     if doc.effective_schema_version() > SCHEMA_VERSION {
         return Err(MemoryCodecError::UnsupportedSchema);
     }
-    observe_doc(page, version, &doc)
+    observe_doc(page, version, doc)
 }
 
 fn evidence_error(error: DocumentReadValidationError) -> MemoryCodecError {

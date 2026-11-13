@@ -4,6 +4,9 @@
 use super::*;
 use loro::{Container, TextDelta};
 
+mod content;
+pub use content::{NodeContentRead, NodeContentReadError};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentReadValidationError {
     NodeLimit { limit: usize },
