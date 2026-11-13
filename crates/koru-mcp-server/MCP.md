@@ -2024,3 +2024,34 @@ ancestor Trash check. A stale SQLite listing projection is never visibility
 authority; missing projection data refuses availability. Current authorization
 must be checked again under the same Store lock as the effect. No workspace-wide
 listing is needed for this targeted validation.
+
+### Internal Memory edit preparation
+
+Memory writes are not exposed as tools yet. A separate trusted Rust constructor,
+`LocalBackend::prepare_memory_write`, accepts a bounded flat recipe produced
+off the AI writer from verified exact history, plus an owner-validated allocation
+view. It never accepts provider-supplied operations or broadens the ordinary
+native catalog. Current binding/authority and an effect lease remain required
+from the caller; the constructor alone grants neither.
+
+The generated edit creates one H2 fact with a plain detail paragraph and a
+fixed `Source Run` document pill. Correction preserves the fact ID and replaces
+its entire detail/source subtree. Forget moves the complete fact into ordinary
+Trash. This private path calls core Trash; generic MCP `remove` retains its
+existing semantics. New summary/detail each reject line breaks instead of
+flattening them; use the ordinary editor for multiline content. Generated node
+IDs must be absent from the complete current document, including hidden Trash.
+
+Recipe and operation bytes are counted before full serialization. The Memory
+branch checks its 16MiB encoded current-snapshot cap before import (the existing
+snapshot transport still returns a Vec). It preserves the allocated exact VV
+bytes while hashing semantic VV entries in a separate Memory domain. Its fixed
+internal request title is `Memory`, independent of page renames; actual Store
+evidence uses the current page title. The single source Run reference is supplied
+by the trusted owner, not looked up through generic document grants. Profile and
+conditional revision checks still apply. Ordinary native Result behavior and
+hosted `actor/1` attribution remain unchanged.
+
+This is the semantic foundation only: public tools, the AI write-authority
+phases, lazy first-use creation and the complete native receipt journey remain
+gated. Pure text validation does not claim a gateway pre-allocation path exists.

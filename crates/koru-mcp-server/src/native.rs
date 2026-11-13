@@ -5,6 +5,8 @@
 use super::*;
 use koru_store_core::{CreationOrigin, CreationOriginLookup};
 
+pub mod memory;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeWriteKind {
     Created,
@@ -66,6 +68,7 @@ pub struct PreparedNativeWrite {
 enum Request {
     Create(CreateDocumentRequest),
     Edit(EditDocumentRequest),
+    Memory(memory::PreparedMemory),
 }
 impl PreparedNativeWrite {
     pub fn description(&self) -> &NativeWriteDescription {
@@ -419,7 +422,7 @@ impl LocalBackend {
                 )
                 .map_err(NativeWriteError::Unconfirmed)
             }
-            Request::Edit(request) => {
+            Request::Edit(_) | Request::Memory(_) => {
                 let id = prepared.description.document.ok_or_else(conflict)?;
                 if identity.candidate != id {
                     return Err(conflict().into());
@@ -429,7 +432,11 @@ impl LocalBackend {
                 if title.trim().is_empty() {
                     return Err(ToolError::invalid("the page has no bounded result title").into());
                 }
-                let mut doc = WorkspaceDoc::from_snapshot(&store.snapshot(ws, id)?)?;
+                let snapshot = store.snapshot(ws, id)?;
+                if matches!(&prepared.request, Request::Memory(_)) {
+                    memory::validate_snapshot(&snapshot)?;
+                }
+                let mut doc = WorkspaceDoc::from_snapshot(&snapshot)?;
                 let expected = prepared
                     .description
                     .expected_revision
@@ -438,11 +445,17 @@ impl LocalBackend {
                 if doc.version() != strict_version(expected)? {
                     return Err(conflict().into());
                 }
-                let mut ops = request.operations.clone();
-                local_ids::resolve_edit(&mut ops)?;
-                let context = self.native_context(ws)?;
                 let before = doc.version();
-                let _ = apply_ops(&mut doc, &ops, &context)?;
+                match &prepared.request {
+                    Request::Edit(request) => {
+                        let mut ops = request.operations.clone();
+                        local_ids::resolve_edit(&mut ops)?;
+                        let context = self.native_context(ws)?;
+                        let _ = apply_ops(&mut doc, &ops, &context)?;
+                    }
+                    Request::Memory(request) => request.apply(self, ws, &mut doc)?,
+                    Request::Create(_) => unreachable!(),
+                }
                 if doc.version() == before {
                     return Err(NativeWriteError::Refused(ToolError {
                         code: "native_no_change".into(),
