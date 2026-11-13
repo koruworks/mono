@@ -773,19 +773,28 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
     let mut replay_count = 0;
     let mut scoped_drain = false;
     let mut startup_drain = false;
-    let (final_command, final_reply) = loop {
+    loop {
         let (command, reply) = next(&calls);
         match command {
             D::Hello {
                 scan: BotBootScan::Probe {},
                 ..
             } => hello(reply, boot, vec![], None),
-            D::Hello { .. } => hello(
+            D::Hello {
+                scan: BotBootScan::Start {},
+                ..
+            } => hello(
                 reply,
                 boot,
                 vec![entry(&bot, 1, BotBootAdmission::Missing {})],
-                None,
+                Some(BotBootCursor {
+                    boot,
+                    owner: delegate_owner(&bot),
+                    after: 1,
+                    through: 2,
+                }),
             ),
+            D::Hello { .. } => hello(reply, boot, vec![], None),
             D::PendingNativeEffects { bot: scope, .. } => {
                 if scope == Some(bot.id) {
                     scoped_drain = true
@@ -808,14 +817,29 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
                 } else {
                     BotBootState::Ready
                 };
-                if replay_count > 1 && scoped_drain && startup_drain {
-                    // Keep the admin lane on this known call while the read
-                    // below proves that replay did not complete the receipt.
-                    break (command, reply);
-                }
                 reply.send(Ok(synchronized(command, state))).unwrap();
+                if replay_count > 1 && scoped_drain && startup_drain {
+                    break;
+                }
             }
             _ => unreachable!(),
+        }
+    }
+    // The next page can be scheduled only after the Ready callback clears
+    // boot.busy. Hold that known job while checking the durable pause receipt.
+    let final_reply = loop {
+        let (command, reply) = next(&calls);
+        match command {
+            D::Hello { .. } => break reply,
+            D::PendingNativeEffects { .. } => reply
+                .send(Ok(BotReply::NativePendingEffects {
+                    page: koru_delegate_core::NativePendingEffects {
+                        targets: vec![],
+                        next: None,
+                    },
+                }))
+                .unwrap(),
+            other => panic!("unexpected after Ready: {other:?}"),
         }
     };
     let response = worker
@@ -835,9 +859,7 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
     worker.shutdown();
     // Release the known in-flight call only after shutdown prevents another
     // scripted admin call from starting without a test owner to answer it.
-    final_reply
-        .send(Ok(synchronized(final_command, BotBootState::Ready)))
-        .unwrap();
+    hello(final_reply, boot, vec![], None);
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
