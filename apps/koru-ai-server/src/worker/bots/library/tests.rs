@@ -70,12 +70,42 @@ fn shared_chat_preserves_task_pin_replace_semantics_with_knowledge() {
     let explicit = page(&bot);
     let bot = set(&mut repo, &bot, vec![knowledge.clone()]);
     let turn = super::super::tests::turn(bot.main_chat, Uuid::new_v4(), 1);
-    repo.begin_turn(&turn).unwrap();
+    let sources = LibrarySources::read(&repo, &bot, vec![retained.clone()]).unwrap();
+    let task = BotTask {
+        text: turn.user_message.markdown.clone(),
+        documents: vec![retained.clone()],
+    };
+    let mut intent = super::super::admission::make_library_intent(
+        &bot,
+        BotRequestId::mint(),
+        bot.main_chat,
+        bot.home_workspace,
+        &task,
+        None,
+        &pins(&sources),
+        &sources,
+        ProfileId::new(),
+    )
+    .unwrap();
+    intent.submission.provenance.ai_attempt_id = Some(turn.attempt.id.as_uuid());
+    intent.submission.provenance.assistant_message_id = Some(turn.assistant_message.id.as_uuid());
+    repo.prepare_bot_chat_with_library(
+        &BotChatPreparation::Turn(turn.clone()),
+        &intent,
+        &sources.capture(&intent).unwrap(),
+        HASH,
+        bot.revision,
+        turn.attempt.queued_at,
+    )
+    .unwrap();
     repo.commit_context(&ContextCommit {
         attempt_id: turn.attempt.id,
         started_at: turn.attempt.queued_at,
         completed_at: turn.attempt.queued_at,
-        measurements: RequestMeasurements::default(),
+        measurements: RequestMeasurements {
+            context_document_count: 1,
+            ..Default::default()
+        },
         pinned_documents: vec![PinnedDocument {
             chat_id: bot.main_chat,
             document_id: retained.document,
@@ -84,7 +114,16 @@ fn shared_chat_preserves_task_pin_replace_semantics_with_knowledge() {
             first_used_at: turn.attempt.queued_at,
             last_used_at: turn.attempt.queued_at,
         }],
-        document_refs: vec![],
+        document_refs: vec![koru_ai_core::MessageDocumentRef {
+            message_id: turn.user_message.id,
+            document_id: retained.document,
+            relation: koru_ai_core::DocumentRelation::Context,
+            display_title: "retained".into(),
+            source_revision: Some(koru_ai_core::StoreRevision(
+                loro::VersionVector::default().encode(),
+            )),
+            used_at: turn.attempt.queued_at,
+        }],
         message_block_refs: vec![],
         replace_pinned_documents: true,
     })
@@ -450,6 +489,18 @@ struct ExactHistory {
     pins: Vec<d::RunContextItem>,
 }
 impl BotAuthority for ExactHistory {
+    fn pinned_document_revision(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        reader: ProfileId,
+        document: DocumentId,
+        version: d::DocumentVersionId,
+    ) -> Result<koru_ai_core::StoreRevision, BotError> {
+        assert!(self.pins.iter().any(|pin| matches!(pin,d::RunContextItem::Document{workspace:w,document:id,version:v} if *w==workspace && *id==document && *v==version)));
+        self.inner
+            .pinned_document_revision(owner, workspace, reader, document, version)
+    }
     fn owner(&self) -> Result<BotOwner, BotError> {
         self.inner.owner()
     }
@@ -472,13 +523,42 @@ impl BotAuthority for ExactHistory {
     }
 }
 struct Submissions(SyncSender<d::BotSubmission>);
+struct TaskContext(DocumentId);
+impl StoreContextPort for TaskContext {
+    fn resolve_document(
+        &self,
+        document: DocumentId,
+        _reader: Option<ProfileId>,
+    ) -> Result<koru_ai_core::DocumentContext, AiError> {
+        panic!(
+            "Bot task {document:?} must use exact history, not current body {:?}",
+            self.0
+        );
+    }
+    fn create_document(
+        &self,
+        _: Uuid,
+        _: &koru_ai_core::DocumentDestination,
+        _: &str,
+    ) -> Result<DocumentId, AiError> {
+        unreachable!("admission fixture never creates documents")
+    }
+}
 impl koru_delegate_api::bots::BotDelegatePort for Submissions {
     fn execute(
         &self,
         command: koru_delegate_api::bots::BotCommand,
     ) -> Result<koru_delegate_api::bots::BotReply, koru_delegate_api::Failure> {
-        if let koru_delegate_api::bots::BotCommand::Submit { submission } = command {
-            let _ = self.0.try_send(submission);
+        match command {
+            koru_delegate_api::bots::BotCommand::Reconcile { .. } => {
+                // This fixture starts with an empty delegate journal. Admission
+                // must observe Missing before sending its durable submission.
+                return Ok(koru_delegate_api::bots::BotReply::Missing);
+            }
+            koru_delegate_api::bots::BotCommand::Submit { submission } => {
+                let _ = self.0.try_send(submission);
+            }
+            _ => {}
         }
         Err(koru_delegate_api::Failure::new(
             "fixture_unavailable",
@@ -508,7 +588,7 @@ fn api_and_shared_chat_submit_identical_knowledge_versions() {
         let mut repo = Repository::in_memory().unwrap();
         repo.save_bot(
             &original,
-            ProfileId::new(),
+            inner.workspace(original.home_workspace).unwrap(),
             BotRequestId::mint(),
             HASH,
             None,
@@ -526,6 +606,7 @@ fn api_and_shared_chat_submit_identical_knowledge_versions() {
             ProviderRegistry::default(),
         )
         .with_bot_authority(authority)
+        .with_store_context(Arc::new(TaskContext(task_page.document)))
         .with_bot_delegate(Arc::new(Submissions(sent)));
         config.test_repository = Some(repo);
         config.test_bot_runtime_ready = true;
@@ -570,7 +651,9 @@ fn api_and_shared_chat_submit_identical_knowledge_versions() {
                 )
                 .unwrap();
         }
-        let submission = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        let submission = received
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|error| panic!("shared_chat={shared_chat}: {error}"));
         assert_eq!(submission.request.context, exact);
         assert!(submission.policy.selected_pages.is_empty());
         assert_eq!(submission.provenance.ai_attempt_id.is_some(), shared_chat);

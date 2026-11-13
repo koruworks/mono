@@ -60,9 +60,9 @@ use koru_store_core::ids::{ClientId, DocumentId, DocumentVersionId, HistoryEntry
 use koru_store_core::model::{Blob, BlobHash, DocumentKind, Timestamp};
 use koru_store_core::ports::{
     Checkpoint, CheckpointHeader, CreationOrigin, CreationOriginLookup, DocumentState,
-    DocumentVersion, HistoryCapture, HistoryEntry, HistoryReason, JournalSince,
-    ProvenSeededDocument, SeedDocument, SeededDocument, StoredUpdate, UpdateBatch, UpdateOrigin,
-    WorkspaceRepo,
+    DocumentVersion, DocumentVersionRevision, HistoryCapture, HistoryEntry, HistoryReason,
+    JournalSince, ProvenSeededDocument, SeedDocument, SeededDocument, StoredUpdate, UpdateBatch,
+    UpdateOrigin, WorkspaceRepo,
 };
 use koru_store_core::version::WORKSPACE_SCHEMA_VERSION;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -936,6 +936,61 @@ impl WorkspaceRepo for SqliteWorkspace {
             )),
             other => Ok(other),
         }
+    }
+
+    fn document_version_revision(
+        &self,
+        id: DocumentVersionId,
+        max_bytes: u32,
+    ) -> Result<Option<DocumentVersionRevision>> {
+        if max_bytes == 0 || max_bytes > koru_store_core::ports::MAX_HISTORY_REVISION_BYTES {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "invalid history revision budget",
+            ));
+        }
+        // CASE bounds the returned blob before rusqlite allocates it. Snapshot
+        // bytes are deliberately absent from this metadata projection.
+        let row: Option<(String, String, i64, Option<Vec<u8>>)> = self
+            .connection
+            .query_row(
+                "SELECT id,document_id,length(version_vector),
+                    CASE WHEN length(version_vector)<=?2 THEN version_vector ELSE NULL END
+                 FROM document_versions WHERE id=?1",
+                params![id.to_storage(), max_bytes],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(|error| match error {
+                rusqlite::Error::InvalidColumnType(..)
+                | rusqlite::Error::FromSqlConversionFailure(..)
+                | rusqlite::Error::IntegralValueOutOfRange(..) => {
+                    Error::new(Code::CorruptState, "invalid history revision metadata type")
+                }
+                other => sql_failed(other),
+            })?;
+        let Some((version, document, length, bytes)) = row else {
+            return Ok(None);
+        };
+        if length > i64::from(max_bytes) {
+            return Err(Error::new(
+                Code::PayloadTooLarge,
+                "history revision exceeds the context budget",
+            ));
+        }
+        let corrupt = || Error::new(Code::CorruptState, "invalid history revision metadata");
+        let version = DocumentVersionId::parse(&version).ok_or_else(corrupt)?;
+        let document = DocumentId::parse(&document).ok_or_else(corrupt)?;
+        let bytes = bytes.ok_or_else(corrupt)?;
+        if version != id || usize::try_from(length).ok() != Some(bytes.len()) {
+            return Err(corrupt());
+        }
+        loro::VersionVector::decode(&bytes).map_err(|_| corrupt())?;
+        Ok(Some(DocumentVersionRevision {
+            id: version,
+            document,
+            version_vector: bytes,
+        }))
     }
 
     // ----------------------------------------------------------------- blobs

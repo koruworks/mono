@@ -2,6 +2,7 @@
 use super::*;
 use koru_ai_core::bots::{BotError, BotSubmissionIntent};
 use koru_ai_core::{AgentAnswer, AgentAnswerValue, AgentQuestion, AnswersRecord, QuestionsRecord};
+mod context;
 
 fn fresh() -> (Repository, Bot, PendingTurn, BotSubmissionIntent) {
     let mut repo = Repository::in_memory().unwrap();

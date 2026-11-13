@@ -1014,6 +1014,16 @@ pub struct DocumentVersion {
     pub captured_at: Timestamp,
 }
 
+/// Bounded immutable history metadata, without loading its snapshot bytes.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DocumentVersionRevision {
+    pub id: DocumentVersionId,
+    pub document: DocumentId,
+    pub version_vector: Vec<u8>,
+}
+
+pub const MAX_HISTORY_REVISION_BYTES: u32 = 65_536;
+
 /// A user-visible marker referring to immutable state.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HistoryEntry {
@@ -1243,6 +1253,18 @@ pub trait WorkspaceRepo {
         Err(crate::errors::Error::new(
             crate::errors::Code::StorageFailed,
             "history is not implemented by this repository",
+        ))
+    }
+    /// Exact history metadata only. No fallback to a snapshot read; a missing
+    /// row differs from an oversized or corrupt stored revision.
+    fn document_version_revision(
+        &self,
+        _id: DocumentVersionId,
+        _max_bytes: u32,
+    ) -> Result<Option<DocumentVersionRevision>> {
+        Err(crate::errors::Error::new(
+            crate::errors::Code::StorageFailed,
+            "history revision metadata is not implemented by this repository",
         ))
     }
     /// Rename a marker. The label lives on the marker, never on the immutable

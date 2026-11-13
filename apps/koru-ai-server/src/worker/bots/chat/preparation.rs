@@ -15,7 +15,7 @@ pub(in crate::worker) fn retry_input(
     history: &mut Vec<AiRequestMessage>,
 ) -> ApiResult<MessageId> {
     let original_user = original_task_user(messages, failed, task)?;
-    if original_user.is_some_and(|user| {
+    if original_user.as_ref().is_some_and(|user| {
         messages
             .iter()
             .rev()
@@ -46,29 +46,23 @@ fn original_task_user<'a>(
     messages: &'a [Message],
     failed: &'a Message,
     task: &str,
-) -> ApiResult<Option<&'a Message>> {
+) -> ApiResult<Option<Message>> {
     let by_id: HashMap<_, _> = messages
         .iter()
         .map(|message| (message.id, message))
         .collect();
-    let mut origin = failed;
-    while let Some(id) = origin.origin_message_id {
-        let Some(previous) = by_id.get(&id).copied() else {
-            break;
-        };
-        if previous.role != ChatRole::Assistant || previous.ordinal >= origin.ordinal {
-            return Err(invariant_failure());
-        }
-        origin = previous;
-    }
-    // begin_turn creates adjacent User/Assistant rows. Assistant-only answer
-    // tasks have no user bubble; their immutable receipt remains the authority.
-    Ok(messages.iter().find(|message| {
-        message.role == ChatRole::User
-            && message.state == MessageState::Complete
-            && message.ordinal.checked_add(1) == Some(origin.ordinal)
-            && message.markdown == task
-    }))
+    koru_ai_core::bots::replay::original_bot_task_user(
+        failed,
+        task,
+        |id| Ok(by_id.get(&id).map(|message| (*message).clone())),
+        |chat, ordinal| {
+            Ok(messages
+                .iter()
+                .find(|message| message.chat_id == chat && message.ordinal == ordinal)
+                .cloned())
+        },
+    )
+    .map_err(ai_failure)
 }
 
 pub(in crate::worker) struct ChatCapture {
