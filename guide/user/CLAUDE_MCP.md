@@ -43,6 +43,39 @@ registered bridge is always this checkout's latest. A Claude Code session that
 is already open keeps the bridge it started; open a new session, or ask it to
 reconnect with `/mcp`, to get the rebuilt one.
 
+## Isolated Windows development stacks
+
+`koru.bat root [path]` always builds `koru`, `koru-agent` and `koru-mcp`
+together before launching. Runtime chats use that sibling bridge. Add `--mcp`
+to also register it with external Claude Code, Codex and Gemini clients on PATH:
+
+```bat
+koru.bat root --mcp
+koru.bat root "D:\Koru test" --mcp
+```
+
+The flag may come before or after the path. The default root is `KORU_ROOT`,
+or `<repo>\.dev-data\root-mode` when unset. All processes and registrations
+receive the same resolved absolute root. `root-open [path]` opens another
+window on a running root; `root-stop [path]` stops its services.
+
+The registration is named `koru_<full-git-branch>`, replacing each character
+other than letters, digits, `_` and `-` with `_`: `sliechti/a2ui` registers as
+`koru_sliechti_a2ui`. Detached HEAD uses the checkout directory name and short
+commit ID instead. Names can collide after sanitizing; choose a different name
+with `mcp-add [name]` and set `KORU_ROOT` explicitly if needed. `mcp-add` still
+defaults to `koru`. These Windows commands honor `CARGO_TARGET_DIR` and use its
+`debug` directory for both building and registration.
+
+If an installed client rejects registration, the command names that client
+and fails before launching. If the name already exists, remove that specific
+entry with `koru.bat mcp-remove koru_sliechti_a2ui`, then retry. Successful
+registrations in other clients are retained. Already open client sessions must
+reconnect or restart to use the rebuilt bridge.
+
+Unknown options are rejected before setup or process changes. `--mcp` is an
+option even when quoted; to name a literal directory `--mcp`, use `.\--mcp`.
+
 ## Serve fewer tools
 
 The bridge serves every Koru tool by default, which costs an agent about

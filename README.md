@@ -159,6 +159,23 @@ Two setup options are available separately:
 Ordinary build, test, and run commands do not install agent tooling or change
 Git hooks. Both optional flags can be combined on Windows.
 
+On Windows, `koru.bat root [path]` builds Koru, Agent and the sibling MCP bridge,
+then opens an isolated development stack. The root defaults to `KORU_ROOT`, or
+`.dev-data\root-mode` in this checkout. Add `--mcp` to also register that bridge
+with the agent CLIs on PATH for the same root:
+
+```bat
+koru.bat root --mcp
+koru.bat root "D:\Koru test" --mcp
+koru.bat root-open "D:\Koru test"
+koru.bat root-stop "D:\Koru test"
+```
+
+`--mcp` can precede the path. Registrations use `koru_<branch>` with punctuation
+replaced by underscores, so `sliechti/a2ui` becomes `koru_sliechti_a2ui`.
+See the [MCP guide](guide/user/CLAUDE_MCP.md#isolated-windows-development-stacks)
+for client reconnection and removal.
+
 `run` downloads the bundled fonts on first use (`koru.bat fonts` does just that
 step; the faces are pinned by hash in `scripts/setup/fonts.manifest`), compiles, and
 launches. The first compile takes several minutes and everything after it is
