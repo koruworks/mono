@@ -90,7 +90,15 @@ pub struct SubscriptionSnapshot {
     pub status: SubscriptionStatus,
     pub price_id: String,
     pub livemode: bool,
+    /// The current period is settled. For `Active` this is a paid latest
+    /// invoice covering the current period at a supported price. For
+    /// `Trialing` nothing is owed until the trial ends, so the provider sets
+    /// it when the current item is a supported price, whether the trial's $0
+    /// invoice is present or not.
     pub invoice_paid: bool,
+    /// End of the current period. While `Trialing` this is the trial end:
+    /// the provider records the earlier of the item's period end and the
+    /// subscription's `trial_end`.
     pub current_period_end_millis: i64,
     pub cancel_at_period_end: bool,
     pub cancel_at_millis: Option<i64>,
@@ -126,10 +134,22 @@ impl SubscriptionSummary {
 }
 
 impl SubscriptionSnapshot {
+    /// Whether this status, on its own, can grant Cloud access. `Active`
+    /// needs its invoice paid. `Trialing` grants until the trial ends
+    /// (`current_period_end_millis`); its period is settled by being free.
+    /// Every other status, including a trial that turned `incomplete`,
+    /// `past_due` or `unpaid`, grants nothing.
+    fn in_good_standing(&self) -> bool {
+        match self.status {
+            SubscriptionStatus::Active | SubscriptionStatus::Trialing => self.invoice_paid,
+            _ => false,
+        }
+    }
+
     pub fn summary(&self, account_linked: bool, now: i64) -> SubscriptionSummary {
+        let standing = self.in_good_standing();
         let access = account_linked
-            && self.status == SubscriptionStatus::Active
-            && self.invoice_paid
+            && standing
             && self.current_period_end_millis > now
             && self.cancel_at_millis.is_none_or(|end| end > now);
         SubscriptionSummary {
@@ -138,6 +158,8 @@ impl SubscriptionSnapshot {
             status: self.status,
             cloud_access: access,
             storage_allowance_bytes: if access { 100_000_000_000 } else { 0 },
+            // A trial's settled period runs through the trial end, so this is
+            // the trial end while trialing and `at` revokes access after it.
             paid_through_millis: self.invoice_paid.then_some(self.current_period_end_millis),
             cancel_at_period_end: self.cancel_at_period_end,
             cancel_at_millis: self.cancel_at_millis,
@@ -311,6 +333,41 @@ mod current_subscription_tests {
     }
 
     #[test]
+    fn a_trial_counts_as_a_live_renewing_plan() {
+        use SubscriptionStatus::Trialing;
+        // One trial answers on its own.
+        let rows = [sub("sub_trial", "price_month", Trialing, false)];
+        assert_eq!(
+            current_subscription(&rows)
+                .unwrap()
+                .unwrap()
+                .subscription_id,
+            "sub_trial"
+        );
+        // A trial set to end beside a renewing yearly plan: the yearly answers.
+        let rows = [
+            sub("sub_year", "price_year", Active, false),
+            sub("sub_trial", "price_month", Trialing, true),
+        ];
+        assert_eq!(
+            current_subscription(&rows)
+                .unwrap()
+                .unwrap()
+                .subscription_id,
+            "sub_year"
+        );
+        // A renewing trial beside a renewing paid plan is two plans billing.
+        let rows = [
+            sub("sub_year", "price_year", Active, false),
+            sub("sub_trial", "price_month", Trialing, false),
+        ];
+        assert!(matches!(
+            current_subscription(&rows),
+            Err(BillingError::Conflict)
+        ));
+    }
+
+    #[test]
     fn canceled_history_never_conflicts_and_the_newest_answers_when_none_is_live() {
         let rows = [
             sub("sub_new", "price_year", Active, false),
@@ -334,5 +391,102 @@ mod current_subscription_tests {
                 .subscription_id,
             "sub_new"
         );
+    }
+}
+
+#[cfg(test)]
+mod entitlement_tests {
+    use super::*;
+    use SubscriptionStatus::*;
+
+    const TRIAL_END: i64 = 2_000_000;
+
+    fn snapshot(status: SubscriptionStatus, invoice_paid: bool) -> SubscriptionSnapshot {
+        SubscriptionSnapshot {
+            subscription_id: "sub_a".into(),
+            customer_id: "cus_a".into(),
+            checkout_session_id: "cs_a".into(),
+            purchase_email: "person@example.com".into(),
+            status,
+            price_id: "price_month".into(),
+            livemode: false,
+            invoice_paid,
+            current_period_end_millis: TRIAL_END,
+            cancel_at_period_end: false,
+            cancel_at_millis: None,
+            canceled_at_millis: None,
+        }
+    }
+
+    #[test]
+    fn active_still_needs_a_paid_invoice() {
+        assert!(snapshot(Active, true).summary(true, 1_000_000).cloud_access);
+        let unpaid = snapshot(Active, false).summary(true, 1_000_000);
+        assert!(!unpaid.cloud_access);
+        assert_eq!(unpaid.paid_through_millis, None);
+    }
+
+    #[test]
+    fn a_trial_grants_access_until_its_end() {
+        let summary = snapshot(Trialing, true).summary(true, 1_000_000);
+        assert!(summary.cloud_access);
+        assert_eq!(summary.storage_allowance_bytes, 100_000_000_000);
+        assert_eq!(summary.paid_through_millis, Some(TRIAL_END));
+        assert!(
+            !snapshot(Trialing, true)
+                .summary(false, 1_000_000)
+                .cloud_access
+        );
+        // A trial whose period is not settled (unsupported item) grants nothing.
+        assert!(
+            !snapshot(Trialing, false)
+                .summary(true, 1_000_000)
+                .cloud_access
+        );
+        // A trial with a cancel_at date ends at that date.
+        let mut ending = snapshot(Trialing, true);
+        ending.cancel_at_millis = Some(1_500_000);
+        assert!(ending.summary(true, 1_400_000).cloud_access);
+        assert!(!ending.summary(true, 1_500_000).cloud_access);
+    }
+
+    #[test]
+    fn a_lapsed_trial_grants_nothing() {
+        // The provider has not reported the end of the trial yet: still
+        // trialing on record, but past the trial end.
+        assert!(
+            !snapshot(Trialing, true)
+                .summary(true, TRIAL_END)
+                .cloud_access
+        );
+        assert!(
+            !snapshot(Trialing, true)
+                .summary(true, TRIAL_END + 1)
+                .cloud_access
+        );
+        // Granted while trialing, delivered after the end: revoked.
+        let delivered = snapshot(Trialing, true)
+            .summary(true, 1_000_000)
+            .at(TRIAL_END);
+        assert!(!delivered.cloud_access);
+        assert_eq!(delivered.storage_allowance_bytes, 0);
+    }
+
+    #[test]
+    fn a_trial_that_failed_to_convert_grants_nothing() {
+        for status in [
+            Incomplete,
+            IncompleteExpired,
+            PastDue,
+            Unpaid,
+            Paused,
+            Canceled,
+        ] {
+            // Even with a settled (paid $0) trial invoice still on record.
+            assert!(
+                !snapshot(status, true).summary(true, 1_000_000).cloud_access,
+                "{status:?}"
+            );
+        }
     }
 }
