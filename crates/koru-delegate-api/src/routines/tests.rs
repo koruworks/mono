@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
-use koru_delegate_core::bots::UserScopeId;
 use koru_delegate_core::*;
 use koru_delegate_schedule::{DelegationTemplate, RecurrenceRule, RoutineAssociation};
 
@@ -19,7 +18,7 @@ fn prepared() -> RoutinePrepared {
         assistant_message: id(6),
     };
     let owner = BotOwner {
-        user_scope: UserScopeId::from_uuid(id(10)),
+        user_scope: serde_json::from_value(serde_json::json!(id(10))).unwrap(),
         device: DeviceId::from_uuid(id(11)),
     };
     let slot = RoutineSlot {
