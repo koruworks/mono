@@ -43,7 +43,7 @@ pub fn deserialize_profile<'de, D: serde::Deserializer<'de>>(
     )]
     enum Profile {
         BuiltIn(String),
-        Custom(uuid::Uuid),
+        Custom(String),
     }
     match Profile::deserialize(d)? {
         Profile::BuiltIn(key) => key
@@ -51,7 +51,6 @@ pub fn deserialize_profile<'de, D: serde::Deserializer<'de>>(
             .map(SessionProfileKey::BuiltIn)
             .map_err(serde::de::Error::custom),
         Profile::Custom(key) => key
-            .to_string()
             .parse()
             .map(SessionProfileKey::Custom)
             .map_err(serde::de::Error::custom),

@@ -75,6 +75,17 @@ fn private_submission_closes_nested_intent_and_input_without_changing_ordinary_t
             "{key}"
         );
     }
+    for noncanonical in [
+        "ABCDEF01-2345-4678-8ABC-1234567890AB",
+        "abcdef01234546788abc1234567890ab",
+    ] {
+        let mut changed = encoded.clone();
+        changed["request"]["agent"] = serde_json::json!({"kind":"custom","value":noncanonical});
+        assert!(
+            serde_json::from_value::<BotSubmission>(changed).is_err(),
+            "v1 profile {noncanonical}"
+        );
+    }
     let mut changed = encoded;
     changed["request"]["context"] = serde_json::json!([{
         "kind":"document", "workspace":workspace, "document":Uuid::new_v4(),

@@ -263,6 +263,21 @@ fn routine_bridge_closes_nested_source_and_prepared_reply_fields() {
             "{pointer}"
         );
     }
+    for noncanonical in [
+        "ABCDEF01-2345-4678-8ABC-1234567890AB",
+        "abcdef01234546788abc1234567890ab",
+    ] {
+        let mut json = serde_json::to_value(&reply).unwrap();
+        json["payload"]["preparation"]["submission"]["request"]["agent"] =
+            serde_json::json!({"kind":"custom","value":noncanonical});
+        assert!(
+            RoutineBridgeEnvelope::<PrepareOccurrenceReply>::decode(
+                &serde_json::to_vec(&json).unwrap()
+            )
+            .is_err(),
+            "v2 profile {noncanonical}"
+        );
+    }
     let mut legacy = serde_json::to_value(&request.payload.schedule_definition).unwrap();
     legacy["template"]["agent"]["extra"] = true.into();
     assert!(serde_json::from_value::<ScheduleDefinition>(legacy).is_ok());
