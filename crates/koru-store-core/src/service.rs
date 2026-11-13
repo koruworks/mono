@@ -52,9 +52,9 @@ use crate::model::{
 use crate::personal_attributes::EntityRef;
 use crate::ports::SyncStateEvent;
 use crate::ports::{
-    BlobStore, Catalog, CompletedBlobUpload, DocumentIndex, DocumentVersion, HistoryCapture,
-    HistoryEntry, HistoryReason, LegacyPromotion, Opened, PendingBlobUpload, ProfileCatalogState,
-    SeedDocument, SyncDocumentDigest, WorkspaceRepo,
+    BlobStore, Catalog, CompletedBlobUpload, DocumentIndex, DocumentVersion,
+    DocumentVersionRevision, HistoryCapture, HistoryEntry, HistoryReason, LegacyPromotion, Opened,
+    PendingBlobUpload, ProfileCatalogState, SeedDocument, SyncDocumentDigest, WorkspaceRepo,
 };
 use crate::profile_account::{ProfileAccountBinding, ProfileAccountBindingOutcome};
 use crate::profile_manifest::ProfileManifest;
@@ -3478,6 +3478,28 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .expect("just opened")
             .repo
             .document_version(version)
+    }
+
+    /// Read bounded exact-history revision metadata without loading its body.
+    /// Physical purge removes this evidence just as it removes the snapshot.
+    pub fn document_version_revision(
+        &mut self,
+        workspace: WorkspaceId,
+        version: DocumentVersionId,
+        max_bytes: u32,
+    ) -> Result<Option<DocumentVersionRevision>> {
+        if max_bytes == 0 || max_bytes > crate::ports::MAX_HISTORY_REVISION_BYTES {
+            return Err(Error::new(
+                Code::InvalidRequest,
+                "invalid history revision budget",
+            ));
+        }
+        self.ensure_open(workspace)?;
+        self.open
+            .get(&workspace)
+            .expect("just opened")
+            .repo
+            .document_version_revision(version, max_bytes)
     }
 
     /// Everything this store has that the caller's version vector does not.

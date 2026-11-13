@@ -580,9 +580,9 @@ Returns: A bounded owner-authorized projection; no configuration or execution ha
 
 ## POST `/v1/ai/bots`
 
-Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or a task started through the API, request admission, or stop a task started through the API
+Read or configure an engine-owned Bot and its Knowledge Library, archive, trash or restore it, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task
 
-Returns: A durable configuration, authorized listing, bounded page of the Bot's conversations with their labels, a workspace's running and Needs-you Bot conversations, new conversation reference, content-free admission operation, lifecycle progress with per-member outcomes, the Run view of a reply's or an API task's Run (a bounded window of its history, without its session), or what a task's Stop found and did. Conversation history uses the Chat reads; execution is coordinated separately.
+Returns: A durable configuration, bounded Library references or immutable Knowledge-save receipt, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.
 
 ## GET `/v1/ai/providers/settings`
 

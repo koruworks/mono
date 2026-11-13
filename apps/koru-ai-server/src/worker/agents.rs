@@ -1204,6 +1204,19 @@ impl WorkerState {
             .find(|message| message.role == ChatRole::User)
             .ok_or_else(|| failure("invalid_request", "The chat has no message.", false))?
             .id;
+        let context_anchor = if let Some(answer) = &bot_answer {
+            let prior = self
+                .repository
+                .attempt(answer.question.prior_attempt)
+                .map_err(ai_failure)?
+                .ok_or_else(invariant_failure)?;
+            if prior.chat_id != Some(chat.id) {
+                return Err(invariant_failure());
+            }
+            prior.assistant_message_id.ok_or_else(invariant_failure)?
+        } else {
+            user
+        };
         if bot_answer.is_none() {
             let Some(agents) = self.agents.clone() else {
                 return Err(tool_not_resumable());
@@ -1384,12 +1397,12 @@ impl WorkerState {
         };
         self.work_started(attempt_id);
         let started_at = Timestamp::now();
-        // No context goes with answers: the chat's pinned documents are not
-        // read again, and nothing is recorded against the asking message.
+        // Bot answers capture their task pages against the asking assistant.
+        // Ordinary agent answers retain their existing context-free path.
         let job = if bot_answer.is_some() {
             self.prepare_context_job(
                 attempt_id,
-                user,
+                context_anchor,
                 chat.id,
                 base_request,
                 Vec::new(),
@@ -1401,9 +1414,10 @@ impl WorkerState {
         } else {
             Ok(ContextJob {
                 attempt_id,
-                user_message_id: user,
+                user_message_id: context_anchor,
                 chat_id: chat.id,
                 profile: chat.profile_id,
+                bot_authority: self.bot_authority.clone(),
                 request: base_request,
                 refs: Vec::new(),
                 known_documents: HashMap::new(),

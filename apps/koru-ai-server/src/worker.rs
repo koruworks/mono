@@ -4725,18 +4725,37 @@ impl WorkerState {
         if let Some(receipt) = bot_pins {
             for reference in &mut refs {
                 if let PreparedContextRef::Document(document) = reference {
-                    if !receipt.intent.submission.request.context.iter().any(|pin| {
-                        pin.document_version()
-                            .is_some_and(|(id, _)| id == *document)
-                    }) {
-                        return Err(context_port_unavailable());
-                    }
+                    let (workspace, version) = receipt
+                        .intent
+                        .submission
+                        .request
+                        .context
+                        .iter()
+                        .find_map(|pin| match pin {
+                            koru_delegate_core::RunContextItem::Document {
+                                workspace,
+                                document: id,
+                                version,
+                            } if *id == *document => Some((*workspace, *version)),
+                            _ => None,
+                        })
+                        .ok_or_else(context_port_unavailable)?;
                     let label = known_documents
                         .get(document)
                         .map(|pin| pin.display_title.clone())
                         .filter(|label| !label.is_empty())
                         .unwrap_or_else(|| document.to_string());
-                    *reference = PreparedContextRef::PinnedDocument(*document, label);
+                    let owner = receipt.intent.submission.provenance.owner;
+                    *reference = PreparedContextRef::PinnedDocument {
+                        document: *document,
+                        display_title: label,
+                        workspace,
+                        version,
+                        owner: koru_ai_core::bots::BotOwner {
+                            user_scope: owner.user_scope,
+                            device: owner.device,
+                        },
+                    };
                 }
             }
         }
@@ -4745,6 +4764,7 @@ impl WorkerState {
             user_message_id,
             chat_id,
             profile,
+            bot_authority: self.bot_authority.clone(),
             request,
             refs,
             known_documents,
@@ -6715,7 +6735,13 @@ fn send_admin_envelope(output: &SyncSender<Envelope>, envelope: Envelope, shutdo
 
 enum PreparedContextRef {
     Document(koru_ai_core::DocumentId),
-    PinnedDocument(koru_ai_core::DocumentId, String),
+    PinnedDocument {
+        document: koru_ai_core::DocumentId,
+        display_title: String,
+        owner: koru_ai_core::bots::BotOwner,
+        workspace: WorkspaceId,
+        version: koru_delegate_core::DocumentVersionId,
+    },
     MessageBlock(MessageBlockContext),
 }
 
@@ -6725,6 +6751,7 @@ struct ContextJob {
     chat_id: ChatId,
     /// The chat's stored profile: whose documents it may read.
     profile: Option<koru_ai_core::ProfileId>,
+    bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     request: AiRequest,
     refs: Vec<PreparedContextRef>,
     known_documents: HashMap<koru_ai_core::DocumentId, PinnedDocument>,
@@ -6942,7 +6969,44 @@ fn resolve_context_job(
                 ));
             }
             match reference {
-                PreparedContextRef::PinnedDocument(document_id, display_title) => {
+                PreparedContextRef::PinnedDocument {
+                    document: document_id,
+                    display_title,
+                    owner,
+                    workspace,
+                    version,
+                } => {
+                    let revision = job
+                        .bot_authority
+                        .as_ref()
+                        .ok_or_else(context_port_unavailable)?
+                        .pinned_document_revision(
+                            owner,
+                            workspace,
+                            job.profile.ok_or_else(context_port_unavailable)?,
+                            document_id,
+                            version,
+                        )
+                        .map_err(|error| {
+                            if error == koru_ai_core::bots::BotError::ContextTooLarge {
+                                context_too_large()
+                            } else {
+                                AiError::new(
+                                    AiErrorClass::Storage,
+                                    "The captured Bot document revision is unavailable.",
+                                    matches!(
+                                        error,
+                                        koru_ai_core::bots::BotError::Unavailable
+                                            | koru_ai_core::bots::BotError::Storage
+                                    ),
+                                )
+                            }
+                        })?;
+                    if revision.0.len()
+                        > koru_store_core::ports::MAX_HISTORY_REVISION_BYTES as usize
+                    {
+                        return Err(context_too_large());
+                    }
                     let now = Timestamp::now();
                     let first_used_at = job
                         .known_documents
@@ -6961,8 +7025,7 @@ fn resolve_context_job(
                         document_id,
                         relation: DocumentRelation::Context,
                         display_title,
-                        // Run history IDs are not Store version-vector bytes.
-                        source_revision: None,
+                        source_revision: Some(revision),
                         used_at: now,
                     });
                     // Runtime-loaded file bytes are deliberately not included

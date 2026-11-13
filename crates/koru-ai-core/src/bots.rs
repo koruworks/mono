@@ -136,6 +136,18 @@ pub trait BotAuthority: Send + Sync {
     fn owner(&self) -> Result<BotOwner, BotError>;
     fn workspace(&self, workspace: WorkspaceId) -> Result<ProfileId, BotError>;
     fn page(&self, page: &BotPage) -> Result<(), BotError>;
+    /// Exact captured history metadata, under current owner and reader-profile
+    /// authority. Called off the AI writer; never resolves current body content.
+    fn pinned_document_revision(
+        &self,
+        _owner: BotOwner,
+        _workspace: WorkspaceId,
+        _reader: ProfileId,
+        _document: DocumentId,
+        _version: koru_delegate_core::DocumentVersionId,
+    ) -> Result<crate::StoreRevision, BotError> {
+        Err(BotError::Unavailable)
+    }
     /// Trusted preparation only: capture immutable history under fresh current
     /// authority. Public callers cannot supply the returned version identities.
     fn capture(
@@ -179,6 +191,18 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// Read Role and ordered Knowledge references under current owner authority.
+    ReadLibrary {
+        bot_id: BotId,
+    },
+    /// Replace Knowledge context for new tasks without changing edit grants.
+    /// Exact retries return the immutable receipt even after a page disappears.
+    SetKnowledge {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+        pages: Vec<BotPage>,
+    },
     /// Bounded owner roster for the external task facade, without configuration.
     ListTaskBots {
         workspace: WorkspaceId,
@@ -435,6 +459,8 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    Library { library: BotLibraryView },
+    KnowledgeSaved { receipt: BotKnowledgeReceipt },
     TaskBots { page: BotSummaryPage },
     TaskAnswer { answer: BotTaskAnswer },
     Lifecycle { operation: BotLifecycleProgress },
@@ -740,6 +766,7 @@ impl BotReceiptOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotError {
     Invalid,
+    ContextTooLarge,
     NotFound,
     Forbidden,
     Unavailable,
@@ -756,6 +783,7 @@ impl BotError {
     pub const fn code(self) -> &'static str {
         match self {
             Self::Invalid => "invalid_request",
+            Self::ContextTooLarge => "context_too_large",
             Self::NotFound => "not_found",
             Self::Forbidden => "wrong_owner",
             Self::Unavailable => "workspace_unavailable",

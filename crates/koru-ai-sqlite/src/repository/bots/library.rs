@@ -4,9 +4,40 @@
 //! effects. Prepared inputs and confirmation evidence require a trusted caller.
 use super::*;
 use rusqlite::Transaction;
+
+/// Compose capture with admission on the caller's transaction. A legacy
+/// receipt cannot be upgraded by supplying today's Library after the fact.
+pub(crate) fn prepare_library_submission_tx(
+    tx: &Transaction<'_>,
+    intent: &BotSubmissionIntent,
+    capture: &BotLibraryCapture,
+    fingerprint: &str,
+    expected: u64,
+    now: i64,
+) -> Result<BotSubmissionReceipt, BotError> {
+    let p = &intent.submission.provenance;
+    if capture.owner.user_scope != p.owner.user_scope
+        || capture.owner.device != p.owner.device
+        || capture.bot != p.bot
+        || capture.submission != p.submission
+        || capture.config_revision != p.config_revision
+    {
+        return Err(BotError::Conflict);
+    }
+    if admission::raw(tx, p.owner.user_scope, p.submission)?.is_some() {
+        let has_capture: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bot_library_captures WHERE user_scope_id=?1 AND submission_request_id=?2)",
+            params![p.owner.user_scope.to_storage(), p.submission.to_storage()], |r| r.get(0)).map_err(bad)?;
+        if !has_capture {
+            return Err(BotError::Conflict);
+        }
+    }
+    let receipt = admission::prepare_bot_submission_tx(tx, intent, fingerprint, expected, now)?;
+    insert_library_capture_tx(tx, capture, now)?;
+    Ok(receipt)
+}
 mod capture;
 mod memory;
-#[allow(unused_imports)] // Admission composes this transaction helper in the next increment.
 pub(crate) use capture::insert_library_capture_tx;
 #[cfg(test)]
 mod tests;
@@ -115,6 +146,68 @@ fn insert_receipt(
 }
 
 impl Repository {
+    /// API task admission, folder reservation and exact Library capture commit
+    /// together. Existing legacy receipts retain their original replay path.
+    pub fn prepare_bot_submission_with_library(
+        &mut self,
+        intent: &BotSubmissionIntent,
+        capture: &BotLibraryCapture,
+        fingerprint: &str,
+        expected: u64,
+        now: i64,
+    ) -> Result<BotSubmissionReceipt, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let receipt =
+            prepare_library_submission_tx(&tx, intent, capture, fingerprint, expected, now)?;
+        tx.commit().map_err(bad)?;
+        Ok(receipt)
+    }
+
+    /// Exact shared-journal lookup before a trusted caller inspects page
+    /// availability. Current owner/lifecycle still apply; this grants no page
+    /// authority and never admits a new mutation.
+    pub fn bot_knowledge_receipt(
+        &self,
+        input: &PreparedBotKnowledge,
+        fingerprint: &str,
+    ) -> Result<Option<BotLibraryReceiptV1>, BotError> {
+        validate_library_request(
+            input.owner,
+            input.bot,
+            input.request,
+            input.expected_revision,
+        )?;
+        admission::fingerprint(fingerprint)?;
+        let g = admission::guard(&self.connection, input.owner, input.bot)?;
+        validate_knowledge(&input.pages, g.home)?;
+        let receipt = receipt_on(
+            &self.connection,
+            input.owner,
+            input.bot,
+            input.request,
+            fingerprint,
+            "set_knowledge",
+        )?;
+        if let Some(BotLibraryReceiptV1::SetKnowledge {
+            revision, pages, ..
+        }) = &receipt
+        {
+            if *revision
+                != input
+                    .expected_revision
+                    .checked_add(1)
+                    .ok_or(BotError::Invalid)?
+                || *pages != input.pages
+            {
+                return Err(BotError::Conflict);
+            }
+        }
+        Ok(receipt)
+    }
+
     pub fn bot_library(&self, owner: BotOwner, bot: BotId) -> Result<BotLibrary, BotError> {
         let g = visible(&self.connection, owner, bot)?;
         let knowledge = knowledge_on(&self.connection, bot, g.home)?;

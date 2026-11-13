@@ -2,6 +2,7 @@
 use super::*;
 use koru_ai_core::bots::{BotError, BotSubmissionIntent};
 use koru_ai_core::{AgentAnswer, AgentAnswerValue, AgentQuestion, AnswersRecord, QuestionsRecord};
+mod context;
 
 fn fresh() -> (Repository, Bot, PendingTurn, BotSubmissionIntent) {
     let mut repo = Repository::in_memory().unwrap();
@@ -21,6 +22,102 @@ fn fresh() -> (Repository, Bot, PendingTurn, BotSubmissionIntent) {
             submission,
         },
     )
+}
+
+#[test]
+fn shared_turn_and_library_capture_commit_or_rollback_together() {
+    use koru_ai_core::bots::{BotCapturedMemory, BotLibraryCapture};
+    let (mut repo, bot, turn, intent) = fresh();
+    let prepared = BotChatPreparation::Turn(turn.clone());
+    let capture = BotLibraryCapture {
+        version: 1,
+        owner: koru_ai_core::bots::BotOwner {
+            user_scope: bot.user_scope,
+            device: bot.owner_device,
+        },
+        bot: bot.id,
+        submission: intent.submission.provenance.submission,
+        config_revision: bot.revision,
+        knowledge: vec![],
+        memory: BotCapturedMemory::Absent {},
+        index_digest: [0; 32],
+    };
+    repo.connection.execute_batch("CREATE TRIGGER reject_library_turn BEFORE INSERT ON bot_run_replay BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(
+        repo.prepare_bot_chat_with_library(
+            &prepared,
+            &intent,
+            &capture,
+            &"a".repeat(64),
+            bot.revision,
+            at(1)
+        )
+        .is_err()
+    );
+    assert!(repo.messages(bot.main_chat).unwrap().is_empty());
+    assert!(repo.attempt(turn.attempt.id).unwrap().is_none());
+    assert!(
+        repo.bot(bot.id)
+            .unwrap()
+            .unwrap()
+            .folder_lock_request
+            .is_none()
+    );
+    assert!(
+        repo.bot_library_capture(capture.owner, bot.id, capture.submission)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        repo.bot_admission_receipt(capture.owner, bot.id, capture.submission)
+            .unwrap()
+            .is_none()
+    );
+    repo.connection
+        .execute_batch("DROP TRIGGER reject_library_turn")
+        .unwrap();
+    repo.prepare_bot_chat_with_library(
+        &prepared,
+        &intent,
+        &capture,
+        &"a".repeat(64),
+        bot.revision,
+        at(2),
+    )
+    .unwrap();
+    assert_eq!(repo.messages(bot.main_chat).unwrap().len(), 2);
+    assert_eq!(
+        repo.bot_library_capture(capture.owner, bot.id, capture.submission)
+            .unwrap(),
+        Some(capture.clone())
+    );
+    assert_eq!(
+        repo.prepare_bot_chat_with_library(
+            &prepared,
+            &intent,
+            &capture,
+            &"a".repeat(64),
+            bot.revision,
+            at(3)
+        )
+        .unwrap()
+        .id,
+        turn.attempt.id
+    );
+    assert!(repo.delete_chat(bot.main_chat).is_err());
+    let ordinary = chat(ChatId::new(), 1);
+    repo.create_chat(&ordinary).unwrap();
+    assert!(repo.delete_chats(&[ordinary.id, bot.main_chat]).is_err());
+    assert!(repo.chat(ordinary.id).unwrap().is_some());
+    assert_eq!(repo.clear_history().unwrap(), 1);
+    repo.clear_usage().unwrap();
+    assert!(repo.attempt(turn.attempt.id).unwrap().is_some());
+    assert_eq!(repo.messages(bot.main_chat).unwrap().len(), 2);
+    assert_eq!(
+        repo.bot_library_capture(capture.owner, bot.id, capture.submission)
+            .unwrap(),
+        Some(capture)
+    );
 }
 
 #[test]

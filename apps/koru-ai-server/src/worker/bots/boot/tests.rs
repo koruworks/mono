@@ -780,12 +780,21 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
                 scan: BotBootScan::Probe {},
                 ..
             } => hello(reply, boot, vec![], None),
-            D::Hello { .. } => hello(
+            D::Hello {
+                scan: BotBootScan::Start {},
+                ..
+            } => hello(
                 reply,
                 boot,
                 vec![entry(&bot, 1, BotBootAdmission::Missing {})],
-                None,
+                Some(BotBootCursor {
+                    boot,
+                    owner: delegate_owner(&bot),
+                    after: 1,
+                    through: 2,
+                }),
             ),
+            D::Hello { .. } => hello(reply, boot, vec![], None),
             D::PendingNativeEffects { bot: scope, .. } => {
                 if scope == Some(bot.id) {
                     scoped_drain = true
@@ -816,6 +825,23 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
             _ => unreachable!(),
         }
     }
+    // The next page can be scheduled only after the Ready callback clears
+    // boot.busy. Hold that known job while checking the durable pause receipt.
+    let final_reply = loop {
+        let (command, reply) = next(&calls);
+        match command {
+            D::Hello { .. } => break reply,
+            D::PendingNativeEffects { .. } => reply
+                .send(Ok(BotReply::NativePendingEffects {
+                    page: koru_delegate_core::NativePendingEffects {
+                        targets: vec![],
+                        next: None,
+                    },
+                }))
+                .unwrap(),
+            other => panic!("unexpected after Ready: {other:?}"),
+        }
+    };
     let response = worker
         .client()
         .bots(
@@ -831,6 +857,9 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
     };
     assert_eq!(operation.status, BotOperationStatus::Pending);
     worker.shutdown();
+    // Release the known in-flight call only after shutdown prevents another
+    // scripted admin call from starting without a test owner to answer it.
+    hello(final_reply, boot, vec![], None);
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 

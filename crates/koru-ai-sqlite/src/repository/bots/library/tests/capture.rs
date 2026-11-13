@@ -1,6 +1,139 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+#[test]
+fn api_submission_and_library_capture_commit_or_rollback_together() {
+    let (mut repo, bot, owner, intent, capture) = capture_fixture(false);
+    let before = receipt_count(&repo);
+    let mut invalid = capture.clone();
+    invalid.knowledge.pop();
+    assert!(
+        repo.prepare_bot_submission_with_library(&intent, &invalid, HASH, bot.revision, 4)
+            .is_err()
+    );
+    assert_eq!(receipt_count(&repo), before);
+    assert!(
+        repo.bot(bot.id)
+            .unwrap()
+            .unwrap()
+            .folder_lock_request
+            .is_none()
+    );
+    assert!(
+        repo.bot_library_capture(owner, bot.id, capture.submission)
+            .unwrap()
+            .is_none()
+    );
+    let receipt = repo
+        .prepare_bot_submission_with_library(&intent, &capture, HASH, bot.revision, 4)
+        .unwrap();
+    assert_eq!(
+        repo.bot_library_capture(owner, bot.id, capture.submission)
+            .unwrap(),
+        Some(capture.clone())
+    );
+    assert_eq!(receipt_count(&repo), before + 1);
+    assert_eq!(
+        repo.prepare_bot_submission_with_library(&intent, &capture, HASH, bot.revision, 5)
+            .unwrap(),
+        receipt
+    );
+    let mut changed = capture.clone();
+    changed.index_digest[0] ^= 1;
+    assert_eq!(
+        repo.prepare_bot_submission_with_library(&intent, &changed, HASH, bot.revision, 5),
+        Err(BotError::Conflict)
+    );
+    assert_eq!(receipt_count(&repo), before + 1);
+}
+
+#[test]
+fn legacy_receipt_replay_does_not_gain_library_authority() {
+    let (mut repo, bot, owner, intent, capture) = capture_fixture(false);
+    let receipt = repo
+        .prepare_bot_submission(&intent, HASH, bot.revision, 4)
+        .unwrap();
+    assert_eq!(
+        repo.prepare_bot_submission_with_library(&intent, &capture, HASH, bot.revision, 5),
+        Err(BotError::Conflict)
+    );
+    assert!(
+        repo.bot_library_capture(owner, bot.id, capture.submission)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        repo.prepare_bot_submission(&intent, HASH, bot.revision, 6)
+            .unwrap(),
+        receipt
+    );
+}
+
+#[test]
+fn exact_retry_keeps_old_capture_while_new_task_uses_current_library() {
+    let (mut repo, bot, owner, intent, capture) = capture_fixture(false);
+    let receipt = repo
+        .prepare_bot_submission_with_library(&intent, &capture, HASH, bot.revision, 4)
+        .unwrap();
+    let mut edit = knowledge(&bot, owner);
+    edit.pages = vec![];
+    repo.set_bot_knowledge(&edit, OTHER_HASH, 5).unwrap();
+    assert_eq!(
+        repo.prepare_bot_submission_with_library(&intent, &capture, HASH, bot.revision, 6)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        repo.bot_library_capture(owner, bot.id, capture.submission)
+            .unwrap(),
+        Some(capture.clone())
+    );
+    // The first admission still owns the folder reservation until its owner
+    // settles/refuses it. End it through the real fence before new work.
+    let fenced = repo
+        .prepare_bot_refusal_fence(
+            owner,
+            bot.id,
+            capture.submission,
+            BotAdmissionRefusal::Rejected,
+            false,
+            6,
+        )
+        .unwrap();
+    let Some(BotExecutionOutcome::RefusalFence { round, barrier, .. }) = fenced.outcome else {
+        panic!("fence")
+    };
+    repo.acknowledge_bot_refusal_fence(owner, bot.id, capture.submission, round, &barrier, 6)
+        .unwrap();
+    repo.reject_bot_submission_after_fence(owner, bot.id, capture.submission, round, &barrier, 6)
+        .unwrap();
+    let current = repo.bot(bot.id).unwrap().unwrap();
+    let mut next = intent.clone();
+    next.submission.provenance.submission = BotRequestId::mint();
+    next.submission.provenance.config_revision = current.revision;
+    next.submission.provenance.policy_revision = current.policy_revision;
+    next.submission.request.run = d::RunId::mint();
+    let next_capture = BotLibraryCapture {
+        version: 1,
+        owner,
+        bot: bot.id,
+        submission: next.submission.provenance.submission,
+        config_revision: current.revision,
+        knowledge: vec![],
+        memory: BotCapturedMemory::Absent {},
+        index_digest: [0; 32],
+    };
+    repo.prepare_bot_submission_with_library(&next, &next_capture, HASH, current.revision, 7)
+        .unwrap();
+    assert!(
+        repo.bot_library_capture(owner, bot.id, next_capture.submission)
+            .unwrap()
+            .unwrap()
+            .knowledge
+            .is_empty()
+    );
+}
+
 fn intent(bot: &Bot) -> BotSubmissionIntent {
     BotSubmissionIntent {
         version: 1,

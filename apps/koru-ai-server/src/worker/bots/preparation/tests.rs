@@ -137,6 +137,7 @@ fn prepare(folder: Option<&str>) -> (BotCommand, ApiResult<()>) {
         chats: vec![],
         model: None,
         capture: None,
+        library_sources: None,
         chat_snapshot: None,
         terminal_question: None,
         delegate: None,

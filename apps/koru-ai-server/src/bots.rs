@@ -15,6 +15,53 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn pinned_document_revision(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        reader: ProfileId,
+        document: koru_ai_core::DocumentId,
+        version: koru_delegate_core::DocumentVersionId,
+    ) -> Result<koru_ai_core::StoreRevision, BotError> {
+        if owner.device != self.device {
+            return Err(BotError::Forbidden);
+        }
+        self.client
+            .with_store(move |store| {
+                if store
+                    .local_user_scope()
+                    .map_err(|_| BotError::Unavailable)?
+                    != owner.user_scope
+                    || store
+                        .current_placement_profile(workspace)
+                        .map_err(|_| BotError::Unavailable)?
+                        != Some(reader)
+                {
+                    return Err(BotError::Forbidden);
+                }
+                store.profile(reader).map_err(|_| BotError::Forbidden)?;
+                store
+                    .workspace(workspace)
+                    .map_err(|_| BotError::Forbidden)?;
+                store
+                    .document_entry_live(workspace, document)
+                    .map_err(|_| BotError::Unavailable)?
+                    .ok_or(BotError::Forbidden)?;
+                let metadata = store
+                    .document_version_revision(
+                        workspace,
+                        version,
+                        koru_store_core::ports::MAX_HISTORY_REVISION_BYTES,
+                    )
+                    .map_err(|error| history_revision_error(error.code()))?
+                    .ok_or(BotError::Unavailable)?;
+                if metadata.id != version || metadata.document != document {
+                    return Err(BotError::Invalid);
+                }
+                Ok(koru_ai_core::StoreRevision(metadata.version_vector))
+            })
+            .map_err(|_| BotError::Unavailable)?
+    }
     fn capture(
         &self,
         owner: BotOwner,
@@ -24,7 +71,7 @@ impl BotAuthority for BotAuthorityAdapter {
     ) -> Result<Vec<koru_delegate_core::RunContextItem>, BotError> {
         if owner.device != self.device
             || pages.is_empty()
-            || pages.len() > 17
+            || pages.len() > 33
             || pages.iter().any(|p| p.workspace != workspace)
         {
             return Err(BotError::Forbidden);
@@ -321,6 +368,15 @@ fn role_refusal(code: koru_store_core::errors::Code) -> BotError {
         | Code::PayloadTooLarge
         | Code::UnsupportedMediaType => BotError::Invalid,
         Code::WorkspaceNotFound | Code::Forbidden => BotError::Forbidden,
+        _ => BotError::Unavailable,
+    }
+}
+
+fn history_revision_error(code: koru_store_core::errors::Code) -> BotError {
+    use koru_store_core::errors::Code;
+    match code {
+        Code::PayloadTooLarge => BotError::ContextTooLarge,
+        Code::CorruptState | Code::InvalidRequest | Code::InvalidId => BotError::Invalid,
         _ => BotError::Unavailable,
     }
 }

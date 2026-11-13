@@ -157,6 +157,25 @@ pub(super) struct Authority {
     inspect_gate: std::sync::Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
 }
 impl BotAuthority for Authority {
+    fn pinned_document_revision(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        reader: ProfileId,
+        document: DocumentId,
+        _: koru_delegate_core::DocumentVersionId,
+    ) -> Result<koru_ai_core::StoreRevision, BotError> {
+        if owner != self.owner || self.workspace(workspace)? != reader {
+            return Err(BotError::Forbidden);
+        }
+        self.page(&BotPage {
+            workspace,
+            document,
+        })?;
+        Ok(koru_ai_core::StoreRevision(
+            loro::VersionVector::default().encode(),
+        ))
+    }
     fn owner(&self) -> Result<BotOwner, BotError> {
         Ok(self.owner)
     }

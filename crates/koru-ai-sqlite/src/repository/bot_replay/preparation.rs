@@ -7,6 +7,34 @@ use koru_ai_core::{AgentAnswerValue, AnswersRecord, QuestionsRecord};
 use rusqlite::TransactionBehavior;
 
 impl Repository {
+    /// A new shared turn includes its exact Library capture in the same
+    /// transaction as admission, folder reservation and transcript association.
+    pub fn prepare_bot_chat_with_library(
+        &mut self,
+        preparation: &BotChatPreparation,
+        intent: &BotSubmissionIntent,
+        capture: &koru_ai_core::bots::BotLibraryCapture,
+        fingerprint: &str,
+        expected_revision: u64,
+        now: Timestamp,
+    ) -> Result<InferenceAttempt, BotPreparationError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_failed)?;
+        super::super::bots::library::prepare_library_submission_tx(
+            &tx,
+            intent,
+            capture,
+            fingerprint,
+            expected_revision,
+            now.millis(),
+        )?;
+        let attempt = prepare_association_on(&tx, preparation, &intent.submission, now)?;
+        tx.commit().map_err(storage_failed)?;
+        Ok(attempt)
+    }
+
     /// Whether an attempt is a Bot task's, from its association alone, in
     /// any lifecycle of its Bot. This decides the route an attempt takes; a
     /// receipt read (which refuses an archived or trashed Bot) never does.
@@ -25,30 +53,7 @@ impl Repository {
         &self,
         attempt: InferenceAttemptId,
     ) -> Result<Option<koru_ai_core::bots::BotSubmissionReceipt>, AiError> {
-        let ids: Option<(String, String)> = self
-            .connection
-            .query_row(
-                "SELECT user_scope_id,submission_id FROM bot_chat_runs WHERE ai_attempt_id=?1",
-                [attempt.to_storage()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(storage_failed)?;
-        let Some((scope, request)) = ids else {
-            return Ok(None);
-        };
-        let receipt = super::super::bots::admission::read_bot_submission_on(
-            &self.connection,
-            koru_ai_core::bots::UserScopeId::parse(&scope).ok_or_else(invariant_failed)?,
-            request.parse().map_err(|_| invariant_failed())?,
-        )
-        .map_err(|_| invariant_failed())?
-        .ok_or_else(invariant_failed)?;
-        if receipt.intent.submission.provenance.ai_attempt_id != Some(attempt.as_uuid()) {
-            return Err(invariant_failed());
-        }
-        validate_link(&self.connection, attempt, &receipt.intent.submission)?;
-        Ok(Some(receipt))
+        bot_submission_for_attempt_on(&self.connection, attempt)
     }
 
     pub fn prepare_bot_chat(
@@ -74,6 +79,35 @@ impl Repository {
         tx.commit().map_err(storage_failed)?;
         Ok(attempt)
     }
+}
+
+pub(super) fn bot_submission_for_attempt_on(
+    connection: &Connection,
+    attempt: InferenceAttemptId,
+) -> Result<Option<koru_ai_core::bots::BotSubmissionReceipt>, AiError> {
+    let ids: Option<(String, String)> = connection
+        .query_row(
+            "SELECT user_scope_id,submission_id FROM bot_chat_runs WHERE ai_attempt_id=?1",
+            [attempt.to_storage()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(storage_failed)?;
+    let Some((scope, request)) = ids else {
+        return Ok(None);
+    };
+    let receipt = super::super::bots::admission::read_bot_submission_on(
+        connection,
+        koru_ai_core::bots::UserScopeId::parse(&scope).ok_or_else(invariant_failed)?,
+        request.parse().map_err(|_| invariant_failed())?,
+    )
+    .map_err(|_| invariant_failed())?
+    .ok_or_else(invariant_failed)?;
+    if receipt.intent.submission.provenance.ai_attempt_id != Some(attempt.as_uuid()) {
+        return Err(invariant_failed());
+    }
+    validate_link(connection, attempt, &receipt.intent.submission)?;
+    Ok(Some(receipt))
 }
 
 pub(super) fn prepare_association_on(
