@@ -179,6 +179,18 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// Read Role and ordered Knowledge references under current owner authority.
+    ReadLibrary {
+        bot_id: BotId,
+    },
+    /// Replace Knowledge context for new tasks without changing edit grants.
+    /// Exact retries return the immutable receipt even after a page disappears.
+    SetKnowledge {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_revision: u64,
+        pages: Vec<BotPage>,
+    },
     /// Bounded owner roster for the external task facade, without configuration.
     ListTaskBots {
         workspace: WorkspaceId,
@@ -435,6 +447,8 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    Library { library: BotLibraryView },
+    KnowledgeSaved { receipt: BotKnowledgeReceipt },
     TaskBots { page: BotSummaryPage },
     TaskAnswer { answer: BotTaskAnswer },
     Lifecycle { operation: BotLifecycleProgress },

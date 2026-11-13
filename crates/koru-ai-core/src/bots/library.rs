@@ -10,6 +10,32 @@ pub const BOT_MEMORY_INDEX_LIMIT: usize = 256;
 pub const BOT_LIBRARY_RECEIPT_LIMIT: usize = 16 * 1024;
 pub const BOT_MEMORY_SCOPE: &str = "koru-bot-memory";
 
+/// The owner's bounded Library settings. References are context for new tasks,
+/// not edit grants. `memory` names only a bound page; `None` makes no claim
+/// about an unfinished creation and exposes no creation machinery.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotLibraryView {
+    pub bot_id: BotId,
+    pub revision: u64,
+    pub role: BotPage,
+    pub knowledge: Vec<BotPage>,
+    pub memory: Option<BotPage>,
+}
+
+/// Immutable acknowledgement of one Knowledge save. Reload Library for current
+/// settings; an exact retry returns this original revision and ordered pages.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct BotKnowledgeReceipt {
+    pub bot_id: BotId,
+    pub request_id: BotRequestId,
+    pub revision: u64,
+    pub pages: Vec<BotPage>,
+}
+
 fn valid_id(id: uuid::Uuid) -> bool {
     id.get_version_num() == 4 && id.get_variant() == uuid::Variant::RFC4122
 }
@@ -52,7 +78,7 @@ pub fn validate_knowledge(pages: &[BotPage], home: WorkspaceId) -> Result<(), Bo
 
 /// The trusted preparer has checked current Store existence/read authority for
 /// every page. SQLite independently checks home, owner and the current binding.
-/// No public command accepts this value in the persistence-only increment.
+/// Public commands never accept this trusted preparation value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedBotKnowledge {
     pub owner: BotOwner,
