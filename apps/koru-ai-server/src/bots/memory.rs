@@ -6,6 +6,7 @@ use koru_ai_core::bots::{BotMemoryIdentity, BotPage};
 use koru_core::NodeId;
 use koru_delegate_core::DocumentVersionId;
 
+pub(super) mod adapter;
 pub(super) mod detail;
 pub(super) mod history;
 pub(super) mod index;

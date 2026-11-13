@@ -96,8 +96,8 @@ fn seed_roundtrip_original_vv() {
     let bytes = seed_update(&identity).unwrap();
     let imported = WorkspaceDoc::from_snapshot(&bytes).unwrap();
     assert_eq!(
-        validate_seed_update(&identity, &bytes).unwrap(),
-        imported.version().encode()
+        loro::VersionVector::decode(&validate_seed_update(&identity, &bytes).unwrap()).unwrap(),
+        imported.version()
     );
 }
 
