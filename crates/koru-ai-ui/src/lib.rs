@@ -6936,11 +6936,13 @@ impl ChatSurface {
             rect.y,
             rect.w,
             rect.h,
-            &scene::Panel::popover(18.0).border(if self.focus == Focus::Composer {
-                p.focus_ring
-            } else {
-                p.panel_border
-            }),
+            &scene::Panel::popover(18.0).shadow_alpha(0.25).border(
+                if self.focus == Focus::Composer {
+                    p.focus_ring
+                } else {
+                    p.panel_border
+                },
+            ),
         );
     }
 
