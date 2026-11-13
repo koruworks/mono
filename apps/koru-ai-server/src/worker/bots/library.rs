@@ -15,6 +15,8 @@ pub(in crate::worker) struct LibrarySources {
     pub role: BotPage,
     pub knowledge: Vec<BotPage>,
     pub task_documents: Vec<BotPage>,
+    pub memory_binding: Option<BotMemoryBinding>,
+    pub memory_capture: Option<PreparedMemoryCapture>,
 }
 
 impl LibrarySources {
@@ -32,12 +34,12 @@ impl LibrarySources {
                 bot.id,
             )
             .map_err(bot_failure)?;
-        if library.binding.is_some() {
-            return Err(failure(
-                "unsupported_capability",
-                "This Bot's Memory cannot yet be captured for a new task.",
-                false,
-            ));
+        if library.binding.as_ref().is_some_and(|binding| {
+            binding.page == bot.config.role
+                || library.knowledge.contains(&binding.page)
+                || task_documents.contains(&binding.page)
+        }) {
+            return Err(bot_failure(BotError::Forbidden));
         }
         validate_knowledge(&task_documents, bot.home_workspace).map_err(bot_failure)?;
         Ok(Self {
@@ -46,6 +48,8 @@ impl LibrarySources {
             role: bot.config.role.clone(),
             knowledge: library.knowledge,
             task_documents,
+            memory_binding: library.binding,
+            memory_capture: None,
         })
     }
 
@@ -105,6 +109,30 @@ impl LibrarySources {
 
     pub(super) fn capture(&self, intent: &BotSubmissionIntent) -> ApiResult<BotLibraryCapture> {
         let p = &intent.submission.provenance;
+        let (memory, index_digest) = match (&self.memory_binding, &self.memory_capture) {
+            (None, None) => (BotCapturedMemory::Absent {}, *blake3::hash(&[]).as_bytes()),
+            (Some(binding), Some(proof)) => {
+                proof.validate_for_binding(binding).map_err(bot_failure)?;
+                if proof.owner.user_scope != p.owner.user_scope
+                    || proof.owner.device != p.owner.device
+                    || proof.bot != p.bot
+                {
+                    return Err(bot_failure(BotError::Forbidden));
+                }
+                (
+                    BotCapturedMemory::Captured {
+                        page: proof.page.clone(),
+                        version: proof.version,
+                        creation_request: proof.creation_request,
+                        nodes: proof.nodes.clone(),
+                        omitted_count: proof.omitted_count,
+                        invalid_count: proof.invalid_count,
+                    },
+                    proof.index_digest,
+                )
+            }
+            _ => return Err(bot_failure(BotError::Unavailable)),
+        };
         let knowledge = self
             .knowledge
             .iter()
@@ -141,8 +169,8 @@ impl LibrarySources {
             submission: p.submission,
             config_revision: p.config_revision,
             knowledge,
-            memory: BotCapturedMemory::Absent {},
-            index_digest: *blake3::hash(&[]).as_bytes(),
+            memory,
+            index_digest,
         };
         capture
             .validate(intent.submission.workspace)

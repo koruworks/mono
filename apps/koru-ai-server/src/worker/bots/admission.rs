@@ -1027,6 +1027,8 @@ pub(super) fn make_intent(
         role: bot.config.role.clone(),
         knowledge: vec![],
         task_documents: task.documents.clone(),
+        memory_binding: None,
+        memory_capture: None,
     };
     make_library_intent(
         bot,

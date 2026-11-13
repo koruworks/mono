@@ -157,6 +157,30 @@ pub(super) struct Authority {
     inspect_gate: std::sync::Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
 }
 impl BotAuthority for Authority {
+    fn replay_memory_index(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        home: WorkspaceId,
+        capture: &BotLibraryCapture,
+        _: Option<&BotMemoryBinding>,
+        cancellation: &Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        if cancellation.is_cancelled()
+            || owner != self.owner
+            || self.workspace(home)? != reader
+            || capture.owner != owner
+            || !matches!(capture.memory, BotCapturedMemory::Absent {})
+            || capture.index_digest != *blake3::hash(&[]).as_bytes()
+        {
+            return Err(MemoryAuthorityError::CaptureUnavailable);
+        }
+        capture.validate(home)?;
+        Ok(VerifiedMemoryIndex {
+            capture: capture.clone(),
+            bytes: vec![],
+        })
+    }
     fn pinned_document_revision(
         &self,
         owner: BotOwner,

@@ -167,6 +167,7 @@ impl WorkerState {
     pub(in crate::worker) fn start_bot_chat_context(
         &mut self,
         request: AiRequest,
+        memory: koru_ai_core::bots::VerifiedMemoryIndex,
     ) -> Result<(), AiError> {
         let id = request.attempt_id;
         let receipt = self
@@ -175,6 +176,12 @@ impl WorkerState {
             .ok_or_else(bot_route_error)?;
         let mut input = receipt.intent.submission.input.clone();
         input.text = koru_ai_provider_agent::compose_delegated_prompt(&request);
+        if !memory.bytes.is_empty() {
+            let block =
+                std::str::from_utf8(&memory.bytes).map_err(|_| context_port_unavailable())?;
+            input.text.push_str("\n\n");
+            input.text.push_str(block);
+        }
         // Local file and folder references go as the ordinary route sends
         // them, frozen with the rest of the first input (O30). They are never
         // staged or read: only pictures with a stored copy are.

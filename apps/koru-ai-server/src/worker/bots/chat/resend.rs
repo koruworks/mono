@@ -403,28 +403,13 @@ impl WorkerState {
                 .next()?;
         }
         let submission = &receipt.intent.submission;
-        let bot = self
-            .repository
-            .bot_any_lifecycle(submission.provenance.bot)
-            .ok()??
-            .0;
         // The same task: its destination, reasoning and selected pages, read
-        // again at their current versions as a Retry reads them.
-        let explicit_refs = submission
-            .request
-            .context
-            .iter()
-            .filter_map(|item| match item {
-                koru_delegate_core::RunContextItem::Document { document, .. }
-                    if *document != bot.config.role.document =>
-                {
-                    Some(ContextRef::Document {
-                        document_id: *document,
-                    })
-                }
-                _ => None,
-            })
-            .collect();
+        // again at their current versions as a Retry reads them. The complete
+        // Run pins also include Role/Knowledge: never turn those into task
+        // selection. This reply is still last, and only completed context can
+        // write this chat's pins (branch copies write a different chat).
+        let pins = self.repository.pinned_documents(chat).ok()?;
+        let explicit_refs = resend_task_refs(&attempt, submission, &pins)?;
         let destination = WorkspaceId::parse(&submission.policy.destination.as_uuid().to_string())?;
         Some(Plan {
             chat,
@@ -479,6 +464,57 @@ impl WorkerState {
             })
     }
 }
+
+/// Recover the selected set, in deterministic original Run-pin order. This is
+/// not a claim to recover user ordering that was never separately persisted.
+fn resend_task_refs(
+    attempt: &InferenceAttempt,
+    submission: &koru_delegate_core::BotSubmission,
+    pins: &[PinnedDocument],
+) -> Option<Vec<ContextRef>> {
+    let chat = attempt.chat_id?;
+    let started = attempt.context_started_at?;
+    let completed = attempt.context_completed_at?;
+    if completed < started
+        || pins.len() > 16
+        || pins.len() != attempt.context_document_count as usize
+        || pins.iter().any(|pin| {
+            pin.chat_id != chat
+                || !pin.pinned
+                || pin.last_used_at < started
+                || pin.last_used_at > completed
+        })
+    {
+        return None;
+    }
+    let selected: std::collections::BTreeSet<_> = pins.iter().map(|pin| pin.document_id).collect();
+    if selected.len() != pins.len() {
+        return None;
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut refs = Vec::new();
+    for pin in &submission.request.context {
+        if let koru_delegate_core::RunContextItem::Document {
+            workspace,
+            document,
+            ..
+        } = pin
+        {
+            if selected.contains(document) {
+                if *workspace != submission.workspace || !seen.insert(*document) {
+                    return None;
+                }
+                refs.push(ContextRef::Document {
+                    document_id: *document,
+                });
+            }
+        }
+    }
+    (seen == selected).then_some(refs)
+}
+
+#[cfg(test)]
+mod tests;
 
 /// The owner refused this task's Submit as stale, behind its fence: never
 /// admitted, nothing of it ran, and nothing about it is at fault.

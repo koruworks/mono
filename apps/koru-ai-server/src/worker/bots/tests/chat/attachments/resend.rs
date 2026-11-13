@@ -12,6 +12,18 @@ use super::*;
 /// Send or Retry reads each page's current version through it.
 pub(super) struct Capturing(pub(super) Arc<Authority>);
 impl BotAuthority for Capturing {
+    fn replay_memory_index(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        home: WorkspaceId,
+        capture: &BotLibraryCapture,
+        binding: Option<&BotMemoryBinding>,
+        cancellation: &Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        self.0
+            .replay_memory_index(owner, reader, home, capture, binding, cancellation)
+    }
     fn owner(&self) -> Result<BotOwner, BotError> {
         self.0.owner()
     }
