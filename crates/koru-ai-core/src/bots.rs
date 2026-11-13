@@ -177,6 +177,21 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// Bounded owner roster for the external task facade, without configuration.
+    ListTaskBots {
+        workspace: WorkspaceId,
+        after: Option<BotId>,
+        limit: u16,
+    },
+    /// Read only the terminal assistant text of one exactly bound task.
+    ReadTaskAnswer {
+        bot_id: BotId,
+        chat_id: ChatId,
+        attempt_id: crate::InferenceAttemptId,
+        #[cfg_attr(feature = "schema", schemars(with = "String"))]
+        operation_id: uuid::Uuid,
+        offset: u64,
+    },
     CreateChat {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -418,6 +433,8 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    TaskBots { page: BotSummaryPage },
+    TaskAnswer { answer: BotTaskAnswer },
     Lifecycle { operation: BotLifecycleProgress },
     Chat { reference: BotChatReference },
     Operation { operation: BotOperation },
@@ -430,6 +447,36 @@ pub enum BotResponse {
     Creations { page: BotCreationPage },
     Run { view: koru_delegate_core::RunView },
     TaskStop { stop: BotTaskStop },
+}
+
+/// Internal owner projection. Run identity is for the facade's authorized
+/// result read; it is never an external control handle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotTaskAnswer {
+    pub status: crate::AttemptStatus,
+    pub message_id: crate::MessageId,
+    pub run_id: Option<RunId>,
+    pub markdown: Option<String>,
+    pub next_offset: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotSummary {
+    pub bot_id: BotId,
+    pub name: String,
+    pub main_chat: ChatId,
+    pub revision: u64,
+    pub paused: bool,
+    pub lifecycle: BotLifecycle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotSummaryPage {
+    pub bots: Vec<BotSummary>,
+    pub next: Option<BotId>,
 }
 
 /// What a [`BotCommand::StopTask`] found and did.

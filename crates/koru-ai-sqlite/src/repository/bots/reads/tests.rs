@@ -18,6 +18,119 @@ fn setup() -> (Repository, Bot, ProfileId) {
     (repo, bot, profile)
 }
 
+#[test]
+fn bot_summary_page_is_keyset_bounded_and_owner_workspace_filtered() {
+    let (mut repo, bot, profile) = setup();
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    let found = plan(
+        &repo.connection,
+        BOT_SUMMARY_PAGE_SQL,
+        &[
+            &owner.user_scope.to_storage(),
+            &owner.device.to_storage(),
+            &bot.home_workspace.to_storage(),
+            &"",
+            &8i64,
+        ],
+    );
+    assert!(
+        found.contains("SEARCH bc USING INDEX bot_main_chat (bot_id>?)"),
+        "{found}"
+    );
+    assert!(!found.contains("TEMP B-TREE"), "{found}");
+    let mut expected = vec![bot.id];
+    for index in 0..125 {
+        let mut next = fixture_bot();
+        next.user_scope = owner.user_scope;
+        next.owner_device = owner.device;
+        next.home_workspace = bot.home_workspace;
+        next.config.role.workspace = bot.home_workspace;
+        next.config.working_folder = format!("{}/summary-{index}", bot.config.working_folder);
+        repo.save_bot(
+            &next,
+            profile,
+            BotRequestId::mint(),
+            &format!("create-{index}"),
+            None,
+        )
+        .unwrap();
+        expected.push(next.id);
+    }
+    let mut foreign = fixture_bot();
+    foreign.home_workspace = bot.home_workspace;
+    foreign.config.role.workspace = bot.home_workspace;
+    foreign.config.working_folder = format!("{}/foreign-owner", bot.config.working_folder);
+    repo.save_bot(&foreign, profile, BotRequestId::mint(), "foreign", None)
+        .unwrap();
+    let mut other_device = fixture_bot();
+    other_device.user_scope = owner.user_scope;
+    other_device.home_workspace = bot.home_workspace;
+    other_device.config.role.workspace = bot.home_workspace;
+    other_device.config.working_folder = format!("{}/other-device", bot.config.working_folder);
+    repo.save_bot(
+        &other_device,
+        profile,
+        BotRequestId::mint(),
+        "other-device",
+        None,
+    )
+    .unwrap();
+    let mut other_workspace = fixture_bot();
+    other_workspace.user_scope = owner.user_scope;
+    other_workspace.owner_device = owner.device;
+    other_workspace.config.working_folder =
+        format!("{}/other-workspace", bot.config.working_folder);
+    repo.save_bot(
+        &other_workspace,
+        profile,
+        BotRequestId::mint(),
+        "other-workspace",
+        None,
+    )
+    .unwrap();
+    // Main in Trash is not an external task destination.
+    trash(&repo, &bot, bot.main_chat);
+    expected.retain(|id| *id != bot.id);
+    expected.sort();
+    let mut actual = Vec::new();
+    let mut after = None;
+    loop {
+        let page = repo
+            .bot_summary_page(owner, bot.home_workspace, after, 7)
+            .unwrap();
+        assert!(page.bots.len() <= 7);
+        actual.extend(page.bots.iter().map(|b| b.bot_id));
+        after = page.next;
+        if after.is_none() {
+            break;
+        }
+    }
+    assert_eq!(actual, expected);
+    assert!(
+        repo.bot_summary_page(owner, bot.home_workspace, None, 101)
+            .is_err()
+    );
+    // Corrupt a private field after creation: a narrow scalar projection must
+    // still read. A load-all Bot/config implementation would fail decoding it.
+    repo.connection
+        .execute(
+            "UPDATE bots SET provider='invalid provider' WHERE bot_id=?1",
+            [expected[0].to_storage()],
+        )
+        .unwrap();
+    assert!(repo.bot(expected[0]).is_err());
+    assert_eq!(
+        repo.bot_summary_page(owner, bot.home_workspace, None, 1)
+            .unwrap()
+            .bots[0]
+            .bot_id,
+        expected[0]
+    );
+}
+
 /// An additional conversation last touched at `updated`.
 fn additional(repo: &mut Repository, bot: &Bot, profile: ProfileId, updated: i64) -> ChatId {
     let reference = repo

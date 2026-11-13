@@ -7,6 +7,7 @@ use koru_session_protocol as s;
 use std::sync::Mutex;
 mod attachments;
 mod controls;
+mod external;
 mod interruption;
 mod lifecycle;
 mod questions;
