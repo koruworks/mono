@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Receipt-first Memory writes. New effects stay closed until the next increment.
+//! Receipt-first Memory writes through one native lease/settlement owner.
 use super::super::dispatch;
 use super::*;
 use koru_ai_core::bots::memory::BOT_MEMORY_WRITES_AVAILABLE;
@@ -14,6 +14,9 @@ use koru_mcp_server::native::memory::MemoryRecipeOperation;
 use koru_mcp_server::native::{NativeWriteEvidence, NativeWriteKind};
 use uuid::Uuid;
 mod args;
+#[cfg(test)]
+mod execution_tests;
+mod fresh;
 #[cfg(test)]
 mod tests;
 
@@ -49,6 +52,30 @@ fn failure(code: &str) -> ToolFailure {
             "revision_conflict",
             "Memory changed since this operation's base. Read Current before requesting a new edit.",
         ),
+        "native_no_change" => (
+            "native_no_change",
+            "The requested Memory edit changes no content.",
+        ),
+        "memory_creation_pending" => (
+            "memory_creation_pending",
+            "Memory creation is pending. Retry this same operation and arguments explicitly.",
+        ),
+        "memory_creation_conflict" => (
+            "memory_creation_conflict",
+            "Memory creation is in conflict. Ask the person to inspect and recover it; this operation cannot retry creation automatically.",
+        ),
+        "memory_creation_abandoned" => (
+            "memory_creation_abandoned",
+            "The person abandoned this Memory creation. Ask them to inspect it; this operation cannot restart it.",
+        ),
+        "native_policy_pending" | "bot_operation_pending" => (
+            "native_policy_pending",
+            "Memory policy is still settling. Retry the same operation explicitly.",
+        ),
+        "memory_history_unavailable" | "memory_detail_unsupported" | "context_too_large" => (
+            "memory_base_unavailable",
+            "The requested Memory base or fact cannot be prepared. Read Current or use the ordinary editor; no newer base was substituted.",
+        ),
         "native_request_refused" => (
             "native_request_refused",
             "The retained Memory operation was refused.",
@@ -69,19 +96,15 @@ fn failure(code: &str) -> ToolFailure {
     ToolFailure::new(code, message)
 }
 
-/// All four production client signatures are pinned here. Fresh preparation is
-/// wired by the following increment; no test feature enables the worker gate.
+/// Phase-separated trusted methods; no test feature enables the worker gate.
 trait WritePort {
     fn subject(
         &self,
         request: RunMemoryWriteSubjectRequest,
     ) -> Result<MemoryWriteSubjectEvidence, ToolFailure>;
-    #[expect(dead_code, reason = "staged fresh Memory base integration")]
     fn base(&self, request: MemoryEditBaseRequest) -> Result<MemoryBaseEvidence, ToolFailure>;
-    #[expect(dead_code, reason = "staged lazy Memory creation integration")]
     fn ensure(&self, request: RunMemoryEnsureRequest)
     -> Result<RunMemoryEnsureResult, ToolFailure>;
-    #[expect(dead_code, reason = "staged fresh Memory execution integration")]
     fn authority(
         &self,
         request: MemoryWriteAuthorityRequest,
@@ -181,6 +204,8 @@ pub(super) async fn call(
     };
     let cancellation = Cancellation::default();
     let cancel_on_failure = cancellation.clone();
+    let store = state.store.client();
+    let new_work_ready = state.native_mutations_ready();
     let outcome = tokio::task::spawn_blocking(move || {
         invoke(
             &client,
@@ -191,6 +216,7 @@ pub(super) async fn call(
             params.name.as_ref(),
             Value::Object(params.arguments.unwrap_or_default()),
             cancellation,
+            Some((&store, new_work_ready)),
         )
     })
     .await;
@@ -216,8 +242,9 @@ fn owner_call(port: &dyn BotDelegatePort, command: BotCommand) -> Result<BotRepl
     port.execute(command).map_err(|error| {
         failure(match error.code.as_str() {
             "bot_conflict" => "idempotency_conflict",
-            "bot_invalid" => "invalid_request",
-            "bot_owner_mismatch" | "forbidden" => "permission_denied",
+            "bot_invalid" | "bot_native_invalid" => "invalid_request",
+            "bot_owner_mismatch" | "bot_provenance_mismatch" | "forbidden" => "permission_denied",
+            "bot_policy_stale" | "bot_policy_refresh_required" => "native_policy_pending",
             "bot_fenced" | "bot_stale" => "native_request_refused",
             "bot_capacity" => "native_recovery_pending",
             _ => "memory_write_unavailable",
@@ -235,6 +262,7 @@ fn invoke(
     tool: &str,
     arguments: Value,
     cancellation: Cancellation,
+    new_work: Option<(&koru_store_server::StoreWorkerClient, bool)>,
 ) -> Result<Value, ToolFailure> {
     let args = args::parse(tool, arguments)?;
     live(&cancellation)?;
@@ -254,14 +282,15 @@ fn invoke(
         captured_config_revision: provenance.config_revision,
         action: args.action,
     };
-    let current = client.subject(RunMemoryWriteSubjectRequest {
+    let subject_request = RunMemoryWriteSubjectRequest {
         run: record.run,
         generation: record.generation,
         provenance: provenance.clone(),
-        captured,
+        captured: captured.clone(),
         action: args.action,
         cancellation: cancellation.clone(),
-    })?;
+    };
+    let current = client.subject(subject_request.clone())?;
     if current.subject != subject
         || current.profile.as_uuid().is_nil()
         || current.config_revision < provenance.config_revision
@@ -288,12 +317,41 @@ fn invoke(
             caller_fingerprint: hash,
         },
     )? {
-        BotReply::Missing => return Err(failure("unsupported_capability")), // fresh path staged next
-        BotReply::MemoryEditAllocation { allocation } => allocation,
+        BotReply::Missing => None,
+        BotReply::MemoryEditAllocation { allocation } => Some(allocation),
         _ => return Err(failure("memory_write_unavailable")),
     };
+    if let Some(allocation) = &allocation {
+        validate_allocation(allocation, &subject, record, &args, hash)?;
+        if let Some(saved) = retained(client, port, allocation, record.workspace, &cancellation)? {
+            return Ok(saved);
+        }
+    }
+    let Some((store, true)) = new_work else {
+        return Err(failure("native_recovery_pending"));
+    };
+    fresh::run(
+        client,
+        port,
+        store,
+        record,
+        &subject_request,
+        &current,
+        &args,
+        hash,
+        allocation,
+    )
+}
+
+fn validate_allocation(
+    allocation: &MemoryEditAllocation,
+    subject: &MemoryEditSubjectV1,
+    record: &RunAuthorityRecord,
+    args: &args::Arguments,
+    hash: [u8; 32],
+) -> Result<(), ToolFailure> {
     if !allocation.valid()
-        || allocation.subject != subject
+        || allocation.subject != *subject
         || allocation.key.run != record.run
         || allocation.key.generation != record.generation
         || allocation.key.operation_id != args.operation_id
@@ -307,20 +365,29 @@ fn invoke(
     {
         return Err(failure("memory_operation_conflict"));
     }
-    live(&cancellation)?;
+    Ok(())
+}
+fn retained(
+    client: &dyn WritePort,
+    port: &dyn BotDelegatePort,
+    allocation: &MemoryEditAllocation,
+    workspace: WorkspaceId,
+    cancellation: &Cancellation,
+) -> Result<Option<Value>, ToolFailure> {
+    live(cancellation)?;
     let intent = match owner_call(
         port,
         BotCommand::ReconcileNativeResult {
             key: allocation.key.clone(),
         },
     )? {
-        BotReply::Missing => return Err(failure("unsupported_capability")), // inert allocation, no lease
+        BotReply::Missing => return Ok(None), // positive inert allocation; no lease
         BotReply::NativeResult { intent } => intent,
         _ => return Err(failure("memory_write_unavailable")),
     };
-    validate_retained(&allocation, &intent, record.workspace)?;
-    live(&cancellation)?;
-    match intent.stage {
+    validate_retained(allocation, &intent, workspace)?;
+    live(cancellation)?;
+    let value = match intent.stage {
         NativeResultStage::Registered => receipt(&allocation, &intent),
         NativeResultStage::Verified => {
             let evidence = evidence(&intent)?;
@@ -335,10 +402,15 @@ fn invoke(
         | NativeResultStage::SettledUnknown => {
             // No old history, second effect or fresh permission is needed to
             // request the existing recovery owner. An unleased row stays inert.
-            client.uncertain(provenance.owner, provenance.bot, allocation.key)?;
+            client.uncertain(
+                allocation.subject.owner,
+                allocation.subject.bot,
+                allocation.key.clone(),
+            )?;
             Err(failure("save_status_unknown"))
         }
-    }
+    }?;
+    Ok(Some(value))
 }
 fn validate_retained(
     allocation: &MemoryEditAllocation,
