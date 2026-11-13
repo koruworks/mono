@@ -402,7 +402,7 @@ fn unresolved_submissions_read_through_the_per_bot_guard_index() {
         .connection
         .prepare(
             "EXPLAIN QUERY PLAN SELECT user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_command_guard
-             WHERE bot_id=?1 AND command_kind IN ('start','continue') AND stage IN ('prepared','accepted') LIMIT ?2",
+             WHERE bot_id=?1 AND command_kind IN ('start','continue','routine_occurrence') AND stage IN ('prepared','accepted') LIMIT ?2",
         )
         .unwrap()
         .query_map(params![bot.id.to_storage(), 16], |r| r.get::<_, String>(3))

@@ -9,10 +9,11 @@ description = "Provider-neutral Koru AI chat models, behavior, and ports."
 
 [features]
 default = []
-schema = ["dep:schemars", "koru-store-core/schema", "koru-delegate-core/schema"]
+schema = ["dep:schemars", "koru-store-core/schema", "koru-delegate-core/schema", "koru-delegate-schedule/schema"]
 
 [dependencies]
 koru-delegate-core = { path = "../koru-delegate-core" }
+koru-delegate-schedule = { path = "../koru-delegate-schedule" }
 koru-link = { path = "../koru-link" }
 koru-store-core = { path = "../koru-store-core" }
 pulldown-cmark.workspace = true

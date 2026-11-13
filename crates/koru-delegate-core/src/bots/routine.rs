@@ -7,6 +7,11 @@ use crate::{BotId, BotRequestId, HandoffId, RunId, RunOrigin, ScheduleId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod evidence;
+mod policy;
+pub use evidence::*;
+pub use policy::*;
+
 pub const INTERACTIVE_BOT_SUBMISSION_VERSION: u32 = 1;
 pub const ROUTINE_BOT_SUBMISSION_VERSION: u32 = 2;
 

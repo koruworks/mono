@@ -20,6 +20,8 @@ pub mod library;
 pub use library::*;
 pub mod memory;
 pub use memory::*;
+pub mod routines;
+pub use routines::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
