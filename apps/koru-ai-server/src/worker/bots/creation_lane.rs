@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! One physical creation slot, shared by Bot and ordinary Memory effects.
 use super::*;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::worker) enum Family {
@@ -58,6 +60,16 @@ impl Default for CreationLane {
             active: None,
             last: Family::Memory,
         }
+    }
+}
+
+impl CreationLane {
+    fn complete(&mut self, serial: u64, family: Family) -> bool {
+        if self.active != Some((serial, family)) {
+            return false;
+        }
+        self.active = None;
+        true
     }
 }
 
@@ -120,10 +132,9 @@ impl WorkerState {
             CreationResult::Bot(_) => Family::Bot,
             CreationResult::Memory(_) => Family::Memory,
         };
-        if self.creation_lane.active != Some((result.serial, family)) {
+        if !self.creation_lane.complete(result.serial, family) {
             return;
         }
-        self.creation_lane.active = None;
         match result.result {
             CreationResult::Bot(result) => self.complete_bot_creation_step(result),
             CreationResult::Memory(result) => self.complete_memory_creation(result),

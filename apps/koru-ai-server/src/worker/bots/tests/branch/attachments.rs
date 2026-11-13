@@ -106,6 +106,8 @@ fn wait_until(condition: impl Fn() -> bool) {
 /// worker makes is the one after the files are copied.
 fn prepared(authority: &Arc<Authority>, bot: &Bot, destination: ChatId) -> CommandContext {
     CommandContext {
+        #[cfg(test)]
+        memory_for_fixture: None,
         request: context(true),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: authority.clone(),

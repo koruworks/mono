@@ -723,6 +723,8 @@ fn knowledge_changed_during_capture_refuses_without_partial_turn() {
     // A second command already prepared under this revision may finish while
     // capture waits on Store. This is exactly its current owner/page proof.
     let edit_proof = CommandContext {
+        #[cfg(test)]
+        memory_for_fixture: None,
         request: context(true),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: Arc::new(

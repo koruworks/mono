@@ -857,6 +857,7 @@ fn bot_branch_waits_for_delayed_steer_history_then_copies_it_in_reading_order() 
     let destination = ChatId::new();
     // The proof a prepared Branch carries: the source and its unused destination.
     let branch_context = CommandContext {
+        memory_for_fixture: None,
         request: super::super::context(true),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: prepared.authority.clone(),
@@ -1000,6 +1001,7 @@ fn a_steer_sent_while_branch_files_copy_refuses_the_commit_and_the_branch_follow
     let (bot, chat, revision, policy) = prepared.chats[0];
     let destination = ChatId::new();
     let branch_context = CommandContext {
+        memory_for_fixture: None,
         request: super::super::context(true),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: prepared.authority.clone(),

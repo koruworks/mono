@@ -26,12 +26,16 @@ const _: () = assert!(PREPARATION_OWNER_WITHIN.as_millis() * 3 <= RESPONSE_TIMEO
 
 #[derive(Clone)]
 pub(in crate::worker) struct CommandContext {
+    #[cfg(test)]
+    pub(in crate::worker) memory_for_fixture: Option<BotId>,
     pub(in crate::worker) request: RequestContext,
     pub(in crate::worker) prepared: Option<Arc<PreparedBotCommand>>,
 }
 impl From<RequestContext> for CommandContext {
     fn from(request: RequestContext) -> Self {
         Self {
+            #[cfg(test)]
+            memory_for_fixture: None,
             request,
             prepared: None,
         }
@@ -213,7 +217,7 @@ impl WorkerState {
         };
         // D0's additive contract stays closed before any Store/preparation hop.
         if let WorkerCommand::Bots { request, .. } = &command
-            && let Some(error) = super::closed_memory_failure(request)
+            && let Some(error) = super::closed_memory_context_failure(context, request)
         {
             let error = authorize(context, AiScope::ManageBots)
                 .err()

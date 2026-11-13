@@ -112,6 +112,8 @@ pub struct WorkerConfig {
     #[cfg(test)]
     test_repository_return: Option<SyncSender<Repository>>,
     #[cfg(test)]
+    test_context_completion: Option<SyncSender<InferenceAttemptId>>,
+    #[cfg(test)]
     test_bot_creation: Option<bots::CreationDriver>,
     /// Bot preparation treats the runtime's model discovery as ready, for
     /// tests that run a Bot command through real preparation with no
@@ -174,6 +176,8 @@ impl WorkerConfig {
             #[cfg(test)]
             test_repository_return: None,
             #[cfg(test)]
+            test_context_completion: None,
+            #[cfg(test)]
             test_bot_creation: None,
             #[cfg(test)]
             test_bot_runtime_ready: false,
@@ -204,6 +208,8 @@ impl WorkerConfig {
             test_repository: None,
             #[cfg(test)]
             test_repository_return: None,
+            #[cfg(test)]
+            test_context_completion: None,
             #[cfg(test)]
             test_bot_creation: None,
             #[cfg(test)]
@@ -240,6 +246,8 @@ impl WorkerConfig {
             test_repository: None,
             #[cfg(test)]
             test_repository_return: None,
+            #[cfg(test)]
+            test_context_completion: None,
             #[cfg(test)]
             test_bot_creation: None,
             #[cfg(test)]
@@ -1852,6 +1860,8 @@ fn run_worker(
         store_context.clone(),
         provider_output.clone(),
         Arc::clone(&shutdown),
+        #[cfg(test)]
+        config.test_context_completion.clone(),
     )?;
     let export_pool = ExportPool::spawn(
         store_context,
@@ -6991,6 +7001,7 @@ impl ContextPool {
         store: Option<Arc<dyn StoreContextPort>>,
         output: SyncSender<Envelope>,
         shutdown: Arc<AtomicBool>,
+        #[cfg(test)] completion: Option<SyncSender<InferenceAttemptId>>,
     ) -> Result<Self, String> {
         let (sender, receiver) = sync_channel::<ContextJob>(CONTEXT_QUEUE_CAPACITY);
         let thread = std::thread::Builder::new()
@@ -7030,6 +7041,12 @@ impl ContextPool {
                         )),
                     });
                     send_context_envelope(&output, Envelope::Context(resolution), &shutdown);
+                    #[cfg(test)]
+                    if let Some(completion) = &completion {
+                        // The observer cannot hold context progress. A test
+                        // follows this exact-attempt report with a FIFO Ping.
+                        let _ = completion.try_send(attempt_id);
+                    }
                 }
             })
             .map_err(|error| error.to_string())?;

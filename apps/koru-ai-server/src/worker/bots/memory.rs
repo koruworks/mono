@@ -54,4 +54,6 @@ impl AiWorkerClient {
 }
 
 #[cfg(test)]
+pub(in crate::worker::bots) mod composition;
+#[cfg(test)]
 mod tests;
