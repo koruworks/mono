@@ -152,6 +152,7 @@ fn submission(n: u8) -> BotSubmission {
     request.context.clear();
     BotSubmission {
         provenance: BotProvenance {
+            routine: None,
             owner: BotOwner {
                 user_scope: serde_json::from_value(serde_json::json!(v4(0xf0))).unwrap(),
                 device: request.executing_device,
@@ -240,6 +241,54 @@ fn count_submits(h: &Harness) -> usize {
         .iter()
         .filter(|call| matches!(call, Call::Submit { .. }))
         .count()
+}
+
+#[test]
+fn routine_v2_cannot_enter_ordinary_submit_or_admission() {
+    let mut h = bot_harness();
+    let mut s = submission(63);
+    let routine = RoutineProvenance {
+        schedule: ScheduleId::from_uuid(v4(61)),
+        occurrence_ms: 10,
+        definition: RoutineDefinitionIdentity {
+            revision: 1,
+            digest: RoutineDigest32::from_bytes([1; 32]),
+            owner_handoff: None,
+        },
+        grant_revision: 1,
+    };
+    s.request.origin = RunOrigin::Scheduled {
+        schedule: routine.schedule,
+        occurrence_ms: routine.occurrence_ms,
+        revision: routine.definition.revision,
+    };
+    s.provenance.routine = Some(routine);
+    assert!(s.valid_for_version(2));
+    assert!(!s.valid());
+    assert!(
+        h.orchestrator
+            .bot_submit(s.clone(), s.provenance.owner.device)
+            .is_err()
+    );
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_admission(s.request.run)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .admit_bot(&s)
+            .is_err()
+    );
+    assert!(h.sessions.lock().unwrap().calls.is_empty());
+    assert_eq!(*h.preambles.lock().unwrap(), 0);
 }
 
 #[test]

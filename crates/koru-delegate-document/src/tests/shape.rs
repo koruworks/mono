@@ -29,7 +29,10 @@ fn the_version_is_run_schema_and_meta_is_never_written() {
     run.set_rating(&rating()).unwrap();
     run.refresh_economics(2_000).unwrap();
 
-    assert_eq!(run.schema_version(), Some(RUN_DOCUMENT_SCHEMA_VERSION));
+    assert_eq!(
+        run.schema_version(),
+        Some(RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION)
+    );
     let roots = keys(&run.doc().get_deep_value());
     assert_eq!(
         roots,
@@ -191,7 +194,8 @@ fn no_error_carries_content() {
 fn the_stored_names_are_pinned() {
     assert_eq!(RUN_KIND, "koru-run");
     assert_eq!(SCHEDULE_KIND, "koru-schedule");
-    assert_eq!(RUN_DOCUMENT_SCHEMA_VERSION, 3);
+    assert_eq!(RUN_DOCUMENT_SCHEMA_VERSION, 4);
+    assert_eq!(RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION, 3);
 }
 
 #[test]

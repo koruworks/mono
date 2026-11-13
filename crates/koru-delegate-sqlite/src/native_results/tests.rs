@@ -26,6 +26,7 @@ impl Harness {
         };
         let submission = BotSubmission {
             provenance: BotProvenance {
+                routine: None,
                 owner: BotOwner {
                     user_scope: serde_json::from_value(serde_json::json!(fixtures::v4(0xb0)))
                         .unwrap(),

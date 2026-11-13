@@ -63,6 +63,7 @@ fn fixture(repo: &mut Repository) -> (Bot, PendingTurn, BotSubmission) {
     let workspace = delegate::WorkspaceId::from_uuid(workspace.as_uuid());
     let submission = BotSubmission {
         provenance: delegate::BotProvenance {
+            routine: None,
             owner: delegate::BotOwner {
                 user_scope: bot.user_scope,
                 device: bot.owner_device,

@@ -253,6 +253,7 @@ impl BotDelegatePort for RunOwner {
             1,
         );
         header.bot = Some(d::BotProvenance {
+            routine: None,
             owner,
             bot,
             submission: BotRequestId::mint(),

@@ -3,6 +3,8 @@
 //! AI-owned admission receipts. No live controller or transcript lives here.
 use super::*;
 use koru_delegate_core::{BotAdmissionBarrier, BotAdmissionView, BotSubmission, RunId};
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -42,6 +44,9 @@ pub enum BotOperationKind {
     Continue,
     Pause,
     Resume,
+    /// Identity reservation only, never an executable submission.
+    RoutineDraft,
+    RoutineOccurrence,
 }
 impl BotOperationKind {
     pub fn token(self) -> &'static str {
@@ -51,6 +56,8 @@ impl BotOperationKind {
             Self::Continue => "continue",
             Self::Pause => "pause",
             Self::Resume => "resume",
+            Self::RoutineDraft => "routine_draft",
+            Self::RoutineOccurrence => "routine_occurrence",
         }
     }
     pub fn parse(value: &str) -> Option<Self> {
@@ -60,6 +67,8 @@ impl BotOperationKind {
             "continue" => Some(Self::Continue),
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
+            "routine_draft" => Some(Self::RoutineDraft),
+            "routine_occurrence" => Some(Self::RoutineOccurrence),
             _ => None,
         }
     }
@@ -117,6 +126,26 @@ impl BotSubmissionIntent {
         if self.version != 1 || !self.submission.valid() {
             return Err(BotError::Invalid);
         }
+        self.validate_size()
+    }
+
+    /// Explicit receipt-owner cohort validation. This does not make a draft
+    /// runnable or prove that a Routine's durable claim has been linked.
+    pub fn validate_for_kind(&self, kind: BotOperationKind) -> Result<(), BotError> {
+        let p = &self.submission.provenance;
+        let version = match kind {
+            BotOperationKind::Start if p.continued_from.is_none() => 1,
+            BotOperationKind::Continue if p.continued_from.is_some() => 1,
+            BotOperationKind::RoutineOccurrence if p.continued_from.is_none() => 2,
+            _ => return Err(BotError::Invalid),
+        };
+        if self.version != version || !self.submission.valid_for_version(version) {
+            return Err(BotError::Invalid);
+        }
+        self.validate_size()
+    }
+
+    fn validate_size(&self) -> Result<(), BotError> {
         let bytes = serde_json::to_vec(self).map_err(|_| BotError::Invalid)?;
         if bytes.len() > 4 * 1024 * 1024 {
             return Err(BotError::Invalid);

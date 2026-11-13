@@ -145,6 +145,7 @@ impl Fixture {
             device: DeviceId::new(),
         };
         let provenance = BotProvenance {
+            routine: None,
             owner,
             bot: BotId::mint(),
             submission: BotRequestId::mint(),
