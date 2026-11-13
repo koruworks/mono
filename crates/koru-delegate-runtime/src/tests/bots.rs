@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+mod boot;
 mod host_gone;
 mod native_results;
 
@@ -7,6 +8,23 @@ use super::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn bot_boot_inventory(
+        &self,
+        owner: BotOwner,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .bot_boot_inventory(owner, after, through)
+    }
+    fn bot_has_unsettled(&self, owner: BotOwner, bot: BotId) -> Result<bool, BotLedgerError> {
+        self.inner.lock().unwrap().bot_has_unsettled(owner, bot)
+    }
+    fn recover_bot_reservation(&mut self, key: &BotRunKey) -> Result<bool, BotLedgerError> {
+        self.inner.lock().unwrap().recover_bot_reservation(key)
+    }
     fn active_bot_executions(
         &self,
         device: koru_delegate_core::DeviceId,
@@ -57,6 +75,7 @@ impl BotLedger for RecordingStore {
         owner: BotOwner,
         bot: BotId,
     ) -> Result<Option<BotAdmissionBarrier>, BotLedgerError> {
+        self.check("bot_barrier_read")?;
         self.inner.lock().unwrap().bot_barrier(owner, bot)
     }
     fn apply_bot_barrier(
@@ -185,6 +204,7 @@ fn prepared(h: &mut Harness, s: &BotSubmission) -> BotExecutionFence {
     h.orchestrator
         .bot_submit(s.clone(), s.provenance.owner.device)
         .unwrap();
+    boot::replay(&mut h.orchestrator, s);
     let started = h
         .orchestrator
         .bot_dispatch(&key(s), s.provenance.owner.device)
@@ -514,6 +534,7 @@ fn pause_before_dispatch_keeps_queue_and_resume_uses_original_snapshot() {
         paused: true,
     };
     h.orchestrator.bot_barrier(&barrier, owner.device).unwrap();
+    boot::replay_pair(&mut h.orchestrator, barrier.clone(), boot::policy(&s, 2));
     assert!(
         h.orchestrator
             .bot_dispatch(&key(&s), owner.device)
@@ -524,6 +545,7 @@ fn pause_before_dispatch_keeps_queue_and_resume_uses_original_snapshot() {
     barrier.paused = false;
     barrier.request = BotRequestId::mint();
     h.orchestrator.bot_barrier(&barrier, owner.device).unwrap();
+    boot::replay_pair(&mut h.orchestrator, barrier, boot::policy(&s, 3));
     assert!(
         h.orchestrator
             .bot_dispatch(&key(&s), owner.device)
@@ -808,6 +830,7 @@ fn restart_after_admission_before_document_creation_keeps_pinned_context_and_doe
             .iter()
             .all(|call| !matches!(call, Call::Create { .. }))
     );
+    boot::replay(&mut h.orchestrator, &s);
     assert!(
         h.orchestrator
             .bot_dispatch(&key(&s), s.provenance.owner.device)
@@ -827,6 +850,7 @@ fn full_host_reconciles_reserved_slots_before_admitting_new_queued_work() {
         h.orchestrator
             .bot_submit(s.clone(), s.provenance.owner.device)
             .unwrap();
+        boot::replay(&mut h.orchestrator, s);
     }
     h.schedule_store.reserve_bot(a.request.run).unwrap();
     h.schedule_store.reserve_bot(b.request.run).unwrap();
@@ -1030,6 +1054,7 @@ fn missing_working_folder_refuses_without_creating_or_launching_replacement() {
     h.orchestrator
         .bot_submit(s.clone(), s.provenance.owner.device)
         .unwrap();
+    boot::replay(&mut h.orchestrator, &s);
     assert!(
         h.orchestrator
             .bot_dispatch(&key(&s), s.provenance.owner.device)
@@ -1050,6 +1075,7 @@ fn retained_schedule_identity_blocks_only_overlapping_bot_folder() {
     h.orchestrator
         .bot_submit(s.clone(), s.provenance.owner.device)
         .unwrap();
+    boot::replay(&mut h.orchestrator, &s);
     let overlap = koru_delegate_scope::ScopeIdentity::fixture_canonical(Path::new("C:/fixture"));
     assert!(
         h.orchestrator

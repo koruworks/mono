@@ -59,10 +59,12 @@ pub use attempt::{
     PublicationKind, StaleAttempt,
 };
 pub use bots::{
-    BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView, BotDeliveryReceipt,
-    BotExecutionFence, BotInputRefusal, BotOwner, BotPolicyBarrier, BotPolicyBarrierKey,
-    BotPolicyBarrierReceipt, BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission,
-    BotSubmissionKey, BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy,
+    BOT_BOOT_PAGE_LIMIT, BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView,
+    BotBootAdmission, BotBootCursor, BotBootEntry, BotBootIdentity, BotBootPage, BotBootReceipt,
+    BotBootScan, BotBootState, BotDeliveryReceipt, BotExecutionFence, BotHello, BotInputRefusal,
+    BotOwner, BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt,
+    BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
+    BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy,
     ConfirmNativeResult, NativeDrainReason, NativeEffectBinding, NativeEffectDrainReceipt,
     NativeEffectKind, NativeEffectTimestamp, NativePendingEffect, NativePendingEffects,
     NativePolicyRequestId, NativeRecoveryCursor, NativeResultDisposition, NativeResultIntentView,
@@ -80,8 +82,9 @@ pub use economics::{
 pub use failure::RunFailureReason;
 pub use header::{DelegatedRun, Rating, ResultReference, RunHeader, RunRating};
 pub use ids::{
-    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, HandoffId,
-    IdParseError, ModelRef, RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
+    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, DelegateBootId,
+    HandoffId, IdParseError, ModelRef, RunAttemptId, RunId, ScheduleId, TimelineEntryId,
+    UsageFactId,
 };
 pub use name::RunName;
 pub use pin::ContextState;

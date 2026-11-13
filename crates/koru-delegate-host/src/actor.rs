@@ -208,6 +208,7 @@ pub struct Actor {
     device: DeviceId,
     bot_queue_cursor: u64,
     bot_drain_pending: bool,
+    bot_drain_again: bool,
     pumps: HashMap<RunId, Pump>,
     watchers: HashMap<RunId, Vec<Watcher>>,
     active: Arc<AtomicU32>,
@@ -234,6 +235,7 @@ impl Actor {
             device,
             bot_queue_cursor: 0,
             bot_drain_pending: false,
+            bot_drain_again: false,
             pumps: HashMap::new(),
             watchers: HashMap::new(),
             active: Arc::new(AtomicU32::new(0)),
@@ -387,6 +389,12 @@ impl Actor {
             Err(error) => {
                 tracing::error!(target: "koru::delegate", %error, "restart could not classify the ledger");
             }
+        }
+        if let Err(error) = self
+            .orchestrator
+            .recover_unused_bot_reservations(self.device)
+        {
+            tracing::warn!(target: "koru::delegate", %error, "unused Bot reservations remain held");
         }
         self.count_active();
         self.wake_bots();

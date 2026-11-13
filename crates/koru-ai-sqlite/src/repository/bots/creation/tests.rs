@@ -448,6 +448,43 @@ fn an_existing_role_completes_from_folder_ready_and_stays_shared() {
         )
         .unwrap();
     assert!(!owned);
+    let replay = repo
+        .bot_boot_snapshot(
+            BotOwner {
+                user_scope: bot.user_scope,
+                device: bot.owner_device,
+            },
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Missing {},
+        )
+        .unwrap();
+    assert_eq!(replay.admission.request, request);
+    let mut abandoned = ready;
+    abandoned.abandoned = true;
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET outcome_json=?2 WHERE request_id=?1",
+            params![
+                request.to_storage(),
+                serde_json::to_string(&BotReceiptOutcome::CreationV2 {
+                    version: 2,
+                    creation: abandoned
+                })
+                .unwrap()
+            ],
+        )
+        .unwrap();
+    assert!(
+        repo.bot_boot_snapshot(
+            BotOwner {
+                user_scope: bot.user_scope,
+                device: bot.owner_device
+            },
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Missing {},
+        )
+        .is_err()
+    );
 }
 
 #[test]

@@ -4,6 +4,112 @@ use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
 
 #[test]
+fn boot_admission_hint_distinguishes_unknown_from_missing_and_rejects_unknown_fields() {
+    use koru_delegate_core::BotBootAdmission;
+    for hint in [
+        BotBootAdmission::Missing {},
+        BotBootAdmission::Unavailable {},
+    ] {
+        let mut wire = serde_json::to_value(&hint).unwrap();
+        assert_eq!(
+            serde_json::from_value::<BotBootAdmission>(wire.clone()).unwrap(),
+            hint
+        );
+        wire["force"] = true.into();
+        assert!(serde_json::from_value::<BotBootAdmission>(wire).is_err());
+    }
+    assert_ne!(
+        serde_json::to_value(BotBootAdmission::Missing {}).unwrap(),
+        serde_json::to_value(BotBootAdmission::Unavailable {}).unwrap()
+    );
+    let mut present = serde_json::json!({"state":"present","barrier":{
+        "owner":{"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()},"bot":Uuid::new_v4(),"request":Uuid::new_v4(),"epoch":1,"paused":false
+    }});
+    assert!(serde_json::from_value::<BotBootAdmission>(present.clone()).is_ok());
+    present["barrier"]["force"] = true.into();
+    assert!(serde_json::from_value::<BotBootAdmission>(present).is_err());
+}
+
+#[test]
+fn ipc13_boot_commands_roundtrip_and_ipc12_is_rejected() {
+    let owner = serde_json::from_value(
+        serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
+    )
+    .unwrap();
+    let boot = koru_delegate_core::DelegateBootId::mint();
+    let bot = koru_delegate_core::BotId::mint();
+    let barrier = BotAdmissionBarrier {
+        owner,
+        bot,
+        request: koru_delegate_core::BotRequestId::mint(),
+        epoch: 1,
+        paused: false,
+    };
+    let policy = BotPolicyBarrier {
+        key: BotPolicyBarrierKey {
+            owner,
+            bot,
+            request: koru_delegate_core::BotRequestId::mint().into(),
+        },
+        config_revision: 1,
+        policy_revision: 1,
+        policy: CapturedBotPolicy {
+            workspace: WorkspaceId::from_uuid(Uuid::new_v4()),
+            destination: WorkspaceId::from_uuid(Uuid::new_v4()),
+            access: koru_delegate_core::BotAccess::Default,
+            selected_pages: Default::default(),
+        },
+        effects_allowed: true,
+    };
+    let cursor = BotBootCursor {
+        boot,
+        owner,
+        after: 2,
+        through: 10,
+    };
+    assert!(cursor.valid_for(boot, owner));
+    assert!(!cursor.valid_for(koru_delegate_core::DelegateBootId::mint(), owner));
+    for command in [
+        BotCommand::Hello {
+            owner,
+            scan: BotBootScan::Probe {},
+        },
+        BotCommand::Hello {
+            owner,
+            scan: BotBootScan::Start {},
+        },
+        BotCommand::Hello {
+            owner,
+            scan: BotBootScan::Continue { cursor },
+        },
+        BotCommand::SynchronizeBootBot {
+            boot,
+            barrier,
+            policy,
+        },
+    ] {
+        assert_eq!(command.owner(), Some(&owner));
+        let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
+        let (version, decoded): (u8, BotCommand) =
+            koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
+        assert_eq!(version, 13);
+        assert_eq!(decoded, command);
+        if matches!(command, BotCommand::Hello { .. }) {
+            let mut nested = serde_json::to_value(&command).unwrap();
+            nested["scan"]["force"] = true.into();
+            assert!(serde_json::from_value::<BotCommand>(nested).is_err());
+        }
+        let mut json = serde_json::to_value(&command).unwrap();
+        json["force"] = true.into();
+        assert!(serde_json::from_value::<BotCommand>(json).is_err());
+    }
+    let bytes = koru_ipc::frame::encode(12, &serde_json::json!({"frame":"hello"})).unwrap();
+    let failure = crate::local::read_current_response(&mut bytes.as_slice()).unwrap_err();
+    assert_eq!(failure.code, "delegate_incompatible");
+    assert!(!failure.retryable);
+}
+
+#[test]
 fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
     let key: BotRunKey = serde_json::from_value(serde_json::json!({
         "owner":{"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()},
@@ -32,7 +138,7 @@ fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
 
 #[test]
 fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 12);
+    assert_eq!(crate::ipc::WIRE_VERSION, 13);
     let owner: koru_delegate_core::BotOwner = serde_json::from_value(
         serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
     )
@@ -46,7 +152,7 @@ fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
     let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     let (version, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-    assert_eq!((version, decoded), (12, command.clone()));
+    assert_eq!((version, decoded), (13, command.clone()));
     let mut wire = serde_json::to_value(&command).unwrap();
     assert_eq!(wire["command"], "unsettled_work");
     wire["include_settled"] = serde_json::json!(true);
@@ -73,7 +179,7 @@ fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
 
 #[test]
 fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 12);
+    assert_eq!(crate::ipc::WIRE_VERSION, 13);
     let request = prepare();
     for reason in [
         NativeDrainReason::GatewayStartup,
@@ -89,7 +195,7 @@ fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
         let encoded = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (version, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut encoded.as_slice()).unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert_eq!(decoded, command);
         let mut json = serde_json::to_value(command).unwrap();
         json["reason"]["trusted"] = serde_json::json!(true);

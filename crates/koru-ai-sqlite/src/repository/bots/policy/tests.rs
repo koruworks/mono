@@ -43,6 +43,21 @@ fn pending_access_is_atomic_replayable_and_effective_only_after_exact_barrier() 
         .prepare_bot_access(&bot, profile, request, &fingerprint, 1, &barrier)
         .unwrap();
     assert_eq!(first.operation().status, BotOperationStatus::Pending);
+    let replay = repo
+        .bot_boot_snapshot(
+            owner(&bot),
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Missing {},
+        )
+        .unwrap();
+    assert_eq!(replay.pending_access, Some(barrier.clone()));
+    assert!(
+        !repo
+            .bot_access_receipt(owner(&bot), bot.id, request)
+            .unwrap()
+            .unwrap()
+            .completed
+    );
     assert_eq!(repo.bot(bot.id).unwrap(), Some(bot.clone()));
     assert_eq!(
         repo.prepare_bot_access(&bot, profile, request, &fingerprint, 1, &barrier)

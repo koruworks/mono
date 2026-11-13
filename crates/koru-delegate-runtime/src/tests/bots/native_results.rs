@@ -48,6 +48,7 @@ impl NativeResultLedger for RecordingStore {
         owner: BotOwner,
         bot: BotId,
     ) -> Result<Option<NativePolicyRecord>, BotLedgerError> {
+        self.check("bot_current_policy")?;
         self.inner.lock().unwrap().current_native_policy(owner, bot)
     }
     fn settle_native_policy(
@@ -212,6 +213,15 @@ fn authority_is_derived_and_unknown_stale_or_mismatched_state_never_becomes_ordi
 fn native_effect_requires_fresh_policy_and_issues_one_lease_across_retry_and_barrier() {
     let (mut h, _, fence, mut policy, mut request) = active();
     let device = fence.owner.device;
+    // Boot replay now supplies the initial policy. Exercise loss of that
+    // separate bounded native payload proof through its real eviction path.
+    for _ in 0..64 {
+        let mut other = policy.clone();
+        other.key.bot = BotId::mint();
+        h.orchestrator
+            .synchronize_native_policy(other, device)
+            .unwrap();
+    }
     assert!(
         h.orchestrator
             .prepare_native_effect(&request, device)
@@ -514,8 +524,78 @@ fn restart_cannot_reconstruct_current_policy_from_retained_digest() {
 }
 
 #[test]
+fn boot_policy_pending_is_not_ready_until_native_lease_settles() {
+    let (mut h, s, fence, mut policy, request) = active();
+    let device = fence.owner.device;
+    h.orchestrator
+        .synchronize_native_policy(policy.clone(), device)
+        .unwrap();
+    h.orchestrator
+        .prepare_native_effect(&request, device)
+        .unwrap();
+    policy.config_revision = 2;
+    policy.key.request = BotRequestId::from_uuid(v4(92)).into();
+    policy.effects_allowed = false;
+    let barrier = BotAdmissionBarrier {
+        owner: fence.owner,
+        bot: fence.bot,
+        request: BotRequestId::mint(),
+        epoch: 2,
+        paused: true,
+    };
+    let boot = h
+        .orchestrator
+        .bot_hello(fence.owner, BotBootScan::Probe {}, device)
+        .unwrap()
+        .boot;
+    let receipt = h
+        .orchestrator
+        .synchronize_boot_bot(boot, barrier.clone(), policy.clone(), device)
+        .unwrap();
+    assert_eq!(receipt.state, BotBootState::PendingPolicy);
+    let page = h
+        .orchestrator
+        .bot_hello(fence.owner, BotBootScan::Start {}, device)
+        .unwrap();
+    assert_eq!(
+        page.entries[0].identity.run, s.request.run,
+        "executing owners need fresh replay too"
+    );
+    h.orchestrator
+        .confirm_native_result(
+            &ConfirmNativeResult {
+                key: request.key,
+                request_fingerprint: request.request_fingerprint,
+                observation: NativeResultObservation::NotApplied {
+                    code: NativeResultRefusal::AccessDenied,
+                },
+            },
+            device,
+        )
+        .unwrap();
+    assert_eq!(
+        h.orchestrator
+            .synchronize_boot_bot(boot, barrier, policy, device)
+            .unwrap()
+            .state,
+        BotBootState::Ready
+    );
+    let hello = h
+        .orchestrator
+        .bot_hello(fence.owner, BotBootScan::Start {}, device)
+        .unwrap();
+    assert_eq!(hello.entries.len(), 1);
+    assert!(
+        matches!(&hello.entries[0].admission, BotBootAdmission::Present { barrier } if barrier.epoch == 2 && barrier.paused)
+    );
+}
+
+#[test]
 fn ended_prepared_intent_without_any_lease_can_be_definitively_refused() {
-    let (mut h, _, fence, mut policy, request) = active();
+    let (mut h, _, fence, mut policy, mut request) = active();
+    policy.config_revision = 2;
+    request.config_revision = 2;
+    policy.key.request = BotRequestId::from_uuid(v4(92)).into();
     policy.effects_allowed = false;
     h.orchestrator
         .synchronize_native_policy(policy, fence.owner.device)

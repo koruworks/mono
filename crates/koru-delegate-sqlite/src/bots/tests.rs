@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+mod boot;
 use crate::{AttemptPhase, CrashPoint, LedgerError, Moment, RunsDb, WriteOp, fixtures};
 use koru_delegate_core::{
     BotAccess, BotProvenance, BotWorkingFolder, CapturedBotPolicy, PendingInput, WorkspaceScope,

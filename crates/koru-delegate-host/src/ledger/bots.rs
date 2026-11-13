@@ -6,6 +6,23 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn bot_boot_inventory(
+        &self,
+        owner: BotOwner,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .bot_boot_inventory(owner, after, through)
+    }
+    fn bot_has_unsettled(&self, owner: BotOwner, bot: BotId) -> Result<bool, BotLedgerError> {
+        self.0.lock().unwrap().bot_has_unsettled(owner, bot)
+    }
+    fn recover_bot_reservation(&mut self, key: &BotRunKey) -> Result<bool, BotLedgerError> {
+        self.0.lock().unwrap().recover_bot_reservation(key)
+    }
     fn active_bot_executions(
         &self,
         device: koru_delegate_core::DeviceId,

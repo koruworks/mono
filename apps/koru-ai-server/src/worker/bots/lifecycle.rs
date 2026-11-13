@@ -1870,6 +1870,7 @@ impl WorkerState {
 
     /// An owner step's answer, applied on the writer.
     pub(in crate::worker) fn complete_bot_lifecycle(&mut self, result: LifecycleResult) {
+        self.request_bot_boot_refresh();
         let key = result.key;
         if let Outcome::Probe(answer) = result.outcome {
             return self.complete_bot_lifecycle_probe(key, answer);

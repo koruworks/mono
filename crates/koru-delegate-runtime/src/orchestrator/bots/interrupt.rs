@@ -117,8 +117,7 @@ impl Orchestrator {
             record.state,
             BotAdmissionState::Settled | BotAdmissionState::Refused
         ) {
-            self.bot_ledger()?
-                .settle_bot(key.run, BotSettlement::Settled)?;
+            self.settle_bot_admission(key.run, BotSettlement::Settled)?;
         }
         Ok(())
     }

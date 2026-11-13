@@ -1177,6 +1177,7 @@ enum Envelope {
         deadline: Instant,
     },
     BotPolicyChecked(bots::BotPolicyResult),
+    BotBootChecked(bots::BotBootResult),
     BotPolicyRecover {
         restart: bool,
     },
@@ -1590,6 +1591,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    bot_boot: bots::BootRecovery,
     native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     native_drain_busy: bool,
     bot_policy_pending: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
@@ -1878,6 +1880,7 @@ fn run_worker(
         bot_coordination: HashSet::new(),
         bot_policy_pending: HashSet::new(),
         bot_policy_recovery: bots::policy::PolicyRecovery::default(),
+        bot_boot: Default::default(),
         bot_recovery_after: Some(0),
         bot_recovery_retry: Default::default(),
         bot_delivery_answers: Default::default(),
@@ -1945,6 +1948,7 @@ fn run_worker(
     state.recover_bot_chats();
     state.schedule_native_recovery();
     while !shutdown.load(Ordering::Acquire) {
+        state.schedule_bot_boot();
         state.schedule_native_recovery();
         if state.bot_policy_recovery.due(Instant::now()) {
             state.recover_bot_policy(false);
@@ -1985,7 +1989,13 @@ fn run_worker(
                 deadline,
             }) => state.request_native_policy(request, reply, deadline),
             Ok(Envelope::BotPolicyChecked(result)) => state.complete_bot_policy(result),
-            Ok(Envelope::BotPolicyRecover { restart }) => state.recover_bot_policy(restart),
+            Ok(Envelope::BotBootChecked(result)) => state.complete_bot_boot(result),
+            Ok(Envelope::BotPolicyRecover { restart }) => {
+                if restart {
+                    state.request_bot_boot_refresh();
+                }
+                state.recover_bot_policy(restart);
+            }
             Ok(Envelope::BotCoordinated(result)) => state.complete_bot_coordination(result),
             Ok(Envelope::BotChatStep(result)) => state.complete_bot_chat_step(result),
             Ok(Envelope::BotResendProbed(result)) => state.complete_bot_resend_probe(result),
@@ -5705,6 +5715,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    BotBoot(bots::BotBootJob),
     BotChatRecovery(bots::chat::StepJob),
     BotResendProbe(bots::chat::ResendProbe),
     NativeDrain(native_recovery::NativeDrainJob),
@@ -5850,6 +5861,13 @@ impl ProviderAdminPool {
                             send_admin_envelope(
                                 &output,
                                 Envelope::NativeDrained(result),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotBoot(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::BotBootChecked(job.run()),
                                 &thread_shutdown,
                             );
                         }

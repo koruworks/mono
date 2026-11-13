@@ -414,6 +414,14 @@ impl WorkerState {
             Err(_) => {}
         }
         let answered = result.result.is_ok();
+        if answered
+            || matches!(
+                result.action,
+                Action::Submit | Action::Pause(_) | Action::Fence { .. }
+            )
+        {
+            self.request_bot_boot_refresh();
+        }
         let refusal = result.result.as_ref().err().map(|error| error.code.clone());
         // A pause or resume being delivered: what its owner answered, for the
         // Bot read's `pending_change`.

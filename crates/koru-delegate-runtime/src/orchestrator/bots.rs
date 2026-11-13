@@ -31,7 +31,7 @@ impl From<BotLedgerError> for RunError {
         }
     }
 }
-fn owner_device(owner: BotOwner, device: DeviceId) -> Result<(), RunError> {
+pub(super) fn owner_device(owner: BotOwner, device: DeviceId) -> Result<(), RunError> {
     if owner.device != device || device.as_uuid().is_nil() {
         return Err(refused("bot_owner_mismatch"));
     }
@@ -55,6 +55,7 @@ impl Orchestrator {
             return Err(refused("bot_invalid"));
         }
         let record = self.bot_ledger()?.admit_bot(&submission)?;
+        self.invalidate_boot_for_submission(&submission);
         if self
             .ports
             .store
@@ -71,8 +72,7 @@ impl Orchestrator {
                     .intent(submission.request.run)?
                     .is_some_and(|intent| intent.state == IntentState::Abandoned)
                 {
-                    self.bot_ledger()?
-                        .settle_bot(submission.request.run, BotSettlement::Refused)?;
+                    self.settle_bot_admission(submission.request.run, BotSettlement::Refused)?;
                 }
                 return Err(refused("bot_context_unavailable"));
             }
@@ -160,7 +160,9 @@ impl Orchestrator {
         device: DeviceId,
     ) -> Result<BotAdmissionBarrier, RunError> {
         owner_device(barrier.owner, device)?;
-        Ok(self.bot_ledger()?.apply_bot_barrier(barrier)?)
+        let applied = self.bot_ledger()?.apply_bot_barrier(barrier)?;
+        self.invalidate_boot_for_barrier(&applied);
+        Ok(applied)
     }
 
     pub fn bot_candidates(
@@ -256,6 +258,14 @@ impl Orchestrator {
         if self.ports.store.current_attempt(key.run)?.is_some() {
             return Ok(None);
         }
+        if !self.bot_boot_ack_current(
+            key.owner,
+            key.bot,
+            record.config_revision,
+            record.policy_revision,
+        )? {
+            return Ok(None);
+        }
         if self
             .bot_ledger()?
             .bot_barrier(key.owner, key.bot)?
@@ -305,6 +315,14 @@ impl Orchestrator {
             BotReservation::Acquired | BotReservation::AlreadyOwned => {}
             _ => return Ok(None),
         }
+        if !self.bot_boot_ack_current(
+            key.owner,
+            key.bot,
+            record.submission.provenance.config_revision,
+            record.submission.provenance.policy_revision,
+        )? {
+            return Ok(None);
+        }
         // The actor serializes barriers and dispatch. Retain the reservation if
         // an injected owner nevertheless reports a pause at this last boundary.
         if self
@@ -331,20 +349,21 @@ impl Orchestrator {
                         .intent(key.run)?
                         .is_some_and(|intent| intent.state == IntentState::Abandoned)
                     {
-                        self.bot_ledger()?
-                            .settle_bot(key.run, BotSettlement::Refused)?;
+                        self.settle_bot_admission(key.run, BotSettlement::Refused)?;
                     }
                     return Err(refused("bot_context_unavailable"));
                 }
             }
             IntentState::Abandoned => {
-                self.bot_ledger()?
-                    .settle_bot(key.run, BotSettlement::Refused)?;
+                self.settle_bot_admission(key.run, BotSettlement::Refused)?;
                 return Err(refused("bot_intent_abandoned"));
             }
             IntentState::Satisfied => {}
         }
         if self.status(key.run)? != RunStatus::Created {
+            return Ok(None);
+        }
+        if !self.bot_boot_ack_current(key.owner, key.bot, 0, 0)? {
             return Ok(None);
         }
         let started = self.start_resolved(key.run, scope, StartOrigin::Bot { bot: key.bot })?;
@@ -459,7 +478,7 @@ impl Orchestrator {
         self.ports.store.retire(run, row.generation)?;
         // Retirement is the proof boundary. A lost settlement acknowledgement
         // must remain retryable without dropping the still-held folder claim.
-        self.bot_ledger()?.settle_bot(run, BotSettlement::Settled)?;
+        self.settle_bot_admission(run, BotSettlement::Settled)?;
         let state = self.open(run)?;
         let attempt = state.attempt.take();
         state.last_attempt = Some((row.attempt, row.generation));
@@ -520,8 +539,7 @@ impl Orchestrator {
         self.settle(key.run)?;
         if self.ports.store.current_attempt(key.run)?.is_none() {
             self.bot_settle_before_retirement(key.run)?;
-            self.bot_ledger()?
-                .settle_bot(key.run, BotSettlement::Settled)?;
+            self.settle_bot_admission(key.run, BotSettlement::Settled)?;
         }
         Ok(())
     }
