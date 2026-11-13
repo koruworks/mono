@@ -1169,6 +1169,24 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
+    /// Internal entry seam only. Production and normal client dispatch retain
+    /// the shared gate; all subsequent read authority checks are unchanged.
+    #[cfg(test)]
+    RunMemoryReadForFixture {
+        request: bots::memory::RunMemoryReadRequest,
+        reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
+        deadline: Instant,
+    },
+    #[cfg(test)]
+    RetireMemoryReadKeyForFixture {
+        reply: SyncSender<()>,
+    },
+    RunMemoryRead {
+        request: bots::memory::RunMemoryReadRequest,
+        reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
+        deadline: Instant,
+    },
+    MemoryReadCompleted(bots::memory::read::MemoryReadResult),
     NativeDrainWake,
     NativeDrained(native_recovery::NativeDrainResult),
     NativePolicy {
@@ -1196,7 +1214,7 @@ enum Envelope {
         proof: ApiResult<bots::PreparedBotCommand>,
     },
     BotCreationPrepared(Box<bots::CreationPrepared>),
-    BotCreationStep(Box<bots::CreationStepResult>),
+    BotCreationStep(Box<bots::CreationLaneResult>),
     BotCreationRead(Box<bots::CreationReadResult>),
     Command(WorkerCommand),
     Context(ContextResolution),
@@ -1611,6 +1629,9 @@ struct WorkerState {
     bot_lifecycle: bots::LifecycleDriver,
     /// The Bot creations the writer is driving, and their list (P1.8).
     bot_creations: bots::CreationDriver,
+    creation_lane: bots::CreationLane,
+    memory_recovery: bots::memory::recovery::MemoryRecovery,
+    memory_reads: bots::memory::read::MemoryReads,
     /// Refused Bot tasks owed their automatic re-send as files (O30).
     bot_resends: bots::chat::Resends,
     #[cfg(test)]
@@ -1886,6 +1907,9 @@ fn run_worker(
         bot_delivery_answers: Default::default(),
         bot_lifecycle: Default::default(),
         bot_creations,
+        creation_lane: Default::default(),
+        memory_recovery: Default::default(),
+        memory_reads: Default::default(),
         bot_resends: Default::default(),
         #[cfg(test)]
         test_bot_runtime_ready: config.test_bot_runtime_ready,
@@ -1960,7 +1984,7 @@ fn run_worker(
         state.schedule_bot_chat_step();
         state.schedule_bot_resends();
         state.schedule_bot_lifecycle();
-        state.schedule_bot_creations();
+        state.schedule_creation_lanes();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
             Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
@@ -1983,6 +2007,23 @@ fn run_worker(
                 );
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
+            #[cfg(test)]
+            Ok(Envelope::RetireMemoryReadKeyForFixture { reply }) => {
+                state.memory_reads.invalidate();
+                let _ = reply.send(());
+            }
+            #[cfg(test)]
+            Ok(Envelope::RunMemoryReadForFixture {
+                request,
+                reply,
+                deadline,
+            }) => state.enqueue_run_memory_read(request, reply, deadline),
+            Ok(Envelope::RunMemoryRead {
+                request,
+                reply,
+                deadline,
+            }) => state.request_run_memory_read(request, reply, deadline),
+            Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
             Ok(Envelope::NativePolicy {
                 request,
                 reply,
@@ -2012,7 +2053,7 @@ fn run_worker(
             Ok(Envelope::BotCreationPrepared(prepared)) => {
                 state.complete_bot_creation_preparation(*prepared)
             }
-            Ok(Envelope::BotCreationStep(result)) => state.complete_bot_creation_step(*result),
+            Ok(Envelope::BotCreationStep(result)) => state.complete_creation_lane(*result),
             Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
@@ -2172,6 +2213,13 @@ impl WorkerState {
             return;
         };
         match command {
+            WorkerCommand::Bots {
+                context,
+                request:
+                    request @ (koru_ai_wire::BotCommand::ListMemory { .. }
+                    | koru_ai_wire::BotCommand::ReadMemoryFact { .. }),
+                reply,
+            } => self.read_owner_memory(context, request, reply),
             WorkerCommand::Bots {
                 context,
                 request: request @ koru_ai_wire::BotCommand::ReadRun { .. },
@@ -5735,6 +5783,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotBoot(bots::BotBootJob),
     BotChatRecovery(bots::chat::StepJob),
     BotResendProbe(bots::chat::ResendProbe),
@@ -5761,7 +5810,7 @@ enum ProviderAdminJob {
     BotBranch(bots::BotBranchJob),
     BotLifecycle(bots::LifecycleJob),
     BotCreationPrepare(bots::CreationPreparationJob),
-    BotCreationStep(bots::CreationJob),
+    BotCreationStep(bots::CreationLaneJob),
     BotCreationRead(bots::CreationReadJob),
     /// A public Run read (P1.8 B1), on its own lane; it answers its caller
     /// itself.
@@ -5791,12 +5840,14 @@ struct ProviderAdminPool {
     control_sender: Option<SyncSender<bots::chat::StepJob>>,
     interactive_sender: Option<SyncSender<ProviderAdminJob>>,
     control_thread: Option<JoinHandle<()>>,
-    /// Bot creation's own lane (P1.8): its steps wait on the Store and the
-    /// filesystem for up to two 30 s hops each, so they never occupy the
+    /// Bot and ordinary Memory creation's shared lane: steps wait on Store and
+    /// filesystem calls (individual Store waits use the existing 30 s timeout),
+    /// so multiple hops and decoding do not occupy the
     /// shared administration queue that automatic interruptions, policy,
     /// coordination, native drain and lifecycle use. The writer
-    /// keeps at most one step in flight, so this queue of one never fills.
-    creation_sender: Option<SyncSender<bots::CreationJob>>,
+    /// keeps one serial/family slot across both families, so cancellation or
+    /// owner change cannot release a running step early. The queue stays at one.
+    creation_sender: Option<SyncSender<bots::CreationLaneJob>>,
     creation_thread: Option<JoinHandle<()>>,
     /// Public Run reads' own lane (P1.8 B1): each asks the execution owner,
     /// within its deadline, so a slow or hung owner holds this lane and
@@ -5828,6 +5879,7 @@ impl ProviderAdminJob {
     fn preparation(&self) -> bool {
         match self {
             Self::BotPrepare(_)
+            | Self::BotMemoryRead(_)
             | Self::BotCreationPrepare(_)
             | Self::BotCreationRead(_)
             | Self::BotInteractionRead(_)
@@ -5909,6 +5961,7 @@ impl ProviderAdminPool {
                             unreachable!("preparation lane dispatch")
                         }
                         ProviderAdminJob::BotPrepare(_)
+                        | ProviderAdminJob::BotMemoryRead(_)
                         | ProviderAdminJob::BotCreationPrepare(_)
                         | ProviderAdminJob::BotCreationRead(_)
                         | ProviderAdminJob::BotInteractionRead(_)
@@ -6049,7 +6102,7 @@ impl ProviderAdminPool {
             sync_channel::<bots::chat::StepJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
         let (interactive_sender, interactive_receiver) =
             sync_channel::<ProviderAdminJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
-        let (creation_sender, creation_receiver) = sync_channel::<bots::CreationJob>(1);
+        let (creation_sender, creation_receiver) = sync_channel::<bots::CreationLaneJob>(1);
         let creation_shutdown = Arc::clone(&shutdown);
         let creation_thread = std::thread::Builder::new()
             .name("koru-ai-bot-creation".into())
@@ -6429,6 +6482,7 @@ fn run_preparation(
     shutdown: &AtomicBool,
 ) {
     let envelope = match job {
+        ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
         ProviderAdminJob::BotPrepare(job) => {
             let (command, proof) = job.run(agents);
             Envelope::BotPrepared {

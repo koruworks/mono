@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Staged in-process Memory transport. No worker/client dispatch is enabled in D0.
-use crate::worker::{AiWorkerClient, ApiResult, failure};
+//! Trusted in-process Memory transport; the shared exposure gate remains closed.
+use crate::worker::*;
 use koru_ai_core::Cancellation;
 use koru_ai_core::bots::{BotMemoryDetailPage, BotMemoryListPage, MemoryReadOperation};
 use koru_delegate_core::{AttemptGeneration, BotProvenance, CapturedBotPolicy, RunId};
 
-// The issuer is compiled during D1's staged worker wiring; no public gate opens
-// until its caller performs the canonical/delegate checks around each read.
-#[allow(dead_code)]
+mod commands;
 mod cursor;
+pub(in crate::worker) mod read;
+pub(in crate::worker) mod recovery;
 
 /// A trusted composition request, never an HTTP/provider-owned principal.
-/// The future read job must independently verify its canonical association,
+/// The read job independently verifies its canonical association,
 /// current Store authority and delegate generation before and after reading.
 #[derive(Clone)]
 pub struct RunMemoryReadRequest {
@@ -31,18 +31,25 @@ pub enum RunMemoryReadResult {
 }
 
 impl AiWorkerClient {
-    /// Staged trusted-host interface, deliberately absent from AiServerPort/HTTP.
-    /// D0 never queues work or contacts the Store/delegate. D1 supplies the
-    /// reviewed authority checks before the shared exposure gate can open.
-    pub fn read_bot_memory(
-        &self,
-        _request: RunMemoryReadRequest,
-    ) -> ApiResult<RunMemoryReadResult> {
-        Err(failure(
-            "unsupported_capability",
-            "Bot Memory is not available yet.",
-            false,
-        ))
+    /// Trusted-host interface, deliberately absent from AiServerPort/HTTP.
+    /// The closed gate refuses before queuing or contacting the Store/delegate.
+    pub fn read_bot_memory(&self, request: RunMemoryReadRequest) -> ApiResult<RunMemoryReadResult> {
+        if !koru_ai_core::bots::BOT_MEMORY_AVAILABLE {
+            return Err(failure(
+                "unsupported_capability",
+                "Bot Memory is not available yet.",
+                false,
+            ));
+        }
+        let (reply, response) = sync_channel(1);
+        self.sender
+            .try_send(Envelope::RunMemoryRead {
+                request,
+                reply,
+                deadline: Instant::now() + RESPONSE_TIMEOUT,
+            })
+            .map_err(queue_failure)?;
+        receive_api(response)
     }
 }
 

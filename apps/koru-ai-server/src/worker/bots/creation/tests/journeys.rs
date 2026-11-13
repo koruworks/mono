@@ -3,6 +3,7 @@
 //! failures injected before and after every boundary, restarts over the
 //! same in-memory database, and the writer answering while a port blocks.
 use super::*;
+mod memory_lane;
 
 struct Harness {
     worker: WorkerHandle,
