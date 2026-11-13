@@ -583,12 +583,14 @@ fn memory_receipt_subject_and_workspace_refuse_before_delegate_lookup() {
 }
 #[test]
 fn memory_write_gate_catalog_and_complete_response_remain_bounded() {
-    assert_eq!(available().unwrap_err().code, "unsupported_capability");
-    assert!(
-        !super::super::super::definitions()
-            .iter()
-            .any(|t| recognizes(t.name.as_ref()))
-    );
+    available().unwrap();
+    for name in ["remember_memory", "correct_memory", "forget_memory"] {
+        assert!(
+            super::super::super::definitions()
+                .iter()
+                .any(|t| t.name == name)
+        );
+    }
     for tool in definitions() {
         assert_eq!(tool.input_schema["additionalProperties"], false);
         assert_eq!(
@@ -596,12 +598,10 @@ fn memory_write_gate_catalog_and_complete_response_remain_bounded() {
             Some(false)
         );
     }
-    let mut catalog = super::super::super::definitions();
-    catalog.extend(super::super::definitions());
-    catalog.extend(definitions());
+    let catalog = super::super::super::definitions();
     assert_eq!(catalog.len(), 9);
     eprintln!(
-        "Complete staged native catalog: {} serialized bytes",
+        "Complete native catalog: {} serialized bytes",
         serde_json::to_vec(&json!({"tools":catalog})).unwrap().len()
     );
     let response = result(Ok(json!({"untrusted":"\"\\\n".repeat(16000)})));

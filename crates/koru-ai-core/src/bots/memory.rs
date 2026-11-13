@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Ordinary Memory projections. These values carry data, never Store or Run authority.
-//! D0 stages this contract; worker integration and public exposure are still gated.
 use super::*;
 use koru_delegate_core::DocumentVersionId;
 
 /// One internal exposure gate for worker dispatch, UI scheduling/controls,
 /// native catalog and native direct calls. Only the lead's complete integration
 /// checkpoint may enable it; this is not an environment or user setting.
-pub const BOT_MEMORY_AVAILABLE: bool = false;
+pub const BOT_MEMORY_AVAILABLE: bool = true;
 /// Writes require the separately verified lazy-creation and native-effect path.
 /// Enabling read-only Memory must never enable these private/public write routes.
-pub const BOT_MEMORY_WRITES_AVAILABLE: bool = false;
+pub const BOT_MEMORY_WRITES_AVAILABLE: bool = true;
 pub const BOT_MEMORY_CURSOR_BYTES: usize = 2048;
 /// Issued canonical typed tokens are smaller than the accepted input ceiling.
 /// The issuer's maximum-shape test proves this bound; projections reserve it.

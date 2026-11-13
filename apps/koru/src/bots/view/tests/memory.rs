@@ -6,7 +6,6 @@ use koru_ai_core::bots::*;
 
 fn ready() -> Fixture {
     let mut f = Fixture::opened(unpaused());
-    f.view.memory_test_available = true;
     while f.commands.try_recv().is_ok() {}
     f
 }
@@ -53,22 +52,35 @@ fn candidate(f: &Fixture, state: BotMemoryState) -> BotMemoryStatusState {
     }
 }
 #[test]
-fn memory_default_gate_hides_controls_actions_and_scheduling() {
+fn enabled_memory_normal_maintenance_schedules_and_denied_view_refuses() {
     let mut f = Fixture::opened(unpaused());
     while f.commands.try_recv().is_ok() {}
-    assert!(!koru_ai_core::bots::memory::BOT_MEMORY_AVAILABLE);
-    assert!(!f.view.memory_pass());
-    assert!(!f.view.perform_memory(Action::Refresh));
+    assert!(koru_ai_core::bots::memory::BOT_MEMORY_AVAILABLE);
+    assert!(!f.view.memory_test_available);
+    let mut ws = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "test").unwrap();
+    View::maintain(&mut f.view, &mut ws, std::time::Instant::now());
+    let read = request(&f);
+    assert_eq!(read.kind, Kind::Status);
+    let revision = f.bot.revision;
+    answer(
+        &mut f,
+        read,
+        BotMemoryStatusState::NotStarted { can_create: true },
+        revision,
+    );
     assert!(
-        !f.view
+        f.view
             .with_frame(|_, frame| frame.contains(f.view.memory_key("memory-section")))
     );
-    assert!(f.commands.try_recv().is_err());
-    f.view.enable_memory_for_test();
+    while f.commands.try_recv().is_ok() {}
     f.view.load = Load::Denied;
-    assert!(!f.view.memory_pass());
+    View::maintain(&mut f.view, &mut ws, std::time::Instant::now());
     assert!(!f.view.perform_memory(Action::Refresh));
-    assert!(f.commands.try_recv().is_err());
+    assert!(
+        !f.commands
+            .try_iter()
+            .any(|command| matches!(command, Command::Memory(_)))
+    );
 }
 #[test]
 fn memory_controls_are_named_and_unknown_create_retries_exactly() {
@@ -135,7 +147,6 @@ fn memory_same_tab_replacement_rejects_old_confirmation_and_reply() {
     let old_instance = f.view.context_instance;
     let (link, commands, _answers) = BotsLink::test_pair();
     let mut replacement = BotView::with_link(f.bot.id, f.bot.main_chat, link);
-    replacement.memory_test_available = true;
     replacement.take(Ok(f.bot.clone()));
     replacement.set_settings_open(true);
     assert_ne!(replacement.context_instance, old_instance);

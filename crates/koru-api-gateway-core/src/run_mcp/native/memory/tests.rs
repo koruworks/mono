@@ -52,11 +52,12 @@ fn memory_captured_default_and_current_are_forwarded_exactly() {
         }
     );
     assert_eq!(definitions().len(), 2);
-    if !BOT_MEMORY_AVAILABLE {
+    assert!(BOT_MEMORY_AVAILABLE);
+    for name in ["list_memory", "read_memory"] {
         assert!(
-            !super::super::definitions()
+            super::super::definitions()
                 .iter()
-                .any(|tool| recognizes(tool.name.as_ref()))
+                .any(|tool| tool.name == name)
         );
     }
 }

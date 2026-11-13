@@ -399,7 +399,7 @@ fn enqueue(
     worker
         .client()
         .sender
-        .send(Envelope::RunMemoryWriteForFixture {
+        .send(Envelope::RunMemoryWrite {
             request,
             work,
             reply,
@@ -663,28 +663,48 @@ fn write_fingerprint_freezes_exact_body_and_full_uuid_fact_domain_and_rejects_lf
 }
 
 #[test]
-fn private_write_gate_refuses_all_four_methods_before_preparation() {
-    let f = Fixture::new(false);
+fn enabled_private_write_client_runs_subject_base_authority_and_rejects_foreign_owner() {
+    let f = Fixture::new(true);
     let request = f.request.clone();
-    let allocation = f.allocation(MemoryBaseSelector::OriginalSeed {});
+    let history = f.authority.evidence.lock().unwrap().clone().unwrap();
+    let version = DocumentVersionId::from_uuid(history.id.as_uuid());
+    let mut allocation = f.allocation(MemoryBaseSelector::History { version });
+    *f.delegate.allocation.lock().unwrap() = Some(allocation.clone());
     let authority = f.authority.clone();
     let delegate = f.delegate.clone();
     let (worker, returned) = f.start();
     let client = worker.client();
-    assert!(
-        matches!(client.memory_write_subject(request.clone()), Err(error) if error.code == "unsupported_capability")
-    );
-    assert!(
-        matches!(client.prepare_memory_edit_base(MemoryEditBaseRequest { subject_request: request.clone(), selection: MemoryBaseSelection::Allocated { allocation: allocation.clone() }, operation: operation() }), Err(error) if error.code == "unsupported_capability")
-    );
-    assert!(
-        matches!(client.ensure_run_memory(RunMemoryEnsureRequest { subject_request: request.clone(), allocation: allocation.clone() }), Err(error) if error.code == "unsupported_capability")
-    );
-    assert!(
-        matches!(client.memory_write_authority(MemoryWriteAuthorityRequest { subject_request: request, resolved_allocation: allocation }), Err(error) if error.code == "unsupported_capability")
-    );
-    assert_eq!(authority.reads.load(Ordering::SeqCst), 0);
-    assert_eq!(delegate.calls.load(Ordering::SeqCst), 0);
+    let subject = client.memory_write_subject(request.clone()).unwrap();
+    assert_eq!(subject.subject, request.subject());
+    assert!(subject.new_work_barrier.unwrap().effects_allowed);
+    let base = client
+        .prepare_memory_edit_base(MemoryEditBaseRequest {
+            subject_request: request.clone(),
+            selection: MemoryBaseSelection::Allocated {
+                allocation: allocation.clone(),
+            },
+            operation: operation(),
+        })
+        .unwrap();
+    assert_eq!(base.version, version);
+    allocation.resolution = MemoryBaseResolution::Resolved {
+        authority: base.authority.clone(),
+        version,
+        expected_revision: base.expected_revision,
+    };
+    *delegate.allocation.lock().unwrap() = Some(allocation.clone());
+    let final_authority = client
+        .memory_write_authority(MemoryWriteAuthorityRequest {
+            subject_request: request.clone(),
+            resolved_allocation: allocation,
+        })
+        .unwrap();
+    assert_eq!(final_authority.authority, base.authority);
+    let mut foreign = request;
+    foreign.provenance.owner.user_scope = UserScopeId::new();
+    assert!(client.memory_write_subject(foreign).is_err());
+    assert!(authority.reads.load(Ordering::SeqCst) > 0);
+    assert!(delegate.calls.load(Ordering::SeqCst) > 0);
     finish(worker, returned);
 }
 
@@ -881,22 +901,21 @@ fn ensure_reuses_the_shared_durable_body_and_exact_request_after_preparation() {
     let (release, blocked) = sync_channel(1);
     *f.authority.creation_gate.lock().unwrap() = Some((entered, blocked));
     let (worker, returned) = f.start();
-    let first = answer(enqueue(
-        &worker,
-        request.clone(),
-        Work::Ensure {
+    let first = worker
+        .client()
+        .ensure_run_memory(RunMemoryEnsureRequest {
+            subject_request: request.clone(),
             allocation: allocation.clone(),
-        },
-    ))
-    .unwrap();
-    let WriteValue::Ensure(first) = first else {
-        panic!("Ensure result")
-    };
+        })
+        .unwrap();
     reached.recv_timeout(Duration::from_secs(10)).unwrap();
-    let second = answer(enqueue(&worker, request, Work::Ensure { allocation })).unwrap();
-    let WriteValue::Ensure(second) = second else {
-        panic!("Ensure result")
-    };
+    let second = worker
+        .client()
+        .ensure_run_memory(RunMemoryEnsureRequest {
+            subject_request: request,
+            allocation,
+        })
+        .unwrap();
     assert_eq!(first.creation_request, ensure.request_id);
     assert_eq!(first.creation_request, second.creation_request);
     worker.shutdown();

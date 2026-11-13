@@ -125,11 +125,14 @@ fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(if bot {
-            "This Bot endpoint exposes four scoped native document tools. Create ordinary pages in the explicit workspace; use a stable operation_id for each mutation. Access refusals require an owner grant and explicit continuation. A native result is Saved only after durable verification and Run registration."
+            "This Bot endpoint exposes nine scoped tools. search_documents, read_document, create_document and edit_document use effective document permissions; create_document and edit_document save ordinary Run results after durable verification and registration. list_memory/read_memory inspect this Bot's lifetime Memory page without granting generic page access. remember_memory/correct_memory/forget_memory change only that Memory; their saved receipts never become Run results. Use a stable operation_id and identical arguments on every mutation retry. Memory edits require an exact history version from list_memory/read_memory; only first-use remember_memory may omit it to use the original empty seed. After saving, read Current for the next edit. Unknown outcomes must retain the same operation and body. Access refusals require an owner grant and explicit continuation."
         } else {
             "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input."
         })
 }
+
+#[cfg(test)]
+mod tests;
 
 pub(super) async fn handle(
     State(state): State<Arc<GatewayState>>,
