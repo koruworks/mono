@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+use koru_delegate_core::bots::UserScopeId;
 use koru_delegate_core::*;
 use koru_delegate_schedule::{DelegationTemplate, RecurrenceRule, RoutineAssociation};
 
