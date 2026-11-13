@@ -14,9 +14,14 @@ use koru_delegate_core::{BotProvenance, CapturedBotPolicy};
 use rmcp::model::CallToolRequestParams;
 use serde::Deserialize;
 use serde_json::Value;
+mod write;
+
+pub(super) fn write_definitions() -> Vec<Tool> {
+    write::definitions()
+}
 
 pub(super) fn recognizes(name: &str) -> bool {
-    matches!(name, "list_memory" | "read_memory")
+    matches!(name, "list_memory" | "read_memory") || write::recognizes(name)
 }
 fn captured() -> MemoryView {
     MemoryView::Captured
@@ -156,6 +161,9 @@ pub(super) async fn call(
     policy: CapturedBotPolicy,
     params: CallToolRequestParams,
 ) -> CallToolResult {
+    if write::recognizes(params.name.as_ref()) {
+        return write::call(state, record, provenance, policy, params).await;
+    }
     if !BOT_MEMORY_AVAILABLE {
         return result(Err(failure("unsupported_capability")));
     }

@@ -386,7 +386,7 @@ fn invoke(
                     },
                 },
             )?;
-            if !matches!(observed, BotReply::NativeResult { intent } if intent.stage == NativeResultStage::Refused && intent.key == key && intent.request_fingerprint == expected_hash)
+            if !matches!(observed, BotReply::NativeResult { intent: observed } if observed.stage == NativeResultStage::Refused && observed.key == key && observed.request_fingerprint == expected_hash && observed.purpose == intent.purpose)
             {
                 return Err(failure("save_status_unknown"));
             }
@@ -421,7 +421,8 @@ fn validate_intent(
         NativeWriteKind::Created => NativeResultOperation::CreatePage,
         NativeWriteKind::Edited => NativeResultOperation::EditPage,
     };
-    if intent.key != *key
+    if intent.purpose != (NativeEffectPurpose::Result {})
+        || intent.key != *key
         || intent.destination != d.workspace
         || intent.kind != kind
         || intent.request_fingerprint != hash
@@ -455,6 +456,18 @@ fn confirm(
     intent: &NativeResultIntentView,
     evidence: NativeWriteEvidence,
 ) -> Result<Value, ToolFailure> {
+    let observed = confirm_record(port, intent, evidence)?;
+    policy.settled();
+    saved(store, authority, &observed)
+}
+
+/// Settle retained evidence without choosing its user-facing result format.
+/// Memory receipts must never flow through the ordinary page-result formatter.
+pub(super) fn confirm_record(
+    port: &dyn BotDelegatePort,
+    intent: &NativeResultIntentView,
+    evidence: NativeWriteEvidence,
+) -> Result<NativeResultIntentView, ToolFailure> {
     let reference = NativeResultReference {
         operation_id: intent.key.operation_id,
         workspace: evidence.workspace,
@@ -481,6 +494,8 @@ fn confirm(
     )? {
         BotReply::NativeResult { intent: observed }
             if observed.key == intent.key
+                && observed.purpose == intent.purpose
+                && observed.store_request == intent.store_request
                 && observed.request_fingerprint == intent.request_fingerprint
                 && observed.destination == intent.destination
                 && observed.target == intent.target
@@ -492,8 +507,7 @@ fn confirm(
         }
         _ => return Err(failure("save_status_unknown")),
     };
-    policy.settled();
-    saved(store, authority, &observed)
+    Ok(observed)
 }
 fn saved(
     store: &StoreWorkerClient,
