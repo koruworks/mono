@@ -8,6 +8,7 @@ use koru_delegate_core::*;
 use uuid::Uuid;
 
 mod drain;
+mod memory;
 mod repository;
 mod rows;
 #[cfg(test)]
@@ -39,6 +40,7 @@ pub enum NativeLeaseState {
 #[derive(Clone, PartialEq, Eq)]
 pub struct NativeIntentRecord {
     pub key: NativeResultKey,
+    pub purpose: NativeEffectPurpose,
     pub kind: NativeResultOperation,
     pub destination: WorkspaceId,
     pub target: DocumentId,
@@ -86,6 +88,7 @@ impl NativeIntentRecord {
     pub fn view(&self) -> NativeResultIntentView {
         NativeResultIntentView {
             key: self.key.clone(),
+            purpose: self.purpose.clone(),
             kind: self.kind,
             destination: self.destination,
             request_fingerprint: self.fingerprint,
@@ -113,6 +116,7 @@ pub struct NativeLeaseOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingNativeResult {
     pub key: NativeResultKey,
+    pub purpose: NativeEffectPurpose,
     pub stage: NativeResultStage,
     pub lease_state: NativeLeaseState,
     pub cursor: NativeRecoveryCursor,
@@ -122,6 +126,33 @@ pub struct PendingNativeResult {
 /// possession of an ID, snapshot or previous receipt grants none. No Store
 /// callbacks, SQL closures, connection handles or request bodies cross this port.
 pub trait NativeResultLedger {
+    fn memory_edit_allocation(
+        &self,
+        run: RunId,
+        operation: Uuid,
+        caller_fingerprint: [u8; 32],
+    ) -> Result<Option<MemoryEditAllocation>, BotLedgerError>;
+    fn allocate_memory_edit(
+        &mut self,
+        request: &AllocateMemoryEditRequest,
+        source_run_document: DocumentId,
+        fence: &BotExecutionFence,
+        fresh: &BotPolicyBarrier,
+    ) -> Result<MemoryEditAllocation, BotLedgerError>;
+    fn resolve_memory_edit_base(
+        &mut self,
+        key: &NativeResultKey,
+        caller_fingerprint: [u8; 32],
+        resolution: &MemoryBaseResolution,
+        fence: &BotExecutionFence,
+        fresh: &BotPolicyBarrier,
+    ) -> Result<MemoryEditAllocation, BotLedgerError>;
+    fn prepare_memory_edit(
+        &mut self,
+        request: &PrepareNativeResult,
+        caller_fingerprint: [u8; 32],
+        authority: &MemoryEditAuthorityV1,
+    ) -> Result<NativeIntentRecord, BotLedgerError>;
     fn pending_native_effects(
         &self,
         owner: BotOwner,

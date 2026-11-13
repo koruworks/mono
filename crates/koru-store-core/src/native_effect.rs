@@ -5,6 +5,19 @@ use crate::model::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Compare bounded edit positions, not their noncanonical encoded ordering.
+/// This proves neither retained history nor permission to edit a document.
+pub fn same_native_edit_revision(left: &[u8], right: &[u8]) -> crate::Result<bool> {
+    let decode = |bytes: &[u8]| {
+        if bytes.is_empty() || bytes.len() > 65_536 {
+            return Err(crate::Error::bare(crate::Code::InvalidRequest));
+        }
+        loro::VersionVector::decode(bytes)
+            .map_err(|_| crate::Error::bare(crate::Code::InvalidRequest))
+    };
+    Ok(decode(left)? == decode(right)?)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -60,3 +73,6 @@ pub struct NativeEffectDrainReceipt {
     pub fenced_at: Timestamp,
     pub drained_at: Timestamp,
 }
+
+#[cfg(test)]
+mod tests;

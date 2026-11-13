@@ -10,8 +10,9 @@ use koru_delegate_core::{
     StreamSequence, WorkspaceId,
 };
 pub use koru_delegate_core::{
-    BotAdmissionState, BotAdmissionView, BotBootCursor, BotBootReceipt, BotBootScan, BotBootState,
-    BotHello, BotRunKey, BotSubmissionKey, BotUnsettledAdmission, BotUnsettledWork,
+    AllocateMemoryEditRequest, BotAdmissionState, BotAdmissionView, BotBootCursor, BotBootReceipt,
+    BotBootScan, BotBootState, BotHello, BotRunKey, BotSubmissionKey, BotUnsettledAdmission,
+    BotUnsettledWork, MemoryEditAllocation, MemoryEditAuthorityV1,
 };
 pub use koru_delegate_core::{
     BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt, BotPolicyBarrierState,
@@ -199,6 +200,28 @@ pub enum BotCommand {
     PrepareNativeResult {
         request: PrepareNativeResult,
     },
+    ReadMemoryEditAllocation {
+        run: koru_delegate_core::RunId,
+        operation_id: uuid::Uuid,
+        caller_fingerprint: [u8; 32],
+    },
+    AllocateMemoryEdit {
+        request: AllocateMemoryEditRequest,
+    },
+    ResolveMemoryEditBase {
+        key: NativeResultKey,
+        caller_fingerprint: [u8; 32],
+        authority: MemoryEditAuthorityV1,
+        expected_version: koru_delegate_core::DocumentVersionId,
+        expected_revision: Vec<u8>,
+        current_config_revision: u64,
+        current_policy_revision: u64,
+    },
+    PrepareMemoryEdit {
+        request: PrepareNativeResult,
+        caller_fingerprint: [u8; 32],
+        authority: MemoryEditAuthorityV1,
+    },
     ReconcileNativeResult {
         key: NativeResultKey,
     },
@@ -244,6 +267,10 @@ impl BotCommand {
             Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
             Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
             Self::ResolveRunAuthority { .. }
+            | Self::ReadMemoryEditAllocation { .. }
+            | Self::AllocateMemoryEdit { .. }
+            | Self::ResolveMemoryEditBase { .. }
+            | Self::PrepareMemoryEdit { .. }
             | Self::CheckNativeEffectDrain { .. }
             | Self::PrepareNativeResult { .. }
             | Self::ReconcileNativeResult { .. }
@@ -318,6 +345,9 @@ pub enum BotReply {
     },
     NativeResult {
         intent: NativeResultIntentView,
+    },
+    MemoryEditAllocation {
+        allocation: MemoryEditAllocation,
     },
 }
 impl std::fmt::Debug for BotReply {

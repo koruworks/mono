@@ -135,6 +135,53 @@ impl BotLedger for SharedLedger {
     }
 }
 impl NativeResultLedger for SharedLedger {
+    fn memory_edit_allocation(
+        &self,
+        run: RunId,
+        operation: uuid::Uuid,
+        fingerprint: [u8; 32],
+    ) -> Result<Option<MemoryEditAllocation>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .memory_edit_allocation(run, operation, fingerprint)
+    }
+    fn allocate_memory_edit(
+        &mut self,
+        request: &AllocateMemoryEditRequest,
+        source: DocumentId,
+        fence: &BotExecutionFence,
+        fresh: &BotPolicyBarrier,
+    ) -> Result<MemoryEditAllocation, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .allocate_memory_edit(request, source, fence, fresh)
+    }
+    fn resolve_memory_edit_base(
+        &mut self,
+        key: &NativeResultKey,
+        fingerprint: [u8; 32],
+        resolution: &MemoryBaseResolution,
+        fence: &BotExecutionFence,
+        fresh: &BotPolicyBarrier,
+    ) -> Result<MemoryEditAllocation, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .resolve_memory_edit_base(key, fingerprint, resolution, fence, fresh)
+    }
+    fn prepare_memory_edit(
+        &mut self,
+        request: &PrepareNativeResult,
+        fingerprint: [u8; 32],
+        authority: &MemoryEditAuthorityV1,
+    ) -> Result<NativeIntentRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .prepare_memory_edit(request, fingerprint, authority)
+    }
     fn verified_native_result(
         &self,
         run: RunId,

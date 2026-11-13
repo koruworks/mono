@@ -25,8 +25,9 @@ pub use koru_sqlite::OpenError;
 /// schema 4 adds the durable schedule-event outbox; schema 5 adds Bot
 /// admission, reservation accounting, delivery correlation and pause barriers;
 /// schema 6 adds native-result intents and ordered effect-policy barriers;
-/// schema 7 retains exact Store drain proofs separately from result certainty.
-pub const RUNS_SCHEMA_VERSION: i64 = 7;
+/// schema 7 retains exact Store drain proofs separately from result certainty;
+/// schema 8 separates Memory effects and their stable allocation identities.
+pub const RUNS_SCHEMA_VERSION: i64 = 8;
 /// The file's name inside the delegate root.
 pub const DATABASE_NAME: &str = "runs.db";
 
@@ -71,6 +72,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         to: 7,
         name: "026_runs_native_drain_migration.sql",
         sql: include_str!("../migrations/026_runs_native_drain_migration.sql"),
+        columns: &[],
+    },
+    Migration {
+        to: 8,
+        name: "027_runs_memory_effects_migration.sql",
+        sql: include_str!("../migrations/027_runs_memory_effects_migration.sql"),
         columns: &[],
     },
 ];

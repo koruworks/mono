@@ -296,10 +296,10 @@ fn migration_preserves_populated_six_and_nullable_drain_guards_refuse_partial_pr
             .collect::<Result<_, _>>()
             .unwrap();
     let columns = columns.join(",");
-    h.db.conn().execute_batch(&format!("INSERT INTO old_native({columns}) SELECT {columns} FROM native_result_intents; DROP TABLE native_result_intents; ALTER TABLE old_native RENAME TO native_result_intents; PRAGMA user_version=6;")).unwrap();
+    h.db.conn().execute_batch(&format!("INSERT INTO old_native({columns}) SELECT {columns} FROM native_result_intents; DROP TABLE bot_memory_edit_allocations; DROP TABLE native_result_intents; ALTER TABLE old_native RENAME TO native_result_intents; PRAGMA user_version=6;")).unwrap();
     h.db.migrate_in_memory();
     h.db.migrate_in_memory();
-    assert_eq!(h.db.schema_version().unwrap(), 7);
+    assert_eq!(h.db.schema_version().unwrap(), crate::RUNS_SCHEMA_VERSION);
     assert_eq!(h.db.native_result(&h.request.key).unwrap().unwrap(), before);
     assert!(
         h.db.conn()
