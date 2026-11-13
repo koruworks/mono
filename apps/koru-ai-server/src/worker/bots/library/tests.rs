@@ -323,6 +323,20 @@ fn sixteen_knowledge_and_sixteen_task_pages_capture_thirty_three_pins() {
     let exact = pins(&sources);
     assert_eq!(exact.len(), 33);
     sources.validate(&bot, &task, &exact).unwrap();
+    let intent = super::super::admission::make_library_intent(
+        &bot,
+        BotRequestId::mint(),
+        bot.main_chat,
+        bot.home_workspace,
+        &task,
+        None,
+        &exact,
+        &sources,
+        ProfileId::new(),
+    )
+    .unwrap();
+    assert_eq!(intent.submission.request.context.len(), 33);
+    assert_eq!(sources.capture(&intent).unwrap().knowledge.len(), 16);
     let mut too_many = task.documents.clone();
     too_many.push(page(&bot));
     assert!(LibrarySources::read(&repo, &bot, too_many).is_err());
@@ -375,9 +389,196 @@ struct Pages {
     inspected: AtomicUsize,
 }
 
+struct ForeignOwner(Arc<dyn BotAuthority>, BotOwner);
+impl BotAuthority for ForeignOwner {
+    fn owner(&self) -> Result<BotOwner, BotError> {
+        Ok(self.1)
+    }
+    fn workspace(&self, id: WorkspaceId) -> Result<ProfileId, BotError> {
+        self.0.workspace(id)
+    }
+    fn page(&self, page: &BotPage) -> Result<(), BotError> {
+        self.0.page(page)
+    }
+}
+
+#[test]
+fn library_commands_refuse_another_engine_owner_with_the_same_label() {
+    let (mut repo, bot, authority) = fixture();
+    let bot = set(&mut repo, &bot, vec![page(&bot)]);
+    let foreign = Arc::new(ForeignOwner(
+        authority,
+        BotOwner {
+            user_scope: UserScopeId::new(),
+            device: DeviceId::new(),
+        },
+    ));
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-library-foreign-owner"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(foreign);
+    config.test_repository = Some(repo);
+    let worker = AiWorker::new(config).spawn().unwrap();
+    let client = worker.client();
+    for command in [
+        BotCommand::ReadLibrary { bot_id: bot.id },
+        BotCommand::SetKnowledge {
+            request_id: BotRequestId::mint(),
+            bot_id: bot.id,
+            expected_revision: bot.revision,
+            pages: vec![],
+        },
+    ] {
+        assert_eq!(
+            client.bots(context(true), command).unwrap_err().code,
+            BotError::Forbidden.code()
+        );
+    }
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
 struct CaptureGate {
     inner: Arc<dyn BotAuthority>,
     gate: std::sync::Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
+}
+
+struct ExactHistory {
+    inner: Arc<dyn BotAuthority>,
+    pins: Vec<d::RunContextItem>,
+}
+impl BotAuthority for ExactHistory {
+    fn owner(&self) -> Result<BotOwner, BotError> {
+        self.inner.owner()
+    }
+    fn workspace(&self, id: WorkspaceId) -> Result<ProfileId, BotError> {
+        self.inner.workspace(id)
+    }
+    fn page(&self, page: &BotPage) -> Result<(), BotError> {
+        self.inner.page(page)
+    }
+    fn capture(
+        &self,
+        _: BotOwner,
+        _: WorkspaceId,
+        _: ProfileId,
+        pages: &[BotPage],
+    ) -> Result<Vec<d::RunContextItem>, BotError> {
+        pages.iter().map(|page| self.pins.iter().find(|pin| matches!(pin,
+            d::RunContextItem::Document { workspace, document, .. } if *workspace == page.workspace && *document == page.document))
+            .cloned().ok_or(BotError::Forbidden)).collect()
+    }
+}
+struct Submissions(SyncSender<d::BotSubmission>);
+impl koru_delegate_api::bots::BotDelegatePort for Submissions {
+    fn execute(
+        &self,
+        command: koru_delegate_api::bots::BotCommand,
+    ) -> Result<koru_delegate_api::bots::BotReply, koru_delegate_api::Failure> {
+        if let koru_delegate_api::bots::BotCommand::Submit { submission } = command {
+            let _ = self.0.try_send(submission);
+        }
+        Err(koru_delegate_api::Failure::new(
+            "fixture_unavailable",
+            "Fixture records admission only.",
+            true,
+        ))
+    }
+}
+
+#[test]
+fn api_and_shared_chat_submit_identical_knowledge_versions() {
+    // Observe the actual delegated admission payload, not native Begin input.
+    // Direct management Start/Continue do not own the shared chat Begin driver.
+    let (_, original, inner) = fixture();
+    let knowledge = page(&original);
+    let task_page = page(&original);
+    let exact: Vec<_> = [&original.config.role, &knowledge, &task_page]
+        .into_iter()
+        .map(|page| d::RunContextItem::Document {
+            workspace: page.workspace,
+            document: page.document,
+            version: d::DocumentVersionId::new(),
+        })
+        .collect();
+    let mut delivered = Vec::new();
+    for shared_chat in [false, true] {
+        let mut repo = Repository::in_memory().unwrap();
+        repo.save_bot(
+            &original,
+            ProfileId::new(),
+            BotRequestId::mint(),
+            HASH,
+            None,
+        )
+        .unwrap();
+        let bot = set(&mut repo, &original, vec![knowledge.clone()]);
+        let authority = Arc::new(ExactHistory {
+            inner: inner.clone(),
+            pins: exact.clone(),
+        });
+        let (sent, received) = sync_channel(4);
+        let mut config = WorkerConfig::new(
+            PathBuf::from("unused-library-delivery-fixture"),
+            "internal-debug",
+            ProviderRegistry::default(),
+        )
+        .with_bot_authority(authority)
+        .with_bot_delegate(Arc::new(Submissions(sent)));
+        config.test_repository = Some(repo);
+        config.test_bot_runtime_ready = true;
+        let worker = AiWorker::new(config).spawn().unwrap();
+        let client = worker.client();
+        if shared_chat {
+            let (reply, response) = sync_channel(1);
+            client
+                .send(WorkerCommand::SendTurn {
+                    context: context(true).into(),
+                    request: send_request(
+                        &bot,
+                        vec![ContextRef::Document {
+                            document_id: task_page.document,
+                        }],
+                        false,
+                    ),
+                    reply,
+                })
+                .unwrap();
+            drop(
+                response
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap()
+                    .unwrap(),
+            );
+        } else {
+            client
+                .bots(
+                    context(true),
+                    BotCommand::Start {
+                        request_id: BotRequestId::mint(),
+                        bot_id: bot.id,
+                        chat_id: bot.main_chat,
+                        expected_revision: bot.revision,
+                        destination: bot.home_workspace,
+                        task: BotTask {
+                            text: "Question".into(),
+                            documents: vec![task_page.clone()],
+                        },
+                    },
+                )
+                .unwrap();
+        }
+        let submission = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(submission.request.context, exact);
+        assert!(submission.policy.selected_pages.is_empty());
+        assert_eq!(submission.provenance.ai_attempt_id.is_some(), shared_chat);
+        delivered.push(submission.request.context);
+        worker.shutdown();
+        assert_eq!(worker.join(), WorkerExit::Clean);
+    }
+    assert_eq!(delivered[0], delivered[1]);
 }
 impl BotAuthority for CaptureGate {
     fn owner(&self) -> Result<BotOwner, BotError> {
@@ -593,4 +794,81 @@ fn library_commands_require_owner_and_preserve_retry_after_page_loss() {
     assert_eq!(current.selected_pages, bot.selected_pages);
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
+#[test]
+fn library_lifecycle_reads_and_purge_refusals_keep_populated_references() {
+    for state in [
+        BotLifecycle::Active,
+        BotLifecycle::Archived,
+        BotLifecycle::Trashed,
+    ] {
+        let (mut repo, bot, authority) = fixture();
+        let knowledge = page(&bot);
+        let bot = set(&mut repo, &bot, vec![knowledge.clone()]);
+        repo.fixture_set_bot_lifecycle(bot.id, state).unwrap();
+        let mut config = WorkerConfig::new(
+            PathBuf::from("unused-library-lifecycle-fixture"),
+            "internal-debug",
+            ProviderRegistry::default(),
+        )
+        .with_bot_authority(authority);
+        config.test_repository = Some(repo);
+        let worker = AiWorker::new(config).spawn().unwrap();
+        let client = worker.client();
+        let read = || client.bots(context(true), BotCommand::ReadLibrary { bot_id: bot.id });
+        if state == BotLifecycle::Trashed {
+            assert_eq!(read().unwrap_err().code, "not_found");
+        } else {
+            let BotResponse::Library { library } = read().unwrap() else {
+                panic!("library")
+            };
+            assert_eq!(library.knowledge, vec![knowledge.clone()]);
+        }
+        if state == BotLifecycle::Archived {
+            assert_eq!(
+                client
+                    .bots(
+                        context(true),
+                        BotCommand::SetKnowledge {
+                            request_id: BotRequestId::mint(),
+                            bot_id: bot.id,
+                            expected_revision: bot.revision,
+                            pages: vec![]
+                        }
+                    )
+                    .unwrap_err()
+                    .code,
+                koru_ai_wire::bot_lifecycle_codes::ARCHIVED
+            );
+        }
+        for purge in [
+            BotCommand::PurgeBot {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+                expected_revision: bot.revision,
+                source_request_id: BotRequestId::mint(),
+            },
+            BotCommand::PurgeChat {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+                chat_id: bot.main_chat,
+                expected_revision: bot.revision,
+                source_request_id: BotRequestId::mint(),
+            },
+        ] {
+            assert_eq!(
+                client.bots(context(true), purge).unwrap_err().code,
+                "unsupported_capability"
+            );
+        }
+        if state != BotLifecycle::Trashed {
+            let BotResponse::Library { library } = read().unwrap() else {
+                panic!("library")
+            };
+            assert_eq!(library.knowledge, vec![knowledge]);
+        }
+        worker.shutdown();
+        assert_eq!(worker.join(), WorkerExit::Clean);
+    }
 }

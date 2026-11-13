@@ -1539,6 +1539,13 @@ return the original receipt where the shared lifecycle permits; archived
 mutations refuse, archived history remains readable, and Trash hides it. A
 trashed main conversation is a refusal, never a replacement conversation.
 
+Configured Knowledge is captured by the shared task path alongside Role and the
+explicit task pages. Its separate sixteen-page bound does not reduce the task's
+sixteen-page selection bound; the distinct union is at most 33 pages. Knowledge
+provides context without adding selected-page write grants. New tasks use current
+captured versions; exact submission retries keep the originals. These tools do
+not expose Library management or Memory creation.
+
 This local authentication boundary is the OS user. Caller-selected product
 labels are audit text, not separate authenticated app identities. All clients
 of the same engine-established owner share the request UUID namespace; reuse
