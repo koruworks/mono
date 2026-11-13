@@ -1418,6 +1418,7 @@ impl WorkerState {
                 chat_id: chat.id,
                 profile: chat.profile_id,
                 bot_authority: self.bot_authority.clone(),
+                bot_memory: None,
                 request: base_request,
                 refs: Vec::new(),
                 known_documents: HashMap::new(),

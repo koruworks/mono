@@ -139,6 +139,34 @@ impl BotPreparationJob {
             } else {
                 Vec::new()
             };
+            // Preparation has no registered attempt yet. This cooperative token
+            // belongs to this finite job; a caller timeout does not cancel it.
+            // Completion still compares canonical revision/binding atomically.
+            let cancellation = Cancellation::default();
+            if let Some(sources) = self.library_sources.as_mut() {
+                if let Some(binding) = &sources.memory_binding {
+                    let reader = authority
+                        .workspace(binding.page.workspace)
+                        .map_err(bot_failure)?;
+                    let capture = self
+                        .authority
+                        .capture_memory(binding.owner, reader, binding, &cancellation)
+                        .map_err(|error| {
+                            failure(
+                                error.code(),
+                                "The Bot Memory capture is unavailable.",
+                                matches!(
+                                    error,
+                                    MemoryAuthorityError::Authority(
+                                        BotError::Unavailable | BotError::Storage
+                                    )
+                                ),
+                            )
+                        })?;
+                    capture.validate_for_binding(binding).map_err(bot_failure)?;
+                    sources.memory_capture = Some(capture);
+                }
+            }
             if let Some(question) = &self.terminal_question {
                 question.verify(self.delegate.as_ref())?;
             }
@@ -250,20 +278,15 @@ impl WorkerState {
                 && !archived
             {
                 match request {
-                    // D0 has no Memory adapter/preparation path, even if a caller
-                    // reaches this exhaustive match without the early gate.
+                    // Only owner/workspace metadata is prepared here. Memory
+                    // body reads and creation use their specialized lanes;
+                    // the shared early gate stays closed until full integration.
                     BotCommand::ReadMemory { .. }
                     | BotCommand::EnsureMemory { .. }
                     | BotCommand::RetryMemory { .. }
                     | BotCommand::AbandonMemory { .. }
                     | BotCommand::ListMemory { .. }
-                    | BotCommand::ReadMemoryFact { .. } => {
-                        return Err(failure(
-                            "unsupported_capability",
-                            "Bot Memory is not available yet.",
-                            false,
-                        ));
-                    }
+                    | BotCommand::ReadMemoryFact { .. } => {}
                     BotCommand::Create {
                         home_workspace,
                         config,

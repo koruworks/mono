@@ -4722,6 +4722,18 @@ impl WorkerState {
         // Bot documents were captured before admission. Never resolve their
         // current bodies here: the delegate materializes the exact Run pins.
         let bot_pins = self.repository.bot_submission_for_attempt(attempt_id)?;
+        let bot_memory = match &bot_pins {
+            Some(receipt) => Some(BotMemoryContext::from_receipt(
+                &self.repository,
+                attempt_id,
+                chat_id,
+                receipt,
+            )?),
+            None if self.repository.is_bot_attempt(attempt_id)? => {
+                return Err(context_port_unavailable());
+            }
+            None => None,
+        };
         if let Some(receipt) = bot_pins {
             for reference in &mut refs {
                 if let PreparedContextRef::Document(document) = reference {
@@ -4765,6 +4777,7 @@ impl WorkerState {
             chat_id,
             profile,
             bot_authority: self.bot_authority.clone(),
+            bot_memory,
             request,
             refs,
             known_documents,
@@ -4838,7 +4851,14 @@ impl WorkerState {
                     }
                     resolution.result
                 })
-                .and_then(|request| self.start_bot_chat_context(request));
+                .and_then(|request| {
+                    if request.attempt_id != attempt_id {
+                        return Err(context_port_unavailable());
+                    }
+                    let memory = resolution.bot_memory.ok_or_else(context_port_unavailable)?;
+                    memory.validate(&self.repository, attempt_id)?;
+                    self.start_bot_chat_context(request, memory.index)
+                });
             if result.is_err() {
                 self.interrupt_bot_chat(attempt_id);
             }
@@ -6745,6 +6765,146 @@ enum PreparedContextRef {
     MessageBlock(MessageBlockContext),
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct BotMemoryContext {
+    capture: koru_ai_core::bots::BotLibraryCapture,
+    binding: Option<koru_ai_core::bots::BotMemoryBinding>,
+    home: koru_ai_core::WorkspaceId,
+    chat: ChatId,
+    operation: uuid::Uuid,
+}
+
+impl BotMemoryContext {
+    fn read(
+        repository: &Repository,
+        attempt: InferenceAttemptId,
+        chat: ChatId,
+    ) -> Result<Option<Self>, AiError> {
+        let Some(receipt) = repository.bot_submission_for_attempt(attempt)? else {
+            return if repository.is_bot_attempt(attempt)? {
+                Err(context_port_unavailable())
+            } else {
+                Ok(None)
+            };
+        };
+        Self::from_receipt(repository, attempt, chat, &receipt).map(Some)
+    }
+
+    fn from_receipt(
+        repository: &Repository,
+        attempt: InferenceAttemptId,
+        chat: ChatId,
+        receipt: &koru_ai_core::bots::BotSubmissionReceipt,
+    ) -> Result<Self, AiError> {
+        use koru_ai_core::bots::BotRepository;
+        let p = &receipt.intent.submission.provenance;
+        let row = repository
+            .attempt(attempt)?
+            .ok_or_else(context_port_unavailable)?;
+        if row.chat_id != Some(chat)
+            || p.chat_id != chat.as_uuid()
+            || p.ai_attempt_id != Some(attempt.as_uuid())
+            || row.assistant_message_id.map(|id| id.as_uuid()) != p.assistant_message_id
+        {
+            return Err(context_port_unavailable());
+        }
+        let bot = repository
+            .bot(p.bot)
+            .map_err(|_| context_port_unavailable())?
+            .ok_or_else(context_port_unavailable)?;
+        let owner = koru_ai_core::bots::BotOwner {
+            user_scope: p.owner.user_scope,
+            device: p.owner.device,
+        };
+        if bot.user_scope != owner.user_scope
+            || bot.owner_device != owner.device
+            || bot.home_workspace != receipt.intent.submission.workspace
+        {
+            return Err(context_port_unavailable());
+        }
+        let capture = repository
+            .bot_library_capture(owner, p.bot, p.submission)
+            .map_err(|_| context_port_unavailable())?
+            .ok_or_else(context_port_unavailable)?;
+        if capture.owner != owner
+            || capture.bot != p.bot
+            || capture.submission != p.submission
+            || capture.config_revision != p.config_revision
+        {
+            return Err(context_port_unavailable());
+        }
+        let binding = if matches!(
+            capture.memory,
+            koru_ai_core::bots::BotCapturedMemory::Captured { .. }
+        ) {
+            repository
+                .bot_library(owner, p.bot)
+                .map_err(|_| context_port_unavailable())?
+                .binding
+        } else {
+            // Once admitted, absence is historical even if Memory binds later.
+            None
+        };
+        if let koru_ai_core::bots::BotCapturedMemory::Captured {
+            page,
+            creation_request,
+            ..
+        } = &capture.memory
+        {
+            if !binding.as_ref().is_some_and(|binding| {
+                binding.owner == owner
+                    && binding.bot == p.bot
+                    && binding.page == *page
+                    && binding.creation_request == *creation_request
+            }) {
+                return Err(context_port_unavailable());
+            }
+        }
+        Ok(Self {
+            capture,
+            binding,
+            home: bot.home_workspace,
+            chat,
+            operation: row.operation_id,
+        })
+    }
+}
+
+struct BotMemoryResolution {
+    expected: BotMemoryContext,
+    index: koru_ai_core::bots::VerifiedMemoryIndex,
+    cancellation: Cancellation,
+}
+
+impl BotMemoryResolution {
+    fn validate(
+        &self,
+        repository: &Repository,
+        attempt: InferenceAttemptId,
+    ) -> Result<(), AiError> {
+        if self.cancellation.is_cancelled() {
+            return Err(AiError::new(
+                AiErrorClass::Cancelled,
+                "The AI request was cancelled.",
+                false,
+            ));
+        }
+        if BotMemoryContext::read(repository, attempt, self.expected.chat)?.as_ref()
+            != Some(&self.expected)
+            || self.index.capture != self.expected.capture
+        {
+            return Err(context_port_unavailable());
+        }
+        self.index
+            .validate_shape(self.expected.home)
+            .map_err(|_| context_port_unavailable())?;
+        if self.index.capture.index_digest != *blake3::hash(&self.index.bytes).as_bytes() {
+            return Err(context_port_unavailable());
+        }
+        Ok(())
+    }
+}
+
 struct ContextJob {
     attempt_id: InferenceAttemptId,
     user_message_id: MessageId,
@@ -6752,6 +6912,7 @@ struct ContextJob {
     /// The chat's stored profile: whose documents it may read.
     profile: Option<koru_ai_core::ProfileId>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
+    bot_memory: Option<BotMemoryContext>,
     request: AiRequest,
     refs: Vec<PreparedContextRef>,
     known_documents: HashMap<koru_ai_core::DocumentId, PinnedDocument>,
@@ -6763,6 +6924,7 @@ struct ContextJob {
 struct ContextResolution {
     commit: ContextCommit,
     result: Result<AiRequest, AiError>,
+    bot_memory: Option<BotMemoryResolution>,
 }
 
 struct ContextPool {
@@ -6793,6 +6955,7 @@ impl ContextPool {
                         resolve_context_job(store.as_deref(), job)
                     }))
                     .unwrap_or_else(|_| ContextResolution {
+                        bot_memory: None,
                         commit: ContextCommit {
                             attempt_id,
                             started_at,
@@ -6959,6 +7122,7 @@ fn resolve_context_job(
     let mut document_refs = Vec::new();
     let mut message_block_refs = Vec::new();
     let mut payload_bytes = 0_u64;
+    let mut bot_memory = None;
     let result = (|| {
         for reference in job.refs {
             if job.cancellation.is_cancelled() {
@@ -7070,6 +7234,55 @@ fn resolve_context_job(
                 }
             }
         }
+        if let Some(expected) = job.bot_memory.take() {
+            if job.cancellation.is_cancelled() {
+                return Err(AiError::new(
+                    AiErrorClass::Cancelled,
+                    "The AI request was cancelled.",
+                    false,
+                ));
+            }
+            let index = job
+                .bot_authority
+                .as_ref()
+                .ok_or_else(context_port_unavailable)?
+                .replay_memory_index(
+                    expected.capture.owner,
+                    job.profile.ok_or_else(context_port_unavailable)?,
+                    expected.home,
+                    &expected.capture,
+                    expected.binding.as_ref(),
+                    &job.cancellation,
+                )
+                .map_err(|error| {
+                    if error
+                        == koru_ai_core::bots::MemoryAuthorityError::Authority(
+                            koru_ai_core::bots::BotError::ContextTooLarge,
+                        )
+                    {
+                        context_too_large()
+                    } else {
+                        AiError::new(
+                            AiErrorClass::Storage,
+                            "The captured Bot Memory is unavailable.",
+                            false,
+                        )
+                    }
+                })?;
+            if job.cancellation.is_cancelled() {
+                return Err(AiError::new(
+                    AiErrorClass::Cancelled,
+                    "The AI request was cancelled.",
+                    false,
+                ));
+            }
+            add_context_bytes(&mut payload_bytes, index.bytes.len())?;
+            bot_memory = Some(BotMemoryResolution {
+                expected,
+                index,
+                cancellation: job.cancellation.clone(),
+            });
+        }
         job.request.context = context;
         Ok(job.request)
     })();
@@ -7095,6 +7308,7 @@ fn resolve_context_job(
         message_block_refs.clear();
     }
     ContextResolution {
+        bot_memory,
         commit: ContextCommit {
             attempt_id: job.attempt_id,
             started_at: job.started_at,

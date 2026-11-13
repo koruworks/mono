@@ -10,6 +10,7 @@ mod controls;
 mod external;
 mod interruption;
 mod lifecycle;
+mod memory;
 mod questions;
 mod refusal;
 
@@ -449,6 +450,8 @@ fn proof(authority: Arc<Authority>, bot: &Bot, chat: Chat) -> CommandContext {
                 version: d::DocumentVersionId::new(),
             }],
             library_sources: Some(crate::worker::bots::library::LibrarySources {
+                memory_binding: None,
+                memory_capture: None,
                 config_revision: bot.revision,
                 policy_revision: bot.policy_revision,
                 role: bot.config.role.clone(),
