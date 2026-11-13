@@ -394,15 +394,14 @@ impl ManageView {
     /// known not to be, and nothing while that is still unknown — unknown is
     /// not *Off*.
     fn cloud_word(&self) -> Option<(&'static str, bool)> {
-        use profiles::CloudStatus;
         // A build with no Koru Cloud: known, and off — the page says why.
         if self.c.account().stage == AccountStage::NotConfigured {
             return Some(("Off", false));
         }
-        match self.c.cloud_status() {
-            CloudStatus::Manage => Some(("On", true)),
-            CloudStatus::Subscribe => Some(("Off", false)),
-            CloudStatus::Unknown | CloudStatus::Loading | CloudStatus::Unavailable => None,
+        match self.c.cloud_access() {
+            Some(true) => Some(("On", true)),
+            Some(false) => Some(("Off", false)),
+            None => None,
         }
     }
 

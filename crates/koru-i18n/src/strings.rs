@@ -2049,6 +2049,7 @@ pub enum Key {
     CloudLearnMore,
     CloudSubscribedSyncing,
     CloudSubscribed,
+    CloudAccessInactive,
     CloudManageSubscription,
     CloudNotConfigured,
     CloudNotConfiguredBody,
@@ -3229,7 +3230,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2253] = [
+    pub const ALL: [Key; 2254] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4670,6 +4671,7 @@ impl Key {
         Key::CloudLearnMore,
         Key::CloudSubscribedSyncing,
         Key::CloudSubscribed,
+        Key::CloudAccessInactive,
         Key::CloudManageSubscription,
         Key::CloudNotConfigured,
         Key::CloudNotConfiguredBody,
@@ -15656,6 +15658,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudLearnMore, en: "Learn more", es: "Más información", pt_br: "Saiba mais", de: "Mehr erfahren", fr: "En savoir plus", ar: "معرفة المزيد", zh_hans: "了解更多", ja: "詳しくはこちら" },
     Row { key: Key::CloudSubscribedSyncing, en: "Subscribed · syncing {} of {} profiles", es: "Suscrito · sincronizando {} de {} perfiles", pt_br: "Assinado · sincronizando {} de {} perfis", de: "Abonniert · {} von {} Profilen werden synchronisiert", fr: "Abonné · synchronisation de {} profils sur {}", ar: "مشترك · تتمّ مزامنة {} من {} ملفات شخصية", zh_hans: "已订阅 · 正在同步 {} / {} 个配置文件", ja: "登録済み · {} / {} プロファイルを同期中" },
     Row { key: Key::CloudSubscribed, en: "Subscribed", es: "Suscrito", pt_br: "Assinado", de: "Abonniert", fr: "Abonné", ar: "مشترك", zh_hans: "已订阅", ja: "登録済み" },
+    Row { key: Key::CloudAccessInactive, en: "Cloud access is inactive.", es: "El acceso a Cloud está inactivo.", pt_br: "O acesso ao Cloud está inativo.", de: "Der Cloud-Zugriff ist inaktiv.", fr: "L’accès au Cloud est inactif.", ar: "الوصول إلى السحابة غير نشط.", zh_hans: "云服务访问未启用。", ja: "クラウドへのアクセスは無効です。" },
     Row { key: Key::CloudManageSubscription, en: "Manage subscription", es: "Gestionar suscripción", pt_br: "Gerenciar assinatura", de: "Abonnement verwalten", fr: "Gérer l’abonnement", ar: "إدارة الاشتراك", zh_hans: "管理订阅", ja: "サブスクリプションを管理" },
     // A build with no Koru Cloud origin (`koru_env::cloud_configured`). Not an
     // outage and not an error: there is no server to reach, so nothing offers

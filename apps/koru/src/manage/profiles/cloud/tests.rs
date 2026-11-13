@@ -57,7 +57,8 @@ fn subscribed() -> ProfilesController {
         0,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: Some(true)
+            current: Some(true),
+            access: Some(true),
         }
     ));
     c
@@ -97,6 +98,56 @@ fn subtitle(c: &ProfilesController, index: usize) -> Option<String> {
     let profile = c.profiles[index].clone();
     c.cloud_sync_subtitle(&profile)
 }
+#[test]
+fn email_session_updates_settle_before_cloud_subscription_and_sync_reads() {
+    let mut c = signed_in();
+    c.set_cloud_visible(false);
+    let work = profile("Work", Some(ACCOUNT));
+    c.profiles = vec![work.clone()];
+    let mut account = c.account.clone();
+    account.generation = 1;
+    c.set_account(account.clone());
+    assert_eq!(
+        c.take_request(),
+        Some(AccountCommand::InspectAccountSession)
+    );
+    c.complete_scoped(
+        1,
+        1,
+        AccountOperationResult::SignedInIdentity {
+            provider: "email".into(),
+            verified_email: "person@example.test".into(),
+        },
+    );
+    assert_eq!(c.take_request(), Some(AccountCommand::ListProfiles));
+    for generation in 2..34 {
+        account.generation = generation;
+        c.set_account(account.clone());
+        assert!(c.take_request().is_none(), "session inspection must settle");
+    }
+
+    c.set_cloud_visible(true);
+    let (request_id, submission) = start(&mut c);
+    assert!(c.account_command_admitted(CommandAdmission {
+        submission,
+        owner_scope: 1,
+        generation: 34,
+    }));
+    c.complete_scoped(
+        1,
+        34,
+        AccountOperationResult::CloudSubscription {
+            request_id,
+            current: Some(true),
+            access: Some(true),
+        },
+    );
+    assert_eq!(c.cloud_status(), Status::Manage);
+    answer_sync(&mut c, vec![row(&work, true, 1, 1)]);
+    assert!(c.cloud_sync_on(work.id));
+    assert!(c.take_request().is_none());
+}
+
 #[test]
 fn cloud_startup_and_outage_leave_local_profile_details_accessible() {
     use koru_agent_wire::{
@@ -141,6 +192,64 @@ fn cloud_startup_and_outage_leave_local_profile_details_accessible() {
 }
 
 #[test]
+fn complimentary_access_enables_sync_without_purchase_actions() {
+    let mut c = signed_in();
+    let work = profile("Work", Some(ACCOUNT));
+    c.profiles = vec![work.clone()];
+    let (request_id, _) = start(&mut c);
+    c.complete_scoped(
+        1,
+        0,
+        AccountOperationResult::CloudSubscription {
+            request_id,
+            current: Some(false),
+            access: Some(true),
+        },
+    );
+    assert_eq!(c.cloud_status(), Status::Active);
+    assert_eq!(c.cloud_access(), Some(true));
+    assert_eq!(c.cloud_body_text(Lang::En), "Subscribed");
+    assert!(!c.cloud_actionable());
+    assert!(!c.cloud_learn_more_visible());
+    assert!(matches!(
+        c.cloud_sync_availability(&work),
+        SyncAvailability::Enabled
+    ));
+    c.cloud_activate();
+    assert!(c.take_cloud_uri().is_none());
+    answer_sync(&mut c, vec![row(&work, true, 1, 1)]);
+    assert_eq!(
+        c.cloud_body_text(Lang::En),
+        "Subscribed · syncing 1 of 1 profiles"
+    );
+}
+
+#[test]
+fn an_inactive_purchase_keeps_billing_management_but_not_sync_access() {
+    let mut c = signed_in();
+    let work = profile("Work", Some(ACCOUNT));
+    let (request_id, _) = start(&mut c);
+    c.complete_scoped(
+        1,
+        0,
+        AccountOperationResult::CloudSubscription {
+            request_id,
+            current: Some(true),
+            access: Some(false),
+        },
+    );
+    assert_eq!(c.cloud_access(), Some(false));
+    assert_eq!(c.cloud_status(), Status::Manage);
+    assert!(c.cloud_action_is_link());
+    assert_eq!(c.cloud_body_text(Lang::En), "Cloud access is inactive.");
+    assert!(matches!(
+        c.cloud_sync_availability(&work),
+        SyncAvailability::Disabled(TextKey::CloudAccessInactive)
+    ));
+    assert!(c.take_request().is_none());
+}
+
+#[test]
 fn hidden_cards_and_busy_command_lanes_never_issue_a_background_cloud_read() {
     let mut c = signed_in();
     c.set_cloud_visible(false);
@@ -163,7 +272,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         7,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: None
+            current: None,
+            access: None,
         }
     ));
     assert_eq!(c.notice.as_deref(), Some("unrelated profile work"));
@@ -187,7 +297,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         7,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: Some(false)
+            current: Some(false),
+            access: Some(false),
         }
     ));
     assert!(c.complete_scoped(
@@ -195,7 +306,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         8,
         AccountOperationResult::CloudSubscription {
             request_id: new_id,
-            current: Some(true)
+            current: Some(true),
+            access: Some(true),
         }
     ));
     assert!(c.cloud.status == Status::Manage);
@@ -213,7 +325,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         9,
         AccountOperationResult::CloudSubscription {
             request_id: late,
-            current: Some(true)
+            current: Some(true),
+            access: Some(true),
         }
     ));
     assert!(c.cloud.status == Status::Unknown);
@@ -233,7 +346,8 @@ fn switching_accounts_keeps_targeted_status_off_the_selected_profile_and_new_acc
         3,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: Some(true)
+            current: Some(true),
+            access: Some(true),
         }
     ));
     assert_eq!(c.account.active_scope, 2);
