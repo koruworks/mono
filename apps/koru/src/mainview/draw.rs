@@ -538,7 +538,7 @@ impl MainView {
         });
         self.refresh_tasks_context(workspace);
         let cx = self.context_rect();
-        if cx.w > 0.0 {
+        if cx.w > 0.0 && self.snapshot_target_agrees() {
             self.document_history.set_client(workspace.store_client());
             self.cloud_sync.set_client(workspace.store_client());
             // **The one sweep in this frame that walks the document**, and it
@@ -561,6 +561,7 @@ impl MainView {
         // Before it, the sidebar's own fill and the lane's were painting the
         // pane's corner back square (the review's note).
         self.draw_cards(scene, root);
+        self.draw_bot_context(scene, root);
         // **After both columns**, and deliberately not from inside the pane's
         // own `draw`: a popover hangs over the active view, so where it lands in
         // the frame is a z-order decision worth making out loud. It lives
@@ -1038,6 +1039,7 @@ impl MainView {
         // document action and normally lives on the title block; this remains
         // behind the zero-width product switch for compatible chrome geometry.
         if CONTEXT_TOGGLE {
+            let disabled = !self.context_has_sections();
             koru_ui::icon_button::draw(
                 scene,
                 root,
@@ -1054,7 +1056,7 @@ impl MainView {
                     active: false,
                     // Dimmed, never hidden, while the column has nothing to
                     // show (DESIGN.md: a disabled control explains itself).
-                    disabled: !super::context_has_sections(),
+                    disabled,
                 },
             );
         }

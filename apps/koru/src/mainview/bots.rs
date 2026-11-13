@@ -800,6 +800,7 @@ impl MainView {
     /// again. A comparison per Bot tab when nothing moved. `true` when the
     /// strip owes a remeasure.
     pub(super) fn refresh_bot_tabs(&mut self) -> bool {
+        self.sync_bot_context();
         let placed = self.place_opening_tabs();
         // What every Bot tab's lifecycle finished, into the window's book,
         // and the book back into every tab (S14).

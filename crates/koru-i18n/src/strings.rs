@@ -2003,6 +2003,9 @@ pub enum Key {
     BotsAccessChoiceWorkspace,
     /// The Bot's Role and Knowledge references, separate from edit permissions.
     BotsLibrary,
+    BotsMemory,
+    BotsManageLibrary,
+    BotsLibraryDraftInSettings,
     BotsKnowledge,
     BotsKnowledgeHint,
     BotsKnowledgeEmpty,
@@ -3765,7 +3768,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2525] = [
+    pub const ALL: [Key; 2528] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5143,6 +5146,9 @@ impl Key {
         Key::BotsAccessChoiceDefault,
         Key::BotsAccessChoiceWorkspace,
         Key::BotsLibrary,
+        Key::BotsMemory,
+        Key::BotsManageLibrary,
+        Key::BotsLibraryDraftInSettings,
         Key::BotsKnowledge,
         Key::BotsKnowledgeHint,
         Key::BotsKnowledgeEmpty,
@@ -16731,6 +16737,9 @@ pub const ROWS: &[Row] = &[
         ja: "このワークスペースのすべてのページ",
     },
     Row { key: Key::BotsLibrary, en: "Library", es: "Biblioteca", pt_br: "Biblioteca", de: "Bibliothek", fr: "Bibliothèque", ar: "المكتبة", zh_hans: "资料库", ja: "ライブラリ" },
+    Row { key: Key::BotsMemory, en: "Memory", es: "Memoria", pt_br: "Memória", de: "Gedächtnis", fr: "Mémoire", ar: "الذاكرة", zh_hans: "记忆", ja: "メモリー" },
+    Row { key: Key::BotsManageLibrary, en: "Manage Library", es: "Gestionar biblioteca", pt_br: "Gerenciar biblioteca", de: "Bibliothek verwalten", fr: "Gérer la bibliothèque", ar: "إدارة المكتبة", zh_hans: "管理资料库", ja: "ライブラリを管理" },
+    Row { key: Key::BotsLibraryDraftInSettings, en: "Knowledge changes are waiting in Settings.", es: "Hay cambios de conocimiento pendientes en Ajustes.", pt_br: "Há alterações de conhecimento pendentes nas Configurações.", de: "In den Einstellungen warten Änderungen am Wissen.", fr: "Des modifications des connaissances sont en attente dans les paramètres.", ar: "توجد تغييرات على المعرفة بانتظارك في الإعدادات.", zh_hans: "知识更改正在设置中等待处理。", ja: "設定に保留中のナレッジ変更があります。" },
     Row { key: Key::BotsKnowledge, en: "Knowledge", es: "Conocimiento", pt_br: "Conhecimento", de: "Wissen", fr: "Connaissances", ar: "المعرفة", zh_hans: "知识", ja: "知識" },
     Row { key: Key::BotsKnowledgeHint, en: "Up to 16 pages provide context for new tasks. Adding a page does not grant permission to edit it.", es: "Hasta 16 páginas aportan contexto a las nuevas tareas. Añadir una página no concede permiso para editarla.", pt_br: "Até 16 páginas fornecem contexto para novas tarefas. Adicionar uma página não concede permissão para editá-la.", de: "Bis zu 16 Seiten liefern Kontext für neue Aufgaben. Das Hinzufügen einer Seite erteilt keine Bearbeitungsrechte.", fr: "Jusqu’à 16 pages fournissent du contexte aux nouvelles tâches. Ajouter une page n’accorde pas le droit de la modifier.", ar: "توفر حتى ١٦ صفحة سياقًا للمهام الجديدة. إضافة صفحة لا تمنح إذنًا بتعديلها.", zh_hans: "最多可添加 16 个页面，为新任务提供背景信息。添加页面不会授予编辑权限。", ja: "最大16ページを新しいタスクの参考情報として使用します。ページを追加しても編集権限は付与されません。" },
     Row { key: Key::BotsKnowledgeEmpty, en: "No Knowledge pages added.", es: "No se han añadido páginas de conocimiento.", pt_br: "Nenhuma página de conhecimento adicionada.", de: "Keine Wissensseiten hinzugefügt.", fr: "Aucune page de connaissances ajoutée.", ar: "لم تُضف صفحات معرفة.", zh_hans: "尚未添加知识页面。", ja: "知識ページはまだありません。" },

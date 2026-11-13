@@ -66,6 +66,7 @@ mod agent_cli_updates;
 mod agent_install;
 mod agent_mcp;
 mod agent_providers;
+mod bot_context;
 mod bot_lifecycle;
 mod bots;
 mod canvas;
@@ -435,12 +436,6 @@ struct MoveUndo {
 /// another layout path.
 const CONTEXT_TOGGLE: bool = true;
 
-/// Whether the context column has anything to show this build: at least
-/// one of its sections is visible. The caption's toggle dims otherwise.
-fn context_has_sections() -> bool {
-    !crate::panes::context::Section::visible().is_empty()
-}
-
 const SEARCH_MODAL_MARGIN: f32 = 16.0;
 const MOVE_TO_MODAL_W: f32 = 420.0;
 const MOVE_TO_MODAL_H: f32 = 360.0;
@@ -701,6 +696,10 @@ pub struct MainView {
     /// The context column, on the right.
     context: Panel,
     context_view: ContextView,
+    bot_context: crate::bots::view::context_library::Surface,
+    context_document_section: crate::panes::context::Section,
+    context_return_tab: Option<(u64, u64, Option<koru_draw::el::Key>)>,
+    bot_context_release_owed: bool,
     /// Koru AI is its own full-height left pane. It is intentionally not a
     /// section of the context column: chat has independent width, focus and
     /// lifetime.
@@ -1868,6 +1867,10 @@ impl MainView {
             context_stale: true,
             context: Panel::new(theme::CONTEXT_W, false),
             context_view: ContextView::new(),
+            bot_context: Default::default(),
+            context_document_section: Default::default(),
+            context_return_tab: None,
+            bot_context_release_owed: false,
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
             bot_create_folder_ask: None,
@@ -3485,6 +3488,9 @@ impl MainView {
         koru_store_core::ids::WorkspaceId,
         koru_store_core::ids::DocumentId,
     )> {
+        if !self.snapshot_target_agrees() {
+            return None;
+        }
         self.current_workspace()
             .zip(self.active_document)
             .map(|(workspace, document)| {
@@ -3502,22 +3508,31 @@ impl MainView {
     /// no focus ring and no traversal, so without this the Cloud tab — and
     /// Tasks, and Reminders — could be reached only with a pointer.
     pub(super) fn next_context_section(&mut self) -> bool {
-        use crate::panes::context::Section;
+        self.sync_bot_context();
+        let visible = self.context_sections();
+        if visible.is_empty() {
+            return false;
+        }
         if !self.context.is_open() {
             // A section asked for by name is one you meant to see; opening on
             // the way there is what `ShowNavigator` already does for the
             // explore column.
             self.toggle_context();
+            if self.bot_context_stands() {
+                self.focus_bot_context();
+            }
             return true;
         }
         let current = self.context_view.section();
-        let visible = Section::visible();
         let at = visible
             .iter()
             .position(|section| *section == current)
             .unwrap_or(0);
         let next = visible[(at + 1) % visible.len()];
         self.context_view.select(next);
+        if self.bot_context_stands() {
+            self.focus_bot_context();
+        }
         true
     }
 
@@ -8575,7 +8590,7 @@ impl MainView {
             }
             // A dimmed toggle (the column has nothing to show) swallows the
             // press rather than opening an empty column.
-            Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
+            Hit::ToggleContext if !self.context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
             // The lane's New: the launcher the tab strip's `+` opens.
             Hit::New => {
@@ -10407,6 +10422,9 @@ impl MainView {
         // The pane's resize grip, before the hit is resolved: it straddles the
         // pane's edge, so half of it is over the content and `regions::hit`
         // would answer for that half.
+        if !self.popover_hit(x, y) && self.bot_context_press(x, y, ctrl) {
+            return true;
+        }
         if self.workspace_rename.is_none()
             && self.menu.is_none()
             && !self.popover_hit(x, y)
@@ -10590,6 +10608,9 @@ impl MainView {
             return self.apply(ws, out);
         }
         if hit == Hit::Context {
+            if !self.snapshot_target_agrees() {
+                return true;
+            }
             let out = self.context_view.mouse_down(self.regions.context, x, y);
             return self.apply(ws, out) || dismissed;
         }
@@ -10813,6 +10834,9 @@ impl MainView {
                 .settle(tab_count, i, dx, std::time::Instant::now());
         }
         // The context column's scrollbar drag ends on any release.
+        if self.bot_context_release() {
+            return true;
+        }
         if self.context_view.mouse_up() {
             return true;
         }
@@ -11318,6 +11342,12 @@ impl View for MainView {
             self.nested = None;
             return self.ai_chat.context_menu(x, y);
         }
+        self.sync_bot_context();
+        if self.bot_context_current()
+            && (self.bot_context.floating || self.bot_context.area.contains(x, y))
+        {
+            return true;
+        }
         let hit = self.hit_at(x, y);
         match hit {
             // A right-click on a tab (its close box is part of it) opens a menu
@@ -11787,6 +11817,15 @@ impl View for MainView {
                 .scroll_popover(self.explore_popover_area(), self.viewport, dy);
             return;
         }
+        self.sync_bot_context();
+        if self.bot_context_current() && self.bot_context.area.contains(px, py) {
+            self.bot_context
+                .scroll_by(-Self::wheel_lines(delta) * theme::NAV_ROW_H);
+            return;
+        }
+        if self.bot_context_current() && self.bot_context.floating {
+            return;
+        }
         if self.regions.sidebar.w > 0.0 && self.regions.sidebar.contains(px, py) {
             let dy = Self::wheel_lines(delta);
             self.explore.scroll_by(self.explore_area(), dy);
@@ -11796,7 +11835,10 @@ impl View for MainView {
             self.ai_chat.scroll_by(delta);
             return;
         }
-        if self.context.is_open() && self.regions.context.contains(px, py) {
+        if self.context.is_open()
+            && self.snapshot_target_agrees()
+            && self.regions.context.contains(px, py)
+        {
             let dy = Self::wheel_lines(delta);
             self.context_view.scroll_by(self.regions.context, dy);
             return;
@@ -11916,6 +11958,7 @@ impl View for MainView {
         self.retain_rail_focus(rail_focus);
         let bell = self.reminder_bell_rect();
         self.reminder_shell.maintain_geometry(self.viewport, bell);
+        self.sync_bot_context();
     }
 
     fn set_maximized(&mut self, maximized: bool) {
@@ -12097,6 +12140,14 @@ impl View for MainView {
         }
         // A library thumb keeps its vertical-resize cursor while captured,
         // including when the pointer has left the sidebar's narrow hit region.
+        if self.bot_context_current()
+            && self
+                .bot_context
+                .area
+                .contains(self.pointer.0, self.pointer.1)
+        {
+            return CursorIcon::Default;
+        }
         if self.explore.pointer_active() && !self.explore.drag_active() {
             return self.explore.cursor_icon();
         }
@@ -12157,6 +12208,7 @@ impl View for MainView {
                 TabView::Leaf(l) => View::cursor_icon(l),
             },
             Some(Hit::Sidebar) => self.explore.cursor_icon(),
+            Some(Hit::Context) if self.bot_context_current() => CursorIcon::Default,
             Some(Hit::Context) => self.context_view.cursor_icon(),
             // Over any chrome the pointer is never the I-beam the row scrolled
             // behind it would otherwise earn. Beyond that it does not change:
@@ -15376,8 +15428,9 @@ impl View for MainView {
         };
         let entity_changed = entity_changed || faces_changed;
         let history_target = self.history_target();
-        let history_visible =
-            self.context.is_open() && self.context_view.section() == Section::History;
+        let history_visible = self.snapshot_target_agrees()
+            && self.context.is_open()
+            && self.context_view.section() == Section::History;
         let history_changed = self
             .document_history
             .maintain(history_target, history_visible, now);
@@ -15388,8 +15441,9 @@ impl View for MainView {
         // **The Cloud tab, on the same terms as History**: one target, visible
         // only while its own section is showing, and a push into chrome only
         // when the lines actually moved.
-        let cloud_visible =
-            self.context.is_open() && self.context_view.section() == Section::CloudSync;
+        let cloud_visible = self.snapshot_target_agrees()
+            && self.context.is_open()
+            && self.context_view.section() == Section::CloudSync;
         let cloud_context = self.cloud_context(cloud_visible);
         let cloud_changed =
             self.cloud_sync
@@ -16001,6 +16055,9 @@ impl MainView {
         // view the move chords move it; asked here, they are answered before
         // the chat's *Previous / Next chat* or an editor's line move is
         // reached, and only while `F6` has put the keyboard on the rail.
+        if self.bot_context_key(key, text, mods) {
+            return true;
+        }
         if self.chrome_focus.is_some() && self.chrome_focus_key(ws, key, text, mods) {
             return true;
         }
@@ -18081,7 +18138,7 @@ impl MainView {
             // A hovered history row answers with the exact moment behind its
             // relative time. Keys sit past the caption buttons' 1..4 so a
             // pointer sliding between rows re-anchors while staying warm.
-            Hit::Context => self
+            Hit::Context if self.snapshot_target_agrees() => self
                 .context_view
                 .history_tooltip(self.regions.context)
                 .map(|(row, anchor, detail)| TooltipContent::new(100 + row as u64, anchor, detail)),
@@ -18442,6 +18499,12 @@ impl MainView {
         }
 
         let hit = self.hit_at(x, y);
+        if !self.carrying() && !self.popover_hit(x, y) {
+            if let Some(changed) = self.bot_context_hover(x, y) {
+                self.hover = Some(Hit::Context);
+                return changed;
+            }
+        }
         let hover_changed = self.hover != Some(hit);
         self.hover = Some(hit);
         // Leaving the toggle re-arms its hint: pointing at it again is a fresh
@@ -18548,7 +18611,9 @@ impl MainView {
         };
         // A live scrollbar drag follows the pointer out of the column, the
         // way every other drag in the app does.
-        let context_moved = if hit == Hit::Context || self.context_view.is_dragging() {
+        let context_moved = if self.snapshot_target_agrees()
+            && (hit == Hit::Context || self.context_view.is_dragging())
+        {
             self.context_view.mouse_move(self.regions.context, x, y)
         } else {
             self.context_view.clear_hover()

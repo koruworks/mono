@@ -6505,8 +6505,18 @@ If someone else changed the Bot, your draft stays visible while its current
 settings reload. Archived Bots let you read and open their Library pages,
 but cannot change the list. A Bot in Trash has no Library editor.
 
-This Library editor is in the desktop Bot settings. Memory creation and a
-Library section in the context pane are not available yet.
+In a Bot conversation, open the context pane to see **Library**. It lists the
+saved Role and Knowledge pages; **Manage Library** opens the same Settings
+draft. Changes waiting in Settings are identified separately from the saved
+list. An already-bound Memory page also has an ordinary page link; Memory
+creation is not available yet.
+
+The context pane becomes a floating disclosure when the window is narrow.
+Escape or an outside press dismisses it. F6 reaches its controls while it is
+open and stays within the narrow disclosure; Tab and Shift+Tab move through
+the controls. Document History remains available
+when a document is selected. The desktop Bot context pane currently provides
+Library; Upcoming and Computer sections are not available yet.
 
 ## Chatting with a local agent
 
