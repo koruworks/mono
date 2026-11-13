@@ -812,6 +812,7 @@ fn command_failure(command: &AccountCommand, code: &str) -> AccountOperationResu
             AccountOperationResult::CloudSubscription {
                 request_id: *request_id,
                 current: None,
+                access: None,
             }
         }
         _ if code == "cancelled" => AccountOperationResult::Cancelled,
@@ -925,8 +926,8 @@ pub struct ProductionAccountService {
     cloud_sync: Option<Arc<dyn cloud_sync::CloudSyncPort>>,
     /// Whether an account has Koru Cloud, as last answered. Memory only, and
     /// read by one thing: a Profile waiting to start syncing
-    /// (`cloud_sync::cloud_subscription_known`).
-    cloud_subscribed: Option<(KoruIdentityId, bool)>,
+    /// (`cloud_sync::cloud_access_known`).
+    cloud_access: Option<(KoruIdentityId, bool)>,
     /// When the service last accepted this sign-in: set with every token
     /// pair it answers, published as `AccountState::session_checked_at_millis`.
     session_checked_at_millis: Option<i64>,
@@ -1018,7 +1019,7 @@ impl ProductionAccountService {
             responder_session: None,
             local_profiles: ports.local_profiles,
             cloud_sync: ports.cloud_sync,
-            cloud_subscribed: None,
+            cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: Arc::new(Mutex::new(ports.lifecycle_repository)),
@@ -2357,7 +2358,7 @@ impl AccountService for ProductionAccountService {
             responder_session: self.responder_session.clone(),
             local_profiles: self.local_profiles.clone(),
             cloud_sync: self.cloud_sync.clone(),
-            cloud_subscribed: None,
+            cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: self.lifecycle_repository.clone(),
@@ -2557,21 +2558,22 @@ impl AccountService for ProductionAccountService {
                 }
             }
             AccountCommand::InspectCloudSubscription { request_id } => {
-                let current = self
+                let subscription = self
                     .client
-                    .has_cloud_subscription(&self.authorization()?, &|| cancel.cancelled())
+                    .cloud_subscription_status(&self.authorization()?, &|| cancel.cancelled())
                     .ok();
                 // Remembered for a Profile waiting to start syncing: this is
-                // the moment a new subscription is first seen.
-                if let (Some(current), Some(owner)) = (current, self.durable_owner) {
-                    self.cloud_subscribed = Some((owner.account, current));
+                // the moment paid or complimentary access is first seen.
+                if let (Some(subscription), Some(owner)) = (subscription, self.durable_owner) {
+                    self.cloud_access = Some((owner.account, subscription.cloud_access));
                 }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
                     credential: CredentialChange::Keep,
                     result: AccountOperationResult::CloudSubscription {
                         request_id,
-                        current,
+                        current: subscription.map(|status| status.current),
+                        access: subscription.map(|status| status.cloud_access),
                     },
                     follow_up: None,
                 })

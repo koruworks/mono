@@ -107,7 +107,7 @@ impl ProfilesController {
         })
     }
 
-    /// The signed-in Google or Apple email, once the session has said it.
+    /// The signed-in email address, once the session has said it.
     pub fn signed_in_email(&self) -> Option<&str> {
         self.signed_in_identity
             .as_ref()

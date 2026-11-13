@@ -29,6 +29,7 @@ pub enum Status {
     Loading,
     Subscribe,
     Manage,
+    Active,
     Unavailable,
 }
 pub(super) struct Pending {
@@ -48,6 +49,7 @@ pub(super) struct SyncPending {
 }
 pub(super) struct State {
     pub(super) status: Status,
+    access: Option<bool>,
     due: bool,
     pending: Option<Pending>,
     /// Per-Profile Cloud sync as the Agent last reported it. `None` until the
@@ -66,6 +68,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             status: Status::Unknown,
+            access: None,
             due: true,
             pending: None,
             sync: None,
@@ -85,6 +88,14 @@ impl ProfilesController {
     /// What the account's subscription is, as far as this form knows.
     pub fn cloud_status(&self) -> Status {
         self.cloud.status
+    }
+    pub fn cloud_access(&self) -> Option<bool> {
+        match self.cloud.status {
+            Status::Unknown | Status::Loading | Status::Unavailable => None,
+            Status::Active => Some(true),
+            Status::Manage => Some(self.cloud.access.unwrap_or(true)),
+            Status::Subscribe => Some(false),
+        }
     }
     pub fn set_cloud_visible(&mut self, visible: bool) {
         if visible && !self.cloud_visible {
@@ -140,9 +151,8 @@ impl ProfilesController {
                 enabled,
             });
         }
-        // Nothing can be synced without a subscription, so the per-Profile read
-        // waits for the subscription answer rather than racing it.
-        if self.cloud.sync_due && self.cloud.status == Status::Manage {
+        // Per-Profile sync waits for confirmed account access.
+        if self.cloud.sync_due && self.cloud_access() == Some(true) {
             let id = next_request_id();
             self.cloud.sync_due = false;
             self.cloud.sync_pending = Some(SyncPending {
@@ -245,6 +255,7 @@ impl ProfilesController {
             AccountOperationResult::CloudSubscription {
                 request_id,
                 current,
+                access,
             } => {
                 let Some(pending) = self.cloud.pending.as_ref() else {
                     return false;
@@ -256,15 +267,16 @@ impl ProfilesController {
                 {
                     return false;
                 }
+                self.cloud.access = access.or(*current);
                 self.cloud.status = match current {
                     Some(true) => Status::Manage,
+                    Some(false) if self.cloud.access == Some(true) => Status::Active,
                     Some(false) => Status::Subscribe,
                     None => Status::Unavailable,
                 };
                 self.cloud.pending = None;
-                // A confirmed subscription is what makes the per-Profile state
-                // worth reading at all, so confirming one asks for it.
-                if self.cloud.status == Status::Manage {
+                // Confirmed access makes the per-Profile state worth reading.
+                if self.cloud_access() == Some(true) {
                     self.cloud.sync_due = true;
                 } else {
                     self.cloud.sync = None;
@@ -372,6 +384,9 @@ impl ProfilesController {
             Status::Unknown | Status::Loading => TextKey::CloudLoading,
             Status::Unavailable => TextKey::CloudUnavailable,
             Status::Subscribe => TextKey::CloudSubscribeIntro,
+            Status::Active if self.cloud_profile_counts().is_some() => TextKey::CloudActiveSyncing,
+            Status::Active => TextKey::CloudActive,
+            Status::Manage if self.cloud_access() == Some(false) => TextKey::CloudAccessInactive,
             Status::Manage if self.cloud_profile_counts().is_some() => {
                 TextKey::CloudSubscribedSyncing
             }
@@ -381,19 +396,22 @@ impl ProfilesController {
     pub fn cloud_body_text(&self, lang: Lang) -> String {
         let key = self.cloud_message();
         match (key, self.cloud_profile_counts()) {
-            (TextKey::CloudSubscribedSyncing, Some((on, total))) => koru_i18n::fill(
-                koru_i18n::t(lang, key),
-                &[&on.to_string(), &total.to_string()],
-            ),
+            (TextKey::CloudSubscribedSyncing | TextKey::CloudActiveSyncing, Some((on, total))) => {
+                koru_i18n::fill(
+                    koru_i18n::t(lang, key),
+                    &[&on.to_string(), &total.to_string()],
+                )
+            }
             _ => koru_i18n::t(lang, key).to_owned(),
         }
     }
     pub fn cloud_actionable(&self) -> bool {
         self.cloud.pending.is_none()
             && match self.account.stage {
-                AccountStage::SignedIn => {
-                    !matches!(self.cloud.status, Status::Loading | Status::Unknown)
-                }
+                AccountStage::SignedIn => !matches!(
+                    self.cloud.status,
+                    Status::Loading | Status::Unknown | Status::Active
+                ),
                 AccountStage::SignedOut
                 | AccountStage::Cancelled
                 | AccountStage::Failed
@@ -481,7 +499,13 @@ impl ProfilesController {
         if self.profile_unlinked_from_sign_in(profile) {
             return SyncAvailability::Disabled(TextKey::CloudSyncNotLinkedReason);
         }
-        if self.cloud.status != Status::Manage {
+        if self.cloud_access() != Some(true) {
+            if self.cloud_access().is_none() {
+                return SyncAvailability::Disabled(self.cloud_message());
+            }
+            if self.cloud.status == Status::Manage {
+                return SyncAvailability::Disabled(TextKey::CloudAccessInactive);
+            }
             return SyncAvailability::Disabled(TextKey::CloudSyncSubscribeReason);
         }
         match self.account.active_account_id.as_deref() {

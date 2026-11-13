@@ -322,8 +322,8 @@ impl ManageView {
     pub(super) fn lay_cloud_page(&mut self) -> profile_page::Laid {
         let column = self.column();
         let mut controls = Vec::new();
-        let subscribed = self.c.account().stage == AccountStage::SignedIn
-            && self.c.cloud_status() == CloudStatus::Manage;
+        let subscribed =
+            self.c.account().stage == AccountStage::SignedIn && self.c.cloud_access() == Some(true);
 
         // The title, with the subscribed dot before it, and the
         // subscription's line as its lead; then what can be done about it.

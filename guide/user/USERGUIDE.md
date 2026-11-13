@@ -146,8 +146,9 @@ returns the Profile to its existing device-to-device connection behavior.
 **The Koru Cloud page.** Click the cloud status at the bottom of the Profile
 popover to open **Manage › Koru Cloud** directly, including when Cloud is not
 set up yet. In the **Manage** tab, **Koru Cloud** under *This
-computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
-subscription for your signed-in Koru account, from top to bottom:
+computer* in the nav (its *On* / *Off* says whether you have Cloud access) shows
+access for your signed-in Koru account, whether you signed in with email,
+Google, or Apple. From top to bottom:
 
 - **When Koru can't connect**, a card at the top says so, with **Try again**
   and **Continue offline**; your local Profiles stay available. A Profile's own
@@ -165,7 +166,7 @@ subscription for your signed-in Koru account, from top to bottom:
   you signed in with, a card under Account says *This device has Profiles from
   another account*, with **Create a new Profile with** your email, **Sign in
   with another Google Account**, and **Continue offline**.
-- **Not subscribed:** *One subscription covers every profile on this computer.
+- **No Cloud access or current subscription:** *One subscription covers every profile on this computer.
   Each signed-in profile chooses whether it syncs.*, the list of what Koru Cloud
   includes, **Subscribe to Koru Cloud** (the website's pricing page) and
   **Learn more**.
@@ -173,6 +174,11 @@ subscription for your signed-in Koru account, from top to bottom:
   profiles*, and **Manage subscription**, which opens the website's dashboard,
   where you can sign in and manage the plan. A scheduled cancellation remains
   manageable until it ends.
+- **Complimentary access:** *Cloud active · syncing 1 of 2 profiles*. An active
+  grant enables desktop sync without a paid subscription. There is no
+  **Manage subscription** button unless you also have a subscription to manage.
+  An unpaid current subscription remains manageable but says *Cloud access is
+  inactive* when neither paid access nor a complimentary grant applies.
 - While the subscription is being checked, could not be checked (**Try
   again**), or you are signed out (**Sign in with Google**), the page says so in
   one line.
@@ -186,8 +192,8 @@ subscription for your signed-in Koru account, from top to bottom:
   says the same. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how to give a
   build a Koru Cloud.
 
-The subscription is checked again each time the page comes to the front, so
-return to Koru after changing the plan. This page reports billing status, not
+Cloud access is checked again each time the page comes to the front, so
+return to Koru after changing the plan or grant. This page reports access, not
 whether documents have finished syncing through Cloud.
 
 **Turning Cloud sync on.** Under **Which profiles sync** on the Koru Cloud
@@ -198,7 +204,7 @@ another device of yours receives them even when this one is closed. The row
 says what is happening underneath — turning on, connecting, or syncing via Koru
 Cloud — in the same words as the Profile's own page, which has the same switch
 under *Sign-in and sync*. The switch is only live for a Profile of the account
-you are signed in to and only while the subscription is current; otherwise it
+you are signed in to and only while that account has Cloud access; otherwise it
 is shown dimmed with the reason. A Profile that belongs to your account but
 is not linked to the Google Account you are signed in with reads *Not linked
 to this sign-in*: after you unlink a Google Account from a Profile, that is

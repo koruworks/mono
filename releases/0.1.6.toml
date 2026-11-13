@@ -1,0 +1,161 @@
+title = "Cloud sync that starts by itself, notes on Tasks pages, and a new chat composer"
+
+summary = [
+  "Sign in, create or choose a Profile, and it syncs through Koru Cloud with nothing else to press and no second device needed.",
+  "Every Tasks page can carry a note and attached files above its tasks.",
+  "The chat composer is rebuilt: files and folders, @ references, command and skill menus, and a context usage panel.",
+  "Workspaces can be pinned, reordered and moved between Profiles, and switching workspace keeps your tabs open.",
+]
+
+body = """
+## Koru Cloud
+
+A Profile you create while signed in, or choose from your account onto this
+computer, now starts with Cloud sync on. There is no switch to find and no
+question about moving your workspaces, and a chosen Profile no longer waits
+for another of your devices to come online. A local Profile you connect later
+still starts off, and switching sync off sticks.
+
+The Profiles of your account that are not on this computer are listed on the
+Koru Cloud page under Which profiles sync, each with a switch that brings the
+Profile here. The separate Other Profiles group is gone.
+
+A Profile your sign-in is no longer linked to says Not linked to this sign-in
+and offers Connect, instead of showing Koru Cloud unavailable with nothing to
+do about it. The Account card shows when your sign-in was last checked.
+
+Fixes:
+
+- Koru no longer signs a computer out of Koru Cloud after restarts.
+- Profile sessions against Koru Cloud failed on their first message, which
+  showed Koru Cloud unavailable on every row. They sync again.
+- Refusals the service explains are shown as what they are, not retried for
+  ever as an outage.
+- A Profile removed from this computer can be imported again, and a refused
+  import no longer looks like a sign-out.
+- A first run could stay on Finishing for good.
+- The notice that a Profile was deleted on another device appeared again and
+  again. It now appears once and names the Profile.
+
+## Profiles and workspaces
+
+Where a workspace sits is now its own record, shared between your devices. A
+workspace can move between Profiles, and its former Profile can be deleted,
+without losing its reminders or personal fields. Linked devices follow a move
+or a trip to the Trash on their own, and the sync icon says what state your
+organization is in.
+
+- A Profile can be empty, and nothing creates a workspace for it behind your
+  back.
+- A Profile's Manage page ends in two separate actions: Delete profile and its
+  workspaces, which can be restored, and Remove from this device.
+- Workspaces left behind by a deleted Profile appear as Unassigned, with Move
+  to and Restore Profile. Manage lists deleted Profiles with Restore.
+- Pin workspaces from their menu or from Manage. The rail shows up to five
+  pins, keeps them in the order you give them, and lets you drag them or move
+  them with Ctrl+Shift+Up and Down. One press switches workspace.
+- The workspace menu opens from a new square under the pins. Ctrl+Alt+W opens
+  a quick switcher at the pointer, with a search field.
+- Switching workspace no longer closes your open tabs. A new setting,
+  Workspace tabs, lets each workspace keep its own tabs instead.
+- The Profile menu holds Manage profiles, Add new profile and Global sync.
+  App settings has its own square on the rail.
+
+This release upgrades the local database. Once it has, an older version of
+Koru on the same computer will refuse to open that data.
+
+## Tasks
+
+Every Tasks page, a list or a queue such as Today, can carry a note above its
+tasks. Hover the heading and press + to show it.
+
+- The note is an ordinary document. It does everything a document does, it
+  appears in your library, and it opens in a tab of its own.
+- A task written in a list's note joins that list, and one undo takes both
+  back.
+- Renaming the list renames its note.
+- The same + attaches files to the page, or links an existing document or
+  file, searched across the current Profile.
+- A note deleted on one device and written on another shows both choices on
+  the page: Recover or Keep deleted.
+
+Opening a task list could take seconds on a large library. It answers in
+milliseconds again. The rows of a list's color menu now show their colors.
+
+## Chat
+
+The chat composer is rebuilt.
+
+- The + menu adds files and folders from this computer. A file can be added
+  to the workspace on the way, and long names keep their extension visible.
+- @ opens a reference picker above the draft with recent documents, and it
+  finds tasks as well as documents and files.
+- In an agent chat, / and $ open the command and skill menus at once. Chosen
+  commands and skills survive in the chat's history.
+- The model mark opens a context panel showing what the agent reports of its
+  context window, when it reports it. The last reading is kept when you
+  reopen the chat.
+- Files you sent open inside Koru in a preview with Save As, images open in
+  the viewer, and folders open in your file manager.
+- Every agent stays reachable in the model picker, and the microphone no
+  longer hides behind a long model name.
+- Save chat asks for a name and saves to the workspace on screen.
+- A restored agent session that cannot resume starts one fresh session and
+  says so.
+- A queued message waiting for workspace access no longer stays paused for
+  good.
+- Updates for coding-agent tools no longer put a card in every window at
+  start. The offer is in Settings under Agent providers, and on that agent's
+  session tab.
+
+## Documents and editor
+
+- A bullet or a callout line added by an assistant or by another device now
+  appears in an open document as it arrives.
+- Attaching a file with /attach at the end of a sentence no longer removes
+  the sentence.
+- Body text on a light theme is a true regular weight and no longer reads as
+  bold.
+- Two crashes that could close the window while a screen reader was reading a
+  document are fixed, one of them caused by copying and pasting a paragraph
+  that holds a date, link or mention.
+- Reveal in Explore, Ctrl+Shift+E, shows the Documents view from any view.
+- An empty document's first line points at / and dictation.
+
+## Appearance and settings
+
+- Appearance has an accent color per theme and a scroll speed for the mouse
+  wheel, from 1x to 4x. Trackpads are unchanged.
+- Help lists the published releases and the update on offer in one timeline,
+  next to support, feedback and community links.
+- The setting for pinned tab titles applies to pins that are already open.
+
+## MCP assistants
+
+- Preview: an assistant that supports MCP Apps, connected through the local
+  Koru MCP bridge, can show a Koru document inside the conversation as a view
+  you can read, edit and save. The view follows the document as it changes
+  and can make text bold, italic, underlined or struck through. Code, tables
+  and files are shown but cannot be edited there.
+- Images are uploaded separately and then placed or replaced, so an assistant
+  no longer has to send image data through the conversation.
+- After you reorganize your workspaces, a connected assistant reaches exactly
+  the workspaces its grant covers.
+
+## Windows
+
+- Koru starts faster from cold.
+- New document on the taskbar's jump list, used while Koru is closed, asks
+  for a document title. It used to ask for a new workspace.
+
+## Linux
+
+- Koru can add itself to the desktop's app menu, from Welcome or from
+  Settings under System, and repairs the entry if you move its folder.
+- Start Koru when you log in works on Linux.
+
+## Security
+
+Dependencies were updated past recently published advisories, including five
+in the DNS resolver used for device-to-device connections.
+"""

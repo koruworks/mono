@@ -422,8 +422,10 @@ impl ProfilesController {
                 provider,
                 verified_email,
             } => {
-                // Both browser providers land here; email has its own journey.
-                if matches!(provider.as_str(), "google" | "apple") {
+                // Session inspection is shared by every sign-in method. Leaving
+                // a valid email identity unknown repeats inspection on each
+                // account update and can fill the account command queue.
+                if matches!(provider.as_str(), "google" | "apple" | "email") {
                     self.signed_in_identity = Some((provider, verified_email));
                     self.account_profiles.clear();
                     self.account_profiles_loaded = false;
