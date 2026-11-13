@@ -40,9 +40,19 @@ pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 pub(crate) enum Command {
     /// The Bots whose home is `workspace`, as the service lists them — and,
     /// as a second answer, its unfinished creations (S8).
-    List { seq: u64, workspace: WorkspaceId },
+    List {
+        seq: u64,
+        workspace: WorkspaceId,
+    },
     /// One Bot, as the service holds it now: what a Bot tab's header says.
-    Read { seq: u64, bot: BotId },
+    Read {
+        seq: u64,
+        bot: BotId,
+    },
+    ReadLibrary {
+        seq: u64,
+        bot: BotId,
+    },
     /// **A change a person asked for in a Bot's settings** (Bots P1.8 S5):
     /// an `Update`, `UpdateAccess`, `Pause` or `Resume` carrying the
     /// revision it read, or the `ReadOperation` that follows one until the
@@ -59,7 +69,9 @@ pub(crate) enum Command {
     /// **Whose conversation `chat` is** (Bots P1.8, B1): the owner's own
     /// read of the chat, whose `Chat.bot` labels a Bot's conversation for a
     /// caller that may open it. Only the label is kept.
-    Label { chat: ChatId },
+    Label {
+        chat: ChatId,
+    },
     /// **One page of a Bot's conversations** (S8): `ListBotChats`, main
     /// first then newest, Trash left out; `cursor` is the previous page's.
     ListChats {
@@ -70,7 +82,10 @@ pub(crate) enum Command {
     },
     /// **The workspace's running and Needs-you Bot conversations** (S10):
     /// `ListActivity`, at most 200, for the roster's sub-rows.
-    Activity { seq: u64, workspace: WorkspaceId },
+    Activity {
+        seq: u64,
+        workspace: WorkspaceId,
+    },
     /// **The workspace's Bots in one lifecycle** (S14): `ListLifecycle`,
     /// the roster's Archived filter and the Trash's Bot rows. `Active` is
     /// never asked: the owner answers it `invalid_request`.
@@ -83,11 +98,19 @@ pub(crate) enum Command {
     /// every page up to four): each with the operation that hid it and which
     /// Restore brings it back — what a conversation's Restore names, after a
     /// restart too.
-    TrashedChats { seq: u64, workspace: WorkspaceId },
+    TrashedChats {
+        seq: u64,
+        workspace: WorkspaceId,
+    },
 }
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    Library {
+        seq: u64,
+        bot: BotId,
+        result: Result<koru_ai_core::bots::library::BotLibraryView, Failure>,
+    },
     Listed {
         seq: u64,
         workspace: WorkspaceId,
@@ -518,6 +541,30 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     client = None;
                 }
                 if answers.send(Answer::Read { seq, bot, result }).is_err() {
+                    return;
+                }
+            }
+            Command::ReadLibrary { seq, bot } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => match connected
+                        .ai()
+                        .bots(&BotCommand::ReadLibrary { bot_id: bot })
+                    {
+                        Ok(BotResponse::Library { library }) if library.bot_id == bot => {
+                            Ok(library)
+                        }
+                        Ok(_) => Err(Failure::Unanswered),
+                        Err(failure) => Err(Failure::of(said(failure.code, failure.retryable))),
+                    },
+                    None => Err(Failure::Unanswered),
+                };
+                if result.is_err() {
+                    client = None;
+                }
+                if answers.send(Answer::Library { seq, bot, result }).is_err() {
                     return;
                 }
             }

@@ -61,7 +61,7 @@ pub(crate) const RESTORE: Key = Key::surface(SURFACE, "restore");
 
 /// The ⋯'s treatments: the shared icon button lights itself; the element
 /// draws the keyboard's ring.
-static ICON_STATES: StateRecipe = StateRecipe {
+pub(super) static ICON_STATES: StateRecipe = StateRecipe {
     name: "bot actions",
     base: Look::NONE,
     selected: Look::NONE,

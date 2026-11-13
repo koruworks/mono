@@ -10,6 +10,8 @@
 //! picked goes into the unsaved access choice; nothing is sent until
 //! *Save*. The create form (S8) opens the same picker for its selected
 //! pages and, under *Choose a page…*, for an existing role page.
+//! Library Knowledge uses its own destination and draft; adding context
+//! never changes the access card's selected-page grants.
 
 use koru_ai_core::bots::BotPage;
 use koru_draw::geometry::Rect;
@@ -23,27 +25,39 @@ use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use super::BotView;
 use super::region::ADD_PAGE;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Destination {
+    Access,
+    Role,
+    Knowledge,
+}
+
 impl BotView {
     /// Open the picker under *Add a page…*.
     pub(super) fn open_page_picker(&mut self) {
         self.picker = Some(Box::new(crate::input_engine::with(EntityPicker::for_link)));
         self.picker_hover = None;
-        self.picker_for_role = false;
+        self.picker_destination = Destination::Access;
     }
 
     /// **Open the picker under *Choose a page…*** (S8): the create form's
     /// existing role page, from the same home workspace.
     pub(super) fn open_role_picker(&mut self) {
         self.open_page_picker();
-        self.picker_for_role = true;
+        self.picker_destination = Destination::Role;
+    }
+
+    pub(super) fn open_knowledge_picker(&mut self) {
+        self.open_page_picker();
+        self.picker_destination = Destination::Knowledge;
     }
 
     /// The control the picker opens under, and the keyboard goes back to.
     fn picker_anchor(&self) -> koru_draw::el::Key {
-        if self.picker_for_role {
-            super::create::CHOOSE_ROLE_PAGE
-        } else {
-            ADD_PAGE
+        match self.picker_destination {
+            Destination::Role => super::create::CHOOSE_ROLE_PAGE,
+            Destination::Access => ADD_PAGE,
+            Destination::Knowledge => super::library::ADD,
         }
     }
 
@@ -93,13 +107,25 @@ impl BotView {
 
     /// Hits as the picker may offer them: not a page already selected.
     fn picker_hits(&self, hits: Vec<DocumentChoice>) -> Vec<DocumentChoice> {
-        let listed: Vec<koru_core::DocumentId> = self
-            .pages_shown()
+        let pages = match self.picker_destination {
+            Destination::Knowledge => self.library.pages(),
+            Destination::Role => &[],
+            Destination::Access => self.pages_shown(),
+        };
+        let listed: Vec<koru_core::DocumentId> = pages
             .iter()
             .map(|page| koru_core::DocumentId::from_uuid(page.document.as_uuid()))
             .collect();
         hits.into_iter()
             .filter(|hit| !listed.contains(&hit.target.document))
+            .filter(|hit| {
+                self.picker_destination != Destination::Knowledge
+                    || self
+                        .library
+                        .held()
+                        .and_then(|v| v.memory.as_ref())
+                        .is_none_or(|p| p.document.as_uuid() != hit.target.document.as_uuid())
+            })
             .collect()
     }
 
@@ -149,14 +175,22 @@ impl BotView {
             };
             match self.create.as_deref_mut() {
                 // The create form's (S8): its role page, or a selected one.
-                Some(create) if self.picker_for_role => {
+                Some(create) if self.picker_destination == Destination::Role => {
                     create.form.choose_existing(page);
                 }
                 Some(create) => {
                     create.form.add_page(page);
                 }
                 None => {
-                    self.settings.add_page(page);
+                    if self.picker_destination == Destination::Knowledge {
+                        if !self.settings.delivering()
+                            && let Some(bot) = self.settings.bot()
+                        {
+                            self.library.add(bot, page);
+                        }
+                    } else {
+                        self.settings.add_page(page);
+                    }
                 }
             }
             self.close_page_picker();
