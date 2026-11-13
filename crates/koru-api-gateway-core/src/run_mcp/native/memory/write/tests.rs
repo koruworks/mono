@@ -304,6 +304,7 @@ impl Fixture {
             "remember_memory",
             self.args.clone(),
             Cancellation::default(),
+            None,
         )
     }
 }
@@ -424,6 +425,7 @@ fn correct_and_forget_retained_receipts_preserve_full_domain_fact_identity() {
                 tool,
                 f.args.clone(),
                 Cancellation::default(),
+                None,
             )
             .unwrap();
             assert_eq!(saved["status"], "saved");
@@ -540,7 +542,7 @@ fn unresolved_memory_receipts_only_request_recovery_and_refused_stays_refused() 
 fn fresh_memory_work_is_explicitly_staged_and_cancellation_precedes_ports() {
     let f = Fixture::new(NativeResultStage::Registered);
     f.owner.0.lock().unwrap().allocation = None;
-    assert_eq!(f.invoke().unwrap_err().code, "unsupported_capability");
+    assert_eq!(f.invoke().unwrap_err().code, "native_recovery_pending");
     assert_eq!(f.owner.0.lock().unwrap().commands, ["allocation"]);
     let token = Cancellation::default();
     token.cancel();
@@ -554,7 +556,8 @@ fn fresh_memory_work_is_explicitly_staged_and_cancellation_precedes_ports() {
             f.captured.clone(),
             "remember_memory",
             f.args.clone(),
-            token
+            token,
+            None
         )
         .is_err()
     );

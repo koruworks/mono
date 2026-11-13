@@ -134,7 +134,7 @@ fn operation(arguments: &mut Value) -> Result<Uuid, ToolFailure> {
     }
     Ok(id)
 }
-fn fingerprint(raw: &str) -> Result<[u8; 32], ToolFailure> {
+pub(super) fn fingerprint(raw: &str) -> Result<[u8; 32], ToolFailure> {
     if raw.len() != 64 || !raw.is_ascii() {
         return Err(failure("invalid_request"));
     }
@@ -359,19 +359,46 @@ fn invoke(
             Err(failure("save_status_unknown"))
         };
     }
-    if intent.stage != NativeResultStage::Prepared || intent.verified.is_some() {
+    let registered = execute_record(
+        port,
+        &intent,
+        || backend.execute_native_write(&prepared, store_identity(&provenance, &intent)),
+        || policy.settled(),
+        || policy.uncertain(provenance.owner, provenance.bot, key),
+    )?;
+    saved(store, &authority, &registered)
+}
+
+/// The single lease-to-settlement state machine for Result and Memory purposes.
+/// Callers validate immutable intent identity before entering. Cancellation may
+/// refuse before acquisition, but cannot abandon an Execute lease here. Fresh
+/// AI preparation is forbidden; settlement/recovery notifications remain owed.
+pub(super) fn execute_record(
+    port: &dyn BotDelegatePort,
+    intent: &NativeResultIntentView,
+    execute: impl FnOnce() -> Result<NativeWriteEvidence, NativeWriteError>,
+    settled: impl FnOnce(),
+    uncertain: impl FnOnce() -> Result<(), ToolFailure>,
+) -> Result<NativeResultIntentView, ToolFailure> {
+    if intent.disposition != NativeResultDisposition::Execute
+        || intent.stage != NativeResultStage::Prepared
+        || intent.verified.is_some()
+    {
         return Err(failure("native_operation_conflict"));
     }
-    // No AI call from here until the owner proves the lease is settled.
-    match backend.execute_native_write(&prepared, store_identity(&provenance, &intent)) {
-        Ok(evidence) => confirm(port, policy, store, &authority, &intent, evidence),
+    match execute() {
+        Ok(evidence) => {
+            let registered = confirm_record(port, intent, evidence)?;
+            settled();
+            Ok(registered)
+        }
         Err(NativeWriteError::Refused(error)) => {
             let observed = owner_call(
                 port,
                 BotCommand::ConfirmNativeResult {
                     request: ConfirmNativeResult {
-                        key: key.clone(),
-                        request_fingerprint: expected_hash,
+                        key: intent.key.clone(),
+                        request_fingerprint: intent.request_fingerprint,
                         observation: NativeResultObservation::NotApplied {
                             code: match error.code.as_str() {
                                 "permission_denied" | "forbidden" => {
@@ -386,11 +413,15 @@ fn invoke(
                     },
                 },
             )?;
-            if !matches!(observed, BotReply::NativeResult { intent: observed } if observed.stage == NativeResultStage::Refused && observed.key == key && observed.request_fingerprint == expected_hash && observed.purpose == intent.purpose)
+            if !matches!(observed, BotReply::NativeResult { intent: observed } if observed.stage == NativeResultStage::Refused
+                && observed.key == intent.key && observed.request_fingerprint == intent.request_fingerprint
+                && observed.purpose == intent.purpose && observed.store_request == intent.store_request
+                && observed.destination == intent.destination && observed.target == intent.target
+                && observed.kind == intent.kind && observed.verified.is_none())
             {
                 return Err(failure("save_status_unknown"));
             }
-            policy.settled();
+            settled();
             Err(refused(error))
         }
         Err(NativeWriteError::Unconfirmed(_)) => {
@@ -398,13 +429,13 @@ fn invoke(
                 port,
                 BotCommand::ConfirmNativeResult {
                     request: ConfirmNativeResult {
-                        key: key.clone(),
-                        request_fingerprint: expected_hash,
+                        key: intent.key.clone(),
+                        request_fingerprint: intent.request_fingerprint,
                         observation: NativeResultObservation::Unconfirmed,
                     },
                 },
             );
-            policy.uncertain(provenance.owner, provenance.bot, key)?;
+            uncertain()?;
             Err(failure("save_status_unknown"))
         }
     }
@@ -435,7 +466,7 @@ fn validate_intent(
     }
     Ok(())
 }
-fn store_identity(
+pub(super) fn store_identity(
     provenance: &BotProvenance,
     intent: &NativeResultIntentView,
 ) -> NativeStoreIdentity {

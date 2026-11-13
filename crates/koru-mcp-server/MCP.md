@@ -2052,6 +2052,11 @@ by the trusted owner, not looked up through generic document grants. Profile and
 conditional revision checks still apply. Ordinary native Result behavior and
 hosted `actor/1` attribution remain unchanged.
 
-This is the semantic foundation only: public tools, the AI write-authority
-phases, lazy first-use creation and the complete native receipt journey remain
-gated. Pure text validation does not claim a gateway pre-allocation path exists.
+The gated gateway now validates strict arguments before allocation, reconciles
+retained receipts before fresh authority, and uses the private AI phases for
+exact history, allocation-backed lazy Ensure and final authority/Profile proof.
+Only an exact Prepared Execute intent enters the shared Store executor and
+confirmation path. Cancellation cannot abandon an acquired lease; uncertain
+lease or settlement replies recover the known operation without reexecution.
+The launched client allowlist, public discovery/direct invocation and complete
+native-client journey remain subject to the separate integration gate.
