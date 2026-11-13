@@ -675,6 +675,42 @@ impl MainView {
         self.ask_abandon_creation(name, super::trash::AbandonFrom::Tab(draft))
     }
 
+    pub(super) fn drain_bot_memory_asks(&mut self) -> bool {
+        let TabView::Bot(view) = &mut self.tabs_mut().active_mut().view else {
+            return false;
+        };
+        let Some(ask) = view.take_memory_ask() else {
+            return false;
+        };
+        let lang = crate::format::lang();
+        self.confirm = Some((
+            koru_ui::Confirm::localized(
+                koru_i18n::t(lang, koru_i18n::Key::BotsMemoryAbandonTitle).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::BotsMemoryAbandonBody).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::BotsAbandon).to_owned(),
+                koru_i18n::t(lang, koru_i18n::Key::BotsDialogCancel),
+            ),
+            super::trash::ConfirmSubject::AbandonBotMemory(ask),
+        ));
+        true
+    }
+
+    pub(super) fn settle_bot_memory_ask(
+        &mut self,
+        ask: &crate::bots::view::memory::Ask,
+        confirmed: bool,
+    ) {
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if let TabView::Bot(view) = &mut tab.view {
+                    if view.settle_memory_ask(ask, confirmed) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     /// **Ask before a creation is abandoned** — a create tab's or the
     /// roster's Unfinished row's Abandon: nothing is deleted, and what it
     /// leaves stays where it is.
@@ -783,12 +819,8 @@ impl MainView {
         let TabView::Bot(view) = self.active_view() else {
             return false;
         };
-        let Some(role) = view.take_role_request() else {
+        let Some(target) = view.take_document_request() else {
             return false;
-        };
-        let target = koru_editor::trigger::DocumentTarget {
-            document: koru_core::DocumentId::from_uuid(role.document.as_uuid()),
-            node: None,
         };
         self.open_document_target(target, koru_editor::OpenWhere::NewTab)
     }

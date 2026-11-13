@@ -128,6 +128,7 @@ pub(super) enum ConfirmSubject {
     /// Unfinished row, by the creation's request — and deletes nothing; a
     /// no sends nothing. The keyboard goes back to the tab's *Abandon*.
     AbandonBotCreation(AbandonFrom),
+    AbandonBotMemory(crate::bots::view::memory::Ask),
 }
 
 /// Who asked to abandon a creation, and so who sends it on a yes.
@@ -784,6 +785,10 @@ impl MainView {
             self.settle_abandon_creation(*from, confirmed);
             return true;
         }
+        if let ConfirmSubject::AbandonBotMemory(ask) = &subject {
+            self.settle_bot_memory_ask(ask, confirmed);
+            return true;
+        }
         if let ConfirmSubject::BotLifecycle { bot, tab, .. }
         | ConfirmSubject::TrashBotConversation { bot, tab, .. } = &subject
         {
@@ -893,6 +898,7 @@ impl MainView {
             // Answered above, by the Bot's tab.
             ConfirmSubject::BotLifecycle { .. }
             | ConfirmSubject::TrashBotConversation { .. }
+            | ConfirmSubject::AbandonBotMemory(_)
             | ConfirmSubject::AbandonBotCreation(_) => {}
         }
         true

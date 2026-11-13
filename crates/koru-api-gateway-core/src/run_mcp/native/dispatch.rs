@@ -77,6 +77,9 @@ pub(in crate::run_mcp) async fn call(
     captured: CapturedBotPolicy,
     params: CallToolRequestParams,
 ) -> CallToolResult {
+    if super::memory::recognizes(params.name.as_ref()) {
+        return super::memory::call(state, record, provenance, captured, params).await;
+    }
     if matches!(params.name.as_ref(), "create_document" | "edit_document")
         && !state.native_mutations_ready()
     {

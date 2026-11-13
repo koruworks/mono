@@ -38,6 +38,7 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
+    Memory(super::memory::Request),
     /// The Bots whose home is `workspace`, as the service lists them — and,
     /// as a second answer, its unfinished creations (S8).
     List {
@@ -106,6 +107,10 @@ pub(crate) enum Command {
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    Memory {
+        request: super::memory::Request,
+        result: Result<BotResponse, Failure>,
+    },
     Library {
         seq: u64,
         bot: BotId,
@@ -449,6 +454,24 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
     let mut client: Option<koru_api_client::Client> = None;
     while let Ok(command) = commands.recv() {
         match command {
+            Command::Memory(request) => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => connected
+                        .ai()
+                        .bots(&request.command)
+                        .map_err(|error| Failure::of(said(error.code, error.retryable))),
+                    None => Err(Failure::Unanswered),
+                };
+                if result.is_err() {
+                    client = None;
+                }
+                if answers.send(Answer::Memory { request, result }).is_err() {
+                    return;
+                }
+            }
             Command::List { seq, workspace } => {
                 if client.is_none() {
                     client = connect(root.as_deref());

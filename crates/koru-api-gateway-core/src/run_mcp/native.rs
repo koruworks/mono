@@ -9,6 +9,7 @@ use rmcp::model::{CallToolResult, Tool};
 use serde_json::json;
 use std::sync::Arc;
 mod dispatch;
+mod memory;
 pub(super) use dispatch::call;
 
 fn unavailable() -> ToolFailure {
@@ -51,7 +52,7 @@ pub(super) async fn classify(
 }
 
 pub(super) fn definitions() -> Vec<Tool> {
-    koru_mcp_server::native::native_tool_catalog().into_iter().map(|tool| {
+    let mut tools: Vec<Tool> = koru_mcp_server::native::native_tool_catalog().into_iter().map(|tool| {
         let mutation=matches!(tool.name.as_str(),"create_document"|"edit_document");
         let mut schema=tool.input_schema;
         if mutation {
@@ -65,7 +66,11 @@ pub(super) fn definitions() -> Vec<Tool> {
             "name":tool.name,"title":tool.title,"description":description,"inputSchema":schema,
             "annotations":{"readOnlyHint":tool.safety.read_only,"destructiveHint":tool.safety.destructive,"idempotentHint":tool.name != "edit_document" && tool.safety.idempotent,"openWorldHint":false}
         })).expect("shared tool definition")
-    }).collect()
+    }).collect();
+    if koru_ai_core::bots::memory::BOT_MEMORY_AVAILABLE {
+        tools.extend(memory::definitions());
+    }
+    tools
 }
 
 #[cfg(test)]

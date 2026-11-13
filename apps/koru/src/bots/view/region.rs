@@ -133,6 +133,7 @@ pub(crate) const CHOICES: [BotAccess; 2] = [BotAccess::Default, BotAccess::Works
 /// What a press or a key on one of the tab's controls asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Act {
+    Memory(super::memory::Action),
     Library(super::library::Action),
     ToggleSettings,
     /// The header's *Conversations*, while the tab is compact: the list in
@@ -954,6 +955,9 @@ impl BotView {
 
     /// What pressing `key` asks for, if anything.
     pub(super) fn act_for(&self, key: Key) -> Option<Act> {
+        if let Some(action) = self.memory_action(key) {
+            return Some(Act::Memory(action));
+        }
         if let Some(action) = self.library_action(key) {
             return Some(Act::Library(action));
         }
@@ -1001,6 +1005,7 @@ impl BotView {
             return self.perform_create(act);
         }
         let command = match act {
+            Act::Memory(action) => return self.perform_memory(action),
             Act::Library(action) => return self.perform_library(action),
             Act::ToggleSettings => {
                 self.set_settings_open(!self.settings_open);
@@ -1100,6 +1105,7 @@ impl BotView {
     pub(crate) fn set_settings_open(&mut self, open: bool) {
         let from_header = self.focus == Some(SETTINGS_BUTTON);
         self.settings_open = open;
+        self.memory.show(open && !self.stale);
         if open {
             self.library.owe_read();
             if self.settings.bot().is_none() {
@@ -1206,10 +1212,9 @@ impl BotView {
         }
         // Ctrl+I may arrive as Tab on Windows. Library actions never take
         // a modified Tab; plain Tab and Shift+Tab keep the form's traversal.
-        if self
-            .focus
-            .is_some_and(|focus| self.library_action(focus).is_some())
-            && (mods.control_key() || mods.alt_key() || mods.super_key())
+        if self.focus.is_some_and(|focus| {
+            self.library_action(focus).is_some() || self.memory_action(focus).is_some()
+        }) && (mods.control_key() || mods.alt_key() || mods.super_key())
         {
             return Some(false);
         }
@@ -1223,6 +1228,9 @@ impl BotView {
             return Some(self.step_focus(mods.shift_key()));
         }
         if let WinitKey::Named(NamedKey::Escape) = key {
+            if self.memory.detail.is_some() && self.memory_available() {
+                return Some(self.perform_memory(super::memory::Action::Back));
+            }
             if self.settings_open {
                 self.set_settings_open(false);
             } else {
@@ -1231,7 +1239,7 @@ impl BotView {
             return Some(true);
         }
         let focus = self.focus?;
-        if self.library_action(focus).is_some()
+        if (self.library_action(focus).is_some() || self.memory_action(focus).is_some())
             && (mods.control_key() || mods.alt_key() || mods.super_key() || mods.shift_key())
         {
             return Some(false);
@@ -1546,6 +1554,9 @@ impl BotView {
                     }
                 };
                 let words = match role {
+                    ControlRole::Label if key.part.starts_with("memory-") => {
+                        Some(label(&node.label))
+                    }
                     ControlRole::Label => self.line_words(key),
                     _ => Some(label(&node.label)),
                 };
@@ -1567,7 +1578,11 @@ impl BotView {
                 arena.push((
                     Control {
                         key,
-                        rect: node.rect,
+                        rect: if key.part.starts_with("memory-") {
+                            node.hit_region().unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0))
+                        } else {
+                            node.rect
+                        },
                         role,
                         label: words,
                         value: self.field_value(key),
