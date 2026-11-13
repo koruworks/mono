@@ -19,6 +19,38 @@ pub(crate) fn memory_seed(home: WorkspaceId, title: &str) -> Result<BotMemorySee
     })
 }
 
+/// Called only on the bounded background preparation lane. Encoded history is
+/// consumed here; only the bounded recipe and its exact revision leave it.
+pub(crate) fn memory_edit_recipe(
+    page: BotPage,
+    version: koru_delegate_core::DocumentVersionId,
+    evidence: koru_store_core::ports::BoundedDocumentVersion,
+    operation: &koru_mcp_server::native::memory::MemoryRecipeOperation,
+) -> Result<(Vec<u8>, koru_mcp_server::native::memory::MemoryEditRecipe), MemoryAuthorityError> {
+    // Alternate ports/fakes must not force a large clone before the common
+    // history validator gets to enforce its metadata bound.
+    if evidence.version_vector.len() > koru_store_core::ports::MAX_BOUNDED_HISTORY_POSITION_BYTES {
+        return Err(BotError::ContextTooLarge.into());
+    }
+    let revision = evidence.version_vector.clone();
+    let verified =
+        memory::history::validate(page, version, evidence).map_err(memory_write_error)?;
+    let recipe =
+        memory::recipe::prepare_recipe(&verified, operation).map_err(memory_write_error)?;
+    Ok((revision, recipe))
+}
+
+fn memory_write_error(error: memory::MemoryCodecError) -> MemoryAuthorityError {
+    use memory::MemoryCodecError as E;
+    match error {
+        E::InvalidWriteInput | E::InvalidDetailPosition => BotError::Invalid.into(),
+        E::UnsupportedDetail => MemoryAuthorityError::DetailUnsupported,
+        E::DetailTooLarge => MemoryAuthorityError::DetailTooLarge,
+        E::TooLarge(_) => BotError::ContextTooLarge.into(),
+        _ => MemoryAuthorityError::HistoryUnavailable,
+    }
+}
+
 pub struct BotAuthorityAdapter {
     client: StoreWorkerClient,
     device: DeviceId,
@@ -29,6 +61,28 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn memory_edit_history(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        binding: &BotMemoryBinding,
+        version: koru_delegate_core::DocumentVersionId,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<koru_store_core::ports::BoundedDocumentVersion, MemoryAuthorityError> {
+        memory::adapter::write::exact(self, owner, reader, binding, version, cancellation)
+    }
+
+    fn memory_original_seed_history(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotMemoryIdentity,
+        binding: &BotMemoryBinding,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<koru_store_core::ports::BoundedDocumentVersion, MemoryAuthorityError> {
+        memory::adapter::write::original_seed(self, owner, reader, identity, binding, cancellation)
+    }
+
     fn prepare_memory_page(
         &self,
         owner: BotOwner,

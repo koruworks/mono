@@ -4,6 +4,74 @@ mod cas;
 mod recovery;
 
 #[test]
+fn exact_memory_creation_receipt_is_read_only_and_binds_alias_body_before_current_revision() {
+    let (mut repo, bot, owner) = fixture();
+    let original = prepared(&mut repo, &bot, owner);
+    let alias = BotRequestId::mint();
+    assert_eq!(
+        repo.bot_memory_creation_receipt(owner, bot.id, alias, 1, &seed(), OTHER_HASH)
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        repo.bot_library(owner, bot.id).unwrap().creation,
+        Some(original.clone())
+    );
+    repo.prepare_bot_memory_creation(owner, bot.id, alias, 1, &seed(), OTHER_HASH, 3)
+        .unwrap();
+    repo.bind_bot_memory(&confirmation(&original), original.observed(), 4)
+        .unwrap();
+    let bound = repo.bot_library(owner, bot.id).unwrap().creation.unwrap();
+    assert_eq!(
+        repo.bot_memory_creation_receipt(owner, bot.id, alias, 1, &seed(), OTHER_HASH)
+            .unwrap(),
+        Some(bound.clone())
+    );
+    assert!(
+        repo.bot_memory_creation_receipt(owner, bot.id, alias, 2, &seed(), OTHER_HASH)
+            .is_err()
+    );
+    assert!(
+        repo.bot_memory_creation_receipt(owner, bot.id, alias, 1, &seed(), HASH)
+            .is_err()
+    );
+    let mut changed = seed();
+    changed.title = "Changed".into();
+    assert!(
+        repo.bot_memory_creation_receipt(
+            owner,
+            bot.id,
+            original.identity.creation_request,
+            1,
+            &changed,
+            HASH
+        )
+        .is_err()
+    );
+    repo.connection
+        .execute(
+            "UPDATE bots SET lifecycle='archived' WHERE bot_id=?1",
+            [bot.id.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.bot_memory_creation_receipt(owner, bot.id, alias, 1, &seed(), OTHER_HASH)
+            .unwrap(),
+        Some(bound)
+    );
+    repo.connection
+        .execute(
+            "UPDATE bots SET lifecycle='trashed' WHERE bot_id=?1",
+            [bot.id.to_storage()],
+        )
+        .unwrap();
+    assert!(
+        repo.bot_memory_creation_receipt(owner, bot.id, alias, 1, &seed(), OTHER_HASH)
+            .is_err()
+    );
+}
+
+#[test]
 fn memory_candidate_transitions_preserve_identity() {
     let (mut repo, bot, owner) = fixture();
     let c = prepared(&mut repo, &bot, owner);

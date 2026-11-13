@@ -11,6 +11,7 @@ use koru_store_core::ports::{CreationOrigin, CreationOriginLookup, HistoryReason
 use koru_store_server::WorkerStore;
 
 mod projection;
+pub(in crate::bots) mod write;
 
 type Result<T> = std::result::Result<T, MemoryAuthorityError>;
 
@@ -260,6 +261,20 @@ fn exact(
     version: DocumentVersionId,
     cancellation: &Cancellation,
 ) -> Result<history::VerifiedMemory> {
+    let evidence = exact_evidence(adapter, owner, reader, page, version, cancellation)?;
+    let memory = history::validate(page.clone(), version, evidence).map_err(codec)?;
+    recheck(adapter, owner, reader, page, cancellation)?;
+    Ok(memory)
+}
+
+fn exact_evidence(
+    adapter: &BotAuthorityAdapter,
+    owner: BotOwner,
+    reader: ProfileId,
+    page: &BotPage,
+    version: DocumentVersionId,
+    cancellation: &Cancellation,
+) -> Result<koru_store_core::ports::BoundedDocumentVersion> {
     cancelled(cancellation)?;
     let owned_page = page.clone();
     let cancel = cancellation.clone();
@@ -274,9 +289,8 @@ fn exact(
         })
         .map_err(|_| BotError::Unavailable)??;
     cancelled(cancellation)?;
-    let memory = history::validate(page.clone(), version, evidence).map_err(codec)?;
     recheck(adapter, owner, reader, page, cancellation)?;
-    Ok(memory)
+    Ok(evidence)
 }
 
 fn current(

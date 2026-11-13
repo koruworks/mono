@@ -1187,6 +1187,24 @@ enum Envelope {
         deadline: Instant,
     },
     MemoryReadCompleted(bots::memory::read::MemoryReadResult),
+    RunMemoryWrite {
+        request: bots::memory::RunMemoryWriteSubjectRequest,
+        work: bots::memory::write::Work,
+        reply: SyncSender<ApiResult<bots::memory::write::WriteValue>>,
+        deadline: Instant,
+    },
+    #[cfg(test)]
+    RunMemoryWriteForFixture {
+        request: bots::memory::RunMemoryWriteSubjectRequest,
+        work: bots::memory::write::Work,
+        reply: SyncSender<ApiResult<bots::memory::write::WriteValue>>,
+        deadline: Instant,
+    },
+    MemoryWriteCompleted(bots::memory::write::MemoryWriteResult),
+    #[cfg(test)]
+    RetireMemoryWritesForFixture {
+        reply: SyncSender<()>,
+    },
     NativeDrainWake,
     NativeDrained(native_recovery::NativeDrainResult),
     NativePolicy {
@@ -1632,6 +1650,7 @@ struct WorkerState {
     creation_lane: bots::CreationLane,
     memory_recovery: bots::memory::recovery::MemoryRecovery,
     memory_reads: bots::memory::read::MemoryReads,
+    memory_writes: bots::memory::write::MemoryWrites,
     /// Refused Bot tasks owed their automatic re-send as files (O30).
     bot_resends: bots::chat::Resends,
     #[cfg(test)]
@@ -1910,6 +1929,7 @@ fn run_worker(
         creation_lane: Default::default(),
         memory_recovery: Default::default(),
         memory_reads: Default::default(),
+        memory_writes: Default::default(),
         bot_resends: Default::default(),
         #[cfg(test)]
         test_bot_runtime_ready: config.test_bot_runtime_ready,
@@ -2024,6 +2044,25 @@ fn run_worker(
                 deadline,
             }) => state.request_run_memory_read(request, reply, deadline),
             Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
+            Ok(Envelope::RunMemoryWrite {
+                request,
+                work,
+                reply,
+                deadline,
+            }) => state.request_memory_write(request, work, reply, deadline),
+            #[cfg(test)]
+            Ok(Envelope::RunMemoryWriteForFixture {
+                request,
+                work,
+                reply,
+                deadline,
+            }) => state.enqueue_memory_write(request, work, reply, deadline),
+            Ok(Envelope::MemoryWriteCompleted(result)) => state.complete_memory_write(result),
+            #[cfg(test)]
+            Ok(Envelope::RetireMemoryWritesForFixture { reply }) => {
+                state.memory_writes.invalidate();
+                let _ = reply.send(());
+            }
             Ok(Envelope::NativePolicy {
                 request,
                 reply,
@@ -5804,6 +5843,7 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 
 enum ProviderAdminJob {
     BotMemoryRead(bots::memory::read::MemoryReadJob),
+    BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
     BotChatRecovery(bots::chat::StepJob),
     BotResendProbe(bots::chat::ResendProbe),
@@ -5900,6 +5940,7 @@ impl ProviderAdminJob {
         match self {
             Self::BotPrepare(_)
             | Self::BotMemoryRead(_)
+            | Self::BotMemoryWrite(_)
             | Self::BotCreationPrepare(_)
             | Self::BotCreationRead(_)
             | Self::BotInteractionRead(_)
@@ -5982,6 +6023,7 @@ impl ProviderAdminPool {
                         }
                         ProviderAdminJob::BotPrepare(_)
                         | ProviderAdminJob::BotMemoryRead(_)
+                        | ProviderAdminJob::BotMemoryWrite(_)
                         | ProviderAdminJob::BotCreationPrepare(_)
                         | ProviderAdminJob::BotCreationRead(_)
                         | ProviderAdminJob::BotInteractionRead(_)
@@ -6503,6 +6545,7 @@ fn run_preparation(
 ) {
     let envelope = match job {
         ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
+        ProviderAdminJob::BotMemoryWrite(job) => Envelope::MemoryWriteCompleted(job.run()),
         ProviderAdminJob::BotPrepare(job) => {
             let (command, proof) = job.run(agents);
             Envelope::BotPrepared {

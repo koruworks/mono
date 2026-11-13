@@ -10,6 +10,12 @@ mod commands;
 mod cursor;
 pub(in crate::worker) mod read;
 pub(in crate::worker) mod recovery;
+pub(in crate::worker) mod write;
+pub use write::{
+    MemoryBaseEvidence, MemoryBaseSelection, MemoryEditBaseRequest, MemoryWriteAuthorityEvidence,
+    MemoryWriteAuthorityRequest, MemoryWriteSubjectEvidence, RunMemoryEnsureRequest,
+    RunMemoryEnsureResult, RunMemoryWriteSubjectRequest, memory_write_fingerprint,
+};
 
 /// A trusted composition request, never an HTTP/provider-owned principal.
 /// The read job independently verifies its canonical association,
