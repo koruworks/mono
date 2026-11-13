@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod recovery;
 
 fn next_token(creation: &BotMemoryCreation, now: i64) -> Result<i64, BotError> {
     Ok(now.max(
@@ -16,7 +17,26 @@ pub(super) fn creation_on(
     bot: BotId,
     home: WorkspaceId,
 ) -> Result<Option<BotMemoryCreation>, BotError> {
-    let row = conn.query_row("SELECT user_scope_id,request_id,owner_device_id,workspace_id,candidate_document_id,store_request_id,seed_format,seed_title,seed_hash,state,origin_edit_revision,refusal,created_at_ms,updated_at_ms FROM bot_memory_creation_intents WHERE bot_id=?1", [bot.to_storage()], |r| {
+    let row = conn.query_row("SELECT
+        CASE WHEN typeof(user_scope_id)='text' AND length(CAST(user_scope_id AS BLOB))=36 THEN user_scope_id END,
+        CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END,
+        CASE WHEN typeof(owner_device_id)='text' AND length(CAST(owner_device_id AS BLOB))=36 THEN owner_device_id END,
+        CASE WHEN typeof(workspace_id)='text' AND length(CAST(workspace_id AS BLOB))=36 THEN workspace_id END,
+        CASE WHEN typeof(candidate_document_id)='text' AND length(CAST(candidate_document_id AS BLOB))=36 THEN candidate_document_id END,
+        CASE WHEN typeof(store_request_id)='text' AND length(CAST(store_request_id AS BLOB))=36 THEN store_request_id END,
+        seed_format,
+        CASE WHEN typeof(seed_title)='text' AND length(CAST(seed_title AS BLOB)) BETWEEN 1 AND 256 THEN seed_title END,
+        CASE WHEN typeof(seed_hash)='blob' AND length(seed_hash)=32 THEN seed_hash END,
+        CASE WHEN typeof(state)='text' AND length(CAST(state AS BLOB))<=16 THEN state END,
+        CASE WHEN typeof(origin_edit_revision)='blob' AND length(origin_edit_revision) BETWEEN 1 AND 65536 THEN origin_edit_revision END,
+        CASE WHEN typeof(refusal)='text' AND length(CAST(refusal AS BLOB))<=32 THEN refusal END,
+        created_at_ms,updated_at_ms,
+        (origin_edit_revision IS NULL OR (typeof(origin_edit_revision)='blob' AND length(origin_edit_revision) BETWEEN 1 AND 65536))
+        AND (refusal IS NULL OR (typeof(refusal)='text' AND length(CAST(refusal AS BLOB))<=32))
+        FROM bot_memory_creation_intents WHERE bot_id=?1", [bot.to_storage()], |r| {
+        if !r.get::<_, bool>(14)? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
         Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,String>(5)?,r.get::<_,u32>(6)?,r.get::<_,String>(7)?,r.get::<_,Vec<u8>>(8)?,r.get::<_,String>(9)?,r.get::<_,Option<Vec<u8>>>(10)?,r.get::<_,Option<String>>(11)?,r.get::<_,i64>(12)?,r.get::<_,i64>(13)?))
     }).optional().map_err(bad)?;
     let Some(r) = row else {
@@ -50,7 +70,7 @@ pub(super) fn creation_on(
         updated_at_ms: r.13,
     };
     creation.validate().map_err(|_| BotError::Storage)?;
-    let original = admission::raw(conn, owner.user_scope, creation.identity.creation_request)?
+    let original = bounded::receipt(conn, owner.user_scope, creation.identity.creation_request)?
         .ok_or(BotError::Storage)?;
     if original.stage != creation.state.receipt_stage() {
         return Err(BotError::Storage);
@@ -60,7 +80,7 @@ pub(super) fn creation_on(
         owner,
         bot,
         creation.identity.creation_request,
-        &original.fingerprint,
+        original.fingerprint.as_deref().ok_or(BotError::Storage)?,
         "ensure_memory",
     )
     .map_err(|_| BotError::Storage)?

@@ -36,6 +36,7 @@ pub(crate) fn prepare_library_submission_tx(
     insert_library_capture_tx(tx, capture, now)?;
     Ok(receipt)
 }
+mod bounded;
 mod capture;
 mod memory;
 pub(crate) use capture::insert_library_capture_tx;
@@ -148,11 +149,19 @@ fn receipt_on(
     fingerprint: &str,
     kind: &str,
 ) -> Result<Option<BotLibraryReceiptV1>, BotError> {
-    let Some(raw) = admission::raw(conn, owner.user_scope, request)? else {
+    let Some(raw) = bounded::receipt(conn, owner.user_scope, request)? else {
         return Ok(None);
     };
-    if raw.kind != kind || raw.bot != bot.to_storage() || raw.fingerprint != fingerprint {
+    if raw.kind != kind || raw.bot != bot.to_storage() {
         return Err(BotError::Conflict);
+    }
+    let recorded_fingerprint = raw.fingerprint.ok_or(BotError::Storage)?;
+    admission::fingerprint(&recorded_fingerprint).map_err(|_| BotError::Storage)?;
+    if recorded_fingerprint != fingerprint {
+        return Err(BotError::Conflict);
+    }
+    if !raw.outcome_valid {
+        return Err(BotError::Storage);
     }
     let text = raw.outcome.ok_or(BotError::Storage)?;
     if text.len() > BOT_LIBRARY_RECEIPT_LIMIT {

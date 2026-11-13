@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 mod cas;
+mod recovery;
 
 #[test]
 fn memory_candidate_transitions_preserve_identity() {

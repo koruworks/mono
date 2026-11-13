@@ -1014,9 +1014,9 @@ impl WorkerState {
     /// Called from the writer loop on every pass: when nothing is due, or a
     /// step is already on the lane, it reads nothing. A failure waits for its
     /// backoff; nothing is retried per pass.
-    pub(in crate::worker) fn schedule_bot_creations(&mut self) {
+    pub(super) fn ready_bot_creation(&mut self) -> Option<(UserScopeId, BotRequestId)> {
         if self.bot_authority.is_none() || self.provider_admin.is_none() {
-            return;
+            return None;
         }
         let now = Instant::now();
         if let Some(after) = self.bot_creations.scan.clone()
@@ -1054,7 +1054,7 @@ impl WorkerState {
             self.read_scanned_creation(key, now);
         }
         if self.bot_creations.stepping {
-            return;
+            return None;
         }
         let next = self
             .bot_creations
@@ -1065,9 +1065,7 @@ impl WorkerState {
                 (tracked.retry.failures, tracked.receipt.record.created_at_ms)
             })
             .map(|(key, _)| *key);
-        if let Some(key) = next {
-            self.step_bot_creation(key);
-        }
+        next
     }
 
     /// Read one receipt the scan named. One that cannot be read is kept for
@@ -1092,7 +1090,7 @@ impl WorkerState {
         }
     }
 
-    fn step_bot_creation(&mut self, key: (UserScopeId, BotRequestId)) {
+    pub(super) fn step_bot_creation(&mut self, key: (UserScopeId, BotRequestId)) {
         let receipt = match self.repository.bot_creation(key.0, key.1) {
             Ok(Some(receipt)) if receipt.open() => receipt,
             Ok(_) => {
@@ -1151,12 +1149,10 @@ impl WorkerState {
                 (record.clone(), CreationStep::Authorize)
             }
         };
-        let (Some(authority), Some(pool)) =
-            (self.bot_authority.clone(), self.provider_admin.as_ref())
-        else {
+        let Some(authority) = self.bot_authority.clone() else {
             return;
         };
-        let job = ProviderAdminJob::BotCreationStep(CreationJob {
+        let job = CreationWork::Bot(CreationJob {
             key,
             expected,
             step,
@@ -1164,7 +1160,7 @@ impl WorkerState {
             folders: self.bot_creations.folders.clone(),
             reserved: self.bot_creations.reserved.clone(),
         });
-        let submitted = pool.try_submit(job).is_ok();
+        let submitted = self.submit_creation_work(job);
         let Some(tracked) = self.bot_creations.open.get_mut(&key) else {
             return;
         };

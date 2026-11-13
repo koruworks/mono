@@ -48,10 +48,12 @@ pub(super) use preparation::{BotPreparationJob, CommandContext, PreparedBotComma
 pub(super) use reads::{BotRunReadJob, RUN_READ_QUEUE_CAPACITY};
 pub(super) use stop::{BotTaskStopJob, TASK_STOP_QUEUE_CAPACITY};
 mod creation;
+mod creation_lane;
 pub(super) use creation::{
     BotFolderSystem, CreationDriver, CreationJob, CreationPreparationJob, CreationPrepared,
     CreationReadJob, CreationReadResult, CreationStepResult, NativeFolders,
 };
+pub(super) use creation_lane::{CreationLane, CreationLaneJob, CreationLaneResult, CreationWork};
 impl WorkerState {
     pub(super) fn bot_read_access(&self, context: &CommandContext) -> ApiResult<ChatReadAccess> {
         if !context.principal.scopes.contains(&AiScope::ManageBots) {
@@ -90,6 +92,7 @@ impl WorkerState {
         let response = self.bot_command(context, request);
         if refresh && response.is_ok() {
             self.request_bot_boot_refresh();
+            self.memory_recovery.request();
         }
         // Refused because another change of the Bot is still waiting for its
         // owner: offer what is owed now, so the person's retry can succeed.
@@ -117,6 +120,9 @@ impl WorkerState {
             return result;
         }
         if let Some(result) = self.bot_library_command(&context, &request) {
+            return result;
+        }
+        if let Some(result) = self.bot_memory_command(&context, &request) {
             return result;
         }
         if let BotCommand::CreateChat { request_id, bot_id } = &request {

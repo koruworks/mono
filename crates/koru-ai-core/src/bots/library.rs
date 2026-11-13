@@ -455,6 +455,30 @@ pub struct BotMemoryPendingPage {
     pub next: Option<BotMemoryPendingCursor>,
 }
 
+/// Process-local recovery walk. Rowids are scan positions, never authority.
+/// A completed pass must be followed when an admission may have reused a rowid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BotMemoryRecoveryCursor {
+    pub owner: BotOwner,
+    pub after: i64,
+    pub through: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotMemoryRecoveryIdentity {
+    pub bot: BotId,
+    pub request: BotRequestId,
+    pub observed: BotMemoryObserved,
+}
+
+/// Each failed identity occupies its scan position so later valid work can
+/// advance. This bounded inventory includes no title, document bytes or VV.
+#[derive(Clone, Debug)]
+pub struct BotMemoryRecoveryPage {
+    pub entries: Vec<Result<BotMemoryRecoveryIdentity, BotError>>,
+    pub next: Option<BotMemoryRecoveryCursor>,
+}
+
 mod owner_serde {
     use super::*;
     #[derive(Serialize, Deserialize)]

@@ -10,6 +10,15 @@ use koru_store_server::StoreWorkerClient;
 #[allow(dead_code)]
 mod memory;
 
+/// Semantic, title-only seed identity. No document bytes are generated on the
+/// AI writer; the original page is built/reconciled on the creation lane.
+pub(crate) fn memory_seed(home: WorkspaceId, title: &str) -> Result<BotMemorySeed, BotError> {
+    Ok(BotMemorySeed {
+        title: title.to_owned(),
+        hash: memory::seed::seed_hash(home, title).map_err(|_| BotError::Invalid)?,
+    })
+}
+
 pub struct BotAuthorityAdapter {
     client: StoreWorkerClient,
     device: DeviceId,
