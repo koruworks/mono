@@ -46,5 +46,20 @@ impl<'de> Deserialize<'de> for BotMemoryNodeId {
     }
 }
 
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for BotMemoryNodeId {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("BotMemoryNodeId")
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "An ordinary Memory node's canonical UUID, preserving its original value and version."
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests;

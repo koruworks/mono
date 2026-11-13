@@ -38,7 +38,7 @@ pub struct BotKnowledgeReceipt {
     pub pages: Vec<BotPage>,
 }
 
-fn valid_id(id: uuid::Uuid) -> bool {
+pub(super) fn valid_id(id: uuid::Uuid) -> bool {
     id.get_version_num() == 4 && id.get_variant() == uuid::Variant::RFC4122
 }
 
@@ -128,6 +128,7 @@ impl BotMemoryIdentity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BotMemoryState {
     Prepared,
@@ -166,6 +167,7 @@ impl BotMemoryState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BotMemoryRefusal {
     OwnerUnavailable,

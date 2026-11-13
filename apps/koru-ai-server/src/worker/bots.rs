@@ -16,6 +16,16 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
     )
 }
 
+fn closed_memory_failure(command: &BotCommand) -> Option<Failure> {
+    (!BOT_MEMORY_AVAILABLE && command.is_memory()).then(|| {
+        failure(
+            "unsupported_capability",
+            "Bot Memory is not available yet.",
+            false,
+        )
+    })
+}
+
 mod admission;
 mod boot;
 pub(super) use boot::{BootRecovery, BotBootJob, BotBootResult};
@@ -23,6 +33,7 @@ mod branch;
 pub(in crate::worker) mod chat;
 mod library;
 mod lifecycle;
+pub(crate) mod memory;
 pub(crate) mod policy;
 mod preparation;
 mod reads;
@@ -92,6 +103,10 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
+        if let Some(error) = closed_memory_failure(&request) {
+            authorize(&context, AiScope::ManageBots)?;
+            return Err(error);
+        }
         if let Some(result) = self.bot_lifecycle_command(&context, &request) {
             return result;
         }
@@ -275,6 +290,9 @@ fn execute_bot_command(
     mut request: BotCommand,
 ) -> ApiResult<BotResponse> {
     authorize(&context, AiScope::ManageBots)?;
+    if let Some(error) = closed_memory_failure(&request) {
+        return Err(error);
+    }
     let owner = authority.owner().map_err(bot_failure)?;
     let now = Timestamp::now().millis();
     match &mut request {
@@ -306,6 +324,12 @@ fn execute_bot_command(
         | BotCommand::ReadTaskAnswer { .. }
         | BotCommand::ReadLibrary { .. }
         | BotCommand::SetKnowledge { .. }
+        | BotCommand::ReadMemory { .. }
+        | BotCommand::EnsureMemory { .. }
+        | BotCommand::RetryMemory { .. }
+        | BotCommand::AbandonMemory { .. }
+        | BotCommand::ListMemory { .. }
+        | BotCommand::ReadMemoryFact { .. }
         | BotCommand::ListTaskBots { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
