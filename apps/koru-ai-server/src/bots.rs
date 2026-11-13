@@ -5,6 +5,11 @@ use koru_ai_core::bots::*;
 use koru_ai_core::{ProfileId, WorkspaceId};
 use koru_store_server::StoreWorkerClient;
 
+// The pure codec is staged before the reviewed Memory authority/delivery slice.
+// Keep its production helpers compiled while that wiring is implemented.
+#[allow(dead_code)]
+mod memory;
+
 pub struct BotAuthorityAdapter {
     client: StoreWorkerClient,
     device: DeviceId,
