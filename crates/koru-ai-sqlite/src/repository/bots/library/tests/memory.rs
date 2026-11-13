@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod cas;
 
 #[test]
 fn memory_candidate_transitions_preserve_identity() {
@@ -12,7 +13,7 @@ fn memory_candidate_transitions_preserve_identity() {
         assert_eq!(
             repo.transition_bot_memory_creation(
                 &c.identity,
-                BotMemoryState::Prepared,
+                c.observed(),
                 BotMemoryTransition::Disagreement(reason),
                 3
             ),
@@ -46,7 +47,7 @@ fn memory_candidate_transitions_preserve_identity() {
         BotMemoryTransition::Retry,
     ] {
         current = repo
-            .transition_bot_memory_creation(&c.identity, current.state, transition, 4)
+            .transition_bot_memory_creation(&c.identity, current.observed(), transition, 4)
             .unwrap();
         assert_eq!(current.identity, c.identity);
     }
@@ -54,7 +55,10 @@ fn memory_candidate_transitions_preserve_identity() {
     assert_eq!(
         repo.transition_bot_memory_creation(
             &c.identity,
-            BotMemoryState::Conflict,
+            BotMemoryObserved {
+                state: BotMemoryState::Conflict,
+                ..current.observed()
+            },
             BotMemoryTransition::Retry,
             5
         ),
@@ -62,10 +66,15 @@ fn memory_candidate_transitions_preserve_identity() {
     );
     let evidence = confirmation(&c);
     let binding = repo
-        .bind_bot_memory(&evidence, BotMemoryState::Prepared, 6)
+        .bind_bot_memory(&evidence, current.observed(), 6)
         .unwrap();
     assert_eq!(
-        repo.bind_bot_memory(&evidence, BotMemoryState::Prepared, 7)
+        repo.bind_bot_memory(&evidence, current.observed(), 7),
+        Err(BotError::Conflict)
+    );
+    let bound = repo.bot_library(owner, bot.id).unwrap().creation.unwrap();
+    assert_eq!(
+        repo.bind_bot_memory(&evidence, bound.observed(), 7)
             .unwrap(),
         binding
     );
@@ -90,7 +99,7 @@ fn memory_candidate_transitions_preserve_identity() {
     assert_eq!(
         repo.transition_bot_memory_creation(
             &c.identity,
-            BotMemoryState::Bound,
+            after.observed(),
             BotMemoryTransition::Abandon,
             8
         ),
@@ -184,8 +193,7 @@ fn memory_bind_rechecks_current_canonical_state() {
             )
             .unwrap();
         assert!(
-            repo.bind_bot_memory(&evidence, BotMemoryState::Prepared, 4)
-                .is_err(),
+            repo.bind_bot_memory(&evidence, c.observed(), 4).is_err(),
             "{disagreement}"
         );
         assert_eq!(
@@ -227,7 +235,7 @@ fn memory_bind_rechecks_current_canonical_state() {
         Some(1),
     )
     .unwrap();
-    repo.bind_bot_memory(&confirmation(&c), BotMemoryState::Prepared, 4)
+    repo.bind_bot_memory(&confirmation(&c), c.observed(), 4)
         .unwrap();
     let read = repo.bot(bot.id).unwrap().unwrap();
     assert_eq!(read.revision, 3);
@@ -252,12 +260,12 @@ fn memory_pending_scan_is_owner_bound_and_keyset() {
     let foreign = prepared(&mut repo, &bot, owner);
     repo.transition_bot_memory_creation(
         &foreign.identity,
-        BotMemoryState::Prepared,
+        foreign.observed(),
         BotMemoryTransition::Abandon,
         1,
     )
     .unwrap();
-    repo.bind_bot_memory(&confirmation(&identities[0]), BotMemoryState::Prepared, 20)
+    repo.bind_bot_memory(&confirmation(&identities[0]), identities[0].observed(), 20)
         .unwrap();
     let first = repo.pending_bot_memory(owner, None, 16).unwrap();
     assert_eq!(first.creations.len(), 16);

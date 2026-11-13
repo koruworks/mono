@@ -138,7 +138,7 @@ fn library_domain_rejects_unknown_and_unbounded() {
         page,
         version: DocumentVersionId::new(),
         creation_request: identity.creation_request,
-        nodes: vec![BlockNodeId::mint(); 257],
+        nodes: vec![BotMemoryNodeId::from_uuid(uuid::Uuid::new_v4()); 257],
         omitted_count: 0,
         invalid_count: 0,
     };

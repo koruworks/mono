@@ -473,6 +473,18 @@ impl Repository {
             if folder != bot.config.working_folder && (lock.is_some() || frozen.is_some()) {
                 return Err(BotError::FolderLocked);
             }
+            let memory = library::bound_memory_on(
+                &tx,
+                BotOwner {
+                    user_scope: bot.user_scope,
+                    device: bot.owner_device,
+                },
+                bot.id,
+                bot.home_workspace,
+            )?;
+            if memory.is_some_and(|binding| binding.page == bot.config.role) {
+                return Err(BotError::Forbidden);
+            }
         } else {
             // The one BotId reservation, shared with creation (P1.8): a live
             // Bot, a purged one's tombstone or another unfinished creation.
