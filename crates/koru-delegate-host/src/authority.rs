@@ -66,6 +66,36 @@ fn allowlist() -> McpToolAllowlist {
     .expect("six names are under the allowlist bound")
 }
 
+/// The Bot endpoint's native document and own-Memory tools. Keep this exact
+/// vocabulary aligned with the gateway's catalog test; it grants no page access.
+const BOT_RUN_TOOLS: [&str; 9] = [
+    "search_documents",
+    "read_document",
+    "create_document",
+    "edit_document",
+    "list_memory",
+    "read_memory",
+    "remember_memory",
+    "correct_memory",
+    "forget_memory",
+];
+
+fn launch_tools(
+    authority: &koru_delegate_core::RunToolAuthority,
+    ordinary: &McpToolAllowlist,
+) -> McpToolAllowlist {
+    if matches!(authority, koru_delegate_core::RunToolAuthority::Bot { .. }) {
+        McpToolAllowlist::new(
+            BOT_RUN_TOOLS
+                .into_iter()
+                .map(|name| name.parse().expect("native tool name")),
+        )
+        .expect("nine native tools")
+    } else {
+        ordinary.clone()
+    }
+}
+
 fn refusal(operation: &'static str, failure: &koru_artifact_wire::Failure) -> PortError {
     PortError::new(Port::Mcp, failure.code.clone(), operation)
 }
@@ -116,24 +146,7 @@ impl McpEndpoints for GatewayAuthority {
     }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let run = launch.run;
-        let tools = if matches!(
-            &launch.authority,
-            koru_delegate_core::RunToolAuthority::Bot { .. }
-        ) {
-            McpToolAllowlist::new(
-                [
-                    "search_documents",
-                    "read_document",
-                    "create_document",
-                    "edit_document",
-                ]
-                .into_iter()
-                .map(|name| name.parse().expect("native tool name")),
-            )
-            .expect("four native tools")
-        } else {
-            self.tools.clone()
-        };
+        let tools = launch_tools(&launch.authority, &self.tools);
         let run_workspace = RunWorkspace::new(launch.run_workspace)
             .map_err(|error| PortError::new(Port::Mcp, error.code(), "the run's working folder"))?;
         let artifacts = self.client.artifacts();
@@ -220,6 +233,9 @@ impl McpEndpoints for GatewayAuthority {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// What a run has registered, and what this device has already told the
 /// orchestrator about.

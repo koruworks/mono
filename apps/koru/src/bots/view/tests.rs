@@ -494,6 +494,16 @@ impl Fixture {
                 | Command::Lifecycle { .. } => {
                     continue;
                 }
+                // Normal Settings maintenance also reads this Bot's Memory.
+                // A mutation or foreign subject is still an unexpected command.
+                Command::Memory(request) => {
+                    assert_eq!(request.bot, self.bot.id);
+                    assert_eq!(request.kind, crate::bots::memory::Kind::Status);
+                    assert!(matches!(
+                        request.command,
+                        BotCommand::ReadMemory { bot_id } if bot_id == self.bot.id
+                    ));
+                }
                 _ => panic!("not a write"),
             }
         }

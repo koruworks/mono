@@ -1201,13 +1201,6 @@ enum Envelope {
         reply: SyncSender<ApiResult<bots::memory::write::WriteValue>>,
         deadline: Instant,
     },
-    #[cfg(test)]
-    RunMemoryWriteForFixture {
-        request: bots::memory::RunMemoryWriteSubjectRequest,
-        work: bots::memory::write::Work,
-        reply: SyncSender<ApiResult<bots::memory::write::WriteValue>>,
-        deadline: Instant,
-    },
     MemoryWriteCompleted(bots::memory::write::MemoryWriteResult),
     #[cfg(test)]
     RetireMemoryWritesForFixture {
@@ -2060,13 +2053,6 @@ fn run_worker(
                 reply,
                 deadline,
             }) => state.request_memory_write(request, work, reply, deadline),
-            #[cfg(test)]
-            Ok(Envelope::RunMemoryWriteForFixture {
-                request,
-                work,
-                reply,
-                deadline,
-            }) => state.enqueue_memory_write(request, work, reply, deadline),
             Ok(Envelope::MemoryWriteCompleted(result)) => state.complete_memory_write(result),
             #[cfg(test)]
             Ok(Envelope::RetireMemoryWritesForFixture { reply }) => {

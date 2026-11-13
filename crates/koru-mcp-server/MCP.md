@@ -2027,7 +2027,8 @@ listing is needed for this targeted validation.
 
 ### Internal Memory edit preparation
 
-Memory writes are not exposed as tools yet. A separate trusted Rust constructor,
+The Bot-native `remember_memory`, `correct_memory` and `forget_memory` tools use
+a separate trusted Rust constructor,
 `LocalBackend::prepare_memory_write`, accepts a bounded flat recipe produced
 off the AI writer from verified exact history, plus an owner-validated allocation
 view. It never accepts provider-supplied operations or broadens the ordinary
@@ -2052,11 +2053,14 @@ by the trusted owner, not looked up through generic document grants. Profile and
 conditional revision checks still apply. Ordinary native Result behavior and
 hosted `actor/1` attribution remain unchanged.
 
-The gated gateway now validates strict arguments before allocation, reconciles
+The gateway validates strict arguments before allocation, reconciles
 retained receipts before fresh authority, and uses the private AI phases for
 exact history, allocation-backed lazy Ensure and final authority/Profile proof.
 Only an exact Prepared Execute intent enters the shared Store executor and
 confirmation path. Cancellation cannot abandon an acquired lease; uncertain
 lease or settlement replies recover the known operation without reexecution.
-The launched client allowlist, public discovery/direct invocation and complete
-native-client journey remain subject to the separate integration gate.
+The Bot launch allowlist and gateway catalog expose the same nine native tools,
+including `list_memory` and `read_memory`. Ordinary Runs retain their artifact
+catalog. The Memory tools cannot widen generic document permissions; their
+saved receipts do not become Run results. Actual provider/client and desktop
+acceptance remain separate from the in-memory composition evidence.

@@ -3,15 +3,15 @@ use crate::worker::*;
 use koru_ai_core::bots::*;
 
 #[test]
-fn staged_memory_commands_refuse_before_any_authority_or_store_work() {
+fn enabled_memory_commands_still_refuse_missing_authority_and_manage_permission() {
     let mut config = WorkerConfig::new(
         PathBuf::from("unused-memory-contract-fixture"),
         "internal-debug",
         ProviderRegistry::default(),
     );
     config.test_repository = Some(Repository::in_memory().unwrap());
-    // No Bot authority, delegate, provider or Store is installed: the closed
-    // capability must be answered before looking up any of them or the Bot.
+    // No Bot authority, delegate, provider or Store is installed. Exposure
+    // cannot substitute authority or manufacture a Bot.
     let worker = AiWorker::new(config).spawn().unwrap();
     let client = worker.client();
     let bot_id = BotId::mint();
@@ -48,6 +48,14 @@ fn staged_memory_commands_refuse_before_any_authority_or_store_work() {
         },
     ];
     for command in commands {
+        let expected = if matches!(
+            command,
+            BotCommand::ListMemory { .. } | BotCommand::ReadMemoryFact { .. }
+        ) {
+            "ai_unavailable"
+        } else {
+            "workspace_unavailable"
+        };
         let context = RequestContext {
             principal: koru_ai_api::AiPrincipal {
                 label: "fixture".into(),
@@ -56,10 +64,7 @@ fn staged_memory_commands_refuse_before_any_authority_or_store_work() {
             trace_id: "memory-contract".into(),
             deadline_millis: None,
         };
-        assert_eq!(
-            client.bots(context, command).unwrap_err().code,
-            "unsupported_capability"
-        );
+        assert_eq!(client.bots(context, command).unwrap_err().code, expected);
     }
     let denied = RequestContext {
         principal: koru_ai_api::AiPrincipal {
@@ -69,12 +74,12 @@ fn staged_memory_commands_refuse_before_any_authority_or_store_work() {
         trace_id: "memory-contract-denied".into(),
         deadline_millis: None,
     };
-    assert_ne!(
+    assert_eq!(
         client
             .bots(denied, BotCommand::ReadMemory { bot_id })
             .unwrap_err()
             .code,
-        "unsupported_capability"
+        "forbidden"
     );
     let workspace = koru_ai_core::WorkspaceId::new();
     let request = super::RunMemoryReadRequest {
@@ -110,7 +115,7 @@ fn staged_memory_commands_refuse_before_any_authority_or_store_work() {
     };
     assert_eq!(
         client.read_bot_memory(request).unwrap_err().code,
-        "unsupported_capability"
+        "not_found"
     );
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
