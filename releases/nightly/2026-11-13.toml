@@ -1,0 +1,24 @@
+title = "Cloud sign-in and access fixes"
+
+summary = [
+  "Complimentary Cloud accounts can enable desktop sync and show Subscribed, just like paid accounts.",
+  "Email sign-in no longer leaves Cloud subscription checks stuck.",
+  "Updated DNS components address security vulnerabilities."
+]
+
+body = """
+## Cloud on desktop
+
+- Complimentary Cloud access now enables Profile sync and shows Subscribed,
+  with the same sync counts as a paid account.
+- Signing in with email now lets Koru recognize the signed-in account when
+  checking Cloud access. Repeated account checks could previously leave Cloud
+  unavailable even after sign-in succeeded.
+- A Cloud access check that cannot finish stays unavailable instead of asking
+  you to subscribe again.
+
+## Security
+
+Updated the DNS components used by device connections to address DNSSEC
+validation errors and excessive lookup retries.
+"""
