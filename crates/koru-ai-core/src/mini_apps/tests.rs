@@ -2,6 +2,99 @@
 use super::*;
 
 #[test]
+fn declaration_decode_failures_are_closed_and_do_not_echo_private_fields() {
+    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+    let private = Capability::mint().0;
+    let mut missing = fixture.clone();
+    missing.as_object_mut().unwrap().remove("version");
+    let mut unknown = fixture.clone();
+    unknown[private.clone()] = private.clone().into();
+    let mut wrong_type = fixture.clone();
+    wrong_type["version"] = false.into();
+    let mut bad_list = fixture.clone();
+    bad_list["createSurface"]["components"][2]
+        .as_object_mut()
+        .unwrap()
+        .remove("bucket");
+    bad_list["createSurface"]["components"][2]["list"] =
+        json!({"workspace":"current","listId":private});
+    let mut bad_document = fixture;
+    bad_document["createSurface"]["components"][4]["document"] =
+        json!({"workspace":"current","documentId":private});
+    for (value, expected) in [
+        (missing, "missing declaration field"),
+        (unknown, "unknown declaration field"),
+        (wrong_type, "invalid declaration type"),
+        (bad_list, "invalid declaration value"),
+        (bad_document, "invalid declaration value"),
+    ] {
+        let reason = Declaration::from_value(&value).unwrap_err();
+        assert_eq!(reason, expected);
+        assert!(!reason.contains(&private));
+    }
+    let duplicate = FIXTURE.replacen(
+        "\"version\": \"1.0\"",
+        "\"version\": \"1.0\", \"version\": \"1.0\"",
+        1,
+    );
+    assert_eq!(
+        Declaration::parse(duplicate.as_bytes()).unwrap_err(),
+        "duplicate declaration field"
+    );
+    assert_eq!(
+        Declaration::parse(b"{").unwrap_err(),
+        "malformed declaration JSON"
+    );
+    let unknown = serde_json::Error::io(std::io::Error::other(private));
+    assert_eq!(
+        declaration_decode_reason(&unknown),
+        "unsupported declaration"
+    );
+}
+
+#[test]
+fn mini_app_capability_is_runtime_only_redacted_and_keys_cannot_echo_it() {
+    let capability = Capability::mint();
+    let context = RuntimeContext {
+        capability: capability.clone(),
+        workspace_id: WorkspaceId::new(),
+        refinement_surface: None,
+    };
+    let options = crate::AiRequestOptions {
+        mini_app: Some(context),
+        ..Default::default()
+    };
+    assert!(!format!("{options:?}").contains(&capability.0));
+    assert!(
+        !serde_json::to_string(&options)
+            .unwrap()
+            .contains(&capability.0)
+    );
+    assert!(
+        serde_json::to_value(&options)
+            .unwrap()
+            .get("mini_app")
+            .is_none()
+    );
+    let event = crate::AiEvent::ToolCalls {
+        attempt_id: crate::InferenceAttemptId::new(),
+        calls: vec![crate::AiToolCall {
+            call_id: capability.0.clone(),
+            name: "ordinary".into(),
+            arguments: json!({capability.0.clone():capability.0.clone()}),
+            thought_signatures: vec![],
+        }],
+        stop_reason: None,
+        at: crate::Timestamp::now(),
+    };
+    let output = serde_json::to_string(&sanitize_agent_event(event)).unwrap();
+    assert!(!output.contains(&capability.0));
+    assert!(output.contains("redacted mini-app permission"));
+    assert!(Capability::in_text(&format!("old: {}", capability.0)));
+    assert!(!Capability::in_text("koru-mini-app documentation"));
+}
+
+#[test]
 fn refinement_accepts_only_a_complete_root_replacement_without_upstream_revision() {
     let mut root = Declaration::parse(FIXTURE.as_bytes())
         .unwrap()

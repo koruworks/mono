@@ -1,6 +1,37 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+#[test]
+fn mini_app_managed_chat_offers_host_context_without_changing_ordinary_chat() {
+    for provider in ["agent-codex", "agent-claude"] {
+        let (mut surface, host, accepted, _) = fixture();
+        surface
+            .transcript
+            .as_mut()
+            .unwrap()
+            .chat
+            .current_model
+            .provider = koru_ai_core::AiProviderId::parse(provider).unwrap();
+        assert!(surface.mini_app_available());
+        let next = surface
+            .begin_mini_app_request(surface.transcript.as_ref().unwrap().chat.id)
+            .unwrap();
+        assert_eq!(next.workspace_id, host.workspace_id);
+        assert_ne!(next.request_id, host.request_id);
+        surface.accept_mini_app_attempt(&accepted, next);
+        stream(
+            &mut surface,
+            PublicAiEvent::Notice {
+                attempt_id: accepted.attempt_id,
+                notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+                at: koru_ai_core::Timestamp::now(),
+            },
+        );
+        assert!(surface.native_apps.unavailable);
+        assert!(surface.take_mini_app_creation().is_none());
+    }
+}
+
 fn refinement_fixture() -> (
     ChatSurface,
     HostContext,

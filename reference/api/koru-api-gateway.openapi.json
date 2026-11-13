@@ -8159,6 +8159,12 @@
         ],
         "type": "object"
       },
+      "MiniAppCapability": {
+        "description": "An expiring bearer, minted by the AI worker for one exact live attempt.\nDebug deliberately never prints it; it is not a workspace or tab identity.",
+        "maxLength": 46,
+        "minLength": 46,
+        "type": "string"
+      },
       "MiniAppPin": {
         "additionalProperties": false,
         "properties": {
@@ -8353,6 +8359,42 @@
         "required": [
           "profile",
           "workspace"
+        ],
+        "type": "object"
+      },
+      "MiniAppToolRequest": {
+        "additionalProperties": false,
+        "description": "Desktop MCP delegates only these bounded calls to an exact live attempt.",
+        "properties": {
+          "arguments": {},
+          "call_id": {
+            "type": "string"
+          },
+          "capability": {
+            "$ref": "#/components/schemas/MiniAppCapability"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "name",
+          "call_id",
+          "arguments"
+        ],
+        "type": "object"
+      },
+      "MiniAppToolResponse": {
+        "properties": {
+          "content": {},
+          "is_error": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "is_error"
         ],
         "type": "object"
       },
@@ -23654,6 +23696,92 @@
           }
         ],
         "summary": "Search non-private AI chats for a trusted tool caller"
+      }
+    },
+    "/v1/ai/tools/mini-app": {
+      "post": {
+        "description": "A validated result offered to the live native host; not a host acknowledgement.",
+        "operationId": "ai_mini_app_tool",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MiniAppToolRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MiniAppToolResponse"
+                }
+              }
+            },
+            "description": "A validated result offered to the live native host; not a host acknowledgement."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Invoke a bounded mini-app tool for an exact live desktop attempt"
       }
     },
     "/v1/ai/usage": {

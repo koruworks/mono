@@ -49,4 +49,4 @@ koru-log = { path = "../../crates/koru-log" }
 tempfile.workspace = true
 
 [features]
-test-support = []
+test-support = ["koru-mcp-server/test-support"]

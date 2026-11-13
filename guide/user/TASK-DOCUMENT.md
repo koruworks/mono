@@ -42,15 +42,15 @@ current workspace remains open; try the action again after processing finishes.
 In an AI chat tab or the AI pane, ask for a mini app with a task list and a
 document, and say which side each belongs on. For example: “Create a mini app
 with my Travel list and Trip notes, with the document on the left.” The model
-uses the native creation tool and chooses the list/document references and
+uses the mini-app creation tool and chooses the list/document references and
 arrangement. A named empty list can be found too. The same experimental host
 opens after validation; changing its list, completing tasks, searching and
 editing then work locally without more model calls.
 
-Generation uses OpenAI, an Ollama model that advertises tools, or hosted Koru
-AI when its endpoint accepts tools. Managed agent providers such as Codex and
-Claude sessions do not support this creation path yet; ordinary chat remains
-available. If tools become unavailable or opening is interrupted, chat says so.
+Claude and Codex managed AI chats use Koru's installed tools to create and
+refine mini apps. Tool-capable direct providers are also supported. If the
+required tools are unavailable or opening is interrupted, chat says so;
+ordinary chat remains available.
 History and reconnect do not recreate tabs. If no app opened, use **Retry** on
 a failed or interrupted response. If reconnection recovered a completed
 response with no Retry action, send a new request instead. Retrying a creation

@@ -144,12 +144,22 @@ impl CallShape {
 
 /// `koru`'s tool in a label that names an MCP server and one of its tools:
 /// `mcp__koru__read_document`, `koru.read_document`, `koru/read_document`.
+/// Codex's reserved launch-only `koru_desktop` alias has the same meaning.
 fn koru_tool(label: &str) -> Option<String> {
     let rest = label.strip_prefix("mcp__").unwrap_or(label);
     let lower = rest.to_ascii_lowercase();
-    let tool = ["koru__", "koru.", "koru/", "koru:"]
-        .iter()
-        .find_map(|prefix| lower.strip_prefix(prefix))?;
+    let tool = [
+        "koru__",
+        "koru.",
+        "koru/",
+        "koru:",
+        "koru_desktop__",
+        "koru_desktop.",
+        "koru_desktop/",
+        "koru_desktop:",
+    ]
+    .iter()
+    .find_map(|prefix| lower.strip_prefix(prefix))?;
     let tool = tool.split_whitespace().next()?;
     (!tool.is_empty()
         && tool
@@ -420,6 +430,25 @@ mod tests {
         assert_eq!(CallShape::of("Reading"), None);
         assert_eq!(CallShape::of("\""), None);
         assert_eq!(CallShape::of("mcp__korus__x"), None);
+        for label in [
+            "mcp__koru_desktop__read_document",
+            "koru_desktop.read_document",
+            "koru_desktop/read_document",
+            "koru_desktop:read_document",
+        ] {
+            assert_eq!(
+                CallShape::of(label),
+                Some(CallShape::Koru("read_document".into()))
+            );
+        }
+        for label in [
+            "mcp__koru_desktops__x",
+            "koru_desktop_other.x",
+            "mcp__koru_desktop__",
+            "mcp__koru_desktopx__read_document",
+        ] {
+            assert_eq!(CallShape::of(label), None);
+        }
     }
 
     #[test]

@@ -430,6 +430,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Chat tools are an MCP and provider-facing surface, not a mobile chat operation",
     },
     MobileUnavailableOperation {
+        id: "ai.mini_app_tool",
+        client: "client.ai().mini_app_tool",
+        http: "POST /v1/ai/tools/mini-app",
+        reason: "Mini-app tools require an exact live desktop host capability",
+    },
+    MobileUnavailableOperation {
         id: "ai.tool_read_chat",
         client: "client.ai().tool_read_chat",
         http: "POST /v1/ai/tools/chats/read",

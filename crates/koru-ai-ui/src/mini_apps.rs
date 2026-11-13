@@ -186,7 +186,7 @@ impl ChatSurface {
             return false;
         };
         match model.provider.as_str() {
-            AiProviderId::OPENAI | AiProviderId::KORU => true,
+            AiProviderId::OPENAI | AiProviderId::KORU | "agent-codex" | "agent-claude" => true,
             AiProviderId::OLLAMA => self
                 .validation
                 .as_ref()

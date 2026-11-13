@@ -674,6 +674,12 @@ Search non-private AI chats for a trusted tool caller
 
 Returns: A bounded relevance-ranked page of finalized response matches from non-private chats.
 
+## POST `/v1/ai/tools/mini-app`
+
+Invoke a bounded mini-app tool for an exact live desktop attempt
+
+Returns: A validated result offered to the live native host; not a host acknowledgement.
+
 ## POST `/v1/ai/tools/chats/read`
 
 Read a non-private AI chat for a trusted tool caller

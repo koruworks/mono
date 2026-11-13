@@ -10,6 +10,7 @@
 //! other build. Everything below the fixture is the suite as it stood.
 
 mod gateway_process;
+mod managed_mini_apps_live;
 
 use std::path::Path;
 use std::time::{Duration, Instant};

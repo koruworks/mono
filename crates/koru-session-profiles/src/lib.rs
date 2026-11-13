@@ -34,7 +34,15 @@ use koru_session_protocol::{
 /// another name both run and every Koru tool is listed twice (D55). So with
 /// the defaults a chat has one `koru`, and it is the chat's, on the chat's
 /// root.
+/// Codex is the launch-only exception: its configuration deep-merges a
+/// same-name server's transport fields, so Koru disables `koru` there and
+/// supplies the bridge under [`CODEX_DESKTOP_MCP_SERVER_NAME`].
 pub const MCP_SERVER_NAME: &str = "koru";
+
+/// Reserved for Koru's launch-local Codex stdio bridge. Other providers and
+/// global MCP registration keep `koru`. An inherited HTTP server using this
+/// reserved alias would still conflict with Codex's deep merge.
+pub const CODEX_DESKTOP_MCP_SERVER_NAME: &str = "koru_desktop";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProfileLabel {
@@ -1149,6 +1157,10 @@ mod tests {
             r"@C:\Users\me\bridge\copilot.json",
             r"mcp_servers.koru.command='C:\Program Files\Koru\koru-mcp.exe'",
             "mcp_servers.koru.args=['serve','--stdio']",
+            "mcp_servers.koru.enabled=false",
+            "mcp_servers.koru_desktop.enabled=true",
+            r"mcp_servers.koru_desktop.command='C:\Program Files\Koru\koru-mcp.exe'",
+            "mcp_servers.koru_desktop.args=['serve','--stdio']",
         ] {
             assert!(cmd_transparent(argument), "{argument}");
         }

@@ -7,6 +7,9 @@ license.workspace = true
 publish = false
 description = "Transport-neutral MCP tools for Koru."
 
+[features]
+test-support = []
+
 [dependencies]
 rmcp = { version = "=3.9.0", features = ["transport-io"] }
 tokio.workspace = true

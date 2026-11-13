@@ -49,28 +49,113 @@ enum Arguments {
     Find(FindLists),
 }
 fn arguments(call: &AiToolCall) -> Result<Arguments, AiError> {
-    let bytes = mini_apps::bounded_json(&call.arguments).map_err(|_| invalid())?;
+    let bytes = mini_apps::bounded_json(&call.arguments).map_err(validation_error)?;
     match call.name.as_str() {
         mini_apps::CREATE_TOOL => Ok(Arguments::Create(
-            Declaration::parse(&bytes).map_err(|_| invalid())?,
+            Declaration::parse(&bytes).map_err(validation_error)?,
         )),
         mini_apps::UPDATE_TOOL => Ok(Arguments::Update(
-            mini_apps::UpdateEnvelope::from_value(&call.arguments).map_err(|_| invalid())?,
+            mini_apps::UpdateEnvelope::from_value(&call.arguments).map_err(validation_error)?,
         )),
         mini_apps::LIST_TOOL => {
-            let request: FindLists =
-                serde_json::from_value(call.arguments.clone()).map_err(|_| invalid())?;
+            let request: FindLists = serde_json::from_value(call.arguments.clone())
+                .map_err(|_| validation_error("list lookup"))?;
             if request.query.chars().count() > 128
                 || request.query.contains('\0')
                 || !(1..=20).contains(&request.limit)
                 || request.offset > 1_000_000
             {
-                return Err(invalid());
+                return Err(validation_error("list lookup"));
             }
             Ok(Arguments::Find(request))
         }
         _ => Err(unavailable()),
     }
+}
+
+/// Fixed guidance only, after the authoritative parser has already refused.
+fn validation_error(reason: &'static str) -> AiError {
+    let (code, guidance) = match reason {
+        "missing declaration field" => (
+            "mini_app_validation_missing_field",
+            "Supply every required field from the published schema: version/createSurface; surfaceId/catalogId/sendDataModel/components; each component's id/component and required root children/arrangement.",
+        ),
+        "unknown declaration field" => (
+            "mini_app_validation_unknown_field",
+            "Remove extra fields. The envelope accepts only version/createSurface; createSurface only surfaceId/catalogId/sendDataModel/components. Components accept only the fields of their exact published variant. Do not add an arguments wrapper, type, text, styles or data.",
+        ),
+        "duplicate declaration field" => (
+            "mini_app_validation_duplicate_field",
+            "Send each JSON object field once; do not repeat version, createSurface or component/reference fields.",
+        ),
+        "invalid declaration type" => (
+            "mini_app_validation_field_type",
+            "Use exact JSON types: version, IDs, component and arrangement are strings; sendDataModel is boolean false; components and children are arrays; list/document bindings are objects, not strings.",
+        ),
+        "invalid declaration value" => (
+            "mini_app_validation_field_value",
+            "Use UUID strings for listId/documentId, workspace string current, and the literal values from the published schema; do not use labels or compound objects as IDs.",
+        ),
+        "malformed declaration JSON" => (
+            "mini_app_validation_json",
+            "Send one complete valid JSON object, not Markdown or a code fence.",
+        ),
+        "unsupported declaration" => (
+            "mini_app_validation_shape",
+            "Use the exact published envelope, component and reference field names and JSON types; omit unsupported fields.",
+        ),
+        "surface exceeds byte limit" => (
+            "mini_app_validation_size",
+            "Keep the A2UI envelope within 4096 UTF-8 bytes; include references and arrangement only.",
+        ),
+        "unsupported surface" => (
+            "mini_app_validation_surface",
+            "Use version 1.0, catalogId koru:task-document:0.1-proposal1, sendDataModel false, a 1-96 character surfaceId using only letters, digits, hyphen, underscore or colon, and exactly five components.",
+        ),
+        "missing component" | "unsupported component" => (
+            "mini_app_validation_components",
+            "Include each fixed id/component pair exactly once: root/TaskDocument, selector/TaskListSelector, tasks/TaskCollection, search/DocumentSearch, document/DocumentHost. Only root has children/arrangement; only tasks has bucket/list; only document has document.",
+        ),
+        "unsupported child graph" => (
+            "mini_app_validation_children",
+            "root.children must be exactly selector, tasks, search, document in that order. Child IDs are strings, not component objects.",
+        ),
+        "unsupported arrangement" => (
+            "mini_app_validation_arrangement",
+            "root.arrangement must be tasks-first or document-first.",
+        ),
+        "unsupported task selection" => (
+            "mini_app_validation_task_selection",
+            "TaskCollection must have exactly one of bucket (today, next, upcoming, later, completed) or list (workspace current and a nonnil listId UUID). Omit the unused binding.",
+        ),
+        "unsupported document scope" => (
+            "mini_app_validation_document_scope",
+            "DocumentHost.document, when supplied, must use workspace current and a nonnil documentId UUID.",
+        ),
+        "unsupported refinement"
+        | "refinement must preserve the active editor and controls"
+        | "only the named arrangement can be refined" => (
+            "mini_app_validation_refinement",
+            "Use version 1.0 and updateComponents with the current surfaceId and exactly one root TaskDocument component; preserve children selector, tasks, search, document and change only arrangement.",
+        ),
+        "list lookup" => (
+            "mini_app_validation_list_query",
+            "Use only query (at most 128 characters, no NUL), offset (0 through 1000000) and limit (1 through 20).",
+        ),
+        _ => return invalid(),
+    };
+    AiError::new(AiErrorClass::Provider, format!("{code}: {guidance}"), false)
+}
+/// The admission path reuses the registered pure parser before even profile
+/// visibility I/O. Execution repeats it before registry access.
+pub(crate) fn validate_arguments(name: &str, value: &serde_json::Value) -> Result<(), AiError> {
+    arguments(&AiToolCall {
+        call_id: "validation".into(),
+        name: name.into(),
+        arguments: value.clone(),
+        thought_signatures: Vec::new(),
+    })
+    .map(|_| ())
 }
 impl AiToolExecutor for MiniAppTools {
     fn definitions(&self) -> Vec<AiToolDefinition> {

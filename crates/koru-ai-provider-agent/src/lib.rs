@@ -48,12 +48,30 @@ use koru_session_protocol::{
 
 mod control;
 mod joined;
+mod mini_apps;
 mod turn;
 
 pub use control::{AgentCatalog, AgentSessions, CommandListingUpdate, EndOutcome, EnsuredSession};
 
 /// The product name this crate's connections announce to the host.
 pub const PRODUCT: &str = "koru-ai-agent";
+
+/// Same installation boundary as session-host's chat_bridge. Called on the
+/// worker, never a UI frame; an absent bridge leaves ordinary chat available.
+pub fn desktop_bridge_present() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.parent().map(|p| {
+                p.join(if cfg!(windows) {
+                    "koru-mcp.exe"
+                } else {
+                    "koru-mcp"
+                })
+            })
+        })
+        .is_some_and(|path| path.is_file())
+}
 
 pub use koru_ai_core::AGENT_DEFAULT_MODEL;
 

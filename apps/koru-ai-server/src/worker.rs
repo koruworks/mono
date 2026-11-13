@@ -62,6 +62,8 @@ pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
 mod mini_apps;
+#[cfg(feature = "test-support")]
+pub(crate) use mini_apps::mcp::fixture as scripted_mcp_result;
 mod removed;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
@@ -670,6 +672,19 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn mini_app_tool(
+        &self,
+        context: RequestContext,
+        request: koru_ai_wire::MiniAppToolRequest,
+    ) -> ApiResult<koru_ai_wire::MiniAppToolResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::MiniAppTool {
+            context,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
     fn tool_list_chats(
         &self,
         context: RequestContext,
@@ -1073,6 +1088,11 @@ enum Envelope {
 }
 
 enum WorkerCommand {
+    MiniAppTool {
+        context: RequestContext,
+        request: koru_ai_wire::MiniAppToolRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::MiniAppToolResponse>>,
+    },
     Ping(SyncSender<()>),
     Info(SyncSender<AiWorkerInfo>),
     ProviderSettings {
@@ -1332,6 +1352,7 @@ enum WorkerCommand {
 impl WorkerCommand {
     fn diagnostic_name(&self) -> &'static str {
         match self {
+            Self::MiniAppTool { .. } => "mini_app_tool",
             Self::Ping(_) => "ping",
             Self::Info(_) => "info",
             Self::ProviderSettings { .. } => "provider_settings",
@@ -1420,6 +1441,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    managed_mini_apps: bool,
     repository: Repository,
     /// The worker's stop flag, the one the pools' threads watch too.
     shutdown: Arc<AtomicBool>,
@@ -1546,6 +1568,8 @@ fn run_worker(
 
     let mut registry = config.providers;
     let mut agent_views = Vec::new();
+    let managed_mini_apps =
+        config.session_host.is_some() && koru_ai_provider_agent::desktop_bridge_present();
     let agents = match config.session_host {
         Some(endpoint) => match AgentSessions::spawn(endpoint) {
             Ok(agents) => {
@@ -1646,6 +1670,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        managed_mini_apps,
         repository,
         shutdown: Arc::clone(&shutdown),
         provider_runtime: config.provider_runtime,
@@ -1955,6 +1980,11 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.tool_read_chat(context, request));
             }
+            WorkerCommand::MiniAppTool {
+                context,
+                request,
+                reply,
+            } => self.begin_mcp_mini_app(context, request, reply),
             WorkerCommand::UpdateChatToolPolicy {
                 context,
                 chat,
@@ -3779,6 +3809,7 @@ impl WorkerState {
             tools: native_tools,
             tool_history: Vec::new(),
             options: AiRequestOptions {
+                mini_app: self.mini_app_runtime(attempt_id),
                 web_search: request.web_search,
                 chat_id: Some(chat.id),
                 working_folder: chat.agent_working_folder.clone(),
@@ -3992,6 +4023,7 @@ impl WorkerState {
             tools: native_tools,
             tool_history: Vec::new(),
             options: AiRequestOptions {
+                mini_app: self.mini_app_runtime(attempt_id),
                 web_search: request.web_search,
                 chat_id: Some(chat_id),
                 working_folder: chat.agent_working_folder.clone(),
@@ -4431,6 +4463,10 @@ impl WorkerState {
     fn handle_tool_resolution(&mut self, resolution: ToolResolution) {
         let attempt_id = resolution.attempt_id;
         self.work_returned(attempt_id);
+        if resolution.external {
+            self.finish_mcp_mini_app(resolution);
+            return;
+        }
         let Ok(Some(attempt)) = self.repository.attempt(attempt_id) else {
             return;
         };
@@ -4566,6 +4602,7 @@ impl WorkerState {
         self.tool_batches.insert(attempt_id, pending);
         for (invocation_id, call) in automatic {
             match self.tool_pool.try_submit(ToolJob {
+                external: false,
                 context: AiToolExecutionContext {
                     mini_app: self.mini_apps.authorities.get(&attempt_id).cloned(),
                     chat_id,
@@ -4800,6 +4837,7 @@ impl WorkerState {
             .cloned()
             .ok_or_else(tool_not_resumable)?;
         match self.tool_pool.try_submit(ToolJob {
+            external: false,
             context: AiToolExecutionContext {
                 mini_app: self.mini_apps.authorities.get(&attempt_id).cloned(),
                 chat_id: activity.chat_id,
@@ -5958,12 +5996,14 @@ struct PendingToolCall {
 }
 
 struct ToolJob {
+    external: bool,
     context: AiToolExecutionContext,
     call: AiToolCall,
     cancellation: Cancellation,
 }
 
 struct ToolResolution {
+    external: bool,
     invocation_id: ToolInvocationId,
     attempt_id: InferenceAttemptId,
     call: AiToolCall,
@@ -6074,6 +6114,7 @@ impl ToolPool {
 
 fn run_tool_job(executor: &dyn AiToolExecutor, job: ToolJob) -> ToolResolution {
     let ToolJob {
+        external,
         context,
         call,
         cancellation,
@@ -6092,6 +6133,7 @@ fn run_tool_job(executor: &dyn AiToolExecutor, job: ToolJob) -> ToolResolution {
             .or_else(|error| Ok(tool_error_result(&call, error)))
     };
     ToolResolution {
+        external,
         invocation_id,
         attempt_id,
         call,

@@ -25,6 +25,21 @@ pub use koru_ai_core::{
     SearchChatsToolResponse, WorkspaceFileOrigin,
 };
 
+/// Desktop MCP delegates only these bounded calls to an exact live attempt.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MiniAppToolRequest {
+    pub capability: koru_ai_core::mini_apps::Capability,
+    pub name: String,
+    pub call_id: String,
+    pub arguments: serde_json::Value,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MiniAppToolResponse {
+    pub content: serde_json::Value,
+    pub is_error: bool,
+}
+
 /// The stable failure codes of the attachment routes and of a send that
 /// names attachments. Product UI renders localized copy by code.
 pub mod attachment_codes {

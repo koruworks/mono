@@ -6,6 +6,13 @@ use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot, WindowSl
 
 #[test]
 fn mini_app_scripted_refinement_reaches_retained_host_and_refuses_stale_or_closed_target() {
+    check_scripted_refinement(false);
+}
+#[test]
+fn mini_app_mcp_refinement_reaches_same_retained_host() {
+    check_scripted_refinement(true);
+}
+fn check_scripted_refinement(mcp: bool) {
     use koru_ai_core::{
         AiToolExecutionContext, ChatId, InferenceAttemptId, ToolInvocationId, mini_apps,
     };
@@ -43,7 +50,11 @@ fn mini_app_scripted_refinement_reaches_retained_host_and_refuses_stale_or_close
     let leaf_owner = app.leaf().unwrap().native_ime_owner();
     let task_owner = &app.tasks as *const crate::tasks_view::TasksView;
     let count = view.tabs().len();
-    let events = koru_ai_server::scripted_native_refinement(
+    let events = (if mcp {
+        koru_ai_server::scripted_mcp_refinement
+    } else {
+        koru_ai_server::scripted_native_refinement
+    })(
         AiToolExecutionContext {
             chat_id: chat,
             attempt_id: attempt,
@@ -95,6 +106,13 @@ fn mini_app_scripted_refinement_reaches_retained_host_and_refuses_stale_or_close
 
 #[test]
 fn mini_app_scripted_model_dispatches_references_through_stream_and_same_native_host() {
+    check_scripted_creation(false);
+}
+#[test]
+fn mini_app_mcp_creation_dispatches_references_through_stream_and_same_native_host() {
+    check_scripted_creation(true);
+}
+fn check_scripted_creation(mcp: bool) {
     use koru_ai_core::mini_apps::{self, Authority};
     use koru_ai_core::{AiToolExecutionContext, ChatId, InferenceAttemptId, ToolInvocationId};
     let (mut view, _workspace) = container();
@@ -135,7 +153,11 @@ fn mini_app_scripted_model_dispatches_references_through_stream_and_same_native_
         workspace_ids: vec![workspace],
         mini_app: Some(Authority::new(host)),
     };
-    let events = koru_ai_server::scripted_native_creation(
+    let events = (if mcp {
+        koru_ai_server::scripted_mcp_creation
+    } else {
+        koru_ai_server::scripted_native_creation
+    })(
         context,
         declaration,
         vec![(list.as_uuid(), "Travel".into())],

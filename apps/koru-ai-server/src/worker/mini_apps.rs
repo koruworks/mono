@@ -3,6 +3,13 @@ use super::*;
 use koru_ai_core::mini_apps::{self, Authority, HostContext};
 
 const SUCCESS_LIMIT: usize = 1024;
+pub(super) mod mcp;
+struct McpPending {
+    attempt: InferenceAttemptId,
+    context: AiToolExecutionContext,
+    call: AiToolCall,
+    reply: SyncSender<ApiResult<koru_ai_wire::MiniAppToolResponse>>,
+}
 fn scoped_definitions(
     definitions: &[AiToolDefinition],
     host: Option<HostContext>,
@@ -26,6 +33,8 @@ fn scoped_definitions(
 pub(super) struct Deliveries {
     pub(super) authorities: HashMap<InferenceAttemptId, Authority>,
     successes: HashSet<(Uuid, Uuid)>,
+    capabilities: HashMap<mini_apps::Capability, InferenceAttemptId>,
+    pending: HashMap<ToolInvocationId, McpPending>,
 }
 impl Deliveries {
     fn available(&self, host: HostContext) -> bool {
@@ -40,6 +49,18 @@ impl Deliveries {
         self.available(host) && self.successes.insert((host.renderer_id, host.request_id))
     }
     fn retire(&mut self, attempt: InferenceAttemptId) {
+        self.capabilities.retain(|_, owner| *owner != attempt);
+        self.pending.retain(|_, pending| {
+            if pending.attempt != attempt {
+                return true;
+            }
+            let _ = pending.reply.send(Err(failure(
+                "mini_app_unavailable",
+                "The live mini-app request ended.",
+                false,
+            )));
+            false
+        });
         if let Some(authority) = self.authorities.remove(&attempt) {
             authority.revoke();
         }
@@ -93,10 +114,13 @@ impl WorkerState {
         provider: &AiProviderId,
         host: Option<HostContext>,
     ) -> Vec<AiToolDefinition> {
-        let supported = matches!(
-            provider.as_str(),
-            AiProviderId::OPENAI | AiProviderId::OLLAMA | AiProviderId::KORU | "mock"
-        );
+        let managed =
+            matches!(provider.as_str(), "agent-codex" | "agent-claude") && self.managed_mini_apps;
+        let supported = managed
+            || matches!(
+                provider.as_str(),
+                AiProviderId::OPENAI | AiProviderId::OLLAMA | AiProviderId::KORU | "mock"
+            );
         let requested = host.is_some();
         let host = host.filter(|host| supported && self.mini_apps.available(*host));
         if requested && host.is_none() {
@@ -110,6 +134,11 @@ impl WorkerState {
             self.mini_apps
                 .authorities
                 .insert(attempt, Authority::new(host));
+            if managed {
+                self.mini_apps
+                    .capabilities
+                    .insert(mini_apps::Capability::mint(), attempt);
+            }
         }
         scoped_definitions(&self.tool_definitions, host)
     }
@@ -150,25 +179,47 @@ impl WorkerState {
             .chat(chat_id)?
             .and_then(|chat| chat.profile_id)
             .ok_or_else(tool_loop_missing)?;
-        let event = crate::mini_apps::creation_event(
-            &AiToolExecutionContext {
-                chat_id,
-                attempt_id,
-                invocation_id,
-                profile_id: Some(profile_id),
-                workspace_ids: vec![host.workspace_id],
-                mini_app: Some(authority.clone()),
-            },
-            result,
-        )?;
-        if !self.mini_apps.record(host) {
-            return Err(tool_protocol_failure(
-                "This logical request already produced a mini app, or live request capacity was reached.",
-            ));
-        }
+        let context = AiToolExecutionContext {
+            chat_id,
+            attempt_id,
+            invocation_id,
+            profile_id: Some(profile_id),
+            workspace_ids: vec![host.workspace_id],
+            mini_app: Some(authority.clone()),
+        };
         // The event contains only the registered bounded result, never an
         // arbitrary tool payload. Stream failure is not a tab acknowledgement.
-        self.publish_public(event);
-        Ok(())
+        publish_validated(&mut self.streams, &mut self.mini_apps, &context, result)
     }
+}
+
+fn publish_validated(
+    streams: &mut HashMap<InferenceAttemptId, StreamState>,
+    deliveries: &mut Deliveries,
+    context: &AiToolExecutionContext,
+    result: &AiToolResult,
+) -> Result<(), AiError> {
+    if result.is_error
+        || ![mini_apps::CREATE_TOOL, mini_apps::UPDATE_TOOL].contains(&result.name.as_str())
+    {
+        return Ok(());
+    }
+    let authority = context
+        .mini_app
+        .as_ref()
+        .filter(|a| a.live())
+        .ok_or_else(tool_loop_missing)?;
+    let event = crate::mini_apps::creation_event(context, result)?;
+    if !deliveries.record(authority.host) {
+        return Err(tool_protocol_failure(
+            "This logical mini-app request already completed or capacity was reached.",
+        ));
+    }
+    publish_live(streams, deliveries, event);
+    if !streams.contains_key(&context.attempt_id) {
+        return Err(tool_protocol_failure(
+            "The live mini-app offer could not be delivered. Local application is not acknowledged.",
+        ));
+    }
+    Ok(())
 }

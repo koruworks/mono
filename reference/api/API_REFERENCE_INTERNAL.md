@@ -154,6 +154,7 @@ Generated from the route catalog. Do not edit.
 - PATCH `/v1/ai/chats/{chat}/agent-settings` — Choose the approval mode a chat's local agent runs its next message in (Public)
 - POST `/v1/ai/tools/chats/list` — List non-private AI chats for a trusted tool caller (Public)
 - POST `/v1/ai/tools/chats/search` — Search non-private AI chats for a trusted tool caller (Public)
+- POST `/v1/ai/tools/mini-app` — Invoke a bounded mini-app tool for an exact live desktop attempt (Public)
 - POST `/v1/ai/tools/chats/read` — Read a non-private AI chat for a trusted tool caller (Public)
 - PUT `/v1/ai/chats/{chat}/tool-policy` — Replace a chat's workspace-tool policy (Public)
 - GET `/v1/ai/chats/{chat}/tool-policy` — Read a chat's workspace-tool policy (Public)

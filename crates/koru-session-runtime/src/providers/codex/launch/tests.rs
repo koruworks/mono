@@ -147,7 +147,7 @@ fn the_launch_never_prints_its_bearer() {
 }
 
 #[test]
-fn a_stdio_bridge_renders_as_command_and_args_overrides_in_literal_strings() {
+fn a_desktop_stdio_bridge_disables_inherited_koru_and_uses_its_enabled_alias() {
     let argv = strings(&render_argv_with(
         None,
         &[crate::providers::McpServerLaunch {
@@ -172,8 +172,10 @@ fn a_stdio_bridge_renders_as_command_and_args_overrides_in_literal_strings() {
     assert_eq!(
         overrides,
         vec![
-            "mcp_servers.koru.command='C:\\Koru\\koru-mcp.exe'",
-            "mcp_servers.koru.args=['serve','--stdio','--root','D:\\root']",
+            "mcp_servers.koru.enabled=false",
+            "mcp_servers.koru_desktop.enabled=true",
+            "mcp_servers.koru_desktop.command='C:\\Koru\\koru-mcp.exe'",
+            "mcp_servers.koru_desktop.args=['serve','--stdio','--root','D:\\root']",
         ]
     );
     assert!(
@@ -182,4 +184,63 @@ fn a_stdio_bridge_renders_as_command_and_args_overrides_in_literal_strings() {
             .any(|element| element.contains("features.multi_agent")),
         "a manual launch carries no delegation override"
     );
+}
+
+#[test]
+fn desktop_alias_preserves_generic_servers_and_all_delegated_run_overrides() {
+    let bridge = crate::providers::McpServerLaunch {
+        name: koru_session_profiles::MCP_SERVER_NAME.into(),
+        command: "koru-mcp".into(),
+        args: vec!["serve".into(), "--stdio".into()],
+        env: Vec::new(),
+    };
+    let unrelated = crate::providers::McpServerLaunch {
+        name: "other".into(),
+        command: "other-mcp".into(),
+        args: vec![],
+        env: Vec::new(),
+    };
+    assert_eq!(
+        strings(&mcp_server_overrides(std::slice::from_ref(&unrelated))),
+        vec![
+            "-c",
+            "mcp_servers.other.command='other-mcp'",
+            "-c",
+            "mcp_servers.other.args=[]"
+        ]
+    );
+    let delegation = delegated();
+    for version in super::super::SUPPORTED_CODEX_VERSIONS {
+        let version = version.parse().unwrap();
+        let original = render_argv(Some(&delegation), &version);
+        let combined = render_argv_with(
+            Some(&delegation),
+            &[bridge.clone(), unrelated.clone()],
+            &version,
+        );
+        assert!(combined.starts_with(&original));
+        let tail = strings(&combined[original.len()..]);
+        assert_eq!(
+            tail.iter()
+                .filter(|arg| arg.as_str() == "mcp_servers.koru.enabled=false")
+                .count(),
+            1
+        );
+        assert!(
+            tail.iter()
+                .any(|arg| arg == "mcp_servers.koru_desktop.enabled=true")
+        );
+        assert!(
+            tail.iter()
+                .any(|arg| arg == "mcp_servers.other.command='other-mcp'")
+        );
+        assert!(
+            tail.iter()
+                .all(|arg| !arg.contains(".url=") && !arg.contains("koru_run"))
+        );
+        assert!(
+            tail.iter()
+                .all(|arg| koru_session_profiles::cmd_transparent(arg))
+        );
+    }
 }

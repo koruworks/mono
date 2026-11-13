@@ -19,6 +19,93 @@ pub const UPDATE_TOOL: &str = "update_task_document_app";
 pub const LIST_TOOL: &str = "find_task_app_lists";
 pub const MAX_BYTES: usize = 4096;
 pub const FIXTURE: &str = include_str!("mini_apps/fixture.json");
+
+/// An expiring bearer, minted by the AI worker for one exact live attempt.
+/// Debug deliberately never prints it; it is not a workspace or tab identity.
+#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(rename = "MiniAppCapability"))]
+#[serde(transparent)]
+pub struct Capability(
+    #[cfg_attr(feature = "schema", schemars(length(min = 46, max = 46)))] pub String,
+);
+impl std::fmt::Debug for Capability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Capability([redacted])")
+    }
+}
+impl Capability {
+    pub fn in_text(text: &str) -> bool {
+        text.match_indices("koru-mini-").any(|(start, _)| {
+            text.get(start..start + 46)
+                .is_some_and(|s| Self(s.into()).valid())
+        })
+    }
+    pub fn mint() -> Self {
+        Self(format!("koru-mini-{}", uuid::Uuid::new_v4()))
+    }
+    pub fn valid(&self) -> bool {
+        self.0.strip_prefix("koru-mini-").is_some_and(|s| {
+            s.len() == 36
+                && uuid::Uuid::parse_str(s).is_ok_and(|id| {
+                    !id.is_nil() && id.hyphenated().to_string().eq_ignore_ascii_case(s)
+                })
+        })
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeContext {
+    pub capability: Capability,
+    pub workspace_id: crate::WorkspaceId,
+    pub refinement_surface: Option<String>,
+}
+/// Redact every capability spelling, including expired ones echoed from an
+/// agent's own history. Keys and values both carry untrusted provider text.
+pub fn sanitize_agent_event(event: crate::AiEvent) -> crate::AiEvent {
+    fn clean(text: &str) -> String {
+        let mut rest = text;
+        let mut result = String::new();
+        while let Some(start) = rest.find("koru-mini-") {
+            result.push_str(&rest[..start]);
+            rest = &rest[start..];
+            if rest.get(..46).is_some_and(|s| Capability(s.into()).valid()) {
+                result.push_str("[redacted mini-app permission]");
+                rest = &rest[46..];
+            } else {
+                result.push('k');
+                rest = &rest[1..];
+            }
+        }
+        result.push_str(rest);
+        result
+    }
+    fn visit(value: &mut Value) {
+        match value {
+            Value::String(text) => *text = clean(text),
+            Value::Array(items) => items.iter_mut().for_each(visit),
+            Value::Object(fields) => {
+                let old = std::mem::take(fields);
+                for (key, mut value) in old {
+                    visit(&mut value);
+                    fields.insert(clean(&key), value);
+                }
+            }
+            _ => {}
+        }
+    }
+    let attempt_id = event.attempt_id();
+    let mut value = serde_json::to_value(&event).expect("owned event serializes");
+    visit(&mut value);
+    serde_json::from_value(value).unwrap_or_else(|_| crate::AiEvent::Failed {
+        attempt_id,
+        error: crate::AiError::new(
+            crate::AiErrorClass::Provider,
+            "The agent returned invalid metadata.",
+            false,
+        ),
+        at: crate::Timestamp::now(),
+    })
+}
 pub const REFINEMENT_FIXTURE: &str = include_str!("mini_apps/refinement.fixture.json");
 
 pub mod artifact;
@@ -230,7 +317,7 @@ impl Declaration {
             return Err("surface exceeds byte limit");
         }
         let envelope: Envelope =
-            serde_json::from_slice(bytes).map_err(|_| "unsupported declaration")?;
+            serde_json::from_slice(bytes).map_err(|error| declaration_decode_reason(&error))?;
         Self::validate(envelope)
     }
     pub fn from_value(value: &Value) -> Result<Self, &'static str> {
@@ -324,6 +411,29 @@ impl Declaration {
         self.envelope.surface.surface_id = format!("mini-app-{invocation}");
         self
     }
+}
+
+/// Serde remains the sole decoding authority. Its description is inspected
+/// privately only for library-owned prefixes; no key, value or path escapes.
+fn declaration_decode_reason(error: &serde_json::Error) -> &'static str {
+    if error.is_syntax() || error.is_eof() {
+        return "malformed declaration JSON";
+    }
+    let description = error.to_string();
+    for (prefix, reason) in [
+        ("missing field ", "missing declaration field"),
+        ("unknown field ", "unknown declaration field"),
+        ("duplicate field ", "duplicate declaration field"),
+        ("invalid type:", "invalid declaration type"),
+        ("invalid value:", "invalid declaration value"),
+        ("UUID parsing failed:", "invalid declaration value"),
+        ("not a DocumentId", "invalid declaration value"),
+    ] {
+        if description.starts_with(prefix) {
+            return reason;
+        }
+    }
+    "unsupported declaration"
 }
 
 pub fn definitions() -> Vec<AiToolDefinition> {

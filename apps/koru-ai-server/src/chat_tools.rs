@@ -170,6 +170,7 @@ pub fn scripted_native_creation(
         declaration,
         lists,
         documents,
+        false,
     )
 }
 
@@ -185,6 +186,7 @@ pub fn scripted_native_refinement(
         update,
         vec![],
         vec![],
+        false,
     )
 }
 
@@ -196,6 +198,7 @@ fn scripted_native_result(
     declaration: serde_json::Value,
     lists: Vec<(uuid::Uuid, String)>,
     documents: Vec<koru_ai_core::DocumentId>,
+    mcp: bool,
 ) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
     use koru_ai_core::{
         AiEvent, AiProvider, AiRequest, AiRequestOptions, AiToolLoop, AiToolLoopLimits,
@@ -257,6 +260,14 @@ fn scripted_native_result(
             documents,
         })),
     };
+    if mcp {
+        return crate::worker::scripted_mcp_result(
+            std::sync::Arc::new(dispatcher),
+            context,
+            tool,
+            declaration,
+        );
+    }
     let provider = koru_ai_provider::DeterministicMockProvider::new(
         "The declaration was offered to the native host.",
     )
@@ -323,6 +334,39 @@ fn scripted_native_result(
         .unwrap();
     drop(sender);
     Ok(receiver.into_iter().collect())
+}
+
+#[cfg(feature = "test-support")]
+pub fn scripted_mcp_creation(
+    context: AiToolExecutionContext,
+    declaration: serde_json::Value,
+    lists: Vec<(uuid::Uuid, String)>,
+    documents: Vec<koru_ai_core::DocumentId>,
+) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
+    scripted_native_result(
+        context,
+        koru_ai_core::mini_apps::CREATE_TOOL,
+        "Create a task/document app",
+        declaration,
+        lists,
+        documents,
+        true,
+    )
+}
+#[cfg(feature = "test-support")]
+pub fn scripted_mcp_refinement(
+    context: AiToolExecutionContext,
+    update: serde_json::Value,
+) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
+    scripted_native_result(
+        context,
+        koru_ai_core::mini_apps::UPDATE_TOOL,
+        "Put the document on the left and tasks on the right",
+        update,
+        vec![],
+        vec![],
+        true,
+    )
 }
 
 impl AiToolExecutor for AiToolDispatcher {
