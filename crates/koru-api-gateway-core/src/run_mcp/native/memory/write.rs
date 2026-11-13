@@ -14,11 +14,11 @@ use koru_mcp_server::native::memory::MemoryRecipeOperation;
 use koru_mcp_server::native::{NativeWriteEvidence, NativeWriteKind};
 use uuid::Uuid;
 mod args;
+#[cfg(test)]
+mod execution_tests;
 mod fresh;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod execution_tests;
 
 pub(super) fn definitions() -> Vec<Tool> {
     args::definitions()
