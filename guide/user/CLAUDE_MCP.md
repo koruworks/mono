@@ -67,11 +67,17 @@ with `mcp-add [name]` and set `KORU_ROOT` explicitly if needed. `mcp-add` still
 defaults to `koru`. These Windows commands honor `CARGO_TARGET_DIR` and use its
 `debug` directory for both building and registration.
 
+Running the command again refreshes the registration with the current bridge
+and root. When Claude reports that this exact name already exists in its user
+config, the launcher removes only that named user entry and adds it again.
+Other Claude failures leave the existing entry alone. If replacement fails
+after removal, the command reports that the entry may be missing and asks you
+to retry.
+
 If an installed client rejects registration, the command names that client
-and fails before launching. If the name already exists, remove that specific
-entry with `koru.bat mcp-remove koru_sliechti_a2ui`, then retry. Successful
-registrations in other clients are retained. Already open client sessions must
-reconnect or restart to use the rebuilt bridge.
+and fails before launching. Successful registrations in other clients are
+retained. Already open client sessions must reconnect or restart to use the
+rebuilt bridge.
 
 Unknown options are rejected before setup or process changes. `--mcp` is an
 option even when quoted; to name a literal directory `--mcp`, use `.\--mcp`.

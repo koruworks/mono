@@ -55,11 +55,27 @@ class RootArguments(unittest.TestCase):
         collector = self.stub / "collect.py"
         collector.write_text(
             'import json, os, sys\n'
+            'from pathlib import Path\n'
             'with open(os.environ["TEST_CALLS"], "a") as f:\n'
             '    f.write(json.dumps(sys.argv[1:]) + "\\n")\n'
             'if sys.argv[1] == "git":\n'
             '    print(os.environ.get("TEST_BRANCH", "sliechti/a2ui") '
             'if "branch" in sys.argv else "abc1234")\n'
+            'if sys.argv[1] == "claude" and "TEST_CLAUDE_STATE" in os.environ:\n'
+            '    state = Path(os.environ["TEST_CLAUDE_STATE"])\n'
+            '    mode = os.environ.get("TEST_CLAUDE_FAIL")\n'
+            '    if sys.argv[3] == "remove":\n'
+            '        if mode == "remove": sys.exit(9)\n'
+            '        state.unlink()\n'
+            '        sys.exit(0)\n'
+            '    if state.exists():\n'
+            '        name = os.environ.get("TEST_DUPLICATE_NAME", sys.argv[6])\n'
+            '        scope = os.environ.get("TEST_DUPLICATE_SCOPE", "user")\n'
+            '        stream = sys.stdout if os.environ.get("TEST_DUPLICATE_STREAM") == "stdout" else sys.stderr\n'
+            '        print(f"MCP server {name} already exists in {scope} config", file=stream)\n'
+            '        sys.exit(1)\n'
+            '    if mode == "readd": sys.exit(8)\n'
+            '    state.write_text(json.dumps(sys.argv[2:]))\n'
             'sys.exit(int(os.environ.get("TEST_FAIL_CODE", "7")) '
             'if sys.argv[1] == os.environ.get("TEST_FAIL") else 0)\n'
         )
@@ -162,9 +178,75 @@ class RootArguments(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         error = " ".join(result.stderr.split())
         self.assertIn("claude (exit 7)", error)
-        self.assertIn("mcp-remove koru_sliechti_a2ui", error)
         self.assertNotIn("TEST_LAUNCH_ROOT", result.stdout)
         self.assertEqual(len(self.calls("gemini")), 1)
+        self.assertEqual(len(self.calls("claude")), 1)
+
+    def claude_state(self, existing=False):
+        state = self.repo / "claude-test-state.json"
+        self.env["TEST_CLAUDE_STATE"] = str(state)
+        if existing:
+            state.write_text('["existing registration"]')
+        return state
+
+    def test_repeat_claude_registration_refreshes_current_root(self):
+        state = self.claude_state()
+        self.assert_ok(self.run_launcher("root", "--mcp"))
+        path = str(self.repo / "updated !&%TEST_BRANCH%^ root") + "\\"
+        self.assert_ok(self.run_launcher("root", path, "--mcp"))
+        calls = self.calls("claude")
+        self.assertEqual([call[1] for call in calls], ["add", "add", "remove", "add"])
+        self.assertEqual(calls[2], ["mcp", "remove", "--scope", "user", "koru_sliechti_a2ui"])
+        self.assertEqual(calls[1], calls[3])
+        self.assertEqual(json.loads(state.read_text())[-2:], ["--root", path])
+        self.assertEqual(len(self.calls("codex")), 2)
+        self.assertEqual(len(self.calls("gemini")), 2)
+
+    def test_claude_duplicate_stdout_replaces_only_the_named_user_entry(self):
+        self.claude_state(existing=True)
+        self.env["TEST_DUPLICATE_STREAM"] = "stdout"
+        self.assert_ok(self.run_launcher("root", "--mcp"))
+        calls = self.calls("claude")
+        self.assertEqual([call[1] for call in calls], ["add", "remove", "add"])
+        self.assertEqual(calls[0], calls[2])
+        self.assertEqual(calls[1], ["mcp", "remove", "--scope", "user", "koru_sliechti_a2ui"])
+
+    def test_claude_other_name_or_scope_never_triggers_removal(self):
+        state = self.claude_state(existing=True)
+        for name, scope in [("another_server", "user"), ("koru_sliechti_a2ui", "project")]:
+            with self.subTest(name=name, scope=scope):
+                self.log.unlink(missing_ok=True)
+                self.env["TEST_DUPLICATE_NAME"] = name
+                self.env["TEST_DUPLICATE_SCOPE"] = scope
+                result = self.run_launcher("root", "--mcp")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual([call[1] for call in self.calls("claude")], ["add"])
+                self.assertEqual(state.read_text(), '["existing registration"]')
+                self.assertNotIn("TEST_LAUNCH_ROOT", result.stdout)
+
+    def test_claude_removal_failure_does_not_attempt_replacement(self):
+        state = self.claude_state(existing=True)
+        self.env["TEST_CLAUDE_FAIL"] = "remove"
+        result = self.run_launcher("root", "--mcp")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([call[1] for call in self.calls("claude")], ["add", "remove"])
+        self.assertTrue(state.exists())
+        self.assertIn("removal failed (exit 9)", " ".join(result.stderr.split()))
+        self.assertIn("replacement was not attempted", " ".join(result.stderr.split()))
+        self.assertEqual(len(self.calls("gemini")), 1)
+        self.assertNotIn("TEST_LAUNCH_ROOT", result.stdout)
+
+    def test_claude_replacement_failure_reports_possibly_missing_entry(self):
+        state = self.claude_state(existing=True)
+        self.env["TEST_CLAUDE_FAIL"] = "readd"
+        result = self.run_launcher("root", "--mcp")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([call[1] for call in self.calls("claude")], ["add", "remove", "add"])
+        self.assertFalse(state.exists())
+        self.assertIn("replacement failed (exit 8)", " ".join(result.stderr.split()))
+        self.assertIn("entry may now be missing; retry this command", " ".join(result.stderr.split()))
+        self.assertEqual(len(self.calls("gemini")), 1)
+        self.assertNotIn("TEST_LAUNCH_ROOT", result.stdout)
 
     def test_build_failure_does_not_register(self):
         self.env["TEST_FAIL"] = "cargo"

@@ -32,9 +32,11 @@ function ConvertTo-NativeArgument([string] $Value) {
     return '"' + (($Value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
 }
 
-function Invoke-McpCli([string] $Executable, [string[]] $Arguments) {
+function Invoke-McpCli([string] $Executable, [string[]] $Arguments, [switch] $CaptureOutput) {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $CaptureOutput
+    $start.RedirectStandardError = $CaptureOutput
     if ([IO.Path]::GetExtension($Executable) -in @('.cmd', '.bat')) {
         # npm installs .cmd shims. Expand values exactly once from environment
         # inside quotes: %, &, ^ and ! in paths cannot become cmd source.
@@ -54,9 +56,60 @@ function Invoke-McpCli([string] $Executable, [string[]] $Arguments) {
     }
     $process = [Diagnostics.Process]::Start($start)
     try {
+        if ($CaptureOutput) {
+            # Drain both pipes concurrently: a diagnostic on one stream must
+            # not block behind a full buffer on the other.
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+        }
         $process.WaitForExit()
+        if ($CaptureOutput) {
+            return [pscustomobject]@{
+                ExitCode = $process.ExitCode
+                StdOut = $stdout.GetAwaiter().GetResult()
+                StdErr = $stderr.GetAwaiter().GetResult()
+            }
+        }
         return $process.ExitCode
     } finally { $process.Dispose() }
+}
+
+function Write-McpCliOutput($Result) {
+    [Console]::Out.Write($Result.StdOut)
+    [Console]::Error.Write($Result.StdErr)
+}
+
+function Register-ClaudeMcpBridge([string] $Executable, [string[]] $Arguments, [string] $Name) {
+    $result = Invoke-McpCli $Executable $Arguments -CaptureOutput
+    $duplicate = $false
+    foreach ($line in (($result.StdOut + "`n" + $result.StdErr) -split '\r?\n')) {
+        if ($line.Trim() -ceq "MCP server $Name already exists in user config") {
+            $duplicate = $true
+        }
+    }
+    if ($result.ExitCode -ne 0 -and $duplicate) {
+        # Claude add does not replace an existing user entry. Only its exact
+        # named duplicate diagnostic authorizes this targeted replacement;
+        # authentication, parsing and other add failures never remove anything.
+        Write-Host "[Koru] updating Claude user registration: $Name"
+        $removed = Invoke-McpCli $Executable @('mcp', 'remove', '--scope', 'user', $Name) -CaptureOutput
+        Write-McpCliOutput $removed
+        if ($removed.ExitCode -ne 0) {
+            throw "could not update '$Name': removal failed (exit $($removed.ExitCode)); replacement was not attempted."
+        }
+        try {
+            $result = Invoke-McpCli $Executable $Arguments -CaptureOutput
+        } catch {
+            throw "removed '$Name', but replacement could not start: $($_.Exception.Message). The entry may now be missing; retry this command."
+        }
+        Write-McpCliOutput $result
+        if ($result.ExitCode -ne 0) {
+            throw "removed '$Name', but replacement failed (exit $($result.ExitCode)). The entry may now be missing; retry this command."
+        }
+    } else {
+        Write-McpCliOutput $result
+    }
+    return $result.ExitCode
 }
 
 function Register-McpBridge([string] $Name, [string] $Bridge, [string] $RootPath) {
@@ -78,7 +131,11 @@ function Register-McpBridge([string] $Name, [string] $Bridge, [string] $RootPath
             'gemini' { $arguments = @('mcp', 'add', '--scope', 'user', $Name, $Bridge, '--') + $serve }
         }
         try {
-            $code = Invoke-McpCli $command.Source $arguments
+            if ($cli -eq 'claude') {
+                $code = Register-ClaudeMcpBridge $command.Source $arguments $Name
+            } else {
+                $code = Invoke-McpCli $command.Source $arguments
+            }
             if ($code -ne 0) { $failed += "${cli} (exit $code)" }
             else { Write-Host "[Koru] registered $Name with $cli" }
         } catch {
@@ -87,6 +144,6 @@ function Register-McpBridge([string] $Name, [string] $Bridge, [string] $RootPath
     }
     if ($found -eq 0) { throw 'None of claude, codex or gemini is on PATH; nothing was registered.' }
     if ($failed.Count -gt 0) {
-        throw "MCP registration failed: $($failed -join ', '). If '$Name' already exists, run koru.bat mcp-remove $Name and retry. Successful registrations were retained."
+        throw "MCP registration failed: $($failed -join ', '). Successful registrations in other clients were retained."
     }
 }
