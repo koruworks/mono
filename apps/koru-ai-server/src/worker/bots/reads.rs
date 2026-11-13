@@ -412,6 +412,38 @@ impl WorkerState {
         command: &BotCommand,
     ) -> Option<ApiResult<BotResponse>> {
         match command {
+            BotCommand::ListTaskBots {
+                workspace,
+                after,
+                limit,
+            } => Some((|| {
+                authorize(context, AiScope::ManageBots)?;
+                let proof = context
+                    .prepared
+                    .as_ref()
+                    .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+                let owner = proof.authority.owner().map_err(bot_failure)?;
+                proof.authority.workspace(*workspace).map_err(bot_failure)?;
+                let page = self
+                    .repository
+                    .bot_summary_page(owner, *workspace, *after, *limit)
+                    .map_err(bot_failure)?;
+                Ok(BotResponse::TaskBots { page })
+            })()),
+            BotCommand::ReadTaskAnswer {
+                bot_id,
+                chat_id,
+                attempt_id,
+                operation_id,
+                offset,
+            } => Some(self.read_task_answer(
+                context,
+                *bot_id,
+                *chat_id,
+                *attempt_id,
+                *operation_id,
+                *offset,
+            )),
             BotCommand::ListBotChats {
                 bot_id,
                 cursor,
@@ -427,6 +459,83 @@ impl WorkerState {
             } => Some(self.list_trashed_bot_chats(context, *workspace, cursor.as_ref(), *limit)),
             _ => None,
         }
+    }
+
+    /// Exact owner-authorized assistant projection, independent of whether
+    /// the execution owner's Run header has been published yet.
+    fn read_task_answer(
+        &self,
+        context: &CommandContext,
+        bot_id: BotId,
+        chat_id: ChatId,
+        attempt_id: InferenceAttemptId,
+        operation_id: uuid::Uuid,
+        offset: u64,
+    ) -> ApiResult<BotResponse> {
+        authorize(context, AiScope::ManageBots)?;
+        self.readable_owned_bot(context, bot_id)?;
+        if self.repository.bot_for_chat(chat_id).map_err(bot_failure)? != Some(bot_id) {
+            return Err(not_found());
+        }
+        if let Some(hold) = self
+            .repository
+            .bot_chat_hold(chat_id)
+            .map_err(bot_failure)?
+            .filter(|h| h.hides())
+        {
+            return Err(lifecycle::hold_failure(hold));
+        }
+        let attempt = self
+            .repository
+            .attempt(attempt_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if attempt.chat_id != Some(chat_id) || attempt.operation_id != operation_id {
+            return Err(not_found());
+        }
+        let message_id = attempt.assistant_message_id.ok_or_else(not_found)?;
+        let message = self
+            .repository
+            .message(message_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
+        if message.chat_id != chat_id || message.role != koru_ai_core::ChatRole::Assistant {
+            return Err(not_found());
+        }
+        let run_id = self
+            .repository
+            .bot_submission_for_attempt(attempt_id)
+            .map_err(ai_failure)?
+            .map(|receipt| receipt.intent.submission.request.run);
+        let (markdown, next_offset) = if attempt.status.is_terminal() {
+            let offset = usize::try_from(offset).map_err(|_| bot_failure(BotError::Invalid))?;
+            let text = &message.markdown;
+            if offset > text.len() || !text.is_char_boundary(offset) {
+                return Err(bot_failure(BotError::Invalid));
+            }
+            let mut end = offset.saturating_add(16 * 1024).min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            (
+                Some(text[offset..end].to_owned()),
+                (end < text.len()).then_some(end as u64),
+            )
+        } else {
+            if offset != 0 {
+                return Err(bot_failure(BotError::Invalid));
+            }
+            (None, None)
+        };
+        Ok(BotResponse::TaskAnswer {
+            answer: koru_ai_core::bots::BotTaskAnswer {
+                status: attempt.status,
+                message_id,
+                run_id,
+                markdown,
+                next_offset,
+            },
+        })
     }
 
     /// Running and Needs-you conversations of the owner's active Bots whose

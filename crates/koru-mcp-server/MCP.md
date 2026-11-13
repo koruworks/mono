@@ -199,6 +199,8 @@ The current tool surface is:
   `compare_document_versions`, and `restore_document_version` for history; and
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
   Koru AI chats; and
+- `list_bots`, `start_bot_task`, `read_bot_task`, and `stop_bot_task` for local
+  external assistants asking a Bot to work in its shared conversation; and
 - `show_document`, which shows a person a document in an interactive view,
   for hosts that render MCP Apps, with `read_image` and `watch_document`,
   which that view draws a document's images from and hears of a change
@@ -285,8 +287,9 @@ group (maintainers, 2026-11-02).
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
 | `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
+| `bots` | `list_bots`, `start_bot_task`, `read_bot_task`, `stop_bot_task` | 2,783 | 696 | 3,100 |
 | the view tools — listed with `docs`, in no toolset | `show_document`, `read_image`, `watch_document` | 1,511 | 378 | 1,650 |
-| every toolset on | the whole reply, envelope included | 25,961 | 6,491 | 27,200 |
+| every toolset on | the whole reply, envelope included | 28,744 | 7,186 | 30,300 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
@@ -294,6 +297,13 @@ adds about 45 bytes of envelope. Tokens are bytes over four. Measured
 `each_toolset_is_within_its_budget`, and the total by
 `the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
 decision recorded here.
+
+The `bots` and whole-reply rows were measured on 2026-11-13 when the four external task tools
+were added (M2); its 3,100-byte budget includes about 11% headroom and is added
+to the total. `start_bot_task` advertises potential destructive and open-world
+work because it delegates to the Bot's configured agent runtime. Those hints
+describe the operation; they grant no additional authority. List, read and
+Stop remain closed-world operations.
 
 **The view tools have a budget line of their own** (2026-11-11), and the
 total grew by it, from 25,550 to 27,200. They are in no router, so in no
@@ -1490,6 +1500,51 @@ the cursor cannot skip or duplicate messages. Interrupted and failed messages
 remain visible with their state. Each message body is capped at 16 KiB on a
 UTF-8 boundary and reports `truncated: true` when shortened; the result also
 reports the complete terminal-message count.
+
+## Bot task tools
+
+`list_bots`, `start_bot_task`, `read_bot_task`, and `stop_bot_task` let a local
+connected assistant ask a Bot to work in its main conversation. They belong to
+the `bots` toolset. Koru AI contexts, hosted MCP connections, and a Bot's native
+Run endpoint cannot call them. The conversation and Stop control in Koru use
+the same attempt and executor as the external request.
+
+List with `workspace` and `limit` (1 to 100); follow `next_cursor`. Start with
+`workspace`, `bot_id`, a fresh UUID v4 `request_id`, `text`, and optional
+`document_ids` (at most sixteen). The accepted response returns `attempt_id`.
+An accepted task continues if the caller disconnects. If submission is
+uncertain, retry **the identical request and UUID**: the durable conversation
+receipt prevents duplicate work; changed input under that UUID conflicts.
+Never automatically generate a replacement UUID after a timeout.
+
+Read and Stop name the same `workspace`, `bot_id`, `request_id`, and accepted
+`attempt_id`. Read returns truthful attempt status, the actual terminal
+assistant answer (including partial text on failure or interruption), and
+confirmed saved-page references. An answer without a saved page is a result.
+Pending answers are `null`; results can separately be `preparing` or
+`unavailable` while the execution owner has no readable Run. Poll the same
+request later. Follow `next_cursor` to recover all terminal text and references:
+each page carries at most 16 KiB of answer text and twenty references, and its
+entire escaped JSON fits 128 KiB. References contain base64 confirmed versions;
+use ordinary `read_document` with its own permission to read the saved content.
+No execution session, provider payload, reasoning, or tool output is returned.
+
+The bridge requests `bots.read`, `bots.run`, and `store.read_documents` on a
+separate connection. The first two scopes are explicit opt-ins, never default
+gateway permissions; neither grants `bots.manage` or `ai.chat`. Direct API
+callers need `store.read_documents` only when selecting document IDs. Current
+Bot owner, home-workspace, lifecycle, and selected-document authority are still
+checked by the shared engine. New work on a paused Bot refuses. Exact retries
+return the original receipt where the shared lifecycle permits; archived
+mutations refuse, archived history remains readable, and Trash hides it. A
+trashed main conversation is a refusal, never a replacement conversation.
+
+This local authentication boundary is the OS user. Caller-selected product
+labels are audit text, not separate authenticated app identities. All clients
+of the same engine-established owner share the request UUID namespace; reuse
+of a UUID for a different Bot also conflicts. A client must retain its receipt
+and request UUID; guessed UI-origin or unrelated attempt IDs do not grant reads
+or control.
 
 ## Preconditions, history, and durability
 

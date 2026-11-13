@@ -2935,6 +2935,84 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "description": "Bounded owner roster for the external task facade, without configuration.",
+            "properties": {
+              "after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "command": {
+                "enum": [
+                  "list_task_bots"
+                ],
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "workspace": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "command",
+              "workspace",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Read only the terminal assistant text of one exactly bound task.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "command": {
+                "enum": [
+                  "read_task_answer"
+                ],
+                "type": "string"
+              },
+              "offset": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "operation_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "chat_id",
+              "attempt_id",
+              "operation_id",
+              "offset"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "properties": {
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -5042,6 +5120,42 @@
         "oneOf": [
           {
             "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotSummaryPage"
+              },
+              "result": {
+                "enum": [
+                  "task_bots"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "answer": {
+                "$ref": "#/components/schemas/BotTaskAnswer"
+              },
+              "result": {
+                "enum": [
+                  "task_answer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "answer"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "operation": {
                 "$ref": "#/components/schemas/BotLifecycleProgress"
               },
@@ -5261,6 +5375,14 @@
           }
         ]
       },
+      "BotResultsState": {
+        "enum": [
+          "preparing",
+          "available",
+          "unavailable"
+        ],
+        "type": "string"
+      },
       "BotRoleInput": {
         "description": "The Role a new Bot starts with.",
         "oneOf": [
@@ -5310,6 +5432,66 @@
           }
         ]
       },
+      "BotSummary": {
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/BotLifecycle"
+          },
+          "main_chat": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bot_id",
+          "name",
+          "main_chat",
+          "revision",
+          "paused",
+          "lifecycle"
+        ],
+        "type": "object"
+      },
+      "BotSummaryPage": {
+        "properties": {
+          "bots": {
+            "items": {
+              "$ref": "#/components/schemas/BotSummary"
+            },
+            "type": "array"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "bots"
+        ],
+        "type": "object"
+      },
       "BotTask": {
         "additionalProperties": false,
         "properties": {
@@ -5326,6 +5508,74 @@
         "required": [
           "text",
           "documents"
+        ],
+        "type": "object"
+      },
+      "BotTaskAnswer": {
+        "description": "Internal owner projection. Run identity is for the facade's authorized\nresult read; it is never an external control handle.",
+        "properties": {
+          "markdown": {
+            "nullable": true,
+            "type": "string"
+          },
+          "message_id": {
+            "$ref": "#/components/schemas/MessageId"
+          },
+          "next_offset": {
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AttemptStatus"
+          }
+        },
+        "required": [
+          "status",
+          "message_id"
+        ],
+        "type": "object"
+      },
+      "BotTaskResult": {
+        "properties": {
+          "confirmed_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "document_id": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "description": "The confirmed version, encoded as standard base64.",
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "document_id",
+          "workspace",
+          "title",
+          "version",
+          "confirmed_at_ms"
         ],
         "type": "object"
       },
@@ -10444,6 +10694,48 @@
         ],
         "type": "object"
       },
+      "ListBotsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ListBotsResponse": {
+        "properties": {
+          "bots": {
+            "items": {
+              "$ref": "#/components/schemas/BotSummary"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "bots"
+        ],
+        "type": "object"
+      },
       "ListChatsResponse": {
         "properties": {
           "chats": {
@@ -13129,6 +13421,70 @@
           "session_id",
           "sequence",
           "bytes"
+        ],
+        "type": "object"
+      },
+      "ReadBotTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "cursor": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "bot_id",
+          "request_id",
+          "attempt_id"
+        ],
+        "type": "object"
+      },
+      "ReadBotTaskResponse": {
+        "properties": {
+          "answer": {
+            "description": "None until terminal; terminal failures may contain a partial answer.",
+            "nullable": true,
+            "type": "string"
+          },
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BotTaskResult"
+            },
+            "type": "array"
+          },
+          "results_state": {
+            "$ref": "#/components/schemas/BotResultsState"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AttemptStatus"
+          }
+        },
+        "required": [
+          "attempt_id",
+          "status",
+          "results_state",
+          "results"
         ],
         "type": "object"
       },
@@ -17529,6 +17885,37 @@
         ],
         "type": "object"
       },
+      "StartBotTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "document_ids": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentId"
+            },
+            "type": "array"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "bot_id",
+          "request_id",
+          "text"
+        ],
+        "type": "object"
+      },
       "Status": {
         "description": "`GET /v1/status`.",
         "properties": {
@@ -18048,6 +18435,30 @@
             "type": "object"
           }
         ]
+      },
+      "StopBotTaskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "$ref": "#/components/schemas/InferenceAttemptId"
+          },
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "bot_id",
+          "request_id",
+          "attempt_id"
+        ],
+        "type": "object"
       },
       "Stopping": {
         "description": "`POST /v1/shutdown`.",
@@ -22007,6 +22418,350 @@
           }
         ],
         "summary": "Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or a task started through the API, request admission, or stop a task started through the API"
+      }
+    },
+    "/v1/ai/bots/list": {
+      "post": {
+        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
+        "operationId": "ai_list_bots",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListBotsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBotsResponse"
+                }
+              }
+            },
+            "description": "A bounded owner-authorized projection; no configuration or execution handles."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.read"
+            ]
+          }
+        ],
+        "summary": "Authorized local Bot task operation: list_bots"
+      }
+    },
+    "/v1/ai/bots/tasks/read": {
+      "post": {
+        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
+        "operationId": "ai_read_bot_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadBotTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadBotTaskResponse"
+                }
+              }
+            },
+            "description": "A bounded owner-authorized projection; no configuration or execution handles."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.read"
+            ]
+          }
+        ],
+        "summary": "Authorized local Bot task operation: read_bot_task"
+      }
+    },
+    "/v1/ai/bots/tasks/start": {
+      "post": {
+        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
+        "operationId": "ai_start_bot_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartBotTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendTurnAccepted"
+                }
+              }
+            },
+            "description": "A bounded owner-authorized projection; no configuration or execution handles."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.run"
+            ]
+          }
+        ],
+        "summary": "Authorized local Bot task operation: start_bot_task"
+      }
+    },
+    "/v1/ai/bots/tasks/stop": {
+      "post": {
+        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
+        "operationId": "ai_stop_bot_task",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopBotTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelAttemptResponse"
+                }
+              }
+            },
+            "description": "A bounded owner-authorized projection; no configuration or execution handles."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.run"
+            ]
+          }
+        ],
+        "summary": "Authorized local Bot task operation: stop_bot_task"
       }
     },
     "/v1/ai/chats": {

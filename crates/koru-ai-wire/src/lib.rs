@@ -8,6 +8,8 @@
 use std::collections::BTreeMap;
 
 pub use koru_ai_core::bots::{BotCommand, BotResponse};
+mod bot_tools;
+pub use bot_tools::*;
 use koru_ai_core::{
     AiError, AiEvent, AiProviderId, AiSearchPage, AiSurface, AiUsage, AttemptStatus, Chat, ChatId,
     ChatToolPolicy, ContextRef, DocumentDestination, DocumentExport, DocumentExportId,

@@ -500,6 +500,8 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
     matches!(
         request,
         BotCommand::Read { .. }
+            | BotCommand::ReadTaskAnswer { .. }
+            | BotCommand::ListTaskBots { .. }
             | BotCommand::ReadOperation { .. }
             | BotCommand::ReadLifecycleOperation { .. }
             | BotCommand::List { .. }
