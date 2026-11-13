@@ -2,7 +2,7 @@
 use super::*;
 mod migration;
 
-fn request(h: &Harness, seed: bool) -> AllocateMemoryEditRequest {
+pub(super) fn request(h: &Harness, seed: bool) -> AllocateMemoryEditRequest {
     let provenance =
         h.db.bot_admission(h.fence.run)
             .unwrap()

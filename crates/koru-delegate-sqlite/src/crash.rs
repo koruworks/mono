@@ -33,6 +33,7 @@ pub enum WriteOp {
     ConfirmNativeResult,
     RegisterNativeResult,
     AdmitBot,
+    RegisterRoutineRoute,
     ApplyBotBarrier,
     ReserveBot,
     RecoverBotReservation,
@@ -72,7 +73,8 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 44] = [
+        Self::RegisterRoutineRoute,
         Self::AllocateMemoryEdit,
         Self::ResolveMemoryEditBase,
         Self::PrepareMemoryEdit,

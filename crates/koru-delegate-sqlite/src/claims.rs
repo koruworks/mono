@@ -95,6 +95,7 @@ impl RunsDb {
         let payload =
             serde_json::to_string(request).map_err(|_| LedgerError::PayloadUnencodable)?;
         self.write(WriteOp::ClaimScheduledRun, |tx, _now| {
+            crate::bots::routines::deny_schedule(tx, schedule)?;
             let claimed = match read(tx, schedule, occurrence_ms)? {
                 Some(existing) => match existing.state {
                     SlotState::Claimed => ClaimedSlot {
@@ -203,6 +204,7 @@ impl RunsDb {
             return Err(LedgerError::RevisionZero);
         }
         self.write(WriteOp::ClaimSkip, |tx, _now| {
+            crate::bots::routines::deny_schedule(tx, schedule)?;
             let due = claim_skip_in_tx(
                 tx,
                 claimed_at_ms,
@@ -264,6 +266,7 @@ impl RunsDb {
         let payload =
             serde_json::to_string(request).map_err(|_| LedgerError::PayloadUnencodable)?;
         self.write(WriteOp::ClaimScheduledRun, |tx, _now| {
+            crate::bots::routines::deny_schedule(tx, schedule)?;
             if let Some(existing) = read(tx, schedule, occurrence_ms)? {
                 return match existing.state {
                     SlotState::Claimed => Ok(ClaimedSlot {
@@ -353,6 +356,7 @@ impl RunsDb {
         }
         validate_skip(outcome, busy_holder)?;
         self.write(WriteOp::ClaimSkip, |tx, _now| {
+            crate::bots::routines::deny_schedule(tx, schedule)?;
             claim_skip_in_tx(
                 tx,
                 claimed_at_ms,
@@ -383,6 +387,7 @@ impl RunsDb {
             return Err(LedgerError::RevisionZero);
         }
         self.write(WriteOp::ClaimSlot, |tx, now| {
+            crate::bots::routines::deny_schedule(tx, schedule)?;
             if let Some(existing) = read(tx, schedule, occurrence_ms)? {
                 return Err(LedgerError::SlotAlreadyClaimed {
                     run: existing.run,

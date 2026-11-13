@@ -68,11 +68,15 @@ fn decode_initial_send(row: &Row<'_>) -> Result<Option<BotInitialSend>, LedgerEr
 }
 fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
     let payload: String = cell(row, "payload_json")?;
+    let submission_version: u8 = cell(row, "submission_version")?;
+    if payload.len() > 4 * 1024 * 1024 || !matches!(submission_version, 1 | 2) {
+        return Err(corrupt("submission_version"));
+    }
     let submission: BotSubmission =
         serde_json::from_str(&payload).map_err(|_| corrupt("payload_json"))?;
     let p = &submission.provenance;
     if payload.len() > 4 * 1024 * 1024
-        || !submission.valid()
+        || !submission.valid_for_version(u32::from(submission_version))
         || cell::<String>(row, "run_id")? != submission.request.run.to_storage()
         || cell::<String>(row, "user_scope")? != p.owner.user_scope.to_storage()
         || cell::<String>(row, "device_id")? != p.owner.device.to_storage()
@@ -140,6 +144,7 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
         return Err(corrupt("state"));
     }
     Ok(BotAdmissionRecord {
+        submission_version,
         submission,
         sequence,
         state,
@@ -299,7 +304,8 @@ impl BotLedger for RunsDb {
         &mut self,
         submission: &BotSubmission,
     ) -> Result<BotAdmissionRecord, BotLedgerError> {
-        if !submission.valid() {
+        let submission_version = if submission.provenance.routine.is_some() { 2 } else { 1 };
+        if !submission.valid_for_version(submission_version) {
             return Err(BotLedgerError::Invalid);
         }
         let payload = serde_json::to_string(submission).map_err(|_| BotLedgerError::Invalid)?;
@@ -314,6 +320,8 @@ impl BotLedger for RunsDb {
             if let Some(existing)=reconcile(tx,&key)? {
                 return if existing.submission==*submission {Ok(existing)} else {Err(BotLedgerError::Conflict)};
             }
+            // Generic admission can replay retained facts but cannot create Routine work.
+            if submission_version != 1 { return Err(BotLedgerError::Fenced); }
             let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1)",[submission.request.run.to_storage()],|r|r.get(0)).map_err(sql)?;
             if exists { return Err(BotLedgerError::Conflict); }
             if let Some(b)=barrier(tx,p.owner,p.bot)? {
@@ -368,7 +376,7 @@ impl BotLedger for RunsDb {
         let Ok(after) = i64::try_from(after) else {
             return Ok(vec![]);
         };
-        let mut stmt=self.conn().prepare("SELECT run_id,user_scope,device_id,bot_id,queue_sequence,config_revision,policy_revision FROM bot_admissions WHERE state IN ('queued','reserved') AND queue_sequence>?1 ORDER BY queue_sequence LIMIT ?2").map_err(sql)?;
+        let mut stmt=self.conn().prepare("SELECT run_id,user_scope,device_id,bot_id,queue_sequence,config_revision,policy_revision FROM bot_admissions WHERE submission_version=1 AND state IN ('queued','reserved') AND queue_sequence>?1 ORDER BY queue_sequence LIMIT ?2").map_err(sql)?;
         let rows = stmt
             .query_map(params![after, limit.clamp(1, 1000)], |r| {
                 Ok((
@@ -462,6 +470,7 @@ impl BotLedger for RunsDb {
     fn reserve_bot(&mut self, run: RunId) -> Result<BotReservation, BotLedgerError> {
         self.write_with_error(WriteOp::ReserveBot,|tx,now| {
             let record=required(tx,run)?;
+            if record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
             match record.state {
                 BotAdmissionState::Reserved|BotAdmissionState::Executing=>return Ok(BotReservation::AlreadyOwned),
                 BotAdmissionState::Settled|BotAdmissionState::Refused=>return Ok(BotReservation::Settled),
@@ -486,6 +495,7 @@ impl BotLedger for RunsDb {
     ) -> Result<(), BotLedgerError> {
         self.write_with_error(WriteOp::ActivateBot,|tx,now| {
             let record=required(tx,run)?;
+            if record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
             current(tx,run,attempt,g,true)?;
             if record.state==BotAdmissionState::Executing {return Ok(())}
             if record.state!=BotAdmissionState::Reserved || record.active_elapsed_at(now)>=BOT_ACTIVE_BUDGET_MS {return Err(BotLedgerError::Fenced)}
@@ -502,6 +512,7 @@ impl BotLedger for RunsDb {
     ) -> Result<(), BotLedgerError> {
         self.write_with_error(WriteOp::SetBotActive,|tx,now| {
             let record=required(tx,run)?;
+            if active && record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
             current(tx,run,attempt,g,true)?;
             if record.state!=BotAdmissionState::Executing {return Err(BotLedgerError::Fenced)}
             if record.active_since_ms.is_some()==active {return Ok(())}
@@ -537,6 +548,7 @@ impl BotLedger for RunsDb {
         }
         self.write_with_error(WriteOp::PrepareBotInitialSend,|tx,now| {
             let record=required(tx,run)?;
+            if record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
             if let Some(old)=record.initial_send {
                 if old.attempt==send.attempt && old.generation==send.generation && old.key==send.key && old.fingerprint==send.fingerprint {return Ok(old)}
                 return Err(BotLedgerError::Fenced);
