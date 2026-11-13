@@ -137,6 +137,21 @@ pub(super) fn key(row: &Row<'_>) -> Result<NativeResultKey, BotLedgerError> {
         operation_id: uuid(row, "operation_id")?,
     })
 }
+pub(super) fn purpose(row: &Row<'_>) -> Result<NativeEffectPurpose, BotLedgerError> {
+    let raw = cell::<Option<String>>(row, "memory_authority_json")?;
+    match (cell::<String>(row, "effect_purpose")?.as_str(), raw) {
+        ("result", None) => Ok(NativeEffectPurpose::Result {}),
+        ("memory", Some(raw)) if !raw.is_empty() && raw.len() <= 4096 => {
+            let authority: MemoryEditAuthorityV1 =
+                serde_json::from_str(&raw).map_err(|_| corrupt("memory_authority_json"))?;
+            if !authority.valid() {
+                return Err(corrupt("memory_authority_json"));
+            }
+            Ok(NativeEffectPurpose::Memory { authority })
+        }
+        _ => Err(corrupt("effect_purpose")),
+    }
+}
 fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
     let key = key(row)?;
     let kind = match cell::<String>(row, "kind")?.as_str() {
@@ -219,6 +234,7 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
         .transpose()?;
     let mut record = NativeIntentRecord {
         key,
+        purpose: purpose(row)?,
         kind,
         destination,
         target,
@@ -338,6 +354,7 @@ pub(super) fn read(
                 return Err(corrupt("lease_policy"));
             }
         }
+        memory::validate_record(conn, record)?;
     }
     Ok(record)
 }
@@ -354,7 +371,7 @@ pub(super) fn created(
     workspace: WorkspaceId,
     document: DocumentId,
 ) -> Result<bool, BotLedgerError> {
-    let found = conn.query_row("SELECT n.run_id,n.operation_id,n.attempt_id,n.generation,n.turn_id FROM native_result_intents n JOIN bot_admissions b ON b.run_id=n.run_id WHERE n.destination_workspace_id=?1 AND n.target_document_id=?2 AND n.kind='create_page' AND n.stage IN ('verified','registered') AND b.user_scope=?3 AND b.device_id=?4 AND b.bot_id=?5",params![workspace.to_storage(),document.to_storage(),owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|row|Ok(key(row))).optional().map_err(sql)?.transpose()?;
+    let found = conn.query_row("SELECT n.run_id,n.operation_id,n.attempt_id,n.generation,n.turn_id FROM native_result_intents n JOIN bot_admissions b ON b.run_id=n.run_id WHERE n.destination_workspace_id=?1 AND n.target_document_id=?2 AND n.effect_purpose='result' AND n.kind='create_page' AND n.stage IN ('verified','registered') AND b.user_scope=?3 AND b.device_id=?4 AND b.bot_id=?5",params![workspace.to_storage(),document.to_storage(),owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|row|Ok(key(row))).optional().map_err(sql)?.transpose()?;
     let Some(key) = found else {
         return Ok(false);
     };

@@ -1153,6 +1153,7 @@ pub(crate) struct IssuedLaunch {
 
 #[derive(Default)]
 pub(crate) struct AuthorityLog {
+    pub folder_lookups: Vec<RunId>,
     pub issued: Vec<IssuedLaunch>,
     pub revoked: Vec<RunId>,
     /// The working folder each run's record holds, as the real store would
@@ -1221,7 +1222,9 @@ impl McpEndpoints for StubMcp {
     }
 
     fn run_workspace(&mut self, run: RunId) -> PortResult<Option<PathBuf>> {
-        Ok(self.log.lock().unwrap().workspaces.get(&run).cloned())
+        let mut log = self.log.lock().unwrap();
+        log.folder_lookups.push(run);
+        Ok(log.workspaces.get(&run).cloned())
     }
 
     fn forget(&mut self, run: RunId) -> PortResult<()> {

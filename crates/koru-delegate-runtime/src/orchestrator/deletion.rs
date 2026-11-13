@@ -93,6 +93,44 @@ impl Orchestrator {
     /// order the module docs give.
     pub fn purge(&mut self, run: RunId) -> Result<Purged, RunError> {
         let place = self.place(run)?;
+        // Bot state is retained for task and effect recovery. Classify before
+        // any folder lookup/removal or artifact/MCP/ledger cleanup: a later FK
+        // refusal must never leave a partially deleted Bot Run.
+        let admission = self
+            .ports
+            .store
+            .bots()
+            .ok_or_else(retention_unavailable)?
+            .bot_admission(run)
+            .map_err(|_| retention_unavailable())?;
+        if admission.is_some() {
+            return Err(retention_refusal(
+                "bot_retained_state",
+                "This Bot Run retains task and recovery state and cannot be permanently deleted.",
+            ));
+        }
+        let facts = self
+            .ports
+            .store
+            .intent_facts(run)
+            .map_err(|_| retention_unavailable())?;
+        if place.header.bot.is_some()
+            || matches!(
+                place.header.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            )
+            || facts.as_ref().is_some_and(|f| {
+                matches!(
+                    f.scope,
+                    koru_delegate_core::WorkspaceScope::BotFolder { .. }
+                )
+            })
+        {
+            return Err(retention_refusal(
+                "bot_retention_inconsistent",
+                "Bot provenance is inconsistent; retained state cannot be safely removed.",
+            ));
+        }
         // A run that is still working never reached the trash, and a
         // restart could not have started it there either — but the empty is
         // the irreversible half, so it asks again rather than trusting that
@@ -110,10 +148,7 @@ impl Orchestrator {
         // the run started. Neither is re-derived: a base a person has since
         // changed or a project that has moved would name a different
         // directory, and that is how a delete removes the wrong thing.
-        let scope = self
-            .ports
-            .store
-            .intent_facts(run)?
+        let scope = facts
             .map(|facts| facts.scope)
             .unwrap_or(koru_delegate_core::WorkspaceScope::None);
         let folder = self.ports.mcp.run_workspace(run)?;
@@ -174,4 +209,14 @@ impl Orchestrator {
             workspace,
         })
     }
+}
+
+fn retention_refusal(code: &'static str, detail: &'static str) -> RunError {
+    crate::ports::PortError::new(crate::ports::Port::Store, code, detail).into()
+}
+fn retention_unavailable() -> RunError {
+    retention_refusal(
+        "bot_retention_unavailable",
+        "Retained Bot state could not be checked. Retry when the local ledger is available.",
+    )
 }

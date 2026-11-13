@@ -82,6 +82,7 @@ impl BotDelegatePort for Owner {
                 state.prepares += 1;
                 if state.intent.is_none() {
                     state.intent = Some(NativeResultIntentView {
+                        purpose: NativeEffectPurpose::Result {},
                         key: request.key,
                         kind: request.kind,
                         destination: request.destination,
@@ -274,6 +275,7 @@ impl Fixture {
         let mut state = self.owner.state.lock().unwrap();
         state.held = held;
         state.intent = Some(NativeResultIntentView {
+            purpose: NativeEffectPurpose::Result {},
             key: NativeResultKey {
                 run: self.record.run,
                 attempt: self.owner.fence.attempt,

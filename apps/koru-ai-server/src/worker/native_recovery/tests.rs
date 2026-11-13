@@ -277,6 +277,7 @@ impl BotDelegatePort for Port {
                 }
                 Ok(BotReply::NativeResult {
                     intent: NativeResultIntentView {
+                        purpose: koru_delegate_core::NativeEffectPurpose::Result {},
                         key: self.target.key.clone(),
                         kind: NativeResultOperation::CreatePage,
                         destination: self.target.binding.workspace,
@@ -288,6 +289,16 @@ impl BotDelegatePort for Port {
                         disposition: NativeResultDisposition::ReconcileOnly,
                     },
                 })
+            }
+            BotCommand::Hello { owner, .. } => {
+                assert_eq!(owner, self.target.owner);
+                // The independent Bot boot scan starts for each worker. This
+                // drain fixture supplies no inventory or execution authority.
+                Err(koru_delegate_api::Failure::new(
+                    "fixture_boot_unavailable",
+                    "Bot boot inventory is unavailable in this drain fixture",
+                    true,
+                ))
             }
             _ => panic!("no execution or ordinary read command belongs in recovery"),
         }

@@ -40,7 +40,8 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 11 separates automatic Bot interruption from explicit owner Stop.
 // Version 12 adds the per-Bot unsettled-work read lifecycle settles from.
 // Version 13 binds queued Bot dispatch to current-owner replay for this boot.
-pub const WIRE_VERSION: u8 = 13;
+// Version 14 separates scoped Memory allocations/effects from saved results.
+pub const WIRE_VERSION: u8 = 14;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

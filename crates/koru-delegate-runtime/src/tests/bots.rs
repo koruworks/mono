@@ -38,6 +38,7 @@ impl BotLedger for RecordingStore {
         self.inner.lock().unwrap().admit_bot(submission)
     }
     fn bot_admission(&self, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
+        self.check("bot_admission_read")?;
         self.inner.lock().unwrap().bot_admission(run)
     }
     fn bot_execution(&self, run: RunId) -> Result<Option<BotExecutionRecord>, BotLedgerError> {

@@ -691,9 +691,9 @@ fn populated_runs_five_delivery_migrates_and_repairs_once_with_exact_receipt() {
     let (mut db, _) = memory();
     let (submission, receipt) = delivered(&mut db);
     db.record_bot_delivery(&receipt).unwrap();
-    // Remove only the unshipped v6 additions to construct the actual v5 shape,
+    // Remove later additions to construct the actual v5 shape,
     // retaining populated canonical v5 admission, attempt and delivery columns.
-    db.conn().execute_batch("DROP TABLE native_result_intents; DROP TABLE bot_policy_barriers; DROP INDEX bot_delivery_publication_identity; ALTER TABLE bot_admissions DROP COLUMN delivery_publication_event_id; PRAGMA user_version=5;").unwrap();
+    db.conn().execute_batch("DROP TABLE bot_memory_edit_allocations; DROP TABLE native_result_intents; DROP TABLE bot_policy_barriers; DROP INDEX bot_delivery_publication_identity; ALTER TABLE bot_admissions DROP COLUMN delivery_publication_event_id; PRAGMA user_version=5;").unwrap();
     db.migrate_in_memory();
     db.migrate_in_memory();
     let migrated = db.bot_admission(receipt.run).unwrap().unwrap();

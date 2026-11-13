@@ -6,6 +6,7 @@ use super::{Orchestrator, RunError, bots::refused};
 use koru_delegate_core::*;
 use koru_delegate_sqlite::{NativeIntentRecord, NativeResultLedger};
 mod drain;
+mod memory;
 
 const POLICY_PROOFS: usize = 64;
 
@@ -340,6 +341,17 @@ impl Orchestrator {
             .verified
             .as_ref()
             .ok_or_else(|| refused("bot_native_invalid"))?;
+        if matches!(record.purpose, NativeEffectPurpose::Memory { .. }) {
+            // Memory edits settle in the existing effect journal. They are
+            // never saved-result references or generic created-page grants.
+            if record.stage == NativeResultStage::Registered {
+                return Ok(record.view());
+            }
+            return Ok(self
+                .native_ledger()?
+                .register_native_result(&record.key, evidence)?
+                .view());
+        }
         let state = self.open(record.key.run)?;
         state
             .doc
