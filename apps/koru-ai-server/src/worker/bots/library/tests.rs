@@ -5,6 +5,7 @@ use koru_ai_core::{AiSurface, ProfileId};
 use koru_delegate_core as d;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+mod memory;
 
 fn fixture() -> (Repository, Bot, Arc<dyn BotAuthority>) {
     let (mut repo, authority, command) = super::super::tests::fixture();
@@ -382,7 +383,7 @@ fn sixteen_knowledge_and_sixteen_task_pages_capture_thirty_three_pins() {
 }
 
 #[test]
-fn unexpected_memory_binding_refuses_new_task_without_false_absent_capture() {
+fn bound_memory_requires_separate_capture_and_never_whole_document_pin() {
     let (mut repo, bot, _) = fixture();
     let owner = BotOwner {
         user_scope: bot.user_scope,
@@ -413,13 +414,15 @@ fn unexpected_memory_binding_refuses_new_task_without_false_absent_capture() {
     )
     .unwrap();
     let bot = repo.bot(bot.id).unwrap().unwrap();
-    assert_eq!(
-        LibrarySources::read(&repo, &bot, vec![])
-            .err()
-            .unwrap()
-            .code,
-        "unsupported_capability"
-    );
+    let sources = LibrarySources::read(&repo, &bot, vec![]).unwrap();
+    assert!(sources.memory_capture.is_none());
+    let page = BotPage {
+        workspace: bot.home_workspace,
+        document: creation.identity.candidate,
+    };
+    assert_eq!(sources.memory_binding.as_ref().unwrap().page, page);
+    assert!(!sources.pages().contains(&page));
+    assert!(LibrarySources::read(&repo, &bot, vec![page]).is_err());
 }
 
 struct Pages {
@@ -489,6 +492,18 @@ struct ExactHistory {
     pins: Vec<d::RunContextItem>,
 }
 impl BotAuthority for ExactHistory {
+    fn replay_memory_index(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        home: WorkspaceId,
+        capture: &BotLibraryCapture,
+        binding: Option<&BotMemoryBinding>,
+        cancellation: &Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        self.inner
+            .replay_memory_index(owner, reader, home, capture, binding, cancellation)
+    }
     fn pinned_document_revision(
         &self,
         owner: BotOwner,

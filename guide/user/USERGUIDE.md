@@ -6493,6 +6493,12 @@ the Bot's home workspace and use the arrow controls to put them in order.
 **Save** applies this list to new tasks; an existing task keeps the versions
 captured when it started. A page can be both the Role and a Knowledge source.
 
+Retrying a task reads its context again. When Koru automatically retries a
+refused task, it keeps the pages selected for that task separately from the
+Bot's Role and Knowledge. A selected page remains selected if it also appears
+in the Library. If Koru cannot verify that selection, it leaves the failed
+reply for you to retry.
+
 Knowledge supplies context. It does not grant permission to edit those pages;
 the separate **Access** settings control that permission. The Knowledge draft
 also stays separate from unsaved Access changes. **Discard edits** returns to
