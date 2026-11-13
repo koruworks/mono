@@ -105,6 +105,7 @@ struct HostedAccount {
     minted: AtomicUsize,
     /// Whether the account has Koru Cloud.
     subscribed: AtomicBool,
+    complimentary: AtomicBool,
 }
 
 impl HostedAccount {
@@ -216,6 +217,8 @@ impl Transport for HostedAccount {
             return Self::json(&serde_json::json!({
                 "subscriptions": subscriptions,
                 "next_cursor": null,
+                "cloud_access": self.subscribed.load(Ordering::Acquire)
+                    || self.complimentary.load(Ordering::Acquire),
             }));
         }
         if path == "/v1/account/cloud/workspaces" {
@@ -895,6 +898,40 @@ fn a_profile_created_with_the_account_starts_syncing_by_itself() {
     assert_eq!(fixture.port.opened().len(), 1);
 }
 
+#[test]
+fn complimentary_access_starts_a_created_profile_without_a_subscription() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), false, 1);
+    fixture.hosted.complimentary.store(true, Ordering::Release);
+    let outcome = fixture
+        .service
+        .execute(
+            7,
+            AccountCommand::InspectCloudSubscription { request_id: 21 },
+            Some(&restored()),
+            &Cancel(Arc::new(AtomicBool::new(false))),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(
+        outcome.result,
+        AccountOperationResult::CloudSubscription {
+            request_id: 21,
+            current: Some(false),
+            access: Some(true),
+        }
+    );
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert_eq!(fixture.port.opened(), vec![fixture.profile]);
+    assert_eq!(fixture.hosted.subscription_reads(), 1);
+
+    // A fresh Agent also uses the grant when no settings page has asked yet.
+    let mut fixture = created_with_the_account(a_new_account_profile(), false, 1);
+    fixture.hosted.complimentary.store(true, Ordering::Release);
+    let rows = fixture.inspect().unwrap();
+    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+}
+
 /// With no Koru Cloud there is nothing to start, and the account is asked
 /// once rather than on every heartbeat. The pass after the settings page
 /// sees a subscription is the one that starts it.
@@ -929,7 +966,8 @@ fn it_waits_for_koru_cloud_without_asking_on_every_pass() {
         outcome.result,
         AccountOperationResult::CloudSubscription {
             request_id: 21,
-            current: Some(true)
+            current: Some(true),
+            access: Some(true),
         }
     );
     let rows = fixture.inspect().unwrap();
@@ -997,7 +1035,7 @@ fn a_switch_somebody_moved_is_never_overridden_by_the_default() {
         .service
         .cloud_sync_starts_on(account, fixture.profile);
     fixture.hosted.subscribed.store(true, Ordering::Release);
-    fixture.service.cloud_subscribed = None;
+    fixture.service.cloud_access = None;
     let rows = fixture.inspect().unwrap();
     assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (false, 0));
     assert_eq!(fixture.hosted.lifecycle_calls(), 0);

@@ -329,14 +329,10 @@ impl ProductionAccountService {
     /// The settings page's own question (`InspectCloudSubscription`) is
     /// remembered, so the usual pass costs nothing. Only an Agent nobody has
     /// asked yet reads it here, once: a `false` is kept until the page asks
-    /// again, so an account with no subscription is not polled on the
+    /// again, so an account with no access is not polled on the
     /// heartbeat. A read that failed is not an answer and is asked again.
-    fn cloud_subscription_known(
-        &mut self,
-        account: KoruIdentityId,
-        cancel: &Cancel,
-    ) -> Option<bool> {
-        if let Some((known, current)) = self.cloud_subscribed
+    fn cloud_access_known(&mut self, account: KoruIdentityId, cancel: &Cancel) -> Option<bool> {
+        if let Some((known, current)) = self.cloud_access
             && known == account
         {
             return Some(current);
@@ -344,9 +340,10 @@ impl ProductionAccountService {
         let authorization = self.authorization().ok()?;
         let current = self
             .client
-            .has_cloud_subscription(&authorization, &|| cancel.cancelled())
-            .ok()?;
-        self.cloud_subscribed = Some((account, current));
+            .cloud_subscription_status(&authorization, &|| cancel.cancelled())
+            .ok()?
+            .cloud_access;
+        self.cloud_access = Some((account, current));
         Some(current)
     }
 
@@ -837,7 +834,7 @@ impl ProductionAccountService {
             // next pass.
             let waiting = applied.is_none()
                 && profile_state.starts_on
-                && self.cloud_subscription_known(account, cancel) == Some(true);
+                && self.cloud_access_known(account, cancel) == Some(true);
             // **Cloud sync on means the Store is open to Cloud.** One rule,
             // however the Profile came to be on: the switch, the default, or
             // another device's switch mirrored here. The two used to be

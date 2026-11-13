@@ -97,6 +97,7 @@ fn manager_wrapper_focus_refreshes_only_the_visible_cloud_card() {
                     koru_agent_wire::AccountOperationResult::CloudSubscription {
                         request_id,
                         current: Some(true),
+                        access: Some(true),
                     },
                 )
             });

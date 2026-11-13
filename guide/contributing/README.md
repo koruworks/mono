@@ -49,6 +49,22 @@ interaction on its supported platforms.
 | Public API and wire schemas | [Generated references](../../reference/README.md) |
 | Environment variables for diagnostics and configuration | [Environment reference](../../reference/ENV.md) |
 
+### Security advisories in dependencies
+
+CI runs `cargo-deny` on every push and pull request, and a separate workflow
+(`.github/workflows/advisories.yml`) checks `main` against the RustSec advisory
+database once a day, so an advisory is noticed the day it is published. Either
+one going red on advisories means a locked crate has a known problem.
+
+Dependabot updates the GitHub Actions pins and the Android build, but **not
+Rust**: it cannot read the patched crates this workspace fetches instead of
+committing ([third-party/](../../third-party/README.md)). So the fix is made by
+hand: change that one crate's `version` and `checksum` in `Cargo.lock` to the
+fixed release, then confirm with `cargo metadata --locked` and
+`cargo deny check`. Prefer that to `cargo update -p <crate>`, which also
+re-resolves unrelated entries the lockfile holds on purpose. An advisory that
+does not apply gets an `ignore` entry in `deny.toml` with the reason.
+
 Some primers retain ADR and plan identifiers as provenance for past experiments.
 Maintainers keep those original records in the private documentation repository;
 the implementation guidance is included in the public pages.

@@ -1742,6 +1742,10 @@ pub enum AccountOperationResult {
     CloudSubscription {
         request_id: u64,
         current: Option<bool>,
+        /// Current Cloud entitlement, independent of paid purchase history.
+        /// Older Agents omit this; clients then retain the legacy decision.
+        #[serde(default)]
+        access: Option<bool>,
     },
     /// Every local Profile's Cloud sync state, after a read or a change. A
     /// Profile absent from the list has no Cloud sync state on this device.

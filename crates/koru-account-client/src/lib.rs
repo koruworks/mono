@@ -24,6 +24,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 mod diagnostics;
 mod subscription;
+pub use subscription::CloudSubscriptionStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpMethod {

@@ -1,0 +1,69 @@
+# advisories — once a day, check the locked dependencies against the RustSec
+# advisory database.
+#
+# Why this exists: `cargo-deny` in ci.yml runs on a push or a pull request, so
+# an advisory published on a day nobody pushes went unnoticed until the next
+# unrelated push turned red — and then every open pull request with it. That
+# is how five hickory-proto advisories were found on 2026-11-11. Dependabot
+# cannot do this job for Rust here: its cargo run fails on the patched crates
+# the workspace names by path, which are fetched rather than committed
+# (third-party/README.md), so it never opened a Rust pull request
+# (.github/dependabot.yml).
+#
+# The contract:
+#
+#   - It checks advisories only. Licenses, bans and sources change when the
+#     tree changes, and ci.yml checks those on every push.
+#   - A red run means an advisory applies to Cargo.lock on `main`. The fix is
+#     a version and checksum in Cargo.lock, made by hand: `cargo update -p`
+#     re-resolves unrelated entries. deny.toml takes an `ignore` entry, with
+#     its reason, only for an advisory that does not apply.
+#   - The alert is GitHub's failure email to the schedule actor — the account
+#     that last changed the cron line below — and only if that account has
+#     Actions failure notifications on. The schedule is best effort, and
+#     GitHub disables it after 60 days without repository activity.
+#   - Same rules as ci.yml: a GitHub-hosted runner, a read-only token, no
+#     secrets, every action pinned to a commit. It is not a required check.
+name: advisories
+
+on:
+  schedule:
+    # 09:17 UTC daily; off the hour, when scheduled runs are least delayed.
+    - cron: "17 9 * * *"
+  # By hand, after a fix or to check the alert arrives.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A delayed run must not stack behind the next one.
+concurrency:
+  group: advisories
+  cancel-in-progress: true
+
+jobs:
+  advisories:
+    name: advisories (daily)
+    # The schedule only exists on the default branch; a manual run from
+    # another branch checks that branch's lockfile, which is the point of one.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # `cargo metadata` asks rustc for its version through the configured
+      # wrapper (sccache, from .cargo/config.toml). Nothing is compiled here,
+      # so the wrapper is switched off rather than installed.
+      RUSTC_WRAPPER: ""
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      # cargo-deny reads the full dependency graph, which includes the patched
+      # third-party crates the workspace names by path (third-party/README.md).
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # EmbarkStudios/cargo-deny-action v2.1.1, as ci.yml pins it.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        with:
+          command: check advisories
