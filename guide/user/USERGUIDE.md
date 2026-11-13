@@ -6514,8 +6514,7 @@ but cannot change the list. A Bot in Trash has no Library editor.
 In a Bot conversation, open the context pane to see **Library**. It lists the
 saved Role and Knowledge pages; **Manage Library** opens the same Settings
 draft. Changes waiting in Settings are identified separately from the saved
-list. An already-bound Memory page also has an ordinary page link; Memory
-creation is not available yet.
+list. A bound Memory page also has an ordinary page link.
 
 The context pane becomes a floating disclosure when the window is narrow.
 Escape or an outside press dismisses it. F6 reaches its controls while it is
@@ -6523,6 +6522,38 @@ open and stays within the narrow disclosure; Tab and Shift+Tab move through
 the controls. Document History remains available
 when a document is selected. The desktop Bot context pane currently provides
 Library; Upcoming and Computer sections are not available yet.
+
+### A Bot's Memory
+
+Each Bot has one lifetime Memory page in its home workspace. Ask the Bot to
+remember a fact; its first Remember can create that page without a prior visit
+to Settings. You can also open **Settings → Library → Memory** and choose
+**Create Memory page**. **Check status** reports creation progress; a pending
+request is not a confirmed page. If a reply is lost, retry the same request.
+Conflict or abandoned creation needs an explicit recovery choice; Koru does not
+silently replace the page.
+
+Open the Memory page to edit it normally, or use its fact list and details in
+Settings. A direct level-two heading is a fact summary; its children hold the
+detail. Other prose can stay on the page without becoming a fact. Settings show
+omitted or unsupported content explicitly. A new task captures a bounded index
+of the facts; existing tasks retain their captured version. A new conversation
+can use the same lifetime Memory.
+
+The Bot can remember, correct or forget its own facts without gaining general
+permission to edit other pages. Remember and Correct add a **Source Run** link.
+Correct preserves the fact identity and replaces its entire detail/source
+subtree; use the ordinary editor for richer or multiline changes. Forget moves
+the fact and its descendants to ordinary Trash. It does not erase document
+history, conversation transcripts or an agent's runtime context. Memory edits
+do not appear as saved Run results.
+
+An edit uses an exact version. If you change the page while the Bot is working,
+its stale edit refuses; the Bot must read Current before requesting a new edit.
+After any successful edit it must read Current again for the next version. If
+the outcome is unknown, retry only the original operation and body. Moving the
+page to Trash does not make the Bot recreate it: restore the original page to
+continue using it. Archive, Restore and creation recovery keep that identity.
 
 ## Chatting with a local agent
 
