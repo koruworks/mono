@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-//! ai17 → ai18 over a database written by the real ai17 code paths.
+//! ai17 → ai18 over frozen ai17 admission SQL and unchanged historical helpers.
 use super::*;
 use crate::repository::tests::complete_turn;
 use koru_ai_core::bots::BotSubmissionIntent;
-use koru_ai_core::bots::replay::BotChatPreparation;
 use koru_ai_core::{AttachmentRecord, Timestamp};
 use koru_delegate_core as d;
 use rusqlite::types::Value;
 use std::collections::BTreeMap;
+mod ai17;
 
 const AI18_TABLES: [&str; 5] = [
     "bot_lifecycle_intents",
@@ -153,14 +153,7 @@ fn populated_ai17() -> Repository {
     turn.attachment_ids = vec![attachment.attachment.id];
     turn.user_message.markdown = "Fixture task".into();
     let started = intent(&a, additional.chat_id, Some(&turn));
-    repo.prepare_bot_chat(
-        &BotChatPreparation::Turn(turn.clone()),
-        &started,
-        HASH,
-        a.revision,
-        Timestamp::from_millis(30),
-    )
-    .unwrap();
+    ai17::prepare_chat(&mut repo, &turn, &started, 30);
     let fence = d::BotExecutionFence {
         owner: started.submission.provenance.owner,
         bot: a.id,
@@ -176,8 +169,7 @@ fn populated_ai17() -> Repository {
     let (b, b_owner, _) = new_bot(&mut repo);
     let refused = intent(&b, b.main_chat, None);
     let request = refused.submission.provenance.submission;
-    repo.prepare_bot_submission(&refused, HASH, b.revision, 40)
-        .unwrap();
+    ai17::prepare_submission(&mut repo, &refused, 40);
     let fenced = repo
         .prepare_bot_refusal_fence(
             b_owner,
@@ -201,8 +193,7 @@ fn populated_ai17() -> Repository {
     let (c, c_owner, _) = new_bot(&mut repo);
     let accepted = intent(&c, c.main_chat, None);
     let request = accepted.submission.provenance.submission;
-    repo.prepare_bot_submission(&accepted, HASH, c.revision, 50)
-        .unwrap();
+    ai17::prepare_submission(&mut repo, &accepted, 50);
     repo.acknowledge_bot_submission(
         c_owner,
         c.id,
@@ -241,7 +232,7 @@ fn populated_ai17() -> Repository {
     )
     .unwrap();
     // Bot D: a prepared access change.
-    let (mut dbot, _, d_profile) = new_bot(&mut repo);
+    let (mut dbot, _, _) = new_bot(&mut repo);
     dbot.revision += 1;
     dbot.policy_revision += 1;
     dbot.access = BotAccess::Workspace;
@@ -259,8 +250,7 @@ fn populated_ai17() -> Repository {
         policy: koru_ai_core::bots::bot_native_policy(&dbot),
         effects_allowed: true,
     };
-    repo.prepare_bot_access(&dbot, d_profile, BotRequestId::mint(), HASH, 1, &barrier)
-        .unwrap();
+    ai17::prepare_access(&mut repo, &dbot, &barrier);
     // Every receipt stage the ai17 code writes is present ('accepted' has no writer).
     let stages: BTreeSet<String> = repo
         .connection

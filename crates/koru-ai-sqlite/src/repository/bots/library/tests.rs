@@ -208,7 +208,7 @@ fn knowledge_atomic_owner_revision_and_binding_fences() {
     let current_bot = repo.bot(bot.id).unwrap().unwrap();
     let c = prepared(&mut repo, &current_bot, owner);
     let binding = repo
-        .bind_bot_memory(&confirmation(&c), BotMemoryState::Prepared, 8)
+        .bind_bot_memory(&confirmation(&c), c.observed(), 8)
         .unwrap();
     let current_bot = repo.bot(bot.id).unwrap().unwrap();
     let mut forbidden = knowledge(&current_bot, owner);
@@ -364,7 +364,7 @@ fn library_writes_obey_pending_policy_and_lifecycle() {
             .is_err()
         );
         assert!(
-            repo.bind_bot_memory(&confirmation(&c), BotMemoryState::Prepared, 5)
+            repo.bind_bot_memory(&confirmation(&c), c.observed(), 5)
                 .is_err()
         );
         assert_eq!(receipt_count(&repo), count);

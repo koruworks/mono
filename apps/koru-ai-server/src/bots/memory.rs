@@ -76,7 +76,7 @@ pub(super) struct MemoryIndex {
     pub digest: [u8; 32],
 }
 
-/// This is deliberately not the durable v4-only BlockNodeId capture DTO.
+/// This is separate from the durable authenticated Memory capture DTO.
 /// Authentication and exact-history selection belong to the future adapter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum MemoryIndexExpectation {

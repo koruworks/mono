@@ -458,6 +458,8 @@ pub(crate) fn prepare_bot_submission_tx(
     if s.workspace != g.home || s.policy.destination != g.home {
         return Err(BotError::Forbidden);
     }
+    let memory = super::library::bound_memory_on(tx, owner, p.bot, g.home)?;
+    super::library::refuse_memory_pins(memory.as_ref(), &s.request.context)?;
     let access: String = tx
         .query_row(
             "SELECT access FROM bots WHERE bot_id=?1",

@@ -2,8 +2,10 @@
 
 //! Durable Library references, never document content or Store authority.
 use super::*;
-use koru_delegate_core::{BlockNodeId, DocumentVersionId};
+use koru_delegate_core::DocumentVersionId;
 use std::collections::BTreeSet;
+mod node_id;
+pub use node_id::BotMemoryNodeId;
 
 pub const BOT_KNOWLEDGE_LIMIT: usize = 16;
 pub const BOT_MEMORY_INDEX_LIMIT: usize = 256;
@@ -211,6 +213,12 @@ pub struct BotMemoryCreation {
     pub updated_at_ms: i64,
 }
 impl BotMemoryCreation {
+    pub fn observed(&self) -> BotMemoryObserved {
+        BotMemoryObserved {
+            state: self.state,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
     pub fn validate(&self) -> Result<(), BotError> {
         self.identity.validate()?;
         if (self.state == BotMemoryState::Bound) != self.origin_edit_revision.is_some()
@@ -224,6 +232,13 @@ impl BotMemoryCreation {
         }
         Ok(())
     }
+}
+
+/// A concurrency token, never proof of owner or Store authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BotMemoryObserved {
+    pub state: BotMemoryState,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -341,7 +356,7 @@ pub enum BotCapturedMemory {
         page: BotPage,
         version: DocumentVersionId,
         creation_request: BotRequestId,
-        nodes: Vec<BlockNodeId>,
+        nodes: Vec<BotMemoryNodeId>,
         omitted_count: u64,
         invalid_count: u64,
     },
@@ -407,7 +422,6 @@ impl BotLibraryCapture {
                 ]
                 .into_iter()
                 .all(valid_id)
-                || nodes.iter().any(|n| !valid_id(n.as_uuid()))
                 || nodes.iter().collect::<BTreeSet<_>>().len() != nodes.len()
                 || *omitted_count > i64::MAX as u64
                 || *invalid_count > i64::MAX as u64
