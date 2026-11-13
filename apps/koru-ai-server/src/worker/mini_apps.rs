@@ -38,12 +38,21 @@ pub(super) struct Deliveries {
 }
 impl Deliveries {
     fn available(&self, host: HostContext) -> bool {
-        !host.renderer_id.is_nil()
-            && !host.request_id.is_nil()
-            && self.successes.len() < SUCCESS_LIMIT
-            && !self
-                .successes
-                .contains(&(host.renderer_id, host.request_id))
+        self.unavailable_reason(host).is_none()
+    }
+    fn unavailable_reason(&self, host: HostContext) -> Option<&'static str> {
+        if host.renderer_id.is_nil() || host.request_id.is_nil() {
+            Some("invalid_host")
+        } else if self.successes.len() >= SUCCESS_LIMIT {
+            Some("host_capacity_reached")
+        } else if self
+            .successes
+            .contains(&(host.renderer_id, host.request_id))
+        {
+            Some("host_already_completed")
+        } else {
+            None
+        }
     }
     fn record(&mut self, host: HostContext) -> bool {
         self.available(host) && self.successes.insert((host.renderer_id, host.request_id))
@@ -121,8 +130,25 @@ impl WorkerState {
                 AiProviderId::OPENAI | AiProviderId::OLLAMA | AiProviderId::KORU | "mock"
             );
         let requested = host.is_some();
-        let host = host.filter(|host| supported && self.mini_apps.available(*host));
+        let managed_provider_registered = koru_ai_provider_agent::is_agent_provider(provider);
+        let reason = match host {
+            None => "no_host_supplied",
+            Some(_) if !supported && managed_provider_registered => "managed_bridge_unavailable",
+            Some(_) if !supported => "provider_unregistered",
+            Some(host) => self
+                .mini_apps
+                .unavailable_reason(host)
+                .unwrap_or("admitted"),
+        };
+        let host = host.filter(|_| reason == "admitted");
         if requested && host.is_none() {
+            tracing::warn!(
+                event = "ai.mini_apps.withheld",
+                attempt = %attempt,
+                provider = %provider,
+                reason,
+                "requested mini-app tools are unavailable"
+            );
             self.publish_public(PublicAiEvent::Notice {
                 attempt_id: attempt,
                 notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
@@ -139,7 +165,35 @@ impl WorkerState {
                     .insert(mini_apps::Capability::mint(), attempt);
             }
         }
-        scoped_definitions(&self.tool_definitions, host)
+        let definitions = scoped_definitions(&self.tool_definitions, host);
+        let native_count = |definitions: &[AiToolDefinition]| {
+            definitions
+                .iter()
+                .filter(|definition| {
+                    [
+                        mini_apps::CREATE_TOOL,
+                        mini_apps::LIST_TOOL,
+                        mini_apps::UPDATE_TOOL,
+                    ]
+                    .contains(&definition.name.as_str())
+                })
+                .count()
+        };
+        tracing::debug!(
+            event = "ai.mini_apps.tools",
+            attempt = %attempt,
+            provider = %provider,
+            managed_provider_registered,
+            managed_tools_available = managed,
+            host_requested = requested,
+            reason,
+            native_tools_configured = native_count(&self.tool_definitions),
+            native_tools_admitted = native_count(&definitions),
+            tools_admitted = definitions.len(),
+            refinement_available = host.and_then(|host| host.refinement).is_some(),
+            "mini-app tools scoped for attempt"
+        );
+        definitions
     }
 
     pub(super) fn retire_mini_app(&mut self, attempt: InferenceAttemptId) {

@@ -1568,8 +1568,16 @@ fn run_worker(
 
     let mut registry = config.providers;
     let mut agent_views = Vec::new();
-    let managed_mini_apps =
-        config.session_host.is_some() && koru_ai_provider_agent::desktop_bridge_present();
+    let session_host_present = config.session_host.is_some();
+    let bridge_present = koru_ai_provider_agent::desktop_bridge_present();
+    let managed_mini_apps = session_host_present && bridge_present;
+    tracing::info!(
+        event = "ai.mini_apps.startup",
+        session_host_present,
+        bridge_present,
+        enabled = managed_mini_apps,
+        "managed mini-app startup eligibility checked"
+    );
     let agents = match config.session_host {
         Some(endpoint) => match AgentSessions::spawn(endpoint) {
             Ok(agents) => {
@@ -4368,6 +4376,12 @@ impl WorkerState {
                     ..
                 }
             ) {
+                tracing::warn!(
+                    event = "ai.mini_apps.provider_unavailable",
+                    attempt = %attempt_id,
+                    provider = %before.provider,
+                    "provider reported native mini-app tools unavailable; live authority retired"
+                );
                 self.retire_mini_app(attempt_id);
             }
             self.publish(event);

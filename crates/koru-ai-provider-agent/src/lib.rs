@@ -59,18 +59,35 @@ pub const PRODUCT: &str = "koru-ai-agent";
 /// Same installation boundary as session-host's chat_bridge. Called on the
 /// worker, never a UI frame; an absent bridge leaves ordinary chat available.
 pub fn desktop_bridge_present() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| {
-            exe.parent().map(|p| {
-                p.join(if cfg!(windows) {
-                    "koru-mcp.exe"
-                } else {
-                    "koru-mcp"
-                })
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(error) => {
+            tracing::warn!(
+                event = "ai.mini_apps.bridge_probe",
+                present = false,
+                reason = "current_exe_unavailable",
+                error_kind = ?error.kind(),
+                "managed mini-app bridge could not be located"
+            );
+            return false;
+        }
+    };
+    let present = exe.parent().is_some_and(|parent| {
+        parent
+            .join(if cfg!(windows) {
+                "koru-mcp.exe"
+            } else {
+                "koru-mcp"
             })
-        })
-        .is_some_and(|path| path.is_file())
+            .is_file()
+    });
+    tracing::info!(
+        event = "ai.mini_apps.bridge_probe",
+        location = "sibling",
+        present,
+        "managed mini-app bridge installation checked"
+    );
+    present
 }
 
 pub use koru_ai_core::AGENT_DEFAULT_MODEL;
