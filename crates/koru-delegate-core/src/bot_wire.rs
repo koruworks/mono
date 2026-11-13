@@ -14,6 +14,7 @@ pub struct StrictDelegationRequest {
     #[serde(with = "StrictActorRef")]
     pub requested_by: ActorRef,
     pub objective: Objective,
+    #[serde(deserialize_with = "deserialize_profile")]
     pub agent: SessionProfileKey,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_model: Option<ModelName>,
@@ -25,6 +26,36 @@ pub struct StrictDelegationRequest {
     pub executing_device: DeviceId,
     #[serde(default, with = "StrictRunOrigin")]
     pub origin: RunOrigin,
+}
+
+/// Closed profile spelling for private Bot/Routine DTOs. The ordinary
+/// SessionProfileKey decoder retains its established forward compatibility.
+#[doc(hidden)]
+pub fn deserialize_profile<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<SessionProfileKey, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(
+        tag = "kind",
+        content = "value",
+        rename_all = "snake_case",
+        deny_unknown_fields
+    )]
+    enum Profile {
+        BuiltIn(String),
+        Custom(uuid::Uuid),
+    }
+    match Profile::deserialize(d)? {
+        Profile::BuiltIn(key) => key
+            .parse()
+            .map(SessionProfileKey::BuiltIn)
+            .map_err(serde::de::Error::custom),
+        Profile::Custom(key) => key
+            .to_string()
+            .parse()
+            .map(SessionProfileKey::Custom)
+            .map_err(serde::de::Error::custom),
+    }
 }
 
 #[derive(Serialize, Deserialize)]

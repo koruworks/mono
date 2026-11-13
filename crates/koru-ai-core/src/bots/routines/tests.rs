@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::super::UserScopeId;
-use super::super::{BotCapturedMemory, BotKnowledgeCapture};
+use super::super::{BotCapturedMemory, BotKnowledgeCapture, BotPage};
 use super::*;
 use koru_delegate_schedule::{DelegationTemplate, RecurrenceRule, ScheduleContextPointer};
 use uuid::Uuid;
