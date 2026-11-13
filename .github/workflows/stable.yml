@@ -189,3 +189,65 @@ jobs:
           else
             echo "$TAG is not marked latest: $newest is newer"
           fi
+
+  # **The MCP registry listing** (`do.koru/koru`, `server.json` at the root) at
+  # this release's version, after the release is published. The registry keeps
+  # metadata only: the hosted server at https://mcp.koru.do/mcp. Ownership is
+  # proven by the `v=MCPv1` TXT record on koru.do, whose private key is the
+  # `MCP_REGISTRY_PRIVATE_KEY` secret. A failure here leaves the release as it
+  # is; re-run this job alone. A version already listed is skipped, because the
+  # registry refuses to publish the same version twice.
+  mcp-registry:
+    name: mcp-registry
+    needs: [plan, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      # Pinned on purpose; raise it deliberately, never `releases/latest`.
+      MCP_PUBLISHER_VERSION: v1.8.9
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # sigstore/cosign-installer v4.1.2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Install mcp-publisher, verified against its Sigstore bundle
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          base="https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION"
+          curl --fail --location --silent --show-error --output "$archive" "$base/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+      - name: Set the listing's version from the tag
+        run: |
+          set -euo pipefail
+          jq --arg v "$VERSION" '.version = $v' server.json > "$RUNNER_TEMP/server.json"
+          mv "$RUNNER_TEMP/server.json" server.json
+          ./mcp-publisher validate server.json
+      - name: Publish the listing
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          name="$(jq -r .name server.json)"
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0.1/servers/${name/\//%2F}/versions/$VERSION")"
+          if [ "$status" = 200 ]; then
+            echo "$name $VERSION is already listed"
+            exit 0
+          fi
+          test -n "$MCP_REGISTRY_PRIVATE_KEY" || { echo "::error::MCP_REGISTRY_PRIVATE_KEY is not set"; exit 1; }
+          ./mcp-publisher login dns --domain koru.do --private-key "$MCP_REGISTRY_PRIVATE_KEY"
+          ./mcp-publisher publish server.json
+          ./mcp-publisher logout
