@@ -4790,6 +4790,7 @@ dependencies = [
  "koru-agents-ui",
  "koru-ai-core",
  "koru-ai-provider",
+ "koru-ai-server",
  "koru-ai-ui",
  "koru-api-client",
  "koru-app-shell",

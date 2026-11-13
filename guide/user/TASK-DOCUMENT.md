@@ -39,6 +39,27 @@ If an accepted task change is still processing, quitting or switching
 workspace/profile waits for it to finish or fail. A message explains why the
 current workspace remains open; try the action again after processing finishes.
 
-This is a development fixture. Chat-generated arrangements and saving or pinning
-an arrangement are later stages. Native input and accessibility acceptance is
-still being completed; the fixture is not a declaration of platform parity.
+In an AI chat tab or the AI pane, ask for a mini app with a task list and a
+document, and say which side each belongs on. For example: “Create a mini app
+with my Travel list and Trip notes, with the document on the left.” The model
+uses the native creation tool and chooses the list/document references and
+arrangement. A named empty list can be found too. The same experimental host
+opens after validation; changing its list, completing tasks, searching and
+editing then work locally without more model calls.
+
+Generation uses OpenAI, an Ollama model that advertises tools, or hosted Koru
+AI when its endpoint accepts tools. Managed agent providers such as Codex and
+Claude sessions do not support this creation path yet; ordinary chat remains
+available. If tools become unavailable or opening is interrupted, chat says so.
+History and reconnect do not recreate tabs. If no app opened, use **Retry** on
+a failed or interrupted response. If reconnection recovered a completed
+response with no Retry action, send a new request instead. Retrying a creation
+already applied in this live chat cannot open
+another copy. Switching workspace/profile, hiding the originating chat, or
+closing it retires pending delivery. Keep the requesting chat visible until
+the mini-app tab opens.
+
+Saving, pinning and conversational refinement are later stages. The proposed
+catalog is experimental and pending maintainer approval. Native input and
+accessibility acceptance is still being completed; this is not a declaration
+of platform parity.

@@ -3227,6 +3227,9 @@ pub enum Key {
     ProfileWaitCredential,
     ProfileLeaveRemovedFailed,
     MiniAppTitle,
+    MiniAppGenerationInterrupted,
+    MiniAppToolsUnavailable,
+    MiniAppProviderUnsupported,
     MiniAppEmpty,
     MiniAppSearch,
     MiniAppOpenFailed,
@@ -3250,7 +3253,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2274] = [
+    pub const ALL: [Key; 2277] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5508,6 +5511,9 @@ impl Key {
         Key::ProfileWaitCredential,
         Key::ProfileLeaveRemovedFailed,
         Key::MiniAppTitle,
+        Key::MiniAppGenerationInterrupted,
+        Key::MiniAppToolsUnavailable,
+        Key::MiniAppProviderUnsupported,
         Key::MiniAppEmpty,
         Key::MiniAppSearch,
         Key::MiniAppOpenFailed,
@@ -16950,6 +16956,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ProfileWaitCredential, en: "Koru needs to renew this workspace’s Cloud connection.", es: "Koru necesita renovar la conexión a la nube de este espacio de trabajo.", pt_br: "O Koru precisa renovar a conexão deste espaço de trabalho com a nuvem.", de: "Koru muss die Cloud-Verbindung dieses Arbeitsbereichs erneuern.", fr: "Koru doit renouveler la connexion cloud de cet espace de travail.", ar: "يحتاج Koru إلى تجديد اتصال مساحة العمل هذه بالسحابة.", zh_hans: "Koru 需要续期此工作区的云连接。", ja: "このワークスペースのクラウド接続を更新する必要があります。" },
     Row { key: Key::ProfileLeaveRemovedFailed, en: "Couldn't leave the removed workspace", es: "No se pudo salir del espacio de trabajo eliminado", pt_br: "Não foi possível sair do espaço de trabalho removido", de: "Der entfernte Arbeitsbereich konnte nicht verlassen werden", fr: "Impossible de quitter l’espace de travail supprimé", ar: "تعذّر مغادرة مساحة العمل المُزالة", zh_hans: "无法离开已移除的工作区", ja: "削除されたワークスペースから移動できませんでした" },
     Row { key: Key::MiniAppTitle, en: "Tasks and document", es: "Tareas y documento", pt_br: "Tarefas e documento", de: "Aufgaben und Dokument", fr: "Tâches et document", ar: "المهام والمستند", zh_hans: "任务与文档", ja: "タスクと文書" },
+    Row { key: Key::MiniAppGenerationInterrupted, en: "Mini-app opening was interrupted. If no app opened, use Retry or send a new request when Retry is unavailable.", es: "Se interrumpió la apertura. Si no se abrió la miniaplicación, usa Reintentar o envía una nueva solicitud si no está disponible.", pt_br: "A abertura foi interrompida. Se o miniapp não abriu, tente novamente ou envie uma nova solicitação se a opção não estiver disponível.", de: "Das Öffnen wurde unterbrochen. Wenn keine Mini-App geöffnet wurde, versuche es erneut oder sende eine neue Anfrage, falls Wiederholen fehlt.", fr: "L’ouverture a été interrompue. Si aucune mini-app ne s’est ouverte, réessayez ou envoyez une nouvelle demande si Réessayer est indisponible.", ar: "توقّف الفتح. إذا لم يُفتح التطبيق المصغّر، أعد المحاولة أو أرسل طلبًا جديدًا إن لم يتوفر خيار إعادة المحاولة.", zh_hans: "打开中断。如果未打开小应用，请重试；若无法重试，请发送新请求。", ja: "開く処理が中断しました。ミニアプリが開いていない場合は再試行し、再試行できない場合は新しいリクエストを送信してください。" },
+    Row { key: Key::MiniAppToolsUnavailable, en: "Tools are unavailable for this reply; mini apps cannot be created.", es: "Las herramientas no están disponibles para esta respuesta; no se pueden crear miniaplicaciones.", pt_br: "As ferramentas estão indisponíveis nesta resposta; não é possível criar miniapps.", de: "Für diese Antwort sind keine Werkzeuge verfügbar; Mini-Apps können nicht erstellt werden.", fr: "Les outils sont indisponibles pour cette réponse ; aucune mini-app ne peut être créée.", ar: "الأدوات غير متاحة لهذا الرد؛ لا يمكن إنشاء تطبيقات مصغّرة.", zh_hans: "此回复的工具不可用，无法创建小应用。", ja: "この返信ではツールを利用できないため、ミニアプリは作成できません。" },
+    Row { key: Key::MiniAppProviderUnsupported, en: "Mini apps need OpenAI, tool-capable Ollama, or Koru AI with tools available. Chat remains available.", es: "Las miniaplicaciones requieren OpenAI, Ollama con herramientas o Koru AI con herramientas. El chat sigue disponible.", pt_br: "Miniapps exigem OpenAI, Ollama com ferramentas ou Koru AI com ferramentas. O chat continua disponível.", de: "Mini-Apps benötigen OpenAI, Ollama mit Werkzeugen oder Koru AI mit Werkzeugen. Chat bleibt verfügbar.", fr: "Les mini-apps nécessitent OpenAI, Ollama avec outils ou Koru AI avec outils. Le chat reste disponible.", ar: "تتطلب التطبيقات المصغّرة OpenAI أو Ollama يدعم الأدوات أو Koru AI بأدوات متاحة. الدردشة متاحة.", zh_hans: "小应用需要 OpenAI、支持工具的 Ollama 或工具可用的 Koru AI。聊天仍可使用。", ja: "ミニアプリには OpenAI、ツール対応の Ollama、またはツールを利用できる Koru AI が必要です。チャットは利用できます。" },
     Row { key: Key::MiniAppEmpty, en: "Select a task or search for a document.", es: "Selecciona una tarea o busca un documento.", pt_br: "Selecione uma tarefa ou busque um documento.", de: "Wähle eine Aufgabe oder suche ein Dokument.", fr: "Sélectionnez une tâche ou recherchez un document.", ar: "اختر مهمة أو ابحث عن مستند.", zh_hans: "选择任务或搜索文档。", ja: "タスクを選択するか、文書を検索してください。" },
     Row { key: Key::MiniAppSearch, en: "Search documents", es: "Buscar documentos", pt_br: "Buscar documentos", de: "Dokumente suchen", fr: "Rechercher des documents", ar: "البحث في المستندات", zh_hans: "搜索文档", ja: "文書を検索" },
     Row { key: Key::MiniAppOpenFailed, en: "Couldn't open that document. Your current document is unchanged.", es: "No se pudo abrir ese documento. El documento actual no ha cambiado.", pt_br: "Não foi possível abrir esse documento. O documento atual não foi alterado.", de: "Das Dokument konnte nicht geöffnet werden. Dein aktuelles Dokument bleibt unverändert.", fr: "Impossible d’ouvrir ce document. Le document actuel reste inchangé.", ar: "تعذّر فتح هذا المستند. لم يتغير مستندك الحالي.", zh_hans: "无法打开该文档。当前文档保持不变。", ja: "文書を開けませんでした。現在の文書は変更されていません。" },

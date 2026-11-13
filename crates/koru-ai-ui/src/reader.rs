@@ -202,6 +202,7 @@ pub(crate) enum Update {
         transcript: Option<ChatTranscript>,
     },
     Accepted(SendTurnAccepted),
+    MiniAppAccepted(SendTurnAccepted, koru_ai_core::mini_apps::HostContext),
     Event(StreamEvent),
     RecoveryStarted(InferenceAttemptId),
     Recovered {
@@ -701,7 +702,13 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 });
             }
             Command::Send(request) => match client.ai().send_turn(&request) {
-                Ok(stream) => stream_attempt(client.clone(), request.chat_id, stream, &updates),
+                Ok(stream) => stream_attempt(
+                    client.clone(),
+                    request.chat_id,
+                    stream,
+                    &updates,
+                    request.mini_app_host,
+                ),
                 // The surface gives the message back (chat-attachments §10).
                 Err(failure) => {
                     let _ = updates.send(Update::SendFailed(failure));
@@ -728,7 +735,13 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, updates: SyncSender<U
                 );
             }
             Command::Retry(chat, request) => match client.ai().retry_turn(chat, &request) {
-                Ok(stream) => stream_attempt(client.clone(), chat, stream, &updates),
+                Ok(stream) => stream_attempt(
+                    client.clone(),
+                    chat,
+                    stream,
+                    &updates,
+                    request.mini_app_host,
+                ),
                 Err(failure) => {
                     let _ = updates.send(Update::Failure(failure.message));
                 }
@@ -943,9 +956,17 @@ fn stream_attempt(
     chat_id: ChatId,
     stream: koru_api_client::AiResponseStream,
     updates: &SyncSender<Update>,
+    mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
 ) {
     let accepted = stream.accepted.clone();
     let attempt_id = accepted.attempt_id;
+    if let Some(host) = mini_app_host
+        && updates
+            .send(Update::MiniAppAccepted(accepted.clone(), host))
+            .is_err()
+    {
+        return;
+    }
     if updates.send(Update::Accepted(accepted)).is_err() {
         return;
     }
@@ -1355,6 +1376,7 @@ mod tests {
         let refused = (chat, failure.clone());
         let send = |chat_id| {
             Command::Send(koru_ai_wire::SendTurnRequest {
+                mini_app_host: None,
                 operation_id: uuid::Uuid::new_v4(),
                 chat_id,
                 surface: koru_ai_core::AiSurface::ContextPane,

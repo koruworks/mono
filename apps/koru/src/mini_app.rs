@@ -135,12 +135,27 @@ impl MiniApp {
 
     pub fn fixture(workspace: WorkspaceId, surface: u64) -> Result<Self, &'static str> {
         let declaration = declaration::Declaration::parse(declaration::FIXTURE.as_bytes())?;
+        Ok(Self::with_declaration(workspace, surface, declaration))
+    }
+    pub fn from_declaration(
+        workspace: WorkspaceId,
+        surface: u64,
+        declaration: koru_ai_core::mini_apps::Declaration,
+    ) -> Result<Self, &'static str> {
+        let declaration = declaration::Declaration::from_shared(declaration)?;
+        Ok(Self::with_declaration(workspace, surface, declaration))
+    }
+    fn with_declaration(
+        workspace: WorkspaceId,
+        surface: u64,
+        declaration: declaration::Declaration,
+    ) -> Self {
         let mut app = Self::new(workspace, surface, declaration.target);
         app.swapped = declaration.swapped;
         if let Some(document) = declaration.document {
             app.request_document(document, None);
         }
-        Ok(app)
+        app
     }
 
     pub fn request_document(&mut self, document: DocumentId, node: Option<NodeId>) {

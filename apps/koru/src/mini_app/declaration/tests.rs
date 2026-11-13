@@ -21,8 +21,8 @@ fn unsupported_programs_content_and_graphs_are_refused() {
             "\"bucket\": {\"functionCall\": \"read\"}",
         ),
         FIXTURE.replace(
-            "\"component\": \"DocumentEditor\"",
-            "\"component\": \"DocumentEditor\", \"text\": \"private content\"",
+            "\"component\": \"DocumentHost\"",
+            "\"component\": \"DocumentHost\", \"text\": \"private content\"",
         ),
         FIXTURE.replace(
             "\"selector\", \"tasks\", \"search\", \"document\"",

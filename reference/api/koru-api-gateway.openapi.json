@@ -1661,6 +1661,13 @@
         "description": "A fact about the attempt the surface shows as one line and nothing\nstores.",
         "oneOf": [
           {
+            "description": "This live reply continues as chat after its native tools were refused.",
+            "enum": [
+              "native_tools_unavailable"
+            ],
+            "type": "string"
+          },
+          {
             "description": "The agent could not be reattached and a replacement was started with\nthe conversation so far.",
             "enum": [
               "fresh_start"
@@ -3571,6 +3578,63 @@
           }
         ]
       },
+      "Component": {
+        "additionalProperties": false,
+        "properties": {
+          "arrangement": {
+            "nullable": true,
+            "type": "string"
+          },
+          "bucket": {
+            "nullable": true,
+            "type": "string"
+          },
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "component": {
+            "type": "string"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentReference"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "list": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListReference"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "component"
+        ],
+        "type": "object"
+      },
       "ContentEncoding": {
         "description": "How `read` spells the bytes it returns.",
         "oneOf": [
@@ -4734,6 +4798,22 @@
           "document",
           "headings",
           "projected"
+        ],
+        "type": "object"
+      },
+      "DocumentReference": {
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "documentId"
         ],
         "type": "object"
       },
@@ -7045,6 +7125,29 @@
         ],
         "type": "object"
       },
+      "HostContext": {
+        "additionalProperties": false,
+        "description": "UI-minted, live-only provenance. None of this is a provider argument.",
+        "properties": {
+          "renderer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "renderer_id",
+          "request_id",
+          "workspace_id"
+        ],
+        "type": "object"
+      },
       "IconPackChoice": {
         "description": "The in-app vector artwork, persisted as `icon_pack=`.",
         "enum": [
@@ -7612,6 +7715,23 @@
         ],
         "type": "object"
       },
+      "ListReference": {
+        "additionalProperties": false,
+        "properties": {
+          "listId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "listId"
+        ],
+        "type": "object"
+      },
       "ListRunsResponse": {
         "properties": {
           "documents": {
@@ -8014,6 +8134,11 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "native_tools": {
+            "default": false,
+            "description": "Registered native tool transport, not a guarantee of request success.\nLive validation only; never written to AI settings or chat history.",
+            "type": "boolean"
           },
           "reasoning": {
             "$ref": "#/components/schemas/ReasoningControl"
@@ -9647,8 +9772,51 @@
         "type": "string"
       },
       "PublicAiEvent": {
-        "description": "An event safe to expose across Koru's public AI boundary.\n\nProvider tool calls are deliberately absent: their arguments and reasoning\ncontinuity data remain inside the worker. Clients observe only the minimal\n[`ToolActivity`] projection: stable target ids and a bounded public failure\nsummary, never raw tool arguments or results.",
+        "description": "An event safe to expose across Koru's public AI boundary.\n\nProvider tool calls are deliberately absent: their arguments and reasoning\ncontinuity data remain inside the worker. Clients observe only the minimal\n[`ToolActivity`] projection: stable target ids and a bounded public failure\nsummary, never raw tool arguments or general tool results. The registered\nreference-only mini-app result has a separate bounded, transient variant.",
         "oneOf": [
+          {
+            "description": "Only the registered, validated mini-app result crosses this boundary.\nIt is transient, never reconstructed from transcript or tool activity.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "call_id": {
+                "type": "string"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "envelope": {
+                "$ref": "#/components/schemas/Envelope"
+              },
+              "host": {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              "invocation_id": {
+                "$ref": "#/components/schemas/ToolInvocationId"
+              },
+              "profile_id": {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              "type": {
+                "enum": [
+                  "mini_app_created"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "chat_id",
+              "profile_id",
+              "invocation_id",
+              "call_id",
+              "host",
+              "envelope"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "at": {
@@ -11484,6 +11652,19 @@
           },
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
+          },
+          "mini_app_host": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
           },
           "operation_id": {
             "type": "string"
@@ -13601,6 +13782,20 @@
           "markdown": {
             "type": "string"
           },
+          "mini_app_host": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Native host provenance for this live request only. Never persisted or\naccepted from a model tool argument."
+          },
           "operation_id": {
             "type": "string"
           },
@@ -15218,6 +15413,33 @@
             "description": "Last raw-output sequence the caller consumed."
           }
         },
+        "type": "object"
+      },
+      "Surface": {
+        "additionalProperties": false,
+        "properties": {
+          "catalogId": {
+            "type": "string"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/Component"
+            },
+            "type": "array"
+          },
+          "sendDataModel": {
+            "type": "boolean"
+          },
+          "surfaceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "surfaceId",
+          "catalogId",
+          "sendDataModel",
+          "components"
+        ],
         "type": "object"
       },
       "TargetState": {

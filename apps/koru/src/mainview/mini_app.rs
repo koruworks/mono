@@ -6,6 +6,82 @@ use super::*;
 use koru_workspace_host::ChildDocumentRequest;
 
 impl MainView {
+    pub(super) fn open_pending_mini_apps(&mut self) -> bool {
+        let mut ready = Vec::new();
+        self.ai_chat.offer_mini_apps(self.ai_panel.is_open());
+        if let Some(creation) = self.ai_chat.take_mini_app_creation() {
+            ready.push((creation, self.ai_panel.is_open()));
+        }
+        let focused = self.panes.focused_path().clone();
+        for (path, group) in self.panes.iter_groups_mut() {
+            let active = group.tabs().active_tab().id;
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::AiChat(view) = &mut tab.view {
+                    view.offer_mini_apps(path == focused && active == tab.id);
+                    if let Some(creation) = view.take_mini_app_creation() {
+                        ready.push((creation, path == focused && active == tab.id));
+                    }
+                }
+            }
+        }
+        let changed = !ready.is_empty();
+        for (creation, visible) in ready {
+            let renderer = creation.host.renderer_id;
+            let request = creation.host.request_id;
+            let opened = visible && self.open_mini_app_creation(&creation);
+            if self.ai_chat.mini_app_renderer_id() == renderer {
+                self.ai_chat.mini_app_opened(request, opened);
+            }
+            for (_, group) in self.panes.iter_groups_mut() {
+                for tab in group.tabs_mut().iter_mut() {
+                    if let TabView::AiChat(view) = &mut tab.view
+                        && view.mini_app_renderer_id() == renderer
+                    {
+                        view.mini_app_opened(request, opened);
+                    }
+                }
+            }
+        }
+        changed
+    }
+    fn open_mini_app_creation(&mut self, creation: &koru_ai_ui::MiniAppCreation) -> bool {
+        let Some((_, profile, _, Some(workspace))) = &self.pane_context else {
+            return false;
+        };
+        if profile.as_uuid() != creation.profile.as_uuid()
+            || workspace.as_uuid() != creation.host.workspace_id.as_uuid()
+        {
+            return false;
+        }
+        let workspace = *workspace;
+        let Ok(declaration) =
+            koru_ai_core::mini_apps::Declaration::validate(creation.envelope.clone())
+        else {
+            return false;
+        };
+        if let koru_ai_core::mini_apps::TaskSelection::List(id) = declaration.selection
+            && !self
+                .list_table
+                .iter()
+                .any(|list| list.id.as_uuid() == id && list.deleted_ms.is_none())
+        {
+            return false;
+        }
+        let mut tab = Tab::welcome();
+        let Ok(app) = crate::mini_app::MiniApp::from_declaration(workspace, tab.id, declaration)
+        else {
+            return false;
+        };
+        tab.home = Some(workspace);
+        tab.label = koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle).into();
+        tab.view = TabView::MiniApp(Box::new(app));
+        self.tabs_mut().push(tab);
+        self.slides_mut().clear();
+        self.relayout();
+        self.size_visible_groups();
+        true
+    }
+
     pub(super) fn open_mini_app_fixture(&mut self) -> bool {
         let Some(workspace) = self.current_workspace() else {
             return false;

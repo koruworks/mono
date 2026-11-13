@@ -1,0 +1,272 @@
+// SPDX-License-Identifier: MPL-2.0
+use super::*;
+#[test]
+fn a_transcript_cannot_create_a_native_app() {
+    let mut surface = ChatSurface::new();
+    assert!(surface.take_mini_app_creation().is_none());
+    assert!(!surface.mini_app_available());
+    surface.offer_mini_apps(true);
+    assert!(!surface.mini_app_available());
+}
+
+fn fixture() -> (
+    ChatSurface,
+    HostContext,
+    koru_ai_wire::SendTurnAccepted,
+    PublicAiEvent,
+) {
+    let mut surface = ChatSurface::new();
+    let profile = ProfileId::new();
+    let workspace = WorkspaceId::new();
+    let chat = ChatId::new();
+    let attempt = InferenceAttemptId::new();
+    let host = surface.arm_mini_app_for_test(profile, workspace, chat, attempt);
+    let accepted = koru_ai_wire::SendTurnAccepted {
+        attempt_id: attempt,
+        assistant_message_id: surface
+            .native_apps
+            .pending
+            .as_ref()
+            .unwrap()
+            .message
+            .unwrap(),
+        user_message_id: MessageId::new(),
+        replayed: false,
+    };
+    let invocation = koru_ai_core::ToolInvocationId::new();
+    let envelope = Declaration::parse(koru_ai_core::mini_apps::FIXTURE.as_bytes())
+        .unwrap()
+        .normalize(invocation)
+        .envelope;
+    let event = PublicAiEvent::MiniAppCreated {
+        attempt_id: attempt,
+        chat_id: chat,
+        profile_id: profile,
+        invocation_id: invocation,
+        call_id: "c1".into(),
+        host,
+        envelope,
+    };
+    (surface, host, accepted, event)
+}
+fn stream(surface: &mut ChatSurface, event: PublicAiEvent) {
+    surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+        version: koru_ai_wire::AI_STREAM_VERSION,
+        sequence: 1,
+        event,
+    }));
+}
+#[test]
+fn mini_app_completed_same_batch_survives_until_host_acceptance_and_never_reopens() {
+    let (mut surface, host, accepted, event) = fixture();
+    stream(&mut surface, event.clone());
+    stream(
+        &mut surface,
+        PublicAiEvent::Completed {
+            attempt_id: accepted.attempt_id,
+            stop_reason: None,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    assert!(surface.take_mini_app_creation().is_some());
+    surface.mini_app_opened(host.request_id, true);
+    surface.offer_mini_apps(false);
+    surface.offer_mini_apps(true);
+    assert!(
+        surface
+            .retry_mini_app_request(
+                surface.current_chat_id().unwrap(),
+                accepted.assistant_message_id
+            )
+            .is_none()
+    );
+    stream(&mut surface, event);
+    assert!(surface.take_mini_app_creation().is_none());
+}
+#[test]
+fn mini_app_hidden_or_stopped_before_acceptance_cannot_be_resurrected() {
+    let (mut surface, host, accepted, event) = fixture();
+    surface.native_apps.pending.as_mut().unwrap().attempt = None;
+    surface.native_apps.pending.as_mut().unwrap().message = None;
+    surface.offer_mini_apps(false);
+    surface.accept_mini_app_attempt(&accepted, host);
+    surface.offer_mini_apps(true);
+    stream(&mut surface, event.clone());
+    assert!(surface.take_mini_app_creation().is_none());
+    let retry = surface
+        .retry_mini_app_request(
+            surface.current_chat_id().unwrap(),
+            accepted.assistant_message_id,
+        )
+        .unwrap();
+    assert_ne!(retry.request_id, host.request_id);
+    surface.accept_mini_app_attempt(&accepted, host);
+    stream(&mut surface, event);
+    assert!(surface.take_mini_app_creation().is_none());
+}
+#[test]
+fn mini_app_interruption_and_fallback_remain_visible_through_recovery() {
+    let (mut surface, _, accepted, _) = fixture();
+    let transcript = surface.transcript.clone().unwrap();
+    surface.apply_update(Update::RecoveryStarted(accepted.attempt_id));
+    surface.apply_update(Update::Recovered {
+        attempt: accepted.attempt_id,
+        status: koru_ai_core::AttemptStatus::Complete,
+        transcript,
+    });
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(koru_i18n::t(
+            surface.lang,
+            koru_i18n::Key::MiniAppGenerationInterrupted
+        ))
+    );
+    let (mut surface, _, accepted, _) = fixture();
+    stream(
+        &mut surface,
+        PublicAiEvent::Notice {
+            attempt_id: accepted.attempt_id,
+            notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    stream(
+        &mut surface,
+        PublicAiEvent::Completed {
+            attempt_id: accepted.attempt_id,
+            stop_reason: None,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    surface.apply_update(Update::Transcript(surface.transcript.clone().unwrap()));
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(koru_i18n::t(
+            surface.lang,
+            koru_i18n::Key::MiniAppToolsUnavailable
+        ))
+    );
+    let (mut surface, _, accepted, _) = fixture();
+    assert_eq!(surface.attempt, Some(accepted.attempt_id));
+    surface.set_context_workspace(Some(WorkspaceId::new()));
+    surface.status = None;
+    stream(
+        &mut surface,
+        PublicAiEvent::Notice {
+            attempt_id: accepted.attempt_id,
+            notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    assert!(surface.status.is_none());
+}
+
+#[test]
+fn mini_app_scope_replay_and_post_application_notices_cannot_reopen_or_erase_success() {
+    let (mut surface, host, mut accepted, event) = fixture();
+    stream(&mut surface, event.clone());
+    assert!(surface.take_mini_app_creation().is_some());
+    surface.mini_app_opened(host.request_id, true);
+    stream(
+        &mut surface,
+        PublicAiEvent::Notice {
+            attempt_id: accepted.attempt_id,
+            notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    assert!(!surface.native_apps.unavailable);
+    let (mut surface, _, _, event) = fixture();
+    surface.set_context_workspace(Some(WorkspaceId::new()));
+    stream(&mut surface, event);
+    assert!(surface.take_mini_app_creation().is_none());
+    let (mut surface, host, _, event) = fixture();
+    surface.native_apps.pending.as_mut().unwrap().attempt = None;
+    accepted.replayed = true;
+    surface.accept_mini_app_attempt(&accepted, host);
+    stream(&mut surface, event);
+    assert!(surface.take_mini_app_creation().is_none());
+}
+
+#[test]
+fn mini_app_two_real_retry_actions_follow_distinct_assistant_acceptances() {
+    let (mut surface, _, mut accepted, _) = fixture();
+    assert_ne!(accepted.user_message_id, accepted.assistant_message_id);
+    let (reader, commands, updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    for _ in 0..2 {
+        stream(
+            &mut surface,
+            PublicAiEvent::Failed {
+                attempt_id: accepted.attempt_id,
+                error: koru_ai_core::AiError::new(
+                    koru_ai_core::AiErrorClass::Provider,
+                    "fixture failure",
+                    true,
+                ),
+                at: koru_ai_core::Timestamp::now(),
+            },
+        );
+        let prior = accepted.assistant_message_id;
+        assert!(surface.perform_response_action(ResponseAction::Retry(prior)));
+        let request = commands
+            .try_iter()
+            .find_map(|command| {
+                if let Command::Retry(_, request) = command {
+                    Some(request)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert_eq!(request.message_id, prior);
+        let host = request
+            .mini_app_host
+            .expect("a never-applied assistant response retains native retry authority");
+        assert!(
+            surface
+                .native_apps
+                .pending
+                .as_ref()
+                .unwrap()
+                .message
+                .is_none()
+        );
+        accepted = koru_ai_wire::SendTurnAccepted {
+            attempt_id: InferenceAttemptId::new(),
+            user_message_id: accepted.user_message_id,
+            assistant_message_id: MessageId::new(),
+            replayed: false,
+        };
+        assert_ne!(accepted.assistant_message_id, prior);
+        updates
+            .send(Update::MiniAppAccepted(accepted.clone(), host))
+            .unwrap();
+        updates.send(Update::Accepted(accepted.clone())).unwrap();
+        surface.drain_updates();
+        assert_eq!(
+            surface.native_apps.pending.as_ref().unwrap().message,
+            Some(accepted.assistant_message_id)
+        );
+    }
+}
+
+#[test]
+fn mini_app_ordinary_completed_chat_hides_without_an_opening_warning() {
+    let (mut surface, _, accepted, _) = fixture();
+    stream(
+        &mut surface,
+        PublicAiEvent::Completed {
+            attempt_id: accepted.attempt_id,
+            stop_reason: None,
+            at: koru_ai_core::Timestamp::now(),
+        },
+    );
+    surface.status = None;
+    surface.offer_mini_apps(false);
+    surface.offer_mini_apps(true);
+    surface.refresh_mini_app_status();
+    assert!(!surface.native_apps.interrupted);
+    assert!(surface.status.is_none());
+    assert!(surface.take_mini_app_creation().is_none());
+}

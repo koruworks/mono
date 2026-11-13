@@ -356,6 +356,8 @@ impl AgentToolFailure {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AttemptNotice {
+    /// This live reply continues as chat after its native tools were refused.
+    NativeToolsUnavailable,
     /// The agent could not be reattached and a replacement was started with
     /// the conversation so far.
     FreshStart,

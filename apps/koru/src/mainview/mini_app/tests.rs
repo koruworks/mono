@@ -4,6 +4,103 @@ use crate::mainview::harness::*;
 use koru_core::{DocumentId, node::Node, schema::Parent};
 use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot, WindowSlot};
 
+#[test]
+fn mini_app_scripted_model_dispatches_references_through_stream_and_same_native_host() {
+    use koru_ai_core::mini_apps::{self, Authority};
+    use koru_ai_core::{AiToolExecutionContext, ChatId, InferenceAttemptId, ToolInvocationId};
+    let (mut view, _workspace) = container();
+    let (_, profile, _, Some(workspace)) = view.pane_context.as_ref().unwrap() else {
+        panic!()
+    };
+    let profile = koru_ai_core::ProfileId::from_uuid(profile.as_uuid());
+    let workspace = koru_ai_core::WorkspaceId::from_uuid(workspace.as_uuid());
+    let mut system = koru_core::system::SystemDoc::create().unwrap();
+    let list = system.create_list("Travel", None, 1).unwrap();
+    view.list_table = system.lists();
+    assert!(view.open_ai_chat_tab());
+    let before = view.tabs().len();
+    let chat = ChatId::new();
+    let attempt = InferenceAttemptId::new();
+    let TabView::AiChat(origin) = &mut view.tabs_mut().active_mut().view else {
+        panic!()
+    };
+    let host = origin
+        .dictation_surface_mut()
+        .arm_mini_app_for_test(profile, workspace, chat, attempt);
+    let document = koru_ai_core::DocumentId::new();
+    let mut declaration: serde_json::Value = serde_json::from_str(mini_apps::FIXTURE).unwrap();
+    declaration["createSurface"]["components"][0]["arrangement"] = "document-first".into();
+    declaration["createSurface"]["components"][2]
+        .as_object_mut()
+        .unwrap()
+        .remove("bucket");
+    declaration["createSurface"]["components"][2]["list"] =
+        serde_json::json!({"workspace":"current","listId":list.as_uuid()});
+    declaration["createSurface"]["components"][4]["document"] =
+        serde_json::json!({"workspace":"current","documentId":document});
+    let context = AiToolExecutionContext {
+        chat_id: chat,
+        attempt_id: attempt,
+        invocation_id: ToolInvocationId::new(),
+        profile_id: Some(profile),
+        workspace_ids: vec![workspace],
+        mini_app: Some(Authority::new(host)),
+    };
+    let events = koru_ai_server::scripted_native_creation(
+        context,
+        declaration,
+        vec![(list.as_uuid(), "Travel".into())],
+        vec![document],
+    )
+    .unwrap();
+    for event in events.clone() {
+        let wire = serde_json::to_vec(&event).unwrap();
+        let event = serde_json::from_slice(&wire).unwrap();
+        origin
+            .dictation_surface_mut()
+            .receive_mini_app_event_for_test(event);
+    }
+    assert!(view.open_pending_mini_apps());
+    assert_eq!(view.tabs().len(), before + 1);
+    let TabView::MiniApp(app) = &mut view.tabs_mut().active_mut().view else {
+        panic!()
+    };
+    assert_eq!(
+        app.tasks.target(),
+        crate::panes::explore::rail::RailTarget::List(list)
+    );
+    assert_eq!(
+        app.pending.unwrap().0.document.as_uuid(),
+        document.as_uuid()
+    );
+    View::set_viewport(app.as_mut(), 1200.0, 700.0);
+    assert!(app.regions.document.x < app.regions.tasks.x);
+    // Ordinary host operations are local; this fixture has no client/provider
+    // reader, and the requesting chat no longer owns a creation delivery.
+    app.tasks
+        .set_target(crate::panes::explore::rail::RailTarget::Bucket(
+            crate::panes::explore::rail::Bucket::Next,
+        ));
+    let count = view.tabs().len();
+    for tab in view.tabs_mut().iter_mut() {
+        if let TabView::AiChat(origin) = &mut tab.view {
+            for event in events.clone() {
+                origin
+                    .dictation_surface_mut()
+                    .receive_mini_app_event_for_test(event);
+            }
+        }
+    }
+    assert!(!view.open_pending_mini_apps());
+    assert_eq!(view.tabs().len(), count);
+    assert!(
+        !view
+            .pane_requests
+            .iter()
+            .any(|r| matches!(r, PaneRequest::Navigate { .. }))
+    );
+}
+
 fn fixture() -> (MainView, Workspace, DocumentId, NodeId) {
     let (mut view, mut workspace) = container();
     let root = a_document(&mut workspace.ws, "Source");

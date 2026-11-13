@@ -148,6 +148,7 @@ fn send_with(
     client.send_turn(
         context(),
         SendTurnRequest {
+            mini_app_host: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,

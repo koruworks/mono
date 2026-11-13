@@ -1849,6 +1849,7 @@ impl MainView {
             ai_diagrams: Default::default(),
             ai_chat: {
                 let mut chat = ChatSurface::new_at(koru_workspace_host::cli::root_from_args());
+                chat.offer_mini_apps(true);
                 // Koru has a Settings tab: the picker's + opens *Agent
                 // providers*.
                 chat.offer_agent_settings(true);
@@ -6136,6 +6137,7 @@ impl MainView {
         let status_changed = self.maintain_chat_status();
         let step_changed = self.step_chats();
         let elsewhere = self.open_chats_elsewhere();
+        let mini_apps_changed = self.open_pending_mini_apps();
         let mut list_changed = self.ai_chat.take_chat_list_changed();
         let mut relabeled = false;
         for (_, group) in self.panes.iter_groups_mut() {
@@ -6157,7 +6159,8 @@ impl MainView {
                 relabeled = true;
             }
         }
-        let mut changed = relabeled || status_changed || step_changed || elsewhere;
+        let mut changed =
+            relabeled || status_changed || step_changed || elsewhere || mini_apps_changed;
         if !self.explore.showing_chats() {
             return changed;
         }

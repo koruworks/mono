@@ -837,6 +837,7 @@ impl MainView {
             self.ai_chat.clear_context_document_dismissal();
         }
         let open = self.ai_panel.toggle(now);
+        self.ai_chat.offer_mini_apps(open);
         self.ai_focused = open;
         if open {
             self.ai_chat.activate();

@@ -47,3 +47,6 @@ koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite", features = ["fixtures"]
 loro.workspace = true
 koru-log = { path = "../../crates/koru-log" }
 tempfile.workspace = true
+
+[features]
+test-support = []

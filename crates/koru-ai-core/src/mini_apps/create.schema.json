@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed bounded Koru task/document creation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "createSurface"],
+  "properties": {
+    "version": {"const": "1.0"},
+    "createSurface": {
+      "type": "object", "additionalProperties": false,
+      "required": ["surfaceId", "catalogId", "sendDataModel", "components"],
+      "properties": {
+        "surfaceId": {"type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9_:-]+$"},
+        "catalogId": {"const": "koru:task-document:0.1-proposal1"},
+        "sendDataModel": {"const": false},
+        "components": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"oneOf": [
+          {"type":"object","additionalProperties":false,"required":["id","component","children","arrangement"],"properties":{"id":{"const":"root"},"component":{"const":"TaskDocument"},"children":{"const":["selector","tasks","search","document"]},"arrangement":{"enum":["tasks-first","document-first"]}}},
+          {"type":"object","additionalProperties":false,"required":["id","component"],"properties":{"id":{"const":"selector"},"component":{"const":"TaskListSelector"}}},
+          {"type":"object","additionalProperties":false,"required":["id","component"],"properties":{"id":{"const":"tasks"},"component":{"const":"TaskCollection"},"bucket":{"enum":["today","next","upcoming","later","completed"]},"list":{"type":"object","additionalProperties":false,"required":["workspace","listId"],"properties":{"workspace":{"const":"current"},"listId":{"type":"string","format":"uuid"}}}},"oneOf":[{"required":["bucket"]},{"required":["list"]}]},
+          {"type":"object","additionalProperties":false,"required":["id","component"],"properties":{"id":{"const":"search"},"component":{"const":"DocumentSearch"}}},
+          {"type":"object","additionalProperties":false,"required":["id","component"],"properties":{"id":{"const":"document"},"component":{"const":"DocumentHost"},"document":{"type":"object","additionalProperties":false,"required":["workspace","documentId"],"properties":{"workspace":{"const":"current"},"documentId":{"type":"string","format":"uuid"}}}}}
+        ]}}
+      }
+    }
+  }
+}

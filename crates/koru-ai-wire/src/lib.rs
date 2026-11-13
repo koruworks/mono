@@ -355,6 +355,8 @@ pub struct BranchChatResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetryTurnRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub message_id: MessageId,
@@ -422,6 +424,10 @@ pub const MAX_CONTEXT_REFS: usize = 16;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SendTurnRequest {
+    /// Native host provenance for this live request only. Never persisted or
+    /// accepted from a model tool argument.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub chat_id: ChatId,
@@ -520,10 +526,22 @@ pub struct StreamEvent {
 /// Provider tool calls are deliberately absent: their arguments and reasoning
 /// continuity data remain inside the worker. Clients observe only the minimal
 /// [`ToolActivity`] projection: stable target ids and a bounded public failure
-/// summary, never raw tool arguments or results.
+/// summary, never raw tool arguments or general tool results. The registered
+/// reference-only mini-app result has a separate bounded, transient variant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PublicAiEvent {
+    /// Only the registered, validated mini-app result crosses this boundary.
+    /// It is transient, never reconstructed from transcript or tool activity.
+    MiniAppCreated {
+        attempt_id: InferenceAttemptId,
+        chat_id: ChatId,
+        profile_id: ProfileId,
+        invocation_id: koru_ai_core::ToolInvocationId,
+        call_id: String,
+        host: koru_ai_core::mini_apps::HostContext,
+        envelope: koru_ai_core::mini_apps::Envelope,
+    },
     Started {
         attempt_id: InferenceAttemptId,
         provider_response_id: Option<String>,
@@ -606,6 +624,7 @@ pub enum PublicAiEvent {
 impl PublicAiEvent {
     pub const fn attempt_id(&self) -> InferenceAttemptId {
         match self {
+            Self::MiniAppCreated { attempt_id, .. } => *attempt_id,
             Self::Started { attempt_id, .. }
             | Self::Notice { attempt_id, .. }
             | Self::TextDelta { attempt_id, .. }

@@ -7,6 +7,16 @@ license files at the exact revisions we build, and the shipped binaries of the
 the people whose work it contains. Open items are marked **⚑** and collected
 at the end, and settled ones are marked ✅.
 
+## A2UI schema references (2026-11-13)
+
+Three A2UI 1.0 JSON schema references are fetched from `a2ui-project/a2ui`
+at revision `84474c34f151f19eaebd1f416065b027722adc15`, under Apache-2.0.
+Their SHA-256 pins are in `third-party/fetch.manifest`; fetched files remain
+ignored. They are development references and are not embedded or distributed
+in a Koru binary. The bounded runtime parser/schema are original first-party
+code; no A2UI runtime/framework dependency or upstream source is vendored.
+See [the reference record](../third-party/a2ui/README.md).
+
 ## Compiled icon artwork (2026-10-30)
 
 Desktop icon paths are generated from the pinned Phosphor 2.1.2 fonts (MIT),

@@ -51,6 +51,7 @@ struct ChatFace {
 
 impl AiChatView {
     fn over(mut surface: Box<ChatSurface>) -> Self {
+        surface.offer_mini_apps(true);
         surface.set_hidden_agents(hidden_agents());
         surface.set_agent_defaults(agent_defaults());
         surface.set_agent_order(agent_order());
@@ -318,6 +319,18 @@ impl AiChatView {
     /// above or below in its Chats list (D87).
     pub fn take_wants_chat_step(&mut self) -> Option<koru_chats_ui::ChatStep> {
         self.surface.take_wants_chat_step()
+    }
+    pub fn take_mini_app_creation(&mut self) -> Option<koru_ai_ui::MiniAppCreation> {
+        self.surface.take_mini_app_creation()
+    }
+    pub fn mini_app_renderer_id(&self) -> uuid::Uuid {
+        self.surface.mini_app_renderer_id()
+    }
+    pub fn offer_mini_apps(&mut self, visible: bool) {
+        self.surface.offer_mini_apps(visible);
+    }
+    pub fn mini_app_opened(&mut self, request: uuid::Uuid, opened: bool) {
+        self.surface.mini_app_opened(request, opened);
     }
 
     /// The chats this tab's surface last listed.

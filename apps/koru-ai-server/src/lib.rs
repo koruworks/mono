@@ -9,8 +9,11 @@ use std::path::PathBuf;
 
 mod attachments;
 mod chat_tools;
+mod mini_apps;
 mod store_context;
 mod store_tools;
+#[cfg(feature = "test-support")]
+pub use chat_tools::scripted_native_creation;
 mod worker;
 
 pub use chat_tools::{AiToolDispatcher, ChatToolAdapter};

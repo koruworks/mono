@@ -109,6 +109,8 @@ mod agents;
 mod approval_modes;
 mod attachments;
 mod chat_status;
+mod mini_apps;
+pub use mini_apps::MiniAppCreation;
 mod chats;
 mod composer;
 mod composer_band;
@@ -475,6 +477,7 @@ struct GrantKey {
 /// One AI conversation surface, usable as a window body or in Koru's context
 /// column. Constructing it in tests starts no service client.
 pub struct ChatSurface {
+    native_apps: mini_apps::NativeApps,
     viewport: Rect,
     engine: TextEngine,
     root: Option<PathBuf>,
@@ -991,6 +994,7 @@ impl ChatSurface {
         let system_prompt = TextArea::new(&mut engine, role::ui());
         let picker = model_picker::PickerState::new(&mut engine);
         Self {
+            native_apps: Default::default(),
             viewport: Rect::new(0.0, 0.0, 460.0, 680.0),
             engine,
             root,
@@ -1233,6 +1237,7 @@ impl ChatSurface {
     /// Start a brand-new chat, suppressing the active document context for this
     /// chat so it begins empty (workspace context still applies).
     pub fn start_new_chat(&mut self) -> bool {
+        self.native_apps.clear();
         self.suppress_next_document_context = true;
         self.fresh_chat_wanted = true;
         // Before the boot has answered there is no provider to create under:
@@ -1247,6 +1252,7 @@ impl ChatSurface {
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
+        self.native_apps.clear();
         self.fresh_chat_wanted = false;
         self.pending_link_chat = Some(chat);
         self.highlight = block.map(|block| (block, Instant::now()));
@@ -1306,6 +1312,7 @@ impl ChatSurface {
             return false;
         }
         self.context_workspace = workspace;
+        self.native_apps.clear();
         self.prioritize_context_workspace();
         true
     }
@@ -3277,6 +3284,9 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        if matches!(command, Command::Cancel(_)) {
+            self.interrupt_mini_app();
+        }
         let Some(command) = self.apply_to_unmade_chat(command) else {
             return true;
         };
@@ -3562,6 +3572,9 @@ impl ChatSurface {
                     .transcript
                     .as_ref()
                     .is_none_or(|current| current.chat.id != transcript.chat.id);
+                if changed_chat {
+                    self.native_apps.clear();
+                }
                 if changed_chat || self.scroll_loaded_chat_to_bottom {
                     self.pending_question_anchor = None;
                     self.scroll_to_pending_question = false;
@@ -3912,6 +3925,9 @@ impl ChatSurface {
                     self.create_chat();
                 }
             }
+            Update::MiniAppAccepted(accepted, host) => {
+                self.accept_mini_app_attempt(&accepted, host)
+            }
             Update::Accepted(accepted) => {
                 if let Some(chat) = self.current_chat_id() {
                     self.context_window_usage.remove(&chat);
@@ -3935,6 +3951,7 @@ impl ChatSurface {
             Update::Event(event) => {
                 let terminal = event.event.is_terminal();
                 match &event.event {
+                    PublicAiEvent::MiniAppCreated { .. } => self.receive_mini_app(&event.event),
                     PublicAiEvent::TextDelta { text, .. } => {
                         self.pulse = None;
                         self.draft.push_str(text);
@@ -3971,8 +3988,23 @@ impl ChatSurface {
                             self.sync_skill_list();
                         }
                     }
-                    PublicAiEvent::Notice { notice, .. } => {
+                    PublicAiEvent::Notice {
+                        notice, attempt_id, ..
+                    } if self.attempt == Some(*attempt_id)
+                        && (!matches!(
+                            notice,
+                            koru_ai_core::AttemptNotice::NativeToolsUnavailable
+                        ) || self.owns_mini_app_outcome(*attempt_id)) =>
+                    {
                         self.status = Some(match notice {
+                            koru_ai_core::AttemptNotice::NativeToolsUnavailable => {
+                                if self.mini_app_attempt_matches(event.event.attempt_id()) {
+                                    self.interrupt_mini_app();
+                                }
+                                self.native_apps.unavailable = true;
+                                koru_i18n::t(self.lang, koru_i18n::Key::MiniAppToolsUnavailable)
+                                    .into()
+                            }
                             koru_ai_core::AttemptNotice::FreshStart => {
                                 koru_i18n::t(self.lang, koru_i18n::Key::AiAgentStartedFresh)
                                     .to_owned()
@@ -4019,6 +4051,13 @@ impl ChatSurface {
                 }
                 if terminal {
                     if let Some(chat) = self.shown_chat_id() {
+                        if self.mini_app_attempt_matches(event.event.attempt_id()) {
+                            if matches!(event.event, PublicAiEvent::Completed { .. }) {
+                                self.complete_mini_app_attempt();
+                            } else {
+                                self.interrupt_mini_app();
+                            }
+                        }
                         let end = match &event.event {
                             PublicAiEvent::Completed { .. } => queue::ReplyEnd::Completed,
                             PublicAiEvent::Cancelled { .. } => queue::ReplyEnd::Stopped,
@@ -4044,6 +4083,9 @@ impl ChatSurface {
                 }
             }
             Update::RecoveryStarted(attempt) => {
+                if self.mini_app_attempt_matches(attempt) {
+                    self.interrupt_mini_app();
+                }
                 if self.attempt == Some(attempt) {
                     self.waiting = true;
                     self.status =
@@ -4090,6 +4132,7 @@ impl ChatSurface {
                         Some("Connection interrupted. Recovering this response...".into())
                     }
                 };
+                self.refresh_mini_app_status();
                 return changed;
             }
             Update::RecoveryFailed { attempt, message } => {
@@ -4406,6 +4449,7 @@ impl ChatSurface {
                 self.status = Some(message);
             }
         }
+        self.refresh_mini_app_status();
         true
     }
 
@@ -5171,7 +5215,9 @@ impl ChatSurface {
             attachments: history_attachments,
         });
         self.messages_dirty = true;
+        let mini_app_host = self.begin_mini_app_request(chat_id);
         let request = SendTurnRequest {
+            mini_app_host,
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
             surface: SURFACE,
@@ -5210,6 +5256,10 @@ impl ChatSurface {
         // After the send, which clears the status line on success.
         if overflowed {
             self.too_many_documents();
+        }
+        if self.native_apps.enabled && !self.mini_app_available() {
+            self.status =
+                Some(koru_i18n::t(self.lang, koru_i18n::Key::MiniAppProviderUnsupported).into());
         }
         true
     }
@@ -9348,9 +9398,11 @@ impl ChatSurface {
             }
             ResponseAction::Retry(message) => {
                 let (explicit_refs, _) = self.turn_refs(&[]);
+                let mini_app_host = self.retry_mini_app_request(chat.id, message);
                 self.send_command(Command::Retry(
                     chat.id,
                     RetryTurnRequest {
+                        mini_app_host,
                         operation_id: uuid::Uuid::new_v4(),
                         message_id: message,
                         surface: SURFACE,
