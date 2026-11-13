@@ -191,6 +191,103 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
             .native_effects_pending(run)
             .unwrap()
     );
+    // The same production mutex/connection forwards the Memory identity lane.
+    let allocation_request = AllocateMemoryEditRequest {
+        key: NativeResultKey {
+            run,
+            attempt: row.attempt,
+            generation: row.generation,
+            turn: send.turn.unwrap(),
+            operation_id: uuid::Uuid::new_v4(),
+        },
+        caller_fingerprint: [9; 32],
+        subject: MemoryEditSubjectV1 {
+            version: 1,
+            owner: s.provenance.owner,
+            bot: s.provenance.bot,
+            submission: s.provenance.submission,
+            captured_config_revision: 1,
+            action: MemoryEditAction::Remember,
+        },
+        base: MemoryBaseSelector::OriginalSeed {},
+        current_config_revision: 1,
+        current_policy_revision: 1,
+        existing_fact_id: None,
+    };
+    let memory_fence = BotExecutionFence {
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        run,
+        attempt: row.attempt,
+        generation: row.generation,
+        session: native.session.unwrap(),
+        turn: send.turn,
+    };
+    let source = shared.intent(run).unwrap().unwrap().run_document.unwrap();
+    let allocation = shared
+        .native_results()
+        .unwrap()
+        .allocate_memory_edit(&allocation_request, source, &memory_fence, &barrier)
+        .unwrap();
+    assert_eq!(
+        reader
+            .native_results()
+            .unwrap()
+            .memory_edit_allocation(run, allocation_request.key.operation_id, [9; 32])
+            .unwrap(),
+        Some(allocation)
+    );
+    let authority = MemoryEditAuthorityV1 {
+        version: 1,
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        submission: s.provenance.submission,
+        captured_config_revision: 1,
+        creation_request: BotRequestId::mint(),
+        workspace: s.workspace,
+        memory_document: DocumentId::new(),
+        action: MemoryEditAction::Remember,
+    };
+    let resolution = MemoryBaseResolution::Resolved {
+        authority: authority.clone(),
+        version: DocumentVersionId::from_uuid(uuid::Uuid::new_v4()),
+        expected_revision: vec![1, 1, 2],
+    };
+    shared
+        .native_results()
+        .unwrap()
+        .resolve_memory_edit_base(
+            &allocation_request.key,
+            [9; 32],
+            &resolution,
+            &memory_fence,
+            &barrier,
+        )
+        .unwrap();
+    let edit = PrepareNativeResult {
+        key: allocation_request.key,
+        kind: NativeResultOperation::EditPage,
+        destination: s.workspace,
+        target: Some(authority.memory_document),
+        request_fingerprint: [8; 32],
+        expected_revision: Some(vec![1, 1, 2]),
+        config_revision: 1,
+        policy_revision: 1,
+        title: "Memory".into(),
+    };
+    let intent = shared
+        .native_results()
+        .unwrap()
+        .prepare_memory_edit(&edit, [9; 32], &authority)
+        .unwrap();
+    assert_eq!(
+        reader
+            .native_results()
+            .unwrap()
+            .native_result(&edit.key)
+            .unwrap(),
+        Some(intent)
+    );
     let fence = BotExecutionFence {
         owner: s.provenance.owner,
         bot: s.provenance.bot,

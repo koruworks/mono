@@ -175,6 +175,7 @@ pub enum NativeResultDisposition {
 #[serde(deny_unknown_fields)]
 pub struct NativeResultIntentView {
     pub key: NativeResultKey,
+    pub purpose: super::NativeEffectPurpose,
     pub kind: NativeResultOperation,
     pub destination: WorkspaceId,
     pub request_fingerprint: [u8; 32],

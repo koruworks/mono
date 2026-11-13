@@ -59,6 +59,12 @@ pub use attempt::{
     PublicationKind, StaleAttempt,
 };
 pub use bots::{
+    AllocateMemoryEditRequest, MEMORY_EDIT_ALLOCATION_LIMIT, MEMORY_EDIT_UNLINKED_LIMIT,
+    MEMORY_ENSURE_TITLE, MemoryBaseResolution, MemoryBaseSelector, MemoryEditAction,
+    MemoryEditAllocation, MemoryEditAuthorityV1, MemoryEditSubjectV1, MemoryEnsureIdentity,
+    NativeEffectPurpose, same_native_edit_revision,
+};
+pub use bots::{
     BOT_BOOT_PAGE_LIMIT, BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView,
     BotBootAdmission, BotBootCursor, BotBootEntry, BotBootIdentity, BotBootPage, BotBootReceipt,
     BotBootScan, BotBootState, BotDeliveryReceipt, BotExecutionFence, BotHello, BotInputRefusal,

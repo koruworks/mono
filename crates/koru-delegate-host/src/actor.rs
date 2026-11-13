@@ -1464,6 +1464,18 @@ fn wire_item(item: WindowItem) -> TimelineItem {
 }
 
 pub fn failure_of(error: &RunError) -> Failure {
+    if let RunError::Port(port) = error {
+        if matches!(
+            port.code.as_str(),
+            "bot_retained_state" | "bot_retention_inconsistent" | "bot_retention_unavailable"
+        ) {
+            return Failure::new(
+                port.code.clone(),
+                port.detail.clone(),
+                port.code == "bot_retention_unavailable",
+            );
+        }
+    }
     let retryable = matches!(error, RunError::Port(_));
     let message = match error {
         RunError::UnknownRun => "No run by that id exists on this device.".to_owned(),

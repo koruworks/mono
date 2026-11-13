@@ -580,10 +580,26 @@ fn bot_admission_blocks_every_ordinary_run_route_before_document_or_session_acce
         },
     ];
     for command in commands {
+        let purge = matches!(command, Command::Purge { .. });
         actor.handle(command);
-        assert!(
-            matches!(answer.recv().unwrap(),Response::Failure(failure) if failure.code=="bot_private_route_required")
+        let Response::Failure(failure) = answer.recv().unwrap() else {
+            panic!("Bot ordinary route must refuse")
+        };
+        assert_eq!(
+            failure.code,
+            if purge {
+                "bot_retained_state"
+            } else {
+                "bot_private_route_required"
+            }
         );
+        assert!(!failure.retryable);
+        if purge {
+            assert_eq!(
+                failure.message,
+                "This Bot Run retains task and recovery state and cannot be permanently deleted."
+            );
+        }
     }
     let (sink, events) = mpsc::sync_channel(1);
     actor.handle(Command::Stream {

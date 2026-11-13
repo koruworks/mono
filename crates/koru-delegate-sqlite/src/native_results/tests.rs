@@ -7,6 +7,7 @@ use crate::{
 };
 use std::sync::{Arc, atomic::AtomicI64};
 mod drain;
+mod memory;
 
 struct Harness {
     db: RunsDb,

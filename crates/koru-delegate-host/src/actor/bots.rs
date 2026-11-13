@@ -82,6 +82,11 @@ impl Actor {
             result => {
                 let failure = match result {
                     Err(error) => failure_of(&error),
+                    Ok(true) if matches!(command, Command::Purge { .. }) => Failure::new(
+                        "bot_retained_state",
+                        "This Bot Run retains task and recovery state and cannot be permanently deleted.",
+                        false,
+                    ),
                     _ => unavailable("bot_private_route_required"),
                 };
                 let _ = reply.send(Response::Failure(failure));
@@ -168,6 +173,61 @@ impl Actor {
                 intent: self
                     .orchestrator
                     .prepare_native_effect(&request, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::ReadMemoryEditAllocation {
+                run,
+                operation_id,
+                caller_fingerprint,
+            } => {
+                match self
+                    .orchestrator
+                    .read_memory_edit_allocation(run, operation_id, caller_fingerprint, device)
+                    .map_err(bot_failure)?
+                {
+                    Some(allocation) => BotReply::MemoryEditAllocation { allocation },
+                    None => BotReply::Missing,
+                }
+            }
+            BotCommand::AllocateMemoryEdit { request } => BotReply::MemoryEditAllocation {
+                allocation: self
+                    .orchestrator
+                    .allocate_memory_edit(&request, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::ResolveMemoryEditBase {
+                key,
+                caller_fingerprint,
+                authority,
+                expected_version,
+                expected_revision,
+                current_config_revision,
+                current_policy_revision,
+            } => BotReply::MemoryEditAllocation {
+                allocation: self
+                    .orchestrator
+                    .resolve_memory_edit_base(
+                        &key,
+                        caller_fingerprint,
+                        &koru_delegate_core::MemoryBaseResolution::Resolved {
+                            authority,
+                            version: expected_version,
+                            expected_revision,
+                        },
+                        current_config_revision,
+                        current_policy_revision,
+                        device,
+                    )
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::PrepareMemoryEdit {
+                request,
+                caller_fingerprint,
+                authority,
+            } => BotReply::NativeResult {
+                intent: self
+                    .orchestrator
+                    .prepare_memory_edit(&request, caller_fingerprint, &authority, device)
                     .map_err(bot_failure)?,
             },
             BotCommand::ReconcileNativeResult { key } => match self
@@ -402,6 +462,24 @@ impl Actor {
 #[cfg(test)]
 mod native_reply_tests {
     use super::*;
+    #[test]
+    fn purge_retention_failures_explain_retained_state_and_only_unavailability_retries() {
+        for code in [
+            "bot_retained_state",
+            "bot_retention_inconsistent",
+            "bot_retention_unavailable",
+        ] {
+            let error = koru_delegate_runtime::PortError::new(
+                koru_delegate_runtime::Port::Store,
+                code,
+                "Retained state cannot be safely removed.",
+            );
+            let failure = failure_of(&error.into());
+            assert_eq!(failure.code, code);
+            assert_eq!(failure.message, "Retained state cannot be safely removed.");
+            assert_eq!(failure.retryable, code == "bot_retention_unavailable");
+        }
+    }
     #[test]
     fn pending_native_stop_is_retryable_failure_never_applied() {
         let failure = bot_failure(

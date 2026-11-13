@@ -4,6 +4,85 @@ use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
 
 #[test]
+fn ipc14_memory_commands_are_closed_owner_derived_and_reject_ipc13_before_body_decode() {
+    use koru_delegate_core::{MemoryBaseSelector, MemoryEditAction, MemoryEditSubjectV1};
+    let effect = prepare();
+    let owner = serde_json::from_value(
+        serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
+    )
+    .unwrap();
+    let subject = MemoryEditSubjectV1 {
+        version: 1,
+        owner,
+        bot: koru_delegate_core::BotId::mint(),
+        submission: koru_delegate_core::BotRequestId::mint(),
+        captured_config_revision: 1,
+        action: MemoryEditAction::Remember,
+    };
+    let authority = MemoryEditAuthorityV1 {
+        version: 1,
+        owner,
+        bot: subject.bot,
+        submission: subject.submission,
+        captured_config_revision: 1,
+        creation_request: koru_delegate_core::BotRequestId::mint(),
+        workspace: effect.destination,
+        memory_document: DocumentId::from_uuid(Uuid::new_v4()),
+        action: MemoryEditAction::Remember,
+    };
+    let allocation = AllocateMemoryEditRequest {
+        key: effect.key.clone(),
+        caller_fingerprint: [5; 32],
+        subject,
+        base: MemoryBaseSelector::OriginalSeed {},
+        current_config_revision: 1,
+        current_policy_revision: 1,
+        existing_fact_id: None,
+    };
+    let commands = [
+        BotCommand::ReadMemoryEditAllocation {
+            run: effect.key.run,
+            operation_id: effect.key.operation_id,
+            caller_fingerprint: [5; 32],
+        },
+        BotCommand::AllocateMemoryEdit {
+            request: allocation,
+        },
+        BotCommand::ResolveMemoryEditBase {
+            key: effect.key.clone(),
+            caller_fingerprint: [5; 32],
+            authority: authority.clone(),
+            expected_version: koru_delegate_core::DocumentVersionId::from_uuid(Uuid::new_v4()),
+            expected_revision: vec![1, 1, 2],
+            current_config_revision: 1,
+            current_policy_revision: 1,
+        },
+        BotCommand::PrepareMemoryEdit {
+            request: effect,
+            caller_fingerprint: [5; 32],
+            authority,
+        },
+    ];
+    assert_eq!(crate::ipc::WIRE_VERSION, 14);
+    for command in commands {
+        assert!(command.owner().is_none());
+        let bytes = koru_ipc::frame::encode(14, &command).unwrap();
+        let (version, decoded): (u8, BotCommand) =
+            koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
+        assert_eq!(version, 14);
+        assert_eq!(decoded, command);
+        let mut json = serde_json::to_value(&command).unwrap();
+        json["force"] = true.into();
+        assert!(serde_json::from_value::<BotCommand>(json).is_err());
+        assert_eq!(format!("{command:?}"), "BotCommand([REDACTED])");
+    }
+    let bytes = koru_ipc::frame::encode(13, &serde_json::json!({"old_reply":true})).unwrap();
+    let refusal = crate::local::read_current_response(&mut bytes.as_slice()).unwrap_err();
+    assert_eq!(refusal.code, "delegate_incompatible");
+    assert!(!refusal.retryable);
+}
+
+#[test]
 fn boot_admission_hint_distinguishes_unknown_from_missing_and_rejects_unknown_fields() {
     use koru_delegate_core::BotBootAdmission;
     for hint in [
@@ -92,7 +171,7 @@ fn ipc13_boot_commands_roundtrip_and_ipc12_is_rejected() {
         let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (version, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, crate::ipc::WIRE_VERSION);
         assert_eq!(decoded, command);
         if matches!(command, BotCommand::Hello { .. }) {
             let mut nested = serde_json::to_value(&command).unwrap();
@@ -138,7 +217,7 @@ fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
 
 #[test]
 fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 13);
+    assert_eq!(crate::ipc::WIRE_VERSION, 14);
     let owner: koru_delegate_core::BotOwner = serde_json::from_value(
         serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
     )
@@ -152,7 +231,10 @@ fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
     let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     let (version, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-    assert_eq!((version, decoded), (13, command.clone()));
+    assert_eq!(
+        (version, decoded),
+        (crate::ipc::WIRE_VERSION, command.clone())
+    );
     let mut wire = serde_json::to_value(&command).unwrap();
     assert_eq!(wire["command"], "unsettled_work");
     wire["include_settled"] = serde_json::json!(true);
@@ -179,7 +261,7 @@ fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
 
 #[test]
 fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 13);
+    assert_eq!(crate::ipc::WIRE_VERSION, 14);
     let request = prepare();
     for reason in [
         NativeDrainReason::GatewayStartup,
@@ -195,7 +277,7 @@ fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
         let encoded = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (version, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut encoded.as_slice()).unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, crate::ipc::WIRE_VERSION);
         assert_eq!(decoded, command);
         let mut json = serde_json::to_value(command).unwrap();
         json["reason"]["trusted"] = serde_json::json!(true);
