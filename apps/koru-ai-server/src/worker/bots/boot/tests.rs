@@ -773,7 +773,7 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
     let mut replay_count = 0;
     let mut scoped_drain = false;
     let mut startup_drain = false;
-    loop {
+    let (final_command, final_reply) = loop {
         let (command, reply) = next(&calls);
         match command {
             D::Hello {
@@ -808,14 +808,16 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
                 } else {
                     BotBootState::Ready
                 };
-                reply.send(Ok(synchronized(command, state))).unwrap();
                 if replay_count > 1 && scoped_drain && startup_drain {
-                    break;
+                    // Keep the admin lane on this known call while the read
+                    // below proves that replay did not complete the receipt.
+                    break (command, reply);
                 }
+                reply.send(Ok(synchronized(command, state))).unwrap();
             }
             _ => unreachable!(),
         }
-    }
+    };
     let response = worker
         .client()
         .bots(
@@ -831,6 +833,11 @@ fn worker_pending_policy_drains_native_work_then_replays_without_completing_paus
     };
     assert_eq!(operation.status, BotOperationStatus::Pending);
     worker.shutdown();
+    // Release the known in-flight call only after shutdown prevents another
+    // scripted admin call from starting without a test owner to answer it.
+    final_reply
+        .send(Ok(synchronized(final_command, BotBootState::Ready)))
+        .unwrap();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
 
