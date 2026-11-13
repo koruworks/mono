@@ -2,6 +2,49 @@
 
 use super::*;
 
+#[test]
+fn unreadable_barrier_is_not_missing_and_inventory_cursor_still_advances() {
+    let mut h = bot_harness();
+    let owner = submission(1).provenance.owner;
+    for n in 1..=17 {
+        let mut s = submission(n);
+        s.provenance.bot = BotId::from_uuid(v4(n));
+        h.orchestrator.bot_submit(s, owner.device).unwrap();
+    }
+    h.ledger.lock().unwrap().fail = Some("bot_barrier_read");
+    let page = h
+        .orchestrator
+        .bot_hello(owner, BotBootScan::Start {}, owner.device)
+        .unwrap();
+    assert_eq!(page.entries.len(), 16);
+    assert!(matches!(
+        page.entries[0].admission,
+        BotBootAdmission::Unavailable {}
+    ));
+    assert!(
+        page.entries[1..]
+            .iter()
+            .all(|entry| matches!(entry.admission, BotBootAdmission::Missing {}))
+    );
+    h.ledger.lock().unwrap().fail = None;
+    let next = h
+        .orchestrator
+        .bot_hello(
+            owner,
+            BotBootScan::Continue {
+                cursor: page.next.unwrap(),
+            },
+            owner.device,
+        )
+        .unwrap();
+    assert_eq!(next.entries.len(), 1);
+    assert!(matches!(
+        next.entries[0].admission,
+        BotBootAdmission::Missing {}
+    ));
+    assert!(next.next.is_none());
+}
+
 pub(super) fn policy(s: &BotSubmission, revision: u64) -> BotPolicyBarrier {
     BotPolicyBarrier {
         key: BotPolicyBarrierKey {
@@ -234,7 +277,9 @@ fn inventory_cursor_is_owner_boot_bound_and_acknowledgements_do_not_starve_later
     let mut pages = 0;
     loop {
         let page = h.orchestrator.bot_hello(owner, scan, owner.device).unwrap();
-        assert!(page.entries.is_empty());
+        assert!(!page.entries.is_empty());
+        assert!(page.entries.iter().all(|entry| matches!(&entry.admission,
+            BotBootAdmission::Present { barrier } if barrier.bot == entry.identity.bot)));
         pages += 1;
         match page.next {
             Some(cursor) => scan = BotBootScan::Continue { cursor },

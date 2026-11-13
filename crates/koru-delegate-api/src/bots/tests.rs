@@ -4,6 +4,33 @@ use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
 
 #[test]
+fn boot_admission_hint_distinguishes_unknown_from_missing_and_rejects_unknown_fields() {
+    use koru_delegate_core::BotBootAdmission;
+    for hint in [
+        BotBootAdmission::Missing {},
+        BotBootAdmission::Unavailable {},
+    ] {
+        let mut wire = serde_json::to_value(&hint).unwrap();
+        assert_eq!(
+            serde_json::from_value::<BotBootAdmission>(wire.clone()).unwrap(),
+            hint
+        );
+        wire["force"] = true.into();
+        assert!(serde_json::from_value::<BotBootAdmission>(wire).is_err());
+    }
+    assert_ne!(
+        serde_json::to_value(BotBootAdmission::Missing {}).unwrap(),
+        serde_json::to_value(BotBootAdmission::Unavailable {}).unwrap()
+    );
+    let mut present = serde_json::json!({"state":"present","barrier":{
+        "owner":{"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()},"bot":Uuid::new_v4(),"request":Uuid::new_v4(),"epoch":1,"paused":false
+    }});
+    assert!(serde_json::from_value::<BotBootAdmission>(present.clone()).is_ok());
+    present["barrier"]["force"] = true.into();
+    assert!(serde_json::from_value::<BotBootAdmission>(present).is_err());
+}
+
+#[test]
 fn ipc13_boot_commands_roundtrip_and_ipc12_is_rejected() {
     let owner = serde_json::from_value(
         serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),

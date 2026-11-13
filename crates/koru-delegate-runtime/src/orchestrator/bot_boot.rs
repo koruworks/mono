@@ -61,12 +61,18 @@ impl Orchestrator {
         let mut seen = HashSet::new();
         let mut entries = Vec::new();
         for entry in page.entries {
-            if seen.insert(entry.bot)
-                && !self
-                    .bot_boot_ack_current(owner, entry.bot, 0, 0)
-                    .unwrap_or(false)
-            {
-                entries.push(entry);
+            if seen.insert(entry.bot) {
+                // A canonical AI-only config change can leave our old proof
+                // current here. Explicit passes must include acknowledged Bots.
+                let admission = match self.bot_ledger()?.bot_barrier(owner, entry.bot) {
+                    Ok(Some(barrier)) => BotBootAdmission::Present { barrier },
+                    Ok(None) => BotBootAdmission::Missing {},
+                    Err(_) => BotBootAdmission::Unavailable {},
+                };
+                entries.push(BotBootEntry {
+                    identity: entry,
+                    admission,
+                });
             }
         }
         Ok(BotHello {

@@ -17,6 +17,8 @@ pub(super) fn bot_failure(error: BotError) -> Failure {
 }
 
 mod admission;
+mod boot;
+pub(super) use boot::{BootRecovery, BotBootJob, BotBootResult};
 mod branch;
 pub(in crate::worker) mod chat;
 mod lifecycle;
@@ -72,7 +74,11 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
+        let refresh = !lifecycle::bot_read_command(&request);
         let response = self.bot_command(context, request);
+        if refresh && response.is_ok() {
+            self.request_bot_boot_refresh();
+        }
         // Refused because another change of the Bot is still waiting for its
         // owner: offer what is owed now, so the person's retry can succeed.
         if matches!(&response, Err(error) if error.code == BotError::Settling.code()) {

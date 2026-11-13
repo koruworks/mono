@@ -1,6 +1,160 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+struct SubmitDuringBootPass {
+    native: Native,
+    first: AtomicBool,
+    entered: SyncSender<()>,
+    release: Mutex<Receiver<()>>,
+    sequence: u64,
+}
+impl BotDelegatePort for SubmitDuringBootPass {
+    fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
+        match command {
+            D::Hello {
+                owner,
+                scan: d::BotBootScan::Start {},
+            } if self.first.swap(false, Ordering::SeqCst) => {
+                let BotReply::Hello { mut hello } = self.native.execute(D::Hello {
+                    owner,
+                    scan: d::BotBootScan::Start {},
+                })?
+                else {
+                    unreachable!()
+                };
+                assert!(hello.entries.is_empty());
+                // Sixteen prior admissions of one unavailable Bot were read
+                // and deduplicated; its final row may settle before Continue.
+                hello.entries.push(d::BotBootEntry {
+                    identity: d::BotBootIdentity {
+                        owner,
+                        bot: d::BotId::mint(),
+                        run: d::RunId::mint(),
+                        sequence: 16,
+                    },
+                    admission: d::BotBootAdmission::Unavailable {},
+                });
+                hello.next = Some(d::BotBootCursor {
+                    boot: hello.boot,
+                    owner,
+                    after: 16,
+                    through: 17,
+                });
+                Ok(BotReply::Hello { hello })
+            }
+            D::Hello {
+                scan: d::BotBootScan::Continue { cursor },
+                ..
+            } => {
+                self.entered.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                Ok(BotReply::Hello {
+                    hello: d::BotHello {
+                        boot: cursor.boot,
+                        entries: vec![],
+                        next: None,
+                    },
+                })
+            }
+            command => {
+                let mut reply = self.native.execute(command)?;
+                if let BotReply::Hello { hello } = &mut reply {
+                    for entry in &mut hello.entries {
+                        entry.identity.sequence = self.sequence;
+                    }
+                }
+                Ok(reply)
+            }
+        }
+    }
+}
+
+#[test]
+fn durable_submit_after_captured_inventory_wakes_followup_above_or_reusing_highwater() {
+    for sequence in [1, 18] {
+        let (mut repository, authority, create) = fixture();
+        let bot = created(&mut repository, authority.clone(), create);
+        let chat = repository
+            .chat_with_access(
+                bot.main_chat,
+                &ChatReadAccess::authorized(vec![bot.main_chat]),
+            )
+            .unwrap()
+            .unwrap();
+        let prepared = proof(authority.clone(), &bot, chat);
+        let (entered_tx, entered) = sync_channel(1);
+        let (release, released) = sync_channel(1);
+        let native = Arc::new(SubmitDuringBootPass {
+            native: Native::default(),
+            first: AtomicBool::new(true),
+            entered: entered_tx,
+            release: Mutex::new(released),
+            sequence,
+        });
+        let mut config = WorkerConfig::new(
+            PathBuf::from("unused-boot-submit-followup"),
+            "internal-debug",
+            ProviderRegistry::default(),
+        )
+        .with_bot_authority(authority)
+        .with_bot_delegate(native.clone());
+        config.test_repository = Some(repository);
+        let worker = AiWorker::new(config).spawn().unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        let client = worker.client();
+        let request = request(&bot);
+        let (reply, response) = sync_channel(1);
+        client
+            .send(WorkerCommand::SendTurn {
+                context: prepared,
+                request: request.clone(),
+                reply,
+            })
+            .unwrap();
+        let stream = response
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let accepted = stream.accepted.clone();
+        drop(stream);
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let BotResponse::TaskAnswer { answer } = client
+                .bots(
+                    context(true),
+                    BotCommand::ReadTaskAnswer {
+                        bot_id: bot.id,
+                        chat_id: bot.main_chat,
+                        attempt_id: accepted.attempt_id,
+                        operation_id: request.operation_id,
+                        offset: 0,
+                    },
+                )
+                .unwrap()
+            else {
+                panic!("answer")
+            };
+            if answer.status.is_terminal() {
+                assert_eq!(answer.status, AttemptStatus::Complete);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "queued submission missed follow-up replay"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(native.native.state.lock().unwrap().begin, 1);
+        worker.shutdown();
+        assert_eq!(worker.join(), WorkerExit::Clean);
+    }
+}
+
 #[test]
 fn external_bot_task_uses_shared_turn_and_survives_subscriber_drop() {
     let (mut repository, authority, create) = fixture();

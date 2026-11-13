@@ -113,7 +113,7 @@ pub(crate) fn read_bot_submission_on(
     }
     Ok(receipt)
 }
-fn pause_on(
+pub(super) fn pause_on(
     conn: &Connection,
     scope: UserScopeId,
     request: BotRequestId,

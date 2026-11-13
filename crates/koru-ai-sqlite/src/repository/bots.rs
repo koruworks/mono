@@ -5,7 +5,9 @@ use koru_ai_core::bots::*;
 pub(crate) mod admission;
 pub(crate) mod policy;
 
+mod boot;
 mod branch;
+pub use boot::BotBootSnapshot;
 pub(crate) mod lifecycle;
 pub use branch::HistoricalBotRun;
 pub use lifecycle::{

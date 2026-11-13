@@ -558,7 +558,7 @@ fn boot_policy_pending_is_not_ready_until_native_lease_settles() {
         .bot_hello(fence.owner, BotBootScan::Start {}, device)
         .unwrap();
     assert_eq!(
-        page.entries[0].run, s.request.run,
+        page.entries[0].identity.run, s.request.run,
         "executing owners need fresh replay too"
     );
     h.orchestrator
@@ -580,12 +580,13 @@ fn boot_policy_pending_is_not_ready_until_native_lease_settles() {
             .state,
         BotBootState::Ready
     );
+    let hello = h
+        .orchestrator
+        .bot_hello(fence.owner, BotBootScan::Start {}, device)
+        .unwrap();
+    assert_eq!(hello.entries.len(), 1);
     assert!(
-        h.orchestrator
-            .bot_hello(fence.owner, BotBootScan::Start {}, device)
-            .unwrap()
-            .entries
-            .is_empty()
+        matches!(&hello.entries[0].admission, BotBootAdmission::Present { barrier } if barrier.epoch == 2 && barrier.paused)
     );
 }
 

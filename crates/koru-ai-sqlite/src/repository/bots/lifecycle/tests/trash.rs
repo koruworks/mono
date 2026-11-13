@@ -5,6 +5,53 @@
 //! took.
 use super::*;
 
+#[test]
+fn boot_snapshot_reads_real_completed_trash_and_restored_current_revisions() {
+    let (mut repo, bot, owner) = setup();
+    let op = repo
+        .capture_bot_lifecycle(&trash_capture(&repo, &bot, owner, 1))
+        .unwrap();
+    settle(&mut repo, owner.user_scope, op.operation, true);
+    repo.complete_bot_trash(owner.user_scope, op.operation, 40)
+        .unwrap();
+    let trashed = repo
+        .bot_boot_snapshot(
+            owner,
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Missing {},
+        )
+        .unwrap();
+    assert_eq!(trashed.bot.lifecycle, BotLifecycle::Trashed);
+    assert_eq!(trashed.admission.epoch, 3);
+    assert!(trashed.admission.paused);
+    assert!(
+        repo.bot_lifecycle_holders(owner, &[(bot.id, BotLifecycle::Trashed)])
+            .unwrap()
+            .contains_key(&bot.id)
+    );
+    repo.restore_trashed_bot(&restore(
+        &bot,
+        owner,
+        BotLifecycleKind::Restore,
+        None,
+        op.operation,
+        3,
+    ))
+    .unwrap();
+    let restored = repo
+        .bot_boot_snapshot(
+            owner,
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Present {
+                barrier: trashed.admission,
+            },
+        )
+        .unwrap();
+    assert_eq!(restored.bot.lifecycle, BotLifecycle::Active);
+    assert_eq!(restored.admission.epoch, 4);
+    assert!(restored.admission.paused);
+}
+
 fn revision(repo: &Repository, bot: BotId) -> (u64, BotLifecycle, bool) {
     let (bot, lifecycle) = repo.bot_any_lifecycle(bot).unwrap().unwrap();
     (bot.revision, lifecycle, bot.paused)

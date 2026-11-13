@@ -60,16 +60,17 @@ pub use attempt::{
 };
 pub use bots::{
     BOT_BOOT_PAGE_LIMIT, BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView,
-    BotBootCursor, BotBootIdentity, BotBootPage, BotBootReceipt, BotBootScan, BotBootState,
-    BotDeliveryReceipt, BotExecutionFence, BotHello, BotInputRefusal, BotOwner, BotPolicyBarrier,
-    BotPolicyBarrierKey, BotPolicyBarrierReceipt, BotPolicyBarrierState, BotProvenance, BotRunKey,
-    BotSubmission, BotSubmissionKey, BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder,
-    CapturedBotPolicy, ConfirmNativeResult, NativeDrainReason, NativeEffectBinding,
-    NativeEffectDrainReceipt, NativeEffectKind, NativeEffectTimestamp, NativePendingEffect,
-    NativePendingEffects, NativePolicyRequestId, NativeRecoveryCursor, NativeResultDisposition,
-    NativeResultIntentView, NativeResultKey, NativeResultKind, NativeResultObservation,
-    NativeResultOperation, NativeResultReference, NativeResultRefusal, NativeResultStage,
-    PrepareNativeResult, RunToolAuthority, native_store_scope,
+    BotBootAdmission, BotBootCursor, BotBootEntry, BotBootIdentity, BotBootPage, BotBootReceipt,
+    BotBootScan, BotBootState, BotDeliveryReceipt, BotExecutionFence, BotHello, BotInputRefusal,
+    BotOwner, BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt,
+    BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
+    BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy,
+    ConfirmNativeResult, NativeDrainReason, NativeEffectBinding, NativeEffectDrainReceipt,
+    NativeEffectKind, NativeEffectTimestamp, NativePendingEffect, NativePendingEffects,
+    NativePolicyRequestId, NativeRecoveryCursor, NativeResultDisposition, NativeResultIntentView,
+    NativeResultKey, NativeResultKind, NativeResultObservation, NativeResultOperation,
+    NativeResultReference, NativeResultRefusal, NativeResultStage, PrepareNativeResult,
+    RunToolAuthority, native_store_scope,
 };
 pub use context::{BlobKind, RunContextItem};
 pub use deletion::{ArtifactDisposition, FolderOutcome};

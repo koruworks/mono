@@ -75,6 +75,7 @@ impl BotLedger for RecordingStore {
         owner: BotOwner,
         bot: BotId,
     ) -> Result<Option<BotAdmissionBarrier>, BotLedgerError> {
+        self.check("bot_barrier_read")?;
         self.inner.lock().unwrap().bot_barrier(owner, bot)
     }
     fn apply_bot_barrier(

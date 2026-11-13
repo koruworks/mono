@@ -42,6 +42,23 @@ pub struct BotBootIdentity {
     pub sequence: u64,
 }
 
+/// Execution-owner identity evidence, not canonical desired policy. A failed
+/// read must never masquerade as permission to synthesize a missing barrier.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BotBootAdmission {
+    Missing {},
+    Present { barrier: BotAdmissionBarrier },
+    Unavailable {},
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotBootEntry {
+    pub identity: BotBootIdentity,
+    pub admission: BotBootAdmission,
+}
+
 /// Column-only ledger projection; the orchestrator binds its cursor to a boot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotBootPage {
@@ -55,7 +72,7 @@ pub struct BotBootPage {
 #[serde(deny_unknown_fields)]
 pub struct BotHello {
     pub boot: DelegateBootId,
-    pub entries: Vec<BotBootIdentity>,
+    pub entries: Vec<BotBootEntry>,
     pub next: Option<BotBootCursor>,
 }
 

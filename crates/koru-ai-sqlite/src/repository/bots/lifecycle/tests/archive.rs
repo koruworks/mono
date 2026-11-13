@@ -3,6 +3,51 @@
 //! and Unarchive, each against the journal's own fences.
 use super::*;
 
+#[test]
+fn boot_snapshot_reads_real_completed_archive_and_restored_current_revisions() {
+    let (mut repo, bot, owner, op) = archived_setup();
+    repo.advance_bot_lifecycle(
+        owner.user_scope,
+        op.operation,
+        BotLifecycleStage::Captured,
+        BotLifecycleStage::Settling,
+        true,
+        11,
+    )
+    .unwrap();
+    repo.complete_bot_archive(owner.user_scope, op.operation, 20)
+        .unwrap();
+    let archived = repo
+        .bot_boot_snapshot(
+            owner,
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Missing {},
+        )
+        .unwrap();
+    assert_eq!(archived.bot.lifecycle, BotLifecycle::Archived);
+    assert_eq!(archived.admission.epoch, 3);
+    assert!(archived.admission.paused);
+    assert!(
+        repo.bot_lifecycle_holders(owner, &[(bot.id, BotLifecycle::Archived)])
+            .unwrap()
+            .contains_key(&bot.id)
+    );
+    repo.unarchive_bot(&restore(&bot, owner, op.operation, 3))
+        .unwrap();
+    let restored = repo
+        .bot_boot_snapshot(
+            owner,
+            bot.id,
+            &koru_delegate_core::BotBootAdmission::Present {
+                barrier: archived.admission,
+            },
+        )
+        .unwrap();
+    assert_eq!(restored.bot.lifecycle, BotLifecycle::Active);
+    assert_eq!(restored.admission.epoch, 4);
+    assert!(restored.admission.paused);
+}
+
 fn archived_setup() -> (Repository, Bot, BotOwner, LifecycleOperation) {
     let (mut repo, bot, owner) = setup();
     let op = repo
