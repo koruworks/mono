@@ -15,7 +15,10 @@ use koru_core::node::Node;
 use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::{Kind, NodeId};
 
+mod document_init;
 pub mod document_load;
+use document_init::InitialContents;
+pub use document_init::initialize_document_from_cutting;
 mod document_retirement;
 pub mod durability;
 pub use document_retirement::DocumentReplacementError;
@@ -639,6 +642,28 @@ impl Workspace {
         Ok(id)
     }
 
+    /// Create a document whose first published content is an authored subtree.
+    ///
+    /// The joined document is initialized before it becomes active. An existing
+    /// seed is never replaced: it may already have reached a peer whose edits
+    /// have not arrived here yet. On failure the previous document stays active
+    /// and the caller retains its cutting; registration itself may have succeeded.
+    pub fn create_document_from_cutting_after(
+        &mut self,
+        title: &str,
+        after: Option<koru_core::DocumentId>,
+        cutting: &koru_core::schema::Cutting,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let placement = self.placement_after(after);
+        self.register_document_placed_with_contents(
+            title,
+            placement,
+            after,
+            koru_core::explore::KIND_DOCUMENT,
+            InitialContents::Cutting { cutting, title },
+        )
+    }
+
     /// Create a document as the **last child** of `parent` and return its id
     /// — a row's `+` in the sidebar (the review's note). Placed by the store
     /// under that parent, and shown there at once by the provisional entry,
@@ -1027,9 +1052,26 @@ impl Workspace {
     fn register_document_placed(
         &mut self,
         title: &str,
+        placement: (Option<koru_store_core::ids::DocumentId>, Option<usize>),
+        near: Option<koru_core::DocumentId>,
+        kind: &str,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        self.register_document_placed_with_contents(
+            title,
+            placement,
+            near,
+            kind,
+            InitialContents::SeedOnOpen,
+        )
+    }
+
+    fn register_document_placed_with_contents(
+        &mut self,
+        title: &str,
         (parent, index): (Option<koru_store_core::ids::DocumentId>, Option<usize>),
         near: Option<koru_core::DocumentId>,
         kind: &str,
+        contents: InitialContents<'_>,
     ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
         let workspace = self.current.ok_or_else(|| {
             koru_store_core::errors::Error::new(
@@ -1076,9 +1118,13 @@ impl Workspace {
         // The store has the document from here on, whatever happens next:
         // a failed open is not *nothing was changed*, and the message says
         // so rather than letting the window claim the opposite.
-        self.open_document(id).map_err(|e| {
-            koru_store_core::errors::Error::new(e.code(), format!("{CREATED_BUT_NOT_OPENED}: {e}"))
-        })?;
+        self.open_document_in_with_contents(workspace, id, contents)
+            .map_err(|e| {
+                koru_store_core::errors::Error::new(
+                    e.code(),
+                    format!("{CREATED_BUT_NOT_OPENED}: {e}"),
+                )
+            })?;
         // **The schema marker, on the document the store made.**
         //
         // `WorkspaceDoc::create` writes it and nothing here calls `create`: the
@@ -1089,12 +1135,14 @@ impl Workspace {
         // was noticed. Stamped here rather than in either caller, because
         // `create_document_after` and `copy_document` both come through here
         // and only one of them seeds.
-        self.ws.stamp_schema_version().map_err(|e| {
-            koru_store_core::errors::Error::new(
-                koru_store_core::errors::Code::Internal,
-                format!("stamping the document schema version: {e}"),
-            )
-        })?;
+        if matches!(contents, InitialContents::SeedOnOpen) {
+            self.ws.stamp_schema_version().map_err(|e| {
+                koru_store_core::errors::Error::new(
+                    koru_store_core::errors::Code::Internal,
+                    format!("stamping the document schema version: {e}"),
+                )
+            })?;
+        }
         Ok(id)
     }
 
@@ -1335,6 +1383,23 @@ impl Workspace {
         workspace: koru_core::WorkspaceId,
         id: koru_core::DocumentId,
     ) -> Result<(), koru_store_core::errors::Error> {
+        self.open_document_in_with_contents(workspace, id, InitialContents::SeedOnOpen)
+    }
+
+    fn open_document_in_with_contents(
+        &mut self,
+        workspace: koru_core::WorkspaceId,
+        id: koru_core::DocumentId,
+        contents: InitialContents<'_>,
+    ) -> Result<(), koru_store_core::errors::Error> {
+        if matches!(contents, InitialContents::Cutting { .. })
+            && (self.active == Some(id) || self.others.contains_key(&id))
+        {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "document initialization requires a newly registered document",
+            ));
+        }
         if self.active == Some(id) {
             return Ok(());
         }
@@ -1391,6 +1456,14 @@ impl Workspace {
         // two can be put back together.
         self.replay_trouble
             .extend(session.replay_buffered(&mut doc));
+        if matches!(contents, InitialContents::Cutting { .. }) {
+            document_load::validate(&doc, workspace, id).map_err(|reason| {
+                koru_store_core::errors::Error::new(
+                    koru_store_core::errors::Code::CorruptState,
+                    reason,
+                )
+            })?;
+        }
         // **The workspace this document is in, before undo is switched on.**
         //
         // `WorkspaceDoc::create` writes the id and nothing on this path calls
@@ -1428,7 +1501,20 @@ impl Workspace {
         })?;
         // **After the replay**, so a seed this machine buffered while offline
         // lands first and the document is no longer empty to seed.
-        let seeded = self.seed_empty_document(id, &mut doc);
+        let seeded = match contents {
+            InitialContents::SeedOnOpen => self.seed_empty_document(id, &mut doc),
+            InitialContents::Cutting { cutting, title } => {
+                // Still unpublished and not installed: a failed plant can leave
+                // partial operations, so discard this local document on error.
+                initialize_document_from_cutting(&mut doc, cutting, title).map_err(|e| {
+                    koru_store_core::errors::Error::new(
+                        koru_store_core::errors::Code::InvalidRequest,
+                        format!("initializing the new document: {e}"),
+                    )
+                })?;
+                true
+            }
+        };
         self.park_active();
         self.ws = doc;
         // **Undo is per document, and this is where it becomes true.**

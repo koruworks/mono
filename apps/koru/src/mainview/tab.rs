@@ -887,16 +887,20 @@ pub const DRAFT_NAME: &str = "Untitled";
 /// to swap visually. The private `Workspace` is the whole trick: `Loro` is happy
 /// to hold a document nobody ever saves.
 ///
-/// It stays permanently empty. The first keystroke that would type is
-/// intercepted *before* the leaf sees it ([`MainView::promote_draft`]), so there
-/// is never any content here to migrate — which is what keeps this from being a
-/// second copy of the document model.
+/// Accepted input stays in this private document until the shell completes
+/// its source-qualified creation request. Native preedit postpones that
+/// request; the eventual handoff carries the full authored subtree and caret.
+/// Failed creation retains the private document and vetoes destructive close.
 ///
 /// [`MainView::promote_draft`]: super::MainView::promote_draft
 pub struct Draft {
     /// Not the window's workspace. Never saved, never synced, thrown away whole
     /// when the tab is promoted or closed.
     pub workspace: Workspace,
+    /// Accepted private edits survive a failed creation and veto teardown
+    /// until a successful canonical handoff. This is transient UI state.
+    pub authored: bool,
+    pub origin_scope: Option<(koru_core::ProfileId, WorkspaceId)>,
     /// Library document that was open when this draft was created — the new
     /// page becomes its next sibling on promote. `None` when there was no
     /// anchor (welcome, empty library).
@@ -1608,6 +1612,8 @@ impl Tab {
             whats_new: None,
             draft: Some(Draft {
                 workspace,
+                authored: false,
+                origin_scope: None,
                 library_anchor,
             }),
             home: None,

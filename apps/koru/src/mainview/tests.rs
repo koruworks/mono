@@ -5225,6 +5225,566 @@ fn typing_while_the_document_is_being_created_keeps_the_letters_in_order() {
     );
 }
 
+/// A Store-shaped creation answer, without the old harness's extra Shift
+/// key. The real host stamps the new document and delivers its completion
+/// only to the source view; later ready drains use the same mutable callback.
+fn answer_draft_without_next_key(v: &mut MainView, ws: &mut WorkspaceDoc) -> NodeId {
+    let root = answer_draft_before_frame(v, ws);
+    v.size_visible_groups();
+    root
+}
+
+fn answer_draft_before_frame(v: &mut MainView, ws: &mut WorkspaceDoc) -> NodeId {
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    let scope = ws.id().unwrap();
+    let (profile, workspace) = v.draft_scope().unwrap();
+    let cutting = v
+        .draft_document_content(profile, Some(workspace))
+        .unwrap()
+        .unwrap();
+    *ws = WorkspaceDoc::create(scope, "fixture").unwrap();
+    let document = koru_core::DocumentId::new();
+    ws.stamp_document_id(document).unwrap();
+    let root = koru_workspace::initialize_document_from_cutting(ws, &cutting, "").unwrap();
+    assert!(v.created_document(ws, document));
+    root
+}
+
+#[test]
+fn draft_atomic_input_is_adopted_without_another_key() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let original = workspace.ws.version();
+    assert!(v.key(
+        &mut workspace.ws,
+        &ch("A2UI Alpha"),
+        Some("A2UI Alpha"),
+        NONE
+    ));
+    assert_eq!(
+        workspace.ws.version(),
+        original,
+        "typing belongs to the private draft"
+    );
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "A2UI Alpha");
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("document")
+    };
+    assert_eq!(leaf.caret_spot(), Some((0, "A2UI Alpha".len())));
+    assert!(v.tabs().active_tab().draft.is_none());
+    assert!(v.take_pane_request().is_none(), "exactly one creation");
+}
+
+#[test]
+fn draft_adoption_defers_metadata_layout_and_first_input_restores_the_caret() {
+    for native in [false, true] {
+        let (mut v, mut workspace) = container();
+        v.new_tab();
+        v.key(&mut workspace.ws, &ch("First"), Some("First"), NONE);
+        // Changed presentation context used to trigger construction-time reflow.
+        v.entity_titles
+            .insert("fixture-entity".into(), "Fixture title".into());
+        let root = answer_draft_before_frame(&mut v, &mut workspace.ws);
+        let tab = v.tabs().active_tab();
+        assert!(tab.sized.is_none());
+        let TabView::Leaf(leaf) = &tab.view else {
+            panic!("document")
+        };
+        assert_eq!(
+            leaf.view().reflows,
+            0,
+            "adoption does not shape hidden rows"
+        );
+        // Deliberately no frame/size helper between adoption and this event.
+        if native {
+            let target = v.ime_target().unwrap().id;
+            assert!(v.ime(
+                &mut workspace.ws,
+                target,
+                &winit::event::Ime::Commit(" next".into())
+            ));
+        } else {
+            v.key(&mut workspace.ws, &ch(" next"), Some(" next"), NONE);
+        }
+        assert_eq!(koru_workspace::name_of(&workspace.ws, root), "First next");
+    }
+}
+
+#[test]
+fn draft_runtime_scope_is_checked_before_the_host_creates_anything() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+    let scope = v.draft_scope().unwrap();
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    assert!(
+        v.draft_document_content(scope.0, Some(scope.1))
+            .unwrap()
+            .is_ok()
+    );
+    assert!(
+        v.draft_document_content(ProfileId::new(), Some(scope.1))
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        v.draft_document_content(scope.0, Some(WorkspaceId::new()))
+            .unwrap()
+            .is_err()
+    );
+    assert!(v.draft_document_content(scope.0, None).unwrap().is_err());
+    v.create_document_failed();
+    v.pane_context.as_mut().unwrap().1 = ProfileId::new();
+    v.promote_draft();
+    assert_eq!(
+        v.queued_drafts.front().unwrap().scope,
+        Some(scope),
+        "a retry retains the original scope"
+    );
+    assert!(v.take_pane_request().is_none());
+    assert!(!v.prepare_document_creation_close());
+    assert_eq!(
+        v.tabs().active_tab().draft.as_ref().unwrap().origin_scope,
+        Some(scope)
+    );
+}
+
+#[test]
+fn draft_requires_a_real_workspace_before_accepting_editable_input() {
+    let (mut v, _) = container();
+    v.pane_context.as_mut().unwrap().3 = None;
+    let count = v.tabs().len();
+    v.new_tab();
+    assert_eq!(v.tabs().len(), count);
+    assert!(v.tabs().active_tab().draft.is_none());
+}
+
+#[test]
+fn draft_native_commit_stays_private_then_adopts_without_another_key() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let target = v.ime_target().unwrap().id;
+    let global = workspace.ws.version();
+    let private = v
+        .tabs()
+        .active_tab()
+        .draft
+        .as_ref()
+        .unwrap()
+        .workspace
+        .ws
+        .version();
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    assert_eq!(
+        v.tabs()
+            .active_tab()
+            .draft
+            .as_ref()
+            .unwrap()
+            .workspace
+            .ws
+            .version(),
+        private
+    );
+    assert!(
+        v.take_pane_request().is_none(),
+        "preedit does not create content"
+    );
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit(String::new(), None)
+    ));
+    assert!(v.ime(&mut workspace.ws, target, &Ime::Commit("題名".into())));
+    assert_eq!(
+        workspace.ws.version(),
+        global,
+        "the real document was not edited"
+    );
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "題名");
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("document")
+    };
+    assert_eq!(leaf.caret_spot(), Some((0, "題名".len())));
+    assert_ne!(leaf.native_ime_owner(), target.owner);
+    assert!(v.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_creation_waits_for_preedit_and_preserves_latest_commit() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("A"), Some("A"), NONE);
+    let target = v.ime_target().unwrap().id;
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    let created = workspace.ws.version();
+    v.maintain(&mut workspace.ws, Instant::now());
+    assert!(v.take_pane_request().is_none());
+    assert_eq!(v.ime_target().unwrap().id, target);
+    assert_eq!(workspace.ws.version(), created);
+    // An empty preedit still owns the replacement anchor until Commit.
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit(String::new(), None)
+    ));
+    v.maintain(&mut workspace.ws, Instant::now());
+    assert!(v.take_pane_request().is_none());
+    assert_eq!(v.ime_target().unwrap().id, target);
+    assert!(v.ime(&mut workspace.ws, target, &Ime::Commit("確定".into())));
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "A確定");
+    assert!(v.tabs().active_tab().draft.is_none());
+}
+
+#[test]
+fn draft_native_cancel_after_tab_switch_uses_original_private_document() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let original_tab = v.tabs().active();
+    let target = v.ime_target().unwrap().id;
+    let global = workspace.ws.version();
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    v.new_tab();
+    assert!(v.ime(&mut workspace.ws, target, &Ime::Disabled));
+    let TabView::Leaf(leaf) = &v.tabs().get(original_tab).unwrap().view else {
+        panic!("draft")
+    };
+    assert!(leaf.body().composition().is_none());
+    assert_eq!(leaf.body().rows[0].text, "");
+    assert_eq!(workspace.ws.version(), global);
+    assert!(v.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_adoption_after_tab_switch_keeps_the_original_tab() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let original_tab = v.tabs().active();
+    v.key(&mut workspace.ws, &ch("Original"), Some("Original"), NONE);
+    v.new_tab();
+    let focused = v.tabs().active_tab().id;
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Original");
+    assert_eq!(v.tabs().active_tab().id, focused);
+    assert!(v.tabs().active_tab().draft.is_some());
+    assert!(v.tabs().get(original_tab).unwrap().draft.is_none());
+}
+
+#[test]
+fn draft_two_windows_and_unrelated_completions_keep_their_origins() {
+    use winit::event::Ime;
+    let (mut a, mut global) = container();
+    let (mut b, _) = container();
+    b.pane_context = a.pane_context.clone();
+    a.new_tab();
+    b.new_tab();
+    a.key(&mut global.ws, &ch("A"), Some("A"), NONE);
+    b.key(&mut global.ws, &ch("B"), Some("B"), NONE);
+    let owner = a.ime_target().unwrap().id;
+    assert!(a.ime(
+        &mut global.ws,
+        owner,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    assert!(a.take_pane_request().is_none());
+    assert!(a.promoting.is_none());
+    let root_b = answer_draft_without_next_key(&mut b, &mut global.ws);
+    let id_b = global.ws.stamped_document_id().unwrap();
+    assert!(!a.show_active_document(&global.ws, Some(id_b)));
+    assert!(
+        !a.created_document(&mut global.ws, id_b),
+        "unrelated/Agent completion has no dispatched draft"
+    );
+    let global_before = global.ws.version();
+    assert!(a.ime(&mut global.ws, owner, &Ime::Commit("確定".into())));
+    assert_eq!(global.ws.version(), global_before);
+    assert_eq!(koru_workspace::name_of(&global.ws, root_b), "B");
+    assert_eq!(global.ws.version(), global_before);
+    let root_a = answer_draft_without_next_key(&mut a, &mut global.ws);
+    let id_a = global.ws.stamped_document_id().unwrap();
+    assert_ne!(id_a, id_b);
+    assert_eq!(koru_workspace::name_of(&global.ws, root_a), "A確定");
+    assert_eq!(a.tabs().active_tab().document, Some(id_a));
+    assert_eq!(b.tabs().active_tab().document, Some(id_b));
+    assert!(a.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_second_atomic_input_is_rearmed_after_first_creation() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let first = v.tabs().active();
+    v.key(&mut workspace.ws, &ch("First"), Some("First"), NONE);
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Second"), Some("Second"), NONE);
+    assert_eq!(v.queued_drafts.len(), 2);
+    let first_root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, first_root), "First");
+    assert!(v.tabs().get(first).unwrap().draft.is_none());
+    let second_root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(
+        koru_workspace::name_of(&workspace.ws, second_root),
+        "Second"
+    );
+    assert!(v.tabs().active_tab().draft.is_none());
+    assert!(v.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_creation_refuses_changed_profile_or_workspace() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+    let original_scope = v.pane_context.clone();
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    let id = koru_core::DocumentId::new();
+    let mut other = WorkspaceDoc::create(WorkspaceId::new(), "other").unwrap();
+    let root = other
+        .insert(Parent::Root, Node::document("").unwrap())
+        .unwrap();
+    other.stamp_document_id(id).unwrap();
+    let before = other.version();
+    assert!(
+        v.created_document(&mut other, id),
+        "the dispatched result is consumed but refused"
+    );
+    assert_eq!(other.version(), before);
+    assert!(v.tabs().active_tab().draft.as_ref().unwrap().authored);
+    v.promote_draft();
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    v.pane_context.as_mut().unwrap().1 = ProfileId::new();
+    other
+        .stamp_workspace_id(workspace.ws.id().unwrap())
+        .unwrap();
+    let before = other.version();
+    assert!(v.created_document(&mut other, id));
+    assert_eq!(other.version(), before);
+    assert_eq!(koru_workspace::name_of(&other, root), "Untitled");
+    v.pane_context = original_scope;
+    v.promote_draft();
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Kept");
+}
+
+#[test]
+fn draft_plain_paste_uses_private_authority_and_promotes_without_a_key() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let before = workspace.ws.version();
+    View::paste_text(&mut v, &mut workspace.ws, "Pasted title");
+    assert_eq!(workspace.ws.version(), before);
+    assert!(v.tabs().active_tab().draft.as_ref().unwrap().authored);
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Pasted title");
+}
+
+#[test]
+fn draft_rich_paste_preserves_marks_nesting_and_blank_rows() {
+    use koru_workspace_host::{RichBlock, RichTextBlock, RichTextRun};
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &enter(), None, NONE);
+    let before = workspace.ws.version();
+    let blocks = vec![
+        RichBlock::CalloutStart {
+            icon: None,
+            tint: Some("red".into()),
+        },
+        RichBlock::Text(RichTextBlock {
+            text: "Bold".into(),
+            runs: vec![RichTextRun {
+                start: 0,
+                end: 4,
+                marks: koru_core::MarkSet {
+                    bold: true,
+                    ..Default::default()
+                },
+            }],
+            ..Default::default()
+        }),
+        RichBlock::Text(RichTextBlock::from_text("")),
+        RichBlock::CalloutEnd,
+        RichBlock::Text(RichTextBlock::from_text("After")),
+    ];
+    View::paste_rich(&mut v, &mut workspace.ws, None, &blocks);
+    assert_eq!(workspace.ws.version(), before);
+    fn tree(
+        ws: &WorkspaceDoc,
+        id: NodeId,
+    ) -> Vec<(usize, koru_core::node::Node, Vec<koru_core::TextRun>)> {
+        fn walk(
+            ws: &WorkspaceDoc,
+            id: NodeId,
+            depth: usize,
+            out: &mut Vec<(usize, koru_core::node::Node, Vec<koru_core::TextRun>)>,
+        ) {
+            let node = ws.read(id).unwrap();
+            let runs = if node.content.as_text().is_some() {
+                ws.runs(id).unwrap()
+            } else {
+                Vec::new()
+            };
+            out.push((depth, node, runs));
+            for child in ws.children(Parent::Node(id)).unwrap() {
+                walk(ws, child, depth + 1, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(ws, id, 0, &mut out);
+        out
+    }
+    let tab = v.tabs().active_tab();
+    let TabView::Leaf(leaf) = &tab.view else {
+        panic!("draft")
+    };
+    let expected = tree(
+        &tab.draft.as_ref().unwrap().workspace.ws,
+        leaf.document_root().unwrap(),
+    );
+    assert!(
+        expected
+            .iter()
+            .any(|(_, _, runs)| runs.iter().any(|run| run.bold))
+    );
+    assert!(expected.iter().any(|(depth, _, _)| *depth > 1));
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    let actual = tree(&workspace.ws, root);
+    assert_eq!(actual.len(), expected.len());
+    for ((ad, a, ar), (ed, e, er)) in actual.iter().zip(&expected) {
+        assert_eq!(ad, ed);
+        assert_eq!(a.kind, e.kind);
+        assert_eq!(a.content, e.content);
+        assert_eq!(a.meta, e.meta);
+        assert_eq!(ar, er);
+        assert_ne!(a.id, e.id, "private identities are reminted");
+    }
+}
+
+#[test]
+fn draft_ordinary_creation_ahead_of_it_cannot_claim_the_private_source() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Private"), Some("Private"), NONE);
+    v.pane_requests
+        .push_back(PaneRequest::CreateDocument("Ordinary".into()));
+    assert!(
+        matches!(v.take_pane_request(), Some(PaneRequest::CreateDocument(name)) if name == "Ordinary")
+    );
+    assert!(v.promoting.is_none());
+    let id = koru_core::DocumentId::new();
+    assert!(!v.created_document(&mut workspace.ws, id));
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Private");
+}
+
+#[test]
+fn draft_failed_creation_retains_authored_work_and_teardown_retries_after_cancel() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    v.create_document_failed();
+    assert!(v.promoting.is_none());
+    assert!(v.queued_drafts.is_empty());
+    let target = v.ime_target().unwrap().id;
+    v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("provisional".into(), Some((11, 11))),
+    );
+    let count = v.tabs().len();
+    assert!(!v.prepare_document_creation_close());
+    assert_eq!(v.tabs().len(), count);
+    assert!(!v.is_poppable(v.tabs().active()));
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("draft")
+    };
+    assert!(leaf.body().composition().is_none());
+    assert_eq!(leaf.body().rows[0].text, "Kept");
+    assert_eq!(v.queued_drafts.len(), 1);
+    assert!(!v.prepare_document_creation_close());
+    assert_eq!(v.queued_drafts.len(), 1);
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Kept");
+    assert!(v.prepare_document_creation_close());
+}
+
+#[test]
+fn draft_authored_work_survives_individual_and_bulk_tab_close_paths() {
+    for action in 0..6 {
+        let (mut v, mut workspace) = container();
+        v.new_tab();
+        let draft_index = v.tabs().active();
+        v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+        let draft_id = v.tabs().active_tab().id;
+        v.new_tab();
+        let right = v.tabs().active();
+        let count = v.tabs().len();
+        match action {
+            0 => {
+                v.close(draft_index);
+            }
+            1 => {
+                v.close_requested(draft_index);
+            }
+            2 => {
+                v.close_all();
+            }
+            3 => {
+                v.close_others(right);
+            }
+            4 => {
+                v.close_left(right);
+            }
+            _ => {
+                v.close_right(draft_index - 1);
+            }
+        }
+        assert_eq!(v.tabs().len(), count, "close route {action}");
+        let tab = v.tabs().iter().find(|tab| tab.id == draft_id).unwrap();
+        assert!(tab.draft.as_ref().unwrap().authored);
+        let TabView::Leaf(leaf) = &tab.view else {
+            panic!("draft")
+        };
+        assert_eq!(leaf.body().rows[0].text, "Kept");
+        assert_eq!(v.queued_drafts.len(), 1);
+    }
+}
+
 /// The same guarantee one row down: a caret in the *body* of a draft is a caret
 /// somewhere, and the swap has to put it back there too. It was lost outright
 /// before, because what crossed the swap was a `bool` meaning "in the title".

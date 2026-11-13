@@ -631,6 +631,12 @@ enum AiChatFolderSource {
     AiChatTab,
 }
 
+#[derive(Clone, Copy)]
+struct DraftOrigin {
+    tab: u64,
+    scope: Option<(ProfileId, WorkspaceId)>,
+}
+
 pub struct MainView {
     /// The pane tree: independent tab groups laid out inside the content area.
     panes: panes::PaneTree,
@@ -1097,15 +1103,10 @@ pub struct MainView {
     /// Creating one is a round trip now, so promotion cannot finish inside the
     /// keystroke that triggers it. Without this the draft would ask again on
     /// every character and make one document per keypress.
-    promoting: bool,
-    /// A promoted draft's text, waiting for a `&mut WorkspaceDoc` to write it
-    /// through. `show_active_document` has only `&`, and the characters typed
-    /// during the round trip must not be lost between the two.
-    ///
-    /// The last field is **where the caret was**, as `(row, byte offset)`. It
-    /// used to be a bare `in_title: bool`, which lost the offset in the title
-    /// and the caret entirely everywhere else — see `Leaf::caret_spot`.
-    pending_draft_text: Option<(NodeId, String, Vec<String>, Option<(usize, usize)>)>,
+    promoting: Option<DraftOrigin>,
+    /// At most one queued intent per retained draft tab. A second atomic
+    /// input need not wait for another key after the first creation settles.
+    queued_drafts: std::collections::VecDeque<DraftOrigin>,
     pane_context: Option<(
         Vec<ProfileSummary>,
         ProfileId,
@@ -1981,8 +1982,8 @@ impl MainView {
             task_commands: Vec::new(),
             pending_count_deltas: Vec::new(),
             tag_table: Vec::new(),
-            promoting: false,
-            pending_draft_text: None,
+            promoting: None,
+            queued_drafts: Default::default(),
             pane_context: None,
             profile_workspace_counts: std::collections::HashMap::new(),
             profile_lifecycle_reconciled_generation: None,
@@ -3703,77 +3704,83 @@ impl MainView {
         }
     }
 
-    /// Make the active tab's draft real: create the document in the workspace
-    /// and swap the throwaway leaf for one over it.
-    ///
-    /// A no-op unless the active tab is a draft, which is what lets the caller
-    /// ask on every keystroke rather than testing first.
-    ///
-    /// The tab keeps its position, its label and its size — only which document
-    /// it is over changes — so from the outside nothing happens except that
-    /// *Untitled* appears in the library, which is exactly the moment somebody
-    /// committed to it.
-    /// Write a promoted draft's text into the real document and swap the tab.
-    ///
-    /// Runs on the next key after the shell answered, which is the first moment
-    /// the document is available mutably. A draft is at most a title and a line
-    /// — promotion fires on the first keystroke — so this copies text rather
-    /// than nodes: the draft is a separate `LoroDoc`, so its ids mean nothing
-    /// here.
-    fn flush_promoted_draft(&mut self, ws: &mut WorkspaceDoc) {
-        let Some((root, title, body, caret)) = self.pending_draft_text.take() else {
-            return;
+    /// Adopt the exact document initialized from this private draft, after the
+    /// synchronous source-qualified creation. Its content was planted before
+    /// first publication; this callback never replaces a published seed.
+    /// Keep the private source on every refusal or read error.
+    fn flush_promoted_draft(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        origin: DraftOrigin,
+        document: koru_core::DocumentId,
+    ) -> Result<bool, koru_core::StoreError> {
+        let tab_id = origin.tab;
+        if !ws.compatibility().writable()
+            || ws.stamped_document_id() != Some(document)
+            || origin.scope != self.draft_scope()
+            || origin
+                .scope
+                .is_some_and(|(_, scope)| ws.id() != Some(scope))
+        {
+            return Ok(false);
+        }
+        let roots = ws.children(koru_core::schema::Parent::Root)?;
+        if roots.len() != 1 || ws.kind_of(roots[0]) != Some(koru_core::Kind::Document) {
+            return Ok(false);
+        }
+        let root = roots[0];
+        let Some(tab) = self
+            .panes
+            .iter_groups()
+            .flat_map(|(_, g)| g.iter_tabs())
+            .find(|tab| tab.id == tab_id)
+        else {
+            return Ok(false);
         };
-        if ws.read(root).is_err() {
-            return;
+        let (Some(_), TabView::Leaf(old_leaf)) = (&tab.draft, &tab.view) else {
+            return Ok(false);
+        };
+        if old_leaf.body().composition().is_some() {
+            return Ok(false);
         }
-        if !title.is_empty() {
-            let _ = ws.set_text(root, &title);
-        }
-        // The seed left one empty paragraph; fill that, then append the rest.
-        let existing = ws
-            .children(koru_core::schema::Parent::Node(root))
-            .unwrap_or_default();
-        for (i, line) in body.iter().enumerate() {
-            if line.is_empty() {
-                continue;
-            }
-            match existing.get(i) {
-                Some(&node) => {
-                    let _ = ws.set_text(node, line);
-                }
-                None => {
-                    if let Ok(para) = koru_core::node::Node::paragraph(line) {
-                        let _ = ws.insert(koru_core::schema::Parent::Node(root), para);
-                    }
-                }
-            }
-        }
+        let caret = old_leaf.caret_spot();
 
         let home = self.current_workspace();
-        let document = self.active_document;
         let name = koru_workspace::name_of(ws, root);
-        let mut leaf = self.document_leaf(ws, root);
+        let mut leaf = Leaf::document(ws, root);
+        leaf.view_mut().active = false;
+        leaf.set_entity_titles(
+            &self.entity_titles,
+            &self.entity_trashed,
+            &self.entity_live(),
+        );
+        leaf.set_schedule_pills(&self.schedule_pill_presentations());
+        leaf.view_mut().active = true;
         // **Every row here is new**, over a different `LoroDoc` with different
         // ids, so nothing was reused and every caret is at 0. Putting the one
         // the person actually had back is the whole of the fix for `rstFi`.
         if let Some((row, at)) = caret {
             leaf.place_caret_at(row, at);
         }
-        let tab = self.tabs_mut().active_mut();
+        let tab = self
+            .panes
+            .iter_groups_mut()
+            .flat_map(|(_, g)| g.iter_tabs_mut())
+            .find(|tab| tab.id == tab_id)
+            .expect("the draft was just read");
         tab.view = TabView::Leaf(leaf);
         // It is over a real document now, and the tab has to know which — that
         // is what makes selecting it open the right one and what stops the next
         // click on it in Explore opening a second tab.
-        tab.document = document;
+        tab.document = Some(document);
         tab.home = home;
         tab.set_name(&name);
         tab.draft = None;
         tab.invalidate_size();
         self.mark_tab_widths_stale();
-        self.size_visible_groups();
         self.explore_stale = true;
         self.ensure_tab_visible(self.tabs().active());
+        Ok(true)
     }
 
     /// **Ask the shell, and stay a draft until it answers.**
@@ -3781,9 +3788,10 @@ impl MainView {
     /// A document belongs to the workspace and creating one is a round trip, so
     /// promotion cannot complete inside the keystroke that triggers it. The
     /// draft keeps taking keys meanwhile — it is a real editable document, just
-    /// a private one — and its text and caret are carried over at the *swap*
-    /// rather than at the request, so nothing typed while waiting is lost. The
-    /// swap is [`flush_promoted_draft`](Self::flush_promoted_draft).
+    /// a private one. The queued intent is dispatched only after preedit ends;
+    /// that synchronous dispatch reads its latest authored subtree, creates
+    /// the real document and adopts it with the same caret before another
+    /// input event can run. The swap is [`flush_promoted_draft`](Self::flush_promoted_draft).
     ///
     /// Returning `false` is not a failure: it says *this keystroke was not
     /// consumed by promotion*, and the draft handles it as usual.
@@ -3809,13 +3817,100 @@ impl MainView {
         if self.tabs().active_tab().draft.is_none() {
             return false;
         }
-        if !self.promoting {
-            self.promoting = true;
-            self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
-                String::new(),
-            ));
+        let scope = self.draft_scope();
+        let tab = self.tabs_mut().active_mut();
+        let draft = tab.draft.as_mut().unwrap();
+        if !draft.authored {
+            draft.origin_scope = scope;
+        }
+        draft.authored = true;
+        let origin = DraftOrigin {
+            tab: tab.id,
+            scope: draft.origin_scope,
+        };
+        let panes = &self.panes;
+        self.queued_drafts.retain(|pending| {
+            panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.iter_tabs())
+                .any(|tab| tab.id == pending.tab && tab.draft.is_some())
+        });
+        if self
+            .promoting
+            .is_none_or(|pending| pending.tab != origin.tab)
+            && !self
+                .queued_drafts
+                .iter()
+                .any(|pending| pending.tab == origin.tab)
+        {
+            self.queued_drafts.push_back(origin);
         }
         false
+    }
+
+    fn draft_scope(&self) -> Option<(ProfileId, WorkspaceId)> {
+        self.pane_context
+            .as_ref()
+            .and_then(|(_, profile, _, workspace)| workspace.map(|workspace| (*profile, workspace)))
+    }
+
+    /// Explicit teardown cancels provisional text, then lets the ordinary
+    /// creation dispatch secure authored edits before the user retries.
+    fn guard_private_drafts(&mut self, selected: Option<&[u64]>) -> bool {
+        let mut waiting = Vec::new();
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if selected.is_some_and(|ids| !ids.contains(&tab.id)) {
+                    continue;
+                }
+                let Some(draft) = tab.draft.as_mut() else {
+                    continue;
+                };
+                if let TabView::Leaf(leaf) = &mut tab.view {
+                    leaf.native_ime_cancel(&mut draft.workspace.ws);
+                    koru_editor::dictation::cancel(leaf.body_mut(), &mut draft.workspace.ws);
+                }
+                if draft.authored {
+                    waiting.push(DraftOrigin {
+                        tab: tab.id,
+                        scope: draft.origin_scope,
+                    });
+                }
+            }
+        }
+        if waiting.is_empty() {
+            return false;
+        }
+        for origin in waiting {
+            if self
+                .promoting
+                .is_none_or(|pending| pending.tab != origin.tab)
+                && !self
+                    .queued_drafts
+                    .iter()
+                    .any(|pending| pending.tab == origin.tab)
+            {
+                self.queued_drafts.push_back(origin);
+            }
+        }
+        self.show_notice(
+            koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::DocumentReplacementPending,
+            )
+            .into(),
+        );
+        true
+    }
+
+    fn draft_close_veto(&mut self, selected: impl Fn(usize) -> bool) -> bool {
+        let ids: Vec<_> = self
+            .tabs()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| selected(index).then_some(tab.id))
+            .collect();
+        self.guard_private_drafts(Some(&ids))
     }
 
     /// Push the active document onto the recents, most recent first and without
@@ -3956,6 +4051,9 @@ impl MainView {
     }
 
     fn close(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index == i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index == i) {
             return true;
         }
@@ -3987,6 +4085,9 @@ impl MainView {
     /// away — so the *pane* goes when the split has others, and only the last
     /// pane standing answers with the window close.
     fn close_requested(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index == i) {
+            return true;
+        }
         if self.tabs().get(i).is_some_and(|t| t.is_pinned()) {
             return false;
         }
@@ -4023,7 +4124,9 @@ impl MainView {
     /// Read off the tab's root rather than its kind so this stays a question
     /// about the tab, not about the document.
     fn is_poppable(&self, i: usize) -> bool {
-        self.tabs().get(i).is_some_and(|t| t.view.pops_out())
+        self.tabs()
+            .get(i)
+            .is_some_and(|t| t.draft.is_none() && t.view.pops_out())
     }
 
     /// Whether tab `i` travels between panes: torn off its strip, dropped into
@@ -4061,7 +4164,7 @@ impl MainView {
         self.panes
             .group(&drag.source)
             .and_then(|g| g.iter_tabs().find(|t| t.id == drag.tab_id))
-            .is_some_and(|t| t.view.pops_out())
+            .is_some_and(|t| t.draft.is_none() && t.view.pops_out())
     }
 
     /// Pop tab `i` out into its own window: close the tab here and ask the shell
@@ -4181,6 +4284,9 @@ impl MainView {
     /// renumbered strip invalidates any slide in flight, and the now-active tab
     /// has to lay out — so the strip and the selection cannot disagree.
     fn close_others(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index != i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index != i) {
             return true;
         }
@@ -4204,6 +4310,9 @@ impl MainView {
     /// is never empty ([`TabSet`]) — so this is one action rather than a loop
     /// that has to stop before the end.
     fn close_all(&mut self) -> bool {
+        if self.draft_close_veto(|_| true) {
+            return true;
+        }
         if self.socials_close_veto(|_| true) {
             return true;
         }
@@ -4220,6 +4329,9 @@ impl MainView {
     }
 
     fn close_left(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index < i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index < i) {
             return true;
         }
@@ -4238,6 +4350,9 @@ impl MainView {
     }
 
     fn close_right(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index > i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index > i) {
             return true;
         }
@@ -4292,6 +4407,7 @@ impl MainView {
                     action,
                     MenuAction::Documents
                         | MenuAction::NewDocument
+                        | MenuAction::MiniApp
                         | MenuAction::OpenRecentDocument(_)
                         | MenuAction::Canvases
                         | MenuAction::NewCanvas
@@ -7178,6 +7294,11 @@ impl MainView {
     /// [`Draft`]: tab::Draft
     /// [`promote_draft`]: Self::promote_draft
     fn new_tab(&mut self) -> bool {
+        if self.current_workspace().is_none() {
+            return self.show_notice(
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TerminalNoWorkspace).into(),
+            );
+        }
         self.dismiss_settings_menus();
         // Capture before the draft becomes active — its root is not in the
         // library, and explore.selected would track that private id.
@@ -10789,20 +10910,21 @@ impl View for MainView {
         if matches!(event, winit::event::Ime::Disabled) {
             for (_, group) in self.panes.iter_groups_mut() {
                 for tab in group.iter_tabs_mut() {
-                    match &mut tab.view {
+                    let (view, doc) = tab.doc(ws);
+                    match view {
                         TabView::MiniApp(app) => {
-                            if View::ime(app.as_mut(), ws, target, event) {
+                            if View::ime(app.as_mut(), doc, target, event) {
                                 return true;
                             }
                         }
                         TabView::Leaf(leaf) if leaf.native_ime_owner() == target.owner => {
-                            return leaf.native_ime_cancel(ws);
+                            return leaf.native_ime_cancel(doc);
                         }
                         TabView::Tasks(tasks) => {
                             if let Some(leaf) = tasks.body_leaf_mut()
                                 && leaf.native_ime_owner() == target.owner
                             {
-                                return leaf.native_ime_cancel(ws);
+                                return leaf.native_ime_cancel(doc);
                             }
                         }
                         _ => {}
@@ -10814,11 +10936,25 @@ impl View for MainView {
         if View::ime_target(self).is_none_or(|current| current.id != target) {
             return false;
         }
-        if let TabView::MiniApp(app) = self.active_view() {
-            return View::ime(app.as_mut(), ws, target, event);
+        // Promotion builds an unsized retained Leaf. An input event can beat
+        // its first frame; apply its deferred caret before accepting input.
+        self.size_focused_input();
+        // A draft is a private document. Keep the event with that authority;
+        // creation waits until this owner's preedit has ended.
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let before = doc.version();
+        let handled = match view {
+            TabView::MiniApp(app) => View::ime(app.as_mut(), doc, target, event),
+            TabView::Leaf(leaf) => leaf.native_ime(doc, event),
+            TabView::Tasks(tasks) => tasks
+                .body_leaf_mut()
+                .is_some_and(|leaf| leaf.native_ime(doc, event)),
+            _ => false,
+        };
+        if handled && doc.version() != before {
+            self.promote_draft();
         }
-        self.active_editing_leaf()
-            .is_some_and(|leaf| leaf.native_ime(ws, event))
+        handled
     }
 
     fn accept_child_document(
@@ -12628,7 +12764,36 @@ impl View for MainView {
     }
 
     fn take_pane_request(&mut self) -> Option<PaneRequest> {
-        self.pane_requests.pop_front()
+        if let Some(request) = self.pane_requests.pop_front() {
+            return Some(request);
+        }
+        if self.promoting.is_some() {
+            return None;
+        }
+        loop {
+            let origin = *self.queued_drafts.front()?;
+            let tab = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.iter_tabs())
+                .find(|tab| tab.id == origin.tab && tab.draft.is_some());
+            let Some(tab) = tab else {
+                self.queued_drafts.pop_front();
+                continue;
+            };
+            if origin.scope != self.draft_scope() {
+                return None;
+            }
+            if matches!(&tab.view, TabView::Leaf(leaf) if leaf.body().composition().is_some()) {
+                return None;
+            }
+            // This latch names the exact request being returned, never an
+            // earlier queued intent. The host completes this CreateDocument
+            // synchronously before taking another request (including Agent's).
+            self.queued_drafts.pop_front();
+            self.promoting = Some(origin);
+            return Some(PaneRequest::CreateDocument(String::new()));
+        }
     }
 
     fn create_document_failed(&mut self) {
@@ -12636,10 +12801,69 @@ impl View for MainView {
         // latch, so a failed create must hand the latch back or the draft
         // types forever and never becomes real — found live, against a store
         // that went away between the app opening and the first keystroke.
-        self.promoting = false;
+        self.promoting = None;
+    }
+
+    fn draft_document_content(
+        &self,
+        profile: koru_core::ProfileId,
+        workspace: Option<koru_core::WorkspaceId>,
+    ) -> Option<Result<koru_core::schema::Cutting, koru_core::StoreError>> {
+        let origin = self.promoting?;
+        Some((|| {
+            let refused =
+                || koru_core::StoreError::Malformed("private draft creation ownership changed");
+            if origin.scope.is_none()
+                || origin.scope != self.draft_scope()
+                || origin.scope != workspace.map(|workspace| (profile, workspace))
+            {
+                return Err(refused());
+            }
+            let tab = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, g)| g.iter_tabs())
+                .find(|tab| tab.id == origin.tab)
+                .ok_or_else(refused)?;
+            let (Some(draft), TabView::Leaf(leaf)) = (&tab.draft, &tab.view) else {
+                return Err(refused());
+            };
+            if leaf.body().composition().is_some() {
+                return Err(refused());
+            }
+            draft
+                .workspace
+                .ws
+                .cutting(leaf.document_root().ok_or_else(refused)?)
+        })())
+    }
+
+    fn created_document(&mut self, ws: &mut WorkspaceDoc, document: koru_core::DocumentId) -> bool {
+        let Some(origin) = self.promoting.take() else {
+            return false;
+        };
+        if !matches!(self.flush_promoted_draft(ws, origin, document), Ok(true)) {
+            self.show_notice(
+                koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::DocumentReplacementUnsafe,
+                )
+                .into(),
+            );
+        }
+        // Even a failed transfer belongs to this source. Do not broadcast a
+        // replacement over its retained private editor or automatically retry.
+        true
+    }
+
+    fn prepare_document_creation_close(&mut self) -> bool {
+        !self.guard_private_drafts(None)
     }
 
     fn request_close(&mut self) -> bool {
+        if !self.prepare_document_creation_close() {
+            return true;
+        }
         // **A window never dies holding a capture.** The veto drives the
         // lifecycle to its end — stop and finalize a recording, abort a
         // countdown — and the close is re-asked when it lands.
@@ -13069,6 +13293,11 @@ impl View for MainView {
         // by then the push had landed.
         let was = self.active_document;
         self.active_document = active;
+        // A broadcast is not the answer to this window's creation request.
+        // Only source-qualified created_document may bind a private draft.
+        if self.promoting.is_some() || !self.queued_drafts.is_empty() {
+            return false;
+        }
         // A shell announcement is not a request to replace this composition.
         // Explicit navigation still reaches its normal open_search_target route.
         if matches!(self.tabs().active_tab().view, TabView::MiniApp(_)) {
@@ -13141,44 +13370,6 @@ impl View for MainView {
             return false;
         }
 
-        // **A waiting draft becomes this document rather than sitting beside
-        // it.** Its text is captured now — at the swap — so everything typed
-        // during the round trip is kept.
-        if self.promoting && self.tabs().active_tab().draft.is_some() {
-            self.promoting = false;
-            let captured = self.tabs().active_tab().draft.as_ref().and_then(|draft| {
-                let d = &draft.workspace.ws;
-                let droot = d
-                    .children(koru_core::schema::Parent::Root)
-                    .ok()?
-                    .into_iter()
-                    .find(|&n| d.kind_of(n) == Some(koru_core::Kind::Document))?;
-                let title = d
-                    .read(droot)
-                    .ok()
-                    .and_then(|n| n.content.as_text().map(str::to_owned))
-                    .unwrap_or_default();
-                let body: Vec<String> = d
-                    .children(koru_core::schema::Parent::Node(droot))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|n| d.read(n).ok())
-                    .filter_map(|n| n.content.as_text().map(str::to_owned))
-                    .collect();
-                Some((title, body))
-            });
-            // **Where the caret is, not merely whether it is in the title.**
-            // The row alone is not enough: the swap rebuilds every row, and a
-            // rebuilt row's caret is 0.
-            let caret = match &self.tabs().active_tab().view {
-                TabView::Leaf(l) => l.caret_spot(),
-                _ => None,
-            };
-            if let Some((title, body)) = captured {
-                self.pending_draft_text = Some((root, title, body, caret));
-                return true;
-            }
-        }
         // A Tasks tab activated its own note: it is showing it already, and
         // a document tab over it would be a second view of the page. Any
         // other activation of the same document lands as every document does.
@@ -14786,7 +14977,10 @@ impl View for MainView {
     }
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
-        match self.active_view() {
+        self.size_focused_input();
+        let (view, ws) = self.tabs_mut().active_mut().doc(ws);
+        let before = ws.version();
+        match view {
             TabView::MiniApp(app) if app.owns(ws) => {
                 if let Some(leaf) = app.focused_leaf() {
                     View::paste_text(leaf, ws, text);
@@ -14799,6 +14993,9 @@ impl View for MainView {
                 }
             }
             _ => {}
+        }
+        if ws.version() != before {
+            self.promote_draft();
         }
     }
 
@@ -14941,7 +15138,10 @@ impl View for MainView {
         target: Option<koru_workspace_host::PasteTarget>,
         blocks: &[koru_workspace_host::RichBlock],
     ) {
-        let landed = match self.active_view() {
+        self.size_focused_input();
+        let (view, ws) = self.tabs_mut().active_mut().doc(ws);
+        let before = ws.version();
+        let landed = match view {
             TabView::MiniApp(app) if app.owns(ws) => {
                 if let Some(leaf) = app.focused_leaf() {
                     View::paste_rich(leaf, ws, target, blocks);
@@ -14963,6 +15163,9 @@ impl View for MainView {
             },
             _ => false,
         };
+        if ws.version() != before {
+            self.promote_draft();
+        }
         if landed {
             // Like `paste_images`: image blocks landed under the active document,
             // so the explore column's library cache is stale.
@@ -15627,7 +15830,8 @@ impl View for MainView {
         while let Some(request) = self.reminder_preferences.take_startup_request() {
             self.ask_pane(PaneRequest::AnswerReminderStartup(request));
         }
-        let view_changed = self.tabs_mut().active_view().maintain(ws, now);
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let view_changed = view.maintain(doc, now);
         // The Manage tab's *Linked devices* page re-asks for presence on its
         // deadline; the ask leaves as a request for Agent.
         let manage_asked = matches!(self.tabs().active_tab().view, TabView::Manage(_))
@@ -15703,6 +15907,13 @@ impl View for MainView {
     }
 }
 impl MainView {
+    /// Only the input-owning tab needs layout if an event arrives before its
+    /// first visible frame. Tab's size cache makes ordinary input a no-op.
+    fn size_focused_input(&mut self) {
+        let rect = self.focused_view_rect();
+        self.tabs_mut().active_mut().ensure_sized(rect.w, rect.h);
+    }
+
     fn key(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -15710,15 +15921,9 @@ impl MainView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
-        // **A promoted draft's text lands here.** The first point after the
-        // swap where the document is available mutably, and the *inherent*
-        // `key` rather than the trait one because that is what both the shell
-        // and a direct caller reach — an inherent method wins name resolution,
-        // so putting it on the trait impl left the tests going round it.
         if self.file_preview.is_some() {
             return self.file_preview_key(key);
         }
-        self.flush_promoted_draft(ws);
         self.trace_input_state("key");
         // **The blocking prefix, in an order this function no longer owns.**
         //
@@ -16090,6 +16295,7 @@ impl MainView {
         }
         // A draft is talked to through its own document, never the window's —
         // see `Tab::doc`. Everything below this line is the same for both.
+        self.size_focused_input();
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
         let handled = match view {
             TabView::Welcome(w) => w.key(doc, key, text, mods),

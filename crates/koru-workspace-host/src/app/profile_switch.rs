@@ -205,6 +205,12 @@ impl<H: Host> App<H> {
     /// Both synchronous and asynchronous adopters check this immediately
     /// before accepting incoming ownership, on the same event-loop turn.
     pub(super) fn prepare_profile_replacement(&mut self) -> Result<(), &'static str> {
+        if !self.prepare_private_creation_close(None) {
+            return Err(koru_i18n::t(
+                crate::accessibility::ui_lang(),
+                koru_i18n::Key::DocumentReplacementPending,
+            ));
+        }
         self.collect_task_commands();
         if self.task_queue.has_pending() {
             return Err(pending_tasks_reason());

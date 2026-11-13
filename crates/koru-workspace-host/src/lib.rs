@@ -1572,6 +1572,37 @@ pub trait View {
     /// store failure left a draft permanently un-promotable and silent.
     fn create_document_failed(&mut self) {}
 
+    /// Authored content for the exact draft CreateDocument just returned by
+    /// take_pane_request. The host reads this and completes creation on the
+    /// same stack, before another request or event can change the source.
+    /// None means ordinary creation; an error must refuse, never fall back to
+    /// creating an empty document. This is transient host input, not model I/O.
+    fn draft_document_content(
+        &self,
+        _profile: koru_core::ProfileId,
+        _workspace: Option<koru_core::WorkspaceId>,
+    ) -> Option<Result<koru_core::schema::Cutting, koru_core::StoreError>> {
+        None
+    }
+
+    /// Source-qualified synchronous creation completion, before taking another
+    /// request. Return true when this view claims the new document, suppressing
+    /// broadcast navigation. Draft requests wait for preedit before dispatch.
+    fn created_document(
+        &mut self,
+        _ws: &mut WorkspaceDoc,
+        _document: koru_core::DocumentId,
+    ) -> bool {
+        false
+    }
+
+    /// Cancel provisional input before teardown; refuse while accepted private
+    /// edits still need their ordinary creation handoff. Call before removing
+    /// any window or replacing profile/workspace ownership, not only on quit.
+    fn prepare_document_creation_close(&mut self) -> bool {
+        true
+    }
+
     /// A node the user wants to become an image (the `/image` slash command).
     /// The shell opens the file picker and calls [`insert_image`](Self::insert_image)
     /// with the resulting blob — both need disk, which a view does not touch.

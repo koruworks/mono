@@ -1641,6 +1641,31 @@ impl View for ManagerView {
         }
     }
 
+    fn draft_document_content(
+        &self,
+        profile: koru_core::ProfileId,
+        workspace: Option<koru_core::WorkspaceId>,
+    ) -> Option<Result<koru_core::schema::Cutting, koru_core::StoreError>> {
+        match self {
+            Self::Container(c) => c.draft_document_content(profile, workspace),
+            _ => None,
+        }
+    }
+
+    fn created_document(&mut self, ws: &mut WorkspaceDoc, document: koru_core::DocumentId) -> bool {
+        match self {
+            Self::Container(c) => c.created_document(ws, document),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn prepare_document_creation_close(&mut self) -> bool {
+        match self {
+            Self::Container(c) => c.prepare_document_creation_close(),
+            Self::Document(_) => true,
+        }
+    }
+
     fn key(
         &mut self,
         ws: &mut WorkspaceDoc,

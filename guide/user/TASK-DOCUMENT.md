@@ -1,10 +1,10 @@
 # Tasks and document
 
 The experimental **Tasks and document** host places an existing task collection
-beside a document editor. This development checkpoint is unfinished: its entry
-is present only in a legacy menu, not the live **+** launcher. It is not yet
-available through the normal UI. The behavior below describes the host under
-development; native acceptance is still pending.
+beside a document editor. Open **+**, then choose **Tasks and document** in the
+New launcher. Use the arrow keys and Enter, a pointer, or accessible activation
+to choose the tile. The host remains experimental; native acceptance is still
+pending.
 
 Choose Today, Next, Upcoming, Later, Completed, or one of your lists in the
 dropdown. **More lists** and **Previous lists** page through longer list

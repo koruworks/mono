@@ -263,7 +263,7 @@ impl Workspace {
     }
 }
 
-fn validate(
+pub(super) fn validate(
     doc: &WorkspaceDoc,
     workspace: WorkspaceId,
     document: DocumentId,

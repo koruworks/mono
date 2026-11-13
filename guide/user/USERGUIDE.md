@@ -4484,6 +4484,16 @@ for you.
 
 ## Documents
 
+Choose **Document** in the **+** launcher to begin a new page. The first text
+you type or paste is kept in its draft while Koru creates the saved document.
+Native composition finishes before that handoff; you do not need to type an
+extra character to save the completed input. If creation fails, the draft stays
+open. Closing it, hiding the window, or switching workspace/profile waits for
+that writing to be transferred. A message explains the refusal; retry the
+action after creation succeeds. An untouched draft can be closed immediately.
+The content present at that first handoff becomes the document's opening
+baseline; later edits use ordinary undo.
+
 Type `@` and start writing a document title. The text beside the caret filters
 the shared search index while the popover lists every matching document as a
 separate row. It starts in the current workspace. Press **Ctrl+Space** while the

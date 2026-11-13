@@ -12197,6 +12197,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn may_leave_pending_tasks(&mut self) -> bool {
+        if !self.prepare_private_creation_close(None) {
+            return false;
+        }
         self.collect_task_commands();
         if !self.task_queue.has_pending() {
             return true;
@@ -12209,6 +12212,29 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile_switch::pending_tasks_reason(),
         ));
         false
+    }
+
+    pub(super) fn prepare_private_creation_close(&mut self, source: Option<WindowId>) -> bool {
+        let ids: Vec<_> = self
+            .panes
+            .keys()
+            .copied()
+            .filter(|id| source.is_none_or(|source| source == *id))
+            .collect();
+        let mut ready = true;
+        for id in ids {
+            self.interrupt_native_input(id);
+            if self.dictation_pane == Some(id) {
+                self.interrupt_dictation(Interruption::WindowClosed);
+            }
+            if let Some(pane) = self.panes.get_mut(&id)
+                && !pane.view.prepare_document_creation_close()
+            {
+                ready = false;
+                pane.window.request_redraw();
+            }
+        }
+        ready
     }
 
     fn service_task_commands(&mut self) -> bool {
@@ -12341,7 +12367,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
             self.runtime.workspace.create_canvas(title)
         } else {
             let after = self.runtime.workspace.active();
-            self.runtime.workspace.create_document_after(title, after)
+            match self.panes.get(&source).and_then(|pane| {
+                pane.view
+                    .draft_document_content(self.runtime.profile_id(), Some(self.runtime.current))
+            }) {
+                Some(Ok(cutting)) => self
+                    .runtime
+                    .workspace
+                    .create_document_from_cutting_after(title, after, &cutting),
+                Some(Err(_)) => Err(koru_store_core::errors::Error::new(
+                    koru_store_core::errors::Code::InvalidRequest,
+                    "the private draft could not be read for initialization",
+                )),
+                None => self.runtime.workspace.create_document_after(title, after),
+            }
         };
         self.settle_created_document(source, created, canvas);
     }
@@ -12379,14 +12418,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         )
                         .with_details(e),
                     );
+                    if !canvas && let Some(pane) = self.panes.get_mut(&source) {
+                        pane.view.create_document_failed();
+                    }
+                    return;
                 }
                 self.opened_document(id);
                 // Creation changed the manifest locally. `workspace.tick()`
                 // reports imported changes, so waiting for it leaves Explore
                 // and document-id routing on the old list until a workspace
                 // switch rebuilds everything.
+                let before = self.runtime.workspace.ws.version();
+                // take_pane_request arms the exact draft origin only at
+                // dispatch. Complete it synchronously before exposing this
+                // new document or taking another view/Agent request.
+                let claimed = !canvas
+                    && self.panes.get_mut(&source).is_some_and(|pane| {
+                        pane.view
+                            .created_document(&mut self.runtime.workspace.ws, id)
+                    });
+                if self.runtime.workspace.ws.version() != before {
+                    self.runtime.workspace.touched();
+                }
                 self.push_entries();
-                self.show_active_document();
+                if !claimed {
+                    self.show_active_document();
+                }
                 self.sync_pane_context();
                 self.invalidate_everywhere();
             }
@@ -14530,6 +14587,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// machine can be shut down from, and "I put it in the tray last night" must
     /// not be how a day's work is lost.
     fn hide_to_tray(&mut self) -> bool {
+        // A handled refusal keeps the window visible. Returning false here
+        // would ask callers to fall back to destroying it.
+        if !self.prepare_private_creation_close(None) {
+            return true;
+        }
         // **The Agent says whether it has an icon**, rather than this build
         // assuming one from its platform: Linux's comes and goes with its
         // StatusNotifierItem host, and an icon can fail to appear anywhere. A
@@ -14639,6 +14701,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn close_pane(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        if !self.prepare_private_creation_close(Some(id)) {
+            return;
+        }
         self.collect_task_commands();
         if self.panes.len() == 1 && !self.may_leave_pending_tasks() {
             return;
@@ -14730,6 +14795,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// points (the ✕ the view drew, and the OS's `CloseRequested`) both come
     /// here, so the dialog is shown either way.
     fn initiate_close(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        if !self.prepare_private_creation_close(Some(id)) {
+            return;
+        }
         self.collect_task_commands();
         // Before the veto question, deliberately: whether the window survives
         // or not, nothing may commit into a document somebody is closing.
