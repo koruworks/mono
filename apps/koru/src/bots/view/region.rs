@@ -133,6 +133,7 @@ pub(crate) const CHOICES: [BotAccess; 2] = [BotAccess::Default, BotAccess::Works
 /// What a press or a key on one of the tab's controls asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Act {
+    Library(super::library::Action),
     ToggleSettings,
     /// The header's *Conversations*, while the tab is compact: the list in
     /// the conversation's place, or back.
@@ -371,6 +372,8 @@ impl BotView {
         if let Some(bot) = settings.bot() {
             content = content
                 .child(self.about_card(engine))
+                .child(card_title(t(self.lang, Words::BotsLibrary)))
+                .child(self.library_card(engine))
                 .child(card_title(t(self.lang, Words::BotsAgent)))
                 .child(self.agent_card(engine))
                 .child(card_title(t(self.lang, Words::BotsAccess)))
@@ -438,28 +441,7 @@ impl BotView {
                     !self.settings.can_save_name(),
                 )
             });
-        let role = row("Bot role row")
-            .gap(Space::S2)
-            .items_center()
-            .child(
-                text(self.words(Words::BotsRole))
-                    .named("Bot role label")
-                    .role(roles::UI)
-                    .ink(Ink::Secondary)
-                    .fill()
-                    .truncate(),
-            )
-            .child(self.button(
-                engine,
-                "Bot open role",
-                OPEN_ROLE,
-                self.words(Words::BotsOpenRole),
-                ActionStyle::Secondary,
-                false,
-            ));
-        card(ABOUT_CARD, Words::BotsSettings)
-            .child(name)
-            .child(role)
+        card(ABOUT_CARD, Words::BotsSettings).child(name)
     }
 
     /// **What the access choice shows**: the settings' draft over what the
@@ -972,6 +954,9 @@ impl BotView {
 
     /// What pressing `key` asks for, if anything.
     pub(super) fn act_for(&self, key: Key) -> Option<Act> {
+        if let Some(action) = self.library_action(key) {
+            return Some(Act::Library(action));
+        }
         if let Some(act) = self.create_act_for(key) {
             return Some(act);
         }
@@ -1016,6 +1001,7 @@ impl BotView {
             return self.perform_create(act);
         }
         let command = match act {
+            Act::Library(action) => return self.perform_library(action),
             Act::ToggleSettings => {
                 self.set_settings_open(!self.settings_open);
                 return true;
@@ -1115,6 +1101,7 @@ impl BotView {
         let from_header = self.focus == Some(SETTINGS_BUTTON);
         self.settings_open = open;
         if open {
+            self.library.owe_read();
             if self.settings.bot().is_none() {
                 self.settings.owe_read();
             }
@@ -1217,6 +1204,15 @@ impl BotView {
         if is_modifier(key) {
             return Some(false);
         }
+        // Ctrl+I may arrive as Tab on Windows. Library actions never take
+        // a modified Tab; plain Tab and Shift+Tab keep the form's traversal.
+        if self
+            .focus
+            .is_some_and(|focus| self.library_action(focus).is_some())
+            && (mods.control_key() || mods.alt_key() || mods.super_key())
+        {
+            return Some(false);
+        }
         // Tab walks the region's controls while it is open, and the
         // header's and the conversation column's once one of them has the
         // keyboard (`F6` landed on *Settings*). The create form is a region
@@ -1235,6 +1231,11 @@ impl BotView {
             return Some(true);
         }
         let focus = self.focus?;
+        if self.library_action(focus).is_some()
+            && (mods.control_key() || mods.alt_key() || mods.super_key() || mods.shift_key())
+        {
+            return Some(false);
+        }
         if let Some(handled) = self.create_field_key(focus, key, typed, mods) {
             return Some(handled);
         }
@@ -1458,6 +1459,11 @@ impl BotView {
     /// The pages the region lists: what the window looks titles up for.
     pub(crate) fn listed_pages(&self) -> Vec<BotPage> {
         let mut pages = self.pages_shown().to_vec();
+        for page in self.library.pages() {
+            if !pages.contains(page) {
+                pages.push(page.clone());
+            }
+        }
         // The create form's existing role page too (S8), so its title shows.
         if let Some(page) = self
             .create
@@ -1660,6 +1666,9 @@ impl BotView {
 
     /// The words of a sentence in the region, by its key.
     fn line_words(&self, key: Key) -> Option<String> {
+        if let Some(words) = self.library_line(key) {
+            return Some(words);
+        }
         if key == super::list::TRASH_NOTICE {
             return self.list_notice().map(|words| self.words(words));
         }

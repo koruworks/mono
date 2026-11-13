@@ -26,6 +26,7 @@
 pub(crate) mod catalog;
 pub(crate) mod creation;
 pub(crate) mod labels;
+pub(crate) mod library;
 pub(crate) mod lifecycle;
 pub(crate) mod link;
 pub(crate) mod roster;

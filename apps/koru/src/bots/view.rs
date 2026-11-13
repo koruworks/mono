@@ -100,6 +100,7 @@ pub(crate) mod agent;
 mod controls;
 pub(crate) mod conversations;
 pub(crate) mod create;
+mod library;
 pub(crate) mod list;
 mod picker;
 pub(crate) mod region;
@@ -301,6 +302,7 @@ pub(crate) struct BotView {
     header_bottom: Cell<f32>,
     // -------------------------------------------- the settings (S5)
     settings: Box<Settings>,
+    library: Box<super::library::Library>,
     settings_open: bool,
     /// **The conversation list, opened from the header while the tab is
     /// compact**: it takes the conversation's place until a row is chosen
@@ -404,9 +406,8 @@ pub(crate) struct BotView {
     /// fields and what the window owes it. `None` on every other Bot tab.
     /// Boxed for the reason the settings are.
     create: Option<Box<create::CreateTab>>,
-    /// The page picker is choosing the create form's role page, not a
-    /// selected page.
-    picker_for_role: bool,
+    /// Which draft receives the home-workspace page picker choice.
+    picker_destination: picker::Destination,
     /// The tab just became a new Bot's tab: the window lists it.
     created: bool,
     /// **What the roster shows of this Bot moved**, as one of the tab's own
@@ -447,6 +448,7 @@ impl BotView {
             stale: false,
             header_bottom: Cell::new(f32::INFINITY),
             settings: Box::default(),
+            library: Box::default(),
             settings_open: false,
             list_open: false,
             focus: None,
@@ -485,7 +487,7 @@ impl BotView {
             agent: None,
             favorites_request: None,
             create: None,
-            picker_for_role: false,
+            picker_destination: picker::Destination::Access,
             created: false,
             roster_news: None,
             creation_news: None,
@@ -920,6 +922,7 @@ impl BotView {
             }
             // The agents and their readiness may have moved too.
             self.catalog.shown();
+            self.library.owe_read();
         }
         let lifecycle = self.lifecycle_pass(std::time::Instant::now());
         if self.settings.take_read_owed() {
@@ -941,7 +944,8 @@ impl BotView {
         // The catalog only while the settings are shown (S6).
         let catalog = self.settings_open && self.catalog.pass(root);
         self.settle_agent_refreshes();
-        asked || answered || polled || listed || lifecycle || catalog
+        let library = self.library_pass();
+        asked || answered || polled || listed || lifecycle || catalog || library
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -967,6 +971,7 @@ impl BotView {
         self.work.set(work);
         if !sent {
             self.settings.unsent(request);
+            self.library.unsent(request);
             self.lifecycle.unsent(request, std::time::Instant::now());
         }
     }
@@ -1010,6 +1015,14 @@ impl BotView {
         let mut changed = false;
         for answer in answers {
             match answer {
+                Answer::Library { seq, bot, result } if Some(bot) == self.bot => {
+                    if let Some(bot) = self.settings.bot() {
+                        changed |= self.library.answer_read(seq, bot, result);
+                        if self.library.known_revision() > bot.revision {
+                            self.asked = false;
+                        }
+                    }
+                }
                 // Why a write was refused for its agent: noted before its
                 // refusal is folded, so the refusal names why.
                 Answer::Reason {
@@ -1072,6 +1085,11 @@ impl BotView {
         result: Result<BotResponse, Failure>,
         now: std::time::Instant,
     ) -> bool {
+        if self.library.owns(request) {
+            self.library.answer_save(request, result);
+            self.asked = false;
+            return true;
+        }
         // A lifecycle operation's answer is the lifecycle's (S14).
         if self.lifecycle.owns(request) {
             self.lifecycle.answer(request, result, now);
@@ -1090,6 +1108,7 @@ impl BotView {
         }
         let settled = self.settings.answer(request, result, now);
         if let Some(bot) = settled.bot {
+            self.library.know_bot(&bot);
             self.note_roster_news(&bot);
             // A write's answer: it never drops or replaces the operation the
             // tab follows — only a read does.
@@ -1100,6 +1119,13 @@ impl BotView {
     }
 
     fn take(&mut self, result: Result<Bot, Failure>) {
+        if matches!(&result, Ok(bot) if Some(bot.id) == self.bot &&
+            (bot.revision < self.library.known_revision()
+                || self.settings.bot().is_some_and(|known| bot.revision < known.revision)))
+        {
+            self.asked = false;
+            return;
+        }
         match result {
             // A Bot that says it is another is not this tab's.
             Ok(bot) if Some(bot.id) == self.bot => {
@@ -1121,6 +1147,7 @@ impl BotView {
                     self.bot_read_answered();
                 }
                 self.note_roster_news(&bot);
+                self.library.know_bot(&bot);
                 self.settings.know(bot.clone());
                 if bot.lifecycle != BotLifecycle::Trashed {
                     self.trashed_bot = None;
@@ -2031,6 +2058,7 @@ impl View for BotView {
         let read = read.or_else(|| {
             (self.conversations.awaiting()
                 || self.trash_awaiting()
+                || (!self.stale && self.settings_open && self.library.awaiting())
                 || (self.form_open() && self.catalog.waiting()))
             .then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
@@ -2079,9 +2107,11 @@ impl View for BotView {
             !self.stale && self.form_open() && self.catalog.pass(crate::search::gateway_root());
         // A create tab's read on its clock, never while hidden (S8).
         let read = !self.stale && self.send_create_read(now);
+        let library = !self.stale && self.library_pass();
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
-        let folded = folded || polled || listed || lifecycle || catalog || read || reread;
+        let folded =
+            folded || polled || listed || lifecycle || catalog || read || reread || library;
         let chat = self
             .conversation_mut()
             .is_some_and(|conversation| View::maintain(conversation, ws, now));
