@@ -38,6 +38,7 @@ use koru_ai_wire::{
 use schemars::{Schema, SchemaGenerator};
 
 use crate::{GatewayPrincipal, GatewayState};
+mod bot_tools;
 
 type SchemaFor = fn(&mut SchemaGenerator) -> Schema;
 pub const SSE_CAPACITY: usize = 32;
@@ -79,6 +80,58 @@ const ATTACHMENT_BODY_LIMIT: usize =
     koru_ai_core::attachments::MAX_ATTACHMENT_BYTES as usize + 64 * 1024;
 
 pub const ROUTES: &[AiRoute] = &[
+    AiRoute {
+        operation_id: "ai_list_bots",
+        method: "POST",
+        path: "/v1/ai/bots/list",
+        scope: AiScope::ReadBots,
+        summary: "Authorized local Bot task operation: list_bots",
+        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
+        handler: || post(bot_tools::list_bots),
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ListBotsRequest>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ListBotsResponse>()),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
+        operation_id: "ai_start_bot_task",
+        method: "POST",
+        path: "/v1/ai/bots/tasks/start",
+        scope: AiScope::RunBots,
+        summary: "Authorized local Bot task operation: start_bot_task",
+        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
+        handler: || post(bot_tools::start_bot_task),
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::StartBotTaskRequest>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::SendTurnAccepted>()),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
+        operation_id: "ai_read_bot_task",
+        method: "POST",
+        path: "/v1/ai/bots/tasks/read",
+        scope: AiScope::ReadBots,
+        summary: "Authorized local Bot task operation: read_bot_task",
+        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
+        handler: || post(bot_tools::read_bot_task),
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ReadBotTaskRequest>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ReadBotTaskResponse>()),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
+        operation_id: "ai_stop_bot_task",
+        method: "POST",
+        path: "/v1/ai/bots/tasks/stop",
+        scope: AiScope::RunBots,
+        summary: "Authorized local Bot task operation: stop_bot_task",
+        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
+        handler: || post(bot_tools::stop_bot_task),
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::StopBotTaskRequest>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::CancelAttemptResponse>()),
+        stream: false,
+        path_parameters: &[],
+    },
     AiRoute {
         operation_id: "ai_bot_command",
         method: "POST",

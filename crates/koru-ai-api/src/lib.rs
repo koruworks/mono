@@ -34,6 +34,8 @@ pub struct AiPrincipal {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AiScope {
+    ReadBots,
+    RunBots,
     ManageBots,
     Chat,
     ManageProviders,
@@ -43,6 +45,8 @@ pub enum AiScope {
 impl AiScope {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ReadBots => "bots.read",
+            Self::RunBots => "bots.run",
             Self::ManageBots => "bots.manage",
             Self::Chat => "ai.chat",
             Self::ManageProviders => "ai.manage_providers",
@@ -52,6 +56,8 @@ impl AiScope {
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "bots.read" => Some(Self::ReadBots),
+            "bots.run" => Some(Self::RunBots),
             "bots.manage" => Some(Self::ManageBots),
             "ai.chat" => Some(Self::Chat),
             "ai.manage_providers" => Some(Self::ManageProviders),

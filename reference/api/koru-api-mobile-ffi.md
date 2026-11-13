@@ -59,6 +59,10 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.pull_ollama_model` | `client.ai().pull_ollama_model` | POST /v1/ai/providers/ollama/pulls | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.cancel_ollama_pull` | `client.ai().cancel_ollama_pull` | POST /v1/ai/providers/ollama/pulls/cancel | Desktop-local Ollama lifecycle is unavailable on mobile |
 | `ai.bot_command` | `client.ai().bots` | POST /v1/ai/bots | Bot configuration currently requires the vouched desktop owner |
+| `ai.list_bots` | `client.ai().list_bots` | POST /v1/ai/bots/list | External Bot tasks currently run on the desktop owner |
+| `ai.start_bot_task` | `client.ai().start_bot_task` | POST /v1/ai/bots/tasks/start | External Bot tasks currently run on the desktop owner |
+| `ai.read_bot_task` | `client.ai().read_bot_task` | POST /v1/ai/bots/tasks/read | External Bot tasks currently run on the desktop owner |
+| `ai.stop_bot_task` | `client.ai().stop_bot_task` | POST /v1/ai/bots/tasks/stop | External Bot tasks currently run on the desktop owner |
 | `ai.create_chat` | `client.ai().create_chat` | POST /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.list_chats` | `client.ai().list_chats` | GET /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.read_chat` | `client.ai().read_chat` | GET /v1/ai/chats/{chat} | Phase 1 ships desktop chat before a mobile chat host |

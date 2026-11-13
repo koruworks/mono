@@ -343,11 +343,13 @@ impl WorkerState {
                     | BotCommand::ReadLifecycleOperation { .. }
                     | BotCommand::ListBotChats { .. }
                     | BotCommand::ReadRun { .. }
+                    | BotCommand::ReadTaskAnswer { .. }
                     | BotCommand::StopTask { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
                     BotCommand::ListActivity { workspace }
+                    | BotCommand::ListTaskBots { workspace, .. }
                     | BotCommand::ListTrashedBotChats { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -576,10 +578,13 @@ pub(super) fn bot_targets(
             | BotCommand::ReadLifecycleOperation { bot_id, .. }
             | BotCommand::ListBotChats { bot_id, .. }
             | BotCommand::ReadRun { bot_id, .. }
+            | BotCommand::ReadTaskAnswer { bot_id, .. }
             | BotCommand::StopTask { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
             // The workspace alone is proved; the read names no Bot or chat.
-            BotCommand::ListActivity { .. } | BotCommand::ListTrashedBotChats { .. } => {
+            BotCommand::ListActivity { .. }
+            | BotCommand::ListTrashedBotChats { .. }
+            | BotCommand::ListTaskBots { .. } => {
                 return Ok(Some(Vec::new()));
             }
             // A creation names no Bot that exists yet; its owner is proved.

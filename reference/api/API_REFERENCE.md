@@ -554,6 +554,30 @@ Record that a search led somewhere
 
 Returns: nothing. Machine-local and derived: it feeds recent queries and a workspace's recency, and reaches no document and no shared profile. A query earns a place in the history only by leading somewhere, which is why the text arrives here rather than on the search
 
+## POST `/v1/ai/bots/list`
+
+Authorized local Bot task operation: list_bots
+
+Returns: A bounded owner-authorized projection; no configuration or execution handles.
+
+## POST `/v1/ai/bots/tasks/start`
+
+Authorized local Bot task operation: start_bot_task
+
+Returns: A bounded owner-authorized projection; no configuration or execution handles.
+
+## POST `/v1/ai/bots/tasks/read`
+
+Authorized local Bot task operation: read_bot_task
+
+Returns: A bounded owner-authorized projection; no configuration or execution handles.
+
+## POST `/v1/ai/bots/tasks/stop`
+
+Authorized local Bot task operation: stop_bot_task
+
+Returns: A bounded owner-authorized projection; no configuration or execution handles.
+
 ## POST `/v1/ai/bots`
 
 Read, configure, archive, trash or restore an engine-owned Bot, list or add its conversations, read a workspace's Bot activity, read the Run behind a reply or a task started through the API, request admission, or stop a task started through the API

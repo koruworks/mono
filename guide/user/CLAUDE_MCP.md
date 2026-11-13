@@ -55,8 +55,8 @@ claude mcp add --scope user koru -- <repo>\target\debug\koru-mcp.exe serve --std
 
 The toolsets are `docs` (documents: find, read, create, edit, images,
 extraction), `files`, `versions` (saved versions), `tasks` (list tasks, and
-complete, reopen, re-date or re-prioritise one — on its own, without `docs`)
-and `chat`; the documentation and the workspace list are always on. A tool from a group that
+complete, reopen, re-date or re-prioritise one — on its own, without `docs`),
+`chat`, and `bots`; the documentation and the workspace list are always on. A tool from a group that
 is left out is not listed, and if the agent calls it anyway the call comes
 back as an error result the agent reads, naming the group and the
 `--toolsets` value that would serve it. `koru.bat mcp-add` registers every toolset; the table of

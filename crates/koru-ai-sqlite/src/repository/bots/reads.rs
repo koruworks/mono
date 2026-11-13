@@ -13,6 +13,78 @@
 //! would otherwise be free to drive from `chats`.
 use super::*;
 
+// Drive from the ordered main-chat index, not bots_home followed by a sort
+// of the whole roster. Unrelated owners/workspaces are filtered before LIMIT.
+const BOT_SUMMARY_PAGE_SQL: &str = "SELECT b.bot_id,b.name,bc.chat_id,b.revision,b.paused
+    FROM bot_chats AS bc INDEXED BY bot_main_chat
+   CROSS JOIN bots AS b ON b.bot_id=bc.bot_id
+   WHERE bc.purpose='main' AND bc.bot_id>?4
+     AND b.user_scope_id=?1 AND b.owner_device_id=?2 AND b.home_workspace_id=?3
+     AND b.lifecycle='active'
+     AND NOT EXISTS(SELECT 1 FROM bot_chat_trash AS t WHERE t.chat_id=bc.chat_id)
+   ORDER BY bc.bot_id LIMIT ?5";
+
+impl Repository {
+    /// Keyset roster over narrow scalar columns. Neither configuration nor
+    /// page grants/history are loaded, and preparation proves only workspace
+    /// authority, so a caller's page does not first materialize every Bot.
+    /// The main-chat index is global: this may scan unrelated associations
+    /// before filling a page. Materialized rows, not SQL work, are bounded.
+    pub fn bot_summary_page(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        after: Option<BotId>,
+        limit: u16,
+    ) -> Result<BotSummaryPage, BotError> {
+        if !(1..=100).contains(&limit) {
+            return Err(BotError::Invalid);
+        }
+        let mut statement = self.connection.prepare(BOT_SUMMARY_PAGE_SQL).map_err(bad)?;
+        let rows = statement
+            .query_map(
+                params![
+                    owner.user_scope.to_storage(),
+                    owner.device.to_storage(),
+                    workspace.to_storage(),
+                    after.map(|id| id.to_storage()).unwrap_or_default(),
+                    u32::from(limit) + 1
+                ],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, u64>(3)?,
+                        r.get::<_, bool>(4)?,
+                    ))
+                },
+            )
+            .map_err(bad)?;
+        let mut bots = rows
+            .map(|row| {
+                let (id, name, chat, revision, paused) = row.map_err(bad)?;
+                Ok(BotSummary {
+                    bot_id: id.parse().map_err(bad)?,
+                    name,
+                    main_chat: ChatId::parse(&chat).ok_or(BotError::Storage)?,
+                    revision,
+                    paused,
+                    lifecycle: BotLifecycle::Active,
+                })
+            })
+            .collect::<Result<Vec<_>, BotError>>()?;
+        let more = bots.len() > usize::from(limit);
+        bots.truncate(usize::from(limit));
+        let next = if more {
+            bots.last().map(|b| b.bot_id)
+        } else {
+            None
+        };
+        Ok(BotSummaryPage { bots, next })
+    }
+}
+
 /// The page query. `?2` is the cursor's main rank (1 or 0) or NULL for the
 /// first page; `?3`/`?4` the cursor's `updated_at_ms` and Chat ID.
 pub(crate) const BOT_CHAT_PAGE_SQL: &str =

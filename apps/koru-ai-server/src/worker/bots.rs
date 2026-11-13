@@ -293,6 +293,8 @@ fn execute_bot_command(
         | BotCommand::RetryBotCreation { .. }
         | BotCommand::AbandonBotCreation { .. }
         | BotCommand::ReadRun { .. }
+        | BotCommand::ReadTaskAnswer { .. }
+        | BotCommand::ListTaskBots { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,

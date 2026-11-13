@@ -16,6 +16,120 @@ fn worker(repo: Repository, authority: Arc<Authority>) -> (WorkerHandle, AiWorke
     (worker, client)
 }
 
+#[test]
+fn bot_task_answer_is_exact_terminal_utf8_and_survives_late_delta() {
+    let (mut repo, authority, create) = fixture();
+    let bot = created(&mut repo, authority.clone(), create);
+    let pending = turn(bot.main_chat, Uuid::new_v4(), 3);
+    repo.begin_turn(&pending).unwrap();
+    let text = format!("{}🦀tail", "a".repeat(16 * 1024 - 1));
+    repo.apply_event(
+        &AiEvent::TextDelta {
+            attempt_id: pending.attempt.id,
+            text: text.clone(),
+            at: at(4),
+        },
+        &[],
+    )
+    .unwrap();
+    repo.apply_event(
+        &AiEvent::Completed {
+            attempt_id: pending.attempt.id,
+            stop_reason: None,
+            at: at(5),
+        },
+        &[],
+    )
+    .unwrap();
+    repo.apply_event(
+        &AiEvent::TextDelta {
+            attempt_id: pending.attempt.id,
+            text: "LATE".into(),
+            at: at(6),
+        },
+        &[],
+    )
+    .unwrap();
+    let (worker, client) = worker(repo, authority.clone());
+    let read = |operation_id, offset| BotCommand::ReadTaskAnswer {
+        bot_id: bot.id,
+        chat_id: bot.main_chat,
+        attempt_id: pending.attempt.id,
+        operation_id,
+        offset,
+    };
+    let BotResponse::TaskAnswer { answer: first } = client
+        .bots(context(true), read(pending.attempt.operation_id, 0))
+        .unwrap()
+    else {
+        panic!("answer")
+    };
+    assert_eq!(first.status, AttemptStatus::Complete);
+    assert_eq!(first.markdown.as_ref().unwrap().len(), 16 * 1024 - 1);
+    assert_eq!(
+        first.run_id, None,
+        "answer does not depend on an eventual Run header"
+    );
+    let BotResponse::TaskAnswer { answer: rest } = client
+        .bots(
+            context(true),
+            read(pending.attempt.operation_id, first.next_offset.unwrap()),
+        )
+        .unwrap()
+    else {
+        panic!("answer")
+    };
+    assert_eq!(
+        format!("{}{}", first.markdown.unwrap(), rest.markdown.unwrap()),
+        text
+    );
+    assert_eq!(rest.next_offset, None);
+    let BotResponse::TaskAnswer { answer: end } = client
+        .bots(
+            context(true),
+            read(pending.attempt.operation_id, text.len() as u64),
+        )
+        .unwrap()
+    else {
+        panic!("answer")
+    };
+    assert_eq!(end.markdown.as_deref(), Some(""));
+    assert_eq!(end.next_offset, None);
+    for offset in [16 * 1024, text.len() as u64 + 1] {
+        assert_eq!(
+            client
+                .bots(context(true), read(pending.attempt.operation_id, offset))
+                .unwrap_err()
+                .code,
+            "invalid_request"
+        );
+    }
+    assert_eq!(
+        client
+            .bots(context(true), read(Uuid::new_v4(), 0))
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+    assert_eq!(
+        client
+            .bots(context(false), read(pending.attempt.operation_id, 0))
+            .unwrap_err()
+            .code,
+        "forbidden"
+    );
+    authority.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        client
+            .bots(context(true), read(pending.attempt.operation_id, 0))
+            .unwrap_err()
+            .code,
+        "wrong_owner"
+    );
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}
+
 fn list(bot: BotId, cursor: Option<BotChatCursor>, limit: u16) -> BotCommand {
     BotCommand::ListBotChats {
         bot_id: bot,
