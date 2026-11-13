@@ -378,7 +378,40 @@ pub enum TabPresence {
 ///
 /// The mouse and key methods return whether anything changed, so the loop only
 /// redraws when it has to rather than spinning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChildDocumentRequest {
+    pub surface: u64,
+    pub generation: u64,
+    pub workspace: WorkspaceId,
+    pub document: koru_core::DocumentId,
+}
+
+/// Native input identity is scoped to a window and an editable occurrence,
+/// never to its changing geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImeTargetId {
+    pub owner: u64,
+    pub control: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImeTarget {
+    pub id: ImeTargetId,
+    pub cursor_area: Option<koru_draw::geometry::Rect>,
+}
+
 pub trait View {
+    fn ime_target(&self) -> Option<ImeTarget> {
+        None
+    }
+    fn ime(
+        &mut self,
+        _ws: &mut WorkspaceDoc,
+        _target: ImeTargetId,
+        _event: &winit::event::Ime,
+    ) -> bool {
+        false
+    }
     fn key(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -990,6 +1023,38 @@ pub trait View {
     /// and never will be: it *patches* what a subscription reported, and there
     /// is no subscription left to report anything.
     fn reseat(&mut self, ws: &WorkspaceDoc);
+
+    /// A bounded child destination. This never reserves a shell tab and the
+    /// exact request must still be live when the off-thread load finishes.
+    fn child_document_request(&self) -> Option<ChildDocumentRequest> {
+        None
+    }
+
+    /// Returning false retires the exact pending intent; it must not be reissued
+    /// on the next maintenance turn without a new user request.
+    fn accept_child_document(
+        &mut self,
+        _request: ChildDocumentRequest,
+        _doc: &WorkspaceDoc,
+    ) -> bool {
+        false
+    }
+
+    fn child_document_loaded(
+        &mut self,
+        _request: ChildDocumentRequest,
+        _doc: &WorkspaceDoc,
+    ) -> bool {
+        false
+    }
+
+    fn child_document_failed(&mut self, _request: ChildDocumentRequest) {}
+
+    /// The retained editor a focused native window expects. The host may
+    /// restore an already-resident document, without I/O or navigation.
+    fn editing_document(&self) -> Option<(WorkspaceId, koru_core::DocumentId)> {
+        None
+    }
 
     /// Show the document the workspace has just made active, in a tab.
     ///
@@ -1717,6 +1782,18 @@ pub trait View {
     /// unrecoverable bug — so the view is handed the command back and can put
     /// the text where it was. Answers whether anything on screen changed.
     fn task_command_failed(&mut self, _command: &tasks::TaskCommand, _error: &str) -> bool {
+        false
+    }
+
+    /// A bounded queue refused a newest intent before execution. A collected
+    /// batch's refusals arrive newest first, separately from ordered receipts.
+    fn task_command_rejected(&mut self, command: &tasks::TaskCommand, error: &str) -> bool {
+        self.task_command_failed(command, error)
+    }
+
+    /// Another window's write: refresh read-model requirements without
+    /// consuming this window's unrelated optimistic intent or navigation.
+    fn task_command_observed(&mut self, _landed: &tasks::Landed) -> bool {
         false
     }
 

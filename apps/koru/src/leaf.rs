@@ -332,6 +332,36 @@ impl Leaf {
         }
     }
 
+    pub fn native_ime_target(&self) -> Option<u64> {
+        match self {
+            Self::Document(d) => d.native_ime_target(),
+        }
+    }
+
+    pub fn native_ime_owner(&self) -> u64 {
+        match self {
+            Self::Document(d) => d.native_ime_owner(),
+        }
+    }
+
+    pub fn native_ime(&mut self, ws: &mut WorkspaceDoc, event: &winit::event::Ime) -> bool {
+        match self {
+            Self::Document(d) => d.native_ime(ws, event),
+        }
+    }
+
+    pub fn native_ime_rect(&self) -> Option<Rect> {
+        match self {
+            Self::Document(d) => d.native_ime_rect(),
+        }
+    }
+
+    pub fn native_ime_cancel(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        match self {
+            Self::Document(d) => d.native_ime_cancel(ws),
+        }
+    }
+
     pub fn editable_target(
         &self,
         tab: koru_workspace_host::routing::TabId,

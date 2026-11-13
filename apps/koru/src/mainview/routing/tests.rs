@@ -473,6 +473,7 @@ fn tab_kind(v: &MainView) -> &'static str {
         TabView::Result(_) => "result",
         TabView::Canvas(_) => "canvas",
         TabView::Leaf(_) => "leaf",
+        TabView::MiniApp(_) => "mini-app",
     }
 }
 

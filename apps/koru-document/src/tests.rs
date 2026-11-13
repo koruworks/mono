@@ -15,6 +15,9 @@ use koru_workspace_host::{
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
+mod ime_tests;
+mod resident;
+
 /// The button's rect. The caption always offers one now: `theme::window_menu`
 /// and the mutex the tests flipping it queued behind are both gone, and the
 /// caption is four stable controls ([ADR-150](../../../docs/decisions/README.md)).

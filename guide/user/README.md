@@ -14,6 +14,7 @@ covered in the [repository README](../../README.md) and
 | | |
 | --- | --- |
 | Everything the app does, and every gesture | [USERGUIDE.md](USERGUIDE.md) |
+| Experimental task collection beside a document | [Tasks and document](TASK-DOCUMENT.md) |
 | Every chord, per platform — **generated, never hand-edited** | [SHORTCUTS.md](../../reference/SHORTCUTS.md) |
 | Connect Claude Desktop | [CLAUDE_MCP.md](CLAUDE_MCP.md) |
 | Connect ChatGPT or Codex | [CHATGPT_MCP.md](CHATGPT_MCP.md) |

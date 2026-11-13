@@ -14191,7 +14191,14 @@ mod tests {
             .unwrap();
         assert_eq!(read["document_id"], made["document_id"]);
         assert_eq!(read["root_node_id"], made["root_node_id"]);
-        assert_eq!(read["revision"], placed["revision"]);
+        // Version-vector encodings may order equal peer counters differently.
+        let decoded_revision = |token: &Value| {
+            loro::VersionVector::decode(&unhex(token.as_str().unwrap()).unwrap()).unwrap()
+        };
+        assert_eq!(
+            decoded_revision(&read["revision"]),
+            decoded_revision(&placed["revision"])
+        );
         let nodes = read["nodes"].as_array().unwrap();
         assert!(
             nodes
@@ -14206,7 +14213,7 @@ mod tests {
         let before = WorkspaceDoc::from_snapshot(&created_snapshot).unwrap();
         let after =
             WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&document]).unwrap();
-        assert_eq!(revision(&before), made["revision"].as_str().unwrap());
+        assert_eq!(before.doc().oplog_vv(), decoded_revision(&made["revision"]));
         assert!(
             after.doc().oplog_vv().includes_vv(&before.doc().oplog_vv()),
             "the creation's history is a prefix of the document's, not a new lineage"

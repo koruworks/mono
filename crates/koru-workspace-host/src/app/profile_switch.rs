@@ -5,13 +5,16 @@
 use super::*;
 use crate::profile_wait::WaitAttempt;
 use koru_workspace::fromstore::StoreLaunch;
+use std::sync::{Arc, Mutex};
 
 pub(super) struct Opening {
     pub attempt: WaitAttempt,
     began: Instant,
     origin: Option<profile_wait::Place>,
     removed_profile: Option<koru_core::ProfileId>,
-    answer: mpsc::Receiver<koru_store_core::errors::Result<StoreLaunch>>,
+    answer: Arc<Mutex<Option<koru_store_core::errors::Result<StoreLaunch>>>>,
+    ready: mpsc::Receiver<()>,
+    _release: mpsc::Sender<()>,
 }
 
 impl<H: Host> App<H> {
@@ -52,6 +55,10 @@ impl<H: Host> App<H> {
             }
             return;
         }
+        if let Err(reason) = self.prepare_profile_replacement() {
+            self.report(ErrorReport::new("Couldn't switch profiles", reason));
+            return;
+        }
         let origin = if removed_profile.is_some() {
             // Cancel can choose another Profile or close the window, but must
             // never return to content whose removal already committed.
@@ -75,7 +82,10 @@ impl<H: Host> App<H> {
             pane.view.set_profile_wait(Some(waiting));
             pane.window.request_redraw();
         }
-        let (reply, answer) = mpsc::channel();
+        let answer = Arc::new(Mutex::new(None));
+        let output = Arc::clone(&answer);
+        let (reply, ready) = mpsc::channel();
+        let (release, released) = mpsc::channel();
         let root = self.gateway_root.clone();
         let wake = self.wake_proxy.clone();
         let began = Instant::now();
@@ -88,8 +98,9 @@ impl<H: Host> App<H> {
                     profile,
                     wanted,
                 );
-                let _ = reply.send(result);
-                let _ = wake.send_event(Wake::Workspaces);
+                publish_prepared(result, output, reply, released, || {
+                    let _ = wake.send_event(Wake::Workspaces);
+                });
             }) {
             Ok(_) => {
                 self.profile_opening = Some(Opening {
@@ -98,6 +109,8 @@ impl<H: Host> App<H> {
                     origin,
                     removed_profile,
                     answer,
+                    ready,
+                    _release: release,
                 })
             }
             Err(error) => {
@@ -122,14 +135,35 @@ impl<H: Host> App<H> {
             self.profile_opening = None;
             return;
         }
-        let result = match opening.answer.try_recv() {
-            Ok(result) => result,
+        match opening.ready.try_recv() {
+            Ok(()) => {}
             Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Err(koru_store_core::Error::bare(
-                koru_store_core::Code::StorageFailed,
-            )),
+            Err(mpsc::TryRecvError::Disconnected) => {}
         };
         let opening = self.profile_opening.take().unwrap();
+        // Accepted writes can arrive while the incoming profile is opening.
+        // Recheck and save BEFORE taking its result from worker ownership.
+        if let Err(reason) = self.prepare_profile_replacement() {
+            self.clear_profile_waits();
+            self.report(ErrorReport::new("Couldn't switch profiles", reason));
+            return;
+        }
+        let wrong_profile = opening.answer.lock().unwrap().as_ref().is_some_and(|result| {
+            matches!(result, Ok(StoreLaunch::Open(opened)) if opened.profile.id() != Some(opening.attempt.profile))
+        });
+        if wrong_profile {
+            self.clear_profile_waits();
+            self.report(ErrorReport::new(
+                "Couldn't switch profiles",
+                "The selected profile is no longer available. Nothing was changed.",
+            ));
+            return;
+        }
+        let result = opening.answer.lock().unwrap().take().unwrap_or_else(|| {
+            Err(koru_store_core::Error::bare(
+                koru_store_core::Code::StorageFailed,
+            ))
+        });
         match result {
             Ok(StoreLaunch::Open(opened))
                 if opened.profile.id() == Some(opening.attempt.profile) =>
@@ -167,4 +201,70 @@ impl<H: Host> App<H> {
             }
         }
     }
+
+    /// Both synchronous and asynchronous adopters check this immediately
+    /// before accepting incoming ownership, on the same event-loop turn.
+    pub(super) fn prepare_profile_replacement(&mut self) -> Result<(), &'static str> {
+        self.collect_task_commands();
+        if self.task_queue.has_pending() {
+            return Err(pending_tasks_reason());
+        }
+        self.runtime
+            .workspace
+            .prepare_document_replacement()
+            .map_err(replacement_reason)
+    }
 }
+
+pub(super) fn pending_tasks_reason() -> &'static str {
+    koru_i18n::t(
+        crate::accessibility::ui_lang(),
+        koru_i18n::Key::TaskCommandsPending,
+    )
+}
+
+pub(super) fn replacement_reason(reason: koru_workspace::DocumentReplacementError) -> &'static str {
+    koru_i18n::t(
+        crate::accessibility::ui_lang(),
+        match reason {
+            koru_workspace::DocumentReplacementError::Pending => {
+                koru_i18n::Key::DocumentReplacementPending
+            }
+            koru_workspace::DocumentReplacementError::Unsafe => {
+                koru_i18n::Key::DocumentReplacementUnsafe
+            }
+        },
+    )
+}
+
+pub(super) fn saving_reason(why: &str, lang: koru_i18n::Lang) -> &str {
+    match why {
+        koru_workspace::Unconfirmed::NOT_BUFFERED => {
+            koru_i18n::t(lang, koru_i18n::Key::DocumentNotBuffered)
+        }
+        koru_workspace::Unconfirmed::SAVING_PENDING => {
+            koru_i18n::t(lang, koru_i18n::Key::DocumentSavingPending)
+        }
+        _ => why,
+    }
+}
+
+/// Keep a prepared result on its worker until the destination takes it or
+/// cancels. The generic value lets the ownership boundary use a drop probe in
+/// tests without constructing a Store, Profile, or native window.
+fn publish_prepared<T>(
+    value: T,
+    output: Arc<Mutex<Option<T>>>,
+    ready: mpsc::Sender<()>,
+    released: mpsc::Receiver<()>,
+    wake: impl FnOnce(),
+) {
+    *output.lock().unwrap() = Some(value);
+    let _ = ready.send(());
+    wake();
+    let _ = released.recv();
+    output.lock().unwrap().take();
+}
+
+#[cfg(test)]
+mod tests;

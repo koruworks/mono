@@ -223,7 +223,9 @@ impl TasksView {
         let mut children = Vec::new();
         children.extend(self.count_semantics(cx));
         children.extend(self.note_semantics(cx));
-        children.push(self.capture_semantics(cx));
+        if !self.collection_only {
+            children.push(self.capture_semantics(cx));
+        }
         children.push(self.list_semantics(cx, &name));
         children.extend(self.panel_semantics(cx));
         SemanticNode::new(cx.surface(parts::PAGE), Role::Group)
@@ -520,6 +522,7 @@ impl TasksView {
         }
         if target.object == ObjectKey::Surface(PAGE)
             && target.part == parts::CAPTURE
+            && !self.collection_only
             && matches!(action, Action::Focus | Action::Click)
         {
             // The press's own call. The caret lands in the row that is already

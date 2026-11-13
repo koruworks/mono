@@ -44,6 +44,8 @@ pub enum TabView {
     /// Trash arm's reason: it has no `Body` and no rows, so `Editing::parts`
     /// could only be `unreachable!()` down in [`Leaf`].
     Tasks(crate::tasks_view::TasksView),
+    /// A transient declared composition; source documents retain their sessions.
+    MiniApp(Box<crate::mini_app::MiniApp>),
     /// The All Reminders page — the bell popover's management surface hosted
     /// as an ordinary tab (`mainview/reminders_view.rs`). The rail's Reminders
     /// row re-points a Tasks tab to this arm, and a bucket press swaps it
@@ -110,6 +112,30 @@ impl From<crate::canvas_view::CanvasView> for TabView {
 }
 
 impl TabView {
+    /// Retained document child for compare-first presentation context pushes.
+    /// Input routing still uses the focused, document-qualified route.
+    pub(super) fn retained_leaf_mut(&mut self) -> Option<&mut Leaf> {
+        match self {
+            Self::Leaf(leaf) => Some(leaf),
+            Self::Tasks(tasks) => tasks.body_leaf_mut(),
+            Self::MiniApp(app) => app.leaf_mut(),
+            _ => None,
+        }
+    }
+    pub(crate) fn tasks(&self) -> Option<&crate::tasks_view::TasksView> {
+        match self {
+            Self::Tasks(tasks) => Some(tasks),
+            Self::MiniApp(app) => Some(&app.tasks),
+            _ => None,
+        }
+    }
+    pub(crate) fn tasks_mut(&mut self) -> Option<&mut crate::tasks_view::TasksView> {
+        match self {
+            Self::Tasks(tasks) => Some(tasks),
+            Self::MiniApp(app) => Some(&mut app.tasks),
+            _ => None,
+        }
+    }
     /// Whether a drag this view owns is in flight.
     ///
     /// The container stops forwarding pointer moves once the pointer leaves the
@@ -119,6 +145,7 @@ impl TabView {
     /// regression against behaviour the editor already has.
     pub fn is_dragging(&self) -> bool {
         match self {
+            Self::MiniApp(app) => app.is_dragging(),
             // Nothing on the welcome screen is draggable, which is exactly the
             // sort of thing a typed seam should be able to say without a panic.
             Self::Welcome(_)
@@ -194,6 +221,7 @@ impl TabView {
     /// next shown. See the performance rules in AGENTS.md.
     pub fn adopt_cheap(&mut self, ws: &WorkspaceDoc) {
         match self {
+            Self::MiniApp(app) => app.adopt_cheap(ws),
             Self::Welcome(w) => w.adopt(ws),
             Self::Manage(_) => {}
             Self::Trash(t) => koru_workspace_host::View::adopt(t, ws),
@@ -257,6 +285,7 @@ impl TabView {
     /// [`Editing::catch_up`]: koru_editor::Editing::catch_up
     pub fn catch_up(&mut self, ws: &WorkspaceDoc) -> bool {
         match self {
+            Self::MiniApp(app) => app.catch_up(ws),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -299,6 +328,7 @@ impl TabView {
     /// [`koru_workspace_host::View::reseat`].
     pub fn reseat(&mut self, ws: &WorkspaceDoc) {
         match self {
+            Self::MiniApp(app) => View::reseat(app.as_mut(), ws),
             Self::Welcome(w) => koru_workspace_host::View::reseat(w, ws),
             Self::Manage(w) => koru_workspace_host::View::reseat(w, ws),
             Self::Trash(t) => koru_workspace_host::View::reseat(t, ws),
@@ -391,6 +421,7 @@ impl TabView {
 
     pub fn root(&self) -> Option<NodeId> {
         match self {
+            Self::MiniApp(_) => None,
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -417,6 +448,7 @@ impl TabView {
     /// image or line you actually pointed at.
     pub fn reveal(&mut self, id: NodeId) -> bool {
         match self {
+            Self::MiniApp(app) => app.leaf_mut().is_some_and(|leaf| leaf.reveal(id)),
             // Nothing on the welcome screen is a node, so there is nothing to
             // reveal — the typed seam answering for itself again.
             Self::Welcome(_)
@@ -442,6 +474,7 @@ impl TabView {
     /// Focus a search match in the middle of its document viewport.
     pub fn reveal_centered(&mut self, id: NodeId) -> bool {
         match self {
+            Self::MiniApp(app) => app.leaf_mut().is_some_and(|leaf| leaf.reveal_centered(id)),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -464,6 +497,9 @@ impl TabView {
 
     pub fn reveal_search_match(&mut self, id: NodeId, match_text: &str) -> bool {
         match self {
+            Self::MiniApp(app) => app
+                .leaf_mut()
+                .is_some_and(|leaf| leaf.reveal_search_match(id, match_text)),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -487,6 +523,9 @@ impl TabView {
     /// Put a revealed image's display name into edit mode.
     pub fn start_image_rename(&mut self, ws: &WorkspaceDoc, id: NodeId) -> bool {
         match self {
+            Self::MiniApp(app) => app
+                .leaf_mut()
+                .is_some_and(|leaf| leaf.start_image_rename(ws, id)),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -510,6 +549,7 @@ impl TabView {
     /// welcome screen, which is not a document and has no name.
     pub fn start_rename(&mut self, ws: &WorkspaceDoc) -> bool {
         match self {
+            Self::MiniApp(_) => false,
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -541,6 +581,7 @@ impl TabView {
     /// rename was silently dropped.
     pub fn is_prompting(&self) -> bool {
         match self {
+            Self::MiniApp(app) => app.leaf().is_some_and(|leaf| leaf.view().overlay.is_open()),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -573,6 +614,11 @@ impl TabView {
     pub fn is_renaming(&self) -> bool {
         use koru_editor::trigger::Anchor;
         match self {
+            Self::MiniApp(app) => app.leaf().is_some_and(|leaf| {
+                leaf.view().overlay.trigger().is_some_and(|trigger| {
+                    matches!(trigger.anchor, Anchor::Rename(_) | Anchor::RenameImage(_))
+                })
+            }),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -601,6 +647,10 @@ impl TabView {
     /// at and the question is about the body's focus instead.
     pub fn editing_title(&self) -> Option<NodeId> {
         match self {
+            Self::MiniApp(app) => app
+                .leaf()
+                .filter(|leaf| leaf.editing_title())
+                .and_then(View::document_root),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -625,6 +675,12 @@ impl TabView {
     pub fn is_setting_page_icon(&self) -> bool {
         use koru_editor::trigger::Anchor;
         match self {
+            Self::MiniApp(app) => app.leaf().is_some_and(|leaf| {
+                leaf.view()
+                    .overlay
+                    .trigger()
+                    .is_some_and(|trigger| matches!(trigger.anchor, Anchor::PageIcon(_)))
+            }),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -655,6 +711,7 @@ impl TabView {
     /// for the plain thing.
     pub fn take_wants_open(&mut self) -> Option<(NodeId, OpenWhere)> {
         match self {
+            Self::MiniApp(_) => None,
             // The welcome opens a *document* by stable id now, which the
             // container routes through the store — a different channel from the
             // editor's node opens, so nothing comes through here.
@@ -682,6 +739,7 @@ impl TabView {
     /// Where this tab is scrolled to, so a session can put it back.
     pub fn scroll(&self) -> f32 {
         match self {
+            Self::MiniApp(_) => 0.0,
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -726,6 +784,7 @@ impl TabView {
     /// fast-wake loop runs while any visible view reports this.
     pub fn is_animating(&self) -> bool {
         match self {
+            Self::MiniApp(app) => app.leaf().is_some_and(View::animating),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -749,6 +808,7 @@ impl TabView {
 
     pub fn maintenance_deadline(&self) -> Option<std::time::Instant> {
         match self {
+            Self::MiniApp(app) => View::maintenance_deadline(app.as_ref()),
             Self::Welcome(_)
             | Self::Trash(_)
             | Self::Diff(_)
@@ -783,6 +843,7 @@ impl TabView {
 
     pub fn maintain(&mut self, ws: &mut WorkspaceDoc, now: std::time::Instant) -> bool {
         match self {
+            Self::MiniApp(app) => View::maintain(app.as_mut(), ws, now),
             Self::Welcome(_)
             | Self::Trash(_)
             | Self::Diff(_)
@@ -1580,6 +1641,7 @@ impl Tab {
                     | TabView::Socials(_)
                     | TabView::Session(_)
                     | TabView::AiChat(_)
+                    | TabView::MiniApp(_)
             )
     }
 
@@ -1593,6 +1655,7 @@ impl Tab {
             // Only while the note is shown: a hidden note is not edited
             // here, so its document need not be activated for the tab.
             TabView::Tasks(t) if t.page_is_local() && t.note_shown() => t.page_document(),
+            TabView::MiniApp(app) => app.document,
             _ => None,
         })
     }
@@ -1680,6 +1743,7 @@ impl Tab {
             TabView::Manage(v) => View::set_viewport(v, w, h),
             TabView::Trash(v) => v.set_viewport(w, h),
             TabView::Tasks(v) => v.set_viewport(w, h),
+            TabView::MiniApp(app) => View::set_viewport(app.as_mut(), w, h),
             TabView::Reminders(v) => v.set_viewport(w, h),
             TabView::Diff(v) => View::set_viewport(v, w, h),
             TabView::Settings(v) => View::set_viewport(v, w, h),

@@ -228,6 +228,37 @@ impl LocalSearch {
         })
     }
 
+    pub(crate) fn ime(&mut self, editor: &mut Editor, event: &winit::event::Ime) -> bool {
+        if !self.open {
+            return false;
+        }
+        let before = self.query.raw_text().to_owned();
+        let handled = match self.focus {
+            Field::Query => self.query.ime(&mut editor.view.engine, event),
+            Field::Replacement => self.replacement.ime(&mut editor.view.engine, event),
+        };
+        if before != self.query.raw_text() {
+            self.refresh(editor);
+        }
+        handled
+    }
+
+    pub(crate) fn ime_cancel(&mut self, editor: &mut Editor) -> bool {
+        let query = self.query.ime_cancel(&mut editor.view.engine);
+        self.replacement.ime_cancel(&mut editor.view.engine) || query
+    }
+
+    pub(crate) fn ime_cursor_area(&self, editor: &Editor) -> Option<Rect> {
+        if !self.open {
+            return None;
+        }
+        let layout = self.layout(editor);
+        match self.focus {
+            Field::Query => self.query.ime_cursor_area(layout.query),
+            Field::Replacement => self.replacement.ime_cursor_area(layout.replacement?),
+        }
+    }
+
     /// Whichever of query and replacement `field` names, for a caller that is
     /// about to compose a dictation into it.
     ///

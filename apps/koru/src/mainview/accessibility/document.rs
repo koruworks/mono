@@ -216,9 +216,12 @@ impl Bodies {
 }
 
 /// The active tab's editor, when the active tab is a document.
+use koru_draw::geometry::Rect;
+
 fn leaf(view: &MainView) -> Option<&Leaf> {
     match &view.tabs().active_tab().view {
         TabView::Leaf(leaf) => Some(leaf),
+        TabView::MiniApp(app) if app.regions.document.w > 0.0 => app.leaf(),
         _ => None,
     }
 }
@@ -227,6 +230,7 @@ fn leaf_mut(view: &mut MainView) -> Option<&mut Leaf> {
     let index = view.tabs().active();
     match view.tabs_mut().get_mut(index).map(|tab| &mut tab.view) {
         Some(TabView::Leaf(leaf)) => Some(leaf),
+        Some(TabView::MiniApp(app)) if app.regions.document.w > 0.0 => app.leaf_mut(),
         _ => None,
     }
 }
@@ -237,6 +241,15 @@ fn editor(leaf: &Leaf) -> &koru_editor::Editor {
 }
 
 impl MainView {
+    fn accessible_document_rect(&self) -> Rect {
+        let pane = self.focused_view_rect();
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view {
+            let region = app.regions.document;
+            Rect::new(pane.x + region.x, pane.y + region.y, region.w, region.h)
+        } else {
+            pane
+        }
+    }
     /// **Whether the chrome the client holds is still the chrome this window
     /// has.**
     ///
@@ -305,7 +318,7 @@ impl MainView {
         // *does* do here is decide whether a selection request is performed at
         // all, in `document_action` below.
         let read_only = self.editable_target() != EditableTarget::Tab(TabId(self.tabs().active()));
-        let pane = self.focused_view_rect();
+        let pane = self.accessible_document_rect();
         let viewport = body_viewport(editor, pane);
         let mut state = self.bodies.borrow_mut();
 
@@ -469,6 +482,11 @@ impl MainView {
     /// caret is drawn from. Not a second focus: §5 is explicit that accessible
     /// focus is a function over the state the focus ring is painted from.
     pub(crate) fn document_focus(&self, cx: &Shell) -> Option<Occurrence> {
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && !app.document_focused()
+        {
+            return None;
+        }
         let leaf = leaf(self)?;
         let editor = editor(leaf);
         if !editor.view.active {
@@ -521,7 +539,7 @@ impl MainView {
         rev.byte(1);
         let editor = editor(leaf);
         rev.u64(self.tabs().active_tab().id);
-        let viewport = body_viewport(editor, self.focused_view_rect());
+        let viewport = body_viewport(editor, self.accessible_document_rect());
         rev.f32(viewport.x)
             .f32(viewport.y)
             .f32(viewport.w)
@@ -622,6 +640,12 @@ impl MainView {
             None => false,
         };
         self.bodies.borrow_mut().by_tab.insert(tab, access);
+        if performed
+            && matches!(action, Action::Focus | Action::SetTextSelection)
+            && let TabView::MiniApp(app) = self.active_view()
+        {
+            app.focus_region(crate::mini_app::Region::Document);
+        }
         performed
     }
 

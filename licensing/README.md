@@ -32,6 +32,7 @@ the MPL-2.0 crates among them.
 | `third-party/patches/onenote_parser.patch` (to `onenote_parser` 2.0.0, fetched from crates.io) | MPL-2.0, © Markus Siemens and contributors; what Koru changes in `onenote_parser.md` | The crate's own license; the source is fetched, not committed ([third-party/](../third-party/README.md)); not headed by us |
 | `third-party/patches/sherpa-onnx*.patch` (to `sherpa-onnx`, `sherpa-onnx-sys` 1.13.6, fetched from crates.io) | Apache-2.0, © the sherpa-onnx authors; Koru's TTS removal in `sherpa-onnx.md` | Each crate's own `LICENSE`, which its `.crate` carries; not headed by us |
 | `third-party/patches/merman-render.patch` (to `merman-render` 0.9.0, fetched from crates.io) | MIT OR Apache-2.0, © the merman authors; the sequence geometry Koru adds to the layout JSON in `merman-render.md` | The crate's own `LICENSE-MIT` and `LICENSE-APACHE`, which its `.crate` carries; not headed by us |
+| `third-party/patches/winit.patch` (to `winit` 0.30.13, fetched from crates.io) | Apache-2.0; native IME lifetime correction in `winit.md` | The crate's own `LICENSE`, which its `.crate` carries; not headed by us |
 | `crates/koru-blocks/assets/TypeScript.sublime-syntax` (fetched, not committed) | Apache-2.0, © Microsoft (TypeScript-Sublime-Plugin, converted by `bat`) | `README.md` beside it; the text is `crates/koru-release/licences/bundled/typescript-grammar.txt` |
 | The Koru name, logo and icons | Not licensed; trademarks | [TRADEMARKS.md](../TRADEMARKS.md) |
 

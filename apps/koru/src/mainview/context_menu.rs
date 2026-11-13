@@ -227,6 +227,7 @@ pub enum MenuAction {
     /// Parent of the Documents flyout on the `+` menu.
     Documents,
     NewDocument,
+    MiniApp,
     /// A recent document under Documents. Title comes from the snapshot
     /// [`set_plus_snapshots`] captures when the menu opens.
     ///
@@ -1113,6 +1114,9 @@ impl MenuAction {
             MenuAction::Divider => "",
             MenuAction::Documents => "Documents",
             MenuAction::NewDocument => "New",
+            MenuAction::MiniApp => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
+            }
             MenuAction::Canvases => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::CanvasesTitle)
             }
@@ -1991,7 +1995,7 @@ pub fn agent_profile_items() -> Vec<MenuAction> {
 /// Documents flyout: New, then up to ten recents and *Clear recents* under
 /// them — offered only when there is something to clear.
 pub fn document_plus_items() -> Vec<MenuAction> {
-    let mut items = vec![MenuAction::NewDocument];
+    let mut items = vec![MenuAction::NewDocument, MenuAction::MiniApp];
     PLUS_RECENTS.with(|cell| {
         let recents = cell.borrow();
         if recents.is_empty() {

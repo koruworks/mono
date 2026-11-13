@@ -91,6 +91,7 @@ mod launcher;
 pub(crate) mod layout;
 mod link_device;
 pub(crate) mod linked_devices;
+mod mini_app;
 mod move_to;
 mod nav;
 mod nav_debug;
@@ -826,6 +827,8 @@ pub struct MainView {
     /// lands, in order — `pending_count_deltas`'s twin, popped on the same
     /// two turns.
     pending_landings: std::collections::VecDeque<Landing>,
+    pending_task_receipts:
+        std::collections::VecDeque<(Option<u64>, koru_workspace_host::tasks::TaskCommand)>,
     /// A failure the person at the keyboard has to see. The topmost surface in
     /// the window, and the one a press outside does not dismiss — see
     /// [`error_dialog`]. [`Self::updates_modal`] dismisses on the *release* of
@@ -1916,6 +1919,7 @@ impl MainView {
             pending_lands: std::collections::VecDeque::new(),
             pending_pane_drops: Vec::new(),
             pending_landings: std::collections::VecDeque::new(),
+            pending_task_receipts: std::collections::VecDeque::new(),
             error: None,
             import_dialog: None,
             pending_trash: None,
@@ -3843,10 +3847,14 @@ impl MainView {
         // The recorder's v1 set: a tab switch, kind only — which tab is
         // content, and content stays out.
         self.observe_recording_tab_switch();
+        if let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+            app.reactivate();
+        }
         // **The window opens the document the tab is over — without moving
         // Explore.** ActivateDocument parks/opens the room in place; Navigate
         // would switch the active workspace whenever locate_document differed.
         if let Some(doc) = self.tabs().active_tab().edits()
+            && !matches!(self.tabs().active_tab().view,TabView::MiniApp(_))
             && self.active_document != Some(doc)
             // A Tasks tab's ask already out is not made again: the shell
             // answers an ask for the document it has just activated with a
@@ -4679,6 +4687,7 @@ impl MainView {
             },
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
+                MenuAction::MiniApp => self.open_mini_app_fixture(),
                 MenuAction::NewCanvas => self.new_canvas(),
                 MenuAction::OpenRecentDocument(id) => self.open_recent_document(id),
                 MenuAction::Documents
@@ -5055,11 +5064,27 @@ impl MainView {
                 _ => false,
             },
             MenuSubject::Task { document, node } => match action {
-                MenuAction::TaskGoToOrigin => self.open_task_node(document, node, true),
-                MenuAction::TaskGoToList => self
-                    .task_row(document, node)
-                    .and_then(|row| row.list)
-                    .is_some_and(|list| self.go_to_task_list(list)),
+                MenuAction::TaskGoToOrigin => {
+                    if let TabView::MiniApp(app) = self.active_view() {
+                        app.request_document(document, Some(node));
+                        true
+                    } else {
+                        self.open_task_node(document, node, true)
+                    }
+                }
+                MenuAction::TaskGoToList => {
+                    let list = self.task_row(document, node).and_then(|row| row.list);
+                    list.is_some_and(|list| {
+                        if let TabView::MiniApp(app) = self.active_view() {
+                            app.tasks
+                                .set_target(crate::panes::explore::rail::RailTarget::List(list));
+                            app.focus_region(crate::mini_app::Region::Tasks);
+                            true
+                        } else {
+                            self.go_to_task_list(list)
+                        }
+                    })
+                }
                 MenuAction::TaskCreateDocument => {
                     self.queue_task_command(
                         koru_workspace_host::tasks::TaskCommand::CreateHome { document, node },
@@ -9149,6 +9174,7 @@ impl MainView {
     /// has the parity a document tab has without each drain naming it.
     fn active_editing_leaf(&mut self) -> Option<&mut Leaf> {
         match self.active_view() {
+            TabView::MiniApp(app) => app.focused_leaf(),
             TabView::Leaf(leaf) => Some(leaf),
             TabView::Tasks(t) => t.body_leaf_mut(),
             _ => None,
@@ -9158,6 +9184,7 @@ impl MainView {
     /// [`active_editing_leaf`](Self::active_editing_leaf), to read.
     fn active_editing_leaf_ref(&self) -> Option<&Leaf> {
         match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) if app.document_focused() => app.leaf(),
             TabView::Leaf(leaf) => Some(leaf),
             TabView::Tasks(t) => t.body_leaf(),
             _ => None,
@@ -10367,6 +10394,10 @@ impl MainView {
                 View::set_mods(t, mods);
                 View::mouse_down(t, doc, lx, ly, ctrl)
             }
+            TabView::MiniApp(app) => {
+                View::set_mods(app.as_mut(), mods);
+                View::mouse_down(app.as_mut(), doc, lx, ly, ctrl)
+            }
             TabView::Reminders(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Settings(s) => View::mouse_down(s, doc, lx, ly, ctrl),
             TabView::Home(h) => {
@@ -10606,6 +10637,7 @@ impl MainView {
             TabView::Manage(w) => View::mouse_up(w, doc),
             TabView::Trash(t) => View::mouse_up(t, doc),
             TabView::Tasks(t) => View::mouse_up(t, doc),
+            TabView::MiniApp(app) => View::mouse_up(app.as_mut(), doc),
             TabView::Reminders(r) => View::mouse_up(r, doc),
             TabView::Settings(s) => View::mouse_up(s, doc),
             TabView::Home(h) => View::mouse_up(h, doc),
@@ -10701,6 +10733,111 @@ impl MainView {
 }
 
 impl View for MainView {
+    fn child_document_request(&self) -> Option<koru_workspace_host::ChildDocumentRequest> {
+        match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) => app.pending.map(|(request, _)| request),
+            _ => None,
+        }
+    }
+
+    fn editing_document(&self) -> Option<(WorkspaceId, koru_core::DocumentId)> {
+        let tab = self.tabs().active_tab();
+        Some((
+            tab.home_workspace().or_else(|| self.current_workspace())?,
+            tab.edits()?,
+        ))
+    }
+
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        use koru_workspace_host::{ImeTarget, ImeTargetId};
+        if self.blockers().is_blocking()
+            || (self.ai_visible() && self.ai_focused)
+            || (self.sidebar.is_open() && self.explore.has_focus())
+            || self.chrome_focus.is_some()
+            || self.reminder_shell.bell_is_focused()
+            || self.reminder_creation.pill_focused()
+        {
+            return None;
+        }
+        let pane = self.focused_view_rect();
+        let mut target = if let TabView::MiniApp(app) = &self.tabs().active_tab().view {
+            View::ime_target(app.as_ref())?
+        } else {
+            let leaf = self.active_editing_leaf_ref()?;
+            ImeTarget {
+                id: ImeTargetId {
+                    owner: leaf.native_ime_owner(),
+                    control: leaf.native_ime_target()?,
+                },
+                cursor_area: leaf.native_ime_rect(),
+            }
+        };
+        target.cursor_area = target
+            .cursor_area
+            .map(|rect| Rect::new(pane.x + rect.x, pane.y + rect.y, rect.w, rect.h));
+        Some(target)
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        if matches!(event, winit::event::Ime::Disabled) {
+            for (_, group) in self.panes.iter_groups_mut() {
+                for tab in group.iter_tabs_mut() {
+                    match &mut tab.view {
+                        TabView::MiniApp(app) => {
+                            if View::ime(app.as_mut(), ws, target, event) {
+                                return true;
+                            }
+                        }
+                        TabView::Leaf(leaf) if leaf.native_ime_owner() == target.owner => {
+                            return leaf.native_ime_cancel(ws);
+                        }
+                        TabView::Tasks(tasks) => {
+                            if let Some(leaf) = tasks.body_leaf_mut()
+                                && leaf.native_ime_owner() == target.owner
+                            {
+                                return leaf.native_ime_cancel(ws);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return false;
+        }
+        if View::ime_target(self).is_none_or(|current| current.id != target) {
+            return false;
+        }
+        if let TabView::MiniApp(app) = self.active_view() {
+            return View::ime(app.as_mut(), ws, target, event);
+        }
+        self.active_editing_leaf()
+            .is_some_and(|leaf| leaf.native_ime(ws, event))
+    }
+
+    fn accept_child_document(
+        &mut self,
+        request: koru_workspace_host::ChildDocumentRequest,
+        doc: &WorkspaceDoc,
+    ) -> bool {
+        self.accept_mini_app_document(request, doc)
+    }
+
+    fn child_document_loaded(
+        &mut self,
+        request: koru_workspace_host::ChildDocumentRequest,
+        doc: &WorkspaceDoc,
+    ) -> bool {
+        self.land_mini_app_document(request, doc)
+    }
+
+    fn child_document_failed(&mut self, request: koru_workspace_host::ChildDocumentRequest) {
+        self.fail_mini_app_document(request, koru_i18n::Key::MiniAppOpenFailed);
+    }
     /// **A preference changed elsewhere.** Deliberately *not* `restore`, which
     /// reopens the session: a theme change in another window is not a reason to
     /// rebuild a tab strip. It updates open pins when their title preference
@@ -11148,6 +11285,7 @@ impl View for MainView {
                     TabView::Canvas(c) => View::context_menu(c, doc, lx, ly),
                     TabView::Trash(t) => View::context_menu(t, doc, lx, ly),
                     TabView::Tasks(t) => View::context_menu(t, doc, lx, ly),
+                    TabView::MiniApp(app) => View::context_menu(app.as_mut(), doc, lx, ly),
                     TabView::Reminders(r) => View::context_menu(r, doc, lx, ly),
                     TabView::Leaf(l) => View::context_menu(l, doc, lx, ly),
                 };
@@ -11396,6 +11534,7 @@ impl View for MainView {
             TabView::Manage(w) => View::mouse_double_click(w, doc, lx, ly),
             TabView::Trash(t) => View::mouse_double_click(t, doc, lx, ly),
             TabView::Tasks(t) => View::mouse_double_click(t, doc, lx, ly),
+            TabView::MiniApp(app) => View::mouse_double_click(app.as_mut(), doc, lx, ly),
             TabView::Reminders(r) => View::mouse_double_click(r, doc, lx, ly),
             TabView::Settings(s) => View::mouse_double_click(s, doc, lx, ly),
             TabView::Home(h) => View::mouse_double_click(h, doc, lx, ly),
@@ -11597,6 +11736,7 @@ impl View for MainView {
             TabView::Manage(w) => View::scroll_by(w, delta),
             TabView::Trash(t) => View::scroll_by(t, delta),
             TabView::Tasks(t) => View::scroll_by(t, delta),
+            TabView::MiniApp(app) => View::scroll_by(app.as_mut(), delta),
             TabView::Reminders(r) => View::scroll_by(r, delta),
             TabView::Settings(s) => View::scroll_by(s, delta),
             TabView::Home(h) => View::scroll_by(h, delta),
@@ -11661,6 +11801,7 @@ impl View for MainView {
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
             TabView::Tasks(t) => View::set_mods(t, mods),
+            TabView::MiniApp(app) => View::set_mods(app.as_mut(), mods),
             TabView::Home(h) => View::set_mods(h, mods),
             TabView::Reminders(r) => View::set_mods(r, mods),
             TabView::Leaf(l) => View::set_mods(l, mods),
@@ -11870,6 +12011,7 @@ impl View for MainView {
                 TabView::Manage(w) => View::cursor_icon(w),
                 TabView::Trash(t) => View::cursor_icon(t),
                 TabView::Tasks(t) => View::cursor_icon(t),
+                TabView::MiniApp(app) => View::cursor_icon(app.as_ref()),
                 TabView::Reminders(r) => View::cursor_icon(r),
                 TabView::Settings(s) => View::cursor_icon(s),
                 TabView::Home(h) => View::cursor_icon(h),
@@ -12126,6 +12268,7 @@ impl View for MainView {
                     TabView::Manage(w) => View::invalidate(w),
                     TabView::Trash(t) => View::invalidate(t),
                     TabView::Tasks(t) => View::invalidate(t),
+                    TabView::MiniApp(app) => View::invalidate(app.as_mut()),
                     TabView::Reminders(r) => View::invalidate(r),
                     TabView::Settings(s) => View::invalidate(s),
                     TabView::Home(h) => View::invalidate(h),
@@ -12407,6 +12550,12 @@ impl View for MainView {
     }
 
     fn set_window_focused(&mut self, focused: bool) {
+        self.each_tab_mut(|tab| {
+            if let TabView::MiniApp(app) = &mut tab.view {
+                View::set_window_focused(app.as_mut(), focused);
+            }
+            false
+        });
         if !focused {
             self.canvas_focus_lost();
             self.dismiss_settings_menus();
@@ -12918,6 +13067,11 @@ impl View for MainView {
         // by then the push had landed.
         let was = self.active_document;
         self.active_document = active;
+        // A shell announcement is not a request to replace this composition.
+        // Explicit navigation still reaches its normal open_search_target route.
+        if matches!(self.tabs().active_tab().view, TabView::MiniApp(_)) {
+            return true;
+        }
         // **Recents are recorded here**, the one place the shell tells the
         // container which document is active — store ids that survive a
         // workspace switch, not nodes minted in whichever document happens to
@@ -13098,6 +13252,7 @@ impl View for MainView {
             let leaf = match &mut tab.view {
                 TabView::Leaf(l) => Some(l),
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(l) = leaf {
@@ -13145,6 +13300,7 @@ impl View for MainView {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -13232,6 +13388,7 @@ impl View for MainView {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -14123,7 +14280,7 @@ impl View for MainView {
         self.tag_table = tags.to_vec();
         let mut changed = false;
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(l) = &mut tab.view {
+            if let Some(l) = tab.view.retained_leaf_mut() {
                 changed |= View::set_tag_table(l, tags);
             }
         }
@@ -14146,7 +14303,7 @@ impl View for MainView {
         }
         let mut changed = false;
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(l) = &mut tab.view {
+            if let Some(l) = tab.view.retained_leaf_mut() {
                 changed |= View::set_list_table(l, lists);
             }
         }
@@ -14352,6 +14509,21 @@ impl View for MainView {
         MainView::task_command_landed(self, landed)
     }
 
+    fn task_command_rejected(
+        &mut self,
+        command: &koru_workspace_host::tasks::TaskCommand,
+        error: &str,
+    ) -> bool {
+        self.task_command_failed_at(command, error, true)
+    }
+
+    fn task_command_observed(&mut self, landed: &koru_workspace_host::tasks::Landed) -> bool {
+        self.tasks_changed_with(crate::tasks_view::query::WriteRequirement::of_landed(
+            landed,
+        ));
+        true
+    }
+
     /// Forwarded to every leaf on every push, exactly as the tag table is — a
     /// tab opened after the last workspace switch has to be told too, or a
     /// copy made in it would say it came from nowhere.
@@ -14359,7 +14531,7 @@ impl View for MainView {
         let mut changed = false;
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::Leaf(l) = &mut tab.view {
+                if let Some(l) = tab.view.retained_leaf_mut() {
                     changed |= View::set_workspace(l, workspace);
                 }
             }
@@ -14385,6 +14557,7 @@ impl View for MainView {
             Some(TabView::Leaf(l)) => Some(l),
             // The note above a Tasks page asked, through the same `/attach`.
             Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            Some(TabView::MiniApp(app)) if app.owns(ws) => app.leaf_mut(),
             _ => None,
         };
         if let Some(l) = leaf {
@@ -14401,6 +14574,7 @@ impl View for MainView {
         let leaf = match self.tabs_mut().get_mut(i).map(|tab| &mut tab.view) {
             Some(TabView::Leaf(l)) => Some(l),
             Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            Some(TabView::MiniApp(app)) if app.owns(ws) => app.leaf_mut(),
             _ => None,
         };
         if let Some(l) = leaf {
@@ -14413,6 +14587,9 @@ impl View for MainView {
         ws: &WorkspaceDoc,
     ) -> Option<koru_workspace_host::SaveDiagram> {
         let request = match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => app
+                .focused_leaf()
+                .and_then(|leaf| View::take_wants_save_diagram_as(leaf, ws)),
             TabView::Leaf(l) => View::take_wants_save_diagram_as(l, ws),
             _ => None,
         }?;
@@ -14425,6 +14602,7 @@ impl View for MainView {
 
     fn take_wants_copy_diagram(&mut self) -> Option<koru_workspace_host::CopyDiagram> {
         let request = match self.active_view() {
+            TabView::MiniApp(app) => app.focused_leaf().and_then(View::take_wants_copy_diagram),
             TabView::Leaf(l) => View::take_wants_copy_diagram(l),
             _ => None,
         }?;
@@ -14522,6 +14700,11 @@ impl View for MainView {
         }
         let i = self.image_request.take().unwrap_or(self.tabs().active());
         match self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            Some(TabView::MiniApp(app)) if app.owns(ws) => {
+                if let Some(leaf) = app.leaf_mut() {
+                    View::insert_image(leaf, ws, node, hash, mime, width, height);
+                }
+            }
             Some(TabView::Leaf(l)) => View::insert_image(l, ws, node, hash, mime, width, height),
             Some(TabView::Tasks(t)) => {
                 if let Some(l) = t.body_leaf_mut() {
@@ -14544,6 +14727,11 @@ impl View for MainView {
             return;
         }
         match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::append_image(leaf, ws, hash, mime, width, height);
+                }
+            }
             TabView::Leaf(l) => View::append_image(l, ws, hash, mime, width, height),
             TabView::Tasks(t) => {
                 if let Some(l) = t.body_leaf_in(ws) {
@@ -14564,6 +14752,14 @@ impl View for MainView {
             return;
         }
         let landed = match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::paste_images(leaf, ws, target, images);
+                    true
+                } else {
+                    false
+                }
+            }
             TabView::Leaf(l) => {
                 View::paste_images(l, ws, target, images);
                 true
@@ -14589,6 +14785,11 @@ impl View for MainView {
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
         match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::paste_text(leaf, ws, text);
+                }
+            }
             TabView::Leaf(l) => View::paste_text(l, ws, text),
             TabView::Tasks(t) => {
                 if let Some(l) = t.body_leaf_in(ws) {
@@ -14620,6 +14821,7 @@ impl View for MainView {
             Some(TabView::Leaf(l)) => Some(l),
             // The note above a Tasks page imports the same way.
             Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            Some(TabView::MiniApp(app)) if app.owns(ws) => app.leaf_mut(),
             _ => None,
         };
         if let Some(l) = leaf {
@@ -14637,6 +14839,7 @@ impl View for MainView {
                 let leaf = match &mut tab.view {
                     TabView::Leaf(l) => Some(l),
                     TabView::Tasks(t) => t.body_leaf_mut(),
+                    TabView::MiniApp(app) => app.leaf_mut(),
                     _ => None,
                 };
                 if let Some(l) = leaf
@@ -14665,6 +14868,7 @@ impl View for MainView {
                 let leaf = match &mut tab.view {
                     TabView::Leaf(l) => Some(l),
                     TabView::Tasks(t) => t.body_leaf_mut(),
+                    TabView::MiniApp(app) if app.owns(ws) => app.leaf_mut(),
                     _ => None,
                 };
                 if let Some(l) = leaf
@@ -14716,7 +14920,7 @@ impl View for MainView {
         let mut drawn = false;
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
-                if let TabView::Leaf(l) = &mut tab.view {
+                if let Some(l) = tab.view.retained_leaf_mut() {
                     drawn |= View::end_image_import(l, ticket);
                 }
             }
@@ -14736,6 +14940,14 @@ impl View for MainView {
         blocks: &[koru_workspace_host::RichBlock],
     ) {
         let landed = match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::paste_rich(leaf, ws, target, blocks);
+                    true
+                } else {
+                    false
+                }
+            }
             TabView::Leaf(l) => {
                 View::paste_rich(l, ws, target, blocks);
                 true
@@ -14910,6 +15122,12 @@ impl View for MainView {
             // contributes no clock and therefore no wake.
             match &self.tabs().active_tab().view {
                 TabView::Tasks(t) => t.panel().deadline(),
+                TabView::MiniApp(app)
+                    if app.regions.tasks.w > 0.0
+                        && self.current_workspace() == Some(app.workspace) =>
+                {
+                    app.tasks.panel().deadline()
+                }
                 _ => None,
             },
             self.reminders.deadline(),
@@ -15142,13 +15360,16 @@ impl View for MainView {
         // tab in the background has no deadline and makes no request at all,
         // which is the other half of "a background Tasks tab costs a bool".
         let workspace = self.current_workspace();
-        let showing = matches!(self.tabs().active_tab().view, TabView::Tasks(_));
+        let showing = match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) => app.regions.tasks.w > 0.0 && workspace == Some(app.workspace),
+            view => view.tasks().is_some(),
+        };
         let mut page_changed = false;
         let active_path = self.panes.focused_path().clone();
         for (path, group) in self.panes.iter_groups_mut() {
             let group_active = group.active();
             for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
-                if let TabView::Tasks(t) = &mut tab.view {
+                if let Some(t) = tab.view.tasks_mut() {
                     let target = t.target();
                     let in_front = showing && path == active_path && i == group_active;
                     if t.panel_mut()
@@ -15872,6 +16093,7 @@ impl MainView {
             TabView::Manage(w) => View::key(w, doc, key, text, mods),
             TabView::Trash(t) => View::key(t, doc, key, text, mods),
             TabView::Tasks(t) => View::key(t, doc, key, text, mods),
+            TabView::MiniApp(app) => View::key(app.as_mut(), doc, key, text, mods),
             TabView::Reminders(r) => View::key(r, doc, key, text, mods),
             TabView::Settings(s) => View::key(s, doc, key, text, mods),
             TabView::Home(h) => View::key(h, doc, key, text, mods),
@@ -17212,6 +17434,7 @@ impl MainView {
             let leaf = match self.active_view() {
                 TabView::Leaf(leaf) => Some(leaf),
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf.filter(|_| have_recents) {
@@ -17361,6 +17584,7 @@ impl MainView {
                         TabView::Leaf(leaf) => Some(leaf),
                         // The note above a Tasks page is a document leaf too.
                         TabView::Tasks(t) => t.body_leaf_mut(),
+                        TabView::MiniApp(app) => app.leaf_mut(),
                         _ => None,
                     };
                     if let Some(leaf) = leaf {
@@ -17371,6 +17595,7 @@ impl MainView {
             let leaf = match self.active_view() {
                 TabView::Leaf(leaf) => Some(leaf),
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -17506,6 +17731,7 @@ impl MainView {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -18326,6 +18552,7 @@ impl MainView {
             TabView::Manage(w) => View::mouse_move(w, lx, ly),
             TabView::Trash(t) => View::mouse_move(t, lx, ly),
             TabView::Tasks(t) => View::mouse_move(t, lx, ly),
+            TabView::MiniApp(app) => View::mouse_move(app.as_mut(), lx, ly),
             TabView::Reminders(r) => View::mouse_move(r, lx, ly),
             TabView::Settings(s) => View::mouse_move(s, lx, ly),
             TabView::Home(h) => View::mouse_move(h, lx, ly),

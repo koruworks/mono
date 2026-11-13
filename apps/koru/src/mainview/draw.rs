@@ -239,6 +239,15 @@ impl MainView {
                     TabView::Tasks(t) => {
                         View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                     }
+                    TabView::MiniApp(app) => View::draw(
+                        app.as_mut(),
+                        scene,
+                        workspace,
+                        images,
+                        leaf_root,
+                        caret_on,
+                        local,
+                    ),
                     TabView::Home(h) => {
                         // The Due today panel's client, as the Tasks page's: the
                         // discovered client cloned, no request on this thread.
@@ -510,7 +519,7 @@ impl MainView {
         // place the client reaches it, and no request is made here.
         let client = workspace.store_client();
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
+            if let Some(t) = tab.view.tasks_mut() {
                 t.panel_mut().set_client(client.clone());
             }
             false

@@ -50,7 +50,7 @@ and 496 in the iOS app, through normal
 dependencies (2026-10-14). Proc-macros are excluded because they run in the
 compiler and none of their code is in a binary. No crate comes from git; all
 come from crates.io, `onenote_parser`, `sherpa-onnx`, `sherpa-onnx-sys` and
-`merman-render` with Koru's patches applied
+`merman-render` and `winit` with Koru's patches applied
 ([third-party/](../third-party/README.md)).
 
 | License (as declared) | What a binary distribution owes | Handled by |

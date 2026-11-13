@@ -62,6 +62,8 @@ pub enum ManagerView {
 /// as a tab in the container it came from.
 pub struct DocumentPane {
     doc: BuiltInDocument,
+    /// The original resident authority, independent of global active context.
+    resident: Option<(koru_core::WorkspaceId, koru_core::DocumentId)>,
     /// The document node, remembered so "restore as a tab" can name it without
     /// re-asking the editor for its root.
     node: NodeId,
@@ -113,6 +115,7 @@ impl DocumentPane {
     pub fn open(ws: &WorkspaceDoc, doc: NodeId, popout_close: PopoutClose) -> Self {
         Self {
             doc: BuiltInDocument::open(ws, doc).owns_the_window(ws),
+            resident: ws.id().zip(ws.stamped_document_id()),
             node: doc,
             close: None,
             support_toast: None,
@@ -155,6 +158,31 @@ impl DocumentPane {
 }
 
 impl View for DocumentPane {
+    fn editing_document(&self) -> Option<(koru_core::WorkspaceId, koru_core::DocumentId)> {
+        self.resident
+    }
+
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        if self.close.is_some() {
+            return None;
+        }
+        View::ime_target(&self.doc)
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        // A close dialog withdraws input, but the old owner must still be
+        // cancellable after the dialog has appeared.
+        if self.close.is_some() && !matches!(event, winit::event::Ime::Disabled) {
+            return false;
+        }
+        View::ime(&mut self.doc, ws, target, event)
+    }
+
     /// **Straight through to the document, which draws its own caption.**
     ///
     /// A popped-out window shares the container's workspace, so it is owed the
@@ -173,6 +201,7 @@ impl View for DocumentPane {
         // there is no id left to reopen at — `first` lands on whatever the new
         // workspace's library offers, the same as a cold start.
         self.doc = BuiltInDocument::first(ws);
+        self.resident = ws.id().zip(ws.stamped_document_id());
     }
 
     fn key(
@@ -786,6 +815,44 @@ impl ManagerView {
 }
 
 impl View for ManagerView {
+    fn child_document_request(&self) -> Option<koru_workspace_host::ChildDocumentRequest> {
+        match self {
+            Self::Container(view) => view.child_document_request(),
+            Self::Document(_) => None,
+        }
+    }
+
+    fn editing_document(&self) -> Option<(koru_core::WorkspaceId, koru_core::DocumentId)> {
+        match self {
+            Self::Container(view) => view.editing_document(),
+            Self::Document(view) => view.editing_document(),
+        }
+    }
+
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        match self {
+            Self::Container(view) => view.ime_target(),
+            Self::Document(view) => view.ime_target(),
+        }
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        let handled = match self {
+            Self::Container(view) => view.ime(ws, target, event),
+            Self::Document(view) => view.ime(ws, target, event),
+        };
+        if handled && matches!(event, winit::event::Ime::Commit(_)) {
+            self.dispatched(ws, handled)
+        } else {
+            handled
+        }
+    }
+
     fn set_window_focused(&mut self, focused: bool) {
         match self {
             Self::Container(view) => view.set_window_focused(focused),
@@ -2375,6 +2442,14 @@ impl View for ManagerView {
     // recording is saved to, the same trap one window over.
     forward_to_the_window! {
         fn adopt_preferences(&mut self, settings: &Settings);
+        // DocumentPane intentionally inherits no child-host or task-receipt
+        // state; forwarding preserves its defaults without dropping the
+        // container's live requests and correlated receipts.
+        fn accept_child_document(&mut self, request: koru_workspace_host::ChildDocumentRequest, doc: &WorkspaceDoc) -> bool;
+        fn child_document_loaded(&mut self, request: koru_workspace_host::ChildDocumentRequest, doc: &WorkspaceDoc) -> bool;
+        fn child_document_failed(&mut self, request: koru_workspace_host::ChildDocumentRequest);
+        fn task_command_rejected(&mut self, command: &koru_workspace_host::tasks::TaskCommand, error: &str) -> bool;
+        fn task_command_observed(&mut self, landed: &koru_workspace_host::tasks::Landed) -> bool;
         fn adopt_startup_preferences(&mut self, settings: &Settings);
         fn delegate_folder_chosen(
             &mut self,

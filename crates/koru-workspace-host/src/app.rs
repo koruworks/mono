@@ -6,10 +6,12 @@
 //! saved or opened, and the host decides *what* a window shows. Nothing here
 //! knows what a row is.
 
+mod child_document;
 mod delegate_folder;
 mod inspector_window;
 mod key_release;
 mod modifiers;
+mod native_input;
 mod profile_creation;
 mod profile_delivery;
 mod profile_removal;
@@ -2043,6 +2045,7 @@ struct Pane<V> {
     /// window is still being activated; treating that as click-away would make
     /// the global shortcut flash and immediately disappear.
     focused_once: bool,
+    native_input: native_input::State,
     /// What the last `Focused` event said. Gates key-press dispatch: Windows
     /// delivers the trailing key of a window-switching chord — Alt+Tab's Tab —
     /// *after* the focus-loss event, when the modifier bookkeeping has already
@@ -2378,6 +2381,8 @@ impl PendingConnectedProfileCreation {
 }
 
 struct App<H: Host> {
+    child_loads: HashMap<WindowId, child_document::Pending>,
+    task_queue: child_document::TaskQueue,
     /// What makes a view. The one question the loop cannot answer itself.
     host: H,
     context: RenderContext,
@@ -5808,6 +5813,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
             recording_tx,
             recording_rx,
             transfer_tx,
+            child_loads: HashMap::new(),
+            task_queue: child_document::TaskQueue::default(),
             transfer_rx,
             transfers_in_flight: HashSet::new(),
             selection_move_tx,
@@ -6750,49 +6757,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a
         // second copy of ADR-273.
-        let commands: Vec<crate::tasks::TaskCommand> = self
-            .panes
-            .iter_mut()
-            .flat_map(|(_, pane)| pane.view.take_wants_task_commands())
-            .collect();
-        for command in commands {
-            edited = true;
-            let outcome = crate::tasks::serve(&mut self.runtime.workspace, &command);
-            // **The switch says what it is documented to say.** `ENV.md` promises
-            // `KORU_TASKS_DEBUG` reports "task command outcomes and the desktop
-            // wrapper's coalesced counters", and until this line the only thing
-            // that ever printed was the content-burst flush — so the one
-            // question the switch exists to answer, *did the command run*, was
-            // the one it could not. Closed tokens and counts only: the command's
-            // shape, never a title, a date or a row's text.
-            tasks_debug_log(format_args!(
-                "served {} -> {} | {}",
-                command.token(),
-                match &outcome {
-                    Ok(landed) if landed.published => "ok".to_owned(),
-                    Ok(_) => "ok, unpublished".to_owned(),
-                    Err(error) => format!("refused: {error}"),
-                },
-                crate::tasks::counters().describe()
-            ));
-            // **Both halves of the return channel**, to every pane: a refusal
-            // gives a capture its typing back, and a receipt is what lets the
-            // Tasks surfaces ask the read model again *because* the write
-            // landed — after it, with its version in hand — rather than on
-            // the turn the command was merely queued.
-            match outcome {
-                Ok(landed) => {
-                    for pane in self.panes.values_mut() {
-                        pane.view.task_command_landed(&landed);
-                    }
-                }
-                Err(error) => {
-                    for pane in self.panes.values_mut() {
-                        pane.view.task_command_failed(&command, &error);
-                    }
-                }
-            }
-        }
+        self.collect_task_commands();
+        edited |= self.service_task_commands();
         // **The delegation's crumb** (D7, D8). Same sweep and same reason as
         // the task commands above: the document a delegation came from may not
         // be the one on screen, so the surface asks and the shell writes.
@@ -7750,6 +7716,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 needs_frame: std::cell::Cell::new(true),
                 maximize_on_reveal: std::cell::Cell::new(maximize_on_reveal),
                 focused_once: false,
+                native_input: native_input::State::default(),
                 focused: false,
                 quarantine: Default::default(),
                 access,
@@ -12179,7 +12146,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// caret. It is not dropped on the floor: it is remembered and retried after
     /// the next open, which is the only moment it stops being active.
     fn release_document(&mut self, id: koru_core::DocumentId) {
-        if !self.runtime.workspace.close_document(id) && self.runtime.workspace.active() == Some(id)
+        if !self.runtime.workspace.close_document(id)
+            && self.runtime.workspace.document(id).is_some()
+            && !self.releasing.contains(&id)
         {
             self.releasing.push(id);
         }
@@ -12193,14 +12162,156 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// only moment it can be.
     fn opened_document(&mut self, id: koru_core::DocumentId) {
         self.releasing.retain(|&owed| owed != id);
+        self.retry_document_releases();
+    }
+
+    fn collect_task_commands(&mut self) {
+        let commands: Vec<_> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(source, pane)| {
+                pane.view
+                    .take_wants_task_commands()
+                    .into_iter()
+                    .map(|command| (*source, command))
+            })
+            .collect();
+        let mut refused = Vec::new();
+        for (source, command) in commands {
+            if let Err(command) = self.task_queue.push_from(
+                Some(source),
+                self.runtime.profile_id(),
+                self.runtime.current,
+                command,
+            ) {
+                refused.push((source, command));
+            }
+        }
+        for (source, command) in refused.into_iter().rev() {
+            if let Some(pane) = self.panes.get_mut(&source) {
+                pane.view
+                    .task_command_rejected(&command, profile_switch::pending_tasks_reason());
+                pane.window.request_redraw();
+            }
+        }
+    }
+
+    fn may_leave_pending_tasks(&mut self) -> bool {
+        self.collect_task_commands();
+        if !self.task_queue.has_pending() {
+            return true;
+        }
+        self.report(ErrorReport::new(
+            koru_i18n::t(
+                crate::accessibility::ui_lang(),
+                koru_i18n::Key::A11yTasksHeading,
+            ),
+            profile_switch::pending_tasks_reason(),
+        ));
+        false
+    }
+
+    fn service_task_commands(&mut self) -> bool {
+        let mut edited = false;
+        loop {
+            let source = self.task_queue.source();
+            let in_scope = self
+                .task_queue
+                .in_scope(self.runtime.profile_id(), self.runtime.current);
+            let Some((command, prepared)) = self.task_queue.poll(
+                self.runtime.profile_id(),
+                self.runtime.current,
+                &mut self.runtime.workspace,
+            ) else {
+                break;
+            };
+            // Replacement gates normally make this unreachable. An external
+            // scope change still gets a visible terminal refusal, without
+            // consuming a new scope's unrelated optimistic echo.
+            if !in_scope {
+                self.report(ErrorReport::new(
+                    koru_i18n::t(
+                        crate::accessibility::ui_lang(),
+                        koru_i18n::Key::A11yTasksHeading,
+                    ),
+                    koru_i18n::t(
+                        crate::accessibility::ui_lang(),
+                        koru_i18n::Key::MiniAppTaskFailed,
+                    ),
+                ));
+                continue;
+            }
+            // Canonical commands may have edited before a later failure.
+            edited |= prepared.is_ok();
+            let outcome =
+                prepared.and_then(|()| crate::tasks::serve(&mut self.runtime.workspace, &command));
+            // **The switch says what it is documented to say.** `ENV.md` promises
+            // `KORU_TASKS_DEBUG` reports "task command outcomes and the desktop
+            // wrapper's coalesced counters", and until this line the only thing
+            // that ever printed was the content-burst flush — so the one
+            // question the switch exists to answer, *did the command run*, was
+            // the one it could not. Closed tokens and counts only: the command's
+            // shape, never a title, a date or a row's text.
+            tasks_debug_log(format_args!(
+                "served {} -> {} | {}",
+                command.token(),
+                match &outcome {
+                    Ok(landed) if landed.published => "ok".to_owned(),
+                    Ok(_) => "ok, unpublished".to_owned(),
+                    Err(error) => format!("refused: {error}"),
+                },
+                crate::tasks::counters().describe()
+            ));
+            // **Both halves of the return channel**, to every pane: a refusal
+            // gives a capture its typing back, and a receipt is what lets the
+            // Tasks surfaces ask the read model again *because* the write
+            // landed — after it, with its version in hand — rather than on
+            // the turn the command was merely queued.
+            match outcome {
+                Ok(landed) => {
+                    for (id, pane) in self.panes.iter_mut() {
+                        let changed = if Some(*id) == source {
+                            pane.view.task_command_landed(&landed)
+                        } else {
+                            pane.view.task_command_observed(&landed)
+                        };
+                        if changed {
+                            pane.window.request_redraw();
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(pane) = source.and_then(|id| self.panes.get_mut(&id)) {
+                        if pane.view.task_command_failed(&command, &error) {
+                            pane.window.request_redraw();
+                        }
+                    } else {
+                        self.report(ErrorReport::new(
+                            koru_i18n::t(
+                                crate::accessibility::ui_lang(),
+                                koru_i18n::Key::A11yTasksHeading,
+                            ),
+                            koru_i18n::t(
+                                crate::accessibility::ui_lang(),
+                                koru_i18n::Key::MiniAppTaskFailed,
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        edited
+    }
+
+    fn retry_document_releases(&mut self) {
         if self.releasing.is_empty() {
             return;
         }
         for owed in std::mem::take(&mut self.releasing) {
-            if self.runtime.workspace.active() == Some(owed) {
+            if !self.runtime.workspace.close_document(owed)
+                && self.runtime.workspace.document(owed).is_some()
+            {
                 self.releasing.push(owed);
-            } else {
-                self.runtime.workspace.close_document(owed);
             }
         }
     }
@@ -13273,6 +13384,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
 
     /// Replace the active Store workspace with a local, unsaved welcome state.
     fn show_empty_workspace(&mut self) -> Result<(), String> {
+        self.prepare_profile_replacement().map_err(str::to_owned)?;
         self.capture_geometry();
         self.runtime.settings.workspace = None;
         self.runtime.settings.save_all(
@@ -13841,6 +13953,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if self.runtime.profile.id() == Some(id) {
             return;
         }
+        // Gate this synchronous caller before the
+        // synchronous incoming open, so it cannot join a second authority for
+        // a document whose outgoing retirement still owns accepted edits.
+        if let Err(reason) = self.prepare_profile_replacement() {
+            self.report(ErrorReport::new("Couldn't switch profiles", reason));
+            return;
+        }
         let began = Instant::now();
         let opened = match koru_workspace::fromstore::open_from_store_profile_preferring_empty(
             koru_workspace::fromstore::segment(),
@@ -13898,7 +14017,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 &self.instance.slot,
                 &mut self.runtime.written,
             );
-            self.runtime.workspace.save();
+            // switch_profile_inner already saved and checked accepted work
+            // before opening the incoming profile.
         }
         let outgoing_profile = self.runtime.profile.id();
         let outgoing_workspace = self.runtime.current;
@@ -13995,6 +14115,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 trace_profile(self.runtime.profile.id()),
                 id.to_storage(),
             );
+            return;
+        }
+        if !self.may_leave_pending_tasks() {
             return;
         }
         // Re-armed here rather than after the swap, so the span covers the save
@@ -14452,6 +14575,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             if !pane.view.visible_after_restore() {
                 continue;
             }
+            pane.view.adopt(&self.runtime.workspace.ws);
             pane.window.set_visible(true);
             pane.view.window_shown();
             if let Some(native) = pane.inspector_window.as_ref() {
@@ -14515,6 +14639,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn close_pane(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        self.collect_task_commands();
+        if self.panes.len() == 1 && !self.may_leave_pending_tasks() {
+            return;
+        }
         self.profile_waits.leave(id);
         if self
             .panes
@@ -14602,6 +14730,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// points (the ✕ the view drew, and the OS's `CloseRequested`) both come
     /// here, so the dialog is shown either way.
     fn initiate_close(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        self.collect_task_commands();
         // Before the veto question, deliberately: whether the window survives
         // or not, nothing may commit into a document somebody is closing.
         if self.dictation_pane == Some(id) {
@@ -14629,6 +14758,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .values()
             .filter(|pane| !pane.view.is_auxiliary())
             .count();
+        let mut notify_last_close = false;
         if !closing_auxiliary
             && last_window_close_asks_about_the_tray(documents, self.closing_for_update)
         {
@@ -14682,7 +14812,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
                 // With no tray, "keep running in the background" is a quit too.
                 if !background || !self.host.agent_has_notification_area() {
-                    self.host.last_window_closing();
+                    notify_last_close = true;
                 }
             }
         }
@@ -14692,6 +14822,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // still running, still owed, still fine.
         if !closing_auxiliary && documents == 1 && !self.may_close_with_unsent_work() {
             return;
+        }
+        if notify_last_close {
+            self.host.last_window_closing();
         }
         self.close_pane_with_restore(event_loop, id);
     }
@@ -14708,6 +14841,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// still owed rather than what was owed a moment ago — and so that a person
     /// who quits without reading has already had their work written down.
     fn may_close_with_unsent_work(&mut self) -> bool {
+        if !self.may_leave_pending_tasks() {
+            return false;
+        }
         self.runtime.workspace.buffer_everything_owed();
         let unconfirmed = self.runtime.workspace.unconfirmed();
         if unconfirmed.is_empty() {
@@ -14761,6 +14897,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     "{} that could not be sent to the Koru Store, and could not be saved on \
                      this computer either.\n\n{why}\n\nClose Koru anyway?",
                     unconfirmed.describe(),
+                    why = profile_switch::saving_reason(why, crate::accessibility::ui_lang()),
                 ))
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .show(),
@@ -15613,6 +15750,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         id: WindowId,
         resolved: &crate::accessibility::Resolved,
     ) -> bool {
+        self.interrupt_native_input(id);
+        self.restore_window_document(id);
         let document_before = self.runtime.workspace.ws.version();
         let Some(pane) = self.panes.get_mut(&id) else {
             return false;
@@ -17402,7 +17541,36 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         if self.inspector_event(event_loop, id, &event) {
             return;
         }
+        if !matches!(&event, WindowEvent::Ime(_)) {
+            self.sync_native_input(id);
+        }
+        if let WindowEvent::KeyboardInput { event, .. } = &event
+            && event.state == ElementState::Pressed
+            && self.native_key_in_flight(id)
+            && !is_modifier_key(event.physical_key, &event.logical_key)
+        {
+            if self.mods.control_key()
+                || self.mods.super_key()
+                || event.logical_key == Key::Named(NamedKey::Escape)
+            {
+                self.interrupt_native_input(id);
+            } else {
+                // Candidate navigation and confirmation belong to the native
+                // composition. Only its committed string writes authored text.
+                return;
+            }
+        }
+        if matches!(
+            &event,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } | WindowEvent::Focused(false)
+        ) {
+            self.interrupt_native_input(id);
+        }
         match event {
+            WindowEvent::Ime(event) => self.native_input(id, &event),
             WindowEvent::CloseRequested => self.initiate_close(event_loop, id),
 
             WindowEvent::Focused(focused) => {
@@ -17426,6 +17594,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 if let Some(pane) = self.panes.get_mut(&id) {
                     pane.focused = focused;
                     pane.view.set_window_focused(focused);
+                }
+                if focused {
+                    self.restore_window_document(id);
                 }
                 self.show_appearance_change(&was_shown);
                 // **The tie-break between two windows on one workspace.** The
@@ -18590,6 +18761,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 .unwrap_or(now + WINDOW_MOVE_SETTLE);
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline.max(now)));
             return;
+        }
+        self.service_child_documents();
+        for id in self.panes.keys().copied().collect::<Vec<_>>() {
+            self.sync_native_input(id);
         }
         // The connected-Profile worker wakes this loop after every filesystem
         // boundary. Only this drain advances to the hosted acknowledgement.

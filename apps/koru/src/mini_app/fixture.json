@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "createSurface": {
+    "surfaceId": "tasks-document",
+    "catalogId": "koru:p1",
+    "sendDataModel": false,
+    "components": [
+      {"id": "root", "component": "TaskDocument", "children": ["selector", "tasks", "search", "document"], "arrangement": "tasks-first"},
+      {"id": "selector", "component": "TaskSelector"},
+      {"id": "tasks", "component": "Tasks", "bucket": "today"},
+      {"id": "search", "component": "DocumentSearch"},
+      {"id": "document", "component": "DocumentEditor"}
+    ]
+  }
+}

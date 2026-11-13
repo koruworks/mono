@@ -41,6 +41,7 @@ mod leaf;
 pub(crate) mod mainview;
 mod manage;
 mod manager_view;
+mod mini_app;
 pub(crate) mod panes;
 mod reminder_settings;
 mod reopen_claim;

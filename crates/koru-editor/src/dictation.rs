@@ -66,6 +66,9 @@ use crate::view_state::ViewState;
 pub struct Composition {
     replacing: StableTextRange,
     text: String,
+    /// `Some` identifies native input; its inner `None` hides the caret.
+    pub(crate) native_cursor: Option<Option<(usize, usize)>>,
+    pub(crate) armed: (Option<koru_core::MarkSet>, Option<koru_core::TextStyle>),
 }
 
 impl Composition {
@@ -301,6 +304,14 @@ pub fn accepts(view: &ViewState) -> bool {
 ///
 /// Answers whether one is now open.
 pub fn begin(body: &mut Body, view: &ViewState, ws: &mut WorkspaceDoc) -> bool {
+    begin_source(body, view, ws, false)
+}
+
+pub(crate) fn begin_native(body: &mut Body, view: &ViewState, ws: &mut WorkspaceDoc) -> bool {
+    begin_source(body, view, ws, true)
+}
+
+fn begin_source(body: &mut Body, view: &ViewState, ws: &mut WorkspaceDoc, native: bool) -> bool {
     if !accepts(view) || body.composition().is_some() {
         return false;
     }
@@ -320,9 +331,12 @@ pub fn begin(body: &mut Body, view: &ViewState, ws: &mut WorkspaceDoc) -> bool {
     let Ok(replacing) = ws.capture_text_range(id, anchor, focus) else {
         return false;
     };
+    let armed = row.armed();
     body.open_composition(Composition {
         replacing,
         text: String::new(),
+        native_cursor: native.then_some(None),
+        armed,
     });
     body.refresh(ws, id);
     true
@@ -337,6 +351,9 @@ pub fn update(body: &mut Body, ws: &mut WorkspaceDoc, text: &str) {
     let Some(current) = body.composition() else {
         return;
     };
+    if current.native_cursor.is_some() {
+        return;
+    }
     // A recogniser repeats itself. Re-reading and re-shaping a row to arrive at
     // the layout already on screen is the cheapest thing not to do.
     if current.text == text {
@@ -367,6 +384,9 @@ pub fn commit(body: &mut Body, ws: &mut WorkspaceDoc, text: &str) {
     let Some(open) = body.composition() else {
         return;
     };
+    if open.native_cursor.is_some() {
+        return;
+    }
     let id = open.node();
     // Resolved *after* any import that has already landed: the endpoints are
     // cursors, so this is the converged range rather than the one captured.
@@ -407,6 +427,9 @@ pub fn cancel(body: &mut Body, ws: &mut WorkspaceDoc) {
     let Some(open) = body.composition() else {
         return;
     };
+    if open.native_cursor.is_some() {
+        return;
+    }
     let id = open.node();
     body.close_composition();
     body.refresh(ws, id);
@@ -445,3 +468,6 @@ pub fn rect(body: &Body, view: &ViewState) -> Option<Rect> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ime_tests;

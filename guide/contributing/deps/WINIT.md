@@ -453,6 +453,15 @@ called, but it now only reaches the parts of the frame we do not draw ourselves.
 
 ## Where to look
 
+Koru patches winit 0.30.13's desktop IME lifetime boundaries without changing its
+public API. Permission changes retire queued native input before the host reuses
+the window for another editor or selection. An idle stream need not emit
+`Disabled`; hosts reset with disable/enable and await a fresh native `Enabled`
+without blocking ordinary key text. Windows emits `Enabled` on composition
+start, not as a setter acknowledgement. The backend rules, cancellation limits,
+test commands and native acceptance cases are in
+[the patch notes](../../../third-party/patches/winit.md).
+
 - `crates/koru-workspace-host/src/app.rs` — the entire winit surface of this project
 - `crates/koru-editor/src/input/keymap.rs` — `ctrl_letter`, and the key map those traps shaped
 - [winit docs](https://docs.rs/winit) — upstream

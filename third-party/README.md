@@ -7,15 +7,16 @@ because it can be fetched. What is committed is what Koru adds:
 | --- | --- |
 | [`fetch.manifest`](fetch.manifest) | Every fetched thing, pinned by sha256 |
 | [`patches/<name>.patch`](patches/) | Koru's change to a crate, as a diff against the published `.crate` |
-| [`patches/onenote_parser.md`](patches/onenote_parser.md), [`patches/sherpa-onnx.md`](patches/sherpa-onnx.md), [`patches/merman-render.md`](patches/merman-render.md) | What each patch changes and why |
+| [`patches/onenote_parser.md`](patches/onenote_parser.md), [`patches/sherpa-onnx.md`](patches/sherpa-onnx.md), [`patches/merman-render.md`](patches/merman-render.md), [`patches/winit.md`](patches/winit.md) | What each patch changes and why |
 
 The manifest has two kinds of entry:
 
 - **`crate`**: a crates.io release that Koru changes. `onenote_parser` 2.0.0,
-  `sherpa-onnx` / `sherpa-onnx-sys` 1.13.6, and `merman-render` 0.9.0. Each is
+  `sherpa-onnx` / `sherpa-onnx-sys` 1.13.6, `merman-render` 0.9.0, and `winit`
+  0.30.13. Each is
   placed, patched, in `third-party/crates/<name>/`, and the workspace
   `Cargo.toml` names it there by path (`onenote_parser`) or through
-  `[patch.crates-io]` (the sherpa-onnx pair and `merman-render`).
+  `[patch.crates-io]` (the sherpa-onnx pair, `merman-render`, and `winit`).
 - **`file`**: an upstream file used as it is, placed at its own path in the
   tree, which is gitignored. The TypeScript grammar `koru-blocks` compiles in
   (`crates/koru-blocks/assets/TypeScript.sublime-syntax`, from bat v0.24.0) and
@@ -90,7 +91,7 @@ jar's sha256 must equal the one Gradle publishes beside the release
 
 Each crate keeps its own license, which its `.crate` carries:
 `onenote_parser` is MPL-2.0, the sherpa-onnx crates are Apache-2.0 and
-`merman-render` is MIT OR Apache-2.0. Koru's patches are under the license of
+`merman-render` is MIT OR Apache-2.0; `winit` is Apache-2.0. Koru's patches are under the license of
 the code they change. The grammar and the
 Gradle wrapper are Apache-2.0. The license texts that ship in every package are
 in `crates/koru-release/licences/`;

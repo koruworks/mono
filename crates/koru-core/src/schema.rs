@@ -942,13 +942,7 @@ impl WorkspaceDoc {
     /// [ADR-91]: ../../../docs/decisions/ADR-076-100.md#adr-91-perdocument--a-document-keeps-a-root-node-for-its-title-and-the-manifest-mirrors-it
     /// [TECHDEBT 57]: ../../../docs/contributing/techdebt/README.md
     pub fn own_document_id(&self) -> Option<DocumentId> {
-        let stamped = self
-            .doc
-            .get_map(C_META)
-            .get(K_DOCUMENT)
-            .and_then(as_string)
-            .as_deref()
-            .and_then(DocumentId::parse);
+        let stamped = self.stamped_document_id();
         if stamped.is_some() {
             return stamped;
         }
@@ -957,6 +951,17 @@ impl WorkspaceDoc {
             .into_iter()
             .find(|&id| self.kind_of(id) == Some(Kind::Document))
             .map(|root| self.document_id(root))
+    }
+
+    /// The explicit Store identity, without the legacy root-node fallback.
+    /// Loading code uses this before stamping an unstamped legacy document.
+    pub fn stamped_document_id(&self) -> Option<DocumentId> {
+        self.doc
+            .get_map(C_META)
+            .get(K_DOCUMENT)
+            .and_then(as_string)
+            .as_deref()
+            .and_then(DocumentId::parse)
     }
 
     /// Record which document this is, on one that does not say.
@@ -5152,6 +5157,9 @@ mod attr_storage_tests {
         assert_eq!(reopened.export_snapshot().unwrap(), before);
     }
 }
+
+#[cfg(test)]
+mod stamped_identity_tests;
 
 #[cfg(test)]
 mod schema_marker_tests {

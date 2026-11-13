@@ -583,6 +583,7 @@ pub fn draw_document(
         if focused
             && active
             && caret_on
+            && !row.ime_caret_hidden
             && selected_pill.is_none()
             && !row.selected
             && row.selection.is_collapsed()
@@ -835,7 +836,7 @@ pub(crate) fn reminder_flow_anchor(
 }
 
 /// Whether the caret sits in italic (run mark or armed pending italic).
-fn italic_at_caret(row: &Paragraph) -> bool {
+pub(crate) fn italic_at_caret(row: &Paragraph) -> bool {
     if let (Some(marks), _) = row.armed() {
         if marks.has(Mark::Italic) {
             return true;

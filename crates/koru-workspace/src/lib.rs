@@ -15,7 +15,10 @@ use koru_core::node::Node;
 use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::{Kind, NodeId};
 
+pub mod document_load;
+mod document_retirement;
 pub mod durability;
+pub use document_retirement::DocumentReplacementError;
 pub mod explore;
 pub mod fromstore;
 mod store_open;
@@ -179,6 +182,9 @@ pub struct Workspace {
     /// One connection per open document — the store gives each its own room, so
     /// a tab syncs what it is showing and nothing else.
     doc_sessions: std::collections::HashMap<koru_core::DocumentId, store::StoreSession>,
+    retirements: std::collections::HashMap<koru_core::DocumentId, document_retirement::Retirement>,
+    document_epochs: std::collections::HashMap<koru_core::DocumentId, u64>,
+    retirement_retries: std::collections::HashSet<koru_core::DocumentId>,
     /// Where to reach the store, so a document opened later finds the same one.
     ///
     /// The channel and an optional explicit root, which is what a test passes so
@@ -297,6 +303,10 @@ pub struct Unconfirmed {
 }
 
 impl Unconfirmed {
+    /// Known diagnostics translated by the presentation layer. Transport
+    /// failure details remain untouched; this crate has no UI dependency.
+    pub const NOT_BUFFERED: &'static str = "Document changes have not been saved on this computer.";
+    pub const SAVING_PENDING: &'static str = "Document changes are still being saved.";
     /// Nothing outstanding at all.
     pub fn is_empty(&self) -> bool {
         self.documents == 0 && !self.document_list
@@ -345,6 +355,9 @@ impl Workspace {
             manifest_session: None,
             waker: None,
             doc_sessions: std::collections::HashMap::new(),
+            retirements: std::collections::HashMap::new(),
+            document_epochs: std::collections::HashMap::new(),
+            retirement_retries: std::collections::HashSet::new(),
             store: None,
             session: None,
             current: None,
@@ -390,6 +403,9 @@ impl Workspace {
             manifest_session: None,
             waker: None,
             doc_sessions: std::collections::HashMap::new(),
+            retirements: std::collections::HashMap::new(),
+            document_epochs: std::collections::HashMap::new(),
+            retirement_retries: std::collections::HashSet::new(),
             store: None,
             session,
             current,
@@ -1322,6 +1338,12 @@ impl Workspace {
         if self.active == Some(id) {
             return Ok(());
         }
+        if self.document_retiring(id) {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "document is retiring",
+            ));
+        }
         let _current = self.current.ok_or_else(|| {
             koru_store_core::errors::Error::new(
                 koru_store_core::errors::Code::InvalidRequest,
@@ -1331,6 +1353,7 @@ impl Workspace {
 
         // Already an open tab: swap it in without asking the store again.
         if let Some(doc) = self.others.remove(&id) {
+            self.retirement_retries.remove(&id);
             self.park_active();
             self.ws = doc;
             // Its `UndoManager` came with it — it is bound to the `LoroDoc`, and
@@ -1443,18 +1466,19 @@ impl Workspace {
         &mut self,
         id: koru_core::DocumentId,
     ) -> Result<koru_core::WorkspaceId, koru_store_core::errors::Error> {
-        if self.active == Some(id) || self.others.contains_key(&id) {
-            // Prefer a live locate so a background tab stamped under the wrong
-            // window workspace can still learn its real home.
-            let located = self.store_client().and_then(|client| {
-                client
-                    .locate_document(explore::store_document(id))
-                    .ok()
-                    .map(|location| koru_core::WorkspaceId::from_uuid(location.workspace.as_uuid()))
-            });
-            return Ok(located
+        if let Some(doc) = self.document(id) {
+            // Prepared and parked documents carry their authenticated home.
+            // A warm command must not rediscover a Store on the window thread.
+            return Ok(doc
+                .id()
                 .or(self.current)
                 .unwrap_or_else(koru_core::WorkspaceId::new));
+        }
+        if self.document_retiring(id) {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "document is retiring",
+            ));
         }
         // Locate first — the same catalog click uses. Joining `self.current`
         // with the pill's id 404s when the document lives in another workspace
@@ -1725,26 +1749,7 @@ impl Workspace {
         if self.take_page_back(id) {
             return true;
         }
-        // **Correctness, and the case the outbox is easiest to get wrong.**
-        // Closing a tab drops its session, and with it everything that knew
-        // work was owed on that document. If the store has not confirmed it,
-        // this is the last moment anything can write it down.
-        if let Some(doc) = self.others.get(&id)
-            && let Some(session) = self.doc_sessions.get_mut(&id)
-        {
-            session.buffer_now(doc);
-        }
-        // Politeness, not correctness: the store drops a connection's rooms
-        // when it goes, and the socket is about to. It saves the store from
-        // relaying to somebody who has stopped listening in the meantime.
-        if let Some(session) = self.doc_sessions.get(&id) {
-            session.leave();
-        }
-        // Dropping the session joins its thread, so this is where the cost is
-        // reclaimed rather than merely forgotten.
-        let had_session = self.doc_sessions.remove(&id).is_some();
-        let had_doc = self.others.remove(&id).is_some();
-        had_session || had_doc
+        self.retire_document(id)
     }
 
     // ------------------------------------------------- several documents
@@ -2061,6 +2066,23 @@ impl Workspace {
         self.others.get(&id)
     }
 
+    /// Borrow an existing replica for transient editor cancellation. This
+    /// never opens, activates, publishes or marks a document dirty. Authored
+    /// edits must continue to use the normal command/session path.
+    pub fn resident_document_mut(
+        &mut self,
+        id: koru_core::DocumentId,
+    ) -> Option<&mut WorkspaceDoc> {
+        if self.document_retiring(id) {
+            return None;
+        }
+        if self.active == Some(id) {
+            Some(&mut self.ws)
+        } else {
+            self.others.get_mut(&id)
+        }
+    }
+
     /// Every blob referenced by anything open.
     ///
     /// `WorkspaceDoc::blob_hashes` answers for one document; the shell asks this
@@ -2156,6 +2178,7 @@ impl Workspace {
     /// One turn of the sync loop. Returns true if a remote change arrived, in
     /// which case every view over this document has to rebuild.
     pub fn tick(&mut self) -> bool {
+        self.poll_document_retirements();
         let folder = match &mut self.session {
             Some(s) => s.tick(&mut self.ws),
             None => false,
@@ -2483,10 +2506,13 @@ impl Workspace {
             if !session.owes(doc) {
                 return false;
             }
-            if why_not_buffered.is_none()
-                && let Some(why) = session.buffer_failure()
-            {
-                why_not_buffered = Some(why.to_owned());
+            if why_not_buffered.is_none() && !session.buffered_covers(doc) {
+                why_not_buffered = Some(
+                    session
+                        .buffer_failure()
+                        .unwrap_or(Unconfirmed::NOT_BUFFERED)
+                        .to_owned(),
+                );
             }
             true
         };
@@ -2516,6 +2542,11 @@ impl Workspace {
             why_not_buffered = pages_not_buffered;
         }
 
+        let (retiring, unsafe_to_close) = document_retirement::unconfirmed(&self.retirements);
+        out.documents += retiring;
+        if unsafe_to_close && why_not_buffered.is_none() {
+            why_not_buffered = Some(Unconfirmed::SAVING_PENDING.into());
+        }
         out.not_buffered = why_not_buffered;
         out
     }

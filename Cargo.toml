@@ -377,6 +377,8 @@ debug = false
 # third-party/patches/sherpa-onnx.md. Fetched and patched, not committed:
 # third-party/README.md.
 [patch.crates-io]
+# Same public API; native IME retirement and queued-event guards. See third-party/patches/winit.md.
+winit = { path = "third-party/crates/winit" }
 sherpa-onnx = { path = "third-party/crates/sherpa-onnx" }
 sherpa-onnx-sys = { path = "third-party/crates/sherpa-onnx-sys" }
 # **merman-render with the sequence geometry its layout JSON leaves out.**

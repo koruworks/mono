@@ -475,12 +475,149 @@ pub trait Editing {
     fn view(&self) -> &ViewState;
     fn view_mut(&mut self) -> &mut ViewState;
 
+    /// Native input composes over one stable authored range. The host must
+    /// qualify events by editable-target lifetime and cancel before retargeting.
+    /// Preedit never writes the document; Commit uses the ordinary typing path.
+    fn ime(&mut self, ws: &mut WorkspaceDoc, event: &winit::event::Ime) -> bool {
+        use winit::event::Ime;
+        if matches!(event, Ime::Disabled) {
+            return self.ime_cancel(ws);
+        }
+        if !self.view().active
+            || self.view().read_only
+            || self.view().overlay.is_open()
+            || self.body().focused().is_none_or(|row| {
+                row.image.is_some()
+                    || row.kind == Kind::Divider
+                    || row.diagram_shows_picture()
+                    || (row.table.is_some() && !row.table_source_visible)
+            })
+            || self
+                .body()
+                .composition()
+                .is_some_and(|c| c.native_cursor.is_none())
+        {
+            return false;
+        }
+        if matches!(event, Ime::Enabled) {
+            return true;
+        }
+        if self.body().composition().is_none() {
+            let (body, view) = self.parts();
+            if !crate::dictation::begin_native(body, view, ws) {
+                return false;
+            }
+        }
+        match event {
+            Ime::Preedit(text, cursor) => {
+                let cursor = cursor.filter(|(a, f)| {
+                    *a <= text.len()
+                        && *f <= text.len()
+                        && text.is_char_boundary(*a)
+                        && text.is_char_boundary(*f)
+                });
+                let open = self.body_mut().composition_mut().unwrap();
+                let same = open.text() == text;
+                let id = open.node();
+                open.set_text(text);
+                open.native_cursor = Some(cursor);
+                if same {
+                    // A cursor-only update needs no row read or text shaping.
+                    let start = open.range(ws).map(|r| r.start);
+                    if let Some(row) = self.body_mut().row_mut(id) {
+                        row.ime_caret_hidden = cursor.is_none();
+                        if let Some(start) = start {
+                            let (a, f) = cursor.unwrap_or((text.len(), text.len()));
+                            row.place_selection(start + a, start + f);
+                            row.apply_pending();
+                        }
+                    }
+                } else {
+                    self.body_mut().refresh(ws, id);
+                    self.reflow();
+                }
+                if cursor.is_some() {
+                    self.scroll_to_caret();
+                }
+                true
+            }
+            Ime::Commit(text) => {
+                let open = self.body().composition().unwrap().clone();
+                let resolved = open.resolve(ws);
+                let id = open.node();
+                if text.is_empty() || resolved.is_none() || self.body().row(id).is_none() {
+                    self.ime_cancel(ws);
+                    return true;
+                }
+                self.body_mut().close_composition();
+                self.body_mut().refresh(ws, id);
+                self.body_mut().focus_on(id);
+                self.body_mut().clear_selection();
+                // Canonical insertion reads the authored selection from the
+                // row's layout. Shape just that row to restore it; the final
+                // settle positions the document once, after the real edit.
+                let (a, f) = resolved.unwrap();
+                let (body, view) = self.parts();
+                let row = body.row_mut(id).unwrap();
+                rowlayout::build_row(
+                    &mut view.engine,
+                    row,
+                    view.view_mode.effective_w(view.viewport.0),
+                );
+                row.select_range_now(a, f);
+                row.restore_armed(open.armed);
+                ws.checkpoint();
+                self.insert_text(ws, text);
+                if text.chars().any(char::is_whitespace) {
+                    self.view_mut().word_completed = Some(id);
+                }
+                ws.checkpoint();
+                self.settle();
+                self.sync_trigger_range(ws);
+                true
+            }
+            Ime::Enabled | Ime::Disabled => unreachable!(),
+        }
+    }
+
+    /// Discard only native preedit, restoring the directed authored selection
+    /// and armed formatting. Voice owns its independent lifecycle.
+    fn ime_cancel(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let Some(open) = self
+            .body()
+            .composition()
+            .filter(|c| c.native_cursor.is_some())
+            .cloned()
+        else {
+            return false;
+        };
+        let id = open.node();
+        let resolved = open.resolve(ws);
+        self.body_mut().close_composition();
+        self.body_mut().refresh(ws, id);
+        if let (Some((a, f)), Some(row)) = (resolved, self.body_mut().row_mut(id)) {
+            row.place_selection(a, f);
+            row.restore_armed(open.armed);
+        }
+        self.reflow();
+        true
+    }
+
+    /// Caret in this editor's local logical coordinates. A hidden native
+    /// cursor answers None without withdrawing the editable target itself.
+    fn ime_cursor_area(&self) -> Option<Rect> {
+        if self.body().focused()?.ime_caret_hidden {
+            return None;
+        }
+        self.caret_screen_rect()
+    }
+
     /// Open a dictation over the focused row's selection, or at its caret.
     /// See [`crate::dictation`] — these five are the whole seam, and the
     /// controller above them (Plan 2.4) owns when each is called.
     ///
-    /// **An ordinary local event commits an open composition and is then
-    /// re-dispatched**, which is what a keyboard IME does; a *lifecycle* event
+    /// **An ordinary local event commits an open voice composition and is then
+    /// re-dispatched**. Native preedit is cancelled instead; a *lifecycle* event
     /// — window closed, focus lost, machine slept — cancels instead.
     fn begin_dictation(&mut self, ws: &mut WorkspaceDoc) -> bool {
         let (body, view) = self.parts();
@@ -2145,7 +2282,12 @@ pub trait Editing {
         let oy = row.y - self.view().scroll;
         let bb = rowlayout::caret_geometry(row, &self.view().engine.pills, theme::caret_w());
         let (baseline, ascent, descent) = koru_draw::text::TextEngine::line_ink(&row.layout, bb);
-        let r = theme::caret_rect(bb, baseline, ascent, descent, ox, oy);
+        let slant = if crate::draw::italic_at_caret(row) {
+            theme::CARET_ITALIC_SLANT_DEG
+        } else {
+            0.0
+        };
+        let r = theme::caret_bounds(bb, baseline, ascent, descent, ox, oy, slant);
         Some(Rect::new(
             r.x0 as f32,
             r.y0 as f32,
@@ -4367,6 +4509,7 @@ pub trait Editing {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        self.ime_cancel(ws);
         if self.view().body_tone_strip.is_some() {
             if matches!(key, Key::Named(NamedKey::Escape)) {
                 self.view_mut().body_tone_strip = None;
@@ -8530,6 +8673,7 @@ pub trait Editing {
 
     /// Returns true if a redraw is needed.
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        self.ime_cancel(ws);
         // A new press is a new drag, of whichever of the three kinds. Cleared
         // here rather than in each arm, so a press that lands on a row cannot
         // inherit the last field drag.
