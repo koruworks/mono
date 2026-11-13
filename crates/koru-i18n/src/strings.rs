@@ -2001,6 +2001,17 @@ pub enum Key {
     BotsAccessChoiceDefault,
     /// The second of the two approved access choices, on its segment.
     BotsAccessChoiceWorkspace,
+    /// The Bot's Role and Knowledge references, separate from edit permissions.
+    BotsLibrary,
+    BotsKnowledge,
+    BotsKnowledgeHint,
+    BotsKnowledgeEmpty,
+    /// Knowledge row actions; `{}` is the page title.
+    BotsKnowledgeUp,
+    BotsKnowledgeDown,
+    BotsOpenKnowledgePage,
+    BotsDiscardKnowledge,
+    BotsRefreshLibrary,
     /// The pages a person selected for a Bot to edit.
     BotsSelectedPages,
     /// Opens the page picker to add a selected page.
@@ -3754,7 +3765,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2516] = [
+    pub const ALL: [Key; 2525] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5131,6 +5142,15 @@ impl Key {
         Key::BotsAccessWorkspaceSummary,
         Key::BotsAccessChoiceDefault,
         Key::BotsAccessChoiceWorkspace,
+        Key::BotsLibrary,
+        Key::BotsKnowledge,
+        Key::BotsKnowledgeHint,
+        Key::BotsKnowledgeEmpty,
+        Key::BotsKnowledgeUp,
+        Key::BotsKnowledgeDown,
+        Key::BotsOpenKnowledgePage,
+        Key::BotsDiscardKnowledge,
+        Key::BotsRefreshLibrary,
         Key::BotsSelectedPages,
         Key::BotsAddPage,
         Key::BotsRemovePage,
@@ -16710,6 +16730,15 @@ pub const ROWS: &[Row] = &[
         zh_hans: "此工作区中的任何页面",
         ja: "このワークスペースのすべてのページ",
     },
+    Row { key: Key::BotsLibrary, en: "Library", es: "Biblioteca", pt_br: "Biblioteca", de: "Bibliothek", fr: "Bibliothèque", ar: "المكتبة", zh_hans: "资料库", ja: "ライブラリ" },
+    Row { key: Key::BotsKnowledge, en: "Knowledge", es: "Conocimiento", pt_br: "Conhecimento", de: "Wissen", fr: "Connaissances", ar: "المعرفة", zh_hans: "知识", ja: "知識" },
+    Row { key: Key::BotsKnowledgeHint, en: "Up to 16 pages provide context for new tasks. Adding a page does not grant permission to edit it.", es: "Hasta 16 páginas aportan contexto a las nuevas tareas. Añadir una página no concede permiso para editarla.", pt_br: "Até 16 páginas fornecem contexto para novas tarefas. Adicionar uma página não concede permissão para editá-la.", de: "Bis zu 16 Seiten liefern Kontext für neue Aufgaben. Das Hinzufügen einer Seite erteilt keine Bearbeitungsrechte.", fr: "Jusqu’à 16 pages fournissent du contexte aux nouvelles tâches. Ajouter une page n’accorde pas le droit de la modifier.", ar: "توفر حتى ١٦ صفحة سياقًا للمهام الجديدة. إضافة صفحة لا تمنح إذنًا بتعديلها.", zh_hans: "最多可添加 16 个页面，为新任务提供背景信息。添加页面不会授予编辑权限。", ja: "最大16ページを新しいタスクの参考情報として使用します。ページを追加しても編集権限は付与されません。" },
+    Row { key: Key::BotsKnowledgeEmpty, en: "No Knowledge pages added.", es: "No se han añadido páginas de conocimiento.", pt_br: "Nenhuma página de conhecimento adicionada.", de: "Keine Wissensseiten hinzugefügt.", fr: "Aucune page de connaissances ajoutée.", ar: "لم تُضف صفحات معرفة.", zh_hans: "尚未添加知识页面。", ja: "知識ページはまだありません。" },
+    Row { key: Key::BotsKnowledgeUp, en: "Move {} up in Knowledge", es: "Subir {} en Conocimiento", pt_br: "Mover {} para cima em Conhecimento", de: "{} in Wissen nach oben verschieben", fr: "Monter {} dans Connaissances", ar: "نقل \u{2068}{}\u{2069} لأعلى في المعرفة", zh_hans: "在知识列表中上移 {}", ja: "知識の {} を上へ移動" },
+    Row { key: Key::BotsKnowledgeDown, en: "Move {} down in Knowledge", es: "Bajar {} en Conocimiento", pt_br: "Mover {} para baixo em Conhecimento", de: "{} in Wissen nach unten verschieben", fr: "Descendre {} dans Connaissances", ar: "نقل \u{2068}{}\u{2069} لأسفل في المعرفة", zh_hans: "在知识列表中下移 {}", ja: "知識の {} を下へ移動" },
+    Row { key: Key::BotsOpenKnowledgePage, en: "Open Knowledge page {}", es: "Abrir la página de conocimiento {}", pt_br: "Abrir a página de conhecimento {}", de: "Wissensseite {} öffnen", fr: "Ouvrir la page de connaissances {}", ar: "فتح صفحة المعرفة \u{2068}{}\u{2069}", zh_hans: "打开知识页面 {}", ja: "知識ページ {} を開く" },
+    Row { key: Key::BotsDiscardKnowledge, en: "Discard edits", es: "Descartar cambios", pt_br: "Descartar alterações", de: "Änderungen verwerfen", fr: "Annuler les modifications", ar: "تجاهل التعديلات", zh_hans: "放弃修改", ja: "変更を破棄" },
+    Row { key: Key::BotsRefreshLibrary, en: "Reload Library", es: "Recargar biblioteca", pt_br: "Recarregar biblioteca", de: "Bibliothek neu laden", fr: "Recharger la bibliothèque", ar: "إعادة تحميل المكتبة", zh_hans: "重新加载资料库", ja: "ライブラリを再読み込み" },
     Row {
         key: Key::BotsSelectedPages,
         en: "Selected pages",

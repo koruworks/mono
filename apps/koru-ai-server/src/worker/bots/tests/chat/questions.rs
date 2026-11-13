@@ -189,6 +189,16 @@ fn start_with_options(
     resolve_last: bool,
     fail_asking: bool,
 ) -> Fixture {
+    start_with_context_options(secret, cards, resolve_last, fail_asking, false, false)
+}
+fn start_with_context_options(
+    secret: bool,
+    cards: usize,
+    resolve_last: bool,
+    fail_asking: bool,
+    task_document: bool,
+    fail_answer: bool,
+) -> Fixture {
     let (mut repository, authority, create) = fixture();
     let bot = created(&mut repository, authority.clone(), create);
     let chat = repository
@@ -198,13 +208,28 @@ fn start_with_options(
         )
         .unwrap()
         .unwrap();
-    let context = proof(authority.clone(), &bot, chat);
-    let native = Arc::new(TerminalNative::new(
-        secret,
-        cards,
-        resolve_last,
-        fail_asking,
-    ));
+    let mut context = proof(authority.clone(), &bot, chat);
+    let task = task_document.then(DocumentId::new);
+    if let Some(document) = task {
+        let prepared = Arc::get_mut(context.prepared.as_mut().unwrap()).unwrap();
+        prepared.pins.push(d::RunContextItem::Document {
+            workspace: bot.home_workspace,
+            document,
+            version: d::DocumentVersionId::new(),
+        });
+        prepared
+            .library_sources
+            .as_mut()
+            .unwrap()
+            .task_documents
+            .push(BotPage {
+                workspace: bot.home_workspace,
+                document,
+            });
+    }
+    let mut native = TerminalNative::new(secret, cards, resolve_last, fail_asking);
+    native.fail_second |= fail_answer;
+    let native = Arc::new(native);
     let (tx, returned) = sync_channel(1);
     let mut config = WorkerConfig::new(
         PathBuf::from("unused-in-memory-root"),
@@ -217,7 +242,12 @@ fn start_with_options(
     config.test_repository_return = Some(tx);
     let worker = AiWorker::new(config).spawn().unwrap();
     let client = worker.client();
-    let first_request = request(&bot);
+    let mut first_request = request(&bot);
+    if let Some(document_id) = task {
+        first_request
+            .explicit_refs
+            .push(ContextRef::Document { document_id });
+    }
     let stream = send(&client, context.clone(), first_request.clone()).unwrap();
     finish_as(stream, !fail_asking);
     settled(&native, 1);
@@ -333,6 +363,7 @@ fn answer_context_at(f: &Fixture, sequence: u64) -> CommandContext {
             chats: old.chats.clone(),
             runtime: Ok(()),
             pins: old.pins.clone(),
+            library_sources: old.library_sources.clone(),
             chat_snapshot: old.chat_snapshot.clone(),
             settings: None,
             terminal_question: Some(crate::worker::bots::chat::TerminalQuestionProof::fixture(
@@ -454,6 +485,71 @@ fn terminal_answers_create_one_linked_task_and_keep_lossless_history_on_exact_re
     assert_eq!(f.native.native_answers.load(Ordering::SeqCst), 0);
     f.worker.shutdown();
     let _ = f.worker.join();
+}
+
+#[test]
+fn task_document_context_survives_answer_then_failed_answer_retry() {
+    let f = start_with_context_options(false, 1, false, false, true, true);
+    let stream = send(
+        &f.client,
+        answer_context(&f),
+        answer_request(&f, "accepted answer"),
+    )
+    .unwrap();
+    let answered = stream.accepted.clone();
+    finish_as(stream, false);
+    settled(&f.native, 2);
+    let retry = RetryTurnRequest {
+        destination_workspace: Some(f.bot.home_workspace),
+        operation_id: Uuid::new_v4(),
+        message_id: answered.assistant_message_id,
+        surface: AiSurface::Standalone,
+        explicit_refs: vec![],
+        reasoning_override: None,
+        web_search: false,
+        replace_pinned_documents: false,
+    };
+    let (reply, response) = sync_channel(1);
+    f.client
+        .send(WorkerCommand::RetryTurn {
+            context: f.context.clone(),
+            chat: f.bot.main_chat,
+            request: retry,
+            reply,
+        })
+        .unwrap();
+    let stream = response
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    let retried = stream.accepted.clone();
+    finish(stream);
+    settled(&f.native, 3);
+    assert_eq!(f.native.native.state.lock().unwrap().begin, 3);
+    f.worker.shutdown();
+    assert_eq!(f.worker.join(), WorkerExit::Clean);
+    let repo = f.returned.recv_timeout(Duration::from_secs(5)).unwrap();
+    for attempt in [f.row.attempt_id, answered.attempt_id, retried.attempt_id] {
+        assert_eq!(
+            repo.attempt(attempt)
+                .unwrap()
+                .unwrap()
+                .context_document_count,
+            1
+        );
+        let receipt = repo.bot_submission_for_attempt(attempt).unwrap().unwrap();
+        assert_eq!(receipt.intent.submission.request.context.len(), 2);
+        assert!(receipt.intent.submission.policy.selected_pages.is_empty());
+    }
+    assert_eq!(repo.pinned_documents(f.bot.main_chat).unwrap().len(), 1);
+    assert_eq!(
+        repo.messages(f.bot.main_chat)
+            .unwrap()
+            .iter()
+            .filter(|message| message.role == ChatRole::User)
+            .count(),
+        1
+    );
 }
 
 #[test]

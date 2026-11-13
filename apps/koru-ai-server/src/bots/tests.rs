@@ -2,6 +2,175 @@
 use super::*;
 
 #[test]
+fn pinned_history_revision_checks_owner_profile_and_exact_immutable_identity() {
+    use koru_ai_core::{DocumentDestination, StoreContextPort, Timestamp};
+    use koru_store_core::Locale;
+    let memory =
+        koru_store_server::memory::MemoryStore::open("bot-pinned-revision-memory").unwrap();
+    let (profile, other, workspace) = memory
+        .with_store(|store| {
+            let at = Timestamp::from_millis(1);
+            let profile = store
+                .create_profile("First", None, None, Locale::default(), at)
+                .unwrap()
+                .id;
+            let other = store
+                .create_profile("Second", None, None, Locale::default(), at)
+                .unwrap()
+                .id;
+            let workspace = store.create_workspace(profile, "Work", at).unwrap().id;
+            (profile, other, workspace)
+        })
+        .unwrap();
+    let context = crate::store_context::StoreContextAdapter::new(memory.client());
+    let destination = DocumentDestination {
+        profile_id: profile,
+        workspace_id: workspace,
+        parent_document_id: None,
+        index: None,
+        title: "Task".into(),
+    };
+    let document = context
+        .create_document(uuid::Uuid::new_v4(), &destination, "Original task page")
+        .unwrap();
+    let other_document = context
+        .create_document(uuid::Uuid::new_v4(), &destination, "Another page")
+        .unwrap();
+    let adapter =
+        BotAuthorityAdapter::from_device(memory.client(), &uuid::Uuid::new_v4().to_string())
+            .unwrap();
+    let owner = adapter.owner().unwrap();
+    let pins = adapter
+        .capture(
+            owner,
+            workspace,
+            profile,
+            &[BotPage {
+                workspace,
+                document,
+            }],
+        )
+        .unwrap();
+    let version = pins[0].document_version().unwrap().1;
+    let original = adapter
+        .pinned_document_revision(owner, workspace, profile, document, version)
+        .unwrap();
+    memory
+        .with_store(move |store| {
+            let snapshot = store.snapshot(workspace, document).unwrap();
+            let mut changed = koru_core::WorkspaceDoc::from_snapshot(&snapshot).unwrap();
+            changed
+                .insert(
+                    koru_core::Parent::Root,
+                    koru_core::Node::paragraph("Later edit").unwrap(),
+                )
+                .unwrap();
+            store
+                .apply_update(
+                    workspace,
+                    document,
+                    changed.export_all_updates().unwrap(),
+                    Timestamp::from_millis(2),
+                    None,
+                )
+                .unwrap();
+            store
+                .flush(workspace, document, Timestamp::from_millis(2))
+                .unwrap();
+        })
+        .unwrap();
+    let live = context.resolve_document(document, Some(profile)).unwrap();
+    assert_ne!(live.source_revision, original);
+    assert_eq!(
+        adapter
+            .pinned_document_revision(owner, workspace, profile, document, version)
+            .unwrap(),
+        original
+    );
+    assert_eq!(
+        adapter.pinned_document_revision(
+            BotOwner {
+                user_scope: UserScopeId::new(),
+                ..owner
+            },
+            workspace,
+            profile,
+            document,
+            version
+        ),
+        Err(BotError::Forbidden)
+    );
+    assert_eq!(
+        adapter.pinned_document_revision(
+            BotOwner {
+                device: DeviceId::from_uuid(uuid::Uuid::new_v4()),
+                ..owner
+            },
+            workspace,
+            profile,
+            document,
+            version
+        ),
+        Err(BotError::Forbidden)
+    );
+    assert_eq!(
+        adapter.pinned_document_revision(owner, workspace, other, document, version),
+        Err(BotError::Forbidden)
+    );
+    assert_eq!(
+        adapter.pinned_document_revision(owner, workspace, profile, other_document, version),
+        Err(BotError::Invalid)
+    );
+    assert_eq!(
+        adapter.pinned_document_revision(
+            owner,
+            workspace,
+            profile,
+            document,
+            koru_delegate_core::DocumentVersionId::new()
+        ),
+        Err(BotError::Unavailable)
+    );
+    memory
+        .with_store(move |store| store.move_workspace(workspace, other).unwrap())
+        .unwrap();
+    assert_eq!(
+        adapter.pinned_document_revision(owner, workspace, profile, document, version),
+        Err(BotError::Forbidden)
+    );
+    assert_eq!(
+        adapter
+            .pinned_document_revision(owner, workspace, other, document, version)
+            .unwrap(),
+        original
+    );
+    memory
+        .with_store(move |store| {
+            store
+                .trash_document_entry(workspace, document, Timestamp::from_millis(3), None)
+                .unwrap()
+        })
+        .unwrap();
+    assert_eq!(
+        adapter.pinned_document_revision(owner, workspace, other, document, version),
+        Err(BotError::Forbidden)
+    );
+    use koru_store_core::errors::Code;
+    assert_eq!(
+        history_revision_error(Code::PayloadTooLarge),
+        BotError::ContextTooLarge
+    );
+    assert_eq!(
+        history_revision_error(Code::CorruptState),
+        BotError::Invalid
+    );
+    assert_eq!(
+        history_revision_error(Code::StorageFailed),
+        BotError::Unavailable
+    );
+}
+
+#[test]
 fn trusted_device_requires_existing_non_nil_uuid() {
     assert!(trusted_device("").is_none());
     assert!(trusted_device("caller-label").is_none());

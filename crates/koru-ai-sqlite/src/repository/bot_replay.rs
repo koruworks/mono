@@ -4,6 +4,7 @@
 use super::*;
 use koru_ai_core::bots::replay::*;
 use std::io::Write;
+pub(super) mod context;
 mod preparation;
 
 /// How a Bot attempt ends on the AI side before any native terminal arrives.

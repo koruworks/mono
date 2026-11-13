@@ -140,7 +140,6 @@ fn capture_on(
 
 /// Compose with submission/PendingTurn admission on its existing transaction.
 /// There is intentionally no separately committing public insertion method.
-#[allow(dead_code)] // Production admission is wired in the next M3 increment.
 pub(crate) fn insert_library_capture_tx(
     tx: &Transaction<'_>,
     capture: &BotLibraryCapture,

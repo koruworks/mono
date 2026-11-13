@@ -79,6 +79,12 @@ page. Longer answers and saved-page lists have continuation cursors. See the
 retry rules, and result limits. This is a trusted local connection under your
 OS user account; it does not isolate individual assistant applications.
 
+The Bot's saved Knowledge pages also provide context for these tasks. Knowledge
+is separate from permission to edit pages. Each new task uses captured versions
+of its Role, Knowledge and any pages selected for that task; changing Knowledge
+affects later tasks. Retrying an uncertain request keeps the original versions.
+The external task tools do not change the Bot's Library settings.
+
 ## Smoke test
 
 > Use Koru to find the History smoke document. Read it, create a new document

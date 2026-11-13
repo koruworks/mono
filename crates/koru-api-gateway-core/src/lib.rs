@@ -368,7 +368,7 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         id: "ai.bot_command",
         client: "client.ai().bots",
         http: "POST /v1/ai/bots",
-        reason: "Bot configuration currently requires the vouched desktop owner",
+        reason: "Bot configuration and Knowledge Library commands require the vouched desktop owner",
     },
     MobileUnavailableOperation {
         id: "ai.list_bots",

@@ -36,7 +36,7 @@ impl Fixture {
                     assert_eq!(bot, self.bot.id, "about this tab's Bot");
                     return seq;
                 }
-                Command::ListChats { .. } => continue,
+                Command::ListChats { .. } | Command::ReadLibrary { .. } => continue,
                 Command::List { .. }
                 | Command::Write { .. }
                 | Command::Label { .. }
@@ -487,7 +487,10 @@ impl Fixture {
                 }
                 // The conversation list's own reads (S8), and the reads a
                 // lifecycle answer leaves owed (S14): not writes.
-                Command::ListChats { .. } | Command::Read { .. } | Command::Lifecycle { .. } => {
+                Command::ListChats { .. }
+                | Command::Read { .. }
+                | Command::ReadLibrary { .. }
+                | Command::Lifecycle { .. } => {
                     continue;
                 }
                 _ => panic!("not a write"),
@@ -577,8 +580,8 @@ fn the_settings_region_is_an_element_tree_whose_rows_nest_under_their_card() {
             .collect();
         assert_eq!(
             cards.len(),
-            5,
-            "about, agent and model, access, folder, pause"
+            6,
+            "about, Library, agent and model, access, folder, pause"
         );
         for &card in &cards {
             let rect = frame.nodes[card].rect;
@@ -586,7 +589,7 @@ fn the_settings_region_is_an_element_tree_whose_rows_nest_under_their_card() {
         }
         for row in [
             "Bot name row",
-            "Bot role row",
+            "Library standing role",
             "Bot model row",
             "Bot model save row",
             "Bot access row",
@@ -835,7 +838,14 @@ fn the_controls_publish_names_in_the_keyboards_order() {
         .collect();
     assert_eq!(
         cards,
-        [ABOUT_CARD, AGENT_CARD, ACCESS_CARD, FOLDER_CARD, PAUSE_CARD]
+        [
+            ABOUT_CARD,
+            super::library::CARD,
+            AGENT_CARD,
+            ACCESS_CARD,
+            FOLDER_CARD,
+            PAUSE_CARD
+        ]
     );
 
     fn walk(controls: &[Control], out: &mut Vec<Control>) {
@@ -944,7 +954,7 @@ fn a_hidden_tab_sends_nothing_and_reads_once_when_shown_again() {
                 polls += 1;
             }
             // The conversation list reads once too (S8).
-            Command::ListChats { .. } => {}
+            Command::ListChats { .. } | Command::ReadLibrary { .. } => {}
             _ => panic!("a tab lists no Bots"),
         }
     }
@@ -1641,6 +1651,7 @@ fn ink_of(drawn: &std::collections::HashMap<String, String>, name: &str) -> Stri
 /// The lifecycle half of the tab (S14).
 mod agent;
 mod create;
+mod library;
 mod lifecycle;
 
 // ------------------------------------------- the first window run, finding 8

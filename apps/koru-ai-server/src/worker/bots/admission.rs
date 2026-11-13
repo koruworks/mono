@@ -255,7 +255,11 @@ impl WorkerState {
                             return Err(bot_failure(BotError::Forbidden));
                         }
                     }
-                    let intent = make_intent(
+                    let sources = proof
+                        .library_sources
+                        .as_ref()
+                        .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+                    let intent = make_library_intent(
                         &bot,
                         request_id,
                         *chat_id,
@@ -263,14 +267,22 @@ impl WorkerState {
                         task,
                         previous,
                         &proof.pins,
+                        sources,
                         proof
                             .authority
                             .workspace(*destination)
                             .map_err(bot_failure)?,
                     )?;
+                    let capture = sources.capture(&intent)?;
                     BotAdmissionReceipt::Submission(
                         self.repository
-                            .prepare_bot_submission(&intent, &fingerprint, *expected_revision, now)
+                            .prepare_bot_submission_with_library(
+                                &intent,
+                                &capture,
+                                &fingerprint,
+                                *expected_revision,
+                                now,
+                            )
                             .map_err(bot_failure)?,
                     )
                 }
@@ -896,7 +908,7 @@ fn ai_submission_live(repository: &Repository, receipt: &BotSubmissionReceipt) -
         && matches!(repository.bot_replay_state(id), Ok(state) if state.stop_reason.is_none())
         && matches!(repository.bot_submission_for_attempt(id), Ok(Some(current)) if current.intent == receipt.intent)
 }
-pub(super) fn make_intent(
+pub(super) fn make_library_intent(
     bot: &Bot,
     request: BotRequestId,
     chat: ChatId,
@@ -904,6 +916,7 @@ pub(super) fn make_intent(
     task: &BotTask,
     previous: Option<RunId>,
     pins: &[koru_delegate_core::RunContextItem],
+    sources: &super::library::LibrarySources,
     profile: ProfileId,
 ) -> ApiResult<BotSubmissionIntent> {
     use koru_delegate_core as d;
@@ -931,24 +944,7 @@ pub(super) fn make_intent(
             ReasoningLevel::Max => s::LaunchReasoning::Max,
         }),
     };
-    let required = std::iter::once(&bot.config.role)
-        .chain(task.documents.iter())
-        .map(|p| (p.workspace, p.document))
-        .collect::<std::collections::BTreeSet<_>>();
-    let captured = pins
-        .iter()
-        .filter_map(|p| match p {
-            d::RunContextItem::Document {
-                workspace,
-                document,
-                ..
-            } => Some((*workspace, *document)),
-            _ => None,
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    if required != captured || pins.len() != captured.len() {
-        return Err(bot_failure(BotError::Forbidden));
-    }
+    sources.validate(bot, task, pins)?;
     let intent = BotSubmissionIntent {
         version: 1,
         submission: d::BotSubmission {
@@ -1013,6 +1009,36 @@ pub(super) fn make_intent(
     };
     intent.validate().map_err(bot_failure)?;
     Ok(intent)
+}
+#[cfg(test)]
+pub(super) fn make_intent(
+    bot: &Bot,
+    request: BotRequestId,
+    chat: ChatId,
+    destination: WorkspaceId,
+    task: &BotTask,
+    previous: Option<RunId>,
+    pins: &[koru_delegate_core::RunContextItem],
+    profile: ProfileId,
+) -> ApiResult<BotSubmissionIntent> {
+    let sources = super::library::LibrarySources {
+        config_revision: bot.revision,
+        policy_revision: bot.policy_revision,
+        role: bot.config.role.clone(),
+        knowledge: vec![],
+        task_documents: task.documents.clone(),
+    };
+    make_library_intent(
+        bot,
+        request,
+        chat,
+        destination,
+        task,
+        previous,
+        pins,
+        &sources,
+        profile,
+    )
 }
 #[cfg(test)]
 mod tests;

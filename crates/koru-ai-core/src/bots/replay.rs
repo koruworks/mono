@@ -13,6 +13,9 @@ pub use koru_delegate_core::{
 };
 use serde::Serialize;
 
+mod task_anchor;
+pub use task_anchor::original_bot_task_user;
+
 pub const MAX_REPLAY_EVENTS: usize = 256;
 pub const MAX_REPLAY_EFFECTS: usize = 1024;
 pub const MAX_REPLAY_BYTES: usize = 4 * 1024 * 1024;

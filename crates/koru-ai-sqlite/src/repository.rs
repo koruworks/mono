@@ -1342,6 +1342,9 @@ impl AiPersistence for Repository {
             return Err(invariant_failed());
         }
 
+        let retained_bot_refs =
+            bot_replay::context::retained_refs(&transaction, &current, context)?;
+
         transaction
             .execute(
                 "UPDATE inference_attempts
@@ -1394,6 +1397,9 @@ impl AiPersistence for Repository {
                 .map_err(storage_failed)?;
         }
         for reference in &context.document_refs {
+            if retained_bot_refs.contains(&(reference.message_id, reference.document_id)) {
+                continue;
+            }
             transaction
                 .execute(
                     "INSERT INTO message_document_refs (

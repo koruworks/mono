@@ -6485,6 +6485,29 @@ restart.
 | `Alt+1` … `Alt+8` | the views down the Explore column's rail, by place (top is `Alt+1`) |
 | `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
 
+## A Bot's Library
+
+Open a Bot, then **Settings → Library**. **Open role page** opens its standing
+instructions as an ordinary page. Under **Knowledge**, add up to 16 pages from
+the Bot's home workspace and use the arrow controls to put them in order.
+**Save** applies this list to new tasks; an existing task keeps the versions
+captured when it started. A page can be both the Role and a Knowledge source.
+
+Knowledge supplies context. It does not grant permission to edit those pages;
+the separate **Access** settings control that permission. The Knowledge draft
+also stays separate from unsaved Access changes. **Discard edits** returns to
+the last list read from the Bot, and **Reload Library** reads its current list
+without throwing away a different draft.
+
+If a save's reply is lost, **Retry** sends the same change again. Editing or
+discarding that pending change is unavailable until its outcome is known.
+If someone else changed the Bot, your draft stays visible while its current
+settings reload. Archived Bots let you read and open their Library pages,
+but cannot change the list. A Bot in Trash has no Library editor.
+
+This Library editor is in the desktop Bot settings. Memory creation and a
+Library section in the context pane are not available yet.
+
 ## Chatting with a local agent
 
 Press **New chat** and open the model chip. Under **Local agents** are the

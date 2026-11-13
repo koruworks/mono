@@ -24,6 +24,7 @@ fn settings_proof(
             chats: old.chats.clone(),
             runtime: Ok(()),
             pins: old.pins.clone(),
+            library_sources: old.library_sources.clone(),
             chat_snapshot: Some(chat),
             settings: Some(crate::worker::bots::chat::SettingsProof {
                 model,
