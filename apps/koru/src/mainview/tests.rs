@@ -11643,6 +11643,9 @@ fn due_on(ws: &mut WorkspaceDoc, node: NodeId, day: &str) {
 /// the context column open on **Tasks**.
 fn on_a_context_column() -> (MainView, Workspace, NodeId) {
     let (mut v, mut w) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     let doc = fill(&v, &mut w.ws, 2);
     // **By its line, not by its index.** A document opens holding an empty row
     // of its own, so position 0 is not the first paragraph a test wrote — and a
@@ -11720,6 +11723,9 @@ fn a_shut_column_costs_nothing_and_keeps_its_flag() {
 fn the_context_column_opens_on_history_while_tasks_is_hidden() {
     use crate::panes::context::Section;
     let (mut v, mut w) = on_document();
+    let document = koru_core::DocumentId::new();
+    v.tabs_mut().active_mut().document = Some(document);
+    v.active_document = Some(document);
     assert!(v.next_context_section(), "the keyboard opens the column");
     assert!(v.context.is_open());
     assert_eq!(v.context_view.section(), Section::History);

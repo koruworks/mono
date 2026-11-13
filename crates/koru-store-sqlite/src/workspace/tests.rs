@@ -758,6 +758,7 @@ fn an_advertised_origin_round_trips_and_the_first_record_wins() {
 }
 
 // ---------------------------------------------------------------- history
+mod bounded;
 mod history_revision;
 
 fn history_capture<'a>(

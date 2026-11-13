@@ -3502,6 +3502,17 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             .document_version_revision(version, max_bytes)
     }
 
+    /// Bounded immutable bytes only. Integrity work belongs off the Store owner;
+    /// this operation neither loads the current body nor grants permission.
+    pub fn bounded_document_version(
+        &mut self,
+        workspace: WorkspaceId,
+        version: DocumentVersionId,
+    ) -> Result<Option<crate::ports::BoundedDocumentVersion>> {
+        self.ensure_open(workspace)?;
+        self.open[&workspace].repo.bounded_document_version(version)
+    }
+
     /// Everything this store has that the caller's version vector does not.
     pub fn updates_since(
         &mut self,

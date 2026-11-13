@@ -56,10 +56,13 @@ pub enum Section {
     /// the answer to "did this reach the other machine, and when" is on the
     /// screen rather than in a gateway log beside a Docker log.
     CloudSync,
+    /// Host-composed Library for an existing active Bot, never a document tab.
+    Library,
 }
 
 impl Section {
-    /// Every section the column knows, shown or parked. Tests keep the parked
+    /// Every document section, shown or parked. Library is composed by its
+    /// Bot host and has no document empty-state line. Tests keep the parked
     /// labels and empty states ready for a section to rejoin [`Self::VISIBLE`].
     #[cfg(test)]
     pub const ALL: [Section; 6] = [
@@ -93,7 +96,7 @@ impl Section {
             Self::Tasks => koru_features::tasks() && koru_features::context_tasks(),
             Self::Reminders => koru_features::reminders(),
             Self::CloudSync => koru_features::cloud_sync(),
-            Self::Comments | Self::Assets | Self::History => true,
+            Self::Comments | Self::Assets | Self::History | Self::Library => true,
         }
     }
 
@@ -115,6 +118,7 @@ impl Section {
             Self::Tasks => "Tasks",
             Self::History => "History",
             Self::CloudSync => "Cloud sync",
+            Self::Library => "Library",
         }
     }
 
@@ -126,6 +130,7 @@ impl Section {
             Self::Tasks => icons::LIST_CHECKS,
             Self::History => icons::CLOCK,
             Self::CloudSync => icons::CLOUD,
+            Self::Library => icons::LIST_CHECKS,
         }
     }
 
@@ -150,6 +155,7 @@ impl Section {
             // replaced by the localized line the container injects the moment
             // there is one, and this stands only until then.
             Self::CloudSync => "No Cloud pass has run for this document yet.",
+            Self::Library => "",
         }
     }
 }

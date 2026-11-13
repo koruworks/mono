@@ -97,6 +97,7 @@ use crate::ai_chat_view::AiChatView;
 
 mod actions;
 pub(crate) mod agent;
+pub(crate) mod context_library;
 mod controls;
 pub(crate) mod conversations;
 pub(crate) mod create;
@@ -304,6 +305,8 @@ pub(crate) struct BotView {
     settings: Box<Settings>,
     library: Box<super::library::Library>,
     settings_open: bool,
+    context_library_visible: bool,
+    context_instance: u64,
     /// **The conversation list, opened from the header while the tab is
     /// compact**: it takes the conversation's place until a row is chosen
     /// or it is closed.
@@ -450,6 +453,8 @@ impl BotView {
             settings: Box::default(),
             library: Box::default(),
             settings_open: false,
+            context_library_visible: false,
+            context_instance: context_library::mint_instance(),
             list_open: false,
             focus: None,
             settings_return: false,
@@ -2058,7 +2063,9 @@ impl View for BotView {
         let read = read.or_else(|| {
             (self.conversations.awaiting()
                 || self.trash_awaiting()
-                || (!self.stale && self.settings_open && self.library.awaiting())
+                || (!self.stale
+                    && (self.settings_open || self.context_library_visible)
+                    && self.library.awaiting())
                 || (self.form_open() && self.catalog.waiting()))
             .then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))

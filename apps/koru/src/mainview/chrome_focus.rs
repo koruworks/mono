@@ -87,10 +87,14 @@ enum Stop {
     /// keeps its own keyboard state and draws its own ring; this stop only
     /// hands the keyboard to it and takes it back.
     Tab,
+    Library,
 }
 
 impl MainView {
     fn standing_stops(&self) -> Vec<Stop> {
+        if self.bot_context_current() && self.bot_context.floating {
+            return vec![Stop::Library];
+        }
         let mut out = Vec::with_capacity(5);
         if koru_features::reminders() {
             if self.reminder_creation.has_failed_pill() {
@@ -106,10 +110,16 @@ impl MainView {
         if self.tab_header_stands() {
             out.push(Stop::Tab);
         }
+        if self.bot_context_stands() {
+            out.push(Stop::Library);
+        }
         out
     }
 
     fn current_stop(&self) -> Option<Stop> {
+        if self.bot_context_current() && self.bot_context.focus.is_some() {
+            return Some(Stop::Library);
+        }
         if self.reminder_creation.pill_focused() {
             return Some(Stop::Pill);
         }
@@ -180,12 +190,21 @@ impl MainView {
             }
         };
         let was = self.current_stop();
+        if was == Some(Stop::Tab) {
+            let tab = self.tabs().active_tab();
+            if let TabView::Bot(view) = &tab.view {
+                self.context_return_tab = view
+                    .context_library_data(tab.id)
+                    .map(|data| (tab.id, data.instance, view.focus()));
+            }
+        }
         // Leave whichever stop had the keyboard, so two rings are never
         // painted at once.
         let mut moved = self.reminder_shell.blur_bell();
         moved |= self.reminder_creation.blur_pill();
         moved |= self.chrome_focus.take().is_some();
         moved |= self.release_tab_keyboard();
+        moved |= self.blur_bot_context();
         moved |= self.explore.clear_focus();
         // **The navigator's list, when it has something to land on**: one
         // that has not is passed over, never a dead press.
@@ -203,6 +222,7 @@ impl MainView {
             }
         }
         match next {
+            Stop::Library => moved |= self.focus_bot_context(),
             // Landed above, as the loop found it.
             Stop::Column => {}
             Stop::Pill => moved |= self.reminder_creation.focus_first_failed_pill(),

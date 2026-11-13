@@ -812,12 +812,20 @@ impl MainView {
     pub(super) fn toggle_context(&mut self) -> bool {
         let now = Instant::now();
         let opening = !self.context.is_open();
+        if opening && !self.context_has_sections() {
+            return false;
+        }
         if opening {
             self.ai_panel.set_immediately(false);
             self.ai_focused = false;
         }
         self.context.toggle(now);
         self.relayout();
+        if opening && self.bot_context_stands() {
+            self.focus_bot_context();
+        } else if !opening {
+            self.return_bot_context_focus();
+        }
         true
     }
 

@@ -938,6 +938,17 @@ impl WorkspaceRepo for SqliteWorkspace {
         }
     }
 
+    fn bounded_document_version(
+        &self,
+        id: DocumentVersionId,
+    ) -> Result<Option<koru_store_core::ports::BoundedDocumentVersion>> {
+        bounded::document_version(&self.connection, id)
+    }
+
+    fn bounded_creation_origin(&self, document: DocumentId) -> Result<CreationOriginLookup> {
+        bounded::creation_origin(&self.connection, document)
+    }
+
     fn document_version_revision(
         &self,
         id: DocumentVersionId,
@@ -1202,4 +1213,5 @@ mod tests;
 
 mod creation;
 
+mod bounded;
 mod history;

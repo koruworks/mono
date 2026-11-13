@@ -65,6 +65,16 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.open[&workspace].repo.creation_origin(document)
     }
 
+    /// Bounded retained origin evidence, without reconstructing current content.
+    pub fn bounded_creation_origin(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> Result<CreationOriginLookup> {
+        self.ensure_open(workspace)?;
+        self.open[&workspace].repo.bounded_creation_origin(document)
+    }
+
     /// Retain the exact locally proven creation state without changing the live
     /// page or repairing its manifest. Repeated calls deduplicate the version.
     #[allow(clippy::too_many_arguments)]

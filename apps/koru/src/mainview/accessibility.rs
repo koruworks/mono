@@ -254,7 +254,14 @@ impl MainView {
     }
 
     fn ordinary_semantics(&self, cx: &Shell, scope: Scope) -> Vec<SemanticNode> {
+        if self.bot_context_current()
+            && self.bot_context.floating
+            && self.bot_context_unobstructed()
+        {
+            return self.bot_context_semantics(cx).into_iter().collect();
+        }
         let mut out = Vec::new();
+        out.extend(self.bot_context_semantics(cx));
         if self.sidebar.is_open() {
             out.push(self.explore.semantics(&self.explore_context(cx)));
         } else {
@@ -375,6 +382,9 @@ impl MainView {
         // A Bot tab's own control — its header's *Settings* (`F6`'s tab
         // stop) or one of its settings' — read from the focus its ring is
         // drawn from.
+        if let Some(focus) = self.bot_context_accessible_focus(&cx) {
+            return Some(focus);
+        }
         if let TabView::Bot(view) = &self.tabs().active_tab().view
             && let Some(key) = view.focus()
         {
@@ -449,6 +459,7 @@ impl MainView {
 
     /// Everything the window publishes **except** the document body.
     fn revise_chrome(&self, rev: &mut Revision) {
+        self.revise_bot_context(rev);
         // A focus-only F6/arrow move still needs a native focus update. The
         // host publishes only after this fingerprint changes.
         use super::chrome_focus::{ChromeStop, LaneControl};
@@ -578,6 +589,16 @@ impl MainView {
         // which is the same answer the keyboard gives.
         let blocking = self.blockers().is_blocking();
         if blocking && !menus::is_blocker_target(self, target) {
+            return false;
+        }
+        if !blocking && self.bot_context_accessible_action(target, action) {
+            return true;
+        }
+        if !blocking
+            && self.bot_context_current()
+            && self.bot_context.floating
+            && self.bot_context_unobstructed()
+        {
             return false;
         }
         if self.profile_wait_action(target, action) {
