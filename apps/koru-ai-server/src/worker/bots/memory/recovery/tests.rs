@@ -234,3 +234,29 @@ fn explicit_memory_retry_wakes_backoff_without_restarting_scan() {
     assert_eq!(recovery.scan, Some(Some(cursor)));
     assert_eq!(recovery.page.len(), 1);
 }
+
+#[test]
+fn memory_owner_invalidation_clears_old_backoff_and_cancels_active_proof() {
+    let (_, _, creation, _) = fixture();
+    let mut recovery = MemoryRecovery::default();
+    recovery.observe(creation.identity.owner);
+    recovery.probe = false;
+    recovery.owed = true;
+    recovery.failures = 9;
+    recovery.defer();
+    let cancellation = Cancellation::default();
+    recovery.active = Some(cancellation.clone());
+    let previous_epoch = recovery.epoch;
+    assert!(recovery.retry_at.is_some());
+
+    recovery.invalidate_owner();
+
+    assert!(cancellation.is_cancelled());
+    assert!(recovery.active.is_some());
+    assert!(recovery.owner.is_none());
+    assert!(recovery.probe && recovery.followup);
+    assert!(recovery.retry_at.is_none());
+    assert!(!recovery.owed);
+    assert_eq!(recovery.failures, 0);
+    assert_ne!(recovery.epoch, previous_epoch);
+}

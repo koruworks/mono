@@ -55,6 +55,9 @@ impl MemoryRecovery {
         self.probe = true;
         self.scan = None;
         self.page.clear();
+        self.owed = false;
+        self.failures = 0;
+        self.retry_at = None;
         self.followup = true;
     }
     pub(in crate::worker) fn observe(&mut self, owner: BotOwner) {
