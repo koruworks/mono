@@ -5629,14 +5629,26 @@
         "type": "object"
       },
       "BotOperationKind": {
-        "enum": [
-          "update_access",
-          "start",
-          "continue",
-          "pause",
-          "resume"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "update_access",
+              "start",
+              "continue",
+              "pause",
+              "resume",
+              "routine_occurrence"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Identity reservation only, never an executable submission.",
+            "enum": [
+              "routine_draft"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "BotOperationStatus": {
         "enum": [
@@ -5762,6 +5774,20 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "routine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutineProvenance"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Absent for the original Interactive payload. Retained identity alone\nnever authorizes a Routine claim or changes its current access policy."
           },
           "submission": {
             "$ref": "#/components/schemas/BotRequestId"
@@ -15675,6 +15701,68 @@
           "bot",
           "home",
           "creation_request"
+        ],
+        "type": "object"
+      },
+      "RoutineDefinitionIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "$ref": "#/components/schemas/RoutineDigest32"
+          },
+          "owner_handoff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HandoffId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "revision": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "RoutineDigest32": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "RoutineProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/RoutineDefinitionIdentity"
+          },
+          "grant_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "occurrence_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/ScheduleId"
+          }
+        },
+        "required": [
+          "schedule",
+          "occurrence_ms",
+          "definition",
+          "grant_revision"
         ],
         "type": "object"
       },

@@ -81,6 +81,7 @@ fn staged_memory_commands_refuse_before_any_authority_or_store_work() {
         run: RunId::mint(),
         generation: koru_delegate_core::AttemptGeneration::FIRST,
         provenance: koru_delegate_core::BotProvenance {
+            routine: None,
             owner: koru_delegate_core::BotOwner {
                 user_scope: UserScopeId::new(),
                 device: DeviceId::new(),

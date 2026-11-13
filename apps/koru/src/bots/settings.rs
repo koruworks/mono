@@ -269,7 +269,10 @@ impl Settings {
             BotOperationKind::UpdateAccess => Words::BotsDeliveringAccess,
             // Not a kind the owner names here (`pause`, `resume`,
             // `update_access`): the general sentence.
-            BotOperationKind::Start | BotOperationKind::Continue => Words::BotsErrOperationPending,
+            BotOperationKind::Start
+            | BotOperationKind::Continue
+            | BotOperationKind::RoutineDraft
+            | BotOperationKind::RoutineOccurrence => Words::BotsErrOperationPending,
         })
     }
 

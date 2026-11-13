@@ -577,6 +577,7 @@ impl Fixture {
             config_revision: 1,
             policy_revision: 1,
             continued_from: None,
+            routine: None,
         };
         let captured = CapturedBotPolicy {
             workspace,

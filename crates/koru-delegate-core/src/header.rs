@@ -145,6 +145,10 @@ impl RunHeader {
                 && !matches!(self.scope, WorkspaceScope::BotFolder { .. });
         };
         bot.valid()
+            && match &bot.routine {
+                None => matches!(self.origin, RunOrigin::Manual),
+                Some(routine) => routine.matches_origin(&self.origin),
+            }
             && matches!(self.scope, WorkspaceScope::BotFolder { .. })
             && self
                 .native_results

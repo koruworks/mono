@@ -29,8 +29,8 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
     assert_eq!(
         run.compatibility(),
         Compatibility::TooNew {
-            found: 4,
-            understood: 3
+            found: RUN_DOCUMENT_SCHEMA_VERSION + 1,
+            understood: RUN_DOCUMENT_SCHEMA_VERSION
         }
     );
     assert_eq!(run.header().unwrap().status, RunStatus::running());
@@ -38,8 +38,8 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
     assert_eq!(run.timeline_window(0, 10).len(), 2);
 
     let refused = RunDocumentError::ReadOnly {
-        found: 4,
-        understood: 3,
+        found: RUN_DOCUMENT_SCHEMA_VERSION + 1,
+        understood: RUN_DOCUMENT_SCHEMA_VERSION,
     };
     assert_eq!(
         run.append_step(&step(StepKind::Completed, 5)).err(),
@@ -95,7 +95,10 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
 fn a_run_this_build_wrote_is_writable() {
     let run = a_run_with(1);
     assert_eq!(run.compatibility(), Compatibility::Writable);
-    assert_eq!(run.schema_version(), Some(RUN_DOCUMENT_SCHEMA_VERSION));
+    assert_eq!(
+        run.schema_version(),
+        Some(RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION)
+    );
     let reopened = RunDocument::from_snapshot(&run.export_snapshot().unwrap()).unwrap();
     assert!(reopened.compatibility().writable());
 }
