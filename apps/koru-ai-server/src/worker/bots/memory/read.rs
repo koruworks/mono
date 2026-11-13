@@ -430,7 +430,7 @@ impl WorkerState {
     ) {
         let prepared = (|| {
             authorize(&context, AiScope::ManageBots)?;
-            if let Some(error) = closed_memory_failure(&command) {
+            if let Some(error) = closed_memory_context_failure(&context, &command) {
                 return Err(error);
             }
             let (bot_id, operation) = match command {

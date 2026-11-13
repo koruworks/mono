@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use std::sync::atomic::AtomicUsize;
+mod real;
 
 struct MemoryAuthority {
     inner: Arc<Authority>,

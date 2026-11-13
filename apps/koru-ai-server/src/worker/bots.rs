@@ -26,6 +26,28 @@ fn closed_memory_failure(command: &BotCommand) -> Option<Failure> {
     })
 }
 
+fn closed_memory_context_failure(
+    _context: &CommandContext,
+    command: &BotCommand,
+) -> Option<Failure> {
+    #[cfg(test)]
+    if let Some(expected) = _context.memory_for_fixture {
+        let actual = match command {
+            BotCommand::ReadMemory { bot_id }
+            | BotCommand::EnsureMemory { bot_id, .. }
+            | BotCommand::RetryMemory { bot_id, .. }
+            | BotCommand::AbandonMemory { bot_id, .. }
+            | BotCommand::ListMemory { bot_id, .. }
+            | BotCommand::ReadMemoryFact { bot_id, .. } => Some(*bot_id),
+            _ => None,
+        };
+        if actual == Some(expected) {
+            return None;
+        }
+    }
+    closed_memory_failure(command)
+}
+
 mod admission;
 mod boot;
 pub(super) use boot::{BootRecovery, BotBootJob, BotBootResult};
@@ -106,7 +128,7 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
-        if let Some(error) = closed_memory_failure(&request) {
+        if let Some(error) = closed_memory_context_failure(&context, &request) {
             authorize(&context, AiScope::ManageBots)?;
             return Err(error);
         }

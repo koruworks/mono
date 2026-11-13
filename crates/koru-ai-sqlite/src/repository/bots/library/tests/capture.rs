@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod lifecycle;
 
 #[test]
 fn memory_node_capture_roundtrips_genesis_and_imported_uuid_values() {

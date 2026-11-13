@@ -439,6 +439,8 @@ fn admission(state: &NativeState) -> BotReply {
 }
 fn proof(authority: Arc<Authority>, bot: &Bot, chat: Chat) -> CommandContext {
     CommandContext {
+        #[cfg(test)]
+        memory_for_fixture: None,
         request: context(true),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority,

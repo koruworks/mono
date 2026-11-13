@@ -18,6 +18,8 @@ fn settings_proof(
 ) -> CommandContext {
     let old = base.prepared.as_ref().unwrap();
     CommandContext {
+        #[cfg(test)]
+        memory_for_fixture: None,
         request: base.request.clone(),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: old.authority.clone(),

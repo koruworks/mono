@@ -605,6 +605,8 @@ fn conversation_proof(running: &Running, chat: &Chat) -> CommandContext {
     let prepared = running.context.prepared.as_ref().unwrap();
     let (bot, _, revision, policy) = prepared.chats[0];
     CommandContext {
+        #[cfg(test)]
+        memory_for_fixture: None,
         request: super::super::context(true),
         prepared: Some(Arc::new(PreparedBotCommand {
             authority: prepared.authority.clone(),
