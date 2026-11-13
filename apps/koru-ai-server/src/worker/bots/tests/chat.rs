@@ -35,6 +35,9 @@ struct Native {
 }
 #[derive(Default)]
 struct NativeState {
+    boot: Option<d::DelegateBootId>,
+    barrier: Option<d::BotAdmissionBarrier>,
+    policy: Option<d::BotPolicyBarrier>,
     submission: Option<d::BotSubmission>,
     fence: Option<d::BotExecutionFence>,
     begin: usize,
@@ -78,6 +81,118 @@ impl BotDelegatePort for Native {
         }
         let mut state = self.state.lock().unwrap();
         match command {
+            D::Hello { owner, scan } => {
+                let boot = *state.boot.get_or_insert_with(d::DelegateBootId::mint);
+                if matches!(&scan,d::BotBootScan::Continue {cursor} if !cursor.valid_for(boot,owner))
+                {
+                    return Err(koru_delegate_api::Failure::new(
+                        "bot_boot_cursor_stale",
+                        "fixture stale cursor",
+                        false,
+                    ));
+                }
+                let entries = if !matches!(scan, d::BotBootScan::Probe {})
+                    && !state.delivered
+                    && !state.stopped
+                    && !state.interrupt_settled
+                {
+                    state
+                        .submission
+                        .as_ref()
+                        .filter(|submission| submission.provenance.owner == owner)
+                        .map(|submission| d::BotBootEntry {
+                            identity: d::BotBootIdentity {
+                                owner,
+                                bot: submission.provenance.bot,
+                                run: submission.request.run,
+                                sequence: 1,
+                            },
+                            admission: state
+                                .barrier
+                                .clone()
+                                .map_or(d::BotBootAdmission::Missing {}, |barrier| {
+                                    d::BotBootAdmission::Present { barrier }
+                                }),
+                        })
+                        .into_iter()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Ok(BotReply::Hello {
+                    hello: d::BotHello {
+                        boot,
+                        entries,
+                        next: None,
+                    },
+                })
+            }
+            D::SynchronizeBootBot {
+                boot,
+                barrier,
+                policy,
+            } => {
+                let Some(submission) = state.submission.as_ref() else {
+                    return Err(koru_delegate_api::Failure::new(
+                        "bot_missing",
+                        "fixture has no durable admission",
+                        false,
+                    ));
+                };
+                if state.boot != Some(boot)
+                    || barrier.owner != submission.provenance.owner
+                    || barrier.bot != submission.provenance.bot
+                    || policy.key.owner != barrier.owner
+                    || policy.key.bot != barrier.bot
+                    || barrier.epoch != policy.config_revision
+                    || policy.config_revision < submission.provenance.config_revision
+                    || policy.policy_revision < submission.provenance.policy_revision
+                    || state.barrier.as_ref().is_some_and(|old| {
+                        old.epoch > barrier.epoch || (old.epoch == barrier.epoch && *old != barrier)
+                    })
+                    || state.policy.as_ref().is_some_and(|old| {
+                        old.config_revision > policy.config_revision
+                            || (old.config_revision == policy.config_revision && *old != policy)
+                    })
+                {
+                    return Err(koru_delegate_api::Failure::new(
+                        "bot_boot_pair_stale",
+                        "fixture stale boot or current pair",
+                        false,
+                    ));
+                }
+                let settled = state.delivered
+                    || (state.stopped && !state.stop_unconfirmed)
+                    || state.interrupt_settled;
+                let receipt = d::BotBootReceipt {
+                    boot,
+                    barrier: barrier.clone(),
+                    policy: policy.key.clone(),
+                    config_revision: policy.config_revision,
+                    policy_revision: policy.policy_revision,
+                    state: if settled {
+                        d::BotBootState::NoUnsettledWork
+                    } else {
+                        d::BotBootState::Ready
+                    },
+                };
+                if !settled {
+                    if state.fence.is_none() && !barrier.paused {
+                        state.fence = Some(d::BotExecutionFence {
+                            owner: submission.provenance.owner,
+                            bot: submission.provenance.bot,
+                            run: submission.request.run,
+                            attempt: d::RunAttemptId::mint(),
+                            generation: d::AttemptGeneration::from_raw(1).unwrap(),
+                            session: s::SessionId::mint(),
+                            turn: None,
+                        });
+                    }
+                    state.barrier = Some(barrier);
+                    state.policy = Some(policy);
+                }
+                Ok(BotReply::BootSynchronized { receipt })
+            }
             D::Submit { submission } => {
                 assert!(
                     submission.input.text == "CURRENT-TASK"
@@ -93,17 +208,8 @@ impl BotDelegatePort for Native {
                 }) {
                     return Ok(admission(&state));
                 }
-                let fence = d::BotExecutionFence {
-                    owner: submission.provenance.owner,
-                    bot: submission.provenance.bot,
-                    run: submission.request.run,
-                    attempt: d::RunAttemptId::mint(),
-                    generation: d::AttemptGeneration::from_raw(1).unwrap(),
-                    session: s::SessionId::mint(),
-                    turn: None,
-                };
                 state.submission = Some(submission);
-                state.fence = Some(fence);
+                state.fence = None;
                 state.stopped = false;
                 state.stop_unconfirmed = false;
                 state.interrupt_settled = false;
@@ -264,7 +370,20 @@ impl BotDelegatePort for Native {
             }
             D::Stop { key, fence } => {
                 assert_eq!(key.run, state.submission.as_ref().unwrap().request.run);
-                assert_eq!(fence, state.fence);
+                if fence != state.fence {
+                    // A queued observation can race boot replay starting the
+                    // session. The real owner refuses until Stop recaptures
+                    // its current fence; it never accepts the stale None.
+                    return Err(koru_delegate_api::Failure::new(
+                        if fence.is_none() {
+                            "bot_fence_required"
+                        } else {
+                            "bot_fenced"
+                        },
+                        "fixture requires the current execution fence",
+                        false,
+                    ));
+                }
                 state.stopped = true;
                 state.stop_calls += 1;
                 state.stop_unconfirmed = self.hold_stop;
@@ -307,8 +426,10 @@ fn admission(state: &NativeState) -> BotReply {
                 || state.interrupt_settled
             {
                 d::BotAdmissionState::Settled
-            } else {
+            } else if state.fence.is_some() {
                 d::BotAdmissionState::Executing
+            } else {
+                d::BotAdmissionState::Queued
             },
             queue_sequence: 1,
             fence: state.fence.clone(),

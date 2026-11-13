@@ -42,7 +42,7 @@ fn epoch_key(bot: &Bot) -> ApiResult<NativePolicyRequestId> {
         .try_into()
         .map_err(|_| bot_failure(BotError::Invalid))
 }
-fn barrier(bot: &Bot) -> ApiResult<BotPolicyBarrier> {
+pub(super) fn barrier(bot: &Bot) -> ApiResult<BotPolicyBarrier> {
     Ok(BotPolicyBarrier {
         key: BotPolicyBarrierKey {
             owner: koru_delegate_core::BotOwner {
@@ -362,6 +362,7 @@ impl WorkerState {
                 let _ = reply.send(value);
             }
             PolicyWork::Coordinate(receipt) => {
+                self.request_bot_boot_refresh();
                 if let Ok((_, Some(observed))) = &result.result
                     && observed.state == BotPolicyBarrierState::Pending
                 {

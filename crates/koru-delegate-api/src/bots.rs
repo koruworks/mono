@@ -10,8 +10,8 @@ use koru_delegate_core::{
     StreamSequence, WorkspaceId,
 };
 pub use koru_delegate_core::{
-    BotAdmissionState, BotAdmissionView, BotRunKey, BotSubmissionKey, BotUnsettledAdmission,
-    BotUnsettledWork,
+    BotAdmissionState, BotAdmissionView, BotBootCursor, BotBootReceipt, BotBootScan, BotBootState,
+    BotHello, BotRunKey, BotSubmissionKey, BotUnsettledAdmission, BotUnsettledWork,
 };
 pub use koru_delegate_core::{
     BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt, BotPolicyBarrierState,
@@ -70,6 +70,15 @@ pub struct BotObservation {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    Hello {
+        owner: koru_delegate_core::BotOwner,
+        scan: BotBootScan,
+    },
+    SynchronizeBootBot {
+        boot: koru_delegate_core::DelegateBootId,
+        barrier: BotAdmissionBarrier,
+        policy: BotPolicyBarrier,
+    },
     PendingNativeEffects {
         owner: koru_delegate_core::BotOwner,
         bot: Option<koru_delegate_core::BotId>,
@@ -206,12 +215,14 @@ impl BotCommand {
     /// commands instead resolve their immutable Run binding inside the actor.
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
         match self {
-            Self::PendingNativeEffects { owner, .. } | Self::UnsettledWork { owner, .. } => {
-                Some(owner)
-            }
+            Self::Hello { owner, .. }
+            | Self::PendingNativeEffects { owner, .. }
+            | Self::UnsettledWork { owner, .. } => Some(owner),
             Self::Submit { submission } => Some(&submission.provenance.owner),
             Self::Reconcile { key } => Some(&key.owner),
-            Self::Barrier { barrier } => Some(&barrier.owner),
+            Self::Barrier { barrier } | Self::SynchronizeBootBot { barrier, .. } => {
+                Some(&barrier.owner)
+            }
             Self::Read { key, .. }
             | Self::Trash { key, .. }
             | Self::Restore { key, .. }
@@ -251,6 +262,12 @@ impl std::fmt::Debug for BotCommand {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReply {
+    Hello {
+        hello: BotHello,
+    },
+    BootSynchronized {
+        receipt: BotBootReceipt,
+    },
     NativePendingEffects {
         page: NativePendingEffects,
     },
@@ -318,7 +335,8 @@ pub trait BotDelegatePort: Send + Sync {
     /// fails `delegate_unavailable` (retryable) and whatever the owner does
     /// with it is not reported, so only reads use it, and the AI owner's
     /// `stop_task`, whose Stop is idempotent and whose retry reads the
-    /// owner's state afresh. The default ignores the bound: a port that can
+    /// owner's state afresh. Boot replay also uses it: timeout leaves replay
+    /// owed, and a retry must recapture current canonical barriers. The default ignores the bound: a port that can
     /// block must bound it itself.
     fn execute_within(
         &self,

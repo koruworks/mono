@@ -2,8 +2,10 @@
 
 //! Bot admission and result identities. Authority is supplied by the trusted AI
 //! owner, never inferred from these serializable values or a caller label.
+mod boot;
 mod native;
 mod refusal;
+pub use boot::*;
 pub use native::*;
 pub use refusal::BotInputRefusal;
 
@@ -16,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct BotOwner {

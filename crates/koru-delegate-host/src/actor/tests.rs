@@ -658,6 +658,82 @@ fn bot_actor_rechecks_trusted_device_before_any_persistence_or_provider_use() {
     let result = actor.bot_command(koru_delegate_api::bots::BotCommand::Submit { submission: s });
     assert!(matches!(result,Err(failure) if failure.code=="bot_owner_mismatch"));
 }
+
+#[test]
+fn boot_acknowledgements_coalesce_an_extra_sweep_without_rewinding_current_cursor() {
+    use koru_delegate_api::bots::{BotCommand, BotReply};
+    use koru_delegate_core::*;
+    let (mut actor, _, inbox) = actor();
+    let first = bot_submission();
+    let owner = first.provenance.owner;
+    actor.device = owner.device;
+    for _ in 0..4 {
+        let mut s = first.clone();
+        s.request.run = RunId::mint();
+        s.provenance.submission = BotRequestId::mint();
+        actor
+            .orchestrator
+            .ports_mut()
+            .store
+            .bots()
+            .unwrap()
+            .admit_bot(&s)
+            .unwrap();
+    }
+    let BotReply::Hello { hello } = actor
+        .bot_command(BotCommand::Hello {
+            owner,
+            scan: BotBootScan::Probe {},
+        })
+        .unwrap()
+    else {
+        panic!("Hello required")
+    };
+    let command = BotCommand::SynchronizeBootBot {
+        boot: hello.boot,
+        barrier: BotAdmissionBarrier {
+            owner,
+            bot: first.provenance.bot,
+            request: BotRequestId::mint(),
+            epoch: 1,
+            paused: true,
+        },
+        policy: BotPolicyBarrier {
+            key: BotPolicyBarrierKey {
+                owner,
+                bot: first.provenance.bot,
+                request: BotRequestId::mint().into(),
+            },
+            config_revision: 1,
+            policy_revision: 1,
+            policy: first.policy,
+            effects_allowed: false,
+        },
+    };
+    actor.wake_bots();
+    actor.handle(inbox.recv().unwrap());
+    assert_eq!(actor.bot_queue_cursor, 1);
+    for _ in 0..3 {
+        assert!(
+            matches!(actor.bot_command(command.clone()).unwrap(), BotReply::BootSynchronized { receipt } if receipt.state == BotBootState::Ready)
+        );
+        assert_eq!(actor.bot_queue_cursor, 1);
+    }
+    for expected in 2..=4 {
+        actor.handle(inbox.recv().unwrap());
+        assert_eq!(actor.bot_queue_cursor, expected);
+    }
+    actor.handle(inbox.recv().unwrap());
+    assert!(actor.bot_drain_pending);
+    assert_eq!(actor.bot_queue_cursor, 0);
+    for expected in 1..=4 {
+        actor.handle(inbox.recv().unwrap());
+        assert_eq!(actor.bot_queue_cursor, expected);
+    }
+    actor.handle(inbox.recv().unwrap());
+    assert!(!actor.bot_drain_pending);
+    assert!(inbox.try_recv().is_err());
+}
 #[test]
 fn a_named_initial_input_refusal_reaches_the_ai_as_non_retryable_and_no_answer_stays_retryable() {
     use koru_delegate_runtime::{Port, PortError};

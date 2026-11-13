@@ -2,6 +2,154 @@
 use super::*;
 use koru_delegate_core as d;
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+#[test]
+fn boot_refusal_projection_bounds_prepared_rows_and_requires_one_exact_identity() {
+    let (mut repo, bot, owner, intent) = fixture();
+    let request = intent.submission.provenance.submission;
+    repo.prepare_bot_submission(&intent, HASH, 1, 2).unwrap();
+    let refused = repo
+        .prepare_bot_refusal_fence(
+            owner,
+            bot.id,
+            request,
+            BotAdmissionRefusal::Rejected,
+            false,
+            3,
+        )
+        .unwrap();
+    let (_, barrier) = fence(&refused);
+    let mut duplicate = None;
+    for n in 1..=50 {
+        let other = BotRequestId::mint();
+        duplicate = Some(other);
+        repo.connection.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,planned_run_id,captured_config_revision,captured_policy_revision,submission_version,submission_json,outcome_json,created_at_ms,updated_at_ms) SELECT user_scope_id,?2,bot_id,fingerprint,command_kind,stage,?3,captured_config_revision,captured_policy_revision,submission_version,submission_json,outcome_json,created_at_ms,updated_at_ms FROM bot_command_receipts WHERE request_id=?1",params![request.to_storage(),other.to_storage(),d::RunId::mint().to_storage()]).unwrap();
+        let read = repo.bot_boot_snapshot(owner, bot.id, &d::BotBootAdmission::Missing {});
+        if n < 50 {
+            assert_eq!(read.unwrap().admission, barrier)
+        } else {
+            assert!(matches!(read, Err(BotError::Storage)))
+        }
+    }
+    repo.connection
+        .execute(
+            "DELETE FROM bot_command_receipts WHERE request_id=?1",
+            [duplicate.unwrap().to_storage()],
+        )
+        .unwrap();
+    let mut conflict = refused.outcome.unwrap();
+    let BotExecutionOutcome::RefusalFence {
+        barrier: ref mut conflicting,
+        ..
+    } = conflict
+    else {
+        panic!("fence")
+    };
+    conflicting.request = BotRequestId::mint();
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET outcome_json=?2 WHERE request_id=?1",
+            params![
+                request.to_storage(),
+                serde_json::to_string(&conflict).unwrap()
+            ],
+        )
+        .unwrap();
+    assert!(matches!(
+        repo.bot_boot_snapshot(owner, bot.id, &d::BotBootAdmission::Missing {}),
+        Err(BotError::Conflict)
+    ));
+}
+
+#[test]
+fn boot_replay_preserves_pending_refusal_and_recovers_erased_completed_identity() {
+    use d::BotBootAdmission;
+    let (mut repo, bot, owner, intent) = fixture();
+    let request = intent.submission.provenance.submission;
+    repo.prepare_bot_submission(&intent, HASH, 1, 2).unwrap();
+    let refused = repo
+        .prepare_bot_refusal_fence(
+            owner,
+            bot.id,
+            request,
+            BotAdmissionRefusal::Rejected,
+            false,
+            3,
+        )
+        .unwrap();
+    let (round, barrier) = fence(&refused);
+    assert_eq!(
+        repo.bot_boot_snapshot(owner, bot.id, &BotBootAdmission::Missing {})
+            .unwrap()
+            .admission,
+        barrier
+    );
+    let mut other = barrier.clone();
+    other.request = BotRequestId::mint();
+    assert!(
+        repo.bot_boot_snapshot(owner, bot.id, &BotBootAdmission::Present { barrier: other })
+            .is_err()
+    );
+    repo.acknowledge_bot_refusal_fence(owner, bot.id, request, round, &barrier, 4)
+        .unwrap();
+    repo.reject_bot_submission_after_fence(owner, bot.id, request, round, &barrier, 5)
+        .unwrap();
+    assert_eq!(
+        repo.bot_boot_snapshot(
+            owner,
+            bot.id,
+            &BotBootAdmission::Present {
+                barrier: barrier.clone()
+            }
+        )
+        .unwrap()
+        .admission,
+        barrier
+    );
+}
+
+#[test]
+fn boot_refusal_projection_does_not_read_task_and_oversize_is_not_missing() {
+    use d::BotBootAdmission;
+    let (mut repo, bot, owner, intent) = fixture();
+    let request = intent.submission.provenance.submission;
+    repo.prepare_bot_submission(&intent, HASH, 1, 2).unwrap();
+    let refused = repo
+        .prepare_bot_refusal_fence(
+            owner,
+            bot.id,
+            request,
+            BotAdmissionRefusal::Rejected,
+            false,
+            3,
+        )
+        .unwrap();
+    let (_, barrier) = fence(&refused);
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET submission_json='{}' WHERE request_id=?1",
+            [request.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.bot_boot_snapshot(owner, bot.id, &BotBootAdmission::Missing {})
+            .unwrap()
+            .admission,
+        barrier
+    );
+    let json =
+        serde_json::to_string(refused.outcome.as_ref().unwrap()).unwrap() + &" ".repeat(8192);
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET outcome_json=?2 WHERE request_id=?1",
+            params![request.to_storage(), json],
+        )
+        .unwrap();
+    assert!(matches!(
+        repo.bot_boot_snapshot(owner, bot.id, &BotBootAdmission::Missing {}),
+        Err(BotError::Storage)
+    ));
+}
 fn fixture() -> (Repository, Bot, BotOwner, BotSubmissionIntent) {
     let mut repo = Repository::in_memory().unwrap();
     let bot = super::super::tests::fixture_bot();

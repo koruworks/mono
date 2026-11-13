@@ -13,9 +13,9 @@ mod repository;
 pub use db::write_at_schema;
 pub use db::{OpenError, SCHEMA_VERSION, SUPERSEDED_DEVELOPMENT_SCHEMA};
 pub use repository::{
-    BotCreationScan, BotHold, HistoricalBotRun, KnownAttachmentDirs, LifecycleCapture,
-    LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor, ParkedForOwner,
-    RemovedAttachment, Repository,
+    BotBootSnapshot, BotCreationScan, BotHold, HistoricalBotRun, KnownAttachmentDirs,
+    LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
+    ParkedForOwner, RemovedAttachment, Repository,
 };
 
 pub const DATABASE_FILE: &str = "ai.db";

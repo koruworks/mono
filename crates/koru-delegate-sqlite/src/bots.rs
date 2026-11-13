@@ -7,9 +7,9 @@ mod repository;
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::{
-    AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotDeliveryReceipt,
-    BotId, BotOwner, BotRequestId, BotSubmission, BotSubmissionKey, IdempotencyKey, RunAttemptId,
-    RunId,
+    AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
+    BotDeliveryReceipt, BotId, BotOwner, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey,
+    IdempotencyKey, RunAttemptId, RunId,
 };
 
 pub const BOT_ACTIVE_BUDGET_MS: u64 = 600_000;
@@ -161,6 +161,19 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    /// At most sixteen unsettled admission identities, never payloads. The
+    /// high-water mark bounds a scan, not snapshot membership: purging settled
+    /// rows can allow sequence reuse. New submissions need their own replay.
+    fn bot_boot_inventory(
+        &self,
+        owner: BotOwner,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError>;
+    fn bot_has_unsettled(&self, owner: BotOwner, bot: BotId) -> Result<bool, BotLedgerError>;
+    /// Release only a reservation with no attempt, send, delivery, accounting or
+    /// native effect evidence. Unknown evidence leaves capacity owned.
+    fn recover_bot_reservation(&mut self, key: &BotRunKey) -> Result<bool, BotLedgerError>;
     /// Bounded payload-free projection of the two reserved/executing host
     /// slots. Retained reservations remain eligible for reconciliation even
     /// when no additional queued admission can acquire capacity.

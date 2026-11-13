@@ -307,6 +307,7 @@ fn owned_cleanup_resolves_lost_creation_ack_through_exact_key() {
     h.orchestrator
         .bot_submit(submission.clone(), submission.provenance.owner.device)
         .unwrap();
+    boot::replay(&mut h.orchestrator, &submission);
     h.ledger.lock().unwrap().fail = Some("bind_session:id");
     assert!(
         h.orchestrator

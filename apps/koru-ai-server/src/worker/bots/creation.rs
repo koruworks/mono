@@ -1359,6 +1359,7 @@ impl WorkerState {
                     Timestamp::now().millis(),
                 ) {
                     Ok((done, _)) => {
+                        self.request_bot_boot_refresh();
                         tracing::info!(target: "koru_ai::bots", request = %key.1, "Bot created");
                         self.bot_creations.track(&done, false);
                     }
