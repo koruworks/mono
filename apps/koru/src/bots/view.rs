@@ -103,6 +103,7 @@ pub(crate) mod conversations;
 pub(crate) mod create;
 mod library;
 pub(crate) mod list;
+pub(crate) mod memory;
 mod picker;
 pub(crate) mod region;
 pub(crate) use region::{Control, ControlRole};
@@ -304,6 +305,11 @@ pub(crate) struct BotView {
     // -------------------------------------------- the settings (S5)
     settings: Box<Settings>,
     library: Box<super::library::Library>,
+    memory: Box<super::memory::Memory>,
+    #[cfg(test)]
+    memory_test_available: bool,
+    memory_ask: Option<Box<memory::Ask>>,
+    memory_target: Option<Box<koru_editor::trigger::DocumentTarget>>,
     settings_open: bool,
     context_library_visible: bool,
     context_instance: u64,
@@ -452,6 +458,11 @@ impl BotView {
             header_bottom: Cell::new(f32::INFINITY),
             settings: Box::default(),
             library: Box::default(),
+            memory: Box::default(),
+            #[cfg(test)]
+            memory_test_available: false,
+            memory_ask: None,
+            memory_target: None,
             settings_open: false,
             context_library_visible: false,
             context_instance: context_library::mint_instance(),
@@ -736,6 +747,7 @@ impl BotView {
     /// shown again; one never shown has nothing stale to refresh. Nothing is
     /// sent now: a hidden tab sends nothing.
     pub(crate) fn hidden(&mut self) {
+        self.memory.show(false);
         if self.create.is_some() {
             self.create_hidden();
             return;
@@ -950,7 +962,8 @@ impl BotView {
         let catalog = self.settings_open && self.catalog.pass(root);
         self.settle_agent_refreshes();
         let library = self.library_pass();
-        asked || answered || polled || listed || lifecycle || catalog || library
+        let memory = self.memory_pass();
+        asked || answered || polled || listed || lifecycle || catalog || library || memory
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -1020,6 +1033,20 @@ impl BotView {
         let mut changed = false;
         for answer in answers {
             match answer {
+                Answer::Memory { request, result } => {
+                    if let Some(bot) = self.settings.bot() {
+                        let folded =
+                            self.memory
+                                .answer(self.context_instance, bot, request, result);
+                        if folded {
+                            if self.memory.known_revision() > bot.revision {
+                                self.asked = false;
+                                self.library.owe_read();
+                            }
+                            changed = true;
+                        }
+                    }
+                }
                 Answer::Library { seq, bot, result } if Some(bot) == self.bot => {
                     if let Some(bot) = self.settings.bot() {
                         changed |= self.library.answer_read(seq, bot, result);
@@ -1126,6 +1153,7 @@ impl BotView {
     fn take(&mut self, result: Result<Bot, Failure>) {
         if matches!(&result, Ok(bot) if Some(bot.id) == self.bot &&
             (bot.revision < self.library.known_revision()
+                || bot.revision < self.memory.known_revision()
                 || self.settings.bot().is_some_and(|known| bot.revision < known.revision)))
         {
             self.asked = false;
@@ -1153,6 +1181,7 @@ impl BotView {
                 }
                 self.note_roster_news(&bot);
                 self.library.know_bot(&bot);
+                self.memory.know(&bot);
                 self.settings.know(bot.clone());
                 if bot.lifecycle != BotLifecycle::Trashed {
                     self.trashed_bot = None;
@@ -2066,6 +2095,10 @@ impl View for BotView {
                 || (!self.stale
                     && (self.settings_open || self.context_library_visible)
                     && self.library.awaiting())
+                || (self.memory_available()
+                    && !self.stale
+                    && self.settings_open
+                    && self.memory.busy())
                 || (self.form_open() && self.catalog.waiting()))
             .then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
@@ -2115,10 +2148,18 @@ impl View for BotView {
         // A create tab's read on its clock, never while hidden (S8).
         let read = !self.stale && self.send_create_read(now);
         let library = !self.stale && self.library_pass();
+        let memory = self.memory_pass();
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
-        let folded =
-            folded || polled || listed || lifecycle || catalog || read || reread || library;
+        let folded = folded
+            || polled
+            || listed
+            || lifecycle
+            || catalog
+            || read
+            || reread
+            || library
+            || memory;
         let chat = self
             .conversation_mut()
             .is_some_and(|conversation| View::maintain(conversation, ws, now));

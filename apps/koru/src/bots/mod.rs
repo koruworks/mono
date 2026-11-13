@@ -29,6 +29,7 @@ pub(crate) mod labels;
 pub(crate) mod library;
 pub(crate) mod lifecycle;
 pub(crate) mod link;
+pub(crate) mod memory;
 pub(crate) mod roster;
 pub(crate) mod settings;
 pub(crate) mod stops;

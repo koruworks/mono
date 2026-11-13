@@ -38,6 +38,7 @@ impl Fixture {
                 }
                 Command::ListChats { .. } | Command::ReadLibrary { .. } => continue,
                 Command::List { .. }
+                | Command::Memory(_)
                 | Command::Write { .. }
                 | Command::Label { .. }
                 | Command::Activity { .. }
@@ -1653,6 +1654,7 @@ mod agent;
 mod create;
 mod library;
 mod lifecycle;
+mod memory;
 
 // ------------------------------------------- the first window run, finding 8
 
