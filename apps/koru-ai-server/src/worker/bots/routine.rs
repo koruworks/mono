@@ -36,6 +36,9 @@ impl Default for RoutineRecovery {
     }
 }
 impl RoutineRecovery {
+    pub(in crate::worker) fn owner_epoch(&self) -> (Option<BotOwner>, u64) {
+        (self.owner, self.epoch)
+    }
     pub(in crate::worker) fn request(&mut self) {
         self.followup = true;
     }

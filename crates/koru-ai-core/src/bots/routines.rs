@@ -15,6 +15,7 @@ mod preparation;
 pub use creation::*;
 /// Existing neutral definition, re-exported for trusted adapter signatures.
 pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
+pub use koru_delegate_schedule::ScheduleContextPointer as RoutineScheduleContextPointer;
 use koru_delegate_schedule::routine_wire as strict;
 pub use occurrence::*;
 pub use preparation::*;

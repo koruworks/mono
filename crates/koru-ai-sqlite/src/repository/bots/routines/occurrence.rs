@@ -123,6 +123,50 @@ fn fresh(conn: &Connection, input: &BotRoutineCapturedSources) -> Result<(), Bot
 }
 
 impl Repository {
+    /// Current owner/lifecycle and immutable home only. Replay authorization
+    /// must not decode current model, settings, Library content or captures.
+    pub fn routine_occurrence_home(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+    ) -> Result<WorkspaceId, BotError> {
+        let raw: Option<(String, String, String, String)> = self.connection.query_row(
+            "SELECT CASE WHEN typeof(user_scope_id)='text' AND length(CAST(user_scope_id AS BLOB))=36 THEN user_scope_id END,
+             CASE WHEN typeof(owner_device_id)='text' AND length(CAST(owner_device_id AS BLOB))=36 THEN owner_device_id END,
+             CASE WHEN typeof(home_workspace_id)='text' AND length(CAST(home_workspace_id AS BLOB))=36 THEN home_workspace_id END,
+             CASE WHEN typeof(lifecycle)='text' AND length(CAST(lifecycle AS BLOB))<=16 THEN lifecycle END FROM bots WHERE bot_id=?1",
+            [bot.to_storage()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).optional().map_err(bad)?;
+        let (scope, device, home, lifecycle) = raw.ok_or(BotError::NotFound)?;
+        if scope != owner.user_scope.to_storage() || device != owner.device.to_storage() {
+            return Err(BotError::Forbidden);
+        }
+        if BotLifecycle::parse(&lifecycle).ok_or(BotError::Storage)? == BotLifecycle::Trashed {
+            return Err(BotError::NotFound);
+        }
+        WorkspaceId::parse(&home).ok_or(BotError::Storage)
+    }
+
+    /// A caller's claim is a lookup key only. The worker independently reads
+    /// the delegate before using it as evidence or returning an acknowledgement.
+    pub fn routine_preparation_for_claim(
+        &self,
+        claim: &koru_delegate_core::RoutineClaimIdentity,
+    ) -> Result<Option<BotRoutineStoredPreparation>, BotError> {
+        if !claim.valid() {
+            return Err(BotError::Invalid);
+        }
+        visible(&self.connection, owner(&claim.slot), claim.slot.bot)?;
+        let row = rows::read(&self.connection, &claim.slot)?;
+        if row
+            .as_ref()
+            .is_some_and(|row| !claim.matches_prepared(&row.prepared))
+        {
+            return Err(BotError::Conflict);
+        }
+        Ok(row)
+    }
+
     pub fn read_routine_preparation(
         &self,
         slot: &RoutineSlot,

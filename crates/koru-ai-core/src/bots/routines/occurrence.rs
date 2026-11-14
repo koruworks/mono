@@ -3,6 +3,18 @@
 use super::super::{BotCapturedMemory, BotKnowledgeCapture};
 use super::*;
 
+/// The existing scheduler-owned encoding, available to the private AI adapter
+/// without adding another Schedule dependency or a second hash implementation.
+pub fn bot_routine_semantic_hash(
+    slot: &RoutineSlot,
+    definition: &ScheduleDefinition,
+    home: WorkspaceId,
+    owner_handoff: Option<HandoffId>,
+) -> Result<RoutineDigest32, BotError> {
+    koru_delegate_schedule::routine_semantic_digest(slot, definition, home, owner_handoff)
+        .map_err(|_| BotError::Invalid)
+}
+
 /// Trusted capture inputs before any execution IDs exist. This value is not
 /// serializable and is never accepted from a bridge request.
 #[derive(Clone)]
@@ -27,13 +39,12 @@ impl std::fmt::Debug for BotRoutineCapturedSources {
 }
 impl BotRoutineCapturedSources {
     pub fn semantic_hash(&self) -> Result<RoutineDigest32, BotError> {
-        koru_delegate_schedule::routine_semantic_digest(
+        bot_routine_semantic_hash(
             &self.slot,
             &self.definition,
             self.canonical.home,
             self.owner_handoff,
         )
-        .map_err(|_| BotError::Invalid)
     }
     /// Called only after the writer has resolved the existing slot and cap.
     pub fn freeze(
