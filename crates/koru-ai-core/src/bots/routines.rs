@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Private retained Routine data. No worker, command or execution is enabled.
+//! Retained Routine data and narrow owner creation projections. Execution
+//! authority and live Schedule reads belong to their independent owners.
 use super::{Bot, BotConfig, BotError, BotLibraryCapture, validate_config};
 pub use koru_delegate_core::BotRoutineCloseReason;
 use koru_delegate_core::*;
@@ -11,12 +12,14 @@ use serde::{Deserialize, Serialize};
 
 mod creation;
 mod occurrence;
+mod owner;
 mod preparation;
 pub use creation::*;
 /// Existing neutral definition, re-exported for trusted adapter signatures.
 pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
 use koru_delegate_schedule::routine_wire as strict;
 pub use occurrence::*;
+pub use owner::*;
 pub use preparation::*;
 
 pub const BOT_ROUTINE_SCOPE: &str = "koru.bot.routine.v1";

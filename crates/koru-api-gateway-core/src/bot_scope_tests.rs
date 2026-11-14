@@ -31,3 +31,27 @@ fn bot_management_requires_explicit_agent_vouched_scope() {
             .contains(&"bots.manage".into())
     );
 }
+
+#[test]
+fn routine_owner_setup_uses_only_the_existing_vouched_management_route() {
+    let route = ai::ROUTES
+        .iter()
+        .find(|route| route.path == "/v1/ai/bots")
+        .unwrap();
+    assert_eq!(route.scope, koru_ai_api::AiScope::ManageBots);
+    for (scopes, admission) in [
+        (vec!["bots.manage".into()], Admission::Ordinary),
+        (vec!["bots.run".into()], Admission::Vouched),
+        (vec![], Admission::Vouched),
+    ] {
+        assert!(!effective_scopes(&scopes, admission).contains(&"bots.manage".into()));
+    }
+    let public = public_openapi().to_string();
+    for private in [
+        "PrepareOccurrence",
+        "RoutineBridgeAuthority",
+        "FinalizeOccurrence",
+    ] {
+        assert!(!public.contains(private));
+    }
+}
