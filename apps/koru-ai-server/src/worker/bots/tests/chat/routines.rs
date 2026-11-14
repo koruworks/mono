@@ -262,6 +262,8 @@ fn routine_terminal_answer_preflight_and_writer_select_the_question_attempt() {
         live: None,
     };
     repo.create_tool_activity(&row).unwrap();
+    // The repository fills the native row's text offset at insertion.
+    let row = repo.tool_activity(row.id).unwrap().unwrap();
     let (return_tx, returned) = sync_channel(1);
     let mut config = WorkerConfig::new(
         PathBuf::from("unused-routine-answer"),
