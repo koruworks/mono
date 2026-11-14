@@ -29,18 +29,21 @@ fn rows(conn: &Connection, table: &str, columns: &[String]) -> Vec<Vec<Value>> {
     .unwrap()
 }
 fn seven(h: &Harness) -> Connection {
+    historical(h, 7)
+}
+pub(in crate::native_results::tests) fn historical(h: &Harness, version: u32) -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
     koru_sqlite::prepare(
         &koru_sqlite::Schema {
             database: crate::DATABASE_NAME,
-            understood: 7,
-            migrations: &crate::db::MIGRATIONS[..7],
+            understood: version,
+            migrations: &crate::db::MIGRATIONS[..version as usize],
         },
         &mut conn,
     )
     .unwrap();
     conn.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
-    // Copy only the frozen v7 columns into a real v7 schema. All fixture
+    // Copy only the frozen historical columns into that actual schema. All fixture
     // identities/payloads were produced by normal in-memory admission/effects.
     for table in tables(&conn) {
         let columns = columns(&conn, &table);
@@ -163,7 +166,18 @@ fn runs_eight_migration_preserves_populated_seven_result_bytes_and_foreign_keys(
     );
     assert_fk(&conn);
     for retained in records {
-        let migrated = super::super::super::rows::read(&conn, &retained.key)
+        // This is deliberately still schema8. The current owner is schema9;
+        // compare the unchanged native row codec without pretending to open an
+        // old database through the current admission/companion reader.
+        let migrated = conn
+            .query_row(
+                "SELECT * FROM native_result_intents WHERE run_id=?1 AND operation_id=?2",
+                rusqlite::params![
+                    retained.key.run.to_storage(),
+                    retained.key.operation_id.to_string()
+                ],
+                |row| Ok(super::super::super::rows::decode_historical(row)),
+            )
             .unwrap()
             .unwrap();
         assert_eq!(migrated, retained);

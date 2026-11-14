@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
-mod migration;
+pub(super) mod migration;
 
 pub(super) fn request(h: &Harness, seed: bool) -> AllocateMemoryEditRequest {
     let provenance =

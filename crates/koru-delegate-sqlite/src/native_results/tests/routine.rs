@@ -221,6 +221,7 @@ fn routine_native_global_only_proof_refuses_fresh_lease_and_memory() {
     // The backend now validates this deliberately seeded current attempt.
     // Production attempt-opening and dispatch gates remain closed.
     h.db.prepare_native_result(&h.request).unwrap();
+    h.request.key.operation_id = Uuid::new_v4();
     let request = super::memory::request(&h, true);
     assert_eq!(
         h.db.allocate_memory_edit(

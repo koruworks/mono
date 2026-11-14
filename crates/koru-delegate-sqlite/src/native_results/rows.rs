@@ -321,6 +321,13 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
     }
     Ok(record)
 }
+
+/// Frozen migration fixtures compare the row format at their historical schema.
+/// Production reads always add current admission/companion validation below.
+#[cfg(test)]
+pub(super) fn decode_historical(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
+    decode(row)
+}
 pub(super) fn read(
     conn: &Connection,
     key: &NativeResultKey,
