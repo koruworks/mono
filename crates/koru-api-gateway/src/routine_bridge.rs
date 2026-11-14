@@ -17,6 +17,8 @@ use std::{
 };
 
 const PARENT: &str = "PRIVATE-HTTP-WORKER-FIXTURE-PARENT-0123456789";
+mod preclaim;
+use preclaim::PreclaimPeer;
 fn authority() -> RoutineBridgeAuthority {
     BotDelegateAuthority::new(PARENT.into())
         .unwrap()
@@ -85,6 +87,7 @@ struct Peer {
     record: Mutex<Option<Value>>,
     calls: Mutex<Vec<&'static str>>,
     ack: Mutex<Option<Arc<Gate>>>,
+    preclaim: Mutex<PreclaimPeer>,
 }
 impl Peer {
     fn new(seed: &PrepareOccurrence) -> Self {
@@ -103,6 +106,7 @@ impl Peer {
             record: Mutex::new(None),
             calls: Mutex::new(vec![]),
             ack: Mutex::new(None),
+            preclaim: Mutex::new(PreclaimPeer::default()),
         }
     }
     fn log(&self, call: &'static str) {
@@ -116,6 +120,9 @@ impl Peer {
         AckHold(gate)
     }
     fn release(&self) {
+        if let Some(gate) = self.preclaim.lock().unwrap().held.clone() {
+            gate.release();
+        }
         if let Some(gate) = self.ack.lock().unwrap().as_ref() {
             gate.release();
         }
@@ -155,6 +162,9 @@ impl BotDelegatePort for Peer {
         within: Duration,
     ) -> Result<BotReply, koru_delegate_api::Failure> {
         assert!(within <= Duration::from_secs(10));
+        if let Some(reply) = self.answer_preclaim(&command, within) {
+            return reply;
+        }
         match command {
             BotCommand::Hello { owner, .. } => {
                 assert_eq!(owner, self.seed.slot.owner);
@@ -172,6 +182,13 @@ impl BotDelegatePort for Peer {
                 assert!(within <= ROUTINE_BRIDGE_DEADLINE);
                 assert_eq!(slot, self.seed.slot);
                 self.log("read");
+                if self.preclaim.lock().unwrap().protect_draft
+                    && self.record.lock().unwrap().is_none()
+                {
+                    // Real unavailable independent read prevents recovery from
+                    // changing the draft during preclaim composition evidence.
+                    return Err(koru_delegate_api::Failure::unavailable());
+                }
                 let observation = self.record.lock().unwrap().as_ref().map_or_else(
                     || json!({"observation":"absent","slot":slot,"observed_at_ms":slot.occurrence_ms+1}),
                     |record| json!({"observation":"claimed","record":record}),
