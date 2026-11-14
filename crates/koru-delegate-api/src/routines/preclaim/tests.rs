@@ -240,7 +240,10 @@ fn preclaim_codec_correlates_entire_slot_both_hashes_and_envelope_request() {
         let mut request = request();
         match field {
             "request" => request.request_id = id(31).parse().unwrap(),
-            "scope" => request.payload.slot.owner.user_scope = UserScopeId::parse(&id(31)).unwrap(),
+            "scope" => {
+                request.payload.slot.owner.user_scope =
+                    serde_json::from_value(json!(id(31))).unwrap()
+            }
             "device" => request.payload.slot.owner.device = DeviceId::parse(&id(31)).unwrap(),
             "bot" => request.payload.slot.bot = id(31).parse().unwrap(),
             "schedule" => request.payload.slot.schedule = id(31).parse().unwrap(),
