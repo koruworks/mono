@@ -866,7 +866,10 @@ fn started_with(native: Native, holding: bool) -> Running {
         .recv_timeout(Duration::from_secs(5))
         .unwrap()
         .unwrap();
-    begins.recv_timeout(Duration::from_secs(10)).unwrap();
+    begins.recv_timeout(Duration::from_secs(10)).unwrap_or_else(|error| {
+        let events = stream.events.try_iter().collect::<Vec<_>>();
+        panic!("fixture task did not begin: {error:?}; accepted stream: {events:?}");
+    });
     let client = worker.client();
     Running {
         worker,
