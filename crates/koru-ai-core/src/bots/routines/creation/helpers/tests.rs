@@ -58,7 +58,7 @@ fn frozen() -> BotRoutineCreationIdentity {
 #[test]
 fn creation_seed_and_grant_have_digest_free_golden_bytes() {
     let frozen = frozen();
-    let grant = r#"{"version":1,"source_bot_policy_revision":3,"grant_revision":1,"policy":{"workspace":"00000000-0000-4000-8000-000000000003","destination":"00000000-0000-4000-8000-000000000003","access":"default","selected_pages":["00000000-0000-4000-8000-000000000009","00000000-0000-4000-8000-00000000000a"]}}"#;
+    let grant = r#"{"version":1,"source_bot_policy_revision":3,"grant_revision":1,"policy":{"workspace":"00000000-0000-4000-8000-000000000003","access":"default","selected_pages":["00000000-0000-4000-8000-000000000009","00000000-0000-4000-8000-00000000000a"],"destination":"00000000-0000-4000-8000-000000000003"}}"#;
     assert_eq!(
         String::from_utf8(frozen.grant.canonical_bytes().unwrap()).unwrap(),
         grant
