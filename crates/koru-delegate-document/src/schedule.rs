@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+mod occurrence;
 mod seed;
 
 use koru_delegate_core::{

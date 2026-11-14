@@ -38,6 +38,30 @@ pub(super) fn owner_device(owner: BotOwner, device: DeviceId) -> Result<(), RunE
     Ok(())
 }
 impl Orchestrator {
+    pub fn read_routine_claim(
+        &mut self,
+        slot: &koru_delegate_core::RoutineSlot,
+        device: DeviceId,
+    ) -> Result<koru_delegate_core::RoutineClaimObservation, RunError> {
+        owner_device(slot.owner, device)?;
+        if !slot.valid() {
+            return Err(refused("bot_invalid"));
+        }
+        Ok(self.bot_ledger()?.read_routine_claim(slot)?)
+    }
+    pub fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
+        device: DeviceId,
+    ) -> Result<koru_delegate_core::RoutineClaimRecord, RunError> {
+        owner_device(acknowledgement.claim.slot.owner, device)?;
+        if !acknowledgement.claim.valid() {
+            return Err(refused("bot_invalid"));
+        }
+        Ok(self
+            .bot_ledger()?
+            .acknowledge_routine_link(acknowledgement)?)
+    }
     pub fn register_routine_route(
         &mut self,
         identity: &koru_delegate_core::RoutineRouteIdentity,

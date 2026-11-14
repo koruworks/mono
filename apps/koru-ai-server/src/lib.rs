@@ -30,6 +30,7 @@ pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
 pub use worker::native_recovery::{
     NativeMutationGate, NativeRecoveryAdmission, NativeRecoveryRefusal,
 };
+pub use worker::routine_call::{RoutineCall, RoutineCallContext};
 pub use worker::{
     AiWorker, AiWorkerClient, AiWorkerInfo, WORKER_COMMAND_CAPACITY, WorkerConfig, WorkerError,
     WorkerExit, WorkerHandle, WorkerStatus,

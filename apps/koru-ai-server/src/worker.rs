@@ -356,6 +356,8 @@ pub enum WorkerExit {
     Panicked,
 }
 
+pub(crate) mod routine_call;
+
 pub struct AiWorker {
     config: WorkerConfig,
 }
