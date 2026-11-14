@@ -13,7 +13,7 @@ use koru_delegate_core::{
 };
 use std::sync::{
     Mutex,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, SyncSender, sync_channel},
 };
 
@@ -35,6 +35,7 @@ struct Peer {
     record: Mutex<Option<RoutineClaimRecord>>,
     hold: Mutex<Option<Hold>>,
     resolves: AtomicUsize,
+    claim_unavailable: AtomicBool,
 }
 impl BotDelegatePort for Peer {
     fn execute(&self, _: BotCommand) -> Result<BotReply, koru_delegate_api::Failure> {
@@ -62,6 +63,9 @@ impl BotDelegatePort for Peer {
             }
             BotCommand::ReadRoutineClaim { slot } => {
                 assert_eq!(slot, self.seed.slot);
+                if self.claim_unavailable.load(Ordering::Acquire) {
+                    return Err(koru_delegate_api::Failure::unavailable());
+                }
                 Ok(BotReply::RoutineClaim {
                     observation: self.record.lock().unwrap().clone().map_or(
                         RoutineClaimObservation::Absent {
@@ -135,6 +139,7 @@ async fn setup() -> (RoutineWorkerFixture, Arc<Peer>, RunBotSubject) {
             record: Mutex::new(None),
             hold: Mutex::new(None),
             resolves: AtomicUsize::new(0),
+            claim_unavailable: AtomicBool::new(false),
         });
         peer = Some(p.clone());
         p
@@ -299,6 +304,37 @@ async fn routine_gateway_dropped_future_cancels_real_worker_before_journal_accep
     future.abort();
     assert!(future.await.unwrap_err().is_cancelled());
     drop(release);
+    let listed = invoke(
+        fixture.client(),
+        subject.clone(),
+        parse("list_routines", json!({})).unwrap(),
+    )
+    .await;
+    assert_ne!(listed.is_error, Some(true));
+    let repo = fixture.finish().unwrap();
+    assert!(
+        repo.routine_tool_creation_by_request(subject.provenance.owner, subject.provenance.bot, id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn routine_gateway_fresh_routine_create_requires_independent_current_claim() {
+    let (fixture, peer, subject) = setup().await;
+    peer.claim_unavailable.store(true, Ordering::Release);
+    let id = BotRequestId::mint();
+    let mut args = create();
+    args["request_id"] = json!(id);
+    let reply = invoke(
+        fixture.client(),
+        subject.clone(),
+        parse("create_routine", args).unwrap(),
+    )
+    .await;
+    assert_eq!(reply.is_error, Some(true));
+    // Metadata observation still uses the full local Linked decoder plus current
+    // Run/human authority, without mistaking it for a fresh independent claim.
     let listed = invoke(
         fixture.client(),
         subject.clone(),

@@ -633,6 +633,66 @@ fn routine_model_missing_shared_association_refuses_even_matching_delegate_subje
 }
 
 #[test]
+fn routine_model_client_refuses_full_existing_command_channel_without_waiting() {
+    let f = Fixture::new();
+    let (worker, returned) = f.start();
+    let mut client = worker.client();
+    let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
+    client.sender = sender;
+    for _ in 0..WORKER_COMMAND_CAPACITY {
+        let (reply, _) = sync_channel(1);
+        client
+            .sender
+            .try_send(Envelope::Command(WorkerCommand::Ping(reply)))
+            .unwrap();
+    }
+    let req = request(&f.subject, list());
+    let cancellation = req.cancellation.clone();
+    assert_eq!(
+        client.routine_for_run(req).err().unwrap().code,
+        "ai_worker_saturated"
+    );
+    assert!(cancellation.is_cancelled());
+    assert_eq!(receiver.try_iter().count(), WORKER_COMMAND_CAPACITY);
+    assert_eq!(f.delegate.resolves.load(Ordering::Acquire), 0);
+    finish(worker, returned);
+}
+
+#[test]
+fn routine_model_generation_change_after_commit_returns_unknown_and_keeps_candidate() {
+    let f = Fixture::new();
+    let args = f.create();
+    let id = args.request_id;
+    let (held, entered, mut release) = gate();
+    *f.delegate.gate.lock().unwrap() = Some((3, held));
+    let (worker, returned) = f.start();
+    let response = direct(
+        &worker.client(),
+        request(&f.subject, RunRoutineOperation::Create(args)),
+    );
+    entered.recv_timeout(WAIT).unwrap();
+    f.delegate.denied.store(true, Ordering::Release);
+    release.open();
+    assert_eq!(
+        response.recv_timeout(WAIT).unwrap().err().unwrap().code,
+        "save_status_unknown"
+    );
+    let repo = finish(worker, returned);
+    let row = repo
+        .bot_routine_creation_by_request(f.store.owner, f.store.bot.id, id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.identity.creation_request, id);
+    assert_eq!(row.identity.owner, f.store.owner);
+    assert!(matches!(
+        row.state,
+        BotRoutineCreationState::Prepared
+            | BotRoutineCreationState::Unconfirmed
+            | BotRoutineCreationState::Bound
+    ));
+}
+
+#[test]
 fn routine_model_shutdown_joins_held_physical_job_without_detaching_it() {
     let f = Fixture::new();
     let (held, entered, mut release) = gate();
