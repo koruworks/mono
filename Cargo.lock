@@ -5769,6 +5769,7 @@ dependencies = [
 name = "koru-delegate-core"
 version = "0.0.3"
 dependencies = [
+ "blake3",
  "koru-device",
  "koru-events",
  "koru-session-protocol",

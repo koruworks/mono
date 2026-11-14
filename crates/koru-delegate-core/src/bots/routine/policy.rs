@@ -25,6 +25,21 @@ impl std::fmt::Debug for RoutinePolicyBarrier {
     }
 }
 impl RoutinePolicyBarrier {
+    /// Complete independent Routine policy encoding, including request and
+    /// effects fencing. This does not replace the ordinary global policy hash.
+    pub fn digest(&self) -> Result<RoutineDigest32, RoutineDigestError> {
+        if !self.valid() {
+            return Err(RoutineDigestError::Invalid);
+        }
+        routine_digest_json(
+            b"koru.bot.routine.barrier.v1",
+            &BarrierDigestV1 {
+                version: 1,
+                barrier: self,
+            },
+            65536,
+        )
+    }
     pub fn valid(&self) -> bool {
         RoutineSlot {
             owner: self.owner,
@@ -37,6 +52,13 @@ impl RoutinePolicyBarrier {
             && self.grant_revision <= i64::MAX as u64
             && self.policy.valid()
     }
+}
+
+// No digest field: the complete typed barrier is the immutable hash input.
+#[derive(Serialize)]
+struct BarrierDigestV1<'a> {
+    version: u8,
+    barrier: &'a RoutinePolicyBarrier,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

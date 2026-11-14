@@ -7,8 +7,10 @@ use crate::{BotId, BotRequestId, HandoffId, RunId, RunOrigin, ScheduleId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod digest;
 mod evidence;
 mod policy;
+pub use digest::{RoutineDigestError, routine_digest_json};
 pub use evidence::*;
 pub use policy::*;
 
@@ -16,7 +18,8 @@ pub const INTERACTIVE_BOT_SUBMISSION_VERSION: u32 = 1;
 pub const ROUTINE_BOT_SUBMISSION_VERSION: u32 = 2;
 
 /// A fixed digest with one wire spelling. Hash computation belongs to the
-/// owner of the versioned semantic encoding, not this vocabulary crate.
+/// owner of the versioned semantic encoding: the neutral policy owner here,
+/// Schedule owner, or private AI preparation owner. A digest grants no authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct RoutineDigest32([u8; 32]);

@@ -30,16 +30,18 @@ fn normal_dependency_direction_is_a_leaf_allowlist() {
     assert_eq!(
         actual,
         BTreeSet::from([
+            "blake3",
             "koru-device",
             "koru-events",
             "koru-session-protocol",
             "koru-store-core",
             "schemars",
             "serde",
+            "serde_json",
             "uuid",
         ]),
         "koru-delegate-core is a leaf: the id crates it speaks Koru's vocabulary \
-         through, serde, an optional schema derive, and uuid"
+         through, pure canonical JSON/digest utilities, an optional schema derive, and uuid"
     );
 }
 
