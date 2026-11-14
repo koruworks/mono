@@ -180,7 +180,7 @@ fn occurrence_claim_lookup_uses_sole_decoder_and_does_not_assert_claim_time_auth
         repo.routine_preparation_for_claim(&key).unwrap(),
         Some(row.clone())
     );
-    key.ids.run = koru_delegate_core::RunId::new();
+    key.ids.run = koru_delegate_core::RunId::mint();
     assert_eq!(
         repo.routine_preparation_for_claim(&key),
         Err(BotError::Conflict)

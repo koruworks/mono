@@ -15,7 +15,7 @@ fn slot() -> RoutineSlot {
             device: koru_delegate_core::DeviceId::new(),
         },
         bot: BotId::mint(),
-        schedule: koru_delegate_core::ScheduleId::new(),
+        schedule: koru_delegate_core::ScheduleId::mint(),
         occurrence_ms: 60_000,
     }
 }
