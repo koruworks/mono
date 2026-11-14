@@ -179,7 +179,10 @@ fn routine_sql_native_companion_gates_bind_identity_and_retain_held_evidence() {
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &h.policy,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None,
+            },
         )
         .unwrap();
     assert!(replay.execute.is_none());
@@ -195,12 +198,11 @@ fn routine_sql_native_companion_gates_bind_identity_and_retain_held_evidence() {
 }
 
 #[test]
-fn routine_native_fresh_authority_is_fenced_while_reconciliation_is_readable() {
+fn routine_native_global_only_proof_refuses_fresh_lease_and_memory() {
     let mut h = Harness::new();
     let old = h.prepare();
     let r = converted(&mut h, true);
     policy(&h, &r);
-    companion(&h, &r).unwrap();
     assert_eq!(h.prepare(), old);
     assert_eq!(h.db.native_result(&h.request.key).unwrap(), Some(old));
     assert_eq!(
@@ -208,18 +210,29 @@ fn routine_native_fresh_authority_is_fenced_while_reconciliation_is_readable() {
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &h.policy
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
         ),
         Err(BotLedgerError::Fenced)
     );
     h.request.key.operation_id = Uuid::new_v4();
-    assert_eq!(
-        h.db.prepare_native_result(&h.request),
-        Err(BotLedgerError::Fenced)
-    );
+    // The backend now validates this deliberately seeded current attempt.
+    // Production attempt-opening and dispatch gates remain closed.
+    h.db.prepare_native_result(&h.request).unwrap();
+    h.request.key.operation_id = Uuid::new_v4();
     let request = super::memory::request(&h, true);
     assert_eq!(
-        h.db.allocate_memory_edit(&request, fixtures::document(0xd0), &h.fence, &h.policy),
+        h.db.allocate_memory_edit(
+            &request,
+            fixtures::document(0xd0),
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        ),
         Err(BotLedgerError::Fenced)
     );
     assert_eq!(
@@ -227,7 +240,7 @@ fn routine_native_fresh_authority_is_fenced_while_reconciliation_is_readable() {
             .query_row("SELECT count(*) FROM native_result_intents", [], |r| r
                 .get::<_, i64>(0))
             .unwrap(),
-        1
+        2
     );
     assert_eq!(
         h.db.conn()

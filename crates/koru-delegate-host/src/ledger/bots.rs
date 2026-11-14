@@ -163,7 +163,7 @@ impl NativeResultLedger for SharedLedger {
         request: &AllocateMemoryEditRequest,
         source: DocumentId,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError> {
         self.0
             .lock()
@@ -176,7 +176,7 @@ impl NativeResultLedger for SharedLedger {
         fingerprint: [u8; 32],
         resolution: &MemoryBaseResolution,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError> {
         self.0
             .lock()
@@ -254,7 +254,7 @@ impl NativeResultLedger for SharedLedger {
         key: &NativeResultKey,
         fingerprint: [u8; 32],
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<NativeLeaseOutcome, BotLedgerError> {
         self.0
             .lock()
@@ -299,15 +299,38 @@ impl NativeResultLedger for SharedLedger {
     }
     fn created_native_page(
         &self,
-        owner: BotOwner,
-        bot: BotId,
+        execution: &BotRunKey,
         workspace: WorkspaceId,
         document: DocumentId,
     ) -> Result<bool, BotLedgerError> {
         self.0
             .lock()
             .unwrap()
-            .created_native_page(owner, bot, workspace, document)
+            .created_native_page(execution, workspace, document)
+    }
+    fn pending_routine_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .pending_routine_native_effects(owner, bot, schedule, after, limit)
+    }
+    fn current_routine_native_policy(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+    ) -> Result<Option<koru_delegate_sqlite::RoutinePolicyRecord>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .current_routine_native_policy(owner, bot, schedule)
     }
 }
 

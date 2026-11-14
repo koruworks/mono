@@ -170,6 +170,7 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
         None => None,
         Some(_) => Some(NativeEffectLease {
             id: uuid(row, "lease_id")?,
+            routine: None,
             policy: NativePolicyRecord {
                 key: BotPolicyBarrierKey {
                     owner: BotOwner {
@@ -320,11 +321,26 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
     }
     Ok(record)
 }
+
+/// Frozen migration fixtures compare the row format at their historical schema.
+/// Production reads always add current admission/companion validation below.
+#[cfg(test)]
+pub(super) fn decode_historical(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
+    decode(row)
+}
 pub(super) fn read(
     conn: &Connection,
     key: &NativeResultKey,
 ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
-    let record = conn
+    read_admitted(conn, key, None)
+}
+
+pub(super) fn read_admitted(
+    conn: &Connection,
+    key: &NativeResultKey,
+    admitted: Option<&crate::BotAdmissionRecord>,
+) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
+    let mut record = conn
         .query_row(
             "SELECT * FROM native_result_intents WHERE run_id=?1 AND operation_id=?2",
             params![key.run.to_storage(), key.operation_id.to_string()],
@@ -333,7 +349,7 @@ pub(super) fn read(
         .optional()
         .map_err(sql)?
         .transpose()?;
-    if let Some(record) = &record {
+    if let Some(record) = &mut record {
         if record.key != *key {
             return Err(BotLedgerError::Conflict);
         }
@@ -354,6 +370,7 @@ pub(super) fn read(
                 return Err(corrupt("lease_policy"));
             }
         }
+        routine::validate_record(conn, record, admitted)?;
         memory::validate_record(conn, record)?;
     }
     Ok(record)
@@ -366,18 +383,40 @@ pub(super) fn required(
 }
 pub(super) fn created(
     conn: &Connection,
-    owner: BotOwner,
-    bot: BotId,
+    admitted: &crate::BotAdmissionRecord,
     workspace: WorkspaceId,
     document: DocumentId,
 ) -> Result<bool, BotLedgerError> {
-    let found = conn.query_row("SELECT n.run_id,n.operation_id,n.attempt_id,n.generation,n.turn_id FROM native_result_intents n JOIN bot_admissions b ON b.run_id=n.run_id WHERE n.destination_workspace_id=?1 AND n.target_document_id=?2 AND n.effect_purpose='result' AND n.kind='create_page' AND n.stage IN ('verified','registered') AND b.user_scope=?3 AND b.device_id=?4 AND b.bot_id=?5",params![workspace.to_storage(),document.to_storage(),owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|row|Ok(key(row))).optional().map_err(sql)?.transpose()?;
+    let schedule = routine::subject(conn, admitted)?;
+    let owner = admitted.submission.provenance.owner;
+    let bot = admitted.submission.provenance.bot;
+    let found = conn
+        .query_row(
+            if schedule.is_some() {
+                CREATED_ROUTINE_QUERY
+            } else {
+                CREATED_INTERACTIVE_QUERY
+            },
+            params![
+                workspace.to_storage(),
+                document.to_storage(),
+                owner.user_scope.to_storage(),
+                owner.device.to_storage(),
+                bot.to_storage(),
+                schedule.map(|s| s.to_storage())
+            ],
+            |row| Ok(key(row)),
+        )
+        .optional()
+        .map_err(sql)?
+        .transpose()?;
     let Some(key) = found else {
         return Ok(false);
     };
     // The index locates one unique creation; it is not itself authority.
     // Validate its full evidence and exact retained lease-owner binding.
-    let record = required(conn, &key)?;
+    let source = routine::admission(conn, key.run)?;
+    let record = read_admitted(conn, &key, Some(&source))?.ok_or(BotLedgerError::Invalid)?;
     if record
         .lease
         .as_ref()
@@ -385,5 +424,17 @@ pub(super) fn created(
     {
         return Err(corrupt("creation_owner"));
     }
+    if record
+        .lease
+        .as_ref()
+        .and_then(|l| l.routine.as_ref())
+        .map(|r| r.schedule)
+        != schedule
+    {
+        return Err(corrupt("creation_subject"));
+    }
     Ok(true)
 }
+
+pub(super) const CREATED_INTERACTIVE_QUERY: &str = "SELECT n.run_id,n.operation_id,n.attempt_id,n.generation,n.turn_id FROM native_result_intents n JOIN bot_admissions b ON b.run_id=n.run_id WHERE n.destination_workspace_id=?1 AND n.target_document_id=?2 AND n.effect_purpose='result' AND n.kind='create_page' AND n.stage IN ('verified','registered') AND b.user_scope=?3 AND b.device_id=?4 AND b.bot_id=?5 AND b.submission_version=1 AND ?6 IS NULL";
+pub(super) const CREATED_ROUTINE_QUERY: &str = "SELECT n.run_id,n.operation_id,n.attempt_id,n.generation,n.turn_id FROM native_result_intents n JOIN bot_admissions b ON b.run_id=n.run_id JOIN bot_routine_links l ON l.run_id=b.run_id AND l.schedule_id=?6 WHERE n.destination_workspace_id=?1 AND n.target_document_id=?2 AND n.effect_purpose='result' AND n.kind='create_page' AND n.stage IN ('verified','registered') AND b.user_scope=?3 AND b.device_id=?4 AND b.bot_id=?5 AND b.submission_version=2";

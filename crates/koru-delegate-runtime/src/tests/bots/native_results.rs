@@ -23,7 +23,7 @@ impl NativeResultLedger for RecordingStore {
         request: &AllocateMemoryEditRequest,
         source: DocumentId,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError> {
         self.inner
             .lock()
@@ -36,7 +36,7 @@ impl NativeResultLedger for RecordingStore {
         fingerprint: [u8; 32],
         resolution: &MemoryBaseResolution,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError> {
         self.inner.lock().unwrap().resolve_memory_edit_base(
             key,
@@ -119,7 +119,7 @@ impl NativeResultLedger for RecordingStore {
         key: &NativeResultKey,
         fingerprint: [u8; 32],
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<NativeLeaseOutcome, BotLedgerError> {
         self.inner
             .lock()
@@ -170,15 +170,38 @@ impl NativeResultLedger for RecordingStore {
     }
     fn created_native_page(
         &self,
-        owner: BotOwner,
-        bot: BotId,
+        execution: &BotRunKey,
         workspace: WorkspaceId,
         document: DocumentId,
     ) -> Result<bool, BotLedgerError> {
         self.inner
             .lock()
             .unwrap()
-            .created_native_page(owner, bot, workspace, document)
+            .created_native_page(execution, workspace, document)
+    }
+    fn pending_routine_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .pending_routine_native_effects(owner, bot, schedule, after, limit)
+    }
+    fn current_routine_native_policy(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+    ) -> Result<Option<koru_delegate_sqlite::RoutinePolicyRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .current_routine_native_policy(owner, bot, schedule)
     }
 }
 
@@ -227,6 +250,54 @@ fn active() -> (
         title: "Result".into(),
     };
     (h, s, fence, policy, request)
+}
+
+#[test]
+fn routine_native_reason_cannot_drain_interactive_composite_none_lease() {
+    let (mut h, _, fence, policy, request) = active();
+    let device = fence.owner.device;
+    h.orchestrator
+        .synchronize_native_policy(policy, device)
+        .unwrap();
+    let intent = h
+        .orchestrator
+        .prepare_native_effect(&request, device)
+        .unwrap();
+    assert_eq!(intent.disposition, NativeResultDisposition::Execute);
+    let schedule = ScheduleId::from_uuid(uuid::Uuid::new_v4());
+    let page = h
+        .orchestrator
+        .pending_routine_native_effects(fence.owner, fence.bot, schedule, None, 1, device)
+        .unwrap();
+    assert!(page.targets.is_empty());
+    assert!(page.next.is_some());
+    assert!(
+        h.orchestrator
+            .check_native_effect_drain(
+                &request.key,
+                &NativeDrainReason::RoutinePolicyPending {
+                    owner: fence.owner,
+                    bot: fence.bot,
+                    schedule,
+                    request: BotRequestId::mint().into()
+                },
+                device
+            )
+            .is_err()
+    );
+    assert!(
+        h.orchestrator
+            .check_native_effect_drain(&request.key, &NativeDrainReason::GatewayStartup, device)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        h.orchestrator
+            .prepare_native_effect(&request, device)
+            .unwrap()
+            .disposition,
+        NativeResultDisposition::ReconcileOnly
+    );
 }
 
 #[test]
