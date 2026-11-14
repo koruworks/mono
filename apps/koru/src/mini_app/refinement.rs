@@ -81,12 +81,7 @@ impl MiniApp {
                 _ => {}
             }
         }
-        definition.selection = selection;
-        definition.swapped = self.swapped;
-        definition.document = self
-            .document
-            .map(|id| koru_ai_core::DocumentId::from_uuid(id.as_uuid()));
-        definition
+        Declaration::validate(definition.envelope).expect("native owners form a valid declaration")
     }
 
     pub fn refine(

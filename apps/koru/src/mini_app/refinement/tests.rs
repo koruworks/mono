@@ -48,12 +48,15 @@ fn mini_app_revision_tracks_effective_bindings_and_arrangement_only() {
     assert!(app.refine(initial, &envelope).is_err());
     assert!(app.refine(app.refinement_target(), &envelope).is_ok());
     assert_eq!(app.declaration_revision(), 1);
-    assert_eq!(before.selection, app.effective_definition().selection);
+    assert_eq!(
+        before.task_selection(),
+        app.effective_definition().task_selection()
+    );
     app.select_tasks(RailTarget::Bucket(Bucket::Completed));
     assert_eq!(app.declaration_revision(), 2);
     assert_eq!(
-        app.effective_definition().selection,
-        TaskSelection::Bucket("completed".into())
+        app.effective_definition().task_selection(),
+        Some(&TaskSelection::Bucket("completed".into()))
     );
     let target = app.refinement_target();
     app.request_document(DocumentId::new(), None);

@@ -104,11 +104,11 @@ impl MainView {
         else {
             return false;
         };
-        if let koru_ai_core::mini_apps::TaskSelection::List(id) = declaration.selection
+        if let Some(koru_ai_core::mini_apps::TaskSelection::List(id)) = declaration.task_selection()
             && !self
                 .list_table
                 .iter()
-                .any(|list| list.id.as_uuid() == id && list.deleted_ms.is_none())
+                .any(|list| list.id.as_uuid() == *id && list.deleted_ms.is_none())
         {
             return false;
         }

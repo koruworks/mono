@@ -45,8 +45,8 @@ fn saved_format_is_portable_and_contains_no_live_identity() {
     let b = rebound
         .instantiate(rebound.bindings.workspace, "fresh-second".into())
         .unwrap();
-    assert_ne!(a.selection, b.selection);
-    assert_ne!(a.document, b.document);
+    assert_ne!(a.task_selection(), b.task_selection());
+    assert_ne!(a.initial_document(), b.initial_document());
     assert_ne!(a.envelope.surface.surface_id, b.envelope.surface.surface_id);
     assert!(
         original

@@ -668,9 +668,9 @@ fn turn(
                 }
                 let declaration =
                     mini_apps::Declaration::validate(envelope).map_err(str::to_owned)?;
-                if declaration.selection != mini_apps::TaskSelection::List(seed.list)
-                    || declaration.document != Some(seed.document)
-                    || !declaration.swapped
+                if declaration.task_selection() != Some(&mini_apps::TaskSelection::List(seed.list))
+                    || declaration.initial_document() != Some(seed.document)
+                    || declaration.swapped() != Some(true)
                 {
                     return Err(
                         "model did not create the requested non-default bound declaration".into(),

@@ -15,8 +15,11 @@ impl Declaration {
     }
     pub fn from_shared(value: koru_ai_core::mini_apps::Declaration) -> Result<Self, &'static str> {
         use koru_ai_core::mini_apps::TaskSelection;
-        let target = match value.selection {
-            TaskSelection::List(id) => RailTarget::List(koru_core::ids::ListId::from_uuid(id)),
+        let target = match value
+            .task_selection()
+            .ok_or("composition requires the native composition host")?
+        {
+            TaskSelection::List(id) => RailTarget::List(koru_core::ids::ListId::from_uuid(*id)),
             TaskSelection::Bucket(bucket) => RailTarget::Bucket(match bucket.as_str() {
                 "today" => Bucket::Today,
                 "next" => Bucket::Next,
@@ -28,9 +31,9 @@ impl Declaration {
         };
         Ok(Self {
             target,
-            swapped: value.swapped,
+            swapped: value.swapped().ok_or("unsupported legacy arrangement")?,
             document: value
-                .document
+                .initial_document()
                 .map(|id| koru_core::DocumentId::from_uuid(id.as_uuid())),
         })
     }

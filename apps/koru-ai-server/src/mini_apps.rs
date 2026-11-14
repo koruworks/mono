@@ -184,10 +184,11 @@ impl AiToolExecutor for MiniAppTools {
         }
         let needs_lists = match &args {
             Arguments::Find(_) => true,
-            Arguments::Create(d) => matches!(d.selection, TaskSelection::List(_)),
+            Arguments::Create(d) => matches!(d.task_selection(), Some(TaskSelection::List(_))),
             Arguments::Update(_) => false,
         };
-        let needs_document = matches!(&args, Arguments::Create(d) if d.document.is_some());
+        let needs_document =
+            matches!(&args, Arguments::Create(d) if !d.document_references().is_empty());
         let registry = self.registry.read(context, needs_lists, needs_document)?;
         if cancellation.is_cancelled() {
             authority.revoke();
@@ -232,13 +233,15 @@ impl AiToolExecutor for MiniAppTools {
                     return Err(unavailable());
                 }
                 let result = (|| {
-                    if let TaskSelection::List(id) = declaration.selection
-                        && !registry.lists.iter().any(|(list, _)| *list == id)
+                    if let Some(TaskSelection::List(id)) = declaration.task_selection()
+                        && !registry.lists.iter().any(|(list, _)| list == id)
                     {
                         return Err(invalid());
                     }
-                    if let Some(id) = declaration.document
-                        && !registry.documents.contains(&id)
+                    if declaration
+                        .document_references()
+                        .iter()
+                        .any(|id| !registry.documents.contains(id))
                     {
                         return Err(invalid());
                     }

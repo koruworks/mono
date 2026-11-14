@@ -14,6 +14,7 @@ use std::sync::{
 use uuid::Uuid;
 
 pub const CATALOG_ID: &str = "koru:task-document:0.1-proposal1";
+pub const COMPOSITION_CATALOG_ID: &str = "koru:composition:0.1-proposal1";
 pub const CREATE_TOOL: &str = "create_task_document_app";
 pub const UPDATE_TOOL: &str = "update_task_document_app";
 pub const LIST_TOOL: &str = "find_task_app_lists";
@@ -109,14 +110,22 @@ pub fn sanitize_agent_event(event: crate::AiEvent) -> crate::AiEvent {
 pub const REFINEMENT_FIXTURE: &str = include_str!("mini_apps/refinement.fixture.json");
 
 pub mod artifact;
+pub mod composition;
+pub use composition::Composition;
 
 /// Serialize an already parsed value without allocating its unbounded JSON
 /// representation merely to discover that it exceeds this catalog's limit.
 pub fn bounded_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, &'static str> {
-    struct Bounded(Vec<u8>);
+    bounded_json_with_limit(value, MAX_BYTES)
+}
+fn bounded_json_with_limit<T: Serialize + ?Sized>(
+    value: &T,
+    limit: usize,
+) -> Result<Vec<u8>, &'static str> {
+    struct Bounded(Vec<u8>, usize);
     impl std::io::Write for Bounded {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if self.0.len().saturating_add(bytes.len()) > MAX_BYTES {
+            if self.0.len().saturating_add(bytes.len()) > self.1 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "surface exceeds byte limit",
@@ -129,7 +138,7 @@ pub fn bounded_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, &'stati
             Ok(())
         }
     }
-    let mut writer = Bounded(Vec::new());
+    let mut writer = Bounded(Vec::new(), limit);
     serde_json::to_writer(&mut writer, value).map_err(|_| "surface exceeds byte limit")?;
     Ok(writer.0)
 }
@@ -161,6 +170,26 @@ impl RefinementTarget {
     }
 }
 
+/// Transient model-visible placement metadata for an exact active native owner.
+/// Never place this in persisted chat, events, provider continuity or sessions.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RefinementContext {
+    pub target: RefinementTarget,
+    pub declaration: Envelope,
+}
+impl RefinementContext {
+    pub fn validate(&self) -> Result<Declaration, &'static str> {
+        if self.target.surface_id.is_nil()
+            || self.declaration.surface.surface_id != self.target.surface_name()
+        {
+            return Err("refinement surface mismatch");
+        }
+        Declaration::validate(self.declaration.clone())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -180,8 +209,62 @@ impl UpdateEnvelope {
     pub fn from_value(value: &Value) -> Result<Self, &'static str> {
         let bytes = bounded_json(value)?;
         let result: Self = serde_json::from_slice(&bytes).map_err(|_| "unsupported refinement")?;
-        result.arrangement()?;
+        result.validate_shape()?;
         Ok(result)
+    }
+    fn validate_shape(&self) -> Result<(), &'static str> {
+        bounded_json(self)?;
+        if self
+            .update
+            .components
+            .first()
+            .is_some_and(|c| c.component == "TaskDocument")
+        {
+            self.arrangement().map(|_| ())
+        } else {
+            if self.version != "1.0" {
+                return Err("unsupported refinement");
+            }
+            Declaration::validate(Envelope {
+                version: self.version.clone(),
+                surface: Surface {
+                    surface_id: self.update.surface_id.clone(),
+                    catalog_id: COMPOSITION_CATALOG_ID.into(),
+                    send_data_model: false,
+                    components: self.update.components.clone(),
+                },
+            })
+            .map(|_| ())
+        }
+    }
+    /// Full replacement placement tree, checked against the active validated
+    /// declaration. This does not authorize delivery or advance its revision.
+    pub fn refine(&self, current: &Declaration) -> Result<Declaration, &'static str> {
+        self.validate_shape()?;
+        let checked = Declaration::validate(current.envelope.clone())?;
+        let current = &checked;
+        if self.update.surface_id != current.envelope.surface.surface_id {
+            return Err("refinement surface mismatch");
+        }
+        let mut envelope = current.envelope.clone();
+        if let Some(old) = current.composition() {
+            envelope.surface.components = self.update.components.clone();
+            let next = Declaration::validate(envelope)?;
+            if !old.same_bindings_and_identity(next.composition().ok_or("catalog cannot change")?) {
+                return Err("refinement cannot change identities or bindings");
+            }
+            Ok(next)
+        } else {
+            self.arrangement()?;
+            let root = envelope
+                .surface
+                .components
+                .iter_mut()
+                .find(|c| c.id == "root")
+                .ok_or("missing root")?;
+            *root = self.update.components[0].clone();
+            Declaration::validate(envelope)
+        }
     }
     /// Only replacing the fixed root's arrangement is supported. In particular,
     /// missing children cannot remove an editor, selector or search control.
@@ -196,7 +279,9 @@ impl UpdateEnvelope {
             return Err("only the named arrangement can be refined");
         }
         fixture.surface.components[0] = self.update.components[0].clone();
-        Ok(Declaration::validate(fixture)?.swapped)
+        Declaration::validate(fixture)?
+            .swapped()
+            .ok_or("unsupported legacy refinement")
     }
 }
 
@@ -283,6 +368,20 @@ pub struct Component {
     pub list: Option<ListReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document: Option<DocumentReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<composition::Layout>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoration: Option<composition::Decoration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<composition::TextRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ink: Option<composition::Ink>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space: Option<composition::Space>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<composition::Action>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -307,11 +406,49 @@ pub enum TaskSelection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Declaration {
     pub envelope: Envelope,
-    pub selection: TaskSelection,
-    pub swapped: bool,
-    pub document: Option<DocumentId>,
+    pub kind: DeclarationKind,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeclarationKind {
+    TaskDocument {
+        selection: TaskSelection,
+        swapped: bool,
+        document: Option<DocumentId>,
+    },
+    Composition(Composition),
 }
 impl Declaration {
+    pub fn task_selection(&self) -> Option<&TaskSelection> {
+        match &self.kind {
+            DeclarationKind::TaskDocument { selection, .. } => Some(selection),
+            _ => None,
+        }
+    }
+    pub fn swapped(&self) -> Option<bool> {
+        match &self.kind {
+            DeclarationKind::TaskDocument { swapped, .. } => Some(*swapped),
+            _ => None,
+        }
+    }
+    pub fn initial_document(&self) -> Option<DocumentId> {
+        match &self.kind {
+            DeclarationKind::TaskDocument { document, .. } => *document,
+            DeclarationKind::Composition(c) => c.initial_document(),
+        }
+    }
+    pub fn composition(&self) -> Option<&Composition> {
+        match &self.kind {
+            DeclarationKind::Composition(c) => Some(c),
+            _ => None,
+        }
+    }
+    /// Stable first-occurrence order; includes every local action target.
+    pub fn document_references(&self) -> Vec<DocumentId> {
+        match &self.kind {
+            DeclarationKind::Composition(c) => c.document_references(),
+            _ => self.initial_document().into_iter().collect(),
+        }
+    }
     pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
         if bytes.len() > MAX_BYTES {
             return Err("surface exceeds byte limit");
@@ -325,10 +462,10 @@ impl Declaration {
     }
     pub fn validate(envelope: Envelope) -> Result<Self, &'static str> {
         // The public event is typed but remains untrusted at a receiver.
-        bounded_json(&envelope)?;
+        let encoded_len = bounded_json(&envelope)?.len();
         let surface = &envelope.surface;
         if envelope.version != "1.0"
-            || surface.catalog_id != CATALOG_ID
+            || ![CATALOG_ID, COMPOSITION_CATALOG_ID].contains(&surface.catalog_id.as_str())
             || surface.send_data_model
             || surface.surface_id.is_empty()
             || surface.surface_id.len() > 96
@@ -336,8 +473,23 @@ impl Declaration {
                 .surface_id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b))
-            || surface.components.len() != 5
         {
+            return Err("unsupported surface");
+        }
+        if surface.catalog_id == COMPOSITION_CATALOG_ID {
+            // Creation replaces the caller's spelling with `mini-app-` plus
+            // a hyphenated UUID (45 ASCII bytes). Reserve that growth now so
+            // a valid declaration stays valid when delivered or saved/reopened.
+            if encoded_len + 45usize.saturating_sub(surface.surface_id.len()) > MAX_BYTES {
+                return Err("surface exceeds byte limit");
+            }
+            let composition = Composition::validate(&surface.components)?;
+            return Ok(Self {
+                envelope,
+                kind: DeclarationKind::Composition(composition),
+            });
+        }
+        if surface.components.len() != 5 {
             return Err("unsupported surface");
         }
         let expected = [
@@ -355,6 +507,13 @@ impl Declaration {
                 || (id != "root" && (c.children.is_some() || c.arrangement.is_some()))
                 || (id != "tasks" && (c.bucket.is_some() || c.list.is_some()))
                 || (id != "document" && c.document.is_some())
+                || c.layout.is_some()
+                || c.decoration.is_some()
+                || c.text.is_some()
+                || c.role.is_some()
+                || c.ink.is_some()
+                || c.space.is_some()
+                || c.action.is_some()
             {
                 return Err("unsupported component");
             }
@@ -402,9 +561,11 @@ impl Declaration {
             .transpose()?;
         Ok(Self {
             envelope,
-            selection,
-            swapped,
-            document,
+            kind: DeclarationKind::TaskDocument {
+                selection,
+                swapped,
+                document,
+            },
         })
     }
     pub fn normalize(mut self, invocation: crate::ToolInvocationId) -> Self {

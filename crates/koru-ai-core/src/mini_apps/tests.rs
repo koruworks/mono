@@ -130,10 +130,16 @@ fn strict_catalog_accepts_order_independent_reference_only_components() {
         .as_array_mut()
         .unwrap()
         .reverse();
-    assert!(!Declaration::from_value(&value).unwrap().swapped);
+    assert_eq!(
+        Declaration::from_value(&value).unwrap().swapped(),
+        Some(false)
+    );
     let mut value: Value = serde_json::from_str(FIXTURE).unwrap();
     value["createSurface"]["components"][0]["arrangement"] = "document-first".into();
-    assert!(Declaration::from_value(&value).unwrap().swapped);
+    assert_eq!(
+        Declaration::from_value(&value).unwrap().swapped(),
+        Some(true)
+    );
     assert!(Declaration::parse(&vec![b' '; MAX_BYTES + 1]).is_err());
     for path in ["dataModel", "metadata", "updateComponents"] {
         let mut invalid = value.clone();

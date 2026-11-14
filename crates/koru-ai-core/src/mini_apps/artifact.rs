@@ -10,6 +10,8 @@ use uuid::Uuid;
 pub const MIME: &str = "application/vnd.koru.mini-app+json";
 pub const MAX_BYTES: usize = 4096;
 pub const FORMAT_VERSION: u32 = 1;
+pub mod composition;
+pub use composition::{CompositionEnvelope, MAX_FILE_BYTES, SavedEnvelope};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,10 +107,13 @@ impl Envelope {
     ) -> Result<Self, &'static str> {
         // Derived fields on a Declaration are public; revalidate its envelope.
         let checked = Declaration::validate(declaration.envelope.clone())?;
-        let (tasks, task_list) = match checked.selection {
+        let (tasks, task_list) = match checked
+            .task_selection()
+            .ok_or("composition requires saved format v2")?
+        {
             TaskSelection::Bucket(bucket) => (
                 Tasks::Bucket {
-                    bucket: Bucket::parse(&bucket)?,
+                    bucket: Bucket::parse(bucket)?,
                 },
                 None,
             ),
@@ -116,7 +121,7 @@ impl Envelope {
                 Tasks::List {
                     parameter: ListParameter::TaskList,
                 },
-                Some(id),
+                Some(*id),
             ),
         };
         let value = Self {
@@ -125,18 +130,20 @@ impl Envelope {
                 catalog_id: CATALOG_ID.into(),
                 a2ui_version: "1.0".into(),
                 workspace: WorkspaceParameter::Workspace,
-                arrangement: if checked.swapped {
+                arrangement: if checked.swapped() == Some(true) {
                     Arrangement::DocumentFirst
                 } else {
                     Arrangement::TasksFirst
                 },
                 tasks,
-                document: checked.document.map(|_| DocumentParameter::Document),
+                document: checked
+                    .initial_document()
+                    .map(|_| DocumentParameter::Document),
             },
             bindings: Bindings {
                 workspace,
                 task_list,
-                document: checked.document,
+                document: checked.initial_document(),
             },
         };
         value.validate()?;
