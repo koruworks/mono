@@ -97,6 +97,7 @@ private object Routes {
     const val Diagnostics = "diagnostics"
     const val Settings = "settings"
     const val Account = "account"
+    const val CloudFiles = "cloud-files"
     const val CloudProgress = "cloud-progress/{profileId}"
     const val Licenses = "licenses"
     const val License = "license/{file}"
@@ -310,7 +311,22 @@ fun KoruApp(
                 onSwitchAccount = { model.accountAction(AccountIntent.SwitchAccount, appearance.language, renderedScope, accountId = it) },
                 hiddenProfileCount = localProfiles.hiddenCount,
                 onSelectProfiles = { model.accountAction(AccountIntent.SelectProfiles, appearance.language, renderedScope, profiles = it) },
-                cloudStorage = cloudStorage, onRefreshCloudStorage = model::refreshCloudStorage)
+                cloudStorage = cloudStorage, onRefreshCloudStorage = model::refreshCloudStorage,
+                onCloudFiles = { nav.navigate(Routes.CloudFiles) })
+        }
+        composable(Routes.CloudFiles) {
+            val account by model.account.collectAsState()
+            val inventory by model.cloudInventory.collectAsStateWithLifecycle()
+            val owner = account.activeScope
+            DisposableEffect(model) {
+                model.cloudInventoryVisible(true)
+                onDispose { model.cloudInventoryVisible(false) }
+            }
+            CloudInventoryScreen(inventory.forAccount(owner, account.activeAccountId.takeIf { account.signedIn }),
+                account.profiles.associate { it.id.value to it.name }, nav::popBackStack,
+                first = { model.cloudInventoryFirst(owner) }, next = { model.cloudInventoryNext(owner) },
+                previous = { model.cloudInventoryPrevious(owner) }, workspaces = { model.cloudInventoryWorkspaces(owner) },
+                documents = { model.cloudInventoryDocuments(it, owner) })
         }
         composable(Routes.Diagnostics) {
             val account by model.accountDiagnostics.collectAsState()

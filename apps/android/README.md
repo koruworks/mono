@@ -52,6 +52,15 @@ keep that response explicitly stale. Signing out or changing accounts clears
 it immediately, including late responses. The native request is bounded and
 cancelable, and the section adds no idle HTTP polling.
 
+View files reads the Cloud Workspace inventory and a selected Workspace's
+durable document inventory. It retains one page of at most 100 rows and 32 back
+cursors; First remains available when older history is dropped. A changed
+revision or source proof clears the old page and restarts once. Unassigned,
+unknown, unfiled, Trash and structural rows remain visible. Profile subtotals
+require a complete single-page inventory with known placement and current
+member counts. Document sizes can overlap and are never added into an account
+total. Recoverable unfiled documents continue to retain their Cloud files.
+
 `CloudStoragePresentationTest` covers exact large integers, overage, partial
 counts, account fences, validity expiry, cancellation and all eight locales.
 TalkBack, enlarged text and narrow/RTL layouts still need device acceptance.

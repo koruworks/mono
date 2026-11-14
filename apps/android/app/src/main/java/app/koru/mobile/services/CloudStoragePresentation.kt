@@ -46,6 +46,7 @@ internal class CloudStoragePresentation(
     private var started = 0L
     private var deadline: Job? = null
     private var requestDeadline: Job? = null
+    private var transitRetryUsed = false
 
     private suspend fun align(next: AndroidAccountStatus) {
         val previous = status
@@ -53,6 +54,7 @@ internal class CloudStoragePresentation(
         if (next.activeScope != previous.activeScope || next.activeAccountId != previous.activeAccountId ||
             next.worker.stage == "signed_out") {
             retire()
+            transitRetryUsed = false
             mutableState.value = CloudStorageState(next.activeScope, next.activeAccountId)
         }
     }
@@ -93,7 +95,15 @@ internal class CloudStoragePresentation(
             val expires = remaining?.let { if (it > Long.MAX_VALUE - now) Long.MAX_VALUE else now + it }
             mutableState.value = CloudStorageState(status.activeScope, status.activeAccountId, snapshot,
                 stale = remaining == 0L, deadlineMillis = expires)
-            scheduleExpiry()
+            if (remaining == 0L) {
+                if (!transitRetryUsed && visible && foreground) {
+                    transitRetryUsed = true
+                    request()
+                }
+            } else {
+                transitRetryUsed = false
+                scheduleExpiry()
+            }
         }
         if (next.resultsLost && pending != null) {
             retire(); failed()
@@ -107,7 +117,7 @@ internal class CloudStoragePresentation(
         visible = value
         expireBeforePaint()
         if (!value) { retire(); mutableState.value = mutableState.value.copy(loading = false) }
-        else if (entering && foreground) request()
+        else if (entering && foreground) { transitRetryUsed = false; request() }
     }
 
     suspend fun foreground(value: Boolean, next: AndroidAccountStatus) = lock.withLock {
@@ -119,7 +129,11 @@ internal class CloudStoragePresentation(
         else if (visible && returning) request()
     }
 
-    suspend fun retry(next: AndroidAccountStatus) = lock.withLock { align(next); request() }
+    suspend fun retry(next: AndroidAccountStatus) = lock.withLock {
+        align(next)
+        if (pending == null) transitRetryUsed = false
+        request()
+    }
 
     private fun expireBeforePaint() {
         mutableState.value = mutableState.value.forAccount(status.activeScope, status.activeAccountId, nowMillis())

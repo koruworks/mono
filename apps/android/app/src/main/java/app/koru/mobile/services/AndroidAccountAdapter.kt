@@ -130,11 +130,13 @@ internal class AndroidAccountAdapter(
 
     fun foreground(value: Boolean) { desiredForeground = value }
 
-    suspend fun command(action: AccountAction, generation: Long = 0, locale: String = "", profileId: String = "", accountId: String = "", expectedOwnerScope: Long? = null, profileIds: List<String> = emptyList(), cloudSyncEnabled: Boolean? = null): AccountCommandReply = lock.withLock {
+    suspend fun command(action: AccountAction, generation: Long = 0, locale: String = "", profileId: String = "", accountId: String = "", expectedOwnerScope: Long? = null, profileIds: List<String> = emptyList(), cloudSyncEnabled: Boolean? = null,
+                        cloudWorkspaceId: String? = null, cloudIncarnationId: String? = null, cloudCursor: String? = null): AccountCommandReply = lock.withLock {
         val request = AccountCommandRequest.newBuilder().setVersion(1).setRequester(REQUESTER)
             .setAction(action).setGeneration(generation).setLocale(locale).setProfileId(profileId).setAccountId(accountId)
             .addAllProfileIds(profileIds).apply { expectedOwnerScope?.let(::setExpectedOwnerScope) }
-            .apply { cloudSyncEnabled?.let(::setCloudSyncEnabled) }.build()
+            .apply { cloudSyncEnabled?.let(::setCloudSyncEnabled) }
+            .apply { cloudWorkspaceId?.let(::setCloudWorkspaceId); cloudIncarnationId?.let(::setCloudIncarnationId); cloudCursor?.let(::setCloudCursor) }.build()
         MobileAccountContract.validate(request)
         if (action in setOf(AccountAction.ACCOUNT_ACTION_START_GOOGLE, AccountAction.ACCOUNT_ACTION_START_APPLE, AccountAction.ACCOUNT_ACTION_START_EMAIL, AccountAction.ACCOUNT_ACTION_ADD_ACCOUNT) && mutableStatus.value.adapterFailure == "provider_session_clear_failed") {
             providerClearRequested = true // one new attempt on explicit user intent

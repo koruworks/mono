@@ -53,6 +53,7 @@ fun AccountScreen(
     onSelectProfiles: (List<ProfileId>) -> Unit = {},
     cloudStorage: CloudStorageState = CloudStorageState(),
     onRefreshCloudStorage: () -> Unit = {},
+    onCloudFiles: () -> Unit = {},
 ) {
     var drafts by rememberSaveable(stateSaver = ProfileDraftSaver) { mutableStateOf(emptyMap<String, ProfileSelectionDraft>()) }
     val scope = "${state.activeScope}:${state.activeAccountId.orEmpty()}"
@@ -157,7 +158,7 @@ fun AccountScreen(
             if (state.signedIn) {
                 item {
                     CloudStorageSection(cloudStorage.forAccount(state.activeScope, state.activeAccountId,
-                        android.os.SystemClock.elapsedRealtime()), onRefreshCloudStorage)
+                        android.os.SystemClock.elapsedRealtime()), onRefreshCloudStorage, onCloudFiles)
                 }
                 item {
                     Text(stringResource(R.string.account_choose), style = MaterialTheme.typography.titleLarge)
