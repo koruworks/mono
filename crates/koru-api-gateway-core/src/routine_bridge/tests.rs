@@ -102,6 +102,175 @@ fn unpolled(polls: Arc<AtomicUsize>) -> Body {
 }
 
 #[tokio::test]
+async fn routine_http_response_permits_follow_unpolled_bodies_until_drop() {
+    let state = state();
+    let mut responses = Vec::new();
+    for used in 1..=HTTP_CAPACITY {
+        let response = send(
+            state.clone(),
+            request(
+                ROUTINE_PREPARATION_ROUTE,
+                Body::from(read().encode().unwrap()),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        responses.push(response);
+        assert_eq!(state.slots.available_permits(), HTTP_CAPACITY - used);
+    }
+    let polls = Arc::new(AtomicUsize::new(0));
+    let saturated = send(
+        state.clone(),
+        request(ROUTINE_PREPARATION_ROUTE, unpolled(polls.clone())),
+    )
+    .await;
+    assert_eq!(saturated.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+    drop(saturated);
+    assert_eq!(state.slots.available_permits(), 0);
+    drop(responses.pop().unwrap());
+    assert_eq!(state.slots.available_permits(), 1);
+    let replacement = send(
+        state.clone(),
+        request(
+            ROUTINE_PREPARATION_ROUTE,
+            Body::from(read().encode().unwrap()),
+        ),
+    )
+    .await;
+    assert_eq!(replacement.status(), StatusCode::OK);
+    assert_eq!(state.slots.available_permits(), 0);
+    drop(replacement);
+    drop(responses);
+    assert_eq!(state.slots.available_permits(), HTTP_CAPACITY);
+}
+
+#[tokio::test]
+async fn routine_http_response_permits_follow_yielded_chunks_and_their_last_clone() {
+    let state = state();
+    let envelope = read();
+    let response = send(
+        state.clone(),
+        request(
+            ROUTINE_PREPARATION_ROUTE,
+            Body::from(envelope.encode().unwrap()),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+    let chunk = stream.next().await.unwrap().unwrap();
+    RoutineBridgeEnvelope::<ReadPreparationReply>::decode(&chunk)
+        .unwrap()
+        .validate_reply_to(&envelope)
+        .unwrap();
+    let cloned = chunk.clone();
+    let sliced = chunk.slice(1..);
+    assert!(stream.next().await.is_none());
+    drop(stream);
+    drop(chunk);
+    assert_eq!(state.slots.available_permits(), HTTP_CAPACITY - 1);
+    let mut responses = Vec::new();
+    for _ in 1..HTTP_CAPACITY {
+        let response = send(
+            state.clone(),
+            request(
+                ROUTINE_PREPARATION_ROUTE,
+                Body::from(read().encode().unwrap()),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        responses.push(response);
+    }
+    assert_eq!(state.slots.available_permits(), 0);
+    assert_eq!(
+        send(
+            state.clone(),
+            request(ROUTINE_PREPARATION_ROUTE, Body::empty())
+        )
+        .await
+        .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    drop(responses);
+    assert_eq!(state.slots.available_permits(), HTTP_CAPACITY - 1);
+    drop(cloned);
+    assert_eq!(state.slots.available_permits(), HTTP_CAPACITY - 1);
+    drop(sliced);
+    assert_eq!(state.slots.available_permits(), HTTP_CAPACITY);
+}
+
+#[tokio::test]
+async fn routine_http_response_error_paths_release_before_error_body_consumption() {
+    for case in 0..5 {
+        let mut state = state();
+        let mut req = request(
+            ROUTINE_PREPARATION_ROUTE,
+            Body::from(read().encode().unwrap()),
+        );
+        let expected = match case {
+            0 => {
+                req.headers_mut()
+                    .insert(header::CONTENT_TYPE, "text/plain".parse().unwrap());
+                StatusCode::BAD_REQUEST
+            }
+            1 => {
+                *req.body_mut() = Body::from("{}");
+                StatusCode::BAD_REQUEST
+            }
+            2 => {
+                *req.body_mut() = Body::from_stream(futures_util::stream::once(async {
+                    Err::<Bytes, _>(std::io::Error::other("fixture body failure"))
+                }));
+                StatusCode::BAD_REQUEST
+            }
+            3 => {
+                req.headers_mut().insert(
+                    header::CONTENT_LENGTH,
+                    (ROUTINE_BRIDGE_BODY_LIMIT + 1).to_string().parse().unwrap(),
+                );
+                StatusCode::PAYLOAD_TOO_LARGE
+            }
+            _ => {
+                Arc::get_mut(&mut state).unwrap().test_budget = Duration::from_millis(10);
+                *req.body_mut() = Body::from_stream(futures_util::stream::pending::<
+                    Result<Bytes, std::io::Error>,
+                >());
+                StatusCode::GATEWAY_TIMEOUT
+            }
+        };
+        let response = send(state.clone(), req).await;
+        assert_eq!(response.status(), expected, "case {case}");
+        assert_eq!(
+            state.slots.available_permits(),
+            HTTP_CAPACITY,
+            "case {case}"
+        );
+        assert!(bytes(response).await.is_empty());
+        let envelope = read();
+        let response = send(
+            state.clone(),
+            request(
+                ROUTINE_PREPARATION_ROUTE,
+                Body::from(envelope.encode().unwrap()),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.slots.available_permits(), HTTP_CAPACITY - 1);
+        let body = bytes(response).await;
+        RoutineBridgeEnvelope::<ReadPreparationReply>::decode(&body)
+            .unwrap()
+            .validate_reply_to(&envelope)
+            .unwrap();
+        assert_eq!(state.slots.available_permits(), HTTP_CAPACITY - 1);
+        drop(body);
+        assert_eq!(state.slots.available_permits(), HTTP_CAPACITY);
+    }
+}
+
+#[tokio::test]
 async fn routine_http_all_four_routes_return_only_correlated_unavailable() {
     let state = state();
     async fn call<Q, R>(state: Arc<HttpState>, path: &str, envelope: RoutineBridgeEnvelope<Q>)
