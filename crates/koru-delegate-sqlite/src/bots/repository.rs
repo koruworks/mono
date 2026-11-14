@@ -69,14 +69,16 @@ fn decode_initial_send(row: &Row<'_>) -> Result<Option<BotInitialSend>, LedgerEr
 fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
     let payload: String = cell(row, "payload_json")?;
     let submission_version: u8 = cell(row, "submission_version")?;
-    if payload.len() > 4 * 1024 * 1024 || !matches!(submission_version, 1 | 2) {
+    if payload.len() > 4 * 1024 * 1024 {
+        return Err(corrupt("payload_json"));
+    }
+    if !matches!(submission_version, 1 | 2) {
         return Err(corrupt("submission_version"));
     }
     let submission: BotSubmission =
         serde_json::from_str(&payload).map_err(|_| corrupt("payload_json"))?;
     let p = &submission.provenance;
-    if payload.len() > 4 * 1024 * 1024
-        || !submission.valid_for_version(u32::from(submission_version))
+    if !submission.valid_for_version(u32::from(submission_version))
         || cell::<String>(row, "run_id")? != submission.request.run.to_storage()
         || cell::<String>(row, "user_scope")? != p.owner.user_scope.to_storage()
         || cell::<String>(row, "device_id")? != p.owner.device.to_storage()
