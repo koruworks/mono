@@ -200,7 +200,7 @@ fn routine_native_atomic_companion_lease_crash_replay_and_terminal_history() {
 
 #[test]
 fn routine_native_composite_subject_current_policy_and_attempt_defenses() {
-    for field in 0..10 {
+    for field in 0..11 {
         let (mut h, mut proof) = fixture();
         h.prepare();
         match field {
@@ -217,13 +217,21 @@ fn routine_native_composite_subject_current_policy_and_attempt_defenses() {
                     .execute("UPDATE bot_routine_links SET state='held'", [])
                     .unwrap();
             }
-            _ => {
+            9 => {
                 let newer = RoutinePolicyBarrier {
                     request: BotRequestId::mint().into(),
                     grant_revision: 2,
                     ..proof.routine.clone().unwrap()
                 };
                 h.db.install_routine_policy(&newer).unwrap();
+            }
+            _ => {
+                h.db.conn()
+                    .execute(
+                        "UPDATE run_intents SET state='pending',run_document_id=NULL",
+                        [],
+                    )
+                    .unwrap();
             }
         }
         assert!(lease(&mut h, &proof).is_err(), "field {field}");
@@ -728,6 +736,15 @@ fn routine_native_scoped_drain_pages_and_effective_fences_preserve_retained_trut
         h.db.install_routine_policy(&next).unwrap().state,
         BotPolicyBarrierState::Pending
     );
+    let original = h.request.clone();
+    h.request.key.operation_id = Uuid::new_v4();
+    h.prepare();
+    let pending_proof = FreshBotPolicyProof {
+        global: proof.global.clone(),
+        routine: Some(next.clone()),
+    };
+    assert_eq!(lease(&mut h, &pending_proof), Err(BotLedgerError::Fenced));
+    h.request = original;
     let pending =
         h.db.pending_routine_native_effects(p.owner, p.bot, p.schedule, None, 16)
             .unwrap();

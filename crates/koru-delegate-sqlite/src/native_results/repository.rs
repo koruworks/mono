@@ -30,6 +30,14 @@ pub(super) fn current_attempt(
     admission: &BotAdmissionRecord,
 ) -> Result<crate::AttemptRow, BotLedgerError> {
     routine::linked(conn, admission)?;
+    if admission.submission_version == 2 {
+        // Linked can precede materialization. Native work additionally needs
+        // the canonical Run-document binding retained by the satisfied intent.
+        let materialized:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1 AND state='satisfied' AND run_document_id IS NOT NULL)",[key.run.to_storage()],|r|r.get(0)).map_err(sql)?;
+        if !materialized {
+            return Err(BotLedgerError::Fenced);
+        }
+    }
     let latest = attempts::latest(conn, key.run)?.ok_or(BotLedgerError::Fenced)?;
     let executing: bool = conn
         .query_row(
