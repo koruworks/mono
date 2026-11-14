@@ -606,14 +606,24 @@ fn routine_model_malformed_original_run_receipt_never_reaches_generation_or_stor
 #[test]
 fn routine_model_linked_attempt_is_checked_and_terminal_attempt_refuses_observation() {
     let f = Fixture::shared();
-    let (worker, returned) = f.start();
+    let subject = f.retained_subject();
     assert_eq!(
-        page(call(&worker.client(), &f.subject, list()).unwrap())
-            .items
-            .len(),
-        1
+        subject.receipt.intent.submission.provenance,
+        f.subject.provenance
     );
-    finish(worker, returned);
+    let attempt =
+        InferenceAttemptId::parse(&f.subject.provenance.ai_attempt_id.unwrap().to_string())
+            .unwrap();
+    let (worker, returned) = f.start();
+    // A pending turn seeded before startup is deliberately interrupted by the
+    // real restart owner. It cannot remain a live model caller after restart.
+    assert!(call(&worker.client(), &f.subject, list()).is_err());
+    let repo = finish(worker, returned);
+    assert!(repo.attempt(attempt).unwrap().unwrap().status.is_terminal());
+    assert_eq!(
+        repo.bot_replay_state(attempt).unwrap().stop_reason,
+        Some(koru_ai_core::bots::replay::BotReplayStop::AiRestart)
+    );
     let f = Fixture::shared();
     f.cancel_attempt();
     let (worker, returned) = f.start();
@@ -625,7 +635,7 @@ fn routine_model_linked_attempt_is_checked_and_terminal_attempt_refuses_observat
 #[test]
 fn routine_model_missing_shared_association_refuses_even_matching_delegate_subject() {
     let f = Fixture::shared();
-    f.damage("DELETE FROM bot_chat_runs");
+    f.damage("PRAGMA foreign_keys=OFF; DELETE FROM bot_chat_runs; PRAGMA foreign_keys=ON;");
     let (worker, returned) = f.start();
     assert!(call(&worker.client(), &f.subject, list()).is_err());
     assert_eq!(f.delegate.resolves.load(Ordering::Acquire), 0);

@@ -367,6 +367,15 @@ impl Fixture {
             .cancel_bot_chat(attempt, Timestamp::from_millis(20))
             .unwrap();
     }
+    pub(super) fn retained_subject(&self) -> RoutineToolSubject {
+        self.repo
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .routine_tool_subject(self.store.owner, self.store.bot.id, self.subject.run)
+            .unwrap()
+    }
     pub(super) fn start(&self) -> (WorkerHandle, Receiver<Repository>) {
         let (send, recv) = sync_channel(1);
         let mut config = WorkerConfig::new(
