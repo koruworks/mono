@@ -202,8 +202,8 @@ pub trait BotAuthority: Send + Sync {
         Err(BotError::Unavailable.into())
     }
 
-    /// Private off-writer creation/reconciliation after the delegate has
-    /// acknowledged the exact deny-only route. Never launch authority.
+    /// Current complete Schedule definition and human/Profile proof, performed
+    /// off-writer against the canonical physical candidate and retained origin.
     fn verify_routine_definition(
         &self,
         _owner: BotOwner,
@@ -216,6 +216,8 @@ pub trait BotAuthority: Send + Sync {
         Err(BotError::Unavailable)
     }
 
+    /// Private off-writer creation/reconciliation after the delegate has
+    /// acknowledged the exact deny-only route. Never launch authority.
     fn prepare_routine_document(
         &self,
         _owner: BotOwner,

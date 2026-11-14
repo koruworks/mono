@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Private draft/link transactions. No Store, IPC, provider or ordinary Submit.
 use super::*;
+use koru_ai_core::bots::BotRoutineDraftReceipt as DraftReceipt;
 use koru_delegate_core::{
     RoutineClaimObservation, RoutineClaimRecord, RoutineDefinitionIdentity, RoutineExecutionIds,
     RoutineLinkState, RoutinePrepared, RoutineSlot, RoutineTerminalReason,
 };
-use serde::{Deserialize, Serialize};
 mod finalize;
 mod recovery;
 mod rows;
@@ -16,39 +16,6 @@ fn owner(slot: &RoutineSlot) -> BotOwner {
     BotOwner {
         user_scope: slot.owner.user_scope,
         device: slot.owner.device,
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DraftReceipt {
-    version: u8,
-    slot: RoutineSlot,
-    ids: RoutineExecutionIds,
-    semantic_hash: RoutineDigest32,
-    preparation_hash: RoutineDigest32,
-    closure: Option<BotRoutineStoredClosure>,
-}
-impl DraftReceipt {
-    fn for_row(row: &BotRoutineStoredPreparation) -> Self {
-        Self {
-            version: 1,
-            slot: row.prepared.slot,
-            ids: row.prepared.ids,
-            semantic_hash: row.prepared.semantic_hash,
-            preparation_hash: row.prepared.preparation_hash,
-            closure: match row.stage {
-                BotRoutineStoredStage::Closed(reason) => Some(reason),
-                _ => None,
-            },
-        }
-    }
-    fn matches(&self, row: &BotRoutineStoredPreparation) -> bool {
-        self.version == 1
-            && self.slot == row.prepared.slot
-            && self.ids == row.prepared.ids
-            && self.semantic_hash == row.prepared.semantic_hash
-            && self.preparation_hash == row.prepared.preparation_hash
     }
 }
 

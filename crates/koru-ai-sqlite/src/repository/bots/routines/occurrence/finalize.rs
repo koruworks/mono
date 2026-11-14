@@ -138,7 +138,7 @@ impl Repository {
             created_at: stamp,
             updated_at: stamp,
         };
-        insert_chat(&tx, &chat).map_err(bad)?;
+        insert_chat(&tx, &chat).map_err(|_| BotError::Storage)?;
         insert_additional_chat(&tx, chat.id, slot.bot, stamp)?;
         let intent = BotSubmissionIntent {
             version: 2,
@@ -158,7 +158,7 @@ impl Repository {
         super::super::super::super::bot_replay::prepare_routine_association_on(
             &tx, &turn, p, stamp,
         )
-        .map_err(bad)?;
+        .map_err(|_| BotError::Storage)?;
         library::insert_library_capture_tx(&tx, &row.capture.library, stamp.millis())?;
         row.stage = BotRoutineStoredStage::Linked;
         row.updated_at_ms = stamp.millis();
@@ -186,7 +186,7 @@ fn settle_linked(
         reason,
         Timestamp::from_millis(now),
     )
-    .map_err(bad)?;
+    .map_err(|_| BotError::Storage)?;
     // Only an unacknowledged prepared receipt changes here. Existing accepted
     // or terminal history is immutable; delegate truth supplies terminal reason.
     let outcome = BotExecutionOutcome::Rejected {

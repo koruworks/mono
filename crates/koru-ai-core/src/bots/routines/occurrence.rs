@@ -317,6 +317,40 @@ pub enum BotRoutineStoredStage {
     Closed(BotRoutineStoredClosure),
 }
 
+/// Strict private journal representation; never a bridge response or authority.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotRoutineDraftReceipt {
+    version: u8,
+    slot: RoutineSlot,
+    ids: RoutineExecutionIds,
+    semantic_hash: RoutineDigest32,
+    preparation_hash: RoutineDigest32,
+    pub closure: Option<BotRoutineStoredClosure>,
+}
+impl BotRoutineDraftReceipt {
+    pub fn for_row(row: &BotRoutineStoredPreparation) -> Self {
+        Self {
+            version: 1,
+            slot: row.prepared.slot,
+            ids: row.prepared.ids,
+            semantic_hash: row.prepared.semantic_hash,
+            preparation_hash: row.prepared.preparation_hash,
+            closure: match row.stage {
+                BotRoutineStoredStage::Closed(reason) => Some(reason),
+                _ => None,
+            },
+        }
+    }
+    pub fn matches(&self, row: &BotRoutineStoredPreparation) -> bool {
+        self.version == 1
+            && self.slot == row.prepared.slot
+            && self.ids == row.prepared.ids
+            && self.semantic_hash == row.prepared.semantic_hash
+            && self.preparation_hash == row.prepared.preparation_hash
+    }
+}
+
 /// A row has no claim time. Assemble a full acknowledgement only from a fresh
 /// authenticated delegate observation, never from either row timestamp.
 #[derive(Clone, PartialEq, Eq)]
