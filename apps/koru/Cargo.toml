@@ -61,6 +61,8 @@ koru-chats-ui = { path = "../../crates/koru-chats-ui" }
 # copy of everything it already has.
 koru-ipc = { path = "../../crates/koru-ipc" }
 koru-agent-wire = { path = "../../crates/koru-agent-wire" }
+# Decode the approved account read DTO carried by the bounded Agent result.
+koru-account-wire = { path = "../../crates/koru-account-wire" }
 koru-device = { path = "../../crates/koru-device" }
 koru-oauth-credentials = { path = "../../crates/koru-oauth-credentials" }
 koru-link = { path = "../../crates/koru-link" }

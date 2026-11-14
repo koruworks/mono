@@ -164,6 +164,7 @@ pub(crate) enum Control {
     DifferentSignIn,
     DifferentOffline,
     /// Subscribe, *Manage subscription*, *Try again* or sign in.
+    CloudStorageRetry,
     CloudPrimary,
     CloudLearnMore,
     /// A Profile's Cloud sync switch on *Which profiles sync*.
@@ -847,6 +848,7 @@ impl ManageView {
             | Control::DifferentCreate
             | Control::DifferentSignIn
             | Control::DifferentOffline
+            | Control::CloudStorageRetry
             | Control::CloudPrimary
             | Control::CloudLearnMore
             | Control::ProfileSync(_)

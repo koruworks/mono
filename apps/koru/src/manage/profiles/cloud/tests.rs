@@ -145,6 +145,10 @@ fn email_session_updates_settle_before_cloud_subscription_and_sync_reads() {
     assert_eq!(c.cloud_status(), Status::Manage);
     answer_sync(&mut c, vec![row(&work, true, 1, 1)]);
     assert!(c.cloud_sync_on(work.id));
+    assert!(matches!(
+        c.take_request(),
+        Some(AccountCommand::InspectCloudPlan { .. })
+    ));
     assert!(c.take_request().is_none());
 }
 
@@ -245,6 +249,11 @@ fn an_inactive_purchase_keeps_billing_management_but_not_sync_access() {
     assert!(matches!(
         c.cloud_sync_availability(&work),
         SyncAvailability::Disabled(TextKey::CloudAccessInactive)
+    ));
+    // Reading retained storage does not require sync or purchase access.
+    assert!(matches!(
+        c.take_request(),
+        Some(AccountCommand::InspectCloudPlan { .. })
     ));
     assert!(c.take_request().is_none());
 }

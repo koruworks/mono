@@ -4786,6 +4786,7 @@ dependencies = [
  "chrono",
  "emojis",
  "image",
+ "koru-account-wire",
  "koru-agent-wire",
  "koru-agents-ui",
  "koru-ai-core",
