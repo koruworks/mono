@@ -18,6 +18,7 @@ mod creation;
 pub use creation::BotCreationScan;
 pub(crate) mod library;
 mod reads;
+mod routines;
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage
