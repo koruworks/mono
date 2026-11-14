@@ -55,6 +55,13 @@ fn strict_references_are_canonical_distinct_include_trash_and_bind_exact_content
     assert_eq!(result.proof().unit(), template(1).unit);
     assert_eq!(result.schema_version(), 5);
     assert_eq!(result.algorithm(), "files-plain-v0");
+    let debug = format!("{result:?}");
+    assert!(debug.contains("reference_count: 2"));
+    for hash in result.hashes() {
+        assert!(!debug.contains(hash));
+    }
+    assert!(!debug.contains(&format!("{:?}", result.proof())));
+    assert!(!debug.contains(&identity::uuid_text(result.proof().cloud_unit_id())));
     assert_eq!(
         restored
             .strict_blob_references_with_budget(ReferenceBudget {
@@ -192,4 +199,65 @@ fn exact_head_mismatch_and_missing_ancestor_never_yield_inspectable_content() {
         )
         .is_ok()
     );
+}
+
+#[test]
+fn manifest_scope_is_bound_by_restore_and_listing_kind_remains_an_open_string() {
+    let raw = cp(0, 1, 0, "base", "base_state");
+    let bound = bind_fixture(&raw);
+    let content = restore_chain(
+        bound,
+        CheckpointOrigin::FirstCloudCheckpoint,
+        &[],
+        head(bound),
+        limits(),
+    )
+    .unwrap();
+    let doc = LoroDoc::new();
+    doc.import(&content.snapshot().unwrap()).unwrap();
+    let tree = doc.get_tree("documents");
+    let id = tree.create(TreeParentId::Root).unwrap();
+    let entry = tree.get_meta(id).unwrap();
+    entry
+        .insert("doc_id", uuid::Uuid::new_v4().to_string())
+        .unwrap();
+    entry.insert("title", "Listing metadata").unwrap();
+    entry.insert("kind", "future-listing-label").unwrap();
+    let check = |doc: &LoroDoc| {
+        let raw = snapshot_object(0, doc);
+        let bound = bind_fixture(&raw);
+        restore_chain(
+            bound,
+            CheckpointOrigin::FirstCloudCheckpoint,
+            &[],
+            head(bound),
+            limits(),
+        )
+    };
+    assert!(
+        check(&doc)
+            .unwrap()
+            .strict_blob_references()
+            .unwrap()
+            .hashes()
+            .is_empty()
+    );
+    entry.insert("kind", 42).unwrap();
+    assert_eq!(
+        check(&doc).unwrap().strict_blob_references().unwrap_err(),
+        StrictReferenceError::Shape
+    );
+    entry.insert("kind", "page").unwrap();
+    entry
+        .insert("blob", format!("b3:{}", "ab".repeat(32)))
+        .unwrap();
+    assert_eq!(
+        check(&doc).unwrap().strict_blob_references().unwrap_err(),
+        StrictReferenceError::Unsupported
+    );
+    entry.delete("blob").unwrap();
+    doc.get_map("meta")
+        .insert("workspace_id", uuid::Uuid::new_v4().to_string())
+        .unwrap();
+    assert!(matches!(check(&doc), Err(Error::Scope)));
 }

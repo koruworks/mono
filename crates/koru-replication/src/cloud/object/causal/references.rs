@@ -8,11 +8,20 @@ use std::collections::BTreeSet;
 
 /// A complete typed inspection of the same content held by `RestoredContent`.
 /// Construction is private; a caller's hash list cannot become this proof.
-#[derive(Debug)]
 pub struct StrictBlobReferences {
     hashes: BTreeSet<String>,
     schema: u32,
     proof: ContentProof,
+}
+impl std::fmt::Debug for StrictBlobReferences {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Reference addresses and scoped proof identifiers are content, not
+        // operational diagnostics. Callers must deliberately access them.
+        f.debug_struct("StrictBlobReferences")
+            .field("schema_version", &self.schema)
+            .field("reference_count", &self.hashes.len())
+            .finish_non_exhaustive()
+    }
 }
 impl StrictBlobReferences {
     pub fn hashes(&self) -> &BTreeSet<String> {
@@ -306,6 +315,9 @@ fn manifest(doc: &LoroDoc, budget: &mut ReferenceBudget) -> Result<u32, StrictRe
                 return Err(StrictReferenceError::DuplicateIdentity);
             }
             for key in ["title", "kind"] {
+                // DocumentEntry.kind is an open listing label (including
+                // "page"), not koru_core::node::Kind. The closed structural
+                // fields establish that this unit cannot carry blob slots.
                 if !matches!(
                     meta.get(key),
                     Some(ValueOrContainer::Value(LoroValue::String(_)))
