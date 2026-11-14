@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use crate::BotPolicyBarrierKey;
+mod digest;
 
 fn proof(s: &BotSubmission) -> FreshBotPolicyProof {
     let p = &s.provenance;

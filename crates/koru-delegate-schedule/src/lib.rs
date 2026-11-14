@@ -22,6 +22,8 @@ use koru_delegate_core::{
 
 mod routine;
 pub use routine::RoutineAssociation;
+mod routine_digest;
+pub use routine_digest::routine_definition_digest;
 /// Strict adapters shared only by private Routine seed/capture and bridge DTOs.
 /// Ordinary Schedule serde retains its existing compatibility behavior.
 #[doc(hidden)]

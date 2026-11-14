@@ -37,7 +37,6 @@ koru-session-protocol = { path = "../koru-session-protocol" }
 koru-store-core = { path = "../koru-store-core" }
 schemars = { workspace = true, optional = true }
 serde = { workspace = true }
-uuid = { workspace = true }
-
-[dev-dependencies]
 serde_json = { workspace = true }
+blake3 = { workspace = true }
+uuid = { workspace = true }
