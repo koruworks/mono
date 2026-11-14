@@ -166,6 +166,43 @@ impl SharedLedger {
     }
 }
 
+impl koru_delegate_runtime::RoutineLedger for SharedLedger {
+    fn claim_bot_routine(
+        &mut self,
+        authority: ScheduleClaimAuthority,
+        fresh: &koru_delegate_core::FreshBotPolicyProof,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        // Acquire the writer before live authority is consumed, not afterward.
+        koru_delegate_runtime::RoutineLedger::claim_bot_routine(
+            &mut *self.0.lock().unwrap(),
+            authority,
+            fresh,
+        )
+    }
+    fn read_routine_claim(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<koru_delegate_core::RoutineClaimObservation, koru_delegate_sqlite::BotLedgerError>
+    {
+        self.0.lock().unwrap().read_routine_claim(slot)
+    }
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
+    ) -> Result<koru_delegate_core::RoutineClaimRecord, koru_delegate_sqlite::BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .acknowledge_routine_link(acknowledgement)
+    }
+}
+
 impl RunStore for SharedLedger {
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         Some(self)

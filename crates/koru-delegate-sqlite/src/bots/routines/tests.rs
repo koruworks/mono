@@ -293,6 +293,9 @@ fn routine_route_decoder_bounds_malformed_cells_without_erasing_denial() {
 fn routine_linked_fixture_never_enables_dispatch_but_replay_and_settlement_survive() {
     let mut db = memory();
     let mut s = crate::bots::tests::submission(1);
+    // The older ordinary fixture reused its Run UUID for request correlation;
+    // a complete Routine winner requires distinct preallocated execution IDs.
+    s.provenance.submission = koru_delegate_core::BotRequestId::mint();
     let r = route(&s);
     let mut fresh = s.clone();
     routine(&mut fresh, &r);

@@ -6,6 +6,18 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn register_routine_route(
+        &mut self,
+        identity: &RoutineRouteIdentity,
+    ) -> Result<RoutineRouteIdentity, BotLedgerError> {
+        self.0.lock().unwrap().register_routine_route(identity)
+    }
+    fn stop_unstarted_routine(
+        &mut self,
+        key: &BotRunKey,
+    ) -> Result<Option<RoutineClaimRecord>, BotLedgerError> {
+        self.0.lock().unwrap().stop_unstarted_routine(key)
+    }
     fn bot_boot_inventory(
         &self,
         owner: BotOwner,

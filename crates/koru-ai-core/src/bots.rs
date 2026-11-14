@@ -202,6 +202,18 @@ pub trait BotAuthority: Send + Sync {
         Err(BotError::Unavailable.into())
     }
 
+    /// Private off-writer creation/reconciliation after the delegate has
+    /// acknowledged the exact deny-only route. Never launch authority.
+    fn prepare_routine_document(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotRoutineCreationIdentity,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<PreparedRoutineDocument, BotError> {
+        Err(BotError::Unavailable)
+    }
+
     fn capture_memory(
         &self,
         _owner: BotOwner,

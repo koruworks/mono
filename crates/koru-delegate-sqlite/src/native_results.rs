@@ -11,6 +11,8 @@ mod drain;
 mod memory;
 mod repository;
 mod rows;
+pub(crate) use repository::policy_digest;
+pub(crate) use rows::current_policy;
 #[cfg(test)]
 mod tests;
 

@@ -1177,6 +1177,16 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
+    /// Read-only observation of production recovery for spawned-worker tests.
+    #[cfg(test)]
+    ReadRoutineCreationForFixture {
+        owner: koru_ai_core::bots::BotOwner,
+        bot: koru_ai_core::bots::BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        reply: SyncSender<
+            Result<Option<koru_ai_core::bots::BotRoutineCreation>, koru_ai_core::bots::BotError>,
+        >,
+    },
     /// Internal entry seam only. Production and normal client dispatch retain
     /// the shared gate; all subsequent read authority checks are unchanged.
     #[cfg(test)]
@@ -1650,6 +1660,7 @@ struct WorkerState {
     bot_creations: bots::CreationDriver,
     creation_lane: bots::CreationLane,
     memory_recovery: bots::memory::recovery::MemoryRecovery,
+    routine_recovery: bots::routine::RoutineRecovery,
     memory_reads: bots::memory::read::MemoryReads,
     memory_writes: bots::memory::write::MemoryWrites,
     /// Refused Bot tasks owed their automatic re-send as files (O30).
@@ -1931,6 +1942,7 @@ fn run_worker(
         bot_creations,
         creation_lane: Default::default(),
         memory_recovery: Default::default(),
+        routine_recovery: Default::default(),
         memory_reads: Default::default(),
         memory_writes: Default::default(),
         bot_resends: Default::default(),
@@ -2030,6 +2042,15 @@ fn run_worker(
                 );
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
+            #[cfg(test)]
+            Ok(Envelope::ReadRoutineCreationForFixture {
+                owner,
+                bot,
+                schedule,
+                reply,
+            }) => {
+                let _ = reply.send(state.repository.bot_routine_creation(owner, bot, schedule));
+            }
             #[cfg(test)]
             Ok(Envelope::RetireMemoryReadKeyForFixture { reply }) => {
                 state.memory_reads.invalidate();

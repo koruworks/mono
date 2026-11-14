@@ -38,6 +38,18 @@ pub(super) fn owner_device(owner: BotOwner, device: DeviceId) -> Result<(), RunE
     Ok(())
 }
 impl Orchestrator {
+    pub fn register_routine_route(
+        &mut self,
+        identity: &koru_delegate_core::RoutineRouteIdentity,
+        device: DeviceId,
+    ) -> Result<koru_delegate_core::RoutineRouteIdentity, RunError> {
+        owner_device(identity.owner, device)?;
+        if !identity.valid() {
+            return Err(refused("bot_invalid"));
+        }
+        Ok(self.bot_ledger()?.register_routine_route(identity)?)
+    }
+
     pub(crate) fn bot_ledger(&mut self) -> Result<&mut dyn BotLedger, RunError> {
         self.ports
             .store
@@ -532,7 +544,11 @@ impl Orchestrator {
                 );
             }
             None if fence.is_some() => return Err(refused("bot_fenced")),
-            None => {}
+            None => {
+                if self.bot_ledger()?.stop_unstarted_routine(key)?.is_some() {
+                    return Ok(());
+                }
+            }
         }
         // cancel specializes Bot retirement below; it never needs a human lease.
         self.cancel(key.run)?;

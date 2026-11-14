@@ -5,6 +5,7 @@
 use crate::LedgerError;
 mod repository;
 pub(crate) mod routines;
+pub use routines::RoutinePolicyRecord;
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::{
@@ -163,6 +164,16 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    /// Retain a deny-only route. Exact retries return the immutable original;
+    /// changed payloads conflict. No execution authority is granted.
+    fn register_routine_route(
+        &mut self,
+        identity: &koru_delegate_core::RoutineRouteIdentity,
+    ) -> Result<koru_delegate_core::RoutineRouteIdentity, BotLedgerError>;
+    fn stop_unstarted_routine(
+        &mut self,
+        key: &BotRunKey,
+    ) -> Result<Option<koru_delegate_core::RoutineClaimRecord>, BotLedgerError>;
     /// At most sixteen unsettled admission identities, never payloads. The
     /// high-water mark bounds a scan, not snapshot membership: purging settled
     /// rows can allow sequence reuse. New submissions need their own replay.

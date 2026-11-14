@@ -7,8 +7,10 @@ use crate::{BotId, BotRequestId, HandoffId, RunId, RunOrigin, ScheduleId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod claim;
 mod digest;
 mod evidence;
+pub use claim::*;
 mod policy;
 pub use digest::{RoutineDigestError, routine_digest_json};
 pub use evidence::*;

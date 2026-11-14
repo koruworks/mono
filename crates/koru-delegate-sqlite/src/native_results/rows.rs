@@ -79,7 +79,7 @@ pub(super) fn read_policy(
 ) -> Result<Option<NativePolicyRecord>, BotLedgerError> {
     conn.query_row("SELECT * FROM bot_policy_barriers WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND request_id=?4", params![key.owner.user_scope.to_storage(),key.owner.device.to_storage(),key.bot.to_storage(),key.request.to_storage()], |row| Ok(policy(row))).optional().map_err(sql)?.transpose()
 }
-pub(super) fn current_policy(
+pub(crate) fn current_policy(
     conn: &Connection,
     owner: BotOwner,
     bot: BotId,

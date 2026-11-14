@@ -105,6 +105,12 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
+            BotCommand::RegisterRoutineRoute { identity } => BotReply::RoutineRoute {
+                identity: self
+                    .orchestrator
+                    .register_routine_route(&identity, device)
+                    .map_err(bot_failure)?,
+            },
             BotCommand::Hello { owner, scan } => BotReply::Hello {
                 hello: self
                     .orchestrator

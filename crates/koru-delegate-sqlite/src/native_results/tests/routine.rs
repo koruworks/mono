@@ -25,6 +25,41 @@ fn raw_lease(h: &Harness) -> rusqlite::Result<usize> {
 }
 
 #[test]
+fn routine_policy_pending_uses_actual_companions_until_native_drain() {
+    let mut h = Harness::new();
+    h.prepare();
+    let route = converted(&mut h, true);
+    policy(&h, &route);
+    companion(&h, &route).unwrap();
+    raw_lease(&h).unwrap();
+    let next = RoutinePolicyBarrier {
+        owner: route.owner,
+        bot: route.bot,
+        schedule: route.schedule,
+        request: BotRequestId::mint().into(),
+        grant_revision: 2,
+        policy: h.policy.policy.clone(),
+        effects_allowed: false,
+    };
+    let pending = h.db.install_routine_policy(&next).unwrap();
+    assert_eq!(pending.state, BotPolicyBarrierState::Pending);
+    assert_eq!(
+        h.db.settle_routine_policy(next.owner, next.bot, next.schedule, next.request)
+            .unwrap(),
+        pending
+    );
+    h.confirm(NativeResultObservation::NotApplied {
+        code: NativeResultRefusal::AccessDenied,
+    });
+    let effective =
+        h.db.settle_routine_policy(next.owner, next.bot, next.schedule, next.request)
+            .unwrap();
+    assert_eq!(effective.state, BotPolicyBarrierState::Effective);
+    assert_eq!(effective.payload_digest, pending.payload_digest);
+    assert_eq!(h.db.install_routine_policy(&next).unwrap(), effective);
+}
+
+#[test]
 fn routine_sql_dispatch_gates_require_link_and_disallow_initial_execution() {
     let mut h = Harness::new();
     h.prepare();
