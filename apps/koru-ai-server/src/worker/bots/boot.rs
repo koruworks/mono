@@ -361,6 +361,7 @@ impl WorkerState {
                     self.bot_boot.observed = None;
                     self.memory_recovery.invalidate_owner();
                     self.routine_recovery.invalidate_owner();
+                    self.routine_listings.invalidate();
                     self.memory_reads.invalidate();
                     self.memory_writes.invalidate();
                     self.bot_boot.page.clear();
@@ -402,6 +403,7 @@ impl WorkerState {
                 }
                 self.bot_boot.observed = Some(observed);
                 if changed {
+                    self.routine_listings.invalidate();
                     self.memory_reads.invalidate();
                     self.memory_writes.invalidate();
                     self.memory_recovery.observe(BotOwner {

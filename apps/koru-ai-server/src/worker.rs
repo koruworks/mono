@@ -549,6 +549,22 @@ impl AiServerPort for AiWorkerClient {
         request: koru_ai_wire::BotCommand,
     ) -> ApiResult<koru_ai_wire::BotResponse> {
         let (reply, response) = sync_channel(1);
+        if matches!(&request, koru_ai_wire::BotCommand::ReadRoutines { .. }) {
+            let cancellation = Cancellation::default();
+            let _wait = bots::routine::listing::CancelOnDrop(cancellation.clone());
+            self.sender
+                .try_send(Envelope::RoutineListing {
+                    command: WorkerCommand::Bots {
+                        context: context.into(),
+                        request,
+                        reply,
+                    },
+                    cancellation,
+                    deadline: Instant::now() + RESPONSE_TIMEOUT,
+                })
+                .map_err(queue_failure)?;
+            return receive_api(response);
+        }
         self.send(WorkerCommand::Bots {
             context: context.into(),
             request,
@@ -1210,6 +1226,12 @@ enum Envelope {
     RetireMemoryReadKeyForFixture {
         reply: SyncSender<()>,
     },
+    RoutineListing {
+        command: WorkerCommand,
+        cancellation: Cancellation,
+        deadline: Instant,
+    },
+    RoutineListingCompleted(bots::routine::listing::ListingResult),
     RunMemoryRead {
         request: bots::memory::RunMemoryReadRequest,
         reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
@@ -1673,6 +1695,7 @@ struct WorkerState {
     creation_lane: bots::CreationLane,
     memory_recovery: bots::memory::recovery::MemoryRecovery,
     routine_recovery: bots::routine::RoutineRecovery,
+    routine_listings: bots::routine::listing::Listings,
     memory_reads: bots::memory::read::MemoryReads,
     memory_writes: bots::memory::write::MemoryWrites,
     /// Refused Bot tasks owed their automatic re-send as files (O30).
@@ -1956,6 +1979,7 @@ fn run_worker(
         creation_lane: Default::default(),
         memory_recovery: Default::default(),
         routine_recovery: Default::default(),
+        routine_listings: Default::default(),
         occurrences: bots::occurrence::OccurrenceDriver::new(routine_calls),
         memory_reads: Default::default(),
         memory_writes: Default::default(),
@@ -2082,6 +2106,12 @@ fn run_worker(
                 reply,
                 deadline,
             }) => state.request_run_memory_read(request, reply, deadline),
+            Ok(Envelope::RoutineListing {
+                command,
+                cancellation,
+                deadline,
+            }) => state.start_routine_listing(command, cancellation, deadline),
+            Ok(Envelope::RoutineListingCompleted(result)) => state.complete_routine_listing(result),
             Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
             Ok(Envelope::RunMemoryWrite {
                 request,
@@ -2165,6 +2195,7 @@ fn run_worker(
         }
     }
     state.cancel_active_for_shutdown();
+    state.routine_listings.invalidate();
     state.occurrences.cancel_all();
     if let Some(admin) = &mut state.provider_admin {
         admin.stop();
@@ -2271,6 +2302,20 @@ fn grant_targets_in_profile(
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
+        if matches!(
+            &command,
+            WorkerCommand::Bots {
+                request: koru_ai_wire::BotCommand::ReadRoutines { .. },
+                ..
+            }
+        ) {
+            self.start_routine_listing(
+                command,
+                Cancellation::default(),
+                Instant::now() + RESPONSE_TIMEOUT,
+            );
+            return;
+        }
         let Some(command) = self.prepare_bot_command(command) else {
             return;
         };
@@ -5891,6 +5936,7 @@ enum ProviderAdminJob {
     RoutineMutation(bots::occurrence::OccurrenceJob),
     RoutineRead(bots::occurrence::OccurrenceJob),
     BotMemoryRead(bots::memory::read::MemoryReadJob),
+    BotRoutineListing(bots::routine::listing::ListingJob),
     BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
     BotChatRecovery(bots::chat::StepJob),
@@ -5991,6 +6037,7 @@ impl ProviderAdminJob {
     fn preparation(&self) -> bool {
         match self {
             Self::BotPrepare(_)
+            | Self::BotRoutineListing(_)
             | Self::BotMemoryRead(_)
             | Self::BotMemoryWrite(_)
             | Self::BotCreationPrepare(_)
@@ -6080,6 +6127,7 @@ impl ProviderAdminPool {
                             unreachable!("preparation lane dispatch")
                         }
                         ProviderAdminJob::BotPrepare(_)
+                        | ProviderAdminJob::BotRoutineListing(_)
                         | ProviderAdminJob::BotMemoryRead(_)
                         | ProviderAdminJob::BotMemoryWrite(_)
                         | ProviderAdminJob::BotCreationPrepare(_)
@@ -6675,6 +6723,7 @@ fn run_preparation(
     shutdown: &AtomicBool,
 ) {
     let envelope = match job {
+        ProviderAdminJob::BotRoutineListing(job) => Envelope::RoutineListingCompleted(job.run()),
         ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
         ProviderAdminJob::BotMemoryWrite(job) => Envelope::MemoryWriteCompleted(job.run()),
         ProviderAdminJob::BotPrepare(job) => {

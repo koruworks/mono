@@ -195,18 +195,37 @@ pub enum BotExecutionOutcome {
 impl BotExecutionOutcome {
     pub fn validate(&self, intent: &BotSubmissionIntent) -> Result<(), BotError> {
         let p = &intent.submission.provenance;
+        self.validate_identity(
+            p.owner,
+            p.bot,
+            p.submission,
+            intent.submission.request.run,
+            p.config_revision,
+        )
+    }
+
+    /// Normalized identity validation only. This does not validate or authorize
+    /// a captured submission; full readers still validate their entire intent.
+    pub fn validate_identity(
+        &self,
+        owner: koru_delegate_core::BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+        run: RunId,
+        config_revision: u64,
+    ) -> Result<(), BotError> {
         match self {
             Self::Accepted {
                 version: 1,
                 admission,
-            } if admission.run == intent.submission.request.run
-                && admission.key.owner == p.owner
-                && admission.key.bot == p.bot
-                && admission.key.request == p.submission
+            } if admission.run == run
+                && admission.key.owner == owner
+                && admission.key.bot == bot
+                && admission.key.request == request
                 && admission.queue_sequence > 0
                 && admission.fence.as_ref().is_none_or(|f| {
-                    f.owner == p.owner
-                        && f.bot == p.bot
+                    f.owner == owner
+                        && f.bot == bot
                         && f.run == admission.run
                         && f.generation.get() > 0
                 }) =>
@@ -220,9 +239,9 @@ impl BotExecutionOutcome {
                 barrier,
                 ..
             } if *round > 0
-                && barrier.owner == p.owner
-                && barrier.bot == p.bot
-                && barrier.epoch > p.config_revision
+                && barrier.owner == owner
+                && barrier.bot == bot
+                && barrier.epoch > config_revision
                 && barrier.epoch <= i64::MAX as u64 =>
             {
                 Ok(())

@@ -759,6 +759,7 @@ pub(super) fn bot_targets(
             | BotCommand::RetryMemory { bot_id, .. }
             | BotCommand::AbandonMemory { bot_id, .. }
             | BotCommand::ListMemory { bot_id, .. }
+            | BotCommand::ReadRoutines { bot_id, .. }
             | BotCommand::ReadMemoryFact { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
