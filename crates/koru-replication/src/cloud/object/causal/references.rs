@@ -153,7 +153,11 @@ impl RestoredContent {
     }
 }
 
-fn schema(doc: &LoroDoc, maximum: i64, legacy: bool) -> Result<u32, StrictReferenceError> {
+pub(super) fn schema(
+    doc: &LoroDoc,
+    maximum: i64,
+    legacy: bool,
+) -> Result<u32, StrictReferenceError> {
     let version = match doc.get_map("meta").get("schema_version") {
         Some(ValueOrContainer::Value(LoroValue::I64(v))) if (1..=maximum).contains(&v) => v,
         None if legacy => 1,
@@ -164,7 +168,7 @@ fn schema(doc: &LoroDoc, maximum: i64, legacy: bool) -> Result<u32, StrictRefere
 
 /// Bound shallow traversal before the existing typed Profile validator builds
 /// a deep value. This is not a bound on decoding or Loro's resident memory.
-fn structural_budget(
+pub(super) fn structural_budget(
     doc: &LoroDoc,
     budget: &mut ReferenceBudget,
 ) -> Result<(), StrictReferenceError> {
@@ -243,7 +247,10 @@ fn structural_budget(
     Ok(())
 }
 
-fn manifest(doc: &LoroDoc, budget: &mut ReferenceBudget) -> Result<u32, StrictReferenceError> {
+pub(super) fn manifest(
+    doc: &LoroDoc,
+    budget: &mut ReferenceBudget,
+) -> Result<u32, StrictReferenceError> {
     let version = schema(doc, koru_store_core::version::CRDT_SCHEMA_VERSION, true)?;
     let LoroValue::Map(roots) = doc.get_value() else {
         return Err(StrictReferenceError::Shape);
@@ -386,6 +393,7 @@ fn check_map(
             ) => {
                 uuid::Uuid::parse_str(&id).map_err(|_| StrictReferenceError::Identity)?;
             }
+            ("icon" | "color", Some(ValueOrContainer::Value(LoroValue::Null))) => {}
             (_, Some(ValueOrContainer::Value(LoroValue::String(_)))) => {}
             _ => return Err(StrictReferenceError::Shape),
         }

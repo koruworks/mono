@@ -5,7 +5,12 @@ use koru_store_core::Manifest;
 use koru_store_core::profile_units::{IdentityManifest, PersonalManifest, PrivateManifest};
 use loro::{EncodedBlobMode, ExportMode, Frontiers, LoroDoc, VersionVector};
 use std::collections::HashSet;
+mod membership;
 mod references;
+pub use membership::{
+    MANIFEST_CLASSIFIER_VERSION, MAX_MANIFEST_SELECTION, ManifestClassification,
+    ManifestMembership, ManifestSelection,
+};
 mod stage;
 pub use koru_core::schema::file_references::{ReferenceBudget, StrictReferenceError};
 pub use references::StrictBlobReferences;
