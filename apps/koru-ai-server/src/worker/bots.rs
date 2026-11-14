@@ -59,6 +59,7 @@ pub(crate) mod memory;
 pub(crate) mod policy;
 mod preparation;
 mod reads;
+pub(crate) mod routine;
 mod stop;
 pub(super) use admission::{
     AdmissionRetry, BotCoordinationJob, BotCoordinationResult, DeliveryAnswers,
@@ -115,6 +116,7 @@ impl WorkerState {
         if refresh && response.is_ok() {
             self.request_bot_boot_refresh();
             self.memory_recovery.request();
+            self.routine_recovery.request();
         }
         // Refused because another change of the Bot is still waiting for its
         // owner: offer what is owed now, so the person's retry can succeed.

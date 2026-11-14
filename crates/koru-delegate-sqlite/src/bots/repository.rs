@@ -273,6 +273,12 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn register_routine_route(
+        &mut self,
+        identity: &koru_delegate_core::RoutineRouteIdentity,
+    ) -> Result<koru_delegate_core::RoutineRouteIdentity, BotLedgerError> {
+        RunsDb::register_routine_route(self, identity)
+    }
     fn stop_unstarted_routine(
         &mut self,
         key: &BotRunKey,

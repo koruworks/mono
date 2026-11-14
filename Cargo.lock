@@ -5257,6 +5257,7 @@ dependencies = [
  "koru-core",
  "koru-delegate-api",
  "koru-delegate-core",
+ "koru-delegate-document",
  "koru-env",
  "koru-export",
  "koru-export-markdown",

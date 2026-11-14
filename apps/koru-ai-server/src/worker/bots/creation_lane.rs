@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! One physical creation slot, shared by Bot and ordinary Memory effects.
+//! One physical creation slot, shared fairly by Bot, Memory and Routine effects.
 use super::*;
 #[cfg(test)]
 mod tests;
@@ -8,17 +8,20 @@ mod tests;
 pub(in crate::worker) enum Family {
     Bot,
     Memory,
+    Routine,
 }
 
 pub(in crate::worker) enum CreationWork {
     Bot(CreationJob),
     Memory(memory::recovery::MemoryCreationJob),
+    Routine(routine::RoutineCreationJob),
 }
 impl CreationWork {
     fn family(&self) -> Family {
         match self {
             Self::Bot(_) => Family::Bot,
             Self::Memory(_) => Family::Memory,
+            Self::Routine(_) => Family::Routine,
         }
     }
 }
@@ -34,12 +37,14 @@ pub(in crate::worker) struct CreationLaneResult {
 enum CreationResult {
     Bot(CreationStepResult),
     Memory(memory::recovery::MemoryCreationResult),
+    Routine(routine::RoutineCreationResult),
 }
 impl CreationLaneJob {
     pub(in crate::worker) fn run(self) -> CreationLaneResult {
         let result = match self.work {
             CreationWork::Bot(job) => CreationResult::Bot(job.run()),
             CreationWork::Memory(job) => CreationResult::Memory(job.run()),
+            CreationWork::Routine(job) => CreationResult::Routine(job.run()),
         };
         CreationLaneResult {
             serial: self.serial,
@@ -58,7 +63,7 @@ impl Default for CreationLane {
         Self {
             serial: 0,
             active: None,
-            last: Family::Memory,
+            last: Family::Routine,
         }
     }
 }
@@ -110,19 +115,23 @@ impl WorkerState {
         if self.creation_lane.active.is_some() {
             return;
         }
-        if self.creation_lane.last == Family::Bot {
-            self.schedule_memory_creation();
-            if self.creation_lane.active.is_none()
-                && let Some(key) = bot
-            {
-                self.step_bot_creation(key);
+        let order = match self.creation_lane.last {
+            Family::Bot => [Family::Memory, Family::Routine, Family::Bot],
+            Family::Memory => [Family::Routine, Family::Bot, Family::Memory],
+            Family::Routine => [Family::Bot, Family::Memory, Family::Routine],
+        };
+        for family in order {
+            match family {
+                Family::Bot => {
+                    if let Some(key) = bot {
+                        self.step_bot_creation(key);
+                    }
+                }
+                Family::Memory => self.schedule_memory_creation(),
+                Family::Routine => self.schedule_routine_creation(),
             }
-        } else {
-            if let Some(key) = bot {
-                self.step_bot_creation(key);
-            }
-            if self.creation_lane.active.is_none() {
-                self.schedule_memory_creation();
+            if self.creation_lane.active.is_some() {
+                break;
             }
         }
     }
@@ -131,6 +140,7 @@ impl WorkerState {
         let family = match &result.result {
             CreationResult::Bot(_) => Family::Bot,
             CreationResult::Memory(_) => Family::Memory,
+            CreationResult::Routine(_) => Family::Routine,
         };
         if !self.creation_lane.complete(result.serial, family) {
             return;
@@ -138,6 +148,7 @@ impl WorkerState {
         match result.result {
             CreationResult::Bot(result) => self.complete_bot_creation_step(result),
             CreationResult::Memory(result) => self.complete_memory_creation(result),
+            CreationResult::Routine(result) => self.complete_routine_creation(result),
         }
     }
 }
