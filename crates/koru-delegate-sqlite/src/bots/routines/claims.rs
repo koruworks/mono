@@ -55,7 +55,7 @@ fn bounded_payloads(value: &BotSubmission) -> Result<(String, String), BotLedger
     ))
 }
 
-fn skip(
+pub(super) fn skip(
     conn: &Connection,
     slot: RoutineSlot,
     revision: u32,

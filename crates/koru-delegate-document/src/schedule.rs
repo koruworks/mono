@@ -5,8 +5,10 @@
 
 use std::fmt;
 
+mod expiry;
 mod occurrence;
 mod seed;
+pub use expiry::{RoutineExpiryAuthority, RoutineExpiryPlan};
 
 use koru_delegate_core::{
     DelegationRequest, DeviceId, HandoffId, RoutineClaimFacts, RoutineDefinitionIdentity,
@@ -68,6 +70,7 @@ pub enum ScheduleClaimPlan {
 }
 
 enum BoundScheduleClaim {
+    ExpiredRoutine(RoutineExpiryPlan),
     BotRoutine {
         prepared: RoutinePrepared,
         representative_miss: Option<RoutineRepresentativeMiss>,

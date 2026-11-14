@@ -2,6 +2,7 @@
 
 use super::*;
 mod claim;
+mod expiry;
 
 fn association() -> RoutineAssociation {
     RoutineAssociation::new(

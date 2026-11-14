@@ -25,6 +25,23 @@ use crate::{RunStore, ScheduleLedger, counters};
 use koru_delegate_document::ScheduleClaimAuthority;
 
 impl crate::RoutineLedger for RunsDb {
+    fn record_expired_routine(
+        &mut self,
+        authority: koru_delegate_document::RoutineExpiryAuthority,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        // Sole production conversion; the host holds its writer mutex, and no
+        // external call lies between live consumption and the transaction.
+        let facts = authority
+            .into_expired_bot_routine()
+            .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
+        RunsDb::record_expired_routine(self, facts)
+    }
     fn claim_bot_routine(
         &mut self,
         authority: ScheduleClaimAuthority,

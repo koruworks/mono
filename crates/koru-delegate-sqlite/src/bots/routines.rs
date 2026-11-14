@@ -7,6 +7,7 @@ use koru_delegate_core::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 mod claims;
+mod expiry;
 pub(super) use claims::settle_link;
 pub(super) use claims::stop;
 mod policy;

@@ -10,10 +10,12 @@ use uuid::Uuid;
 mod claim;
 mod digest;
 mod evidence;
+mod expiry;
 pub use claim::*;
 mod policy;
 pub use digest::{RoutineDigestError, routine_digest_json};
 pub use evidence::*;
+pub use expiry::RoutineExpiredClaimFacts;
 pub use policy::*;
 
 pub const INTERACTIVE_BOT_SUBMISSION_VERSION: u32 = 1;
