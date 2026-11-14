@@ -62,6 +62,7 @@ impl RunsDb {
     /// latest attempt is unretired ([`LedgerError::AttemptLive`]).
     pub fn open_attempt(&mut self, run: RunId) -> Result<AttemptRow, LedgerError> {
         self.write(WriteOp::OpenAttempt, |tx, now| {
+            crate::bots::routines::deny_run(tx, run)?;
             let state: Option<String> = tx
                 .query_row(
                     "SELECT state FROM run_intents WHERE run_id = ?1",

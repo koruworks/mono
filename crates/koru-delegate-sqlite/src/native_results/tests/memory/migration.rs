@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use rusqlite::{Connection, types::Value};
+mod routine;
 
 fn tables(conn: &Connection) -> Vec<String> {
     conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap()
@@ -58,8 +59,8 @@ fn seven(h: &Harness) -> Connection {
 fn schema() -> koru_sqlite::Schema {
     koru_sqlite::Schema {
         database: crate::DATABASE_NAME,
-        understood: crate::RUNS_SCHEMA_VERSION,
-        migrations: crate::db::MIGRATIONS,
+        understood: 8,
+        migrations: &crate::db::MIGRATIONS[..8],
     }
 }
 fn snapshot(conn: &Connection) -> Vec<(String, Vec<String>, Vec<Vec<Value>>)> {

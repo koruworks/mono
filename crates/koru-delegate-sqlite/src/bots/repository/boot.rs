@@ -109,7 +109,7 @@ pub(super) fn recover(db: &mut RunsDb, key: &BotRunKey) -> Result<bool, BotLedge
     db.write_with_error(WriteOp::RecoverBotReservation, |tx, now| {
         let changed = tx.execute(
             "UPDATE bot_admissions SET state='queued',updated_at_ms=?5
-             WHERE run_id=?1 AND user_scope=?2 AND device_id=?3 AND bot_id=?4 AND state='reserved'
+             WHERE run_id=?1 AND user_scope=?2 AND device_id=?3 AND bot_id=?4 AND state='reserved' AND submission_version=1
              AND active_elapsed_ms=0 AND active_since_ms IS NULL
              AND initial_send_key IS NULL AND initial_send_fingerprint IS NULL
              AND initial_send_attempt_id IS NULL AND initial_send_generation IS NULL AND initial_send_turn_id IS NULL
