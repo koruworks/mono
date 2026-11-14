@@ -24,7 +24,10 @@ fn routine_barrier_digest_has_complete_frozen_versioned_json_and_hash() {
     reference.update(b"koru.bot.routine.barrier.v1");
     reference.update(GOLDEN.as_bytes());
     assert_eq!(digest.as_bytes(), reference.finalize().as_bytes());
-    eprintln!("barrier_fixture_digest={}", String::from(digest));
+    assert_eq!(
+        String::from(digest),
+        "e057bd28668d5c8e2203b00fa0e46a2c976c2c1bbc88f9b769b422b7c6fa308e"
+    );
 }
 
 #[test]

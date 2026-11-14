@@ -4,7 +4,7 @@ use crate::*;
 use koru_delegate_core::*;
 use uuid::Uuid;
 
-const GOLDEN: &str = r#"{"version":1,"workspace":"00000000-0000-4000-8000-000000000002","owner_handoff":null,"definition":{"revision":1,"effective_at_ms":1000,"template":{"requested_by":{"kind":"person","profile":"00000000-0000-4000-8000-000000000001"},"objective":"task","agent":{"kind":"built_in","value":"codex"},"requested_model":null,"scope":{"kind":"temporary"},"grants":["00000000-0000-4000-8000-000000000002"],"context":[]},"recurrence":{"type":"floating","cron":"* * * * *"},"lifecycle":"active","routine":{"owner":{"user_scope":"00000000-0000-4000-8000-000000000004","device":"00000000-0000-4000-8000-000000000005"},"bot":"00000000-0000-4000-8000-000000000006","home":"00000000-0000-4000-8000-000000000002","creation_request":"00000000-0000-4000-8000-000000000007"}}}"#;
+const GOLDEN: &str = r#"{"version":1,"workspace":"00000000-0000-4000-8000-000000000002","owner_handoff":null,"definition":{"revision":1,"effective_at_ms":1000,"template":{"requested_by":{"kind":"person","profile":"00000000-0000-4000-8000-000000000001"},"objective":"task","agent":{"kind":"built_in","value":"codex"},"requested_model":null,"scope":{"kind":"temporary"},"grants":["00000000-0000-4000-8000-000000000002"],"context":[]},"recurrence":{"type":"floating","cron":"*/1 * * * *"},"lifecycle":"active","routine":{"owner":{"user_scope":"00000000-0000-4000-8000-000000000004","device":"00000000-0000-4000-8000-000000000005"},"bot":"00000000-0000-4000-8000-000000000006","home":"00000000-0000-4000-8000-000000000002","creation_request":"00000000-0000-4000-8000-000000000007"}}}"#;
 fn fixture() -> (ScheduleDefinition, WorkspaceId) {
     let json: serde_json::Value = serde_json::from_str(GOLDEN).unwrap();
     (
