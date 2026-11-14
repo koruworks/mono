@@ -44,6 +44,9 @@ pub struct BotRoutineListPage {
 pub enum BotRoutineModelObservation {
     Configured {
         provider: AiProviderId,
+        /// Runtime validation limits this to 512 UTF-8 bytes. JSON Schema's
+        /// maxLength counts scalars and is only a necessary upper bound.
+        #[cfg_attr(feature = "schema", schemars(length(max = 512)))]
         requested_model: String,
     },
     Unavailable {},
@@ -179,7 +182,7 @@ mod state {
         HandoffPending {
             #[cfg_attr(feature = "schema", schemars(with = "String"))]
             owner: DeviceId,
-            #[cfg_attr(feature = "schema", schemars(with = "Vec<String>"))]
+            #[cfg_attr(feature = "schema", schemars(with = "Vec<String>", length(max = 256)))]
             requests: Vec<HandoffId>,
         },
         Retired,
