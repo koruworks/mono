@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -12,13 +12,27 @@ use axum::routing::any;
 use futures_util::StreamExt;
 use koru_delegate_api::routines::*;
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const HTTP_CAPACITY: usize = 8;
 
+/// The permit follows the application buffer through Body and every Bytes
+/// clone. There is no TTL: retained memory must retain its allocation slot.
+/// Field order drops the buffer before releasing its permit.
+struct ResponseAllocation {
+    bytes: Vec<u8>,
+    _permit: OwnedSemaphorePermit,
+}
+impl AsRef<[u8]> for ResponseAllocation {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 pub(crate) struct HttpState {
     authority: OnceLock<RoutineBridgeAuthority>,
-    /// Logical/body capacity only; never a future AI physical-work permit.
+    /// Request and application response-buffer capacity, never AI physical work
+    /// or socket/kernel buffering. Encoded responses retain their own slot.
     slots: Arc<Semaphore>,
     #[cfg(test)]
     test_budget: std::time::Duration,
@@ -175,7 +189,7 @@ async fn handle_until(
     state: &Arc<HttpState>,
     request: Request,
     deadline: Instant,
-) -> Result<Vec<u8>, StatusCode> {
+) -> Result<Bytes, StatusCode> {
     // Do not use Json/Bytes extractors: they can read before this capability.
     if !authorized(state, request.headers()) {
         return Err(StatusCode::UNAUTHORIZED);
@@ -184,7 +198,7 @@ async fn handle_until(
         return Err(StatusCode::METHOD_NOT_ALLOWED);
     }
     remaining(deadline)?;
-    let _permit = state
+    let permit = state
         .slots
         .clone()
         .try_acquire_owned()
@@ -230,7 +244,10 @@ async fn handle_until(
         _ => Err(StatusCode::NOT_FOUND),
     }?;
     remaining(deadline)?;
-    Ok(reply)
+    Ok(Bytes::from_owner(ResponseAllocation {
+        bytes: reply,
+        _permit: permit,
+    }))
 }
 
 async fn read_body(

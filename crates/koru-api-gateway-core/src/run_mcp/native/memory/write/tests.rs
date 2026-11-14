@@ -10,6 +10,9 @@ struct Client {
     recovery: RefCell<Vec<NativeResultKey>>,
 }
 impl WritePort for Client {
+    fn policy(&self, _: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
+        panic!("retained receipt must not request fresh composite proof")
+    }
     fn subject(
         &self,
         request: RunMemoryWriteSubjectRequest,
