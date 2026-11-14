@@ -93,7 +93,7 @@ fn creation() -> BotRoutineCreationIdentity {
         },
     }
 }
-fn preparation() -> BotRoutinePreparation {
+pub(super) fn preparation() -> BotRoutinePreparation {
     let c = creation();
     let mut definition = c.seed.header.definition.clone();
     definition.revision = 2;

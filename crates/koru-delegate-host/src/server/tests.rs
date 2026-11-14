@@ -145,6 +145,49 @@ fn routine_route_frame_requires_current_protocol_private_capability_and_device()
     let ordinary =
         BotDelegateAuthority::new("ordinary-caller-label-01234567890123456789".into()).unwrap();
     assert!(!admits_bot_command(&identity, &ordinary, &command));
+    let slot = koru_delegate_core::RoutineSlot {
+        owner: route.owner,
+        bot: route.bot,
+        schedule: route.schedule,
+        occurrence_ms: 60000,
+    };
+    let acknowledgement:koru_delegate_core::RoutineLinkAcknowledgement=serde_json::from_value(serde_json::json!({
+        "claim":{"slot":slot,"definition":{"revision":1,"digest":"11".repeat(32),"owner_handoff":null},
+        "ids":{"submission":uuid::Uuid::new_v4(),"run":uuid::Uuid::new_v4(),"chat":uuid::Uuid::new_v4(),"attempt":uuid::Uuid::new_v4(),"user_message":uuid::Uuid::new_v4(),"assistant_message":uuid::Uuid::new_v4()},
+        "preparation_hash":"22".repeat(32),"claimed_at_ms":60001},"outcome":{"state":"linked"}
+    })).unwrap();
+    for command in [
+        BotCommand::ReadRoutineClaim { slot },
+        BotCommand::AcknowledgeRoutineLink { acknowledgement },
+    ] {
+        assert!(admits_bot_command(&identity, &capability, &command));
+        assert!(!admits_bot_command(&identity, &ordinary, &command));
+        let request = Request::Bot {
+            authority: capability.clone(),
+            command: command.clone(),
+        };
+        assert!(
+            read_current_request(&mut frame::encode(14, &request).unwrap().as_slice())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            read_current_request(&mut frame::encode(WIRE_VERSION, &request).unwrap().as_slice())
+                .unwrap(),
+            Some(request)
+        );
+        let mut foreign = command;
+        match &mut foreign {
+            BotCommand::ReadRoutineClaim { slot } => {
+                slot.owner.device = koru_delegate_core::DeviceId::new()
+            }
+            BotCommand::AcknowledgeRoutineLink { acknowledgement } => {
+                acknowledgement.claim.slot.owner.device = koru_delegate_core::DeviceId::new()
+            }
+            _ => unreachable!(),
+        }
+        assert!(!admits_bot_command(&identity, &capability, &foreign));
+    }
     let mut foreign = route;
     foreign.owner.device = koru_delegate_core::DeviceId::new();
     assert!(!admits_bot_command(

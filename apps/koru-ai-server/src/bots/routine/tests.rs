@@ -145,6 +145,112 @@ impl Fixture {
 }
 
 #[test]
+fn routine_current_definition_uses_retained_origin_and_actual_store_location() {
+    let (f, _) = Fixture::new();
+    f.prepare().unwrap();
+    let origin = f.origin();
+    let mut definition = f.creation.identity.seed.header.definition.clone();
+    definition.revision += 1;
+    definition.effective_at_ms += 1;
+    definition.lifecycle = serde_json::from_str("\"active\"").unwrap();
+    definition.template.objective =
+        koru_delegate_core::Objective::new("Edited current task").unwrap();
+    let current = definition.clone();
+    let id = f.creation.identity.clone();
+    f.memory
+        .with_store(move |store| {
+            let candidate = DocumentId::from_uuid(id.schedule.as_uuid());
+            let doc = ScheduleDocument::from_snapshot(&store.snapshot(id.home, candidate).unwrap())
+                .unwrap();
+            doc.update_definition(id.owner.device, &current).unwrap();
+            doc.doc()
+                .get_map("schedule")
+                .insert("name", "Current title")
+                .unwrap();
+            doc.doc().commit();
+            store
+                .apply_update(
+                    id.home,
+                    candidate,
+                    doc.export_updates_since(&loro::VersionVector::default())
+                        .unwrap(),
+                    Timestamp::from_millis(5),
+                    None,
+                )
+                .unwrap();
+            store
+                .flush(id.home, candidate, Timestamp::from_millis(5))
+                .unwrap();
+        })
+        .unwrap();
+    let verify = |reader,
+                  identity: &BotRoutineCreationIdentity,
+                  definition: &RoutineScheduleDefinition,
+                  cancel: &Cancellation| {
+        f.adapter
+            .verify_routine_definition(f.owner, reader, identity, definition, None, cancel)
+    };
+    assert!(
+        verify(
+            f.profile,
+            &f.creation.identity,
+            &definition,
+            &Cancellation::default()
+        )
+        .is_ok()
+    );
+    assert_eq!(f.origin(), origin);
+    assert!(
+        verify(
+            f.other,
+            &f.creation.identity,
+            &definition,
+            &Cancellation::default()
+        )
+        .is_err()
+    );
+    assert!(
+        verify(
+            f.profile,
+            &f.creation.identity,
+            &f.creation.identity.seed.header.definition,
+            &Cancellation::default()
+        )
+        .is_err()
+    );
+    let mut wrong = f.creation.identity.clone();
+    wrong.schedule = koru_delegate_core::ScheduleId::mint();
+    wrong.seed.header.schedule = wrong.schedule;
+    wrong.seed_hash = wrong.seed.canonical_digest().unwrap();
+    assert!(verify(f.profile, &wrong, &definition, &Cancellation::default()).is_err());
+    let cancel = Cancellation::default();
+    cancel.cancel();
+    assert!(verify(f.profile, &f.creation.identity, &definition, &cancel).is_err());
+    let id = f.creation.identity.clone();
+    f.memory
+        .with_store(move |store| {
+            store
+                .trash_document_entry(
+                    id.home,
+                    DocumentId::from_uuid(id.schedule.as_uuid()),
+                    Timestamp::from_millis(6),
+                    None,
+                )
+                .unwrap();
+        })
+        .unwrap();
+    assert!(
+        verify(
+            f.profile,
+            &f.creation.identity,
+            &definition,
+            &Cancellation::default()
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn routine_store_retains_exact_origin_and_original_vv_after_lost_acknowledgement() {
     let (f, mut repo) = Fixture::new();
     let PreparedRoutineDocument::Confirmed(first) = f.prepare().unwrap() else {
