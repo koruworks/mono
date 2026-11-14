@@ -117,3 +117,17 @@ fn fake_free_wire_is_finite_and_cannot_grant_mcp() {
     assert_eq!(json["mcp_allowed"], false);
     assert_eq!(json["access"]["state"], "read_write");
 }
+
+#[test]
+fn workspace_diagnostics_do_not_disclose_names_or_identifiers() {
+    let page: CloudUsageWorkspacesResponseV1 =
+        serde_json::from_value(fixtures()[7]["response"].clone()).unwrap();
+    assert_eq!(
+        format!("{page:?}"),
+        "CloudUsageWorkspacesResponseV1(<redacted>)"
+    );
+    assert_eq!(
+        format!("{:?}", page.items[0]),
+        "WorkspaceUsageItemV1(<redacted>)"
+    );
+}

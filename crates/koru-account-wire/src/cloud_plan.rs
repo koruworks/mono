@@ -74,8 +74,13 @@ fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<T, D
 // cross-field invariants. Raw is private and cannot escape validation.
 macro_rules! object {
     ($name:ident { $($field:ident: $ty:ty),* $(,)? }) => {
-        #[derive(Clone, Debug, PartialEq, Eq)]
+        #[derive(Clone, PartialEq, Eq)]
         pub struct $name { $(pub $field: $ty),* }
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(concat!(stringify!($name), "(<redacted>)"))
+            }
+        }
         impl Serialize for $name {
             fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 self.validate().map_err(ser::Error::custom)?;
