@@ -10,10 +10,17 @@ mod claims;
 mod expiry;
 pub(super) use claims::settle_link;
 pub(super) use claims::stop;
+mod markers;
 mod policy;
+mod recovery;
 mod rows;
+pub(crate) use markers::{deny_run, deny_run_metadata};
 pub use policy::RoutinePolicyRecord;
 pub(crate) use policy::{current as current_policy, read_policy};
+pub use recovery::{
+    RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutineQueuedCursor,
+    RoutineRecoveryEntry, RoutineSlotCursor,
+};
 
 /// Reuse the complete claim validator with an already decoded admission.
 /// Retained terminal evidence is valid here; callers separately require Linked
@@ -150,23 +157,6 @@ pub(crate) fn deny_request(
 ) -> Result<(), LedgerError> {
     if let RunOrigin::Scheduled { schedule, .. } = request.origin {
         deny_schedule(conn, schedule)?;
-    }
-    Ok(())
-}
-pub(crate) fn deny_run_metadata(conn: &Connection, run: RunId) -> Result<(), LedgerError> {
-    let blocked: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE run_id=?1 AND submission_version<>1) OR EXISTS(SELECT 1 FROM bot_routine_links WHERE run_id=?1) OR EXISTS(SELECT 1 FROM schedule_claims c JOIN bot_routine_routes r ON r.schedule_id=c.schedule_id WHERE c.run_id=?1)", [run.to_storage()], |row| row.get(0)).map_err(sql)?;
-    if blocked {
-        return Err(LedgerError::InvalidScheduleAuthority);
-    }
-    Ok(())
-}
-pub(crate) fn deny_run(conn: &Connection, run: RunId) -> Result<(), LedgerError> {
-    deny_run_metadata(conn, run)?;
-    // Ordinary requests have no aggregate stored-byte bound. Project only the
-    // marker relationship, without copying or decoding their content in Rust.
-    let marked: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM run_intents i JOIN bot_routine_routes r ON r.schedule_id=json_extract(i.payload_json,'$.origin.schedule') WHERE i.run_id=?1)",[run.to_storage()],|row|row.get(0)).map_err(sql)?;
-    if marked {
-        return Err(LedgerError::InvalidScheduleAuthority);
     }
     Ok(())
 }
