@@ -32,6 +32,7 @@ struct State {
     invalid_history: bool,
     pending_policy: bool,
     foreign_profile: bool,
+    composite_fault: Option<(&'static str, bool)>,
     stale_final_fence: bool,
     cancel_at_base: bool,
     cancel_after_lease: bool,
@@ -106,6 +107,44 @@ fn assert_source_pill(view: &Value, allocation: &MemoryEditAllocation) {
     );
 }
 impl WritePort for Client {
+    fn policy(&self, r: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
+        let mut s = self.state.lock().unwrap();
+        assert_eq!(r.provenance.owner, s.subject.subject.owner);
+        let final_phase = r.target.is_some();
+        s.trace.push(if final_phase {
+            "composite_final"
+        } else {
+            "composite_initial"
+        });
+        let mut evidence = NativePolicyEvidence {
+            profile: s.subject.profile,
+            proof: FreshBotPolicyProof {
+                global: if final_phase {
+                    s.barrier.clone()
+                } else {
+                    s.subject.new_work_barrier.clone().unwrap()
+                },
+                routine: None,
+            },
+        };
+        if let Some((fault, at_final)) = s.composite_fault {
+            if at_final == final_phase {
+                match fault {
+                    "profile" => evidence.profile = koru_ai_core::ProfileId::new(),
+                    "global" => {
+                        evidence
+                            .proof
+                            .global
+                            .policy
+                            .selected_pages
+                            .insert(DocumentId::new());
+                    }
+                    _ => panic!("unexpected composite fault"),
+                };
+            }
+        }
+        Ok(evidence)
+    }
     fn subject(
         &self,
         r: RunMemoryWriteSubjectRequest,
@@ -685,6 +724,7 @@ impl Fixture {
             invalid_history: false,
             pending_policy: false,
             foreign_profile: false,
+            composite_fault: None,
             stale_final_fence: false,
             cancel_at_base: false,
             cancel_after_lease: false,
@@ -919,6 +959,50 @@ fn memory_gateway_profile_or_stale_final_fence_refuses_before_lease() {
         assert_eq!(s.leases, 0);
         assert!(!s.trace.contains(&"prepare"));
     }
+}
+
+#[test]
+fn memory_gateway_composite_matches_each_phase_profile_and_full_global_payload() {
+    for final_phase in [false, true] {
+        for fault in ["profile", "global"] {
+            let f = Fixture::new();
+            f.state.lock().unwrap().composite_fault = Some((fault, final_phase));
+            assert_eq!(f.call().unwrap_err().code, "permission_denied");
+            let s = f.state.lock().unwrap();
+            assert_eq!(s.leases, 0);
+            assert!(!s.trace.contains(&"prepare"));
+            assert_eq!(s.trace.contains(&"allocate"), final_phase);
+            assert!(s.trace.contains(&"composite_initial"));
+            assert_eq!(s.trace.contains(&"composite_final"), final_phase);
+        }
+    }
+}
+
+#[test]
+fn memory_gateway_retained_receipt_precedes_composite_freshness_but_new_work_refuses() {
+    let mut f = Fixture::new();
+    let saved = f.call().unwrap();
+    {
+        let mut s = f.state.lock().unwrap();
+        s.trace.clear();
+        s.subject.new_work_barrier = None;
+        s.barrier.effects_allowed = false;
+        s.pending_policy = true;
+        s.composite_fault = Some(("profile", false));
+    }
+    assert_eq!(f.call().unwrap(), saved);
+    {
+        let s = f.state.lock().unwrap();
+        assert_eq!(s.leases, 1);
+        assert!(!s.trace.contains(&"composite_initial"));
+        assert!(!s.trace.contains(&"composite_final"));
+        assert!(!s.trace.contains(&"sync"));
+    }
+    f.args["summary"] = json!("Changed caller request");
+    assert_eq!(f.call().unwrap_err().code, "idempotency_conflict");
+    f.args["operation_id"] = json!(Uuid::new_v4());
+    assert!(f.call().is_err());
+    assert_eq!(f.state.lock().unwrap().leases, 1);
 }
 #[test]
 fn memory_gateway_human_revision_conflict_settles_without_memory_effect() {

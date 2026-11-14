@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Receipt-first Memory writes through one native lease/settlement owner.
-use super::super::dispatch;
+use super::super::{dispatch, policy as composite_policy};
 use super::*;
 use koru_ai_core::bots::memory::BOT_MEMORY_WRITES_AVAILABLE;
 use koru_ai_server::{
@@ -98,6 +98,7 @@ fn failure(code: &str) -> ToolFailure {
 
 /// Phase-separated trusted methods; no test feature enables the worker gate.
 trait WritePort {
+    fn policy(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure>;
     fn subject(
         &self,
         request: RunMemoryWriteSubjectRequest,
@@ -118,6 +119,10 @@ trait WritePort {
     ) -> Result<(), ToolFailure>;
 }
 impl WritePort for AiWorkerClient {
+    fn policy(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
+        self.native_policy(request)
+            .map_err(|error| failure(&error.code))
+    }
     fn subject(
         &self,
         request: RunMemoryWriteSubjectRequest,

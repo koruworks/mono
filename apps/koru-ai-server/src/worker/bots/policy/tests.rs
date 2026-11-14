@@ -2,7 +2,7 @@
 use super::*;
 use koru_ai_core::{DocumentId, ModelSelection, ProfileId};
 
-fn bot() -> Bot {
+pub(super) fn bot() -> Bot {
     let workspace = WorkspaceId::new();
     Bot {
         id: BotId::from_uuid("00000000-0000-4000-8000-000000000003".parse().unwrap()),

@@ -10,6 +10,7 @@ use serde_json::json;
 use std::sync::Arc;
 mod dispatch;
 mod memory;
+mod policy;
 pub(super) use dispatch::call;
 
 fn unavailable() -> ToolFailure {

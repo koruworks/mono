@@ -13,7 +13,10 @@ struct Policy {
 }
 impl PolicySource for Policy {
     fn current(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
-        assert_eq!(request.provenance.owner, self.evidence.barrier.key.owner);
+        assert_eq!(
+            request.provenance.owner,
+            self.evidence.proof.global.key.owner
+        );
         Ok(self.evidence.clone())
     }
     fn settled(&self) {
@@ -222,16 +225,19 @@ impl Fixture {
             policy: Policy {
                 evidence: NativePolicyEvidence {
                     profile,
-                    barrier: BotPolicyBarrier {
-                        key: BotPolicyBarrierKey {
-                            owner,
-                            bot,
-                            request: Uuid::new_v4().try_into().unwrap(),
+                    proof: FreshBotPolicyProof {
+                        routine: None,
+                        global: BotPolicyBarrier {
+                            key: BotPolicyBarrierKey {
+                                owner,
+                                bot,
+                                request: Uuid::new_v4().try_into().unwrap(),
+                            },
+                            config_revision: 1,
+                            policy_revision: 1,
+                            policy: captured.clone(),
+                            effects_allowed: true,
                         },
-                        config_revision: 1,
-                        policy_revision: 1,
-                        policy: captured.clone(),
-                        effects_allowed: true,
                     },
                 },
                 wakes: AtomicUsize::new(0),

@@ -369,6 +369,8 @@ impl AiWorker {
 
     pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
+        let routine_calls = routine_call::RoutineCallGates::default();
+        let worker_routine_calls = routine_calls.clone();
         let attachments = AttachmentStore::new(&self.config.root);
         let store_context = self.config.store_context.clone();
         let native_mutations = self
@@ -392,6 +394,7 @@ impl AiWorker {
                         provider_output,
                         Arc::clone(&thread_shutdown),
                         ready_tx,
+                        worker_routine_calls,
                     )
                 }));
                 let exit = match outcome {
@@ -419,6 +422,7 @@ impl AiWorker {
                     attachments,
                     store_context,
                     native_mutations,
+                    routine_calls,
                     shutdown,
                     status,
                     join: Some(join),
@@ -445,6 +449,7 @@ impl AiWorker {
 }
 
 pub struct WorkerHandle {
+    routine_calls: routine_call::RoutineCallGates,
     native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
     attachments: AttachmentStore,
@@ -469,6 +474,7 @@ impl WorkerHandle {
             attachments: self.attachments.clone(),
             store_context: self.store_context.clone(),
             native_mutations: self.native_mutations.clone(),
+            routine_calls: self.routine_calls.clone(),
         }
     }
 
@@ -520,6 +526,7 @@ impl Drop for WorkerHandle {
 
 #[derive(Clone)]
 pub struct AiWorkerClient {
+    routine_calls: routine_call::RoutineCallGates,
     native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
     /// Where uploads are prepared and read, on the caller's own thread.
@@ -1179,6 +1186,8 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
+    RoutineOccurrence(Box<bots::occurrence::Incoming>),
+    RoutineOccurrenceCompleted(Box<bots::occurrence::OccurrenceResult>),
     /// Read-only observation of production recovery for spawned-worker tests.
     #[cfg(test)]
     ReadRoutineCreationForFixture {
@@ -1640,6 +1649,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    occurrences: bots::occurrence::OccurrenceDriver,
     bot_boot: bots::BootRecovery,
     native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     native_drain_busy: bool,
@@ -1752,6 +1762,7 @@ fn run_worker(
     provider_output: SyncSender<Envelope>,
     shutdown: Arc<AtomicBool>,
     ready: SyncSender<Result<AiWorkerInfo, String>>,
+    routine_calls: routine_call::RoutineCallGates,
 ) -> Result<(), String> {
     let database = config.root.join(koru_ai_sqlite::DATABASE_FILE);
     #[cfg(test)]
@@ -1945,6 +1956,7 @@ fn run_worker(
         creation_lane: Default::default(),
         memory_recovery: Default::default(),
         routine_recovery: Default::default(),
+        occurrences: bots::occurrence::OccurrenceDriver::new(routine_calls),
         memory_reads: Default::default(),
         memory_writes: Default::default(),
         bot_resends: Default::default(),
@@ -2022,6 +2034,7 @@ fn run_worker(
         state.schedule_bot_resends();
         state.schedule_bot_lifecycle();
         state.schedule_creation_lanes();
+        state.schedule_occurrence_recovery();
         match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
             Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
@@ -2112,6 +2125,10 @@ fn run_worker(
                 state.complete_bot_creation_preparation(*prepared)
             }
             Ok(Envelope::BotCreationStep(result)) => state.complete_creation_lane(*result),
+            Ok(Envelope::RoutineOccurrence(incoming)) => state.begin_routine_occurrence(*incoming),
+            Ok(Envelope::RoutineOccurrenceCompleted(result)) => {
+                state.complete_routine_occurrence(*result)
+            }
             Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
@@ -2148,6 +2165,7 @@ fn run_worker(
         }
     }
     state.cancel_active_for_shutdown();
+    state.occurrences.cancel_all();
     if let Some(admin) = &mut state.provider_admin {
         admin.stop();
     }
@@ -5870,6 +5888,8 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
+    RoutineMutation(bots::occurrence::OccurrenceJob),
+    RoutineRead(bots::occurrence::OccurrenceJob),
     BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
@@ -5923,6 +5943,10 @@ struct AdminSubmitError {
 }
 
 struct ProviderAdminPool {
+    /// Two admitted operations share one physical mutation thread and one
+    /// queued job. Their permits survive every phase and waiter cancellation.
+    routine_sender: Option<SyncSender<bots::occurrence::OccurrenceJob>>,
+    routine_thread: Option<JoinHandle<()>>,
     sender: Option<SyncSender<ProviderAdminJob>>,
     thread: Option<JoinHandle<()>>,
     control_sender: Option<SyncSender<bots::chat::StepJob>>,
@@ -5941,7 +5965,7 @@ struct ProviderAdminPool {
     /// within its deadline, so a slow or hung owner holds this lane and
     /// nothing else of the Bot's (its preparation, chat reads, recovery).
     /// A small queue; a full one is answered at once.
-    run_read_sender: Option<SyncSender<bots::BotRunReadJob>>,
+    run_read_sender: Option<SyncSender<bots::occurrence::RunReadWork>>,
     run_read_thread: Option<JoinHandle<()>>,
     /// Preparation's own lane: every Bot command a person sends (reads
     /// included) is prepared here, and so are the other hops a waiting
@@ -5992,6 +6016,9 @@ impl ProviderAdminPool {
         let creation_output = output.clone();
         let prepare_output = output.clone();
         let prepare_agents = agents.clone();
+        let routine_agents = agents.clone();
+        let routine_output = output.clone();
+        let run_read_output = output.clone();
         let thread_shutdown = Arc::clone(&shutdown);
         let thread = std::thread::Builder::new()
             .name("koru-ai-provider-admin".into())
@@ -6003,6 +6030,9 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
+                        ProviderAdminJob::RoutineMutation(_) | ProviderAdminJob::RoutineRead(_) => {
+                            unreachable!("Routine occurrence lane dispatch")
+                        }
                         ProviderAdminJob::BotChatRecovery(job) => {
                             send_admin_envelope(
                                 &output,
@@ -6219,14 +6249,14 @@ impl ProviderAdminPool {
             }
         };
         let (run_read_sender, run_read_receiver) =
-            sync_channel::<bots::BotRunReadJob>(bots::RUN_READ_QUEUE_CAPACITY);
+            sync_channel::<bots::occurrence::RunReadWork>(bots::RUN_READ_QUEUE_CAPACITY);
         let run_read_shutdown = Arc::clone(&shutdown);
         let run_read_thread = match std::thread::Builder::new()
             .name("koru-ai-provider-run-read".into())
             .spawn(move || {
                 while !run_read_shutdown.load(Ordering::Acquire) {
                     match run_read_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => job.run(),
+                        Ok(job) => job.run(&run_read_output, &run_read_shutdown),
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(RecvTimeoutError::Disconnected) => break,
                     }
@@ -6358,7 +6388,46 @@ impl ProviderAdminPool {
                 return Err(error.to_string());
             }
         };
+        let (routine_sender, routine_receiver) = sync_channel::<bots::occurrence::OccurrenceJob>(1);
+        let routine_shutdown = Arc::clone(&shutdown);
+        let routine_thread = match std::thread::Builder::new()
+            .name("koru-ai-routine-mutation".into())
+            .spawn(move || {
+                while !routine_shutdown.load(Ordering::Acquire) {
+                    match routine_receiver.recv_timeout(LOOP_INTERVAL) {
+                        Ok(job) => send_admin_envelope(
+                            &routine_output,
+                            Envelope::RoutineOccurrenceCompleted(Box::new(
+                                job.run(routine_agents.as_ref()),
+                            )),
+                            &routine_shutdown,
+                        ),
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                drop(sender);
+                drop(creation_sender);
+                drop(run_read_sender);
+                drop(prepare_sender);
+                drop(task_stop_sender);
+                drop(control_sender);
+                drop(interactive_sender);
+                let _ = thread.join();
+                let _ = creation_thread.join();
+                let _ = run_read_thread.join();
+                let _ = prepare_thread.join();
+                let _ = task_stop_thread.join();
+                let _ = control_thread.join();
+                return Err(error.to_string());
+            }
+        };
         Ok(Self {
+            routine_sender: Some(routine_sender),
+            routine_thread: Some(routine_thread),
             sender: Some(sender),
             thread: Some(thread),
             control_sender: Some(control_sender),
@@ -6377,6 +6446,28 @@ impl ProviderAdminPool {
     }
 
     fn try_submit(&self, job: ProviderAdminJob) -> Result<(), AdminSubmitError> {
+        if let ProviderAdminJob::RoutineMutation(job) = job {
+            let Some(sender) = &self.routine_sender else {
+                return Err(AdminSubmitError {
+                    job: ProviderAdminJob::RoutineMutation(job),
+                    failure: unavailable_failure(),
+                });
+            };
+            return sender.try_send(job).map_err(|error| match error {
+                TrySendError::Full(job) => AdminSubmitError {
+                    job: ProviderAdminJob::RoutineMutation(job),
+                    failure: failure(
+                        "ai_worker_saturated",
+                        "The Routine mutation lane is busy. Try again.",
+                        true,
+                    ),
+                },
+                TrySendError::Disconnected(job) => AdminSubmitError {
+                    job: ProviderAdminJob::RoutineMutation(job),
+                    failure: unavailable_failure(),
+                },
+            });
+        }
         if job.preparation() {
             let Some(sender) = &self.prepare_sender else {
                 return Err(AdminSubmitError {
@@ -6468,16 +6559,24 @@ impl ProviderAdminPool {
                 },
             });
         }
-        if let ProviderAdminJob::BotRunRead(read) = job {
+        if matches!(
+            &job,
+            ProviderAdminJob::BotRunRead(_) | ProviderAdminJob::RoutineRead(_)
+        ) {
+            let read = match job {
+                ProviderAdminJob::BotRunRead(read) => bots::occurrence::RunReadWork::Bot(read),
+                ProviderAdminJob::RoutineRead(read) => bots::occurrence::RunReadWork::Routine(read),
+                _ => unreachable!("Run read lane classification"),
+            };
             let Some(sender) = &self.run_read_sender else {
                 return Err(AdminSubmitError {
-                    job: ProviderAdminJob::BotRunRead(read),
+                    job: read.into_admin(),
                     failure: unavailable_failure(),
                 });
             };
             return sender.try_send(read).map_err(|error| match error {
                 TrySendError::Full(read) => AdminSubmitError {
-                    job: ProviderAdminJob::BotRunRead(read),
+                    job: read.into_admin(),
                     failure: failure(
                         "ai_worker_saturated",
                         "The Bot Run read lane is busy. Try again.",
@@ -6485,7 +6584,7 @@ impl ProviderAdminPool {
                     ),
                 },
                 TrySendError::Disconnected(read) => AdminSubmitError {
-                    job: ProviderAdminJob::BotRunRead(read),
+                    job: read.into_admin(),
                     failure: unavailable_failure(),
                 },
             });
@@ -6536,6 +6635,7 @@ impl ProviderAdminPool {
 
     fn stop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
+        self.routine_sender.take();
         self.sender.take();
         self.control_sender.take();
         self.interactive_sender.take();
@@ -6543,6 +6643,9 @@ impl ProviderAdminPool {
         self.run_read_sender.take();
         self.prepare_sender.take();
         self.task_stop_sender.take();
+        if let Some(thread) = self.routine_thread.take() {
+            let _ = thread.join();
+        }
         if let Some(thread) = self.control_thread.take() {
             let _ = thread.join();
         }

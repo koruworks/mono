@@ -153,16 +153,19 @@ fn fixture() -> (Port, RunAuthorityRecord, BotProvenance, CapturedBotPolicy) {
     };
     let evidence = NativePolicyEvidence {
         profile: koru_ai_core::ProfileId::new(),
-        barrier: BotPolicyBarrier {
-            key: BotPolicyBarrierKey {
-                owner: provenance.owner,
-                bot: provenance.bot,
-                request: uuid::Uuid::new_v4().try_into().unwrap(),
+        proof: koru_delegate_core::FreshBotPolicyProof {
+            routine: None,
+            global: BotPolicyBarrier {
+                key: BotPolicyBarrierKey {
+                    owner: provenance.owner,
+                    bot: provenance.bot,
+                    request: uuid::Uuid::new_v4().try_into().unwrap(),
+                },
+                config_revision: 1,
+                policy_revision: 1,
+                policy: captured.clone(),
+                effects_allowed: false,
             },
-            config_revision: 1,
-            policy_revision: 1,
-            policy: captured.clone(),
-            effects_allowed: false,
         },
     };
     (
@@ -220,7 +223,7 @@ fn memory_timeout_is_read_unavailable_and_cancels() {
 #[test]
 fn memory_foreign_policy_refuses_before_worker_read() {
     let (mut port, record, provenance, captured) = fixture();
-    port.evidence.barrier.key.bot = BotId::mint();
+    port.evidence.proof.global.key.bot = BotId::mint();
     let error = invoke(
         &port,
         &record,

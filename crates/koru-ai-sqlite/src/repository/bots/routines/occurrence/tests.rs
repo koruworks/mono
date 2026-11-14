@@ -121,6 +121,87 @@ fn counts(repo: &Repository) -> Vec<u64> {
 }
 
 #[test]
+fn occurrence_worker_metadata_guard_ignores_model_but_requires_current_owner_home_and_visibility() {
+    let (repo, input) = fixture();
+    let owner = owner(&input.slot);
+    repo.connection
+        .execute(
+            "UPDATE bots SET model=zeroblob(1000000) WHERE bot_id=?1",
+            [input.slot.bot.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.routine_occurrence_home(owner, input.slot.bot),
+        Ok(input.canonical.home)
+    );
+    let other = BotOwner {
+        device: koru_delegate_core::DeviceId::new(),
+        ..owner
+    };
+    assert_eq!(
+        repo.routine_occurrence_home(other, input.slot.bot),
+        Err(BotError::Forbidden)
+    );
+    repo.connection
+        .execute(
+            "UPDATE bots SET lifecycle='trashed' WHERE bot_id=?1",
+            [input.slot.bot.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.routine_occurrence_home(owner, input.slot.bot),
+        Err(BotError::NotFound)
+    );
+    // Deliberate damaged metadata, beyond the ordinary FK-protected writer.
+    repo.connection
+        .pragma_update(None, "foreign_keys", "OFF")
+        .unwrap();
+    repo.connection
+        .execute(
+            "UPDATE bots SET lifecycle='active', home_workspace_id='malformed' WHERE bot_id=?1",
+            [input.slot.bot.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        repo.routine_occurrence_home(owner, input.slot.bot),
+        Err(BotError::Storage)
+    );
+}
+
+#[test]
+fn occurrence_claim_lookup_uses_sole_decoder_and_does_not_assert_claim_time_authority() {
+    let (mut repo, input) = fixture();
+    let row = prepare(&mut repo, &input);
+    let mut key = claim(&row).claim;
+    assert_eq!(
+        repo.routine_preparation_for_claim(&key).unwrap(),
+        Some(row.clone())
+    );
+    key.claimed_at_ms += 1;
+    // No claim time lives in AI: this is lookup only. The worker separately
+    // compares the entire caller identity with authenticated delegate truth.
+    assert_eq!(
+        repo.routine_preparation_for_claim(&key).unwrap(),
+        Some(row.clone())
+    );
+    key.ids.run = koru_delegate_core::RunId::mint();
+    assert_eq!(
+        repo.routine_preparation_for_claim(&key),
+        Err(BotError::Conflict)
+    );
+    let key = claim(&row).claim;
+    // Bypass only this in-memory fixture's CHECK to exercise bounded decoding.
+    repo.connection
+        .pragma_update(None, "ignore_check_constraints", "ON")
+        .unwrap();
+    repo.connection.execute("UPDATE bot_command_receipts SET submission_version=2 WHERE command_kind='routine_draft'", []).unwrap();
+    assert_eq!(
+        repo.routine_preparation_for_claim(&key),
+        Err(BotError::Storage)
+    );
+}
+
+#[test]
 fn occurrence_exact_replay_precedes_fresh_settings_capture_and_capacity() {
     let (mut repo, input) = fixture();
     let row = prepare(&mut repo, &input);
