@@ -16,6 +16,26 @@ struct Fixture {
     request: NativePolicyRequest,
     claim: RoutineClaimRecord,
 }
+
+/// Reuse the actual in-memory retained-row fixture for portable preclaim
+/// continuation validation; no additional writer or Store authority seam.
+pub(in crate::worker::bots) fn preclaim_fixture() -> (
+    Repository,
+    koru_delegate_api::routines::SynchronizeRoutinePreclaim,
+) {
+    let f = Fixture::new(false);
+    let row = f
+        .repository
+        .routine_preparation_for_claim(&f.claim.claim)
+        .unwrap()
+        .unwrap();
+    let request = koru_delegate_api::routines::SynchronizeRoutinePreclaim {
+        slot: row.prepared.slot,
+        semantic_hash: row.prepared.semantic_hash,
+        preparation_hash: row.prepared.preparation_hash,
+    };
+    (f.repository, request)
+}
 impl Fixture {
     fn new(linked: bool) -> Self {
         let mut repository = Repository::in_memory().unwrap();

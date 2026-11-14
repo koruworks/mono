@@ -122,6 +122,7 @@ impl RunsDb {
     pub fn claim_bot_routine(
         &mut self,
         facts: RoutineClaimFacts,
+        admission: &BotAdmissionBarrier,
         fresh: &FreshBotPolicyProof,
     ) -> Result<(RoutineClaimObservation, Option<RoutineSkippedClaim>), BotLedgerError> {
         self.write_with_error(WriteOp::ClaimBotRoutine,|tx,now| {
@@ -141,7 +142,7 @@ impl RunsDb {
                 let record = skip(tx,*slot,prepared.definition.revision,prepared.ids.run,RoutineSkipOutcome::SkippedMissed {},now)?;
                 return Ok((RoutineClaimObservation::Skipped {record},representative(tx,&facts,now)?));
             }
-            policy::fresh(tx,&prepared.submission,fresh)?;
+            policy::fresh(tx,&prepared.submission,admission,fresh)?;
             // O85: the existing 50 pending entries are per owner/device/Bot;
             // any actual unsettled holder shadows that defensive queue check.
             // Host capacity two is still enforced only at reservation time.

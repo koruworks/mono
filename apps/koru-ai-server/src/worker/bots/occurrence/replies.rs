@@ -189,6 +189,10 @@ pub(super) fn answer(
             },
             Err(code) => ReadOccurrenceLinkReply::Refused { code },
         })),
+        // Preclaim has its own complete writer recheck and response path.
+        Reply::Preclaim(reply) => reply.send(Ok(SynchronizeRoutinePreclaimReply::Refused {
+            code: RoutineBridgeRefusal::Unavailable,
+        })),
         Reply::Recovery => {}
     }
 }

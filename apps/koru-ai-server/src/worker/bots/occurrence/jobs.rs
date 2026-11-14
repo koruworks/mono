@@ -9,6 +9,8 @@ pub(super) struct Fresh {
     pub library: library::LibrarySources,
 }
 pub(super) enum Phase {
+    PreclaimRead(Box<preclaim::Snapshot>),
+    PreclaimInstall(Box<preclaim::Install>),
     Capture(Box<Fresh>),
     Observe {
         home: WorkspaceId,
@@ -26,6 +28,8 @@ pub(in crate::worker) struct OccurrenceJob {
     pub(super) delegate: Arc<dyn BotDelegatePort>,
 }
 pub(super) enum Evidence {
+    PreclaimRead(Box<preclaim::Hint>),
+    PreclaimInstalled(Box<preclaim::Install>),
     Captured(Box<BotRoutineCapturedSources>),
     Observed {
         authority: BotRoutineFinalizeAuthority,
@@ -51,14 +55,14 @@ impl OccurrenceJob {
             evidence,
         }
     }
-    fn live(&self) -> Result<(), RoutineBridgeRefusal> {
+    pub(super) fn live(&self) -> Result<(), RoutineBridgeRefusal> {
         self.operation
             .context
             .live()
             .then_some(())
             .ok_or(RoutineBridgeRefusal::Unavailable)
     }
-    fn current(
+    pub(super) fn current(
         &self,
         home: WorkspaceId,
     ) -> Result<BotRoutineFinalizeAuthority, RoutineBridgeRefusal> {
@@ -82,7 +86,7 @@ impl OccurrenceJob {
         }
         Ok(())
     }
-    fn call(&self, command: DelegateCommand) -> Result<BotReply, RoutineBridgeRefusal> {
+    pub(super) fn call(&self, command: DelegateCommand) -> Result<BotReply, RoutineBridgeRefusal> {
         self.live()?;
         let remaining = self
             .operation
@@ -109,6 +113,8 @@ impl OccurrenceJob {
     }
     fn execute(&self, agents: Option<&AgentSessions>) -> Result<Evidence, RoutineBridgeRefusal> {
         match &self.phase {
+            Phase::PreclaimRead(snapshot) => self.preclaim_read(snapshot),
+            Phase::PreclaimInstall(install) => self.preclaim_install(install),
             Phase::Capture(fresh) => self.capture(fresh, agents),
             Phase::Observe { home, claim } => {
                 let authority = self.current(*home)?;

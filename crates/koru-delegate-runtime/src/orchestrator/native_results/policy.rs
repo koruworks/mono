@@ -60,6 +60,60 @@ impl Orchestrator {
         {
             return Err(refused("bot_provenance_mismatch"));
         }
+        self.current_policy_for_submission(&submission, config_revision, policy_revision)
+    }
+
+    /// Process-local preclaim comparison. The host owns HTTP correlation; this
+    /// owner derives all repeated identities from the complete preparation.
+    /// No run admission is required and no execution permission is created.
+    pub fn routine_policy_for_prepared(
+        &mut self,
+        prepared: &koru_delegate_core::RoutinePrepared,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
+        offered: &FreshBotPolicyProof,
+    ) -> Result<FreshBotPolicyProof, RunError> {
+        let p = &prepared.submission.provenance;
+        if !prepared.valid()
+            || admission.owner != prepared.slot.owner
+            || admission.bot != prepared.slot.bot
+            || admission.paused
+            || admission.epoch != p.config_revision
+            || offered.global.config_revision != p.config_revision
+            || offered.global.policy_revision != p.policy_revision
+            || offered.routine.as_ref().map(|r| r.grant_revision)
+                != p.routine.map(|r| r.grant_revision)
+            || !offered.effects_allowed_for(&prepared.submission)
+        {
+            return Err(refused("bot_policy_stale"));
+        }
+        if self.bot_ledger()?.bot_barrier(p.owner, p.bot)?.as_ref() != Some(admission) {
+            return Err(refused("bot_admission_stale"));
+        }
+        let current = self.current_policy_for_submission(
+            &prepared.submission,
+            p.config_revision,
+            p.policy_revision,
+        )?;
+        if &current != offered {
+            return Err(refused("bot_policy_stale"));
+        }
+        Ok(current)
+    }
+
+    // Shared bounded cache and durable-current composition. Native callers keep
+    // their existing >= captured-revision semantics; preclaim checks equality.
+    fn current_policy_for_submission(
+        &mut self,
+        submission: &koru_delegate_core::BotSubmission,
+        config_revision: u64,
+        policy_revision: u64,
+    ) -> Result<FreshBotPolicyProof, RunError> {
+        let provenance = &submission.provenance;
+        let key = BotRunKey {
+            owner: provenance.owner,
+            bot: provenance.bot,
+            run: submission.request.run,
+        };
         let cached = self
             .native_policies
             .iter()
@@ -120,7 +174,7 @@ impl Orchestrator {
             }
         };
         let proof = FreshBotPolicyProof { global, routine };
-        if !proof.effects_allowed_for(&submission) {
+        if !proof.effects_allowed_for(submission) {
             return Err(refused("bot_policy_stale"));
         }
         Ok(proof)

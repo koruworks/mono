@@ -26,25 +26,48 @@ pub struct NativePolicyEvidence {
     pub profile: koru_ai_core::ProfileId,
 }
 
+#[cfg(test)]
 fn epoch_key(bot: &Bot) -> ApiResult<NativePolicyRequestId> {
     epoch::key(owner(bot), bot.id, bot.revision)
 }
 pub(super) fn barrier(bot: &Bot) -> ApiResult<BotPolicyBarrier> {
+    global_barrier(
+        owner(bot),
+        bot.id,
+        bot.revision,
+        bot.policy_revision,
+        bot_native_policy(bot),
+    )
+}
+
+/// Construct the same global tuple from canonical identity/policy inputs.
+/// The caller owns lifecycle/currentness checks; this value is not authority.
+pub(in crate::worker) fn global_barrier(
+    owner: BotOwner,
+    bot: BotId,
+    config_revision: u64,
+    policy_revision: u64,
+    policy: CapturedBotPolicy,
+) -> ApiResult<BotPolicyBarrier> {
     Ok(BotPolicyBarrier {
         key: BotPolicyBarrierKey {
             owner: koru_delegate_core::BotOwner {
-                user_scope: bot.user_scope,
-                device: bot.owner_device,
+                user_scope: owner.user_scope,
+                device: owner.device,
             },
-            bot: bot.id,
-            request: epoch_key(bot)?,
+            bot,
+            request: epoch::key(owner, bot, config_revision)?,
         },
-        config_revision: bot.revision,
-        policy_revision: bot.policy_revision,
-        policy: bot_native_policy(bot),
-        effects_allowed: true, // repository.bot only returns active canonical Bots; Pause is separate.
+        config_revision,
+        policy_revision,
+        policy,
+        effects_allowed: true, // Current lifecycle is caller-checked; Pause is admission-only.
     })
 }
+
+pub(in crate::worker) use routine::initial_barrier as initial_routine_barrier;
+#[cfg(test)]
+pub(in crate::worker::bots) use routine::tests::preclaim_fixture;
 fn owner(bot: &Bot) -> BotOwner {
     BotOwner {
         user_scope: bot.user_scope,

@@ -45,6 +45,7 @@ impl crate::RoutineLedger for RunsDb {
     fn claim_bot_routine(
         &mut self,
         authority: ScheduleClaimAuthority,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
         fresh: &koru_delegate_core::FreshBotPolicyProof,
     ) -> Result<
         (
@@ -59,7 +60,7 @@ impl crate::RoutineLedger for RunsDb {
         let facts = authority
             .into_bot_routine()
             .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
-        RunsDb::claim_bot_routine(self, facts, fresh)
+        RunsDb::claim_bot_routine(self, facts, admission, fresh)
     }
     fn read_routine_claim(
         &self,

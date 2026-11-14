@@ -32,6 +32,13 @@ macro_rules! starter {
 }
 impl AiWorkerClient {
     starter!(
+        synchronize_routine_preclaim,
+        SynchronizeRoutinePreclaim,
+        SynchronizeRoutinePreclaimReply,
+        Preclaim,
+        false
+    );
+    starter!(
         prepare_routine_occurrence,
         PrepareOccurrence,
         PrepareOccurrenceReply,

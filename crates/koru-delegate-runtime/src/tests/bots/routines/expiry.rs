@@ -130,6 +130,7 @@ fn routine_expiry_adapter_preserves_actual_claim_and_busy_winners_before_early_c
         let winner = crate::RoutineLedger::claim_bot_routine(
             &mut *h.schedule_store.inner.lock().unwrap(),
             token(&doc, &p, false),
+            &admission(&p),
             &fresh,
         )
         .unwrap()
