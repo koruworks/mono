@@ -10,6 +10,7 @@ use std::{
     task::{Context, Poll, Wake, Waker},
 };
 mod cases;
+mod preclaim;
 use crate::fixtures::catalog::Catalog;
 
 struct Signal(SyncSender<()>);
@@ -77,6 +78,7 @@ fn gate() -> (Gate, Receiver<()>, Release) {
 }
 
 struct Delegate {
+    preclaim: preclaim::Peer,
     owner: koru_delegate_core::BotOwner,
     boot: koru_delegate_core::DelegateBootId,
     records: Mutex<BTreeMap<i64, RoutineClaimRecord>>,
@@ -91,6 +93,7 @@ struct Delegate {
 impl Delegate {
     fn new(owner: koru_delegate_core::BotOwner) -> Self {
         Self {
+            preclaim: Default::default(),
             owner,
             boot: koru_delegate_core::DelegateBootId::mint(),
             records: Default::default(),
@@ -139,7 +142,20 @@ impl Delegate {
     }
 }
 impl BotDelegatePort for Delegate {
-    fn execute(&self, _: DelegateCommand) -> Result<BotReply, koru_delegate_api::Failure> {
+    fn execute(&self, command: DelegateCommand) -> Result<BotReply, koru_delegate_api::Failure> {
+        if self.preclaim.enabled.load(Ordering::Acquire)
+            && matches!(
+                command,
+                DelegateCommand::SynchronizePolicy { .. }
+                    | DelegateCommand::UnsettledWork { .. }
+                    | DelegateCommand::Stop { .. }
+            )
+        {
+            // Pending access/lifecycle fixtures retain their real recovery
+            // work. This peer deliberately refuses those unrelated jobs;
+            // preclaim itself must still use only finite execute_within.
+            return Err(unavailable());
+        }
         panic!("only finite private calls")
     }
     fn execute_within(
@@ -147,6 +163,9 @@ impl BotDelegatePort for Delegate {
         command: DelegateCommand,
         within: Duration,
     ) -> Result<BotReply, koru_delegate_api::Failure> {
+        if let Some(answer) = self.preclaim.answer(&command, within) {
+            return answer;
+        }
         match command {
             DelegateCommand::Hello { owner, .. } => {
                 assert_eq!(owner, self.owner);

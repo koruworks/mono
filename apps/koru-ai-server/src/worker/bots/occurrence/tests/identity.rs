@@ -55,3 +55,45 @@ fn occurrence_current_key_requires_uuid_serial_owner_epoch_slot_hash_and_phase()
     driver.cancel_all();
     assert!(op.context.cancellation.is_cancelled());
 }
+
+#[test]
+fn preclaim_stale_identity_or_epoch_completion_cannot_finish_current_operation() {
+    let slot = slot();
+    let mut driver = OccurrenceDriver::new(Default::default());
+    driver.synchronize(Some(ai_owner(slot)), 9);
+    let mut op = operation(&mut driver, slot, 4);
+    let request = SynchronizeRoutinePreclaim {
+        slot,
+        semantic_hash: RoutineDigest32::from_bytes([1; 32]),
+        preparation_hash: RoutineDigest32::from_bytes([2; 32]),
+    };
+    op.request = Request::Preclaim(request.clone());
+    op.key.identity = op.request.identity().unwrap();
+    driver.active.get_mut(&4).unwrap().key = op.key.clone();
+    for field in 0..7 {
+        let mut key = op.key.clone();
+        match field {
+            0 => key.request_id = Uuid::new_v4(),
+            1 => key.serial += 1,
+            2 => key.owner_epoch += 1,
+            3 => key.slot.occurrence_ms += 60_000,
+            4 => {
+                key.identity = Identity::Preparation {
+                    semantic_hash: RoutineDigest32::from_bytes([3; 32]),
+                    preparation_hash: request.preparation_hash,
+                }
+            }
+            5 => {
+                key.identity = Identity::Preparation {
+                    semantic_hash: request.semantic_hash,
+                    preparation_hash: RoutineDigest32::from_bytes([3; 32]),
+                }
+            }
+            _ => key.phase += 1,
+        }
+        assert!(!driver.current(&key));
+    }
+    driver.active.get_mut(&4).unwrap().key.phase += 1;
+    driver.finish(&op, false);
+    assert!(driver.active.contains_key(&4));
+}
