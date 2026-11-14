@@ -16,7 +16,7 @@ fn reply(value: Value) -> BotReply {
     serde_json::from_value(value).unwrap()
 }
 impl Peer {
-    fn answer_preclaim(
+    pub(super) fn answer_preclaim(
         &self,
         command: &BotCommand,
         within: Duration,
