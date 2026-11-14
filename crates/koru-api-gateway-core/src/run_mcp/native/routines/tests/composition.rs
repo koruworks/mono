@@ -132,7 +132,7 @@ fn context() -> RoutineCallContext {
 }
 fn ai_owner(subject: &RunBotSubject) -> koru_ai_core::bots::BotOwner {
     koru_ai_core::bots::BotOwner {
-        account: subject.provenance.owner.account,
+        user_scope: subject.provenance.owner.user_scope,
         device: subject.provenance.owner.device,
     }
 }
