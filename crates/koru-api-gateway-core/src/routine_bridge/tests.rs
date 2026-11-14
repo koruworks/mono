@@ -324,7 +324,7 @@ async fn routine_http_strict_envelopes_and_nested_objects_refuse_unknown_or_inva
     value["request_id"] = "00000000-0000-0000-0000-000000000000".into();
     cases.push(value);
     let mut value = base.clone();
-    value["payload"]["slot"]["occurrence_ms"] = (-1).into();
+    value["payload"]["slot"]["schedule"] = "00000000-0000-0000-0000-000000000000".into();
     cases.push(value);
     for value in cases {
         let response = send(
@@ -335,6 +335,22 @@ async fn routine_http_strict_envelopes_and_nested_objects_refuse_unknown_or_inva
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{value}");
         assert!(bytes(response).await.is_empty());
     }
+    // Slot timestamps retain the owning type's full signed domain. The shell
+    // must not invent a new epoch/precision rule for read identities.
+    let mut signed = read();
+    signed.payload.slot.occurrence_ms = -1;
+    assert_eq!(
+        send(
+            state.clone(),
+            request(
+                ROUTINE_PREPARATION_ROUTE,
+                Body::from(signed.encode().unwrap())
+            )
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
     for key in [
         "schedule_definition",
         "template",
