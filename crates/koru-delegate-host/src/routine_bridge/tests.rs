@@ -30,7 +30,7 @@ pub(crate) fn authority() -> BotDelegateAuthority {
 pub(crate) fn gateway(origin: &str) -> koru_api_client::Client {
     checked_gateway(origin).expect("valid literal loopback fixture")
 }
-fn checked_gateway(origin: &str) -> Option<koru_api_client::Client> {
+fn checked_gateway(origin: &str) -> koru_store_core::Result<koru_api_client::Client> {
     koru_api_client::Client::from_gateway(
         serde_json::from_value(serde_json::json!({
             "instance_id":"fixture", "supervisor_launch_id":null,"gateway_version":"fixture",
@@ -39,7 +39,6 @@ fn checked_gateway(origin: &str) -> Option<koru_api_client::Client> {
         }))
         .unwrap(),
     )
-    .ok()
 }
 fn slot() -> RoutineSlot {
     serde_json::from_value(serde_json::json!({"owner":{"user_scope":uuid::Uuid::new_v4(),"device":uuid::Uuid::new_v4()},
@@ -106,9 +105,12 @@ fn routine_host_bridge_uses_only_literal_loopback_and_derived_credential() {
     ] {
         // Discovery already refuses some nonliteral origins. If it accepts the
         // gateway shape, the stricter private bridge still must refuse it.
-        if let Some(gateway) = checked_gateway(origin) {
-            let bridge = HostRoutineBridge::new(&gateway, Some(&authority()), stopped.clone());
-            assert!(bridge.client.is_none());
+        match checked_gateway(origin) {
+            Ok(gateway) => {
+                let bridge = HostRoutineBridge::new(&gateway, Some(&authority()), stopped.clone());
+                assert!(bridge.client.is_none());
+            }
+            Err(error) => assert_eq!(error.code(), koru_store_core::Code::CorruptState),
         }
     }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
