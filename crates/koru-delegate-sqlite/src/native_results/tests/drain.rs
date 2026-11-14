@@ -274,45 +274,44 @@ fn migration_preserves_populated_six_and_nullable_drain_guards_refuse_partial_pr
     let mut h = Harness::new();
     h.prepare();
     h.lease();
-    // Rebuild a real v6 table from its immutable migration, then reopen through
-    // the current migration owner. All ordinary ledger/admission rows remain.
+    // Copy the frozen v6 columns into an actual v6 schema, then run the real
+    // migration owner. Never partially downgrade a current schema with retained
+    // Routine triggers and foreign-key relationships.
     let before = h.db.native_result(&h.request.key).unwrap().unwrap();
-    let sql = include_str!("../../../migrations/025_runs_native_results_migration.sql");
-    let start = sql.find("CREATE TABLE native_result_intents (").unwrap();
-    let end = sql
-        .find("CREATE UNIQUE INDEX native_result_created_identity")
-        .unwrap();
-    let table = sql[start..end].replace(
-        "CREATE TABLE native_result_intents (",
-        "CREATE TABLE old_native (",
+    let mut conn = super::memory::migration::historical(&h, 6);
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        6
     );
-    h.db.conn().execute_batch(&table).unwrap();
-    let columns: Vec<String> =
-        h.db.conn()
-            .prepare("SELECT name FROM pragma_table_info('old_native')")
+    let schema = koru_sqlite::Schema {
+        database: crate::DATABASE_NAME,
+        understood: crate::RUNS_SCHEMA_VERSION,
+        migrations: crate::db::MIGRATIONS,
+    };
+    koru_sqlite::prepare(&schema, &mut conn).unwrap();
+    koru_sqlite::prepare(&schema, &mut conn).unwrap();
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        crate::RUNS_SCHEMA_VERSION
+    );
+    assert_eq!(
+        super::super::rows::read(&conn, &h.request.key)
             .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-    let columns = columns.join(",");
-    h.db.conn().execute_batch(&format!("INSERT INTO old_native({columns}) SELECT {columns} FROM native_result_intents; DROP TABLE bot_memory_edit_allocations; DROP TABLE native_result_intents; ALTER TABLE old_native RENAME TO native_result_intents; PRAGMA user_version=6;")).unwrap();
-    h.db.migrate_in_memory();
-    h.db.migrate_in_memory();
-    assert_eq!(h.db.schema_version().unwrap(), crate::RUNS_SCHEMA_VERSION);
-    assert_eq!(h.db.native_result(&h.request.key).unwrap().unwrap(), before);
+            .unwrap(),
+        before
+    );
     assert!(
-        h.db.conn()
-            .execute("UPDATE native_result_intents SET effect_fenced_at_ms=1", [])
+        conn.execute("UPDATE native_result_intents SET effect_fenced_at_ms=1", [])
             .is_err()
     );
     assert!(
-        h.db.conn()
-            .execute(
-                "UPDATE native_result_intents SET stage='settled_unknown',lease_state='settled'",
-                []
-            )
-            .is_err()
+        conn.execute(
+            "UPDATE native_result_intents SET stage='settled_unknown',lease_state='settled'",
+            []
+        )
+        .is_err()
     );
     let mut older_reader = rusqlite::Connection::open_in_memory().unwrap();
     older_reader

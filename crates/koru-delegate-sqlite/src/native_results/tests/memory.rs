@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
-mod migration;
+pub(super) mod migration;
 
 pub(super) fn request(h: &Harness, seed: bool) -> AllocateMemoryEditRequest {
     let provenance =
@@ -33,10 +33,18 @@ pub(super) fn request(h: &Harness, seed: bool) -> AllocateMemoryEditRequest {
     }
 }
 fn allocate(h: &mut Harness, request: &AllocateMemoryEditRequest) -> MemoryEditAllocation {
-    h.db.allocate_memory_edit(request, fixtures::document(0xd0), &h.fence, &h.policy)
-        .unwrap()
+    h.db.allocate_memory_edit(
+        request,
+        fixtures::document(0xd0),
+        &h.fence,
+        &koru_delegate_core::FreshBotPolicyProof {
+            global: (h.policy).clone(),
+            routine: None,
+        },
+    )
+    .unwrap()
 }
-fn authority(request: &AllocateMemoryEditRequest) -> MemoryEditAuthorityV1 {
+pub(super) fn authority(request: &AllocateMemoryEditRequest) -> MemoryEditAuthorityV1 {
     MemoryEditAuthorityV1 {
         version: 1,
         owner: request.subject.owner,
@@ -49,7 +57,7 @@ fn authority(request: &AllocateMemoryEditRequest) -> MemoryEditAuthorityV1 {
         action: request.subject.action,
     }
 }
-fn resolution(request: &AllocateMemoryEditRequest) -> MemoryBaseResolution {
+pub(super) fn resolution(request: &AllocateMemoryEditRequest) -> MemoryBaseResolution {
     MemoryBaseResolution::Resolved {
         authority: authority(request),
         version: match request.base {
@@ -69,11 +77,14 @@ fn resolve(
         request.caller_fingerprint,
         resolution,
         &h.fence,
-        &h.policy,
+        &koru_delegate_core::FreshBotPolicyProof {
+            global: (h.policy).clone(),
+            routine: None,
+        },
     )
     .unwrap()
 }
-fn prepare(
+pub(super) fn prepare(
     h: &mut Harness,
     request: &AllocateMemoryEditRequest,
     resolution: &MemoryBaseResolution,
@@ -94,7 +105,7 @@ fn prepare(
 }
 
 #[test]
-fn routine_memory_replays_remain_readable_without_fresh_resolution_or_preparation() {
+fn routine_memory_replays_remain_readable_but_global_proof_cannot_authorize_effect() {
     for already_resolved in [false, true] {
         let mut h = Harness::new();
         let request = request(&h, true);
@@ -111,7 +122,10 @@ fn routine_memory_replays_remain_readable_without_fresh_resolution_or_preparatio
             request.caller_fingerprint,
             &resolution,
             &h.fence,
-            &h.policy,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None,
+            },
         );
         if already_resolved {
             assert_eq!(replay.unwrap(), retained);
@@ -126,8 +140,18 @@ fn routine_memory_replays_remain_readable_without_fresh_resolution_or_preparatio
             h.request.kind = NativeResultOperation::EditPage;
             h.request.target = Some(authority.memory_document);
             h.request.expected_revision = Some(expected_revision.clone());
+            h.db.prepare_memory_edit(&h.request, request.caller_fingerprint, authority)
+                .unwrap();
             assert_eq!(
-                h.db.prepare_memory_edit(&h.request, request.caller_fingerprint, authority),
+                h.db.lease_native_result(
+                    &h.request.key,
+                    h.request.request_fingerprint,
+                    &h.fence,
+                    &FreshBotPolicyProof {
+                        global: h.policy.clone(),
+                        routine: None
+                    }
+                ),
                 Err(BotLedgerError::Fenced)
             );
         } else {
@@ -138,7 +162,7 @@ fn routine_memory_replays_remain_readable_without_fresh_resolution_or_preparatio
                 .query_row("SELECT count(*) FROM native_result_intents", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            0
+            i64::from(already_resolved)
         );
     }
 }
@@ -165,27 +189,59 @@ fn allocation_replay_preserves_ids_before_live_fences_and_rejects_namespace_coll
     let mut changed = r.clone();
     changed.caller_fingerprint[0] ^= 1;
     assert_eq!(
-        h.db.allocate_memory_edit(&changed, first.source_run_document, &h.fence, &h.policy),
+        h.db.allocate_memory_edit(
+            &changed,
+            first.source_run_document,
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        ),
         Err(BotLedgerError::Conflict)
     );
     let mut changed = r.clone();
     changed.key.turn = AgentTurnId::mint();
     assert_eq!(
-        h.db.allocate_memory_edit(&changed, first.source_run_document, &h.fence, &h.policy),
+        h.db.allocate_memory_edit(
+            &changed,
+            first.source_run_document,
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        ),
         Err(BotLedgerError::Conflict)
     );
     let mut next = r.clone();
     next.key.operation_id = Uuid::new_v4();
     assert!(
-        h.db.allocate_memory_edit(&next, first.source_run_document, &h.fence, &h.policy)
-            .is_err()
+        h.db.allocate_memory_edit(
+            &next,
+            first.source_run_document,
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        )
+        .is_err()
     );
 
     let mut h = Harness::new();
     let original = h.prepare();
     let r = request(&h, false);
     assert_eq!(
-        h.db.allocate_memory_edit(&r, fixtures::document(0xd0), &h.fence, &h.policy),
+        h.db.allocate_memory_edit(
+            &r,
+            fixtures::document(0xd0),
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        ),
         Err(BotLedgerError::Conflict)
     );
     assert_eq!(h.prepare(), original); // Generic Result hash and retry body are unchanged.
@@ -221,8 +277,17 @@ fn resolve_uses_semantic_revision_equality_and_retains_first_encoding_after_narr
         };
         *expected_revision = bytes;
         assert!(
-            h.db.resolve_memory_edit_base(&r.key, r.caller_fingerprint, &bad, &h.fence, &h.policy)
-                .is_err()
+            h.db.resolve_memory_edit_base(
+                &r.key,
+                r.caller_fingerprint,
+                &bad,
+                &h.fence,
+                &koru_delegate_core::FreshBotPolicyProof {
+                    global: (h.policy).clone(),
+                    routine: None
+                }
+            )
+            .is_err()
         );
         assert_eq!(
             h.db.memory_edit_allocation(r.key.run, r.key.operation_id, r.caller_fingerprint)
@@ -276,7 +341,15 @@ fn memory_effect_has_one_lease_and_settles_without_created_page_authority() {
     assert_eq!(prepare(&mut h, &r, &resolution), current);
     assert!(
         !h.db
-            .created_native_page(h.fence.owner, h.fence.bot, e.workspace, e.document)
+            .created_native_page(
+                &BotRunKey {
+                    owner: h.fence.owner,
+                    bot: h.fence.bot,
+                    run: h.fence.run
+                },
+                e.workspace,
+                e.document
+            )
             .unwrap()
     );
     assert_eq!(
@@ -325,7 +398,15 @@ fn allocation_capacity_counts_unlinked_rows_and_exact_retry_precedes_limit() {
     let mut overflow = first.clone();
     overflow.key.operation_id = Uuid::new_v4();
     assert_eq!(
-        h.db.allocate_memory_edit(&overflow, fixtures::document(0xd0), &h.fence, &h.policy),
+        h.db.allocate_memory_edit(
+            &overflow,
+            fixtures::document(0xd0),
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        ),
         Err(BotLedgerError::Capacity)
     );
     assert_eq!(allocate(&mut h, &first), saved);
@@ -353,7 +434,15 @@ fn allocation_total_capacity_includes_linked_effects_and_replay_never_spends_cap
     let mut overflow = first.clone();
     overflow.key.operation_id = Uuid::new_v4();
     assert_eq!(
-        h.db.allocate_memory_edit(&overflow, fixtures::document(0xd0), &h.fence, &h.policy),
+        h.db.allocate_memory_edit(
+            &overflow,
+            fixtures::document(0xd0),
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
+        ),
         Err(BotLedgerError::Capacity)
     );
     assert_eq!(allocate(&mut h, &first), retained.unwrap());
@@ -385,22 +474,46 @@ fn memory_fresh_lease_refuses_foreign_fences_stale_policies_and_effects_off() {
     fences.push(wrong);
     for wrong in fences {
         assert!(
-            h.db.lease_native_result(&r.key, h.request.request_fingerprint, &wrong, &h.policy)
-                .is_err()
+            h.db.lease_native_result(
+                &r.key,
+                h.request.request_fingerprint,
+                &wrong,
+                &koru_delegate_core::FreshBotPolicyProof {
+                    global: (h.policy).clone(),
+                    routine: None
+                }
+            )
+            .is_err()
         );
         assert_eq!(h.db.native_result(&r.key).unwrap(), Some(record.clone()));
     }
     let mut stale = h.policy.clone();
     stale.config_revision += 1;
     assert!(
-        h.db.lease_native_result(&r.key, h.request.request_fingerprint, &h.fence, &stale)
-            .is_err()
+        h.db.lease_native_result(
+            &r.key,
+            h.request.request_fingerprint,
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (stale).clone(),
+                routine: None
+            }
+        )
+        .is_err()
     );
     let off = h.narrow();
     h.db.install_native_policy(&off).unwrap();
     assert!(
-        h.db.lease_native_result(&r.key, h.request.request_fingerprint, &h.fence, &off)
-            .is_err()
+        h.db.lease_native_result(
+            &r.key,
+            h.request.request_fingerprint,
+            &h.fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (off).clone(),
+                routine: None
+            }
+        )
+        .is_err()
     );
     assert_eq!(h.db.native_result(&r.key).unwrap(), Some(record));
     let MemoryBaseResolution::Resolved { mut authority, .. } = resolved else {
@@ -465,8 +578,16 @@ fn allocation_and_resolution_crashes_preserve_their_own_durable_boundaries() {
             at: moment,
         });
         assert!(
-            h.db.allocate_memory_edit(&r, fixtures::document(0xd0), &h.fence, &h.policy)
-                .is_err()
+            h.db.allocate_memory_edit(
+                &r,
+                fixtures::document(0xd0),
+                &h.fence,
+                &koru_delegate_core::FreshBotPolicyProof {
+                    global: (h.policy).clone(),
+                    routine: None
+                }
+            )
+            .is_err()
         );
         h.db.restart_in_memory();
         let retained =
@@ -488,7 +609,10 @@ fn allocation_and_resolution_crashes_preserve_their_own_durable_boundaries() {
                 r.caller_fingerprint,
                 &resolution,
                 &h.fence,
-                &h.policy
+                &koru_delegate_core::FreshBotPolicyProof {
+                    global: (h.policy).clone(),
+                    routine: None
+                }
             )
             .is_err()
         );

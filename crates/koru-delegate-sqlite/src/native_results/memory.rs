@@ -232,7 +232,7 @@ pub(super) fn allocate(
     request: &AllocateMemoryEditRequest,
     source: DocumentId,
     fence: &BotExecutionFence,
-    fresh: &BotPolicyBarrier,
+    fresh: &FreshBotPolicyProof,
 ) -> Result<MemoryEditAllocation, BotLedgerError> {
     if !request.valid() || source.as_uuid().is_nil() {
         return Err(BotLedgerError::Invalid);
@@ -250,7 +250,7 @@ pub(super) fn allocate(
             return Ok(old);
         }
         repository::fresh_policy(tx,&request.key,&admitted,fence,fresh)?;
-        if request.current_config_revision!=fresh.config_revision || request.current_policy_revision!=fresh.policy_revision {return Err(BotLedgerError::Stale);}
+        if request.current_config_revision!=fresh.global.config_revision || request.current_policy_revision!=fresh.global.policy_revision {return Err(BotLedgerError::Stale);}
         let source_matches:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1 AND workspace_id=?2 AND state='satisfied' AND run_document_id=?3)",params![request.key.run.to_storage(),admitted.submission.workspace.to_storage(),source.to_storage()],|r|r.get(0)).map_err(rows::sql)?;
         if !source_matches {return Err(BotLedgerError::Fenced);}
         let (all,unlinked):(i64,i64)=tx.query_row("SELECT count(*),coalesce(sum(n.run_id IS NULL),0) FROM bot_memory_edit_allocations a LEFT JOIN native_result_intents n ON n.run_id=a.run_id AND n.operation_id=a.operation_id WHERE a.run_id=?1",[request.key.run.to_storage()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(rows::sql)?;
@@ -276,7 +276,7 @@ pub(super) fn resolve(
     fingerprint: [u8; 32],
     resolution: &MemoryBaseResolution,
     fence: &BotExecutionFence,
-    fresh: &BotPolicyBarrier,
+    fresh: &FreshBotPolicyProof,
 ) -> Result<MemoryEditAllocation, BotLedgerError> {
     let MemoryBaseResolution::Resolved {
         authority,

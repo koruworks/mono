@@ -270,6 +270,15 @@ fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
         NativeDrainReason::OwnerStop,
         NativeDrainReason::TerminalTurn,
         NativeDrainReason::UnconfirmedOperation,
+        NativeDrainReason::RoutinePolicyPending {
+            owner: serde_json::from_value(
+                serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
+            )
+            .unwrap(),
+            bot: koru_delegate_core::BotId::mint(),
+            schedule: koru_delegate_core::ScheduleId::from_uuid(Uuid::new_v4()),
+            request: koru_delegate_core::BotRequestId::mint().into(),
+        },
     ] {
         let command = BotCommand::CheckNativeEffectDrain {
             key: request.key.clone(),

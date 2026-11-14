@@ -2,6 +2,36 @@
 use super::*;
 
 #[test]
+fn routine_native_drain_reason_requires_exact_subject_and_request_fields() {
+    let reason = NativeDrainReason::RoutinePolicyPending {
+        owner: BotOwner {
+            user_scope: UserScopeId::new(),
+            device: crate::DeviceId::from_uuid(Uuid::new_v4()),
+        },
+        bot: BotId::mint(),
+        schedule: crate::ScheduleId::from_uuid(Uuid::new_v4()),
+        request: NativePolicyRequestId::from(BotRequestId::mint()),
+    };
+    let value = serde_json::to_value(&reason).unwrap();
+    assert_eq!(value["reason"], "routine_policy_pending");
+    assert_eq!(
+        serde_json::from_value::<NativeDrainReason>(value.clone()).unwrap(),
+        reason
+    );
+    for field in ["owner", "bot", "schedule", "request"] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<NativeDrainReason>(missing).is_err());
+    }
+    let mut extra = value.clone();
+    extra["trusted"] = true.into();
+    assert!(serde_json::from_value::<NativeDrainReason>(extra).is_err());
+    let mut invalid = value;
+    invalid["request"] = Uuid::nil().to_string().into();
+    assert!(serde_json::from_value::<NativeDrainReason>(invalid).is_err());
+}
+
+#[test]
 fn private_submission_closes_nested_intent_and_input_without_changing_ordinary_types() {
     let mut request = crate::tests::request();
     let workspace = WorkspaceId::from_uuid(Uuid::new_v4());
