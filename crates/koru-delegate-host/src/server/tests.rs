@@ -32,7 +32,7 @@ fn stale_wire_versions_cannot_reach_dispatch() {
             confirm: false,
         },
     ] {
-        for stale in [1, 3, 4, 6, 7, 10, 13] {
+        for stale in [1, 3, 4, 6, 7, 10, 13, 14] {
             let legacy = frame::encode(stale, &request).unwrap();
             assert!(
                 read_current_request(&mut legacy.as_slice())
@@ -104,4 +104,52 @@ fn caller_owner_must_match_the_agents_validated_device() {
     value["key"]["owner"]["device"] = serde_json::json!(uuid::Uuid::new_v4());
     let command: BotCommand = serde_json::from_value(value).unwrap();
     assert!(!admits_bot_command(&identity, &capability, &command));
+}
+
+#[test]
+fn routine_route_frame_requires_current_protocol_private_capability_and_device() {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    let capability =
+        BotDelegateAuthority::new("routine-private-authority-01234567890123456789".into()).unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let identity = Identity {
+        launch_id: "fixture".into(),
+        authority: "stop-only".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
+    };
+    let route: koru_delegate_core::RoutineRouteIdentity = serde_json::from_value(serde_json::json!({
+        "owner":{"user_scope":uuid::Uuid::new_v4(),"device":device},"bot":uuid::Uuid::new_v4(),
+        "schedule":uuid::Uuid::new_v4(),"workspace":uuid::Uuid::new_v4(),"creation_request":uuid::Uuid::new_v4(),"seed_hash":"11".repeat(32),"created_at_ms":1
+    })).unwrap();
+    let command = BotCommand::RegisterRoutineRoute {
+        identity: route.clone(),
+    };
+    let request = Request::Bot {
+        authority: capability.clone(),
+        command: command.clone(),
+    };
+    let stale = frame::encode(14, &request).unwrap();
+    assert!(
+        read_current_request(&mut stale.as_slice())
+            .unwrap()
+            .is_none()
+    );
+    let current = frame::encode(WIRE_VERSION, &request).unwrap();
+    assert_eq!(
+        read_current_request(&mut current.as_slice()).unwrap(),
+        Some(request)
+    );
+    assert!(admits_bot_command(&identity, &capability, &command));
+    let ordinary =
+        BotDelegateAuthority::new("ordinary-caller-label-01234567890123456789".into()).unwrap();
+    assert!(!admits_bot_command(&identity, &ordinary, &command));
+    let mut foreign = route;
+    foreign.owner.device = koru_delegate_core::DeviceId::new();
+    assert!(!admits_bot_command(
+        &identity,
+        &capability,
+        &BotCommand::RegisterRoutineRoute { identity: foreign }
+    ));
 }

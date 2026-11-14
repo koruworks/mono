@@ -4,6 +4,7 @@ use super::*;
 use koru_delegate_core::{RoutineDigest32, ScheduleId};
 mod bounded;
 mod page;
+mod recovery;
 #[cfg(test)]
 mod tests;
 
@@ -241,28 +242,39 @@ impl Repository {
                 creation.refusal = Some(reason);
             }
         }
-        creation.updated_at_ms = now.max(
-            creation
-                .updated_at_ms
-                .checked_add(1)
-                .ok_or(BotError::Storage)?,
-        );
-        let changed = tx.execute("UPDATE bot_routines SET creation_state=?2,origin_edit_revision=?3,refusal=?4,updated_at_ms=?5 WHERE schedule_id=?1 AND creation_state=?6 AND updated_at_ms=?7",
-            params![identity.schedule.to_storage(),state_name(creation.state),creation.origin_edit_revision,creation.refusal.map(refusal_name),creation.updated_at_ms,state_name(observed.state),observed.updated_at_ms]).map_err(bad)?;
-        if changed != 1 {
-            return Err(BotError::Conflict);
-        }
-        if matches!(
-            creation.state,
-            BotRoutineCreationState::Bound | BotRoutineCreationState::Conflict
-        ) {
-            let changed = tx.execute("UPDATE bot_command_receipts SET stage=?3,outcome_json=?4,updated_at_ms=?5 WHERE user_scope_id=?1 AND request_id=?2 AND command_kind='create_routine' AND stage='prepared'",
-                params![identity.owner.user_scope.to_storage(),identity.creation_request.to_storage(),receipt_stage(&creation),serde_json::to_string(&receipt_for(&creation)).map_err(bad)?,creation.updated_at_ms]).map_err(bad)?;
-            if changed != 1 {
-                return Err(BotError::Storage);
-            }
-        }
+        persist_transition(&tx, &mut creation, observed, now)?;
         tx.commit().map_err(bad)?;
         Ok(creation)
     }
+}
+
+fn persist_transition(
+    tx: &rusqlite::Transaction<'_>,
+    creation: &mut BotRoutineCreation,
+    observed: BotRoutineCreationObserved,
+    now: i64,
+) -> Result<(), BotError> {
+    creation.updated_at_ms = now.max(
+        creation
+            .updated_at_ms
+            .checked_add(1)
+            .ok_or(BotError::Storage)?,
+    );
+    let identity = &creation.identity;
+    let changed = tx.execute("UPDATE bot_routines SET creation_state=?2,origin_edit_revision=?3,refusal=?4,updated_at_ms=?5 WHERE schedule_id=?1 AND creation_state=?6 AND updated_at_ms=?7",
+        params![identity.schedule.to_storage(),state_name(creation.state),creation.origin_edit_revision,creation.refusal.map(refusal_name),creation.updated_at_ms,state_name(observed.state),observed.updated_at_ms]).map_err(bad)?;
+    if changed != 1 {
+        return Err(BotError::Conflict);
+    }
+    if matches!(
+        creation.state,
+        BotRoutineCreationState::Bound | BotRoutineCreationState::Conflict
+    ) {
+        let changed = tx.execute("UPDATE bot_command_receipts SET stage=?3,outcome_json=?4,updated_at_ms=?5 WHERE user_scope_id=?1 AND request_id=?2 AND command_kind='create_routine' AND stage='prepared'",
+            params![identity.owner.user_scope.to_storage(),identity.creation_request.to_storage(),receipt_stage(creation),serde_json::to_string(&receipt_for(creation)).map_err(bad)?,creation.updated_at_ms]).map_err(bad)?;
+        if changed != 1 {
+            return Err(BotError::Storage);
+        }
+    }
+    Ok(())
 }

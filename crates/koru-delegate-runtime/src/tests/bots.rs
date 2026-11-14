@@ -9,6 +9,12 @@ use super::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn register_routine_route(
+        &mut self,
+        identity: &RoutineRouteIdentity,
+    ) -> Result<RoutineRouteIdentity, BotLedgerError> {
+        self.inner.lock().unwrap().register_routine_route(identity)
+    }
     fn stop_unstarted_routine(
         &mut self,
         key: &BotRunKey,

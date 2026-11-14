@@ -77,6 +77,10 @@ pub struct BotObservation {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// IPC 15: retain the deny-only Schedule route before Store creation.
+    RegisterRoutineRoute {
+        identity: koru_delegate_core::RoutineRouteIdentity,
+    },
     Hello {
         owner: koru_delegate_core::BotOwner,
         scan: BotBootScan,
@@ -244,6 +248,7 @@ impl BotCommand {
     /// commands instead resolve their immutable Run binding inside the actor.
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
         match self {
+            Self::RegisterRoutineRoute { identity } => Some(&identity.owner),
             Self::Hello { owner, .. }
             | Self::PendingNativeEffects { owner, .. }
             | Self::UnsettledWork { owner, .. } => Some(owner),
@@ -295,6 +300,9 @@ impl std::fmt::Debug for BotCommand {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReply {
+    RoutineRoute {
+        identity: koru_delegate_core::RoutineRouteIdentity,
+    },
     Hello {
         hello: BotHello,
     },
@@ -371,7 +379,9 @@ pub trait BotDelegatePort: Send + Sync {
     /// fails `delegate_unavailable` (retryable) and whatever the owner does
     /// with it is not reported, so only reads use it, and the AI owner's
     /// `stop_task`, whose Stop is idempotent and whose retry reads the
-    /// owner's state afresh. Boot replay also uses it: timeout leaves replay
+    /// owner's state afresh. Routine route registration uses it too: unknown
+    /// acknowledgement forbids Store creation and retries the same immutable
+    /// route. Boot replay also uses it: timeout leaves replay
     /// owed, and a retry must recapture current canonical barriers. The default ignores the bound: a port that can
     /// block must bound it itself.
     fn execute_within(

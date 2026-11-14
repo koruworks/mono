@@ -19,4 +19,10 @@ fn stale_or_wrong_family_creation_completion_cannot_release_current_slot() {
     assert!(!lane.complete(13, Family::Memory));
     assert_eq!(lane.active, Some((13, Family::Bot)));
     assert!(lane.complete(13, Family::Bot));
+    lane.active = Some((14, Family::Routine));
+    assert!(!lane.complete(14, Family::Bot));
+    assert!(!lane.complete(14, Family::Memory));
+    assert!(!lane.complete(13, Family::Routine));
+    assert_eq!(lane.active, Some((14, Family::Routine)));
+    assert!(lane.complete(14, Family::Routine));
 }

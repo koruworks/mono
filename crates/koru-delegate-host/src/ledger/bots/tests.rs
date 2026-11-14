@@ -373,3 +373,53 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
             .is_empty()
     );
 }
+
+#[test]
+fn actual_shared_ledger_retains_route_across_clones_without_run_or_session() {
+    let mut shared = SharedLedger::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap());
+    let mut retry = shared.clone();
+    let s = submission();
+    let route = RoutineRouteIdentity {
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        schedule: ScheduleId::mint(),
+        workspace: s.workspace,
+        creation_request: BotRequestId::mint(),
+        seed_hash: RoutineDigest32::from_bytes([9; 32]),
+        created_at_ms: 1,
+    };
+    assert_eq!(
+        shared
+            .bots()
+            .unwrap()
+            .register_routine_route(&route)
+            .unwrap(),
+        route
+    );
+    assert_eq!(
+        retry
+            .bots()
+            .unwrap()
+            .register_routine_route(&route)
+            .unwrap(),
+        route
+    );
+    let mut changed = route.clone();
+    changed.workspace = WorkspaceId::new();
+    assert!(
+        retry
+            .bots()
+            .unwrap()
+            .register_routine_route(&changed)
+            .is_err()
+    );
+    assert_eq!(
+        shared
+            .0
+            .lock()
+            .unwrap()
+            .routine_route(route.schedule)
+            .unwrap(),
+        Some(route)
+    );
+}
