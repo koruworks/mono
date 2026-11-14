@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+mod routines;
 use crate::bots::view::context_library::{BODY, MANAGE, RELOAD, SURFACE};
 use crate::bots::{
     BotView,
@@ -109,7 +110,7 @@ fn context_library_subject_excludes_creation_trash_and_stale_document() {
     assert!(v.history_target().is_some());
     let first = bot();
     let _first_link = install(&mut v, &first, vec![page(&first)], None);
-    assert_eq!(v.context_sections(), [Section::Library]);
+    assert_eq!(v.context_sections(), [Section::Library, Section::Routines]);
     assert!(
         v.history_target().is_none(),
         "last document is not Bot authority"
@@ -429,7 +430,25 @@ fn context_library_bound_memory_and_geometry_are_host_fed() {
         lang: koru_i18n::Lang::En,
     };
     let semantic = v.bot_context_semantics(&cx).unwrap();
-    assert_eq!(semantic.children.len(), 5);
+    assert_eq!(
+        semantic.children.len(),
+        7,
+        "two selectors, three links, refresh and manage"
+    );
+    for (index, key, selected) in [
+        (0, crate::bots::view::context_library::LIBRARY_SECTION, true),
+        (
+            1,
+            crate::bots::view::context_library::ROUTINES_SECTION,
+            false,
+        ),
+    ] {
+        assert_eq!(
+            semantic.children[index].occurrence,
+            v.context_occurrence(&cx, key).unwrap()
+        );
+        assert_eq!(semantic.children[index].selected, Some(selected));
+    }
     let manage = semantic.children.last().unwrap().occurrence;
     assert!(v.accessibility_action(&mut w.ws, manage, accesskit::Action::Focus, None));
     assert_eq!(v.bot_context.focus, Some(MANAGE));
@@ -492,8 +511,17 @@ fn context_library_accessible_bounds_follow_clipping_and_focus_reveals() {
     let offset = first_rect.y - v.bot_context.area.y + first_rect.h / 2.0;
     v.bot_context.scroll_by(offset);
     let semantic = v.bot_context_semantics(&cx).unwrap();
+    let first_occurrence = v.context_occurrence(&cx, first_key).unwrap();
     assert!(
-        semantic.children[0].bounds.unwrap().h < first_rect.h,
+        semantic
+            .children
+            .iter()
+            .find(|child| child.occurrence == first_occurrence)
+            .unwrap()
+            .bounds
+            .unwrap()
+            .h
+            < first_rect.h,
         "partially clipped action uses visible bounds"
     );
     assert!(

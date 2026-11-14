@@ -3,6 +3,7 @@
 //! Canonical Library links. BotView keeps the only reader and draft; this
 //! surface owns just layout and transient interaction in window coordinates.
 use super::{BotView, controls::ButtonLeaf};
+use crate::panes::context::Section;
 use koru_ai_core::bots::{BotId, BotLifecycle, BotPage};
 use koru_draw::el::{
     El, Frame, FrameCx, Interaction, Key, Role, TextCache, col, leaf, row, scroll_y, text,
@@ -21,6 +22,8 @@ pub(crate) const SURFACE: &str = "bot-context-library";
 pub(crate) const BODY: Key = Key::surface(SURFACE, "body");
 pub(crate) const RELOAD: Key = Key::surface(SURFACE, "reload");
 pub(crate) const MANAGE: Key = Key::surface(SURFACE, "manage");
+pub(crate) const LIBRARY_SECTION: Key = Key::surface(SURFACE, "section-library");
+pub(crate) const ROUTINES_SECTION: Key = Key::surface(SURFACE, "section-routines");
 static NEXT_OCCURRENCE: AtomicU64 = AtomicU64::new(1);
 pub(super) fn mint_instance() -> u64 {
     NEXT_OCCURRENCE.fetch_add(1, Ordering::Relaxed)
@@ -42,9 +45,13 @@ pub(crate) struct Data {
     pub pages: Vec<Page>,
     pub notices: Vec<String>,
     pub loading: bool,
+    pub section: Section,
+    pub routines: Option<super::context_routines::Data>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
+    Section(Section),
+    Routine(super::context_routines::Action),
     Open(BotPage),
     Reload,
     Manage,
@@ -52,7 +59,7 @@ pub(crate) enum Action {
 }
 
 impl BotView {
-    pub(crate) fn context_library_data(&self, tab: u64) -> Option<Data> {
+    pub(crate) fn context_subject(&self, tab: u64) -> Option<Data> {
         let bot = self.settings.bot()?;
         if self.create.is_some()
             || self.load == super::Load::Denied
@@ -61,6 +68,25 @@ impl BotView {
         {
             return None;
         }
+        Some(Data {
+            tab,
+            instance: self.context_instance,
+            revision: bot.revision,
+            bot: bot.id,
+            lang: self.lang,
+            pages: Vec::new(),
+            notices: Vec::new(),
+            loading: false,
+            section: Section::Library,
+            routines: None,
+        })
+    }
+    pub(crate) fn context_library_shown(&self) -> bool {
+        self.context_library_visible
+    }
+    pub(crate) fn context_library_data(&self, tab: u64) -> Option<Data> {
+        let mut data = self.context_subject(tab)?;
+        let bot = self.settings.bot()?;
         let mut pages = Vec::new();
         if let Some(held) = self.library.held() {
             let mut add = |page: &BotPage, part: &'static str, purpose: Words| {
@@ -88,16 +114,11 @@ impl BotView {
         if self.library.dirty() || self.library.saving() || self.library.retrying() {
             notices.push(self.words(Words::BotsLibraryDraftInSettings));
         }
-        Some(Data {
-            tab,
-            instance: self.context_instance,
-            revision: bot.revision.max(self.library.known_revision()),
-            bot: bot.id,
-            lang: self.lang,
-            pages,
-            notices,
-            loading: self.library.loading(),
-        })
+        data.revision = bot.revision.max(self.library.known_revision());
+        data.pages = pages;
+        data.notices = notices;
+        data.loading = self.library.loading();
+        Some(data)
     }
     pub(crate) fn show_context_library(&mut self, visible: bool) -> bool {
         if self.context_library_visible == visible {
@@ -114,6 +135,7 @@ impl BotView {
             return false;
         };
         match action {
+            Action::Section(_) | Action::Routine(_) => false,
             Action::Open(page) => {
                 if !data.pages.iter().any(|p| p.page == page) {
                     return false;
@@ -164,8 +186,10 @@ impl Default for Surface {
 impl Surface {
     pub(crate) fn update(&mut self, data: Option<Data>, area: Rect, floating: bool) -> bool {
         let switched = self.data.as_ref().map(|d| (d.tab, d.bot, d.instance))
-            != data.as_ref().map(|d| (d.tab, d.bot, d.instance));
-        let revised = self.data.as_ref().map(|d| d.revision) != data.as_ref().map(|d| d.revision);
+            != data.as_ref().map(|d| (d.tab, d.bot, d.instance))
+            || self.data.as_ref().map(|d| d.section) != data.as_ref().map(|d| d.section);
+        let revision = |d: &Data| (d.revision, d.routines.as_ref().map(|r| r.revision));
+        let revised = self.data.as_ref().map(revision) != data.as_ref().map(revision);
         let changed = self.data != data || self.area != area || self.floating != floating;
         if switched {
             self.focus = None;
@@ -185,7 +209,10 @@ impl Surface {
         self.area = area;
         self.floating = floating;
         let mut keys = self.keys();
-        if self.data.is_some() && !keys.contains(&RELOAD) {
+        if let Some(routines) = self.data.as_ref().and_then(|d| d.routines.as_ref()) {
+            keys.extend(routines.all_keys());
+        }
+        if self.data.as_ref().is_some_and(|d| d.routines.is_none()) && !keys.contains(&RELOAD) {
             keys.push(RELOAD);
         }
         self.occurrences
@@ -215,15 +242,32 @@ impl Surface {
         let Some(data) = &self.data else {
             return Vec::new();
         };
-        data.pages
-            .iter()
-            .map(|p| p.key)
-            .chain((!data.loading).then_some(RELOAD))
-            .chain([MANAGE])
-            .collect()
+        let mut keys = vec![LIBRARY_SECTION, ROUTINES_SECTION];
+        if let Some(routines) = &data.routines {
+            keys.extend(routines.keys());
+            return keys;
+        }
+        keys.extend(
+            data.pages
+                .iter()
+                .map(|p| p.key)
+                .chain((!data.loading).then_some(RELOAD))
+                .chain([MANAGE])
+                .collect::<Vec<_>>(),
+        );
+        keys
     }
     pub(crate) fn action(&self, key: Key) -> Option<Action> {
         let data = self.data.as_ref()?;
+        if key == LIBRARY_SECTION {
+            return Some(Action::Section(Section::Library));
+        }
+        if key == ROUTINES_SECTION {
+            return Some(Action::Section(Section::Routines));
+        }
+        if let Some(routines) = &data.routines {
+            return routines.action(key).map(Action::Routine);
+        }
         match key {
             RELOAD if !data.loading => Some(Action::Reload),
             MANAGE => Some(Action::Manage),
@@ -234,13 +278,28 @@ impl Surface {
                 .map(|p| Action::Open(p.page.clone())),
         }
     }
-    fn button(&self, engine: &mut TextEngine, key: Key, label: String, disabled: bool) -> El {
+    pub(super) fn button(
+        &self,
+        engine: &mut TextEngine,
+        key: Key,
+        label: String,
+        disabled: bool,
+    ) -> El {
+        let selected = self.data.as_ref().is_some_and(|data| match key {
+            LIBRARY_SECTION => data.section == Section::Library,
+            ROUTINES_SECTION => data.section == Section::Routines,
+            _ => data.routines.as_ref().is_some_and(|r| r.selected(key)),
+        });
         leaf(
             "Context Library action",
             ButtonLeaf::new(
                 engine,
                 label.clone(),
-                ActionStyle::Ghost,
+                if selected {
+                    ActionStyle::Secondary
+                } else {
+                    ActionStyle::Ghost
+                },
                 disabled,
                 self.focus == Some(key),
             ),
@@ -254,8 +313,7 @@ impl Surface {
         .name_text(label)
         .fill()
     }
-    pub(crate) fn layout(&self, engine: &mut TextEngine) -> Option<(El, Frame)> {
-        let data = self.data.as_ref()?;
+    fn library_content(&self, engine: &mut TextEngine, data: &Data) -> El {
         let mut content = col("Context Library content")
             .pad(Space::S3)
             .gap(Space::S2)
@@ -316,13 +374,46 @@ impl Surface {
                 t(data.lang, Words::BotsManageLibrary).into(),
                 false,
             )));
-        let tree = scroll_y("Bot context Library")
+        content
+    }
+    pub(crate) fn layout(&self, engine: &mut TextEngine) -> Option<(El, Frame)> {
+        let data = self.data.as_ref()?;
+        let content = if let Some(routines) = &data.routines {
+            routines.content(self, engine, data.lang)
+        } else {
+            self.library_content(engine, data)
+        };
+        let selector = row("Bot context sections")
+            .gap(Space::S1)
+            .child(
+                self.button(
+                    engine,
+                    LIBRARY_SECTION,
+                    t(data.lang, Words::BotsLibrary).into(),
+                    false,
+                )
+                .selected(data.section == Section::Library),
+            )
+            .child(
+                self.button(
+                    engine,
+                    ROUTINES_SECTION,
+                    t(data.lang, Words::BotsRoutines).into(),
+                    false,
+                )
+                .selected(data.section == Section::Routines),
+            );
+        let tree = scroll_y("Bot context")
             .id(BODY)
             .offset(self.scroll)
             .scrollbar()
             .semantics(Role::Group)
-            .name(Words::BotsLibrary)
-            .child(content);
+            .name(if data.section == Section::Routines {
+                Words::BotsRoutines
+            } else {
+                Words::BotsLibrary
+            })
+            .child(col("Bot context content").child(selector).child(content));
         let frame = tree.layout(
             engine,
             &mut self.cache.borrow_mut(),
