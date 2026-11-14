@@ -500,6 +500,7 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
     matches!(
         request,
         BotCommand::Read { .. }
+            | BotCommand::ReadRoutineCreation { .. }
             | BotCommand::ReadLibrary { .. }
             | BotCommand::ReadMemory { .. }
             | BotCommand::ListMemory { .. }
@@ -539,6 +540,8 @@ pub(super) fn archived_change(
         WorkerCommand::Bots { request, .. } => match request {
             _ if bot_read_command(request) || request.lifecycle_kind().is_some() => None,
             BotCommand::CreateChat { bot_id, .. }
+            | BotCommand::CreateRoutine { bot_id, .. }
+            | BotCommand::RetryRoutineCreation { bot_id, .. }
             | BotCommand::SetKnowledge { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
@@ -721,6 +724,8 @@ impl WorkerState {
         let id = match command {
             _ if bot_read_command(command) => return Ok(()),
             BotCommand::CreateChat { bot_id, .. }
+            | BotCommand::CreateRoutine { bot_id, .. }
+            | BotCommand::RetryRoutineCreation { bot_id, .. }
             | BotCommand::SetKnowledge { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
@@ -2132,7 +2137,9 @@ impl WorkerState {
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }
             | BotCommand::Pause { bot_id, .. }
-            | BotCommand::Resume { bot_id, .. } => (*bot_id, None, false),
+            | BotCommand::Resume { bot_id, .. }
+            | BotCommand::CreateRoutine { bot_id, .. }
+            | BotCommand::RetryRoutineCreation { bot_id, .. } => (*bot_id, None, false),
             BotCommand::ReconcileOperation { bot_id, .. } => (*bot_id, None, true),
             _ => return Ok(()),
         };

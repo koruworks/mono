@@ -233,6 +233,21 @@ impl NativeResultLedger for SharedLedger {
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError> {
         self.0.lock().unwrap().native_effects_pending(run)
     }
+    fn install_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<koru_delegate_sqlite::RoutinePolicyRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .install_routine_native_policy(barrier)
+    }
+    fn settle_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<koru_delegate_sqlite::RoutinePolicyRecord, BotLedgerError> {
+        self.0.lock().unwrap().settle_routine_native_policy(barrier)
+    }
     fn install_native_policy(
         &mut self,
         barrier: &BotPolicyBarrier,

@@ -138,7 +138,7 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/ai/bots/tasks/start` — Authorized local Bot task operation: start_bot_task (Public)
 - POST `/v1/ai/bots/tasks/read` — Authorized local Bot task operation: read_bot_task (Public)
 - POST `/v1/ai/bots/tasks/stop` — Authorized local Bot task operation: stop_bot_task (Public)
-- POST `/v1/ai/bots` — Read or configure an engine-owned Bot and its Knowledge Library, archive, trash or restore it, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task (Public)
+- POST `/v1/ai/bots` — Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine or read/retry its creation, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task (Public)
 - GET `/v1/ai/providers/settings` — Read non-secret AI provider settings (Public)
 - PUT `/v1/ai/providers/selection` — Select the active AI provider (Public)
 - PUT `/v1/ai/providers/openai` — Update non-secret OpenAI settings (Public)

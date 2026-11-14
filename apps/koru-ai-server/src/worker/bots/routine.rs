@@ -4,6 +4,8 @@ use super::*;
 use koru_ai_core::ProfileId;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use std::collections::VecDeque;
+mod commands;
+pub(in crate::worker) use commands::{create_body, retained_create};
 #[cfg(test)]
 mod tests;
 
@@ -41,6 +43,12 @@ impl RoutineRecovery {
     }
     pub(in crate::worker) fn request(&mut self) {
         self.followup = true;
+    }
+    /// An explicit admitted create/retry may bypass old backoff. It does not
+    /// cancel the current pass or release its physical creation slot.
+    pub(in crate::worker) fn wake(&mut self) {
+        self.followup = true;
+        self.retry_at = None;
     }
     pub(in crate::worker) fn invalidate_owner(&mut self) {
         if let Some(active) = &self.active {

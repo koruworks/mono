@@ -235,6 +235,35 @@ impl WorkerState {
             command.refuse(error);
             return None;
         }
+        if let WorkerCommand::Bots {
+            request: request @ BotCommand::CreateRoutine { .. },
+            ..
+        } = &command
+            && let Err(error) = routine::create_body(request)
+        {
+            command.refuse(error);
+            return None;
+        }
+        if let WorkerCommand::Bots {
+            request:
+                BotCommand::CreateRoutine { bot_id, .. }
+                | BotCommand::ReadRoutineCreation { bot_id, .. }
+                | BotCommand::RetryRoutineCreation { bot_id, .. },
+            ..
+        } = &command
+        {
+            match lifecycle::readable_bot(&self.repository, *bot_id) {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    command.refuse(not_found());
+                    return None;
+                }
+                Err(error) => {
+                    command.refuse(bot_failure(error));
+                    return None;
+                }
+            }
+        }
         // Creation and its read run their own owner checks (P1.8 B2).
         let command = self.route_bot_creation(command)?;
         let targets = match bot_targets(&self.repository, &command) {
@@ -282,6 +311,33 @@ impl WorkerState {
                 && !archived
             {
                 match request {
+                    BotCommand::CreateRoutine {
+                        bot_id, documents, ..
+                    } => {
+                        let bot = lifecycle::readable_bot(&self.repository, *bot_id)
+                            .map_err(bot_failure)?
+                            .ok_or_else(not_found)?;
+                        let owner = BotOwner {
+                            user_scope: bot.user_scope,
+                            device: bot.owner_device,
+                        };
+                        if self
+                            .repository
+                            .bot_hold(*bot_id)
+                            .map_err(bot_failure)?
+                            .is_none()
+                            && !routine::retained_create(&self.repository, owner, request)?
+                        {
+                            pages.extend(documents.iter().map(|document| BotPage {
+                                workspace: bot.home_workspace,
+                                document: *document,
+                            }));
+                        }
+                        // Always Paused: no model discovery, content/history
+                        // capture or current source-policy freeze here.
+                    }
+                    BotCommand::ReadRoutineCreation { .. }
+                    | BotCommand::RetryRoutineCreation { .. } => {}
                     // Only owner/workspace metadata is prepared here. Memory
                     // body reads and creation use their specialized lanes;
                     // the shared early gate stays closed until full integration.
@@ -609,7 +665,28 @@ impl WorkerState {
         // must not refuse a client polling its progress.
         // A task's Stop is the same: it proves the owner and the workspace
         // against the row at dispatch, and only reduces work.
-        let read = matches!(&command, WorkerCommand::Bots { request, .. }
+        let routine_replay = match &command {
+            WorkerCommand::Bots {
+                request: request @ BotCommand::CreateRoutine { .. },
+                ..
+            } => {
+                let retained = proof
+                    .authority
+                    .owner()
+                    .map_err(bot_failure)
+                    .and_then(|owner| routine::retained_create(&self.repository, owner, request));
+                match retained {
+                    Ok(value) => value,
+                    Err(error) => {
+                        command.refuse(error);
+                        return;
+                    }
+                }
+            }
+            _ => false,
+        };
+        let read = routine_replay
+            || matches!(&command, WorkerCommand::Bots { request, .. }
             if super::lifecycle::bot_read_command(request)
                 || matches!(request, BotCommand::StopTask { .. }));
         for (id, chat, revision, policy) in &proof.chats {
@@ -670,6 +747,9 @@ pub(super) fn bot_targets(
     if let WorkerCommand::Bots { request, .. } = command {
         let id = match request {
             BotCommand::Create { bot_id, .. }
+            | BotCommand::CreateRoutine { bot_id, .. }
+            | BotCommand::ReadRoutineCreation { bot_id, .. }
+            | BotCommand::RetryRoutineCreation { bot_id, .. }
             | BotCommand::CreateChat { bot_id, .. }
             | BotCommand::Read { bot_id }
             | BotCommand::ReadLibrary { bot_id }

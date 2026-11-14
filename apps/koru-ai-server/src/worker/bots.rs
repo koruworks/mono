@@ -116,7 +116,13 @@ impl WorkerState {
         context: CommandContext,
         request: BotCommand,
     ) -> ApiResult<BotResponse> {
-        let refresh = !lifecycle::bot_read_command(&request);
+        let routine_setup = matches!(
+            &request,
+            BotCommand::CreateRoutine { .. }
+                | BotCommand::ReadRoutineCreation { .. }
+                | BotCommand::RetryRoutineCreation { .. }
+        );
+        let refresh = !routine_setup && !lifecycle::bot_read_command(&request);
         let response = self.bot_command(context, request);
         if refresh && response.is_ok() {
             self.request_bot_boot_refresh();
@@ -152,6 +158,9 @@ impl WorkerState {
             return result;
         }
         if let Some(result) = self.bot_memory_command(&context, &request) {
+            return result;
+        }
+        if let Some(result) = self.bot_routine_creation_command(&context, &request) {
             return result;
         }
         if let BotCommand::CreateChat { request_id, bot_id } = &request {
@@ -332,6 +341,9 @@ fn execute_bot_command(
     let now = Timestamp::now().millis();
     match &mut request {
         BotCommand::CreateChat { .. }
+        | BotCommand::CreateRoutine { .. }
+        | BotCommand::ReadRoutineCreation { .. }
+        | BotCommand::RetryRoutineCreation { .. }
         | BotCommand::Start { .. }
         | BotCommand::Continue { .. }
         | BotCommand::Pause { .. }

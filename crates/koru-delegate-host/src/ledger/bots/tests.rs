@@ -155,6 +155,49 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
             .state,
         BotPolicyBarrierState::Effective
     );
+    let routine = RoutinePolicyBarrier {
+        owner: barrier.key.owner,
+        bot: barrier.key.bot,
+        schedule: ScheduleId::from_uuid(uuid::Uuid::new_v4()),
+        request: BotRequestId::mint().into(),
+        grant_revision: 1,
+        policy: barrier.policy.clone(),
+        effects_allowed: true,
+    };
+    shared
+        .bots()
+        .unwrap()
+        .register_routine_route(&RoutineRouteIdentity {
+            owner: routine.owner,
+            bot: routine.bot,
+            schedule: routine.schedule,
+            workspace: routine.policy.workspace,
+            creation_request: BotRequestId::mint(),
+            seed_hash: RoutineDigest32::from_bytes([9; 32]),
+            created_at_ms: 0,
+        })
+        .unwrap();
+    let installed = shared
+        .native_results()
+        .unwrap()
+        .install_routine_native_policy(&routine)
+        .unwrap();
+    assert_eq!(
+        reader
+            .native_results()
+            .unwrap()
+            .current_routine_native_policy(routine.owner, routine.bot, routine.schedule,)
+            .unwrap(),
+        Some(installed.clone())
+    );
+    assert_eq!(
+        reader
+            .native_results()
+            .unwrap()
+            .settle_routine_native_policy(&routine)
+            .unwrap(),
+        installed
+    );
     let request = PrepareNativeResult {
         key: NativeResultKey {
             run,

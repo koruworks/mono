@@ -169,6 +169,8 @@ pub(crate) struct LedgerScript {
     pub ops: Vec<&'static str>,
     /// The next call named here fails with `Storage`.
     pub fail: Option<&'static str>,
+    /// Corrupt both retained/current policy read results after real SQL install.
+    pub corrupt_native_policy_digest: bool,
 }
 
 #[derive(Clone)]

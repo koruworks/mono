@@ -2,6 +2,7 @@
 use super::*;
 use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
+mod routine_policy;
 mod routine_route;
 
 #[test]

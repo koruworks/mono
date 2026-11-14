@@ -2935,6 +2935,105 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "description": "Vouched owner creation only: always Paused, with canonical inherited\nruntime/scope and an independent frozen copy of current Bot access.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "create_routine"
+                ],
+                "type": "string"
+              },
+              "documents": {
+                "items": {
+                  "$ref": "#/components/schemas/DocumentId"
+                },
+                "type": "array"
+              },
+              "expected_bot_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "$ref": "#/components/schemas/ScheduleName"
+              },
+              "objective": {
+                "$ref": "#/components/schemas/Objective"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "expected_bot_revision",
+              "name",
+              "objective",
+              "documents",
+              "recurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read_routine_creation"
+                ],
+                "type": "string"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "request_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "retry_routine_creation"
+                ],
+                "type": "string"
+              },
+              "observed_token": {
+                "$ref": "#/components/schemas/BotRoutineCreationObserved"
+              },
+              "original_request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "original_request_id",
+              "observed_token"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Staged Memory status contract; unavailable until complete Memory integration.",
             "properties": {
               "bot_id": {
@@ -5812,6 +5911,42 @@
         "oneOf": [
           {
             "properties": {
+              "receipt": {
+                "$ref": "#/components/schemas/BotRoutineCreateResult"
+              },
+              "result": {
+                "enum": [
+                  "routine_created"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "creation": {
+                "$ref": "#/components/schemas/BotRoutineCreationStatus"
+              },
+              "result": {
+                "enum": [
+                  "routine_creation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "creation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "result": {
                 "enum": [
                   "memory_status"
@@ -6213,6 +6348,135 @@
             "type": "object"
           }
         ]
+      },
+      "BotRoutineCreateResult": {
+        "additionalProperties": false,
+        "description": "Immutable creation receipt projection; mutable state is read separately.",
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineCreationRefusal"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BotRoutineCreationState"
+          }
+        },
+        "required": [
+          "request_id",
+          "bot_id",
+          "schedule_id",
+          "state"
+        ],
+        "type": "object"
+      },
+      "BotRoutineCreationObserved": {
+        "additionalProperties": false,
+        "description": "Optimistic concurrency token, never proof of Store or owner authority.",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/BotRoutineCreationState"
+          },
+          "updated_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "updated_at_ms"
+        ],
+        "type": "object"
+      },
+      "BotRoutineCreationRefusal": {
+        "enum": [
+          "origin_mismatch",
+          "document_changed",
+          "owner_changed",
+          "authority_changed"
+        ],
+        "type": "string"
+      },
+      "BotRoutineCreationState": {
+        "enum": [
+          "prepared",
+          "unconfirmed",
+          "bound",
+          "conflict"
+        ],
+        "type": "string"
+      },
+      "BotRoutineCreationStatus": {
+        "additionalProperties": false,
+        "description": "Current creation coordination status, never a current Schedule lifecycle,\ngrant body or occurrence list. Frozen revisions describe original creation\nevidence and do not claim current effect permission or service availability.",
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "can_retry": {
+            "description": "The owner command is permitted by current state/lifecycle evidence;\nthis is not a connectivity probe or a promise that recovery succeeds.",
+            "type": "boolean"
+          },
+          "grant_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observed_token": {
+            "$ref": "#/components/schemas/BotRoutineCreationObserved"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineCreationRefusal"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          },
+          "source_bot_policy_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "bot_id",
+          "schedule_id",
+          "observed_token",
+          "can_retry",
+          "source_bot_policy_revision",
+          "grant_revision"
+        ],
+        "type": "object"
       },
       "BotSummary": {
         "properties": {
@@ -23218,7 +23482,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
+        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine creation status does not claim current Schedule lifecycle or permission. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -23239,7 +23503,7 @@
                 }
               }
             },
-            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
+            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine creation status does not claim current Schedule lifecycle or permission. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -23299,7 +23563,7 @@
             ]
           }
         ],
-        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, archive, trash or restore it, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
+        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine or read/retry its creation, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
       }
     },
     "/v1/ai/bots/list": {

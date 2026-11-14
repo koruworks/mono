@@ -2,11 +2,12 @@
 
 //! Native writes are performed by the trusted semantic adapter. This owner
 //! grants one durable effect lease and registers only its verified evidence.
-use super::{Orchestrator, RunError, bots::refused};
+use super::{CachedNativePolicy, Orchestrator, RunError, bots::refused};
 use koru_delegate_core::*;
 use koru_delegate_sqlite::{NativeIntentRecord, NativeResultLedger};
 mod drain;
 mod memory;
+mod policy;
 
 const POLICY_PROOFS: usize = 64;
 
@@ -91,14 +92,30 @@ impl Orchestrator {
         }
         self.native_ledger()?.install_native_policy(&barrier)?;
         let record = self.native_ledger()?.settle_native_policy(&barrier.key)?;
-        self.native_policies
-            .retain(|p| p.key.owner != barrier.key.owner || p.key.bot != barrier.key.bot);
+        if self
+            .native_ledger()?
+            .current_native_policy(barrier.key.owner, barrier.key.bot)?
+            != Some(record.clone())
+        {
+            // Exact historical replay remains a truthful receipt, but cannot
+            // replace a newer subject snapshot or evict another cache entry.
+            return Ok(BotPolicyBarrierReceipt {
+                barrier,
+                state: record.state,
+            });
+        }
+        self.native_policies.retain(|p| {
+            p.barrier.key.owner != barrier.key.owner || p.barrier.key.bot != barrier.key.bot
+        });
         // Eviction only removes a proof: it cannot grant a lease. A later call
         // must supply a freshly synchronized AI snapshot again.
         if self.native_policies.len() == POLICY_PROOFS {
             self.native_policies.remove(0);
         }
-        self.native_policies.push(barrier.clone());
+        self.native_policies.push(CachedNativePolicy {
+            barrier: barrier.clone(),
+            digest: record.payload_digest,
+        });
         Ok(BotPolicyBarrierReceipt {
             barrier,
             state: record.state,
@@ -116,8 +133,8 @@ impl Orchestrator {
         let barrier = self
             .native_policies
             .iter()
-            .find(|p| p.key == *key)
-            .cloned()
+            .find(|p| p.barrier.key == *key)
+            .map(|p| p.barrier.clone())
             .ok_or_else(|| refused("bot_policy_refresh_required"))?;
         let record = self.native_ledger()?.settle_native_policy(key)?;
         Ok(BotPolicyBarrierReceipt {
@@ -186,26 +203,29 @@ impl Orchestrator {
         if fence.attempt != request.key.attempt || fence.turn != Some(request.key.turn) {
             return Err(refused("bot_fenced"));
         }
-        let policy = self
-            .native_policies
-            .iter()
-            .find(|p| p.key.owner == fence.owner && p.key.bot == fence.bot)
-            .cloned()
-            .ok_or_else(|| refused("bot_policy_refresh_required"))?;
-        if policy.config_revision != request.config_revision
-            || policy.policy_revision != request.policy_revision
+        if let Some(retained) = self.native_ledger()?.native_result(&request.key)?
+            && (retained.lease.is_some() || retained.stage != NativeResultStage::Prepared)
         {
-            return Err(refused("bot_policy_stale"));
+            // Read before invoking the existing exact request validator: this
+            // path cannot insert a Prepared row to discover whether replay exists.
+            // Retained truth never carries Execute, even after policy changes.
+            return Ok(self.native_ledger()?.prepare_native_result(request)?.view());
         }
+        let fresh = self.native_policy_for_run(
+            &BotRunKey {
+                owner: fence.owner,
+                bot: fence.bot,
+                run: fence.run,
+            },
+            request.config_revision,
+            request.policy_revision,
+        )?;
         self.native_ledger()?.prepare_native_result(request)?;
         let leased = self.native_ledger()?.lease_native_result(
             &request.key,
             request.request_fingerprint,
             &fence,
-            &FreshBotPolicyProof {
-                global: policy,
-                routine: None,
-            },
+            &fresh,
         )?;
         let mut view = leased.intent.view();
         if leased.execute.is_some() {
