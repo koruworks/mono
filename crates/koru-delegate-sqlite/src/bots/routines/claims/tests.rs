@@ -77,7 +77,11 @@ impl Fixture {
             }),
         };
         let admission = BotAdmissionBarrier {
-            owner: route.owner, bot: route.bot, request: BotRequestId::mint(), epoch: 1, paused: false,
+            owner: route.owner,
+            bot: route.bot,
+            request: BotRequestId::mint(),
+            epoch: 1,
+            paused: false,
         };
         db.apply_bot_barrier(&admission).unwrap();
         db.register_routine_route(&route).unwrap();
@@ -109,8 +113,11 @@ impl Fixture {
     }
     fn claim(&mut self) -> RoutineClaimRecord {
         let facts = self.facts(false);
-        let RoutineClaimObservation::Claimed { record } =
-            self.db.claim_bot_routine(facts, &self.admission, &self.fresh).unwrap().0
+        let RoutineClaimObservation::Claimed { record } = self
+            .db
+            .claim_bot_routine(facts, &self.admission, &self.fresh)
+            .unwrap()
+            .0
         else {
             panic!("claim")
         };
@@ -127,7 +134,10 @@ fn routine_claim_crash_boundary_keeps_all_four_rows_and_representative_atomic() 
             op: WriteOp::ClaimBotRoutine,
             at,
         });
-        assert!(f.db.claim_bot_routine(facts, &f.admission, &f.fresh).is_err());
+        assert!(
+            f.db.claim_bot_routine(facts, &f.admission, &f.fresh)
+                .is_err()
+        );
         f.db.restart_in_memory();
         for (table, committed) in [
             ("run_intents", 1),
@@ -148,7 +158,9 @@ fn routine_claim_crash_boundary_keeps_all_four_rows_and_representative_atomic() 
                 }
             );
         }
-        let (outcome, retained_skip) = f.db.claim_bot_routine(f.facts(true), &f.admission, &f.fresh).unwrap();
+        let (outcome, retained_skip) =
+            f.db.claim_bot_routine(f.facts(true), &f.admission, &f.fresh)
+                .unwrap();
         assert!(matches!(outcome, RoutineClaimObservation::Claimed { .. }));
         assert!(retained_skip.is_some());
     }
@@ -181,7 +193,9 @@ fn routine_representative_preserves_retained_skip_truth_and_refuses_claim_collis
             500,
         )
         .unwrap();
-        let (_, actual) = f.db.claim_bot_routine(f.facts(true), &f.admission, &f.fresh).unwrap();
+        let (_, actual) =
+            f.db.claim_bot_routine(f.facts(true), &f.admission, &f.fresh)
+                .unwrap();
         assert_eq!(actual, Some(retained));
     }
     for outcome in ["claimed", "fired"] {
@@ -219,7 +233,10 @@ fn routine_representative_preserves_retained_skip_truth_and_refuses_claim_collis
         f.prepared.ids.submission = BotRequestId::mint();
         f.prepared.submission.request.run = f.prepared.ids.run;
         f.prepared.submission.provenance.submission = f.prepared.ids.submission;
-        assert!(f.db.claim_bot_routine(f.facts(true), &f.admission, &f.fresh).is_err());
+        assert!(
+            f.db.claim_bot_routine(f.facts(true), &f.admission, &f.fresh)
+                .is_err()
+        );
         assert!(f.db.intent(f.prepared.ids.run).unwrap().is_none());
         assert!(matches!(
             f.db.read_routine_claim(&f.prepared.slot).unwrap(),
@@ -349,7 +366,10 @@ fn routine_policy_is_exact_monotonic_current_and_stale_config_cannot_claim() {
             .grant_revision,
         2
     );
-    assert!(f.db.claim_bot_routine(f.facts(false), &f.admission, &f.fresh).is_err());
+    assert!(
+        f.db.claim_bot_routine(f.facts(false), &f.admission, &f.fresh)
+            .is_err()
+    );
     let mut f = Fixture::new();
     f.fresh.global.config_revision = 2;
     f.fresh.global.key.request = BotRequestId::mint().into();
@@ -480,7 +500,10 @@ fn routine_busy_reads_use_unsettled_indexes_and_reject_foreign_retained_holder()
     }
     let holder = crate::bots::tests::submission(80);
     f.db.admit_bot(&holder).unwrap();
-    let result = f.db.claim_bot_routine(f.facts(false), &f.admission, &f.fresh).unwrap().0;
+    let result =
+        f.db.claim_bot_routine(f.facts(false), &f.admission, &f.fresh)
+            .unwrap()
+            .0;
     assert!(matches!(result, RoutineClaimObservation::Skipped { .. }));
     f.db.settle_bot(holder.request.run, BotSettlement::Settled)
         .unwrap();

@@ -474,7 +474,11 @@ pub(crate) fn test_control(actor: mpsc::Sender<ActorCommand>) -> Control {
             }
         }
     });
-    Control { commands, wake, stopped: Arc::new(AtomicBool::new(false)) }
+    Control {
+        commands,
+        wake,
+        stopped: Arc::new(AtomicBool::new(false)),
+    }
 }
 
 impl Drop for Handle {

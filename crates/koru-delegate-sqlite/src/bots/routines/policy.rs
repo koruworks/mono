@@ -131,8 +131,7 @@ pub(super) fn fresh(
     // configuration at this earlier admission boundary.
     if proof.global.config_revision != p.config_revision
         || proof.global.policy_revision != p.policy_revision
-        || proof.routine.as_ref().map(|r| r.grant_revision)
-            != p.routine.map(|r| r.grant_revision)
+        || proof.routine.as_ref().map(|r| r.grant_revision) != p.routine.map(|r| r.grant_revision)
     {
         return Err(BotLedgerError::Stale);
     }

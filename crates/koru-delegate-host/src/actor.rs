@@ -621,8 +621,26 @@ impl Actor {
                 }
             }
             Command::Stop { .. } | Command::ScheduleStopped => {}
-            Command::RoutineBegin { prepared, admission, proof, scope, authored_scope, deadline, cancelled, reply } => {
-                self.begin_routine(*prepared, admission, proof, scope, authored_scope, deadline, cancelled, reply);
+            Command::RoutineBegin {
+                prepared,
+                admission,
+                proof,
+                scope,
+                authored_scope,
+                deadline,
+                cancelled,
+                reply,
+            } => {
+                self.begin_routine(
+                    *prepared,
+                    admission,
+                    proof,
+                    scope,
+                    authored_scope,
+                    deadline,
+                    cancelled,
+                    reply,
+                );
             }
             Command::RoutineRelease { run, reply } => {
                 let result = self.release_routine(run);

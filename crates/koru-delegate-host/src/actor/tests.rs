@@ -22,8 +22,8 @@ use koru_session_protocol::{
 
 use super::*;
 mod native_lookup;
-mod routine_route;
 pub(crate) mod routine;
+mod routine_route;
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {

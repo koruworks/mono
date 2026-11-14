@@ -197,10 +197,18 @@ pub trait ScheduleEffects {
         _authored_scope: koru_delegate_core::WorkspaceScope,
         _deadline: std::time::Instant,
     ) -> PortResult<ScheduleAdmission> {
-        Err(PortError::new(Port::Schedules, "routine_actor_required", "Routine arbitration requires the actor"))
+        Err(PortError::new(
+            Port::Schedules,
+            "routine_actor_required",
+            "Routine arbitration requires the actor",
+        ))
     }
     fn release_routine(&mut self, _run: RunId, _deadline: std::time::Instant) -> PortResult<()> {
-        Err(PortError::new(Port::Schedules, "routine_actor_required", "Routine release requires the actor"))
+        Err(PortError::new(
+            Port::Schedules,
+            "routine_actor_required",
+            "Routine release requires the actor",
+        ))
     }
     fn begin(
         &mut self,
