@@ -176,12 +176,10 @@ fn routine_owner_creates_paused_offline_and_retries_the_same_pending_identity() 
         bot.policy_revision
     );
     assert_eq!(row.identity.grant.grant_revision, 1);
-    assert!(matches!(
-        row.identity.seed.header.definition.lifecycle,
-        koru_delegate_schedule::ScheduleLifecycle::Paused {
-            reason: koru_delegate_schedule::SchedulePauseReason::Manual
-        }
-    ));
+    assert_eq!(
+        serde_json::to_value(&row.identity.seed.header.definition.lifecycle).unwrap(),
+        serde_json::json!({"paused":{"reason":{"reason":"manual"}}})
+    );
     assert_eq!(authority.pages.lock().unwrap().len(), 1);
 }
 
