@@ -154,7 +154,7 @@ fn routine_route_frame_requires_current_protocol_private_capability_and_device()
     let acknowledgement:koru_delegate_core::RoutineLinkAcknowledgement=serde_json::from_value(serde_json::json!({
         "claim":{"slot":slot,"definition":{"revision":1,"digest":"11".repeat(32),"owner_handoff":null},
         "ids":{"submission":uuid::Uuid::new_v4(),"run":uuid::Uuid::new_v4(),"chat":uuid::Uuid::new_v4(),"attempt":uuid::Uuid::new_v4(),"user_message":uuid::Uuid::new_v4(),"assistant_message":uuid::Uuid::new_v4()},
-        "preparation_hash":"22".repeat(32),"claimed_at_ms":60001},"outcome":{"outcome":"linked"}
+        "preparation_hash":"22".repeat(32),"claimed_at_ms":60001},"outcome":{"state":"linked"}
     })).unwrap();
     for command in [
         BotCommand::ReadRoutineClaim { slot },
