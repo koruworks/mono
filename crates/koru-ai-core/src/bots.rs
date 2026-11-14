@@ -4,6 +4,8 @@
 
 use crate::{Chat, ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
 pub use koru_delegate_core::{BotId, BotRequestId, DeviceId, RunId};
+use koru_delegate_core::{Objective, ScheduleId};
+use koru_delegate_schedule::{RecurrenceRule, ScheduleName};
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
 pub mod admission;
@@ -280,6 +282,26 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// Vouched owner creation only: always Paused, with canonical inherited
+    /// runtime/scope and an independent frozen copy of current Bot access.
+    CreateRoutine {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        expected_bot_revision: u64,
+        name: ScheduleName,
+        objective: Objective,
+        documents: Vec<DocumentId>,
+        recurrence: RecurrenceRule,
+    },
+    ReadRoutineCreation {
+        bot_id: BotId,
+        request_id: BotRequestId,
+    },
+    RetryRoutineCreation {
+        bot_id: BotId,
+        original_request_id: BotRequestId,
+        observed_token: BotRoutineCreationObserved,
+    },
     /// Staged Memory status contract; unavailable until complete Memory integration.
     ReadMemory {
         bot_id: BotId,
@@ -594,6 +616,8 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    RoutineCreated { receipt: BotRoutineCreateResult },
+    RoutineCreation { creation: BotRoutineCreationStatus },
     MemoryStatus { status: BotMemoryStatus },
     MemoryList { page: BotMemoryListPage },
     MemoryDetail { page: BotMemoryDetailPage },

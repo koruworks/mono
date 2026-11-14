@@ -7,6 +7,22 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+#[test]
+fn routine_owner_wake_resets_backoff_without_releasing_active_work() {
+    let cancellation = Cancellation::default();
+    let mut recovery = RoutineRecovery::default();
+    recovery.followup = false;
+    recovery.retry_at = Some(Instant::now() + Duration::from_secs(60));
+    recovery.active = Some(cancellation.clone());
+    recovery.failures = 4;
+    recovery.wake();
+    assert!(recovery.followup);
+    assert!(recovery.retry_at.is_none());
+    assert!(recovery.active.is_some());
+    assert!(!cancellation.is_cancelled());
+    assert_eq!(recovery.failures, 4);
+}
+
 struct Delegate {
     route: koru_delegate_core::RoutineRouteIdentity,
     additional: Vec<koru_delegate_core::RoutineRouteIdentity>,
