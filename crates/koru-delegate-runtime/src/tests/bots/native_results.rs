@@ -414,10 +414,12 @@ fn native_effect_requires_fresh_policy_and_issues_one_lease_across_retry_and_bar
             .state,
         BotPolicyBarrierState::Pending
     );
-    assert!(
+    assert_eq!(
         h.orchestrator
             .prepare_native_effect(&request, device)
-            .is_err()
+            .unwrap()
+            .disposition,
+        NativeResultDisposition::ReconcileOnly
     );
     h.orchestrator
         .confirm_native_result(

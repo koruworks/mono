@@ -203,6 +203,14 @@ impl Orchestrator {
         if fence.attempt != request.key.attempt || fence.turn != Some(request.key.turn) {
             return Err(refused("bot_fenced"));
         }
+        if let Some(retained) = self.native_ledger()?.native_result(&request.key)?
+            && (retained.lease.is_some() || retained.stage != NativeResultStage::Prepared)
+        {
+            // Read before invoking the existing exact request validator: this
+            // path cannot insert a Prepared row to discover whether replay exists.
+            // Retained truth never carries Execute, even after policy changes.
+            return Ok(self.native_ledger()?.prepare_native_result(request)?.view());
+        }
         let fresh = self.native_policy_for_run(
             &BotRunKey {
                 owner: fence.owner,

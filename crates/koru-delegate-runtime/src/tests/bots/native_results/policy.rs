@@ -2,6 +2,75 @@
 use super::*;
 
 #[test]
+fn routine_policy_replay_preserves_old_result_but_never_leases_prepared_or_changed_request() {
+    let (mut h, _, fence, mut policy, request) = active();
+    let device = fence.owner.device;
+    h.orchestrator
+        .synchronize_native_policy(policy.clone(), device)
+        .unwrap();
+    let first = h
+        .orchestrator
+        .prepare_native_effect(&request, device)
+        .unwrap();
+    assert_eq!(first.disposition, NativeResultDisposition::Execute);
+    let mut unleased = request.clone();
+    unleased.key.operation_id = uuid::Uuid::new_v4();
+    h.schedule_store.prepare_native_result(&unleased).unwrap();
+    policy.key.request = BotRequestId::mint().into();
+    policy.config_revision = 2;
+    policy.policy_revision = 2;
+    policy.effects_allowed = false;
+    assert_eq!(
+        h.orchestrator
+            .synchronize_native_policy(policy, device)
+            .unwrap()
+            .state,
+        BotPolicyBarrierState::Pending
+    );
+    let replay = h
+        .orchestrator
+        .prepare_native_effect(&request, device)
+        .unwrap();
+    assert_eq!(replay.target, first.target);
+    assert_eq!(replay.disposition, NativeResultDisposition::ReconcileOnly);
+    let mut changed = request.clone();
+    changed.title.push_str(" changed");
+    assert!(
+        h.orchestrator
+            .prepare_native_effect(&changed, device)
+            .is_err()
+    );
+    unleased.config_revision = 2;
+    unleased.policy_revision = 2;
+    assert!(
+        h.orchestrator
+            .prepare_native_effect(&unleased, device)
+            .is_err()
+    );
+    assert!(
+        h.schedule_store
+            .native_result(&unleased.key)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_none()
+    );
+    let mut fresh = unleased.clone();
+    fresh.key.operation_id = uuid::Uuid::new_v4();
+    assert!(
+        h.orchestrator
+            .prepare_native_effect(&fresh, device)
+            .is_err()
+    );
+    assert!(
+        h.schedule_store
+            .native_result(&fresh.key)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn routine_policy_composition_preserves_interactive_subject_and_refuses_pending_global() {
     let (mut h, submission, fence, mut policy, request) = active();
     let key = BotRunKey {
