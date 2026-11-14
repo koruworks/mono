@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "do.koru/koru",
+  "title": "Koru",
+  "description": "Koru notes, docs and files for AI. Open-source alternative to Notion, Evernote, Obsidian, Anytype.",
+  "repository": {
+    "url": "https://github.com/koruworks/mono",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.koru.do/mcp"
+    }
+  ]
+}
