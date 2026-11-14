@@ -246,8 +246,12 @@ impl Routines {
             return false;
         }
         self.opening = None;
-        if seq == self.revision
-            && self.can_open(chat)
+        // A late waiter cannot revoke or reopen a newer projection. The
+        // original command still completed physically, but its view is gone.
+        if seq != self.revision {
+            return true;
+        }
+        if self.can_open(chat)
             && result
                 .as_ref()
                 .ok()
@@ -256,8 +260,10 @@ impl Routines {
         {
             self.opened = Some(chat);
         } else {
+            // The label lane's Failure erases transport/authority provenance.
+            // Missing, foreign and unanswered are therefore all fail-closed.
+            self.invalidate();
             self.notice = Some(Words::BotsConversationUnavailable);
-            self.changed();
         }
         true
     }

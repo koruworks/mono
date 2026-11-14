@@ -423,7 +423,7 @@ fn routine_context_retires_old_press_and_accessibility_occurrence() {
 
 #[test]
 fn routine_context_open_requires_expected_bot_including_existing_tab() {
-    for foreign in [false, true] {
+    for outcome in 0..5 {
         let (mut v, _w) = on_document();
         let bot = bot();
         let p = page(&bot);
@@ -444,7 +444,7 @@ fn routine_context_open_requires_expected_bot_including_existing_tab() {
             })
             .unwrap();
         let label = koru_ai_core::bots::BotChatLabel {
-            bot_id: if foreign {
+            bot_id: if outcome == 1 {
                 koru_ai_core::bots::BotId::mint()
             } else {
                 expected
@@ -456,17 +456,85 @@ fn routine_context_open_requires_expected_bot_including_existing_tab() {
             seq,
             bot: expected,
             chat,
-            result: Ok(Some(label)),
+            result: match outcome {
+                0 | 1 => Ok(Some(label)),
+                2 => Ok(None),
+                3 => Err(Failure::Refused("forbidden".into())),
+                _ => Err(Failure::Unanswered),
+            },
         })
         .unwrap();
         held(&mut v).shown_pass(None);
-        if foreign {
+        if outcome != 0 {
             assert!(!v.drain_bot_routine_open());
             assert_eq!(held(&mut v).chat_id(), bot.main_chat);
+            assert!(held(&mut v).routines.held.is_none());
+            assert!(!lines(&v).contains("Morning reading"));
         } else {
             assert!(v.drain_bot_routine_open());
             assert_eq!(held(&mut v).chat_id(), chat);
         }
+    }
+    {
+        let (mut v, _w) = on_document();
+        let bot = bot();
+        let p = page(&bot);
+        let id = p.items[0].schedule_id;
+        let chat = chat(&p);
+        let (commands, tx) = setup(&mut v, &bot, p);
+        v.bot_context_action(details_key(id));
+        v.bot_context_action(chat_key(chat.as_uuid()));
+        let seq = commands
+            .try_iter()
+            .find_map(|c| match c {
+                Command::RoutineLabel { seq, .. } => Some(seq),
+                _ => None,
+            })
+            .unwrap();
+        // A disclosure change supersedes the pending label while retaining the
+        // same page. Even a refusal must not change its newer notice/content.
+        v.bot_context_action(details_key(id));
+        tx.send(Answer::RoutineLabel {
+            seq,
+            bot: bot.id,
+            chat,
+            result: Err(Failure::Refused("forbidden".into())),
+        })
+        .unwrap();
+        held(&mut v).shown_pass(None);
+        v.sync_bot_context();
+        assert!(held(&mut v).routines.held.is_some());
+        assert!(held(&mut v).routines.notice.is_none());
+        assert!(!v.drain_bot_routine_open());
+        v.bot_context_action(details_key(id));
+        v.bot_context_action(chat_key(chat.as_uuid()));
+        let old = commands
+            .try_iter()
+            .find_map(|c| match c {
+                Command::RoutineLabel { seq, .. } => Some(seq),
+                _ => None,
+            })
+            .unwrap();
+        v.bot_context_action(crate::bots::view::context_routines::REFRESH);
+        let read = request(&mut v, &commands);
+        let fresh = page(&bot);
+        let fresh_id = fresh.items[0].schedule_id;
+        answer(&mut v, &tx, &bot, read, Ok(fresh));
+        tx.send(Answer::RoutineLabel {
+            seq: old,
+            bot: bot.id,
+            chat,
+            result: Err(Failure::Unanswered),
+        })
+        .unwrap();
+        held(&mut v).shown_pass(None);
+        v.sync_bot_context();
+        assert_eq!(
+            held(&mut v).routines.held.as_ref().unwrap().items[0].schedule_id,
+            fresh_id
+        );
+        assert!(held(&mut v).routines.notice.is_none());
+        assert!(!v.drain_bot_routine_open());
     }
     let (mut v, _w) = on_document();
     let bot = bot();
