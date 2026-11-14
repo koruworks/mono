@@ -26,7 +26,7 @@ fn current_routine_definition_requires_actual_location_identity_active_owner_and
         lifecycle: ScheduleLifecycle::Active,
         routine: Some(RoutineAssociation {
             owner: BotOwner {
-                user_scope: UserScopeId::from_uuid(uuid::Uuid::new_v4()),
+                user_scope: koru_store_core::UserScopeId::new(),
                 device: owner,
             },
             bot: BotId::mint(),
