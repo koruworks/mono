@@ -316,3 +316,28 @@ async fn detached_replay_refuses_corrupt_pending_and_wrong_version_payloads() {
         assert!(matches!(read.unwrap().replay(), Err(Error::Invalid)));
     }
 }
+
+#[tokio::test]
+async fn detached_read_never_takes_over_an_existing_partial_transfer() {
+    let (mut client, _reader, mut writer, mut stream, scope, budget) =
+        super::super::tests::pair_with_workspace(true).await;
+    let unit = unit(scope);
+    let (start, _) = stream
+        .begin_outgoing(unit, [7; 8], vec![1], 0, 0, |_| Ok(()))
+        .unwrap();
+    records::write(
+        &mut writer,
+        &Record::Control(start),
+        Instant::now() + Duration::from_secs(2),
+        &budget,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(client.next().await.unwrap(), Event::Progress));
+    assert!(client.stream.incoming_deadline().is_some());
+    assert!(matches!(
+        download(&mut client, unit).await,
+        Err(Error::Unavailable)
+    ));
+    assert!(!client.inspection_only);
+}

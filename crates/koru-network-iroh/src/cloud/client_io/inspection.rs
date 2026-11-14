@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! One authenticated metadata read. No transfer payload, Store job, subscription,
-//! upload, import, or adoption is admitted. The caller still owns the complete
+//! Authenticated metadata and detached content reads. No Store job, live
+//! subscription, upload, durable acknowledgement, or adoption is admitted.
+//! The caller still owns the complete
 //! session::with_fence lifetime and rechecks account/lifecycle before use.
 use super::*;
 
@@ -169,7 +170,9 @@ where
     if client.commit.is_some()
         || client.receipt.is_some()
         || client.upload.is_some()
-        || client.stream.status().incoming_complete
+        || client.stream.incoming_deadline().is_some()
+        || client.stream.outgoing_deadline().is_some()
+        || client.stream.status().draining
         || client.next_start.is_some()
     {
         return Err(Error::Unavailable);
