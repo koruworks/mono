@@ -51,6 +51,7 @@ fn listing_wire_is_closed_through_nested_state_and_pause_reason() {
         vec!["items", "0", "live", "state"],
         vec!["items", "0", "live", "state", "reason"],
     ] {
+        let diagnostic = format!("{path:?}");
         let mut altered = value.clone();
         let mut target = &mut altered;
         for part in path {
@@ -64,12 +65,18 @@ fn listing_wire_is_closed_through_nested_state_and_pause_reason() {
             .as_object_mut()
             .unwrap()
             .insert("extra".into(), serde_json::json!(true));
-        assert!(serde_json::from_value::<BotRoutineListPage>(altered).is_err());
+        assert!(
+            serde_json::from_value::<BotRoutineListPage>(altered).is_err(),
+            "{diagnostic}"
+        );
     }
     let mut other = value;
     other["items"][0]["live"]["state"]["reason"] =
         serde_json::json!({"reason":"context_unavailable","item":0,"stage":"resolve","extra":true});
     assert!(serde_json::from_value::<BotRoutineListPage>(other).is_err());
+    let mut retired = serde_json::to_value(page()).unwrap();
+    retired["items"][0]["live"]["state"] = serde_json::json!({"state":"retired","extra":true});
+    assert!(serde_json::from_value::<BotRoutineListPage>(retired).is_err());
 }
 
 #[test]

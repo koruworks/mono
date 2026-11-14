@@ -185,15 +185,15 @@ mod state {
             #[cfg_attr(feature = "schema", schemars(with = "Vec<String>", length(max = 256)))]
             requests: Vec<HandoffId>,
         },
-        Retired,
+        Retired {},
     }
     #[derive(Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
     pub(super) enum StrictReason {
-        Manual,
-        ProviderNotDelegatable,
-        ScopeUnavailable,
+        Manual {},
+        ProviderNotDelegatable {},
+        ScopeUnavailable {},
         ContextUnavailable {
             item: u32,
             stage: koru_delegate_core::ScheduleContextFailureStage,
@@ -202,9 +202,9 @@ mod state {
     impl From<StrictReason> for SchedulePauseReason {
         fn from(value: StrictReason) -> Self {
             match value {
-                StrictReason::Manual => Self::Manual,
-                StrictReason::ProviderNotDelegatable => Self::ProviderNotDelegatable,
-                StrictReason::ScopeUnavailable => Self::ScopeUnavailable,
+                StrictReason::Manual {} => Self::Manual,
+                StrictReason::ProviderNotDelegatable {} => Self::ProviderNotDelegatable,
+                StrictReason::ScopeUnavailable {} => Self::ScopeUnavailable,
                 StrictReason::ContextUnavailable { item, stage } => {
                     Self::ContextUnavailable { item, stage }
                 }
@@ -224,7 +224,7 @@ mod state {
             StrictState::HandoffPending { owner, requests } => {
                 ScheduleState::HandoffPending { owner, requests }
             }
-            StrictState::Retired => ScheduleState::Retired,
+            StrictState::Retired {} => ScheduleState::Retired,
         })
     }
 }
