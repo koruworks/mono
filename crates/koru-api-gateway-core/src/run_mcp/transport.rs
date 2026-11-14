@@ -33,6 +33,7 @@ use rmcp::model::{
 use super::{native, tools};
 use crate::GatewayState;
 use koru_delegate_core::RunToolAuthority;
+mod routine_bounds;
 
 /// The most bytes one JSON-RPC message may carry. Arguments are a path, a
 /// title, an id or a query; the bytes of a result never travel here.
@@ -125,7 +126,7 @@ fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(if bot {
-            "This Bot endpoint exposes nine scoped tools. search_documents, read_document, create_document and edit_document use effective document permissions; create_document and edit_document save ordinary Run results after durable verification and registration. list_memory/read_memory inspect this Bot's lifetime Memory page without granting generic page access. remember_memory/correct_memory/forget_memory change only that Memory; their saved receipts never become Run results. Use a stable operation_id and identical arguments on every mutation retry. Memory edits require an exact history version from list_memory/read_memory; only first-use remember_memory may omit it to use the original empty seed. After saving, read Current for the next edit. Unknown outcomes must retain the same operation and body. Access refusals require an owner grant and explicit continuation."
+            "This Bot endpoint exposes thirteen scoped tools. search_documents, read_document, create_document and edit_document use effective document permissions; create_document and edit_document save ordinary Run results after durable verification and registration. list_memory/read_memory inspect this Bot's lifetime Memory page without granting generic page access. remember_memory/correct_memory/forget_memory change only that Memory; their saved receipts never become Run results. Use a stable operation_id and identical arguments on every document or Memory mutation retry. Memory edits require an exact history version from list_memory/read_memory; only first-use remember_memory may omit it to use the original empty seed. After saving, read Current for the next edit. Unknown outcomes must retain the same operation and body. create_routine, read_routine_creation, retry_routine_creation and list_routines operate only on this Run's own Bot. Obtain expected_bot_revision from list_routines. Creation retains an initially Paused Routine with an independent copied grant; it never enables work or creates a Run result. Reuse the original request_id and identical Create body after uncertainty. Read creation state before retrying with its observed_token; never replace a lost token or mint a new request automatically. Listing reports applied observations and local references, not current execution or permission authority. Access refusals require an owner grant and explicit continuation."
         } else {
             "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input."
         })
@@ -230,15 +231,26 @@ pub(super) async fn handle(
                 tools::definitions()
             })),
         ),
-        ClientRequest::CallToolRequest(call) => answer(
-            id,
-            ServerResult::CallToolResult(match classification {
+        ClientRequest::CallToolRequest(call) => {
+            let routine = is_bot && native::routines::recognizes(call.params.name.as_ref());
+            let mutation = routine && native::routines::mutation(call.params.name.as_ref());
+            if routine {
+                if let Err(refusal) = routine_bounds::preflight(&id) {
+                    return refusal;
+                }
+            }
+            let result = ServerResult::CallToolResult(match classification {
                 RunToolAuthority::Bot { provenance, policy } => {
                     native::call(&state, authority, provenance, policy, call.params).await
                 }
                 RunToolAuthority::Ordinary {} => tools::call(&state, authority, call.params).await,
-            }),
-        ),
+            });
+            if routine {
+                routine_bounds::answer(id, result, mutation)
+            } else {
+                answer(id, result)
+            }
+        }
         other => jsonrpc_error(
             StatusCode::OK,
             Some(id),

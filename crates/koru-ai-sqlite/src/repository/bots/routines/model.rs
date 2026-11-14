@@ -5,6 +5,7 @@ use super::*;
 #[derive(Clone, PartialEq, Eq)]
 pub struct RoutineToolSubject {
     pub metadata: BotPolicyMetadata,
+    pub profile: ProfileId,
     pub receipt: BotSubmissionReceipt,
     pub occurrence: Option<BotRoutineStoredPreparation>,
 }
@@ -41,6 +42,11 @@ impl Repository {
         run: koru_delegate_core::RunId,
     ) -> Result<RoutineToolSubject, BotError> {
         let metadata = self.routine_tool_metadata(owner, bot)?;
+        let profile: String = self.connection.query_row(
+            "SELECT CASE WHEN typeof(profile_id)='text' AND length(CAST(profile_id AS BLOB))=36 THEN profile_id END FROM chats WHERE id=?1",
+            [metadata.main_chat.to_storage()], |r| r.get(0),
+        ).map_err(bad)?;
+        let profile = ProfileId::parse(&profile).ok_or(BotError::Storage)?;
         // The ordinary decoder owns syntax/identity. Bound its raw allocations
         // before calling it here, including malformed rows beyond SQL CHECKs.
         let (count, bounded): (i64, Option<bool>) = self.connection.query_row(
@@ -67,6 +73,11 @@ impl Repository {
         if submission.workspace != metadata.home_workspace {
             return Err(BotError::Forbidden);
         }
+        if let Some(id) = submission.provenance.ai_attempt_id {
+            let attempt = InferenceAttemptId::parse(&id.to_string()).ok_or(BotError::Storage)?;
+            crate::repository::bot_replay::validate_link(&self.connection, attempt, submission)
+                .map_err(|_| BotError::Storage)?;
+        }
         let occurrence = if let Some(subject) = submission.provenance.routine {
             let row = occurrence::for_run_on(&self.connection, owner, bot, run)?
                 .ok_or(BotError::NotFound)?;
@@ -82,6 +93,7 @@ impl Repository {
         };
         Ok(RoutineToolSubject {
             metadata,
+            profile,
             receipt,
             occurrence,
         })

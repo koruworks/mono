@@ -66,9 +66,9 @@ fn allowlist() -> McpToolAllowlist {
     .expect("six names are under the allowlist bound")
 }
 
-/// The Bot endpoint's native document and own-Memory tools. Keep this exact
+/// The Bot endpoint's native document, own-Memory and own-Routine setup tools. Keep this exact
 /// vocabulary aligned with the gateway's catalog test; it grants no page access.
-const BOT_RUN_TOOLS: [&str; 9] = [
+const BOT_RUN_TOOLS: [&str; 13] = [
     "search_documents",
     "read_document",
     "create_document",
@@ -78,6 +78,10 @@ const BOT_RUN_TOOLS: [&str; 9] = [
     "remember_memory",
     "correct_memory",
     "forget_memory",
+    "create_routine",
+    "read_routine_creation",
+    "retry_routine_creation",
+    "list_routines",
 ];
 
 fn launch_tools(
@@ -90,7 +94,7 @@ fn launch_tools(
                 .into_iter()
                 .map(|name| name.parse().expect("native tool name")),
         )
-        .expect("nine native tools")
+        .expect("thirteen Bot tools")
     } else {
         ordinary.clone()
     }

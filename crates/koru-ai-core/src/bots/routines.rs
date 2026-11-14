@@ -20,6 +20,8 @@ pub use creation::*;
 pub use koru_delegate_schedule::ScheduleContextPointer as RoutineScheduleContextPointer;
 /// Existing neutral definition, re-exported for trusted adapter signatures.
 pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
+/// Existing name owner, reused by trusted in-process setup arguments.
+pub use koru_delegate_schedule::ScheduleName as RoutineScheduleName;
 use koru_delegate_schedule::routine_wire as strict;
 pub use listing::*;
 pub use occurrence::*;

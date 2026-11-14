@@ -6,6 +6,7 @@ use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, Bo
 use std::collections::VecDeque;
 mod commands;
 pub(in crate::worker) mod listing;
+pub(crate) mod model;
 pub(in crate::worker) use commands::{create_body, retained_create};
 #[cfg(test)]
 mod tests;
