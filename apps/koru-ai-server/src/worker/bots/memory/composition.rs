@@ -234,9 +234,7 @@ impl Fixture {
         running: &Running,
         command: BotCommand,
     ) -> ApiResult<BotResponse> {
-        let mut request: CommandContext = context().into();
-        request.memory_for_fixture = Some(self.bot.id);
-        send_owner(&running.worker, request, command)
+        running.worker.client().bots(context(), command)
     }
     pub(in crate::worker::bots) fn status(&self, running: &Running) -> BotMemoryStatus {
         let BotResponse::MemoryStatus { status } = self
@@ -398,24 +396,14 @@ fn run_read(
     submission: &d::BotSubmission,
     operation: MemoryReadOperation,
 ) -> ApiResult<RunMemoryReadResult> {
-    let (reply, response) = sync_channel(1);
-    worker
-        .client()
-        .sender
-        .send(Envelope::RunMemoryReadForFixture {
-            request: RunMemoryReadRequest {
-                run: submission.request.run,
-                generation: d::AttemptGeneration::FIRST,
-                provenance: submission.provenance.clone(),
-                captured: submission.policy.clone(),
-                cancellation: Cancellation::default(),
-                operation,
-            },
-            reply,
-            deadline: Instant::now() + Duration::from_secs(10),
-        })
-        .unwrap();
-    response.recv_timeout(Duration::from_secs(10)).unwrap()
+    worker.client().read_bot_memory(RunMemoryReadRequest {
+        run: submission.request.run,
+        generation: d::AttemptGeneration::FIRST,
+        provenance: submission.provenance.clone(),
+        captured: submission.policy.clone(),
+        cancellation: Cancellation::default(),
+        operation,
+    })
 }
 
 #[test]
@@ -600,31 +588,32 @@ fn real_memory_store_worker_creation_capture_and_historical_reads_compose() {
 }
 
 #[test]
-fn memory_fixture_gate_is_bot_scoped_and_preserves_manage_permission() {
+fn enabled_memory_owner_dispatch_preserves_manage_permission_and_bot_identity() {
     let (fixture, repository) = Fixture::new();
     let running = fixture.start(repository);
     let command = BotCommand::ReadMemory {
         bot_id: fixture.bot.id,
     };
-    assert_eq!(
+    assert!(matches!(
         running
             .worker
             .client()
             .bots(context(), command.clone())
-            .unwrap_err()
-            .code,
-        "unsupported_capability"
+            .unwrap(), BotResponse::MemoryStatus { status } if status.bot_id == fixture.bot.id
+    ));
+    assert!(
+        running
+            .worker
+            .client()
+            .bots(
+                context(),
+                BotCommand::ReadMemory {
+                    bot_id: BotId::mint()
+                }
+            )
+            .is_err()
     );
     let mut request: CommandContext = context().into();
-    request.memory_for_fixture = Some(BotId::mint());
-    assert_eq!(
-        send_owner(&running.worker, request, command.clone())
-            .unwrap_err()
-            .code,
-        "unsupported_capability"
-    );
-    let mut request: CommandContext = context().into();
-    request.memory_for_fixture = Some(fixture.bot.id);
     request.request.principal.scopes = vec![AiScope::Chat];
     assert_eq!(
         send_owner(&running.worker, request, command)
@@ -648,8 +637,7 @@ fn lost_memory_control_reply_reconciles_and_abandon_retry_retains_original_page(
         expected_revision: fixture.bot.revision,
         title: "Memory".into(),
     };
-    let mut request: CommandContext = context().into();
-    request.memory_for_fixture = Some(fixture.bot.id);
+    let request: CommandContext = context().into();
     let (reply, response) = sync_channel(1);
     running
         .worker
