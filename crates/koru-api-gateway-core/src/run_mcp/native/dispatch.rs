@@ -49,7 +49,7 @@ impl PolicySource for AiWorkerClient {
             .map_err(|_| failure("native_recovery_pending"))
     }
 }
-fn failure(code: &'static str) -> ToolFailure {
+pub(super) fn failure(code: &'static str) -> ToolFailure {
     ToolFailure::new(
         code,
         "The native document operation could not be confirmed. Inspect the result before continuing.",
@@ -178,11 +178,7 @@ fn invoke(
         captured: captured.clone(),
         target,
     })?;
-    if current.barrier.key.owner != provenance.owner
-        || current.barrier.key.bot != provenance.bot
-        || current.barrier.policy.workspace != record.workspace
-        || captured.workspace != record.workspace
-    {
+    if !super::policy::matches(&current.proof, &provenance, &captured, record.workspace) {
         return Err(failure("native_policy_unavailable"));
     }
     let authority = NativeStoreAuthority {
@@ -303,17 +299,7 @@ fn invoke(
             _ => return Err(failure("save_status_unknown")),
         }
     }
-    match owner_call(
-        port,
-        BotCommand::SynchronizePolicy {
-            barrier: current.barrier.clone(),
-        },
-    )? {
-        BotReply::PolicyBarrier { receipt }
-            if receipt.barrier == current.barrier
-                && receipt.state == BotPolicyBarrierState::Effective => {}
-        _ => return Err(failure("native_policy_pending")),
-    }
+    super::policy::synchronize(&current.proof, |command| owner_call(port, command))?;
     match owner_call(
         port,
         BotCommand::EffectFence {
@@ -343,8 +329,8 @@ fn invoke(
         target: description.document,
         request_fingerprint: expected_hash,
         expected_revision: description.expected_revision.clone(),
-        config_revision: current.barrier.config_revision,
-        policy_revision: current.barrier.policy_revision,
+        config_revision: current.proof.global.config_revision,
+        policy_revision: current.proof.global.policy_revision,
         title,
     };
     let intent = match owner_call(port, BotCommand::PrepareNativeResult { request })? {

@@ -2,11 +2,12 @@
 
 //! Current policy evidence and access-change coordination on the existing writer.
 mod recovery;
+mod routine;
 use super::*;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use koru_delegate_core::{
     BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierState, BotProvenance, CapturedBotPolicy,
-    NativePolicyRequestId, RunId,
+    FreshBotPolicyProof, NativePolicyRequestId, RunId,
 };
 pub(in crate::worker) use recovery::PolicyRecovery;
 
@@ -20,7 +21,7 @@ pub struct NativePolicyRequest {
 }
 #[derive(Clone)]
 pub struct NativePolicyEvidence {
-    pub barrier: BotPolicyBarrier,
+    pub proof: FreshBotPolicyProof,
     pub profile: koru_ai_core::ProfileId,
 }
 
@@ -68,6 +69,7 @@ fn owner(bot: &Bot) -> BotOwner {
 pub(in crate::worker) enum PolicyWork {
     Lookup {
         request: NativePolicyRequest,
+        routine: Option<Box<routine::RoutineLookup>>,
         reply: SyncSender<ApiResult<NativePolicyEvidence>>,
         deadline: Instant,
     },
@@ -102,7 +104,12 @@ impl BotPolicyJob {
             let profile = checked.workspace(self.bot.home_workspace).map_err(bot_failure)?;
             for page in pages { checked.page(&page).map_err(bot_failure)?; }
             let receipt = match &self.work {
-                PolicyWork::Lookup { .. } => None,
+                PolicyWork::Lookup { routine, deadline, .. } => {
+                    if let Some(snapshot) = routine {
+                        snapshot.verify_delegate(self.delegate.as_deref().ok_or_else(unavailable_failure)?, *deadline)?;
+                    }
+                    None
+                },
                 PolicyWork::Coordinate(r) => {
                     let expected = r.barrier.as_ref().ok_or_else(|| bot_failure(BotError::Invalid))?;
                     match self.delegate.as_ref().ok_or_else(unavailable_failure)?.execute(DelegateCommand::SynchronizePolicy { barrier: expected.clone() }).map_err(|_| unavailable_failure())? {
@@ -164,27 +171,24 @@ impl WorkerState {
             {
                 return Err(bot_failure(BotError::Forbidden));
             }
-            let stored = self
-                .repository
-                .bot_submission_for_run(owner(&bot), bot.id, request.run)
-                .map_err(bot_failure)?
-                .ok_or_else(not_found)?;
-            if stored.intent.submission.provenance != *p
-                || stored.intent.submission.policy != request.captured
-            {
-                return Err(bot_failure(BotError::Forbidden));
-            }
+            let routine = routine::snapshot(&self.repository, &bot, &request)?;
             let authority = self.bot_authority.clone().ok_or_else(unavailable_failure)?;
-            Ok((bot, authority))
+            let delegate = if routine.is_some() {
+                Some(self.bot_delegate.clone().ok_or_else(unavailable_failure)?)
+            } else {
+                None
+            };
+            Ok((bot, authority, routine, delegate))
         })();
         match prepared {
-            Ok((bot, authority)) => {
+            Ok((bot, authority, routine, delegate)) => {
                 let job = BotPolicyJob {
                     bot,
                     authority,
-                    delegate: None,
+                    delegate,
                     work: PolicyWork::Lookup {
                         request,
+                        routine,
                         reply: reply.clone(),
                         deadline,
                     },
@@ -339,19 +343,32 @@ impl WorkerState {
         });
         match result.work {
             PolicyWork::Lookup {
-                reply, deadline, ..
+                request,
+                routine,
+                reply,
+                deadline,
             } => {
                 // While an Archive is settling the Bot, its own effects-off
                 // barrier is the current evidence (P1.7).
                 // A journal read that fails refuses the evidence: it never
                 // falls back to the ordinary effects-allowed barrier.
                 let lifecycle = self.lifecycle_policy_barrier(&result.bot);
-                let value = if same && Instant::now() < deadline {
+                let value = if Instant::now() < deadline {
                     result.result.and_then(|(profile, _)| {
+                        routine::recheck(
+                            &self.repository,
+                            current.as_ref(),
+                            &result.bot,
+                            &request,
+                            routine.as_deref(),
+                        )?;
                         Ok(NativePolicyEvidence {
-                            barrier: match lifecycle? {
-                                Some(barrier) => barrier,
-                                None => barrier(&result.bot)?,
+                            proof: FreshBotPolicyProof {
+                                global: match lifecycle? {
+                                    Some(barrier) => barrier,
+                                    None => barrier(&result.bot)?,
+                                },
+                                routine: routine.as_ref().map(|r| r.barrier()),
                             },
                             profile,
                         })

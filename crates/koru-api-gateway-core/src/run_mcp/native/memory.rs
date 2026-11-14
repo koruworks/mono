@@ -233,11 +233,7 @@ fn invoke(
             target: None,
         })
         .map_err(|error| failure(&error))?;
-    if current.barrier.key.owner != provenance.owner
-        || current.barrier.key.bot != provenance.bot
-        || current.barrier.policy.workspace != record.workspace
-        || captured.workspace != record.workspace
-    {
+    if !super::policy::matches(&current.proof, &provenance, &captured, record.workspace) {
         return Err(failure("forbidden"));
     }
     let cancel_on_failure = cancellation.clone();
