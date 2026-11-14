@@ -683,7 +683,8 @@ fn routine_model_generation_change_after_commit_returns_unknown_and_keeps_candid
         .unwrap()
         .unwrap();
     assert_eq!(row.identity.creation_request, id);
-    assert_eq!(row.identity.owner, f.store.owner);
+    assert_eq!(row.identity.owner.user_scope, f.store.owner.user_scope);
+    assert_eq!(row.identity.owner.device, f.store.owner.device);
     assert!(matches!(
         row.state,
         BotRoutineCreationState::Prepared
