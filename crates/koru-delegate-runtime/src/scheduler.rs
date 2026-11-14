@@ -23,6 +23,8 @@ use crate::{
     ScheduleOccurrenceEvent, SchedulePreparation, Started,
 };
 
+mod routines;
+
 /// One bounded action from an evaluation. A month of missed minute slots is
 /// represented by one `Missed` action whose durable observation cursor skips
 /// the old range. A currently due minute precedes that representative miss,
@@ -123,6 +125,8 @@ pub struct ScheduleEvaluation {
     /// Per-schedule failures isolated so one bad document cannot starve the
     /// rest of the catalog. Content-free; the host logs only port/code.
     pub failures: u32,
+    /// One owned candidate, consumed after the host releases its ordinary gate.
+    pub routine_work: Option<crate::RoutineWork>,
 }
 
 /// Canonical read model produced on the scheduler thread. Public wire mapping
@@ -243,6 +247,7 @@ pub struct ScheduleCoordinator {
     events: Box<dyn ScheduleEvents>,
     claimed_scopes: HashMap<RunId, (ResolvedScope, koru_delegate_core::WorkspaceScope)>,
     device: DeviceId,
+    routines: Option<routines::Routines>,
 }
 
 impl ScheduleCoordinator {
@@ -261,6 +266,7 @@ impl ScheduleCoordinator {
             events: Box::new(NoScheduleEvents),
             claimed_scopes: HashMap::new(),
             device,
+            routines: None,
         }
     }
 
@@ -788,6 +794,9 @@ impl ScheduleCoordinator {
         floating_zone: &R,
     ) -> PortResult<ScheduleEvaluation> {
         crate::counters::schedule_evaluation();
+        if let Some(routines) = &mut self.routines {
+            routines.begin_evaluation(now_ms)?;
+        }
         let evaluated = self.evaluate_inner(effects, now_ms, floating_zone);
         if evaluated.is_err() {
             crate::counters::schedule_evaluation_failed(1);
@@ -843,6 +852,19 @@ impl ScheduleCoordinator {
             report.failures = report.failures.saturating_add(catalog.failures);
             report.next_deadline_ms =
                 min_option(report.next_deadline_ms, Some(now_ms.saturating_add(1_000)));
+        }
+        if let Some(mut routines) = self.routines.take() {
+            let evaluated = self.evaluate_routine_catalog(
+                &mut routines,
+                catalog,
+                effects,
+                now_ms,
+                floating_zone,
+                &mut report,
+            );
+            self.routines = Some(routines);
+            evaluated?;
+            return Ok(report);
         }
         let canonical = canonical_schedule_locations(&catalog.schedules);
         for listed in catalog.schedules.into_iter().filter(|listed| {

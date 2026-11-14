@@ -164,6 +164,10 @@ impl SharedLedger {
     ) -> Result<Option<SlotClaim>, LedgerError> {
         self.0.lock().unwrap().slot(schedule, occurrence_ms)
     }
+
+    pub fn validate_ordinary_schedule_run(&self, run: RunId) -> Result<(), LedgerError> {
+        self.0.lock().unwrap().validate_ordinary_schedule_run(run)
+    }
 }
 
 impl koru_delegate_runtime::RoutineLedger for SharedLedger {

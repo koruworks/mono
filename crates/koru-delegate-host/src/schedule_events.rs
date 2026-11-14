@@ -31,6 +31,8 @@ use koru_events::wire::{AppendReceipt, EventBatch};
 
 use crate::ledger::SharedLedger;
 
+mod routine;
+
 const COMPONENT: &str = "delegate";
 const BATCH: usize = 32;
 pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -97,7 +99,7 @@ impl Drop for ScheduleEventAuthorityGuard<'_> {
 }
 
 // Owned phase guards clone the same state/Condvar; ordinary enter() above keeps
-// its existing lifetime and wait behavior. No Routine coordinator is wired yet.
+// its existing lifetime and wait behavior. Routine phases use that same owner.
 struct OwnedSchedulePhaseGuard {
     gate: ScheduleEventAuthorityGate,
 }
@@ -488,6 +490,7 @@ impl BusScheduleEvents {
         &self,
         fact: ScheduleOccurrenceEvent,
     ) -> PortResult<Option<PreparedScheduleEvent>> {
+        self.validate_occurrence_authority(fact)?;
         let Some(root) = self.root_record(fact.schedule.schedule)? else {
             return Err(Self::error(
                 "schedule_event_root",
@@ -599,6 +602,7 @@ impl BusScheduleEvents {
         record: &SchedulePublicationRecord,
         header: &ScheduleHeader,
     ) -> PortResult<ReconcileDisposition> {
+        self.validate_known_header(Self::event_ref(record.schedule), header)?;
         if Self::stored_matches_created(record, header)? {
             self.ready(PreparedScheduleEvent {
                 event: record.event,
@@ -716,6 +720,7 @@ impl BusScheduleEvents {
                 };
                 let schedule = Self::event_ref(record.schedule);
                 if let Some(pending) = Self::pending_fired_from_claim(schedule, &claim) {
+                    self.validate_occurrence_authority(pending)?;
                     let Some(root) = self.root_record(record.schedule.schedule)? else {
                         self.abandon(PreparedScheduleEvent {
                             event: record.event,
@@ -784,6 +789,7 @@ impl BusScheduleEvents {
                 return Ok(true);
             }
         };
+        self.validate_publication_authority(&record)?;
         self.ledger
             .bump_schedule_publication_attempts(record.event)
             .map_err(|error| Self::error("schedule_event_attempt", error))?;
@@ -893,6 +899,7 @@ impl ScheduleEvents for BusScheduleEvents {
         schedule: ScheduleEventRef,
         header: &ScheduleHeader,
     ) -> PortResult<()> {
+        self.validate_known_header(schedule, header)?;
         if let Some(existing) = self.root_record(schedule.schedule)? {
             if Self::stored_matches_created(&existing, header)? {
                 if existing.ready_at_ms.is_none() {
@@ -922,6 +929,7 @@ impl ScheduleEvents for BusScheduleEvents {
         schedule: ScheduleEventRef,
         header: &ScheduleHeader,
     ) -> PortResult<PreparedScheduleEvent> {
+        self.validate_known_header(schedule, header)?;
         if let Some(existing) = self.root_record(schedule.schedule)? {
             if Self::stored_matches_created(&existing, header)? {
                 return Ok(PreparedScheduleEvent {
@@ -1017,6 +1025,7 @@ impl ScheduleEvents for BusScheduleEvents {
             }
             return Ok(None);
         };
+        self.validate_occurrence_authority(actual)?;
         if let Some(prepared) = prepared {
             let record = self
                 .ledger
@@ -1039,6 +1048,13 @@ impl ScheduleEvents for BusScheduleEvents {
     }
 
     fn ready(&mut self, prepared: PreparedScheduleEvent) -> PortResult<()> {
+        if let Some(record) = self
+            .ledger
+            .schedule_publication(prepared.event)
+            .map_err(|error| Self::error("schedule_event_ledger", error))?
+        {
+            self.validate_publication_authority(&record)?;
+        }
         self.ledger
             .mark_schedule_publication_ready(prepared.event)
             .map(|_| ())

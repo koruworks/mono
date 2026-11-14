@@ -18,6 +18,12 @@ fn refused(code: &'static str) -> PortError {
 }
 
 impl ActorEffects {
+    pub(super) fn finish_pending_routine_release(&mut self, deadline: Instant) -> PortResult<()> {
+        match self.routine.as_ref().map(|pending| pending.run) {
+            Some(run) => self.release_routine_wait(run, deadline),
+            None => Ok(()),
+        }
+    }
     pub(super) fn new(actor: mpsc::Sender<ActorCommand>, stopped: Arc<AtomicBool>) -> Self {
         Self {
             actor,

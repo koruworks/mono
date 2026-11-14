@@ -180,8 +180,16 @@ impl Sleep for NoSleep {
 }
 
 fn actor() -> (Actor, mpsc::Sender<Command>, mpsc::Receiver<Command>) {
+    actor_with_store(Box::new(
+        RunsDb::open(std::path::Path::new(":memory:")).unwrap(),
+    ))
+}
+
+pub(crate) fn actor_with_store(
+    store: Box<dyn koru_delegate_runtime::RunStore>,
+) -> (Actor, mpsc::Sender<Command>, mpsc::Receiver<Command>) {
     let ports = koru_delegate_runtime::Ports {
-        store: Box::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap()),
+        store,
         documents: Box::new(NeverDocuments),
         sessions: Box::new(NeverSessions),
         capture: Box::new(NeverCapture),
