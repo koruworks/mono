@@ -75,6 +75,10 @@ pub struct Limits {
     checkpoint: u64,
 }
 impl Limits {
+    /// Preserve the exact header ceiling across a bounded private replay job.
+    pub fn header_limit(self) -> u32 {
+        self.header
+    }
     /// Fit every valid envelope whose individual vectors fit `vector`.
     /// Header bytes include two vectors and fixed metadata; using the vector
     /// ceiling as the whole header ceiling rejects otherwise valid documents.
