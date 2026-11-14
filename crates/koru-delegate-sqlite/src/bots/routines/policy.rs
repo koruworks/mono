@@ -23,11 +23,10 @@ fn held(
     bot: BotId,
     schedule: ScheduleId,
 ) -> Result<bool, BotLedgerError> {
-    conn.query_row("SELECT EXISTS(SELECT 1 FROM native_routine_leases r JOIN native_result_intents n ON n.run_id=r.run_id AND n.operation_id=r.operation_id WHERE r.user_scope=?1 AND r.device_id=?2 AND r.bot_id=?3 AND r.schedule_id=?4 AND n.lease_state='held')",
-        params![owner.user_scope.to_storage(), owner.device.to_storage(), bot.to_storage(), schedule.to_storage()], |r| r.get(0)).map_err(|e| sql(e).into())
+    crate::native_results::held_routine(conn, owner, bot, schedule)
 }
 
-fn read_policy(
+pub(crate) fn read_policy(
     conn: &Connection,
     owner: BotOwner,
     bot: BotId,
@@ -51,7 +50,7 @@ fn read_policy(
         })())).optional().map_err(sql)?.transpose()
 }
 
-pub(super) fn current(
+pub(crate) fn current(
     conn: &Connection,
     owner: BotOwner,
     bot: BotId,

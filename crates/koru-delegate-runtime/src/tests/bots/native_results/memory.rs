@@ -175,7 +175,15 @@ fn memory_receipts_reconcile_after_effects_off_without_saved_result_publication(
     );
     assert!(
         !h.schedule_store
-            .created_native_page(fence.owner, fence.bot, s.workspace, first.target)
+            .created_native_page(
+                &BotRunKey {
+                    owner: fence.owner,
+                    bot: fence.bot,
+                    run: fence.run
+                },
+                s.workspace,
+                first.target
+            )
             .unwrap()
     );
     assert!(

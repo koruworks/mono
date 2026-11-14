@@ -228,7 +228,15 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
     let allocation = shared
         .native_results()
         .unwrap()
-        .allocate_memory_edit(&allocation_request, source, &memory_fence, &barrier)
+        .allocate_memory_edit(
+            &allocation_request,
+            source,
+            &memory_fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (barrier).clone(),
+                routine: None,
+            },
+        )
         .unwrap();
     assert_eq!(
         reader
@@ -262,7 +270,10 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
             [9; 32],
             &resolution,
             &memory_fence,
-            &barrier,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (barrier).clone(),
+                routine: None,
+            },
         )
         .unwrap();
     let edit = PrepareNativeResult {
@@ -308,7 +319,15 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
     shared
         .native_results()
         .unwrap()
-        .lease_native_result(&request.key, request.request_fingerprint, &fence, &barrier)
+        .lease_native_result(
+            &request.key,
+            request.request_fingerprint,
+            &fence,
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (barrier).clone(),
+                routine: None,
+            },
+        )
         .unwrap();
     let page = reader
         .native_results()

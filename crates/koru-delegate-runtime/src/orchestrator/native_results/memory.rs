@@ -26,7 +26,7 @@ impl Orchestrator {
         config_revision: u64,
         policy_revision: u64,
         device: DeviceId,
-    ) -> Result<(BotExecutionFence, BotPolicyBarrier), RunError> {
+    ) -> Result<(BotExecutionFence, FreshBotPolicyProof), RunError> {
         let provenance = self.memory_subject(key.run, device)?;
         let record = self.bot_record(
             &BotRunKey {
@@ -36,6 +36,9 @@ impl Orchestrator {
             },
             device,
         )?;
+        if provenance.routine.is_some() {
+            return Err(refused("bot_routine_native_not_ready"));
+        }
         let fence = self
             .bot_admission_view(&record)?
             .fence
@@ -56,7 +59,13 @@ impl Orchestrator {
         if policy.config_revision != config_revision || policy.policy_revision != policy_revision {
             return Err(refused("bot_policy_stale"));
         }
-        Ok((fence, policy))
+        Ok((
+            fence,
+            FreshBotPolicyProof {
+                global: policy,
+                routine: None,
+            },
+        ))
     }
 
     pub fn read_memory_edit_allocation(

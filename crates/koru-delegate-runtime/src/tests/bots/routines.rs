@@ -194,7 +194,7 @@ fn replace_candidate(p: &mut RoutinePrepared) {
 
 #[test]
 fn routine_live_adapter_commits_held_and_miss_without_enabling_execution() {
-    let (h, doc, p, fresh) = fixture();
+    let (mut h, doc, p, fresh) = fixture();
     assert!(token(&doc, &p, false).into_run().is_err());
     assert!(token(&doc, &p, false).into_skip().is_err());
     let record = claim(&h, &doc, &p, &fresh, true);
@@ -217,6 +217,38 @@ fn routine_live_adapter_commits_held_and_miss_without_enabling_execution() {
     assert!(db.reserve_bot(p.ids.run).is_err());
     assert!(db.pending_intents().unwrap().is_empty());
     assert!(db.queued_bots(0, 16).unwrap().is_empty());
+    drop(db);
+    let request = PrepareNativeResult {
+        key: NativeResultKey {
+            run: p.ids.run,
+            attempt: RunAttemptId::mint(),
+            generation: AttemptGeneration::from_raw(1).unwrap(),
+            turn: AgentTurnId::mint(),
+            operation_id: uuid::Uuid::new_v4(),
+        },
+        kind: NativeResultOperation::CreatePage,
+        destination: p.submission.workspace,
+        target: None,
+        request_fingerprint: [1; 32],
+        expected_revision: None,
+        config_revision: 1,
+        policy_revision: 1,
+        title: "Result".into(),
+    };
+    assert!(
+        h.orchestrator
+            .prepare_native_effect(&request, p.slot.owner.device)
+            .is_err()
+    );
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .native_result(&request.key)
+            .unwrap()
+            .is_none()
+    );
     assert!(h.sessions.lock().unwrap().calls.is_empty());
 }
 

@@ -6,6 +6,7 @@ use crate::{
     fixtures,
 };
 use std::sync::{Arc, atomic::AtomicI64};
+mod composite;
 mod drain;
 mod memory;
 mod routine;
@@ -136,7 +137,10 @@ impl Harness {
                 &self.request.key,
                 self.request.request_fingerprint,
                 &self.fence,
-                &self.policy,
+                &koru_delegate_core::FreshBotPolicyProof {
+                    global: (self.policy).clone(),
+                    routine: None,
+                },
             )
             .unwrap()
     }
@@ -193,7 +197,10 @@ fn prepare_and_first_lease_have_distinct_commit_boundaries_and_never_reexecute()
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &stale
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (stale).clone(),
+                routine: None
+            }
         )
         .is_err()
     );
@@ -269,7 +276,10 @@ fn narrowing_stays_pending_through_restart_and_uncertainty_until_proven_settled(
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &h.policy
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (h.policy).clone(),
+                routine: None
+            }
         )
         .is_err()
     );
@@ -278,7 +288,10 @@ fn narrowing_stays_pending_through_restart_and_uncertainty_until_proven_settled(
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &narrow
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (narrow).clone(),
+                routine: None
+            }
         )
         .is_err()
     );
@@ -379,7 +392,10 @@ fn changed_payload_cross_fence_and_wrong_evidence_refuse_without_effect_license(
                 &h.request.key,
                 h.request.request_fingerprint,
                 &fence,
-                &h.policy
+                &koru_delegate_core::FreshBotPolicyProof {
+                    global: (h.policy).clone(),
+                    routine: None
+                }
             )
             .is_err()
         );
@@ -417,8 +433,11 @@ fn captured_policy_cannot_widen_and_only_verified_creation_conveys_provenance() 
     assert!(
         !h.db
             .created_native_page(
-                h.fence.owner,
-                h.fence.bot,
+                &BotRunKey {
+                    owner: h.fence.owner,
+                    bot: h.fence.bot,
+                    run: h.fence.run
+                },
                 evidence.workspace,
                 evidence.document
             )
@@ -429,22 +448,27 @@ fn captured_policy_cannot_widen_and_only_verified_creation_conveys_provenance() 
     });
     assert!(
         h.db.created_native_page(
-            h.fence.owner,
-            h.fence.bot,
+            &BotRunKey {
+                owner: h.fence.owner,
+                bot: h.fence.bot,
+                run: h.fence.run
+            },
             evidence.workspace,
             evidence.document
         )
         .unwrap()
     );
     assert!(
-        !h.db
-            .created_native_page(
-                h.fence.owner,
-                BotId::mint(),
-                evidence.workspace,
-                evidence.document
-            )
-            .unwrap()
+        h.db.created_native_page(
+            &BotRunKey {
+                owner: h.fence.owner,
+                bot: BotId::mint(),
+                run: h.fence.run
+            },
+            evidence.workspace,
+            evidence.document
+        )
+        .is_err()
     );
     h.request.key.operation_id = Uuid::new_v4();
     h.request.kind = NativeResultOperation::EditPage;
@@ -462,7 +486,10 @@ fn captured_policy_cannot_widen_and_only_verified_creation_conveys_provenance() 
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &widened
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (widened).clone(),
+                routine: None
+            }
         ),
         Err(BotLedgerError::Fenced)
     );
@@ -584,7 +611,10 @@ fn every_native_write_reuses_the_existing_crash_commit_boundary() {
                             &h.request.key,
                             h.request.request_fingerprint,
                             &h.fence,
-                            &h.policy,
+                            &koru_delegate_core::FreshBotPolicyProof {
+                                global: (h.policy).clone(),
+                                routine: None,
+                            },
                         )
                         .map(|_| ()),
                     WriteOp::RefuseUnleasedNativeResult => db
@@ -767,8 +797,11 @@ fn corrupt_creation_receipt_never_becomes_a_default_edit_grant() {
         .unwrap();
     assert!(matches!(
         h.db.created_native_page(
-            h.fence.owner,
-            h.fence.bot,
+            &BotRunKey {
+                owner: h.fence.owner,
+                bot: h.fence.bot,
+                run: h.fence.run
+            },
             evidence.workspace,
             evidence.document
         ),
@@ -798,7 +831,10 @@ fn new_wrong_destination_and_effective_disabled_policy_never_acquire_a_lease() {
             &h.request.key,
             h.request.request_fingerprint,
             &h.fence,
-            &disabled
+            &koru_delegate_core::FreshBotPolicyProof {
+                global: (disabled).clone(),
+                routine: None
+            }
         ),
         Err(BotLedgerError::Fenced)
     );

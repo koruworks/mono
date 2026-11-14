@@ -12,6 +12,52 @@ pub(super) use claims::stop;
 mod policy;
 mod rows;
 pub use policy::RoutinePolicyRecord;
+pub(crate) use policy::{current as current_policy, read_policy};
+
+/// Reuse the complete claim validator with an already decoded admission.
+/// Retained terminal evidence is valid here; callers separately require Linked
+/// when granting new work.
+pub(crate) fn validate_admission(
+    conn: &Connection,
+    admission: &crate::BotAdmissionRecord,
+) -> Result<koru_delegate_core::RoutineClaimRecord, BotLedgerError> {
+    use koru_delegate_core::{RoutineClaimObservation, RoutineSlot};
+    let p = &admission.submission.provenance;
+    let routine = p.routine.as_ref().ok_or(BotLedgerError::Fenced)?;
+    let slot = RoutineSlot {
+        owner: p.owner,
+        bot: p.bot,
+        schedule: routine.schedule,
+        occurrence_ms: routine.occurrence_ms,
+    };
+    match rows::observation_with_admission(conn, &slot, 0, Some(admission))? {
+        RoutineClaimObservation::Claimed { record }
+            if record.claim.ids.run == admission.submission.request.run =>
+        {
+            Ok(record)
+        }
+        _ => Err(BotLedgerError::Fenced),
+    }
+}
+
+pub(crate) use rows::bounded_admission;
+
+pub(crate) fn native_admission(
+    conn: &Connection,
+    run: RunId,
+) -> Result<crate::BotAdmissionRecord, BotLedgerError> {
+    let version: i64 = conn
+        .query_row(
+            "SELECT submission_version FROM bot_admissions WHERE run_id=?1",
+            [run.to_storage()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if version == 2 {
+        bounded_admission(conn, run)?;
+    }
+    super::repository::read(conn, run)?.ok_or(BotLedgerError::Invalid)
+}
 
 fn sql(error: rusqlite::Error) -> LedgerError {
     LedgerError::sql("access Routine routing", error)
@@ -107,7 +153,7 @@ pub(crate) fn deny_request(
     Ok(())
 }
 pub(crate) fn deny_run_metadata(conn: &Connection, run: RunId) -> Result<(), LedgerError> {
-    let blocked: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE run_id=?1 AND submission_version<>1) OR EXISTS(SELECT 1 FROM schedule_claims c JOIN bot_routine_routes r ON r.schedule_id=c.schedule_id WHERE c.run_id=?1)", [run.to_storage()], |row| row.get(0)).map_err(sql)?;
+    let blocked: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE run_id=?1 AND submission_version<>1) OR EXISTS(SELECT 1 FROM bot_routine_links WHERE run_id=?1) OR EXISTS(SELECT 1 FROM schedule_claims c JOIN bot_routine_routes r ON r.schedule_id=c.schedule_id WHERE c.run_id=?1)", [run.to_storage()], |row| row.get(0)).map_err(sql)?;
     if blocked {
         return Err(LedgerError::InvalidScheduleAuthority);
     }
