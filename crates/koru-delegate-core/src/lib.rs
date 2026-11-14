@@ -120,12 +120,12 @@ pub use view::{RunExecution, RunView, TimelineItem, TimelineWindow};
 // dependant names one crate for a run and its parts.
 pub use bots::{
     BotRoutineCloseReason, FreshBotPolicyProof, INTERACTIVE_BOT_SUBMISSION_VERSION,
-    ROUTINE_BOT_SUBMISSION_VERSION, RoutineClaimIdentity, RoutineClaimObservation,
-    RoutineClaimRecord, RoutineDefinitionIdentity, RoutineDigest32, RoutineDigestError,
-    RoutineExecutionIds, RoutineLinkAcknowledgement, RoutineLinkOutcome, RoutineLinkState,
-    RoutinePolicyBarrier, RoutinePrepared, RoutineProvenance, RoutineRouteIdentity,
-    RoutineSkipOutcome, RoutineSkippedClaim, RoutineSlot, RoutineTerminalReason,
-    routine_digest_json,
+    ROUTINE_BOT_SUBMISSION_VERSION, RoutineClaimFacts, RoutineClaimIdentity,
+    RoutineClaimObservation, RoutineClaimRecord, RoutineDefinitionIdentity, RoutineDigest32,
+    RoutineDigestError, RoutineExecutionIds, RoutineLinkAcknowledgement, RoutineLinkOutcome,
+    RoutineLinkState, RoutinePolicyBarrier, RoutinePrepared, RoutineProvenance,
+    RoutineRepresentativeMiss, RoutineRouteIdentity, RoutineSkipOutcome, RoutineSkippedClaim,
+    RoutineSlot, RoutineTerminalReason, routine_digest_json,
 };
 pub use koru_device::DeviceId;
 pub use koru_events::EventId;

@@ -205,7 +205,10 @@ fn decode_execution(row: &Row<'_>) -> Result<BotExecutionRecord, LedgerError> {
     }
     Ok(record)
 }
-fn read(conn: &Connection, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
+pub(super) fn read(
+    conn: &Connection,
+    run: RunId,
+) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
     Ok(conn
         .query_row(
             "SELECT * FROM bot_admissions WHERE run_id=?1",
@@ -227,7 +230,7 @@ fn reconcile(
         params![key.owner.user_scope.to_storage(),key.owner.device.to_storage(),key.bot.to_storage(),key.request.to_storage()],|r|Ok(decode(r)))
         .optional().map_err(sql)?.transpose()?)
 }
-fn barrier(
+pub(super) fn barrier(
     conn: &Connection,
     owner: BotOwner,
     bot: BotId,
@@ -270,6 +273,14 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn stop_unstarted_routine(
+        &mut self,
+        key: &BotRunKey,
+    ) -> Result<Option<koru_delegate_core::RoutineClaimRecord>, BotLedgerError> {
+        self.write_with_error(WriteOp::StopUnstartedRoutine, |tx, now| {
+            super::routines::stop(tx, key, now)
+        })
+    }
     fn bot_boot_inventory(
         &self,
         owner: BotOwner,
@@ -306,7 +317,11 @@ impl BotLedger for RunsDb {
         &mut self,
         submission: &BotSubmission,
     ) -> Result<BotAdmissionRecord, BotLedgerError> {
-        let submission_version = if submission.provenance.routine.is_some() { 2 } else { 1 };
+        let submission_version = if submission.provenance.routine.is_some() {
+            2
+        } else {
+            1
+        };
         if !submission.valid_for_version(submission_version) {
             return Err(BotLedgerError::Invalid);
         }
@@ -529,6 +544,7 @@ impl BotLedger for RunsDb {
         self.write_with_error(WriteOp::SettleBot,|tx,now| {
             let record=required(tx,run)?;
             let target=match outcome {BotSettlement::Settled=>BotAdmissionState::Settled,BotSettlement::Refused=>BotAdmissionState::Refused};
+            super::routines::settle_link(tx,&record,now)?;
             if matches!(record.state,BotAdmissionState::Settled|BotAdmissionState::Refused) {
                 return if record.state==target {Ok(())} else {Err(BotLedgerError::Conflict)};
             }

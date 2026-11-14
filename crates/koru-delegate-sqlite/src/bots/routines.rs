@@ -6,6 +6,12 @@ use koru_delegate_core::{
     DelegationRequest, RoutineDigest32, RoutineRouteIdentity, RunId, RunOrigin, ScheduleId,
 };
 use rusqlite::{Connection, OptionalExtension, params};
+mod claims;
+pub(super) use claims::settle_link;
+pub(super) use claims::stop;
+mod policy;
+mod rows;
+pub use policy::RoutinePolicyRecord;
 
 fn sql(error: rusqlite::Error) -> LedgerError {
     LedgerError::sql("access Routine routing", error)
