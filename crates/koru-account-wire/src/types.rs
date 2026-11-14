@@ -175,6 +175,8 @@ pub struct ErrorCode(String);
 
 impl ErrorCode {
     pub const INVALID_REQUEST: &'static str = "invalid_request";
+    pub const INVALID_USAGE_CURSOR: &'static str = "invalid_usage_cursor";
+    pub const USAGE_REVISION_CHANGED: &'static str = "usage_revision_changed";
     pub const UNAUTHENTICATED: &'static str = "unauthenticated";
     pub const PERMISSION_DENIED: &'static str = "permission_denied";
     pub const PROFILE_OFFLINE_ONLY_CONFIRMATION_REQUIRED: &'static str =

@@ -11,6 +11,44 @@ use koru_account_core::cloud_plan::{
 use koru_account_core::subscription::SubscriptionStatus;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser};
 
+mod schema;
+
+/// Bounded page query. Hosts reject unknown/duplicate keys and validate these
+/// bounds before starting the database read; no account identifier is accepted.
+#[derive(Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloudUsageWorkspacesQueryV1 {
+    #[schemars(range(min = 1, max = 100))]
+    pub limit: Option<u16>,
+    #[schemars(length(min = 1, max = 2048), regex(pattern = "^[A-Za-z0-9_-]+$"))]
+    pub cursor: Option<String>,
+}
+
+impl CloudUsageWorkspacesQueryV1 {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.limit.is_some_and(|n| !(1..=100).contains(&n)) {
+            return Err("invalid page limit");
+        }
+        if self.cursor.as_ref().is_some_and(|s| {
+            s.is_empty()
+                || s.len() > 2048
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        }) {
+            return Err("invalid usage cursor");
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for CloudUsageWorkspacesQueryV1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudUsageWorkspacesQueryV1")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Nonnegative signed SQL BIGINT, encoded as a canonical decimal JSON string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Decimal(i64);

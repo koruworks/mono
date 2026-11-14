@@ -6,8 +6,8 @@
 //! client fold from [`ROUTES`] so a route and its schema have one owner.
 
 pub mod app_connections;
-pub mod cloud_plan;
 mod catalog;
+pub mod cloud_plan;
 pub mod cloud_sync;
 mod openapi;
 pub mod regional_bootstrap;
