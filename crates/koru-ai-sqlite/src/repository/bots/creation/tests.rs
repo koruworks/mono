@@ -459,6 +459,16 @@ fn an_existing_role_completes_from_folder_ready_and_stays_shared() {
         )
         .unwrap();
     assert_eq!(replay.admission.request, request);
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    let metadata = repo.bot_policy_metadata(owner, bot.id).unwrap();
+    assert_eq!(
+        repo.bot_admission_barrier(&metadata, &koru_delegate_core::BotBootAdmission::Missing {})
+            .unwrap(),
+        replay.admission
+    );
     let mut abandoned = ready;
     abandoned.abandoned = true;
     repo.connection
@@ -484,6 +494,10 @@ fn an_existing_role_completes_from_folder_ready_and_stays_shared() {
             &koru_delegate_core::BotBootAdmission::Missing {},
         )
         .is_err()
+    );
+    assert!(
+        repo.bot_admission_barrier(&metadata, &koru_delegate_core::BotBootAdmission::Missing {})
+            .is_err()
     );
 }
 

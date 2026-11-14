@@ -10,9 +10,9 @@ pub struct BotBootSnapshot {
     pub pending_access: Option<BotPolicyBarrier>,
 }
 
-fn exact(bot: &Bot, barrier: &BotAdmissionBarrier) -> bool {
-    barrier.owner.user_scope == bot.user_scope
-        && barrier.owner.device == bot.owner_device
+fn exact(bot: &BotPolicyMetadata, barrier: &BotAdmissionBarrier) -> bool {
+    barrier.owner.user_scope == bot.owner.user_scope
+        && barrier.owner.device == bot.owner.device
         && barrier.bot == bot.id
         && barrier.epoch == bot.revision
         && barrier.paused == bot.paused
@@ -50,6 +50,37 @@ impl Repository {
         {
             return Err(BotError::Storage);
         }
+        let metadata = self.bot_policy_metadata(owner, id)?;
+        let admission = self.select_admission(&metadata, hint, true)?;
+        let pending_access = self.boot_pending_access(&bot)?;
+        Ok(BotBootSnapshot {
+            bot,
+            admission,
+            pending_access,
+        })
+    }
+
+    /// Receipt-owned request selection against a current bounded snapshot.
+    /// A changed/forged snapshot refuses; callers still re-read after any IPC.
+    pub fn bot_admission_barrier(
+        &self,
+        metadata: &BotPolicyMetadata,
+        hint: &BotBootAdmission,
+    ) -> Result<BotAdmissionBarrier, BotError> {
+        if self.bot_policy_metadata(metadata.owner, metadata.id)? != *metadata {
+            return Err(BotError::RevisionConflict);
+        }
+        self.select_admission(metadata, hint, false)
+    }
+
+    fn select_admission(
+        &self,
+        bot: &BotPolicyMetadata,
+        hint: &BotBootAdmission,
+        full_creation: bool,
+    ) -> Result<BotAdmissionBarrier, BotError> {
+        let owner = bot.owner;
+        let id = bot.id;
         let current = match hint {
             BotBootAdmission::Unavailable {} => return Err(BotError::Unavailable),
             BotBootAdmission::Missing {} => None,
@@ -69,19 +100,30 @@ impl Repository {
                 (barrier.epoch == bot.revision).then_some(barrier.clone())
             }
         };
-        let mut known = self.boot_pause(&bot)?;
-        self.boot_refusals(&bot, &mut known)?;
+        let mut known = self.boot_pause(bot, full_creation)?;
+        self.boot_refusals(bot, &mut known)?;
         // An open lifecycle's required pause may not be replaced with a
         // convenient delegate key or with a synthetic creation-correlated one.
-        if let Some((scope, request)) = self.open_bot_lifecycle(id)? {
-            let op = self
-                .bot_lifecycle_operation(scope, request)?
-                .ok_or(BotError::Storage)?;
-            if op.owner != owner || op.bot != id {
-                return Err(BotError::Forbidden);
-            }
-            if op.barrier_revision == Some(bot.revision) {
-                let request = op.pause_request.ok_or(BotError::Storage)?;
+        let lifecycle_pause = if full_creation {
+            // Preserve boot's complete legacy lifecycle validation, including
+            // its member decoder. The authority-only reader never loads members.
+            self.open_bot_lifecycle(id)?
+                .map(|(scope, request)| {
+                    let op = self
+                        .bot_lifecycle_operation(scope, request)?
+                        .ok_or(BotError::Storage)?;
+                    if op.owner != owner || op.bot != id {
+                        return Err(BotError::Forbidden);
+                    }
+                    Ok((op.barrier_revision, op.pause_request))
+                })
+                .transpose()?
+        } else {
+            metadata::lifecycle_pause(&self.connection, bot)?
+        };
+        if let Some((revision, pause)) = lifecycle_pause {
+            if revision == Some(bot.revision) {
+                let request = pause.ok_or(BotError::Storage)?;
                 if known
                     .as_ref()
                     .is_none_or(|barrier| barrier.request != request)
@@ -100,24 +142,23 @@ impl Repository {
                     device: owner.device,
                 },
                 bot: id,
-                request: self.boot_creation_request(&bot)?,
+                request: self.boot_creation_request(bot, full_creation)?,
                 epoch: bot.revision,
                 paused: bot.paused,
             },
         };
-        let pending_access = self.boot_pending_access(&bot)?;
-        Ok(BotBootSnapshot {
-            bot,
-            admission,
-            pending_access,
-        })
+        Ok(admission)
     }
 
-    fn boot_pause(&self, bot: &Bot) -> Result<Option<BotAdmissionBarrier>, BotError> {
+    fn boot_pause(
+        &self,
+        bot: &BotPolicyMetadata,
+        full: bool,
+    ) -> Result<Option<BotAdmissionBarrier>, BotError> {
         let mut query = self
             .connection
             .prepare_cached(
-                "SELECT request_id FROM bot_command_receipts INDEXED BY bot_command_guard
+                "SELECT CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END FROM bot_command_receipts INDEXED BY bot_command_guard
              WHERE bot_id=?1 AND user_scope_id=?2 AND command_kind IN ('pause','resume')
                AND expected_revision=?3 LIMIT 2",
             )
@@ -126,7 +167,7 @@ impl Repository {
             .query_map(
                 params![
                     bot.id.to_storage(),
-                    bot.user_scope.to_storage(),
+                    bot.owner.user_scope.to_storage(),
                     bot.revision - 1
                 ],
                 |row| row.get::<_, String>(0),
@@ -135,8 +176,12 @@ impl Repository {
         let mut found = None;
         for request in requests {
             let request = request.map_err(bad)?.parse().map_err(bad)?;
-            let receipt = admission::pause_on(&self.connection, bot.user_scope, request)?
-                .ok_or(BotError::Storage)?;
+            let receipt = if full {
+                admission::pause_on(&self.connection, bot.owner.user_scope, request)?
+            } else {
+                admission::pause_for_metadata(&self.connection, bot, request)?
+            }
+            .ok_or(BotError::Storage)?;
             if !exact(bot, &receipt.intent.barrier) {
                 return Err(BotError::Conflict);
             }
@@ -147,7 +192,7 @@ impl Repository {
 
     fn boot_refusals(
         &self,
-        bot: &Bot,
+        bot: &BotPolicyMetadata,
         found: &mut Option<BotAdmissionBarrier>,
     ) -> Result<(), BotError> {
         // prepare_bot_submission_tx caps prepared intents at 50. Project only
@@ -156,8 +201,9 @@ impl Repository {
         let mut query = self
             .connection
             .prepare_cached(
-                "SELECT request_id,captured_config_revision,
-                COALESCE(length(CAST(outcome_json AS BLOB))>8192,0),
+                "SELECT CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END,
+                CASE WHEN typeof(captured_config_revision)='integer' AND captured_config_revision>0 THEN captured_config_revision END,
+                (outcome_json IS NOT NULL AND (typeof(outcome_json)<>'text' OR length(CAST(outcome_json AS BLOB))>8192)),
                 CASE WHEN length(CAST(outcome_json AS BLOB))<=8192 THEN outcome_json END
              FROM bot_command_receipts INDEXED BY bot_command_guard
              WHERE bot_id=?1 AND user_scope_id=?2 AND command_kind IN ('start','continue')
@@ -166,7 +212,7 @@ impl Repository {
             .map_err(bad)?;
         let rows = query
             .query_map(
-                params![bot.id.to_storage(), bot.user_scope.to_storage()],
+                params![bot.id.to_storage(), bot.owner.user_scope.to_storage()],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -198,8 +244,8 @@ impl Repository {
             if round == 0
                 || barrier.epoch <= captured
                 || barrier.epoch > bot.revision
-                || barrier.owner.user_scope != bot.user_scope
-                || barrier.owner.device != bot.owner_device
+                || barrier.owner.user_scope != bot.owner.user_scope
+                || barrier.owner.device != bot.owner.device
                 || barrier.bot != bot.id
             {
                 return Err(BotError::Storage);
@@ -214,14 +260,18 @@ impl Repository {
         Ok(())
     }
 
-    fn boot_creation_request(&self, bot: &Bot) -> Result<BotRequestId, BotError> {
+    fn boot_creation_request(
+        &self,
+        bot: &BotPolicyMetadata,
+        full: bool,
+    ) -> Result<BotRequestId, BotError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT request_id,CASE WHEN length(CAST(outcome_json AS BLOB))<=1048576 THEN outcome_json END
+            "SELECT CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END,CASE WHEN typeof(outcome_json)='text' AND length(CAST(outcome_json AS BLOB))<=1048576 THEN outcome_json END
              FROM bot_command_receipts INDEXED BY bot_command_guard
              WHERE bot_id=?1 AND user_scope_id=?2 AND command_kind='create' AND stage='completed' LIMIT 2").map_err(bad)?;
         let rows = query
             .query_map(
-                params![bot.id.to_storage(), bot.user_scope.to_storage()],
+                params![bot.id.to_storage(), bot.owner.user_scope.to_storage()],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
             )
             .map_err(bad)?;
@@ -232,8 +282,21 @@ impl Repository {
             }
             let (request, json) = row.map_err(bad)?;
             let request = request.parse::<BotRequestId>().map_err(bad)?;
-            let outcome: BotReceiptOutcome =
-                serde_json::from_str(&json.ok_or(BotError::Storage)?).map_err(bad)?;
+            let json = json.ok_or(BotError::Storage)?;
+            let identity = bot_creation_identity(&json)?;
+            if identity.bot != bot.id
+                || identity.owner != bot.owner
+                || identity.home != bot.home_workspace
+                || identity.main_chat != bot.main_chat
+            {
+                return Err(BotError::Storage);
+            }
+            if !full {
+                found = Some(request);
+                continue;
+            }
+            // Boot retains its existing complete receipt/configuration validation.
+            let outcome: BotReceiptOutcome = serde_json::from_str(&json).map_err(bad)?;
             outcome.validate().map_err(|_| BotError::Storage)?;
             let authentic = match outcome {
                 BotReceiptOutcome::Configuration {
@@ -243,8 +306,8 @@ impl Repository {
                     validate_config(&created.config, created.home_workspace)
                         .map_err(|_| BotError::Storage)?;
                     created.id == bot.id
-                        && created.user_scope == bot.user_scope
-                        && created.owner_device == bot.owner_device
+                        && created.user_scope == bot.owner.user_scope
+                        && created.owner_device == bot.owner.device
                         && created.home_workspace == bot.home_workspace
                         && created.main_chat == bot.main_chat
                         && created.revision == 1
@@ -256,12 +319,12 @@ impl Repository {
                     creation.ready()
                         && !creation.abandoned()
                         && creation.bot == bot.id
-                        && creation.user_scope == bot.user_scope
-                        && creation.owner_device == bot.owner_device
+                        && creation.user_scope == bot.owner.user_scope
+                        && creation.owner_device == bot.owner.device
                         && creation.home_workspace == bot.home_workspace
                         && creation.main_chat == bot.main_chat
                         && self
-                            .bot_creation(bot.user_scope, request)?
+                            .bot_creation(bot.owner.user_scope, request)?
                             .is_some_and(|r| {
                                 r.stage == BotReceiptStage::Completed && !r.record.abandoned()
                             })
