@@ -143,7 +143,7 @@ impl Delegate {
 }
 impl BotDelegatePort for Delegate {
     fn execute(&self, command: DelegateCommand) -> Result<BotReply, koru_delegate_api::Failure> {
-        if self.preclaim.enabled.load(Ordering::Acquire)
+        if self.preclaim.enabled()
             && matches!(
                 command,
                 DelegateCommand::SynchronizePolicy { .. }

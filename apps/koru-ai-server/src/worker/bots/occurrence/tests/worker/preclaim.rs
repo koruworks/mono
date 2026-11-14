@@ -15,6 +15,9 @@ pub(super) struct Peer {
     newer_global: Mutex<Option<koru_delegate_core::BotPolicyBarrier>>,
 }
 impl Peer {
+    pub(super) fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
+    }
     pub(super) fn answer(
         &self,
         command: &DelegateCommand,
@@ -316,7 +319,7 @@ fn preclaim_worker_requires_prepared_and_both_hashes() {
     refused(synchronize(&h, &request), RoutineBridgeRefusal::Stale);
     h.finish();
 
-    let (mut h, request) = prepared();
+    let (h, request) = prepared();
     let p = h.prepare();
     let claim = h.delegate.claim_with_state(
         &p,
