@@ -267,7 +267,8 @@ fn routine_route_decoder_bounds_malformed_cells_without_erasing_denial() {
         "workspace_id",
         "creation_request_id",
     ] {
-        db.conn().execute_batch("SAVEPOINT corrupt_cell;").unwrap();
+        let mut db = memory();
+        db.register_routine_route(&r).unwrap();
         db.conn()
             .execute(
                 &format!("UPDATE bot_routine_routes SET {column}=hex(zeroblob(1048576))"),
@@ -279,9 +280,6 @@ fn routine_route_decoder_bounds_malformed_cells_without_erasing_denial() {
             db.claim_slot(r.schedule, 900, 1),
             Err(LedgerError::InvalidScheduleAuthority)
         ));
-        db.conn()
-            .execute_batch("ROLLBACK TO corrupt_cell; RELEASE corrupt_cell;")
-            .unwrap();
     }
     db.conn().execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE bot_routine_routes SET seed_hash=zeroblob(1048576);").unwrap();
     assert!(db.routine_route(r.schedule).is_err());

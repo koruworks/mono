@@ -39,7 +39,7 @@ fn read(
                     device: koru_delegate_core::DeviceId::parse(&row.get::<_,String>(1).map_err(sql)?).ok_or_else(corrupt)?,
                 },
                 bot: parse(row.get(2).map_err(sql)?)?, schedule,
-                workspace: parse(row.get(3).map_err(sql)?)?,
+                workspace: koru_delegate_core::WorkspaceId::parse(&row.get::<_,String>(3).map_err(sql)?).ok_or_else(corrupt)?,
                 creation_request: parse(row.get(4).map_err(sql)?)?,
                 seed_hash: RoutineDigest32::from_bytes(row.get::<_,Vec<u8>>(5).map_err(sql)?.try_into().map_err(|_| corrupt())?),
                 created_at_ms: row.get(6).map_err(sql)?,
