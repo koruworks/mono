@@ -21,6 +21,7 @@ public  final class MobileAccountResult extends
     selectedAccountId_ = "";
     enrollments_ = emptyProtobufList();
     cloudSync_ = emptyProtobufList();
+    cloudPlanJson_ = "";
   }
   private int bitField0_;
   public static final int SEQUENCE_FIELD_NUMBER = 1;
@@ -713,6 +714,118 @@ public  final class MobileAccountResult extends
   private void removeCloudSync(int index) {
     ensureCloudSyncIsMutable();
     cloudSync_.remove(index);
+  }
+
+  public static final int CLOUD_PLAN_JSON_FIELD_NUMBER = 14;
+  private java.lang.String cloudPlanJson_;
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @return Whether the cloudPlanJson field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudPlanJson() {
+    return ((bitField0_ & 0x00000010) != 0);
+  }
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @return The cloudPlanJson.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudPlanJson() {
+    return cloudPlanJson_;
+  }
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @return The bytes for cloudPlanJson.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudPlanJsonBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudPlanJson_);
+  }
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @param value The cloudPlanJson to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudPlanJson(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000010;
+    cloudPlanJson_ = value;
+  }
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   */
+  private void clearCloudPlanJson() {
+    bitField0_ = (bitField0_ & ~0x00000010);
+    cloudPlanJson_ = getDefaultInstance().getCloudPlanJson();
+  }
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @param value The bytes for cloudPlanJson to set.
+   */
+  private void setCloudPlanJsonBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudPlanJson_ = value.toStringUtf8();
+    bitField0_ |= 0x00000010;
+  }
+
+  public static final int CLOUD_PLAN_REQUEST_ELAPSED_MILLIS_FIELD_NUMBER = 15;
+  private long cloudPlanRequestElapsedMillis_;
+  /**
+   * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+   * @return The cloudPlanRequestElapsedMillis.
+   */
+  @java.lang.Override
+  public long getCloudPlanRequestElapsedMillis() {
+    return cloudPlanRequestElapsedMillis_;
+  }
+  /**
+   * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+   * @param value The cloudPlanRequestElapsedMillis to set.
+   */
+  private void setCloudPlanRequestElapsedMillis(long value) {
+    
+    cloudPlanRequestElapsedMillis_ = value;
+  }
+  /**
+   * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+   */
+  private void clearCloudPlanRequestElapsedMillis() {
+
+    cloudPlanRequestElapsedMillis_ = 0L;
   }
 
   public static app.koru.contract.api.v1.MobileAccountResult parseFrom(
@@ -1536,6 +1649,121 @@ public  final class MobileAccountResult extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * </pre>
+     *
+     * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+     * @return Whether the cloudPlanJson field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudPlanJson() {
+      return instance.hasCloudPlanJson();
+    }
+    /**
+     * <pre>
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * </pre>
+     *
+     * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+     * @return The cloudPlanJson.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudPlanJson() {
+      return instance.getCloudPlanJson();
+    }
+    /**
+     * <pre>
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * </pre>
+     *
+     * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+     * @return The bytes for cloudPlanJson.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudPlanJsonBytes() {
+      return instance.getCloudPlanJsonBytes();
+    }
+    /**
+     * <pre>
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * </pre>
+     *
+     * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+     * @param value The cloudPlanJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudPlanJson(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudPlanJson(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * </pre>
+     *
+     * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudPlanJson() {
+      copyOnWrite();
+      instance.clearCloudPlanJson();
+      return this;
+    }
+    /**
+     * <pre>
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * </pre>
+     *
+     * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+     * @param value The bytes for cloudPlanJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudPlanJsonBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudPlanJsonBytes(value);
+      return this;
+    }
+
+    /**
+     * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+     * @return The cloudPlanRequestElapsedMillis.
+     */
+    @java.lang.Override
+    public long getCloudPlanRequestElapsedMillis() {
+      return instance.getCloudPlanRequestElapsedMillis();
+    }
+    /**
+     * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+     * @param value The cloudPlanRequestElapsedMillis to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudPlanRequestElapsedMillis(long value) {
+      copyOnWrite();
+      instance.setCloudPlanRequestElapsedMillis(value);
+      return this;
+    }
+    /**
+     * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudPlanRequestElapsedMillis() {
+      copyOnWrite();
+      instance.clearCloudPlanRequestElapsedMillis();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.MobileAccountResult)
   }
   @java.lang.Override
@@ -1568,11 +1796,13 @@ public  final class MobileAccountResult extends
             app.koru.contract.api.v1.MobileProfileEnrollment.class,
             "cloudSync_",
             app.koru.contract.api.v1.MobileCloudSyncProfile.class,
+            "cloudPlanJson_",
+            "cloudPlanRequestElapsedMillis_",
           };
           java.lang.String info =
-              "\u0000\f\u0000\u0001\u0001\r\f\u0000\u0003\u0000\u0001\u0003\u0002\u0003\u0003\u0003" +
-              "\u0004\u0208\u0005\u1208\u0000\u0006\u001b\b\u1009\u0001\t\u0003\n\u1208\u0002\u000b" +
-              "\u1003\u0003\f\u001b\r\u001b";
+              "\u0000\u000e\u0000\u0001\u0001\u000f\u000e\u0000\u0003\u0000\u0001\u0003\u0002\u0003" +
+              "\u0003\u0003\u0004\u0208\u0005\u1208\u0000\u0006\u001b\b\u1009\u0001\t\u0003\n\u1208" +
+              "\u0002\u000b\u1003\u0003\f\u001b\r\u001b\u000e\u1208\u0004\u000f\u0003";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

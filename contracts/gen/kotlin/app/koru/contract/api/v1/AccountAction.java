@@ -112,6 +112,14 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_START_APPLE = 17;</code>
    */
   ACCOUNT_ACTION_START_APPLE(17),
+  /**
+   * <pre>
+   * Read the exact current account Cloud plan and storage count.
+   * </pre>
+   *
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_PLAN(18),
   UNRECOGNIZED(-1),
   ;
 
@@ -210,6 +218,14 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_START_APPLE = 17;</code>
    */
   public static final int ACCOUNT_ACTION_START_APPLE_VALUE = 17;
+  /**
+   * <pre>
+   * Read the exact current account Cloud plan and storage count.
+   * </pre>
+   *
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_PLAN_VALUE = 18;
 
 
   @java.lang.Override
@@ -249,6 +265,7 @@ public enum AccountAction
       case 15: return ACCOUNT_ACTION_INSPECT_CLOUD_SYNC;
       case 16: return ACCOUNT_ACTION_START_EMAIL;
       case 17: return ACCOUNT_ACTION_START_APPLE;
+      case 18: return ACCOUNT_ACTION_INSPECT_CLOUD_PLAN;
       default: return null;
     }
   }

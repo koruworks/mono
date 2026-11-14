@@ -460,6 +460,62 @@ public object MobileAccountResultKt {
     public fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.MobileCloudSyncProfile, CloudSyncProxy>.clear() {
       _builder.clearCloudSync()
     }
+
+    /**
+     * ```
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * ```
+     *
+     * `optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];`
+     */
+    public var cloudPlanJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudPlanJson")
+        get() = _builder.cloudPlanJson
+      @kotlin.jvm.JvmName("setCloudPlanJson")
+        set(value) {
+        _builder.cloudPlanJson = value
+      }
+    /**
+     * ```
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * ```
+     *
+     * `optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];`
+     */
+    public fun clearCloudPlanJson() {
+      _builder.clearCloudPlanJson()
+    }
+    /**
+     * ```
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * ```
+     *
+     * `optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];`
+     * @return Whether the cloudPlanJson field is set.
+     */
+    public fun hasCloudPlanJson(): kotlin.Boolean {
+      return _builder.hasCloudPlanJson()
+    }
+
+    /**
+     * `uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];`
+     */
+    public var cloudPlanRequestElapsedMillis: kotlin.Long
+      @kotlin.jvm.JvmName("getCloudPlanRequestElapsedMillis")
+        get() = _builder.cloudPlanRequestElapsedMillis
+      @kotlin.jvm.JvmName("setCloudPlanRequestElapsedMillis")
+        set(value) {
+        _builder.cloudPlanRequestElapsedMillis = value
+      }
+    /**
+     * `uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];`
+     */
+    public fun clearCloudPlanRequestElapsedMillis() {
+      _builder.clearCloudPlanRequestElapsedMillis()
+    }
   }
 }
 public inline fun app.koru.contract.api.v1.MobileAccountResult.copy(block: `app.koru.contract.api.v1`.MobileAccountResultKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.MobileAccountResult =

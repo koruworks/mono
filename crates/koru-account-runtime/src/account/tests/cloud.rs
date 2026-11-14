@@ -85,3 +85,83 @@ fn worker_failures_retain_cloud_request_identity_before_admission() {
         ));
     }
 }
+
+struct StoragePlan(bool);
+impl Transport for StoragePlan {
+    fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
+        assert_eq!(request.path_and_query, "/v1/account/cloud-plan");
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(name, value)| name == "authorization" && value == "Bearer memory-only")
+        );
+        let fixtures: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../koru-account-wire/src/cloud_plan.fixtures.json"
+        )))
+        .unwrap();
+        Ok(HttpResponse {
+            status: if self.0 { 200 } else { 503 },
+            body: if self.0 {
+                serde_json::to_vec(&fixtures["fixtures"][0]["response"]).unwrap()
+            } else {
+                Vec::new()
+            },
+        })
+    }
+}
+
+#[test]
+fn storage_read_is_targeted_typed_and_preserves_sign_in_on_failure() {
+    for available in [true, false] {
+        let mut service = ProductionAccountService::with_client(
+            AccountClient::with_transport(Arc::new(StoragePlan(available))),
+            signed_descriptor(),
+            "test".into(),
+        );
+        service.access = Some(AccessToken("memory-only".into()));
+        service.access_expires_at_millis = Some(2_000_000_000_000);
+        let restored = SessionCredential::new(
+            "20000000-0000-4000-8000-000000000002".into(),
+            "refresh-vault-only".into(),
+        )
+        .unwrap();
+        let outcome = service
+            .execute(
+                70,
+                AccountCommand::InspectCloudPlan { request_id: 42 },
+                Some(&restored),
+                &Cancel(Arc::new(AtomicBool::new(false))),
+                &mut |_| {},
+            )
+            .unwrap();
+        assert_eq!(outcome.state.stage, AccountStage::SignedIn);
+        assert!(matches!(outcome.credential, CredentialChange::Keep));
+        let AccountOperationResult::CloudPlan {
+            request_id,
+            payload,
+            ..
+        } = outcome.result
+        else {
+            panic!()
+        };
+        assert_eq!(request_id, 42);
+        assert_eq!(payload.is_some(), available);
+        if let Some(payload) = payload {
+            let _: koru_account_wire::cloud_plan::CloudPlanResponseV1 =
+                serde_json::from_str(payload.as_str()).unwrap();
+        }
+    }
+    assert_eq!(
+        command_failure(
+            &AccountCommand::InspectCloudPlan { request_id: 43 },
+            "authentication_required"
+        ),
+        AccountOperationResult::CloudPlan {
+            request_id: 43,
+            payload: None,
+            request_elapsed_millis: 0
+        }
+    );
+}

@@ -8,6 +8,8 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+// SPDX-License-Identifier: MPL-2.0
+
 #if canImport(FoundationEssentials)
 import FoundationEssentials
 #else
@@ -118,6 +120,9 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
   /// open a browser (BrowserSignInPrompt) and to hand back the verified App
   /// Link that returns from it (BrowserSignInReply).
   case startApple // = 17
+
+  /// Read the exact current account Cloud plan and storage count.
+  case inspectCloudPlan // = 18
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -143,6 +148,7 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     case 15: self = .inspectCloudSync
     case 16: self = .startEmail
     case 17: self = .startApple
+    case 18: self = .inspectCloudPlan
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -166,6 +172,7 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     case .inspectCloudSync: return 15
     case .startEmail: return 16
     case .startApple: return 17
+    case .inspectCloudPlan: return 18
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -189,6 +196,7 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     .inspectCloudSync,
     .startEmail,
     .startApple,
+    .inspectCloudPlan,
   ]
 
 }
@@ -3681,6 +3689,19 @@ public nonisolated struct KORAPIMobileAccountResult: Sendable {
   /// account. A Profile absent from the list has no Cloud sync state here.
   public var cloudSync: [KORAPIMobileCloudSyncProfile] = []
 
+  /// Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+  /// failed cloud_plan read; never interpreted as known zero.
+  public var cloudPlanJson: String {
+    get {_cloudPlanJson ?? String()}
+    set {_cloudPlanJson = newValue}
+  }
+  /// Returns true if `cloudPlanJson` has been explicitly set.
+  public var hasCloudPlanJson: Bool {self._cloudPlanJson != nil}
+  /// Clears the value of `cloudPlanJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudPlanJson() {self._cloudPlanJson = nil}
+
+  public var cloudPlanRequestElapsedMillis: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3689,6 +3710,7 @@ public nonisolated struct KORAPIMobileAccountResult: Sendable {
   fileprivate var _account: KORAPIMobileAccountSummary? = nil
   fileprivate var _selectedAccountID: String? = nil
   fileprivate var _selectedScope: UInt64? = nil
+  fileprivate var _cloudPlanJson: String? = nil
 }
 
 /// One Profile's Cloud sync state on this device. Ids, booleans, counts and a
@@ -4014,7 +4036,7 @@ nonisolated extension KORAPIRelayState: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension KORAPIAccountAction: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCOUNT_ACTION_UNSPECIFIED\0\u{1}ACCOUNT_ACTION_START_GOOGLE\0\u{1}ACCOUNT_ACTION_CANCEL\0\u{1}ACCOUNT_ACTION_RETRY\0\u{1}ACCOUNT_ACTION_LOGOUT\0\u{1}ACCOUNT_ACTION_LIST_PROFILES\0\u{2}\u{2}ACCOUNT_ACTION_RETRY_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CANCEL_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CONFIRM_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_CANCEL_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_SWITCH_ACCOUNT\0\u{1}ACCOUNT_ACTION_ADD_ACCOUNT\0\u{1}ACCOUNT_ACTION_SELECT_PROFILES\0\u{1}ACCOUNT_ACTION_SET_PROFILE_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_START_EMAIL\0\u{1}ACCOUNT_ACTION_START_APPLE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCOUNT_ACTION_UNSPECIFIED\0\u{1}ACCOUNT_ACTION_START_GOOGLE\0\u{1}ACCOUNT_ACTION_CANCEL\0\u{1}ACCOUNT_ACTION_RETRY\0\u{1}ACCOUNT_ACTION_LOGOUT\0\u{1}ACCOUNT_ACTION_LIST_PROFILES\0\u{2}\u{2}ACCOUNT_ACTION_RETRY_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CANCEL_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CONFIRM_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_CANCEL_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_SWITCH_ACCOUNT\0\u{1}ACCOUNT_ACTION_ADD_ACCOUNT\0\u{1}ACCOUNT_ACTION_SELECT_PROFILES\0\u{1}ACCOUNT_ACTION_SET_PROFILE_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_START_EMAIL\0\u{1}ACCOUNT_ACTION_START_APPLE\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_PLAN\0")
 }
 
 nonisolated extension KORAPIAccountVaultAction: SwiftProtobuf._ProtoNameProviding {
@@ -8899,7 +8921,7 @@ nonisolated extension KORAPIMobileAccountSummary: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MobileAccountResult"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}requester\0\u{1}generation\0\u{1}kind\0\u{3}error_code\0\u{1}profiles\0\u{2}\u{2}account\0\u{3}owner_scope\0\u{3}selected_account_id\0\u{3}selected_scope\0\u{1}enrollments\0\u{3}cloud_sync\0\u{b}selected_profile_id\0\u{c}\u{7}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}requester\0\u{1}generation\0\u{1}kind\0\u{3}error_code\0\u{1}profiles\0\u{2}\u{2}account\0\u{3}owner_scope\0\u{3}selected_account_id\0\u{3}selected_scope\0\u{1}enrollments\0\u{3}cloud_sync\0\u{3}cloud_plan_json\0\u{3}cloud_plan_request_elapsed_millis\0\u{b}selected_profile_id\0\u{c}\u{7}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8919,6 +8941,8 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
       case 11: try { try decoder.decodeSingularUInt64Field(value: &self._selectedScope) }()
       case 12: try { try decoder.decodeRepeatedMessageField(value: &self.enrollments) }()
       case 13: try { try decoder.decodeRepeatedMessageField(value: &self.cloudSync) }()
+      case 14: try { try decoder.decodeSingularStringField(value: &self._cloudPlanJson) }()
+      case 15: try { try decoder.decodeSingularUInt64Field(value: &self.cloudPlanRequestElapsedMillis) }()
       default: break
       }
     }
@@ -8965,6 +8989,12 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
     if !self.cloudSync.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.cloudSync, fieldNumber: 13)
     }
+    try { if let v = self._cloudPlanJson {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 14)
+    } }()
+    if self.cloudPlanRequestElapsedMillis != 0 {
+      try visitor.visitSingularUInt64Field(value: self.cloudPlanRequestElapsedMillis, fieldNumber: 15)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8981,6 +9011,8 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
     if lhs._selectedScope != rhs._selectedScope {return false}
     if lhs.enrollments != rhs.enrollments {return false}
     if lhs.cloudSync != rhs.cloudSync {return false}
+    if lhs._cloudPlanJson != rhs._cloudPlanJson {return false}
+    if lhs.cloudPlanRequestElapsedMillis != rhs.cloudPlanRequestElapsedMillis {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

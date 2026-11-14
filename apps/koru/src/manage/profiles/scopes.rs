@@ -328,13 +328,19 @@ impl ProfilesController {
         generation: u64,
         mut result: AccountOperationResult,
     ) -> bool {
+        if matches!(&result, AccountOperationResult::CloudPlan { .. })
+            && owner_scope != self.account.active_scope
+        {
+            return false;
+        }
         // Both Cloud reads are owner-correlated: a subscription answer and a
         // per-Profile sync answer are only ever accepted by the form that asked
         // for them, and neither is allowed to fall through to the general
         // handler, which would let a stale reply touch an unrelated account.
         let cloud = matches!(
             result,
-            AccountOperationResult::CloudSubscription { .. }
+            AccountOperationResult::CloudPlan { .. }
+                | AccountOperationResult::CloudSubscription { .. }
                 | AccountOperationResult::CloudSync { .. }
         );
         if cloud {

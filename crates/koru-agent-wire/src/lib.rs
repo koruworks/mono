@@ -53,6 +53,9 @@
 //! arrival order is wrong the first time somebody presses the hotkey during a
 //! workspace switch.
 
+mod cloud_plan;
+pub use cloud_plan::{CloudPlanPayload, MAX_CLOUD_PLAN_BYTES};
+
 use serde::{Deserialize, Serialize};
 
 /// What these messages mean. Bump when a shape changes in a way an older peer
@@ -234,7 +237,8 @@ use serde::{Deserialize, Serialize};
 /// this device's settings, blocked by a ceiling mismatch, or held by the
 /// peer for privacy — read from the daemon's receipts and admissions. Ids
 /// and states only; the window words it.
-pub const PROTOCOL_VERSION: u32 = 46;
+/// 47 adds the account-owned, bounded Cloud plan read and monotonic request duration.
+pub const PROTOCOL_VERSION: u32 = 47;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -1267,6 +1271,9 @@ pub enum AccountCommand {
     InspectCloudSubscription {
         request_id: u64,
     },
+    InspectCloudPlan {
+        request_id: u64,
+    },
     /// Turn Koru Cloud on or off for every Workspace this device holds for
     /// one Profile of the current account, and remember the choice for
     /// Workspaces created later. Answered by `CloudSync` for the same id.
@@ -1367,6 +1374,7 @@ impl std::fmt::Debug for AccountCommand {
             Self::RetryEnrollment { .. } => "AccountCommand::RetryEnrollment(<redacted>)",
             Self::CancelEnrollment => "AccountCommand::CancelEnrollment",
             Self::InspectAccountSession => "AccountCommand::InspectAccountSession",
+            Self::InspectCloudPlan { .. } => "AccountCommand::InspectCloudPlan",
             Self::InspectCloudSubscription { .. } => "AccountCommand::InspectCloudSubscription",
             Self::SetProfileCloudSync { .. } => "AccountCommand::SetProfileCloudSync(<redacted>)",
             Self::InspectCloudSync { .. } => "AccountCommand::InspectCloudSync",
@@ -1738,6 +1746,12 @@ impl std::fmt::Debug for CloudSyncProfile {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AccountOperationResult {
+    /// Canonical approved HTTP DTO; None means failed read, never zero usage.
+    CloudPlan {
+        request_id: u64,
+        payload: Option<CloudPlanPayload>,
+        request_elapsed_millis: u64,
+    },
     /// Card-only decision. No Stripe identifier, email, credential or URL.
     CloudSubscription {
         request_id: u64,
@@ -1822,6 +1836,7 @@ pub enum AccountOperationResult {
 impl std::fmt::Debug for AccountOperationResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match self {
+            Self::CloudPlan { .. } => "CloudPlan(<redacted>)",
             Self::CloudSubscription { .. } => "CloudSubscription(<redacted>)",
             Self::CloudSync { .. } => "CloudSync(<redacted>)",
             Self::AccountSelected { .. } => "AccountSelected(<redacted>)",

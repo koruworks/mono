@@ -808,6 +808,11 @@ fn publish_cancelled(
 /// remembered state could not be read.
 fn command_failure(command: &AccountCommand, code: &str) -> AccountOperationResult {
     match command {
+        AccountCommand::InspectCloudPlan { request_id } => AccountOperationResult::CloudPlan {
+            request_id: *request_id,
+            payload: None,
+            request_elapsed_millis: 0,
+        },
         AccountCommand::InspectCloudSubscription { request_id } => {
             AccountOperationResult::CloudSubscription {
                 request_id: *request_id,
@@ -2500,6 +2505,7 @@ impl AccountService for ProductionAccountService {
             &command,
             AccountCommand::InspectAccountSession
                 | AccountCommand::InspectCloudSubscription { .. }
+                | AccountCommand::InspectCloudPlan { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
         ) && restored.is_none()
@@ -2510,6 +2516,7 @@ impl AccountService for ProductionAccountService {
             &command,
             AccountCommand::InspectAccountSession
                 | AccountCommand::InspectCloudSubscription { .. }
+                | AccountCommand::InspectCloudPlan { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
                 | AccountCommand::ListProfiles
@@ -2556,6 +2563,27 @@ impl AccountService for ProductionAccountService {
                         follow_up: None,
                     }),
                 }
+            }
+            AccountCommand::InspectCloudPlan { request_id } => {
+                let started = self.clock.monotonic();
+                let payload = self
+                    .client
+                    .cloud_plan_cancelable(&self.authorization()?, &|| cancel.cancelled())
+                    .ok()
+                    .and_then(|plan| serde_json::to_string(&plan).ok())
+                    .and_then(|json| koru_agent_wire::CloudPlanPayload::new(json).ok());
+                let elapsed = self.clock.monotonic().saturating_duration_since(started);
+                Ok(ServiceOutcome {
+                    state: self.state(generation, AccountStage::SignedIn),
+                    credential: CredentialChange::Keep,
+                    result: AccountOperationResult::CloudPlan {
+                        request_id,
+                        payload,
+                        request_elapsed_millis: u64::try_from(elapsed.as_millis())
+                            .unwrap_or(u64::MAX),
+                    },
+                    follow_up: None,
+                })
             }
             AccountCommand::InspectCloudSubscription { request_id } => {
                 let subscription = self
@@ -3501,6 +3529,7 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
         | AccountCommand::CancelEnrollment
         | AccountCommand::InspectAccountSession
         | AccountCommand::InspectCloudSubscription { .. }
+                | AccountCommand::InspectCloudPlan { .. }
         | AccountCommand::InspectCloudSync { .. }
         | AccountCommand::ListProfiles
         | AccountCommand::ListProfileChoices

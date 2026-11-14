@@ -52,13 +52,30 @@ impl AccountClient {
         &self,
         authorization: &AccountAuthorization<'_>,
     ) -> Result<CloudPlanResponseV1, ClientError> {
-        self.execute(
+        self.cloud_plan_cancelable(authorization, &|| false)
+    }
+
+    /// Uses the bounded account transport; cancellation before and after the
+    /// request prevents an obsolete result entering a native surface.
+    pub fn cloud_plan_cancelable(
+        &self,
+        authorization: &AccountAuthorization<'_>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<CloudPlanResponseV1, ClientError> {
+        if cancelled() {
+            return Err(ClientError::Transport(TransportError::Timeout));
+        }
+        let response = self.execute(
             RouteId::ReadCloudPlan,
             vec![],
             Some(authorization),
             false,
             None,
-        )
+        )?;
+        if cancelled() {
+            return Err(ClientError::Transport(TransportError::Timeout));
+        }
+        Ok(response)
     }
 
     pub fn cloud_usage_workspaces(

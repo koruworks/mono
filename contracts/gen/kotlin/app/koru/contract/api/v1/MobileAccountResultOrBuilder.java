@@ -158,4 +158,42 @@ public interface MobileAccountResultOrBuilder extends
    * <code>repeated .koru.api.v1.MobileCloudSyncProfile cloud_sync = 13 [json_name = "cloudSync"];</code>
    */
   int getCloudSyncCount();
+
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @return Whether the cloudPlanJson field is set.
+   */
+  boolean hasCloudPlanJson();
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @return The cloudPlanJson.
+   */
+  java.lang.String getCloudPlanJson();
+  /**
+   * <pre>
+   * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+   * failed cloud_plan read; never interpreted as known zero.
+   * </pre>
+   *
+   * <code>optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];</code>
+   * @return The bytes for cloudPlanJson.
+   */
+  com.google.protobuf.ByteString
+      getCloudPlanJsonBytes();
+
+  /**
+   * <code>uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];</code>
+   * @return The cloudPlanRequestElapsedMillis.
+   */
+  long getCloudPlanRequestElapsedMillis();
 }

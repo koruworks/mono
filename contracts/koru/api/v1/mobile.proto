@@ -801,6 +801,8 @@ enum AccountAction {
   // open a browser (BrowserSignInPrompt) and to hand back the verified App
   // Link that returns from it (BrowserSignInReply).
   ACCOUNT_ACTION_START_APPLE = 17;
+  // Read the exact current account Cloud plan and storage count.
+  ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;
 }
 message AccountCommandRequest {
   HostContext host = 1;
@@ -898,7 +900,12 @@ message MobileAccountResult {
   // Present on a "cloud_sync" result: every local Profile of the signed-in
   // account. A Profile absent from the list has no Cloud sync state here.
   repeated MobileCloudSyncProfile cloud_sync = 13;
+  // Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+  // failed cloud_plan read; never interpreted as known zero.
+  optional string cloud_plan_json = 14;
+  uint64 cloud_plan_request_elapsed_millis = 15;
 }
+
 // One Profile's Cloud sync state on this device. Ids, booleans, counts and a
 // stable code only — never a Workspace name, a path or a credential.
 message MobileCloudSyncProfile {
@@ -933,6 +940,7 @@ message AccountVaultPrompt {
   // Only STORE carries this opaque credential. Never in status or results.
   optional bytes credential = 4;
 }
+
 // Open this provider page in a browser tab. A new request_id means a new page
 // (the collision proof opens a second one); open each request_id once.
 message BrowserSignInPrompt {
@@ -960,6 +968,7 @@ message AccountVaultReply {
   // LOAD only; absent means no stored credential. STORE success means durable.
   optional bytes credential = 3;
 }
+
 // The App Link URL the browser returned to (it carries the one-use grant:
 // never log it), or cancelled when the person backed out of the tab.
 message BrowserSignInReply {

@@ -1405,6 +1405,12 @@ pub struct MobileAccountResult {
     /// account. A Profile absent from the list has no Cloud sync state here.
     #[prost(message, repeated, tag="13")]
     pub cloud_sync: ::prost::alloc::vec::Vec<MobileCloudSyncProfile>,
+    /// Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+    /// failed cloud_plan read; never interpreted as known zero.
+    #[prost(string, optional, tag="14")]
+    pub cloud_plan_json: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, tag="15")]
+    pub cloud_plan_request_elapsed_millis: u64,
 }
 /// One Profile's Cloud sync state on this device. Ids, booleans, counts and a
 /// stable code only — never a Workspace name, a path or a credential.
@@ -1626,6 +1632,8 @@ pub enum AccountAction {
     /// open a browser (BrowserSignInPrompt) and to hand back the verified App
     /// Link that returns from it (BrowserSignInReply).
     StartApple = 17,
+    /// Read the exact current account Cloud plan and storage count.
+    InspectCloudPlan = 18,
 }
 impl AccountAction {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1651,6 +1659,7 @@ impl AccountAction {
             AccountAction::InspectCloudSync => "ACCOUNT_ACTION_INSPECT_CLOUD_SYNC",
             AccountAction::StartEmail => "ACCOUNT_ACTION_START_EMAIL",
             AccountAction::StartApple => "ACCOUNT_ACTION_START_APPLE",
+            AccountAction::InspectCloudPlan => "ACCOUNT_ACTION_INSPECT_CLOUD_PLAN",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1673,6 +1682,7 @@ impl AccountAction {
             "ACCOUNT_ACTION_INSPECT_CLOUD_SYNC" => Some(Self::InspectCloudSync),
             "ACCOUNT_ACTION_START_EMAIL" => Some(Self::StartEmail),
             "ACCOUNT_ACTION_START_APPLE" => Some(Self::StartApple),
+            "ACCOUNT_ACTION_INSPECT_CLOUD_PLAN" => Some(Self::InspectCloudPlan),
             _ => None,
         }
     }

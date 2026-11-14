@@ -585,6 +585,9 @@ impl MobileAccount {
                 profile_id: request.profile_id.clone(),
                 enabled: request.cloud_sync_enabled.unwrap_or(false),
             },
+            wire::AccountAction::InspectCloudPlan => AccountCommand::InspectCloudPlan {
+                request_id: request.requester,
+            },
             wire::AccountAction::InspectCloudSync => AccountCommand::InspectCloudSync {
                 request_id: request.requester,
             },
@@ -890,6 +893,15 @@ fn operation_result(
             result.selected_scope = Some(scope_id);
             result.selected_account_id = account_id;
             "account_selected"
+        }
+        AccountOperationResult::CloudPlan {
+            payload,
+            request_elapsed_millis,
+            ..
+        } => {
+            result.cloud_plan_json = payload.map(|payload| payload.as_str().to_owned());
+            result.cloud_plan_request_elapsed_millis = request_elapsed_millis;
+            "cloud_plan"
         }
         AccountOperationResult::SignedIn => "signed_in",
         // Desktop-only card query has no mobile command or projection yet.

@@ -51,6 +51,34 @@ impl Transport for FakeTransport {
 }
 
 #[test]
+fn cloud_plan_cancellation_refuses_before_io_and_discards_a_completed_response() {
+    let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+        "../../koru-account-wire/src/cloud_plan.fixtures.json"
+    ))
+    .unwrap();
+    let transport = FakeTransport::responding(&fixtures["fixtures"][0]["response"]);
+    let client = AccountClient::with_transport(transport.clone());
+    let token = AccessToken("account-token".into());
+    let authorization = AccountAuthorization::Bearer(&token);
+    assert!(
+        client
+            .cloud_plan_cancelable(&authorization, &|| true)
+            .is_err()
+    );
+    assert!(transport.requests.lock().unwrap().is_empty());
+    assert!(
+        client
+            .cloud_plan_cancelable(&authorization, &|| !transport
+                .requests
+                .lock()
+                .unwrap()
+                .is_empty())
+            .is_err()
+    );
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn document_inventory_reads_bind_scope_and_reject_unbounded_or_mismatched_pages() {
     use koru_account_wire::cloud_plan::{ReadUuid, documents::*};
     let fixtures: serde_json::Value = serde_json::from_str(include_str!(

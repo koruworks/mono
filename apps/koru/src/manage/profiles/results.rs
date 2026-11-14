@@ -362,7 +362,8 @@ impl ProfilesController {
         }
         match result {
             // Only the scope/request-correlated branch may accept this result.
-            AccountOperationResult::CloudSubscription { .. }
+            AccountOperationResult::CloudPlan { .. }
+            | AccountOperationResult::CloudSubscription { .. }
             | AccountOperationResult::CloudSync { .. } => return false,
             AccountOperationResult::AccountCreationRequired => {
                 self.creation_submission = None;
