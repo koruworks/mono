@@ -353,7 +353,9 @@ fn safe_reservations_requeue_but_existing_attempt_retains_capacity() {
     h.orchestrator
         .bot_submit(unused.clone(), unused.provenance.owner.device)
         .unwrap();
-    h.schedule_store.reserve_bot(unused.request.run).unwrap();
+    h.schedule_store
+        .reserve_bot(unused.request.run, None)
+        .unwrap();
     h.orchestrator
         .recover_unused_bot_reservations(live.provenance.owner.device)
         .unwrap();
@@ -426,7 +428,7 @@ fn direct_start_cannot_bypass_boot_gate_with_retained_reservation() {
     h.orchestrator
         .bot_submit(s.clone(), s.provenance.owner.device)
         .unwrap();
-    h.schedule_store.reserve_bot(s.request.run).unwrap();
+    h.schedule_store.reserve_bot(s.request.run, None).unwrap();
     assert!(
         h.orchestrator
             .start(

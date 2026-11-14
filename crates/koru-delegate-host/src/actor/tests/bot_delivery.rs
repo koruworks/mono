@@ -61,7 +61,7 @@ fn delivery_command_returns_retryable_pending_then_applied_without_reopening_fai
     let store = &mut actor.orchestrator.ports_mut().store;
     store.bots().unwrap().admit_bot(&s).unwrap();
     store.satisfy_intent(key.run, DocumentId::new()).unwrap();
-    store.bots().unwrap().reserve_bot(key.run).unwrap();
+    store.bots().unwrap().reserve_bot(key.run, None).unwrap();
     let row = store.open_attempt(key.run).unwrap();
     store
         .advance(key.run, row.generation, AttemptPhase::Starting)
@@ -83,7 +83,7 @@ fn delivery_command_returns_retryable_pending_then_applied_without_reopening_fai
     store
         .bots()
         .unwrap()
-        .activate_bot(key.run, row.attempt, row.generation)
+        .activate_bot(key.run, row.attempt, row.generation, None)
         .unwrap();
     let mut send = BotInitialSend {
         attempt: row.attempt,
@@ -95,7 +95,7 @@ fn delivery_command_returns_retryable_pending_then_applied_without_reopening_fai
     store
         .bots()
         .unwrap()
-        .prepare_bot_initial_send(key.run, &send)
+        .prepare_bot_initial_send(key.run, &send, None)
         .unwrap();
     send.turn = Some(AgentTurnId::mint());
     store

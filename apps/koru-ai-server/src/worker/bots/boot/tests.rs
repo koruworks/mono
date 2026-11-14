@@ -200,8 +200,10 @@ fn worker_unknown_timeout_retries_and_ignores_late_old_serial() {
         .client()
         .sender
         .send(Envelope::BotBootChecked(BotBootResult {
+            routine_ready: true,
             serial: 3,
             work: Work::Replay {
+                routine: Ok(None),
                 boot: sent_boot,
                 bot: bot.clone(),
                 admission: barrier.clone(),
@@ -611,6 +613,40 @@ impl BotDelegatePort for RecordingDelegate {
     }
 }
 #[test]
+fn failed_routine_snapshot_preserves_successful_global_boot_receipt() {
+    let (mut repo, authority, command) = super::super::tests::fixture();
+    let bot = super::super::tests::created(&mut repo, authority.clone(), command);
+    let snapshot = repo
+        .bot_boot_snapshot(
+            BotOwner {
+                user_scope: bot.user_scope,
+                device: bot.owner_device,
+            },
+            bot.id,
+            &BotBootAdmission::Missing {},
+        )
+        .unwrap();
+    let port = Arc::new(RecordingDelegate(Mutex::new(vec![])));
+    let result = BotBootJob {
+        serial: 1,
+        work: Work::Replay {
+            boot: DelegateBootId::mint(),
+            admission: snapshot.admission,
+            policy: policy::barrier(&bot).unwrap(),
+            bot,
+            routine: Err(unavailable()),
+        },
+        authority,
+        delegate: port.clone(),
+    }
+    .run();
+    assert!(
+        matches!(result.result,Ok((_,BotReply::BootSynchronized{receipt})) if receipt.state==BotBootState::Ready)
+    );
+    assert!(!result.routine_ready);
+    assert_eq!(port.0.lock().unwrap().len(), 1);
+}
+#[test]
 fn effects_off_replay_requires_owner_home_but_not_deleted_role_or_selected_page() {
     let (mut repo, authority, command) = super::super::tests::fixture();
     let bot = super::super::tests::created(&mut repo, authority, command);
@@ -633,6 +669,7 @@ fn effects_off_replay_requires_owner_home_but_not_deleted_role_or_selected_page(
         let result = BotBootJob {
             serial: 1,
             work: Work::Replay {
+                routine: Ok(None),
                 boot: DelegateBootId::mint(),
                 bot: bot.clone(),
                 admission: snapshot.admission.clone(),
@@ -658,6 +695,7 @@ fn effects_off_replay_requires_owner_home_but_not_deleted_role_or_selected_page(
         BotBootJob {
             serial: 2,
             work: Work::Replay {
+                routine: Ok(None),
                 boot: DelegateBootId::mint(),
                 bot,
                 admission: snapshot.admission,

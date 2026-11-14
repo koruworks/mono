@@ -60,7 +60,7 @@ fn routine_policy_pending_uses_actual_companions_until_native_drain() {
 }
 
 #[test]
-fn routine_sql_dispatch_gates_require_link_and_disallow_initial_execution() {
+fn routine_sql_dispatch_requires_current_proof_but_preserves_retained_accounting_and_send() {
     let mut h = Harness::new();
     h.prepare();
     converted(&mut h, false);
@@ -99,17 +99,26 @@ fn routine_sql_dispatch_gates_require_link_and_disallow_initial_execution() {
     h.db.conn()
         .execute("UPDATE bot_admissions SET state='executing'", [])
         .unwrap();
-    assert_eq!(h.db.reserve_bot(h.fence.run), Err(BotLedgerError::Fenced));
     assert_eq!(
-        h.db.activate_bot(h.fence.run, h.fence.attempt, h.fence.generation),
+        h.db.reserve_bot(h.fence.run, None),
+        Ok(crate::BotReservation::AlreadyOwned)
+    );
+    assert_eq!(
+        h.db.activate_bot(h.fence.run, h.fence.attempt, h.fence.generation, None),
         Err(BotLedgerError::Fenced)
     );
     assert_eq!(
-        h.db.set_bot_active(h.fence.run, h.fence.attempt, h.fence.generation, true),
-        Err(BotLedgerError::Fenced)
+        h.db.set_bot_active(h.fence.run, h.fence.attempt, h.fence.generation, true, None),
+        Ok(())
     );
-    h.db.set_bot_active(h.fence.run, h.fence.attempt, h.fence.generation, false)
-        .unwrap();
+    h.db.set_bot_active(
+        h.fence.run,
+        h.fence.attempt,
+        h.fence.generation,
+        false,
+        None,
+    )
+    .unwrap();
     let mut send =
         h.db.bot_admission(h.fence.run)
             .unwrap()
@@ -117,9 +126,15 @@ fn routine_sql_dispatch_gates_require_link_and_disallow_initial_execution() {
             .initial_send
             .unwrap();
     send.turn = None;
-    assert_eq!(
-        h.db.prepare_bot_initial_send(h.fence.run, &send),
-        Err(BotLedgerError::Fenced)
+    assert!(
+        h.db.prepare_bot_initial_send(h.fence.run, &send, None)
+            .unwrap()
+            .turn
+            .is_some()
+    );
+    assert!(
+        h.db.set_bot_active(h.fence.run, h.fence.attempt, h.fence.generation, true, None)
+            .is_err()
     );
 }
 
@@ -219,7 +234,8 @@ fn routine_native_global_only_proof_refuses_fresh_lease_and_memory() {
     );
     h.request.key.operation_id = Uuid::new_v4();
     // The backend now validates this deliberately seeded current attempt.
-    // Production attempt-opening and dispatch gates remain closed.
+    // Generic attempt opening stays denied; the Bot-owned first-attempt path
+    // separately requires full Linked and current composite authority.
     h.db.prepare_native_result(&h.request).unwrap();
     h.request.key.operation_id = Uuid::new_v4();
     let request = super::memory::request(&h, true);

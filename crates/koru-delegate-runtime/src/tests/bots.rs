@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-mod boot;
 mod admission_read;
+mod boot;
 mod host_gone;
 mod native_results;
 mod routines;
@@ -114,19 +114,31 @@ impl BotLedger for RecordingStore {
     ) -> Result<BotAdmissionBarrier, BotLedgerError> {
         self.inner.lock().unwrap().apply_bot_barrier(barrier)
     }
-    fn reserve_bot(&mut self, run: RunId) -> Result<BotReservation, BotLedgerError> {
-        self.inner.lock().unwrap().reserve_bot(run)
+    fn reserve_bot(
+        &mut self,
+        run: RunId,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
+    ) -> Result<BotReservation, BotLedgerError> {
+        self.inner.lock().unwrap().reserve_bot(run, proof)
+    }
+    fn open_bot_attempt(
+        &mut self,
+        run: RunId,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
+    ) -> Result<koru_delegate_sqlite::AttemptRow, BotLedgerError> {
+        self.inner.lock().unwrap().open_bot_attempt(run, proof)
     }
     fn activate_bot(
         &mut self,
         run: RunId,
         attempt: RunAttemptId,
         generation: AttemptGeneration,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError> {
         self.inner
             .lock()
             .unwrap()
-            .activate_bot(run, attempt, generation)
+            .activate_bot(run, attempt, generation, proof)
     }
     fn set_bot_active(
         &mut self,
@@ -134,11 +146,12 @@ impl BotLedger for RecordingStore {
         attempt: RunAttemptId,
         generation: AttemptGeneration,
         active: bool,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError> {
         self.inner
             .lock()
             .unwrap()
-            .set_bot_active(run, attempt, generation, active)
+            .set_bot_active(run, attempt, generation, active, proof)
     }
     fn settle_bot(&mut self, run: RunId, outcome: BotSettlement) -> Result<(), BotLedgerError> {
         self.check("bot_settle")?;
@@ -148,11 +161,12 @@ impl BotLedger for RecordingStore {
         &mut self,
         run: RunId,
         send: &BotInitialSend,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
     ) -> Result<BotInitialSend, BotLedgerError> {
         self.inner
             .lock()
             .unwrap()
-            .prepare_bot_initial_send(run, send)
+            .prepare_bot_initial_send(run, send, proof)
     }
     fn acknowledge_bot_initial_send(
         &mut self,
@@ -931,8 +945,8 @@ fn full_host_reconciles_reserved_slots_before_admitting_new_queued_work() {
             .unwrap();
         boot::replay(&mut h.orchestrator, s);
     }
-    h.schedule_store.reserve_bot(a.request.run).unwrap();
-    h.schedule_store.reserve_bot(b.request.run).unwrap();
+    h.schedule_store.reserve_bot(a.request.run, None).unwrap();
+    h.schedule_store.reserve_bot(b.request.run, None).unwrap();
     assert_eq!(
         h.schedule_store
             .active_bot_executions(a.provenance.owner.device)

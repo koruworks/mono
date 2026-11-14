@@ -411,8 +411,8 @@ impl Orchestrator {
             Ok(authority) => authority,
             Err(_) => return self.start_failed(run, FailureStage::Authority),
         };
-        if header.bot.is_some() {
-            self.bot_execution_policy(run)?;
+        if header.bot.is_some() && self.bot_execution_policy(run).is_err() {
+            return self.start_failed(run, FailureStage::Authority);
         }
         let mut delegation = match self.ports.mcp.launch(McpLaunch {
             authority: tool_authority,
@@ -449,8 +449,8 @@ impl Orchestrator {
             },
             None => None,
         };
-        if header.bot.is_some() {
-            self.bot_execution_policy(run)?;
+        if header.bot.is_some() && self.bot_execution_policy(run).is_err() {
+            return self.start_failed(run, FailureStage::Authority);
         }
         let created = match self.ports.sessions.create_delegated(SessionLaunch {
             is_bot: header.bot.is_some(),

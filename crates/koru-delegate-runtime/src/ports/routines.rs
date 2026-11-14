@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Neutral scheduler composition seams. No executable Routine is enabled.
+//! Neutral scheduler composition seams; executable authority belongs to the
+//! consuming live document, ledger and Bot execution owners.
 use super::{PortError, PortResult, ScheduleEventRef};
 use koru_delegate_core::{
     BotAdmissionBarrier, BotRoutineCloseReason, FreshBotPolicyProof, HandoffId,

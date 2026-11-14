@@ -75,7 +75,9 @@ pub(super) fn launch_evidence(
         || attempt.attempt != send.attempt
         || attempt.generation != send.generation
         || attempt.provider_session.and_then(|p| p.session).is_none()
-        || attempt.host_instance.is_none()
+        || attempt
+            .host_instance
+            .is_none_or(|host| host.as_uuid().is_nil())
     {
         return Err(BotLedgerError::Fenced);
     }

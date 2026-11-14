@@ -409,20 +409,7 @@ impl BotLedger for RunsDb {
         })
     }
     fn bot_execution(&self, run: RunId) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
-        let record = self
-            .conn()
-            .query_row(
-                &format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE run_id=?1"),
-                [run.to_storage()],
-                |row| Ok(decode_execution(row)),
-            )
-            .optional()
-            .map_err(sql)?
-            .transpose()?;
-        if let Some(record) = &record {
-            validate_execution(self.conn(), record)?;
-        }
-        Ok(record)
+        execution_projection(self.conn(), run)
     }
     fn reconcile_bot_execution(
         &self,
@@ -452,6 +439,10 @@ impl BotLedger for RunsDb {
         let record = read(self.conn(), run)?;
         if let Some(record) = &record {
             super::routines::execution::retained(self.conn(), record)?;
+        } else {
+            // Absence of the admission does not erase retained Routine origin,
+            // route or link markers at a tool-authority boundary.
+            super::routines::deny_run(self.conn(), run)?;
         }
         Ok(record)
     }

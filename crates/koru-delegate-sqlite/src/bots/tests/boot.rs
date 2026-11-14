@@ -48,7 +48,7 @@ fn reservation_recovery_retains_each_independent_evidence_guard() {
         let (mut db, _) = memory();
         let s = submission(1);
         db.admit_bot(&s).unwrap();
-        db.reserve_bot(s.request.run).unwrap();
+        db.reserve_bot(s.request.run, None).unwrap();
         let key = BotRunKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
@@ -65,7 +65,7 @@ fn reservation_recovery_retains_each_independent_evidence_guard() {
     let (mut db, _) = memory();
     let s = submission(1);
     db.admit_bot(&s).unwrap();
-    db.reserve_bot(s.request.run).unwrap();
+    db.reserve_bot(s.request.run, None).unwrap();
     let key = BotRunKey {
         owner: s.provenance.owner,
         bot: s.provenance.bot,
@@ -155,7 +155,7 @@ fn restart_requeues_only_proven_never_started_reservations() {
     let s = submission(1);
     db.admit_bot(&s).unwrap();
     assert_eq!(
-        db.reserve_bot(s.request.run).unwrap(),
+        db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     let key = BotRunKey {
@@ -174,7 +174,7 @@ fn restart_requeues_only_proven_never_started_reservations() {
             .unwrap()
             .is_empty()
     );
-    db.reserve_bot(key.run).unwrap();
+    db.reserve_bot(key.run, None).unwrap();
     db.satisfy_intent(key.run, fixtures::document(0xd0))
         .unwrap();
     db.open_attempt(key.run).unwrap();
@@ -193,7 +193,7 @@ fn reservation_recovery_reply_loss_is_idempotent_and_failed_read_retains_claim()
         let (mut db, _) = memory();
         let s = submission(1);
         db.admit_bot(&s).unwrap();
-        db.reserve_bot(s.request.run).unwrap();
+        db.reserve_bot(s.request.run, None).unwrap();
         let key = BotRunKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
@@ -222,7 +222,7 @@ fn reservation_recovery_reply_loss_is_idempotent_and_failed_read_retains_claim()
     let (mut db, _) = memory();
     let s = submission(1);
     db.admit_bot(&s).unwrap();
-    db.reserve_bot(s.request.run).unwrap();
+    db.reserve_bot(s.request.run, None).unwrap();
     let key = BotRunKey {
         owner: s.provenance.owner,
         bot: s.provenance.bot,

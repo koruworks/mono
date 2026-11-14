@@ -68,7 +68,7 @@ pub(in crate::worker) fn global_barrier(
 
 pub(in crate::worker) use routine::initial_barrier as initial_routine_barrier;
 #[cfg(test)]
-pub(in crate::worker::bots) use routine::tests::preclaim_fixture;
+pub(in crate::worker::bots) use routine::tests::{dispatch_job_fixture, preclaim_fixture};
 fn owner(bot: &Bot) -> BotOwner {
     BotOwner {
         user_scope: bot.user_scope,
