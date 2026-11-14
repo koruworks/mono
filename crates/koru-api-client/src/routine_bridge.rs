@@ -162,6 +162,47 @@ impl Drop for Permit<'_> {
 }
 
 impl RoutineBridgeClient {
+    /// Preserve the caller's original absolute deadline through physical I/O.
+    pub fn prepare_until(
+        &self,
+        request: &RoutineBridgeEnvelope<PrepareOccurrence>,
+        deadline: Instant,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<PrepareOccurrenceReply>> {
+        self.call_until(ROUTINE_PREPARE_ROUTE, request, deadline)
+    }
+
+    pub fn read_preparation_until(
+        &self,
+        request: &RoutineBridgeEnvelope<ReadPreparation>,
+        deadline: Instant,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<ReadPreparationReply>> {
+        self.call_until(ROUTINE_PREPARATION_ROUTE, request, deadline)
+    }
+
+    pub fn synchronize_preclaim_until(
+        &self,
+        request: &RoutineBridgeEnvelope<SynchronizeRoutinePreclaim>,
+        deadline: Instant,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<SynchronizeRoutinePreclaimReply>> {
+        self.call_until(ROUTINE_PRECLAIM_ROUTE, request, deadline)
+    }
+
+    pub fn finalize_until(
+        &self,
+        request: &RoutineBridgeEnvelope<FinalizeOccurrence>,
+        deadline: Instant,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<FinalizeOccurrenceReply>> {
+        self.call_until(ROUTINE_FINALIZE_ROUTE, request, deadline)
+    }
+
+    pub fn read_link_until(
+        &self,
+        request: &RoutineBridgeEnvelope<ReadOccurrenceLink>,
+        deadline: Instant,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<ReadOccurrenceLinkReply>> {
+        self.call_until(ROUTINE_LINK_ROUTE, request, deadline)
+    }
+
     /// Synchronize current policy for an exact immutable draft. The reply is
     /// evidence to recheck, never a claim token or permission to execute.
     pub fn synchronize_preclaim(
@@ -206,10 +247,24 @@ impl RoutineBridgeClient {
         Q: RoutineBridgePayload + Serialize,
         R: RoutineBridgeReply<Q> + DeserializeOwned,
     {
-        let started = Instant::now();
-        let deadline = started
+        let deadline = Instant::now()
             .checked_add(budget)
             .ok_or(RoutineBridgeTransportError::NotSent(BeforeSend::Deadline))?;
+        self.call_until(path, request, deadline)
+    }
+
+    fn call_until<Q, R>(
+        &self,
+        path: &'static str,
+        request: &RoutineBridgeEnvelope<Q>,
+        caller_deadline: Instant,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<R>>
+    where
+        Q: RoutineBridgePayload + Serialize,
+        R: RoutineBridgeReply<Q> + DeserializeOwned,
+    {
+        let deadline = bounded_deadline(caller_deadline, Instant::now())?;
+        before_remaining(deadline)?;
         self.inner
             .in_flight
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -278,6 +333,13 @@ impl RoutineBridgeClient {
         }
         Ok(reply)
     }
+}
+
+fn bounded_deadline(caller: Instant, started: Instant) -> RoutineBridgeTransportResult<Instant> {
+    let cap = started
+        .checked_add(ROUTINE_BRIDGE_DEADLINE)
+        .ok_or(RoutineBridgeTransportError::NotSent(BeforeSend::Deadline))?;
+    Ok(caller.min(cap))
 }
 
 fn before_remaining(deadline: Instant) -> RoutineBridgeTransportResult<Duration> {

@@ -167,6 +167,59 @@ impl SharedLedger {
 }
 
 impl koru_delegate_runtime::RoutineLedger for SharedLedger {
+    fn routine_route(
+        &self,
+        schedule: koru_delegate_core::ScheduleId,
+    ) -> Result<
+        Option<koru_delegate_core::RoutineRouteIdentity>,
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        self.0
+            .lock()
+            .unwrap()
+            .routine_route(schedule)
+            .map_err(Into::into)
+    }
+
+    fn held_routine_page(
+        &self,
+        after: Option<koru_delegate_sqlite::RoutineHeldCursor>,
+    ) -> Result<
+        koru_delegate_sqlite::RoutinePage<
+            koru_delegate_sqlite::RoutineHeldCursor,
+            koru_delegate_sqlite::RoutineRecoveryEntry,
+        >,
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        self.0.lock().unwrap().held_routine_page(after)
+    }
+
+    fn queued_routine_page(
+        &self,
+        after: Option<koru_delegate_sqlite::RoutineQueuedCursor>,
+    ) -> Result<
+        koru_delegate_sqlite::RoutinePage<
+            koru_delegate_sqlite::RoutineQueuedCursor,
+            Option<koru_delegate_sqlite::RoutineRecoveryEntry>,
+        >,
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        self.0.lock().unwrap().queued_routine_page(after)
+    }
+
+    fn routine_slots_page(
+        &self,
+        route: &koru_delegate_core::RoutineRouteIdentity,
+        after: Option<koru_delegate_sqlite::RoutineSlotCursor>,
+    ) -> Result<
+        koru_delegate_sqlite::RoutinePage<
+            koru_delegate_sqlite::RoutineSlotCursor,
+            koru_delegate_sqlite::RoutineOccurrenceFact,
+        >,
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        self.0.lock().unwrap().routine_slots_page(route, after)
+    }
     fn record_expired_routine(
         &mut self,
         authority: koru_delegate_document::RoutineExpiryAuthority,
@@ -475,7 +528,7 @@ impl ScheduleLedger for SharedLedger {
             .record_outcome(schedule, occurrence_ms, outcome)
     }
     fn unsettled(&self) -> Result<Vec<SlotClaim>, LedgerError> {
-        self.0.lock().unwrap().unsettled_claims()
+        self.0.lock().unwrap().ordinary_unsettled_claims()
     }
     fn by_run(&self, run: RunId) -> Result<Option<SlotClaim>, LedgerError> {
         self.0.lock().unwrap().slot_for_run(run)

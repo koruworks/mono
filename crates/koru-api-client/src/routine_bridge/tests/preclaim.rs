@@ -42,7 +42,9 @@ fn preclaim_transport_posts_exact_route_and_validates_current_ready_identity() {
         assert_eq!(decoded, expected);
         answer(&mut stream, "200 OK", &ready(&decoded));
     });
-    let reply = b.synchronize_preclaim(&sent).unwrap();
+    let reply = b
+        .synchronize_preclaim_until(&sent, Instant::now() + ROUTINE_BRIDGE_DEADLINE)
+        .unwrap();
     assert_eq!(reply.encode().unwrap(), ready(&sent));
     assert!(matches!(
         reply.payload,

@@ -5,6 +5,7 @@ use koru_delegate_core::*;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
+mod deadline;
 mod preclaim;
 
 fn id(n: u8) -> String {
@@ -281,25 +282,36 @@ fn routine_transport_uses_all_four_committed_envelopes_and_exact_private_paths()
     });
     let payload:PrepareOccurrence=serde_json::from_value(serde_json::json!({"slot":slot(),"workspace":id(11),"owner_handoff":null,"schedule_definition":{"revision":1,"effective_at_ms":0,"template":{"requested_by":{"kind":"person","profile":id(12)},"objective":"private task","agent":{"kind":"built_in","value":"codex"},"requested_model":null,"scope":{"kind":"bot_folder","folder":"/fixture/bot"},"grants":[id(11)],"context":[]},"recurrence":{"type":"floating","cron":"*/1 * * * *"},"lifecycle":"active","routine":{"owner":slot().owner,"bot":slot().bot,"home":id(11),"creation_request":id(13)}}})).unwrap();
     assert!(matches!(
-        b.prepare(&RoutineBridgeEnvelope::new(payload).unwrap())
-            .unwrap()
-            .payload,
+        b.prepare_until(
+            &RoutineBridgeEnvelope::new(payload).unwrap(),
+            Instant::now() + ROUTINE_BRIDGE_DEADLINE
+        )
+        .unwrap()
+        .payload,
         PrepareOccurrenceReply::Closed { .. }
     ));
     assert!(matches!(
-        b.read_preparation(&read()).unwrap().payload,
+        b.read_preparation_until(&read(), Instant::now() + ROUTINE_BRIDGE_DEADLINE)
+            .unwrap()
+            .payload,
         ReadPreparationReply::Missing { .. }
     ));
     assert!(matches!(
-        b.finalize(&RoutineBridgeEnvelope::new(FinalizeOccurrence { claim: claim() }).unwrap())
-            .unwrap()
-            .payload,
+        b.finalize_until(
+            &RoutineBridgeEnvelope::new(FinalizeOccurrence { claim: claim() }).unwrap(),
+            Instant::now() + ROUTINE_BRIDGE_DEADLINE
+        )
+        .unwrap()
+        .payload,
         FinalizeOccurrenceReply::Terminal { .. }
     ));
     assert!(matches!(
-        b.read_link(&RoutineBridgeEnvelope::new(ReadOccurrenceLink { claim: claim() }).unwrap())
-            .unwrap()
-            .payload,
+        b.read_link_until(
+            &RoutineBridgeEnvelope::new(ReadOccurrenceLink { claim: claim() }).unwrap(),
+            Instant::now() + ROUTINE_BRIDGE_DEADLINE
+        )
+        .unwrap()
+        .payload,
         ReadOccurrenceLinkReply::Missing { .. }
     ));
     server.join().unwrap();

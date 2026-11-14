@@ -46,10 +46,10 @@ struct AuthorityGateState {
 /// Unlike a plain mutex, shutdown can close this gate and wake a scheduler
 /// waiting behind a publisher's bounded Store request. The current holder keeps
 /// its ordinary RAII ownership; new entrants receive `None` and exit.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ScheduleEventAuthorityGate {
-    state: Mutex<AuthorityGateState>,
-    released: Condvar,
+    state: Arc<Mutex<AuthorityGateState>>,
+    released: Arc<Condvar>,
 }
 
 impl ScheduleEventAuthorityGate {
@@ -93,6 +93,46 @@ impl Drop for ScheduleEventAuthorityGuard<'_> {
             .unwrap_or_else(|error| error.into_inner());
         state.held = false;
         self.gate.released.notify_one();
+    }
+}
+
+// Owned phase guards clone the same state/Condvar; ordinary enter() above keeps
+// its existing lifetime and wait behavior. No Routine coordinator is wired yet.
+struct OwnedSchedulePhaseGuard {
+    gate: ScheduleEventAuthorityGate,
+}
+impl koru_delegate_runtime::SchedulePhaseGuard for OwnedSchedulePhaseGuard {}
+impl Drop for OwnedSchedulePhaseGuard {
+    fn drop(&mut self) {
+        let mut state = self.gate.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.held = false;
+        self.gate.released.notify_one();
+    }
+}
+impl koru_delegate_runtime::SchedulePhaseGate for ScheduleEventAuthorityGate {
+    fn enter_until(
+        &self,
+        deadline: std::time::Instant,
+    ) -> PortResult<Box<dyn koru_delegate_runtime::SchedulePhaseGuard>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if state.stopped || remaining.is_zero() {
+                return Err(PortError::new(
+                    Port::Schedules,
+                    "routine_phase_unavailable",
+                    "Schedule phase stopped or expired",
+                ));
+            }
+            if !state.held {
+                state.held = true;
+                return Ok(Box::new(OwnedSchedulePhaseGuard { gate: self.clone() }));
+            }
+            (state, _) = self
+                .released
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+        }
     }
 }
 
