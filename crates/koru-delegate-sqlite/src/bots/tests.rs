@@ -28,7 +28,7 @@ fn memory() -> (RunsDb, Time) {
     let time = Time(Arc::new(AtomicI64::new(1000)));
     (RunsDb::in_memory(Box::new(time.clone())), time)
 }
-fn submission(n: u8) -> BotSubmission {
+pub(super) fn submission(n: u8) -> BotSubmission {
     let mut request = fixtures::request(n);
     request.scope = WorkspaceScope::BotFolder {
         folder: BotWorkingFolder::new("/private/bot-folder".into()).unwrap(),

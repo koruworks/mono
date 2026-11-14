@@ -4,6 +4,7 @@
 //! records are local reconciliation evidence, never canonical Run status.
 use crate::LedgerError;
 mod repository;
+pub(crate) mod routines;
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::{
@@ -36,6 +37,7 @@ impl std::fmt::Debug for BotInitialSend {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotAdmissionRecord {
+    pub submission_version: u8,
     pub submission: BotSubmission,
     pub sequence: u64,
     pub state: BotAdmissionState,
