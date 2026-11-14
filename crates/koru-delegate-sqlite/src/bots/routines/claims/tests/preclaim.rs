@@ -51,9 +51,17 @@ fn routine_preclaim_sql_rejects_newer_policy_and_grant_than_captured_draft() {
             r.request = BotRequestId::mint().into();
             f.db.install_routine_policy(r).unwrap();
         } else {
+            // Global policy installation advances config as well. Match that
+            // captured config/admission while leaving captured policy behind,
+            // so this case specifically proves policy equality is required.
+            f.fresh.global.config_revision += 1;
             f.fresh.global.policy_revision += 1;
             f.fresh.global.key.request = BotRequestId::mint().into();
             f.db.install_native_policy(&f.fresh.global).unwrap();
+            f.prepared.submission.provenance.config_revision = f.fresh.global.config_revision;
+            f.admission.epoch = f.fresh.global.config_revision;
+            f.admission.request = BotRequestId::mint();
+            f.db.apply_bot_barrier(&f.admission).unwrap();
         }
         assert_eq!(
             f.db.claim_bot_routine(f.facts(false), &f.admission, &f.fresh),
