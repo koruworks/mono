@@ -10,6 +10,7 @@ mod finalize;
 mod preclaim;
 pub(super) mod recent;
 mod recovery;
+pub(super) use recovery::for_run_on;
 mod rows;
 #[cfg(test)]
 mod tests;
