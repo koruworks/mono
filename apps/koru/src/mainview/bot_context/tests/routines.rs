@@ -299,6 +299,12 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
                 }
                 for node in frame.nodes.iter().filter(|node| node.focusable) {
                     assert!(
+                        node.rect.w > 0.0 && node.rect.h > 0.0,
+                        "{} {:?}",
+                        lang.tag(),
+                        node.rect
+                    );
+                    assert!(
                         node.rect.x >= v.bot_context.area.x
                             && node.rect.x + node.rect.w
                                 <= v.bot_context.area.x + v.bot_context.area.w + 0.5,
@@ -306,6 +312,17 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
                         lang.tag(),
                         node.rect
                     );
+                    if !node.disabled {
+                        if let Some(hit) = node.hit_region().filter(|r| r.w > 0.0 && r.h > 0.0) {
+                            assert_eq!(
+                                frame.hit_at(hit.x + hit.w / 2.0, hit.y + hit.h / 2.0),
+                                node.key,
+                                "{} {:?}",
+                                lang.tag(),
+                                hit
+                            );
+                        }
+                    }
                 }
             })
             .unwrap();
