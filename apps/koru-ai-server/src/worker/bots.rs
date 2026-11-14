@@ -8,7 +8,11 @@ use koru_ai_core::bots::*;
 pub(super) fn bot_failure(error: BotError) -> Failure {
     failure(
         error.code(),
-        "The Bot operation could not be completed.",
+        if error == BotError::RoutineRetryUnsupported {
+            "Routine retries aren’t available. Send a new manual message or wait for the next occurrence. New messages use Bot access."
+        } else {
+            "The Bot operation could not be completed."
+        },
         matches!(
             error,
             BotError::Unavailable | BotError::Storage | BotError::Settling

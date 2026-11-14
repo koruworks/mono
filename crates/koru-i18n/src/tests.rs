@@ -2,6 +2,18 @@
 
 use super::*;
 
+#[test]
+fn routine_retry_notice_keeps_manual_access_and_next_occurrence_guidance() {
+    let key = Key::BotsErrRoutineRetryUnsupported;
+    assert_eq!(
+        t(Lang::En, key),
+        "Routine retries aren’t available. Send a new manual message or wait for the next occurrence. New messages use Bot access."
+    );
+    for lang in Lang::ALL {
+        assert!(!t(lang, key).trim().is_empty());
+    }
+}
+
 // ------------------------------------------------------- the table is honest
 
 /// The lookup is `ROWS[key as usize]`, so the table has to *be* in key order.

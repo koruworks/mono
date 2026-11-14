@@ -122,6 +122,17 @@ pub struct BotSubmissionIntent {
     pub submission: BotSubmission,
 }
 impl BotSubmissionIntent {
+    /// Refuse a new continuation of a canonical, validated Routine receipt.
+    /// Exact operation replay must be resolved before calling this guard.
+    /// This classifies the attempted submission, never its chat association.
+    pub fn require_interactive_continuation(&self) -> Result<(), BotError> {
+        if self.submission.provenance.routine.is_some() {
+            Err(BotError::RoutineRetryUnsupported)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn validate(&self) -> Result<(), BotError> {
         if self.version != 1 || !self.submission.valid() {
             return Err(BotError::Invalid);

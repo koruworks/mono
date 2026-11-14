@@ -401,6 +401,20 @@ impl WorkerState {
                             .map_err(bot_failure)?
                             .is_none()
                         {
+                            if let BotCommand::Continue { previous_run, .. } = request {
+                                let prior = self
+                                    .repository
+                                    .bot_submission_for_run(owner, *bot_id, *previous_run)
+                                    .map_err(bot_failure)?
+                                    .ok_or_else(not_found)?;
+                                if prior.intent.submission.provenance.chat_id != chat_id.as_uuid() {
+                                    return Err(bot_failure(BotError::Forbidden));
+                                }
+                                prior
+                                    .intent
+                                    .require_interactive_continuation()
+                                    .map_err(bot_failure)?;
+                            }
                             let sources = library::LibrarySources::read(
                                 &self.repository,
                                 &bot,
