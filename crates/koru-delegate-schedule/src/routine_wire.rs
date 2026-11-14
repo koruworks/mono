@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Closed private seed/capture objects leave legacy Schedule decoders unchanged.
-use super::*;
-use koru_delegate_schedule::{DelegationTemplate, RecurrenceRule, ScheduleContextPointer};
+use crate::{
+    DelegationTemplate, RecurrenceRule, RoutineAssociation, ScheduleContextFailureStage,
+    ScheduleContextPointer, ScheduleDefinition, ScheduleHeader, ScheduleLifecycle,
+    SchedulePauseReason,
+};
+use koru_delegate_core::{
+    ActorRef, BlobHash, BlobKind, BlockNodeId, DeviceId, DocumentId, ModelName, Objective,
+    ScheduleId, SessionProfileKey, WorkspaceId, WorkspaceScope,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "ScheduleHeader", deny_unknown_fields)]
-pub(super) struct Header {
+pub struct Header {
     pub schedule: ScheduleId,
     pub created_at_ms: i64,
     pub initial_owner: DeviceId,
@@ -16,7 +24,7 @@ pub(super) struct Header {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "ScheduleDefinition", deny_unknown_fields)]
-pub(super) struct Definition {
+pub struct Definition {
     pub revision: u32,
     pub effective_at_ms: i64,
     #[serde(with = "Template")]
@@ -32,7 +40,7 @@ struct Template {
     #[serde(with = "koru_delegate_core::bot_wire::StrictActorRef")]
     pub requested_by: ActorRef,
     pub objective: Objective,
-    #[serde(deserialize_with = "profile")]
+    #[serde(deserialize_with = "koru_delegate_core::bot_wire::deserialize_profile")]
     pub agent: SessionProfileKey,
     pub requested_model: Option<ModelName>,
     #[serde(with = "koru_delegate_core::bot_wire::StrictWorkspaceScope")]
@@ -42,30 +50,6 @@ struct Template {
     pub context: Vec<ScheduleContextPointer>,
 }
 
-fn profile<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SessionProfileKey, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(
-        tag = "kind",
-        content = "value",
-        rename_all = "snake_case",
-        deny_unknown_fields
-    )]
-    enum Profile {
-        BuiltIn(String),
-        Custom(uuid::Uuid),
-    }
-    match Profile::deserialize(d)? {
-        Profile::BuiltIn(key) => key
-            .parse()
-            .map(SessionProfileKey::BuiltIn)
-            .map_err(serde::de::Error::custom),
-        Profile::Custom(key) => key
-            .to_string()
-            .parse()
-            .map(SessionProfileKey::Custom)
-            .map_err(serde::de::Error::custom),
-    }
-}
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Context {

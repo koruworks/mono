@@ -26,6 +26,7 @@ pub mod bots;
 pub mod ipc;
 mod local;
 mod port;
+pub mod routines;
 pub mod wire;
 
 pub use local::LocalDelegate;

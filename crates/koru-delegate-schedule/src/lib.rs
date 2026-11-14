@@ -22,6 +22,10 @@ use koru_delegate_core::{
 
 mod routine;
 pub use routine::RoutineAssociation;
+/// Strict adapters shared only by private Routine seed/capture and bridge DTOs.
+/// Ordinary Schedule serde retains its existing compatibility behavior.
+#[doc(hidden)]
+pub mod routine_wire;
 
 /// The longest authored schedule name, in Unicode scalar values.
 pub const MAX_SCHEDULE_NAME_CHARS: usize = 128;
