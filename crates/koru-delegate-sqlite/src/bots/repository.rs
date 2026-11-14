@@ -235,7 +235,9 @@ pub(super) fn barrier(
     owner: BotOwner,
     bot: BotId,
 ) -> Result<Option<BotAdmissionBarrier>, BotLedgerError> {
-    let raw:Option<(i64,i64,String)>=conn.query_row("SELECT epoch,paused,request_id FROM bot_admission_barriers WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3",
+    // Project invalid storage to NULL before String allocation. Affinity alone
+    // does not prove integer values or a bounded canonical request spelling.
+    let raw:Option<(i64,i64,String)>=conn.query_row("SELECT CASE WHEN typeof(epoch)='integer' THEN epoch END, CASE WHEN typeof(paused)='integer' THEN paused END, CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END FROM bot_admission_barriers WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3",
         params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(sql)?;
     raw.map(|(epoch, paused, request)| {
         if epoch <= 0 || !matches!(paused, 0 | 1) {

@@ -4,7 +4,8 @@
 //! Retained terminal effect recovery does not use this lookup.
 use super::*;
 use koru_ai_core::bots::{
-    BotRoutineCreation, BotRoutineCreationState, BotRoutineStoredPreparation,
+    BotRoutineCreation, BotRoutineCreationIdentity, BotRoutineCreationState,
+    BotRoutineStoredPreparation,
 };
 use koru_delegate_core::{RoutineClaimObservation, RoutineLinkState, RoutinePolicyBarrier};
 
@@ -14,20 +15,27 @@ pub(in crate::worker) struct RoutineLookup {
     creation: BotRoutineCreation,
 }
 
+/// Initial independent grant tuple, shared by Linked-native proof and preclaim.
+/// Callers validate the complete retained Bound identity and current authority.
+pub(in crate::worker) fn initial_barrier(
+    identity: &BotRoutineCreationIdentity,
+) -> RoutinePolicyBarrier {
+    RoutinePolicyBarrier {
+        owner: identity.owner,
+        bot: identity.bot,
+        schedule: identity.schedule,
+        request: identity.creation_request.into(),
+        grant_revision: identity.grant.grant_revision,
+        policy: identity.grant.policy.clone(),
+        // O86 freezes the initial independent grant. Global lifecycle fencing
+        // remains separate; Schedule Pause does not stop an admitted Run.
+        effects_allowed: true,
+    }
+}
+
 impl RoutineLookup {
     pub(super) fn barrier(&self) -> RoutinePolicyBarrier {
-        let identity = &self.creation.identity;
-        RoutinePolicyBarrier {
-            owner: identity.owner,
-            bot: identity.bot,
-            schedule: identity.schedule,
-            request: identity.creation_request.into(),
-            grant_revision: identity.grant.grant_revision,
-            policy: identity.grant.policy.clone(),
-            // O86 freezes the initial independent grant. Global lifecycle
-            // fencing remains separate; Schedule Pause does not stop this Run.
-            effects_allowed: true,
-        }
+        super::initial_routine_barrier(&self.creation.identity)
     }
 
     pub(super) fn verify_delegate(

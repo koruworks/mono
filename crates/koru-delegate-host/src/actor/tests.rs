@@ -24,6 +24,7 @@ use super::*;
 mod native_lookup;
 pub(crate) mod routine;
 mod routine_route;
+mod admission_read;
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {
