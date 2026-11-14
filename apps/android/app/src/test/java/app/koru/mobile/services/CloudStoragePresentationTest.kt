@@ -117,8 +117,18 @@ class CloudStoragePresentationTest {
         advanceTimeBy(10_001)
         presenter.observe(status(), listOf(result(elapsed = 1)))
         assertTrue(presenter.state.value.stale)
-        assertEquals(1, calls.reads.size)
+        assertEquals(2, calls.reads.size)
+        // A changed revision is not permission to retry forever when every
+        // response has already expired by the time it reaches this screen.
+        val changed = JSONObject(payload()).put("revision", "99").toString()
+        presenter.observe(status(), listOf(result(2, 11, json = changed, elapsed = 10_001)))
+        assertEquals(2, calls.reads.size)
         assertFalse(presenter.state.value.loading)
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(2, calls.reads.size)
+        presenter.retry(status())
+        presenter.observe(status(), listOf(result(3, 12, elapsed = 10_001)))
+        assertEquals(4, calls.reads.size)
     }
 
     @Test fun accountSwitchRejectsLateAndWrongOwnerResponses() = runTest {
