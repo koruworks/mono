@@ -157,12 +157,15 @@ fn listing_recent_missing_foreign_and_duplicate_associations_are_not_filtered() 
     for sql in [
         "UPDATE inference_attempts SET operation_id='00000000-0000-4000-8000-000000000001'",
         "UPDATE bot_chat_runs SET owner_device_id='00000000-0000-4000-8000-000000000001'",
-        "UPDATE messages SET role='system' WHERE role='user'",
+        "UPDATE messages SET role='assistant' WHERE role='user'",
         "UPDATE chats SET profile_id=NULL",
         "DELETE FROM bot_chats WHERE purpose<>'main'",
     ] {
         let (mut repo, input) = fixture();
         linked(&mut repo, &input);
+        repo.connection
+            .execute("PRAGMA foreign_keys=OFF", [])
+            .unwrap();
         repo.connection.execute(sql, []).unwrap();
         assert!(read(&repo, &input).is_err(), "{sql}");
     }
@@ -198,8 +201,13 @@ fn listing_recent_scalar_bounds_and_payload_omission_do_not_weaken_full_reader()
         panic!("signed local observation")
     };
     assert_eq!(items[0].occurrence_ms, -60000);
-    repo.connection.execute("UPDATE bot_routine_preparations SET capture_json='not capture',submission_json='not submission'",[]).unwrap();
-    repo.connection.execute("UPDATE bot_command_receipts SET submission_json='not submission' WHERE command_kind='routine_occurrence'",[]).unwrap();
+    repo.connection
+        .execute(
+            "UPDATE bot_routine_preparations SET capture_json='{}',submission_json='{}'",
+            [],
+        )
+        .unwrap();
+    repo.connection.execute("UPDATE bot_command_receipts SET submission_json='{}' WHERE command_kind='routine_occurrence'",[]).unwrap();
     assert!(read(&repo, &input).is_ok());
     assert!(
         repo.routine_occurrence_for_run(owner(&input.slot), input.slot.bot, row.prepared.ids.run)
@@ -225,9 +233,25 @@ fn listing_recent_chat_trash_retains_reference_and_final_visibility_drift_refuse
         .routine_list_snapshot(owner(&input.slot), input.slot.bot, None, 16)
         .unwrap();
     let (_, checkpoint, _) = repo.routine_list_entry(&snapshot, 0).unwrap();
-    // The owning lifecycle predicate is separately covered by its production
-    // operation tests; this row arms only the normalized visibility observation.
-    repo.connection.execute("INSERT INTO bot_chat_trash(chat_id,user_scope_id,trashed_at_ms,operation_id) VALUES(?1,?2,?3,?4)",params![row.prepared.ids.chat.to_string(),input.slot.owner.user_scope.to_storage(),70000,BotRequestId::mint().to_storage()]).unwrap();
+    // Capture the real operation before applying its existing fixture-only
+    // Trash effect, preserving the journal's relational identity.
+    let chat = ChatId::from_uuid(row.prepared.ids.chat);
+    let operation = repo
+        .capture_bot_lifecycle(&crate::LifecycleCapture {
+            operation: BotRequestId::mint(),
+            owner: owner(&input.slot),
+            bot: input.slot.bot,
+            kind: BotLifecycleKind::TrashChat,
+            chat: Some(chat),
+            fingerprint: "a".repeat(64),
+            expected_revision: input.canonical.config_revision,
+            source: None,
+            members: vec![],
+            now: 70000,
+        })
+        .unwrap();
+    repo.fixture_trash_bot_chat(&operation, chat, 70001)
+        .unwrap();
     let BotRoutineLocalConversations::Available { items, more } = read(&repo, &input).unwrap()
     else {
         panic!("retained reference")
