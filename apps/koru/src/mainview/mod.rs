@@ -15637,6 +15637,7 @@ impl View for MainView {
             | self.drain_bot_lifecycle_asks()
             | self.drain_bot_create_asks()
             | self.drain_bot_memory_asks()
+            | self.drain_bot_routine_open()
             | self.maintain_bot_trash();
         let ai_attachment_opened = self.open_pending_ai_attachment();
         let file_preview_changed = self

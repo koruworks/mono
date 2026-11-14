@@ -98,6 +98,7 @@ use crate::ai_chat_view::AiChatView;
 mod actions;
 pub(crate) mod agent;
 pub(crate) mod context_library;
+pub(crate) mod context_routines;
 mod controls;
 pub(crate) mod conversations;
 pub(crate) mod create;
@@ -309,6 +310,7 @@ pub(crate) struct BotView {
     // -------------------------------------------- the settings (S5)
     settings: Box<Settings>,
     library: Box<super::library::Library>,
+    pub(crate) routines: Box<super::routines::Routines>,
     memory: Box<super::memory::Memory>,
     #[cfg(test)]
     memory_test_available: bool,
@@ -462,6 +464,7 @@ impl BotView {
             header_bottom: Cell::new(f32::INFINITY),
             settings: Box::default(),
             library: Box::default(),
+            routines: Box::default(),
             memory: Box::default(),
             #[cfg(test)]
             memory_test_available: false,
@@ -751,6 +754,7 @@ impl BotView {
     /// shown again; one never shown has nothing stale to refresh. Nothing is
     /// sent now: a hidden tab sends nothing.
     pub(crate) fn hidden(&mut self) {
+        self.routines.show(self.bot, false);
         self.memory.show(false);
         if self.create.is_some() {
             self.create_hidden();
@@ -967,7 +971,16 @@ impl BotView {
         self.settle_agent_refreshes();
         let library = self.library_pass();
         let memory = self.memory_pass();
-        asked || answered || polled || listed || lifecycle || catalog || library || memory
+        let routines = self.routines_pass();
+        asked
+            || answered
+            || polled
+            || listed
+            || lifecycle
+            || catalog
+            || library
+            || memory
+            || routines
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -1037,6 +1050,17 @@ impl BotView {
         let mut changed = false;
         for answer in answers {
             match answer {
+                Answer::Routines { seq, bot, result } => {
+                    changed |= self.routines.answer(seq, bot, result);
+                }
+                Answer::RoutineLabel {
+                    seq,
+                    bot,
+                    chat,
+                    result,
+                } => {
+                    changed |= self.routines.labelled(seq, bot, chat, result);
+                }
                 Answer::Memory { request, result } => {
                     if let Some(bot) = self.settings.bot() {
                         let folded =
@@ -1155,6 +1179,14 @@ impl BotView {
     }
 
     fn take(&mut self, result: Result<Bot, Failure>) {
+        if self.routines.held.is_some()
+            && result
+                .as_ref()
+                .ok()
+                .is_none_or(|bot| self.settings.bot() != Some(bot))
+        {
+            self.routines.invalidate();
+        }
         if matches!(&result, Ok(bot) if Some(bot.id) == self.bot &&
             (bot.revision < self.library.known_revision()
                 || bot.revision < self.memory.known_revision()

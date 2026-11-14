@@ -58,6 +58,8 @@ pub enum Section {
     CloudSync,
     /// Host-composed Library for an existing active Bot, never a document tab.
     Library,
+    /// Host-composed owner overview, never a document section.
+    Routines,
 }
 
 impl Section {
@@ -96,7 +98,7 @@ impl Section {
             Self::Tasks => koru_features::tasks() && koru_features::context_tasks(),
             Self::Reminders => koru_features::reminders(),
             Self::CloudSync => koru_features::cloud_sync(),
-            Self::Comments | Self::Assets | Self::History | Self::Library => true,
+            Self::Comments | Self::Assets | Self::History | Self::Library | Self::Routines => true,
         }
     }
 
@@ -119,6 +121,7 @@ impl Section {
             Self::History => "History",
             Self::CloudSync => "Cloud sync",
             Self::Library => "Library",
+            Self::Routines => "Routines",
         }
     }
 
@@ -131,6 +134,7 @@ impl Section {
             Self::History => icons::CLOCK,
             Self::CloudSync => icons::CLOUD,
             Self::Library => icons::LIST_CHECKS,
+            Self::Routines => icons::CLOCK,
         }
     }
 
@@ -156,6 +160,7 @@ impl Section {
             // there is one, and this stands only until then.
             Self::CloudSync => "No Cloud pass has run for this document yet.",
             Self::Library => "",
+            Self::Routines => "",
         }
     }
 }

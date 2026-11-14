@@ -554,6 +554,74 @@ impl MainView {
         true
     }
 
+    /// A fresh Routine reference has independently resolved its label on the
+    /// Bot link. It must never take the generic ordinary-chat fallback or
+    /// focus another Bot merely because its tab carries the same ChatId.
+    pub(super) fn open_routine_conversation(
+        &mut self,
+        expected: koru_ai_core::bots::BotId,
+        chat: koru_ai_ui::ChatId,
+    ) -> bool {
+        let showing = self.panes.iter_groups().find_map(|(path, group)| {
+            group
+                .tabs()
+                .iter()
+                .enumerate()
+                .find(|(_, tab)| tab.view.chat_id() == Some(chat))
+                .map(|(index, tab)| {
+                    (
+                        path,
+                        index,
+                        matches!(&tab.view,TabView::Bot(view) if view.bot()==Some(expected)),
+                    )
+                })
+        });
+        if let Some((path, index, owned)) = showing {
+            if !owned {
+                return false;
+            }
+            self.panes.set_focus(path);
+            let _ = self.select(index);
+            return true;
+        }
+        match self.active_view() {
+            TabView::Bot(view) if view.bot() == Some(expected) => view.show_conversation(chat),
+            _ => false,
+        }
+    }
+    pub(super) fn drain_bot_routine_open(&mut self) -> bool {
+        self.sync_bot_context();
+        if !self.bot_context_current()
+            || !self.bot_context_unobstructed()
+            || self.context_view.section() != crate::panes::context::Section::Routines
+        {
+            if let TabView::Bot(view) = self.active_view() {
+                let _ = view.take_routine_open();
+            }
+            return false;
+        }
+        let request = match self.active_view() {
+            TabView::Bot(view) => view.take_routine_open(),
+            _ => None,
+        };
+        let Some((bot, chat)) = request else {
+            return false;
+        };
+        if !self.open_routine_conversation(bot, chat) {
+            if let TabView::Bot(view) = self.active_view() {
+                view.routines.invalidate();
+            }
+        } else {
+            self.context_return_tab = None;
+            self.bot_context.focus = None;
+            if self.bot_context.floating {
+                self.context.set_immediately(false);
+                self.relayout();
+            }
+        }
+        true
+    }
+
     /// **A Bot tab's *Change…*** (Bots P1.8 S5): the window's existing
     /// folder dialog, the one an agent chat's working folder uses; its answer
     /// comes back through [`Self::bot_folder_chosen`] to the same tab.

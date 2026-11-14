@@ -31,6 +31,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod link;
 pub(crate) mod memory;
 pub(crate) mod roster;
+pub(crate) mod routines;
 pub(crate) mod settings;
 pub(crate) mod stops;
 pub(crate) mod trash;

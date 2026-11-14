@@ -18,13 +18,24 @@ impl MainView {
     fn active_context_library(&self) -> Option<Data> {
         let tab = self.tabs().active_tab();
         match &tab.view {
-            TabView::Bot(view) => view.context_library_data(tab.id),
+            TabView::Bot(view) => {
+                if self.context_view.section() == Section::Routines {
+                    let mut data = view.context_subject(tab.id)?;
+                    data.section = Section::Routines;
+                    data.routines = Some(crate::bots::view::context_routines::Data::from_state(
+                        &view.routines,
+                    ));
+                    Some(data)
+                } else {
+                    view.context_library_data(tab.id)
+                }
+            }
             _ => None,
         }
     }
     pub(super) fn context_sections(&self) -> Vec<Section> {
         if self.active_context_library().is_some() {
-            vec![Section::Library]
+            vec![Section::Library, Section::Routines]
         } else if self.snapshot_target_agrees() {
             Section::visible()
         } else {
@@ -44,24 +55,40 @@ impl MainView {
     }
     pub(super) fn bot_context_current(&self) -> bool {
         self.bot_context_stands()
-            && self
-                .active_context_library()
-                .as_ref()
-                .map(|d| (d.tab, d.bot, d.instance, d.revision))
-                == self
-                    .bot_context
-                    .data
-                    .as_ref()
-                    .map(|d| (d.tab, d.bot, d.instance, d.revision))
+            && self.active_context_library().as_ref().map(|d| {
+                (
+                    d.tab,
+                    d.bot,
+                    d.instance,
+                    d.revision,
+                    d.section,
+                    d.routines.as_ref().map(|r| r.revision),
+                )
+            }) == self.bot_context.data.as_ref().map(|d| {
+                (
+                    d.tab,
+                    d.bot,
+                    d.instance,
+                    d.revision,
+                    d.section,
+                    d.routines.as_ref().map(|r| r.revision),
+                )
+            })
     }
     pub(super) fn sync_bot_context(&mut self) -> bool {
         let data = self.active_context_library();
         if data.is_some() {
-            if self.context_view.section() != Section::Library {
+            if !matches!(
+                self.context_view.section(),
+                Section::Library | Section::Routines
+            ) {
                 self.context_document_section = self.context_view.section();
                 self.context_view.select(Section::Library);
             }
-        } else if self.context_view.section() == Section::Library {
+        } else if matches!(
+            self.context_view.section(),
+            Section::Library | Section::Routines
+        ) {
             self.context_view.select(self.context_document_section);
         }
         let visible = self.context.is_open();
@@ -69,21 +96,32 @@ impl MainView {
             .as_ref()
             .filter(|_| visible)
             .map(|d| (d.tab, d.instance));
-        if self
+        let section = self.context_view.section();
+        let desired = data
+            .as_ref()
+            .filter(|_| visible)
+            .map(|d| (d.tab, d.instance, d.bot, section));
+        let current = self
             .bot_context
             .data
             .as_ref()
-            .map(|data| (data.tab, data.instance))
-            != active
-        {
+            .map(|d| (d.tab, d.instance, d.bot, d.section));
+        let active_shown = match &self.tabs().active_tab().view {
+            TabView::Bot(view) if section == Section::Routines => view.routines.visible(),
+            TabView::Bot(view) => view.context_library_shown(),
+            _ => false,
+        };
+        if current != desired || desired.is_some() && !active_shown {
             self.each_tab_mut(|tab| match &mut tab.view {
                 TabView::Bot(view) => {
                     let visible = active.is_some()
-                        && view
-                            .context_library_data(tab.id)
-                            .map(|d| (d.tab, d.instance))
-                            == active;
-                    view.show_context_library(visible)
+                        && view.context_subject(tab.id).map(|d| (d.tab, d.instance)) == active;
+                    let changed = view.show_context_library(visible && section == Section::Library);
+                    let bot = view.bot();
+                    changed
+                        | view
+                            .routines
+                            .show(bot, visible && section == Section::Routines)
                 }
                 _ => false,
             });
@@ -108,9 +146,8 @@ impl MainView {
         } else {
             self.context_rect()
         };
-        let changed = self
-            .bot_context
-            .update(data.filter(|_| visible), area, floating);
+        let data = self.active_context_library().filter(|_| visible);
+        let changed = self.bot_context.update(data, area, floating);
         if self.bot_context.data.is_some()
             && floating
             && self.bot_context.focus.is_none()
@@ -127,7 +164,7 @@ impl MainView {
         }
         let area = self.bot_context.area;
         let _scope = koru_draw::inspect::scope(
-            "Bot Library panel",
+            "Bot context panel",
             "container",
             root,
             scene::rect(area.x, area.y, area.w, area.h),
@@ -222,15 +259,27 @@ impl MainView {
         self.apply_bot_context_action(action)
     }
     fn apply_bot_context_action(&mut self, action: Action) -> bool {
+        if let Action::Section(section) = &action {
+            let changed = self.context_view.select(*section);
+            self.sync_bot_context();
+            self.focus_bot_context();
+            return changed;
+        }
         if action == Action::Escape {
             self.dismiss_bot_context();
             return true;
         }
         let dismiss = matches!(action, Action::Open(_) | Action::Manage);
         let changed = match self.active_view() {
-            TabView::Bot(view) => view.perform_context_library(action),
+            TabView::Bot(view) => match action {
+                Action::Routine(action) => view.perform_context_routine(action),
+                other => view.perform_context_library(other),
+            },
             _ => false,
         };
+        if changed {
+            self.sync_bot_context();
+        }
         if changed && dismiss {
             self.context_return_tab = None;
             self.bot_context.focus = None;
@@ -408,6 +457,9 @@ impl MainView {
                             SemanticNode::new(self.context_occurrence(cx, key)?, Role::Button)
                                 .with_label(label)
                                 .disabled(node.disabled);
+                        if let Some(selected) = node.selected {
+                            control = control.with_selected(selected);
+                        }
                         if let Some(bounds) = node
                             .hit_region()
                             .filter(|bounds| bounds.w > 0.0 && bounds.h > 0.0)
@@ -422,7 +474,37 @@ impl MainView {
                     .collect()
             })
             .unwrap_or_default();
-        let mut label = koru_i18n::t(data.lang, koru_i18n::Key::BotsLibrary).to_owned();
+        let mut label = koru_i18n::t(
+            data.lang,
+            if data.section == Section::Routines {
+                koru_i18n::Key::BotsRoutines
+            } else {
+                koru_i18n::Key::BotsLibrary
+            },
+        )
+        .to_owned();
+        if data.section == Section::Routines {
+            // Read-only observations are semantic text too, not just paint
+            // between actionable controls. Use the same allocated frame.
+            if let Some(lines) = self.bot_context.with_frame(|frame| {
+                frame
+                    .nodes
+                    .iter()
+                    .filter(|node| !node.focusable)
+                    .filter_map(|node| match node.label.as_ref()? {
+                        koru_draw::el::Name::Text(value) => Some(value.clone()),
+                        koru_draw::el::Name::Key(words) => {
+                            Some(koru_i18n::t(data.lang, *words).to_owned())
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }) {
+                for line in lines {
+                    label.push_str(". ");
+                    label.push_str(&line);
+                }
+            }
+        }
         for notice in &data.notices {
             label.push_str(". ");
             label.push_str(notice);

@@ -38,6 +38,16 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
+    ReadRoutines {
+        seq: u64,
+        bot: BotId,
+        after: Option<koru_delegate_core::ScheduleId>,
+    },
+    RoutineLabel {
+        seq: u64,
+        bot: BotId,
+        chat: ChatId,
+    },
     Memory(super::memory::Request),
     /// The Bots whose home is `workspace`, as the service lists them — and,
     /// as a second answer, its unfinished creations (S8).
@@ -107,6 +117,18 @@ pub(crate) enum Command {
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    Routines {
+        seq: u64,
+        bot: BotId,
+        result:
+            Result<koru_ai_core::bots::routines::BotRoutineListPage, super::routines::ReadFailure>,
+    },
+    RoutineLabel {
+        seq: u64,
+        bot: BotId,
+        chat: ChatId,
+        result: Result<Option<BotChatLabel>, Failure>,
+    },
     Memory {
         request: super::memory::Request,
         result: Result<BotResponse, Failure>,
@@ -454,6 +476,71 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
     let mut client: Option<koru_api_client::Client> = None;
     while let Ok(command) = commands.recv() {
         match command {
+            Command::ReadRoutines { seq, bot, after } => {
+                let connection_failure = if client.is_none() {
+                    match connect_checked(root.as_deref()) {
+                        Ok(connected) => {
+                            client = Some(connected);
+                            None
+                        }
+                        Err(error) => Some(super::routines::connection_failure(error.code())),
+                    }
+                } else {
+                    None
+                };
+                let result = if let Some(failure) = connection_failure {
+                    Err(failure)
+                } else {
+                    match &client {
+                        Some(connected) => super::routines::listed(
+                            connected
+                                .ai()
+                                .bots(&BotCommand::ReadRoutines {
+                                    bot_id: bot,
+                                    after_schedule: after,
+                                    limit: 16,
+                                })
+                                .map_err(|e| said(e.code, e.retryable)),
+                        ),
+                        None => Err(super::routines::ReadFailure::Other(Failure::Unanswered)),
+                    }
+                };
+                if result.is_err() {
+                    client = None;
+                }
+                if answers.send(Answer::Routines { seq, bot, result }).is_err() {
+                    return;
+                }
+            }
+            Command::RoutineLabel { seq, bot, chat } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => labelled(
+                        connected
+                            .ai()
+                            .read_chat(chat)
+                            .map(|t| t.chat.bot)
+                            .map_err(|e| said(e.code, e.retryable)),
+                    ),
+                    None => Err(Failure::Unanswered),
+                };
+                if result.is_err() {
+                    client = None;
+                }
+                if answers
+                    .send(Answer::RoutineLabel {
+                        seq,
+                        bot,
+                        chat,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Command::Memory(request) => {
                 if client.is_none() {
                     client = connect(root.as_deref());
@@ -930,12 +1017,16 @@ pub(crate) fn read(reply: Result<BotResponse, Said>) -> Result<Bot, Failure> {
 }
 
 fn connect(root: Option<&std::path::Path>) -> Option<koru_api_client::Client> {
+    connect_checked(root).ok()
+}
+fn connect_checked(
+    root: Option<&std::path::Path>,
+) -> Result<koru_api_client::Client, koru_store_core::Error> {
     let segment = koru_channel::segment();
     match root {
         Some(root) => koru_api_client::Client::connect_at_first_party(segment, root, SCOPES),
         None => koru_api_client::Client::connect_first_party(segment, SCOPES),
     }
-    .ok()
 }
 
 /// A `List` reply as the roster reads it, the refusal reduced to its
