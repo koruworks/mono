@@ -6,8 +6,8 @@ pub(crate) mod admission;
 pub(crate) mod policy;
 
 mod boot;
-mod metadata;
 mod branch;
+mod metadata;
 pub use boot::BotBootSnapshot;
 pub(crate) mod lifecycle;
 pub use branch::HistoricalBotRun;
@@ -20,6 +20,7 @@ pub use creation::BotCreationScan;
 pub(crate) mod library;
 mod reads;
 mod routines;
+pub use routines::{RoutineListCheckpoint, RoutineListSnapshot};
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage

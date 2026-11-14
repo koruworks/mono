@@ -4,6 +4,7 @@
 use super::*;
 use koru_delegate_core::{DocumentVersionId, RoutineClaimIdentity};
 
+mod listing;
 mod preclaim;
 
 fn fixture() -> (Repository, BotRoutineCapturedSources) {

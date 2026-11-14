@@ -580,9 +580,9 @@ Returns: A bounded owner-authorized projection; no configuration or execution ha
 
 ## POST `/v1/ai/bots`
 
-Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine or read/retry its creation, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task
+Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation or list current Routine observations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task
 
-Returns: A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine creation status does not claim current Schedule lifecycle or permission. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.
+Returns: A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.
 
 ## GET `/v1/ai/providers/settings`
 
