@@ -3529,7 +3529,7 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
         | AccountCommand::CancelEnrollment
         | AccountCommand::InspectAccountSession
         | AccountCommand::InspectCloudSubscription { .. }
-                | AccountCommand::InspectCloudPlan { .. }
+        | AccountCommand::InspectCloudPlan { .. }
         | AccountCommand::InspectCloudSync { .. }
         | AccountCommand::ListProfiles
         | AccountCommand::ListProfileChoices
