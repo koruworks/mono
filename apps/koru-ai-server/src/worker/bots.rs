@@ -60,6 +60,7 @@ pub(in crate::worker) mod chat;
 mod library;
 mod lifecycle;
 pub(crate) mod memory;
+pub(in crate::worker) mod occurrence;
 pub(crate) mod policy;
 mod preparation;
 mod reads;
