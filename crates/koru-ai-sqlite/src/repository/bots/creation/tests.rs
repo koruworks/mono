@@ -502,6 +502,69 @@ fn an_existing_role_completes_from_folder_ready_and_stays_shared() {
 }
 
 #[test]
+fn v2_metadata_selection_keeps_completed_receipt_scalar_and_correlation_checks() {
+    let mut repo = Repository::in_memory().unwrap();
+    let intent = record(false);
+    let request = BotRequestId::mint();
+    repo.begin_bot_creation(request, &intent, HASH, 1).unwrap();
+    let ready = folder_ready(&intent);
+    repo.advance_bot_creation(
+        intent.user_scope,
+        request,
+        &intent,
+        &ready,
+        BotReceiptStage::Prepared,
+        2,
+    )
+    .unwrap();
+    let (_, bot) = repo
+        .complete_bot_creation(intent.user_scope, request, &ready, ProfileId::new(), 3)
+        .unwrap();
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    let metadata = repo.bot_policy_metadata(owner, bot.id).unwrap();
+    let hint = koru_delegate_core::BotBootAdmission::Missing {};
+    assert_eq!(
+        repo.bot_admission_barrier(&metadata, &hint).unwrap(),
+        repo.bot_boot_snapshot(owner, bot.id, &hint)
+            .unwrap()
+            .admission
+    );
+    for fingerprint in [
+        rusqlite::types::Value::Text("g".repeat(64)),
+        rusqlite::types::Value::Text("a".repeat(63)),
+        rusqlite::types::Value::Blob(vec![b'a'; 64]),
+        rusqlite::types::Value::Text("a".repeat(65536)),
+    ] {
+        repo.connection
+            .execute(
+                "UPDATE bot_command_receipts SET fingerprint=?2 WHERE request_id=?1",
+                params![request.to_storage(), fingerprint],
+            )
+            .unwrap();
+        assert!(repo.bot_admission_barrier(&metadata, &hint).is_err());
+        assert!(repo.bot_boot_snapshot(owner, bot.id, &hint).is_err());
+    }
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET fingerprint=?2 WHERE request_id=?1",
+            params![request.to_storage(), HASH],
+        )
+        .unwrap();
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET stage='accepted' WHERE request_id=?1",
+            [request.to_storage()],
+        )
+        .unwrap();
+    assert!(repo.bot_admission_barrier(&metadata, &hint).is_err());
+    repo.connection.execute("UPDATE bot_command_receipts SET stage='completed',expected_revision=1 WHERE request_id=?1",[request.to_storage()]).unwrap();
+    assert!(repo.bot_admission_barrier(&metadata, &hint).is_err());
+}
+
+#[test]
 fn a_late_final_failure_rolls_everything_back_and_the_step_repeats_alone() {
     let mut repo = Repository::in_memory().unwrap();
     let intent = record(true);

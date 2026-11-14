@@ -68,6 +68,7 @@ enum RoleKind {
 #[derive(Deserialize)]
 struct Role {
     kind: RoleKind,
+    seed: Option<IgnoredAny>,
 }
 #[derive(Deserialize)]
 struct Creation {
@@ -81,6 +82,8 @@ struct Creation {
     home_workspace: WorkspaceId,
     #[serde(deserialize_with = "identity")]
     main_chat: ChatId,
+    #[serde(rename = "profile", deserialize_with = "identity")]
+    _profile: ProfileId,
     phase: BotCreationPhase,
     role: Role,
     reason: Option<IgnoredAny>,
@@ -132,6 +135,7 @@ pub fn bot_creation_identity(json: &str) -> Result<BotCreationIdentity, BotError
             bot: None,
         } if !c.abandoned
             && c.reason.is_none()
+            && c.role.seed.is_none()
             && matches!(
                 (c.role.kind, c.phase),
                 (RoleKind::Existing, BotCreationPhase::FolderReady)

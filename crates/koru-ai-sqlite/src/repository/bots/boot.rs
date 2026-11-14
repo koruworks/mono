@@ -77,7 +77,7 @@ impl Repository {
         &self,
         bot: &BotPolicyMetadata,
         hint: &BotBootAdmission,
-        full_creation: bool,
+        full_boot_validation: bool,
     ) -> Result<BotAdmissionBarrier, BotError> {
         let owner = bot.owner;
         let id = bot.id;
@@ -100,11 +100,11 @@ impl Repository {
                 (barrier.epoch == bot.revision).then_some(barrier.clone())
             }
         };
-        let mut known = self.boot_pause(bot, full_creation)?;
+        let mut known = self.boot_pause(bot, full_boot_validation)?;
         self.boot_refusals(bot, &mut known)?;
         // An open lifecycle's required pause may not be replaced with a
         // convenient delegate key or with a synthetic creation-correlated one.
-        let lifecycle_pause = if full_creation {
+        let lifecycle_pause = if full_boot_validation {
             // Preserve boot's complete legacy lifecycle validation, including
             // its member decoder. The authority-only reader never loads members.
             self.open_bot_lifecycle(id)?
@@ -142,7 +142,7 @@ impl Repository {
                     device: owner.device,
                 },
                 bot: id,
-                request: self.boot_creation_request(bot, full_creation)?,
+                request: self.boot_creation_request(bot, full_boot_validation)?,
                 epoch: bot.revision,
                 paused: bot.paused,
             },
@@ -266,13 +266,24 @@ impl Repository {
         full: bool,
     ) -> Result<BotRequestId, BotError> {
         let mut query = self.connection.prepare_cached(
-            "SELECT CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END,CASE WHEN typeof(outcome_json)='text' AND length(CAST(outcome_json AS BLOB))<=1048576 THEN outcome_json END
+            "SELECT CASE WHEN typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36 THEN request_id END,CASE WHEN typeof(outcome_json)='text' AND length(CAST(outcome_json AS BLOB))<=1048576 THEN outcome_json END,
+             CASE WHEN typeof(fingerprint)='text' AND length(CAST(fingerprint AS BLOB))=64 THEN fingerprint END,
+             planned_run_id IS NULL AND captured_config_revision IS NULL AND captured_policy_revision IS NULL
+                 AND submission_version IS NULL AND submission_json IS NULL AND desired_pause IS NULL
+                 AND expected_revision IS NULL AND pause_ack_stage IS NULL
              FROM bot_command_receipts INDEXED BY bot_command_guard
              WHERE bot_id=?1 AND user_scope_id=?2 AND command_kind='create' AND stage='completed' LIMIT 2").map_err(bad)?;
         let rows = query
             .query_map(
                 params![bot.id.to_storage(), bot.owner.user_scope.to_storage()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, bool>(3)?,
+                    ))
+                },
             )
             .map_err(bad)?;
         let mut found = None;
@@ -280,7 +291,7 @@ impl Repository {
             if found.is_some() {
                 return Err(BotError::Conflict);
             }
-            let (request, json) = row.map_err(bad)?;
+            let (request, json, fingerprint, reserved_empty) = row.map_err(bad)?;
             let request = request.parse::<BotRequestId>().map_err(bad)?;
             let json = json.ok_or(BotError::Storage)?;
             let identity = bot_creation_identity(&json)?;
@@ -288,6 +299,14 @@ impl Repository {
                 || identity.owner != bot.owner
                 || identity.home != bot.home_workspace
                 || identity.main_chat != bot.main_chat
+            {
+                return Err(BotError::Storage);
+            }
+            if identity.version == 2
+                && (!reserved_empty
+                    || fingerprint
+                        .as_ref()
+                        .is_none_or(|f| !f.bytes().all(|b| b.is_ascii_hexdigit())))
             {
                 return Err(BotError::Storage);
             }

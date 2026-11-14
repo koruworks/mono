@@ -13,7 +13,7 @@ fn ready(authored: bool) -> BotCreationRecord {
     }
     c.validate().unwrap();
     assert!(c.ready());
-    c
+    c.without_seed()
 }
 fn legacy() -> Value {
     serde_json::to_value(BotReceiptOutcome::Configuration {
@@ -77,13 +77,17 @@ fn creation_identity_projection_rejects_each_missing_malformed_and_oversize_iden
         };
         let key = if v2 { "creation" } else { "bot" };
         let bot_key = if v2 { "bot" } else { "id" };
-        for field in [
+        let mut fields = vec![
             bot_key,
             "user_scope",
             "owner_device",
             "home_workspace",
             "main_chat",
-        ] {
+        ];
+        if v2 {
+            fields.push("profile");
+        }
+        for field in fields {
             let mut missing = original.clone();
             missing[key].as_object_mut().unwrap().remove(field);
             assert!(project(&missing).is_err(), "missing {field}");
@@ -186,6 +190,9 @@ fn creation_identity_projection_keeps_v2_readiness_and_abandonment_truthful() {
         value["creation"]["reason"] = json!("store_unavailable");
         assert!(project(&value).is_err());
         value["creation"]["reason"] = Value::Null;
+        value["creation"]["role"]["seed"] = json!("00");
+        assert!(project(&value).is_err());
+        value["creation"]["role"]["seed"] = Value::Null;
         value["creation"]["role"]["kind"] = json!("other");
         assert!(project(&value).is_err());
     }
