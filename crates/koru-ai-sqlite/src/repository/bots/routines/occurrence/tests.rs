@@ -4,6 +4,8 @@
 use super::*;
 use koru_delegate_core::{DocumentVersionId, RoutineClaimIdentity};
 
+mod preclaim;
+
 fn fixture() -> (Repository, BotRoutineCapturedSources) {
     let (mut repo, bot, owner, command) = super::super::tests::fixture();
     let creation = super::super::tests::prepared(&mut repo, owner, &command);
