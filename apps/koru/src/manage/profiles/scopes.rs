@@ -328,8 +328,12 @@ impl ProfilesController {
         generation: u64,
         mut result: AccountOperationResult,
     ) -> bool {
-        if matches!(&result, AccountOperationResult::CloudPlan { .. })
-            && owner_scope != self.account.active_scope
+        if matches!(
+            &result,
+            AccountOperationResult::CloudPlan { .. }
+                | AccountOperationResult::CloudUsageWorkspaces { .. }
+                | AccountOperationResult::CloudUsageDocuments { .. }
+        ) && owner_scope != self.account.active_scope
         {
             return false;
         }
@@ -340,6 +344,8 @@ impl ProfilesController {
         let cloud = matches!(
             result,
             AccountOperationResult::CloudPlan { .. }
+                | AccountOperationResult::CloudUsageWorkspaces { .. }
+                | AccountOperationResult::CloudUsageDocuments { .. }
                 | AccountOperationResult::CloudSubscription { .. }
                 | AccountOperationResult::CloudSync { .. }
         );

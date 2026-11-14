@@ -212,3 +212,39 @@ fn secret_payloads_are_bounded_and_cancel_cannot_smuggle_a_token() {
     }
     assert!(platform(&value).is_err());
 }
+
+#[test]
+fn cloud_inventory_requires_exact_selectors_and_bounded_cursor_only_on_read_actions() {
+    let mut request = wire::AccountCommandRequest {
+        version: 1,
+        requester: 42,
+        expected_owner_scope: Some(9),
+        action: wire::AccountAction::InspectCloudUsageWorkspaces as i32,
+        ..Default::default()
+    };
+    assert_eq!(command(&request), Ok(()));
+    request.cloud_cursor = Some("aB9_-".into());
+    assert_eq!(command(&request), Ok(()));
+    for cursor in ["".into(), "x".repeat(2049), "a/b".into(), "a=b".into()] {
+        request.cloud_cursor = Some(cursor);
+        assert!(command(&request).is_err());
+    }
+    request.cloud_cursor = None;
+    request.action = wire::AccountAction::InspectCloudUsageDocuments as i32;
+    assert!(command(&request).is_err());
+    request.cloud_workspace_id = Some("00000000-0000-0000-0000-000000000050".into());
+    request.cloud_incarnation_id = Some("00000000-0000-0000-0000-000000000051".into());
+    assert_eq!(command(&request), Ok(())); // Read contract does not require UUID v4.
+    let bytes = request.encode_to_vec();
+    assert_eq!(
+        command(&wire::AccountCommandRequest::decode(bytes.as_slice()).unwrap()),
+        Ok(())
+    );
+    request.cloud_workspace_id = Some("00000000000000000000000000000050".into());
+    assert!(command(&request).is_err());
+    request.cloud_workspace_id = Some("00000000-0000-0000-0000-000000000050".into());
+    request.action = wire::AccountAction::InspectCloudUsageWorkspaces as i32;
+    assert!(command(&request).is_err());
+    request.action = wire::AccountAction::InspectCloudPlan as i32;
+    assert!(command(&request).is_err());
+}

@@ -36,6 +36,41 @@ pub fn command(value: &wire::AccountCommandRequest) -> Result<(), &'static str> 
     } else if !value.account_id.is_empty() {
         return Err("account_payload_invalid");
     }
+    let inventory = matches!(
+        action,
+        wire::AccountAction::InspectCloudUsageWorkspaces
+            | wire::AccountAction::InspectCloudUsageDocuments
+    );
+    if inventory {
+        if value.cloud_cursor.as_ref().is_some_and(|s| {
+            s.is_empty()
+                || s.len() > 2048
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        }) {
+            return Err("account_payload_invalid");
+        }
+        if action == wire::AccountAction::InspectCloudUsageDocuments {
+            for value in [&value.cloud_workspace_id, &value.cloud_incarnation_id] {
+                let value = value.as_deref().ok_or("account_payload_invalid")?;
+                if value.len() != 36 {
+                    return Err("account_payload_invalid");
+                }
+                let id = uuid::Uuid::parse_str(value).map_err(|_| "account_payload_invalid")?;
+                if id.to_string() != value {
+                    return Err("account_payload_invalid");
+                }
+            }
+        } else if value.cloud_workspace_id.is_some() || value.cloud_incarnation_id.is_some() {
+            return Err("account_payload_invalid");
+        }
+    } else if value.cloud_workspace_id.is_some()
+        || value.cloud_incarnation_id.is_some()
+        || value.cloud_cursor.is_some()
+    {
+        return Err("account_payload_invalid");
+    }
     if action == wire::AccountAction::Cancel && value.generation == 0 {
         return Err("account_generation_invalid");
     }

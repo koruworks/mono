@@ -665,7 +665,7 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     // `OpenLink` bump that took the protocol to 8 and left the frame alone,
     // and then caught root-catalog Plan 2.2 taking the protocol to 46 for
     // `Push::RootSync` while the frame stayed at 1.
-    assert_eq!(PROTOCOL_VERSION, 47);
+    assert_eq!(PROTOCOL_VERSION, 48);
     assert_eq!(FRAME_VERSION, 1);
 }
 

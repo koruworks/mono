@@ -574,3 +574,41 @@ fn a_browser_sign_in_returns_through_the_app_link_with_its_own_state_only() {
     // The session released its slot when it ended.
     assert!(bridge.state.lock().unwrap().browser.is_none());
 }
+
+#[test]
+fn inventory_result_echoes_exact_document_scope_on_success_and_failure() {
+    use koru_agent_wire::{CloudInventoryFailure, CloudInventoryPayload};
+    for failure in [
+        None,
+        Some(CloudInventoryFailure::RevisionChanged),
+        Some(CloudInventoryFailure::Unavailable),
+    ] {
+        let result = operation_result(
+            7,
+            42,
+            9,
+            AccountOperationResult::CloudUsageDocuments {
+                request_id: 42,
+                workspace_id: "source-workspace".into(),
+                incarnation_id: "source-incarnation".into(),
+                payload: failure
+                    .is_none()
+                    .then(|| CloudInventoryPayload::new("{}".into()).unwrap()),
+                failure,
+            },
+        );
+        assert_eq!(result.kind, "cloud_usage_documents");
+        assert_eq!(result.requester, 42);
+        assert_eq!(result.generation, 9);
+        assert_eq!(
+            result.cloud_workspace_id.as_deref(),
+            Some("source-workspace")
+        );
+        assert_eq!(
+            result.cloud_incarnation_id.as_deref(),
+            Some("source-incarnation")
+        );
+        assert_eq!(result.cloud_inventory_json.is_some(), failure.is_none());
+        assert_eq!(result.error_code.as_deref(), failure.map(|f| f.code()));
+    }
+}

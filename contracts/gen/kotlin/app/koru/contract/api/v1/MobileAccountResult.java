@@ -22,6 +22,9 @@ public  final class MobileAccountResult extends
     enrollments_ = emptyProtobufList();
     cloudSync_ = emptyProtobufList();
     cloudPlanJson_ = "";
+    cloudInventoryJson_ = "";
+    cloudWorkspaceId_ = "";
+    cloudIncarnationId_ = "";
   }
   private int bitField0_;
   public static final int SEQUENCE_FIELD_NUMBER = 1;
@@ -826,6 +829,228 @@ public  final class MobileAccountResult extends
   private void clearCloudPlanRequestElapsedMillis() {
 
     cloudPlanRequestElapsedMillis_ = 0L;
+  }
+
+  public static final int CLOUD_INVENTORY_JSON_FIELD_NUMBER = 16;
+  private java.lang.String cloudInventoryJson_;
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @return Whether the cloudInventoryJson field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudInventoryJson() {
+    return ((bitField0_ & 0x00000020) != 0);
+  }
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @return The cloudInventoryJson.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudInventoryJson() {
+    return cloudInventoryJson_;
+  }
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @return The bytes for cloudInventoryJson.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudInventoryJsonBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudInventoryJson_);
+  }
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @param value The cloudInventoryJson to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudInventoryJson(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000020;
+    cloudInventoryJson_ = value;
+  }
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   */
+  private void clearCloudInventoryJson() {
+    bitField0_ = (bitField0_ & ~0x00000020);
+    cloudInventoryJson_ = getDefaultInstance().getCloudInventoryJson();
+  }
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @param value The bytes for cloudInventoryJson to set.
+   */
+  private void setCloudInventoryJsonBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudInventoryJson_ = value.toStringUtf8();
+    bitField0_ |= 0x00000020;
+  }
+
+  public static final int CLOUD_WORKSPACE_ID_FIELD_NUMBER = 17;
+  private java.lang.String cloudWorkspaceId_;
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @return Whether the cloudWorkspaceId field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudWorkspaceId() {
+    return ((bitField0_ & 0x00000040) != 0);
+  }
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @return The cloudWorkspaceId.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudWorkspaceId() {
+    return cloudWorkspaceId_;
+  }
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @return The bytes for cloudWorkspaceId.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudWorkspaceIdBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudWorkspaceId_);
+  }
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @param value The cloudWorkspaceId to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudWorkspaceId(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000040;
+    cloudWorkspaceId_ = value;
+  }
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   */
+  private void clearCloudWorkspaceId() {
+    bitField0_ = (bitField0_ & ~0x00000040);
+    cloudWorkspaceId_ = getDefaultInstance().getCloudWorkspaceId();
+  }
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @param value The bytes for cloudWorkspaceId to set.
+   */
+  private void setCloudWorkspaceIdBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudWorkspaceId_ = value.toStringUtf8();
+    bitField0_ |= 0x00000040;
+  }
+
+  public static final int CLOUD_INCARNATION_ID_FIELD_NUMBER = 18;
+  private java.lang.String cloudIncarnationId_;
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @return Whether the cloudIncarnationId field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudIncarnationId() {
+    return ((bitField0_ & 0x00000080) != 0);
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @return The cloudIncarnationId.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudIncarnationId() {
+    return cloudIncarnationId_;
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @return The bytes for cloudIncarnationId.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudIncarnationIdBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudIncarnationId_);
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @param value The cloudIncarnationId to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudIncarnationId(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000080;
+    cloudIncarnationId_ = value;
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   */
+  private void clearCloudIncarnationId() {
+    bitField0_ = (bitField0_ & ~0x00000080);
+    cloudIncarnationId_ = getDefaultInstance().getCloudIncarnationId();
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @param value The bytes for cloudIncarnationId to set.
+   */
+  private void setCloudIncarnationIdBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudIncarnationId_ = value.toStringUtf8();
+    bitField0_ |= 0x00000080;
   }
 
   public static app.koru.contract.api.v1.MobileAccountResult parseFrom(
@@ -1764,6 +1989,231 @@ public  final class MobileAccountResult extends
       return this;
     }
 
+    /**
+     * <pre>
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * </pre>
+     *
+     * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+     * @return Whether the cloudInventoryJson field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudInventoryJson() {
+      return instance.hasCloudInventoryJson();
+    }
+    /**
+     * <pre>
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * </pre>
+     *
+     * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+     * @return The cloudInventoryJson.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudInventoryJson() {
+      return instance.getCloudInventoryJson();
+    }
+    /**
+     * <pre>
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * </pre>
+     *
+     * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+     * @return The bytes for cloudInventoryJson.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudInventoryJsonBytes() {
+      return instance.getCloudInventoryJsonBytes();
+    }
+    /**
+     * <pre>
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * </pre>
+     *
+     * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+     * @param value The cloudInventoryJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudInventoryJson(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudInventoryJson(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * </pre>
+     *
+     * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudInventoryJson() {
+      copyOnWrite();
+      instance.clearCloudInventoryJson();
+      return this;
+    }
+    /**
+     * <pre>
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * </pre>
+     *
+     * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+     * @param value The bytes for cloudInventoryJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudInventoryJsonBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudInventoryJsonBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * Exact request selectors, echoed for documents on success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+     * @return Whether the cloudWorkspaceId field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudWorkspaceId() {
+      return instance.hasCloudWorkspaceId();
+    }
+    /**
+     * <pre>
+     * Exact request selectors, echoed for documents on success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+     * @return The cloudWorkspaceId.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudWorkspaceId() {
+      return instance.getCloudWorkspaceId();
+    }
+    /**
+     * <pre>
+     * Exact request selectors, echoed for documents on success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+     * @return The bytes for cloudWorkspaceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudWorkspaceIdBytes() {
+      return instance.getCloudWorkspaceIdBytes();
+    }
+    /**
+     * <pre>
+     * Exact request selectors, echoed for documents on success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+     * @param value The cloudWorkspaceId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudWorkspaceId(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudWorkspaceId(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Exact request selectors, echoed for documents on success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudWorkspaceId() {
+      copyOnWrite();
+      instance.clearCloudWorkspaceId();
+      return this;
+    }
+    /**
+     * <pre>
+     * Exact request selectors, echoed for documents on success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+     * @param value The bytes for cloudWorkspaceId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudWorkspaceIdBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudWorkspaceIdBytes(value);
+      return this;
+    }
+
+    /**
+     * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+     * @return Whether the cloudIncarnationId field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudIncarnationId() {
+      return instance.hasCloudIncarnationId();
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+     * @return The cloudIncarnationId.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudIncarnationId() {
+      return instance.getCloudIncarnationId();
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+     * @return The bytes for cloudIncarnationId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudIncarnationIdBytes() {
+      return instance.getCloudIncarnationIdBytes();
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+     * @param value The cloudIncarnationId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudIncarnationId(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudIncarnationId(value);
+      return this;
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudIncarnationId() {
+      copyOnWrite();
+      instance.clearCloudIncarnationId();
+      return this;
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+     * @param value The bytes for cloudIncarnationId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudIncarnationIdBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudIncarnationIdBytes(value);
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.MobileAccountResult)
   }
   @java.lang.Override
@@ -1798,11 +2248,15 @@ public  final class MobileAccountResult extends
             app.koru.contract.api.v1.MobileCloudSyncProfile.class,
             "cloudPlanJson_",
             "cloudPlanRequestElapsedMillis_",
+            "cloudInventoryJson_",
+            "cloudWorkspaceId_",
+            "cloudIncarnationId_",
           };
           java.lang.String info =
-              "\u0000\u000e\u0000\u0001\u0001\u000f\u000e\u0000\u0003\u0000\u0001\u0003\u0002\u0003" +
+              "\u0000\u0011\u0000\u0001\u0001\u0012\u0011\u0000\u0003\u0000\u0001\u0003\u0002\u0003" +
               "\u0003\u0003\u0004\u0208\u0005\u1208\u0000\u0006\u001b\b\u1009\u0001\t\u0003\n\u1208" +
-              "\u0002\u000b\u1003\u0003\f\u001b\r\u001b\u000e\u1208\u0004\u000f\u0003";
+              "\u0002\u000b\u1003\u0003\f\u001b\r\u001b\u000e\u1208\u0004\u000f\u0003\u0010\u1208" +
+              "\u0005\u0011\u1208\u0006\u0012\u1208\u0007";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

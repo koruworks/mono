@@ -196,4 +196,82 @@ public interface MobileAccountResultOrBuilder extends
    * @return The cloudPlanRequestElapsedMillis.
    */
   long getCloudPlanRequestElapsedMillis();
+
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @return Whether the cloudInventoryJson field is set.
+   */
+  boolean hasCloudInventoryJson();
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @return The cloudInventoryJson.
+   */
+  java.lang.String getCloudInventoryJson();
+  /**
+   * <pre>
+   * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+   * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+   * </pre>
+   *
+   * <code>optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];</code>
+   * @return The bytes for cloudInventoryJson.
+   */
+  com.google.protobuf.ByteString
+      getCloudInventoryJsonBytes();
+
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @return Whether the cloudWorkspaceId field is set.
+   */
+  boolean hasCloudWorkspaceId();
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @return The cloudWorkspaceId.
+   */
+  java.lang.String getCloudWorkspaceId();
+  /**
+   * <pre>
+   * Exact request selectors, echoed for documents on success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];</code>
+   * @return The bytes for cloudWorkspaceId.
+   */
+  com.google.protobuf.ByteString
+      getCloudWorkspaceIdBytes();
+
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @return Whether the cloudIncarnationId field is set.
+   */
+  boolean hasCloudIncarnationId();
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @return The cloudIncarnationId.
+   */
+  java.lang.String getCloudIncarnationId();
+  /**
+   * <code>optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];</code>
+   * @return The bytes for cloudIncarnationId.
+   */
+  com.google.protobuf.ByteString
+      getCloudIncarnationIdBytes();
 }

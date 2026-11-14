@@ -158,4 +158,70 @@ public interface AccountCommandRequestOrBuilder extends
    * @return The cloudSyncEnabled.
    */
   boolean getCloudSyncEnabled();
+
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return Whether the cloudWorkspaceId field is set.
+   */
+  boolean hasCloudWorkspaceId();
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return The cloudWorkspaceId.
+   */
+  java.lang.String getCloudWorkspaceId();
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return The bytes for cloudWorkspaceId.
+   */
+  com.google.protobuf.ByteString
+      getCloudWorkspaceIdBytes();
+
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return Whether the cloudIncarnationId field is set.
+   */
+  boolean hasCloudIncarnationId();
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return The cloudIncarnationId.
+   */
+  java.lang.String getCloudIncarnationId();
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return The bytes for cloudIncarnationId.
+   */
+  com.google.protobuf.ByteString
+      getCloudIncarnationIdBytes();
+
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return Whether the cloudCursor field is set.
+   */
+  boolean hasCloudCursor();
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return The cloudCursor.
+   */
+  java.lang.String getCloudCursor();
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return The bytes for cloudCursor.
+   */
+  com.google.protobuf.ByteString
+      getCloudCursorBytes();
 }

@@ -1255,6 +1255,14 @@ pub struct AccountCommandRequest {
     /// Absent on every other action; a missing value is never read as "off".
     #[prost(bool, optional, tag="11")]
     pub cloud_sync_enabled: ::core::option::Option<bool>,
+    /// Inventory reads only. The exact Workspace/incarnation pair is required
+    /// only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+    #[prost(string, optional, tag="12")]
+    pub cloud_workspace_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="13")]
+    pub cloud_incarnation_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="14")]
+    pub cloud_cursor: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1411,6 +1419,15 @@ pub struct MobileAccountResult {
     pub cloud_plan_json: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(uint64, tag="15")]
     pub cloud_plan_request_elapsed_millis: u64,
+    /// One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+    /// has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+    #[prost(string, optional, tag="16")]
+    pub cloud_inventory_json: ::core::option::Option<::prost::alloc::string::String>,
+    /// Exact request selectors, echoed for documents on success and failure.
+    #[prost(string, optional, tag="17")]
+    pub cloud_workspace_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="18")]
+    pub cloud_incarnation_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// One Profile's Cloud sync state on this device. Ids, booleans, counts and a
 /// stable code only — never a Workspace name, a path or a credential.
@@ -1634,6 +1651,8 @@ pub enum AccountAction {
     StartApple = 17,
     /// Read the exact current account Cloud plan and storage count.
     InspectCloudPlan = 18,
+    InspectCloudUsageWorkspaces = 19,
+    InspectCloudUsageDocuments = 20,
 }
 impl AccountAction {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1660,6 +1679,8 @@ impl AccountAction {
             AccountAction::StartEmail => "ACCOUNT_ACTION_START_EMAIL",
             AccountAction::StartApple => "ACCOUNT_ACTION_START_APPLE",
             AccountAction::InspectCloudPlan => "ACCOUNT_ACTION_INSPECT_CLOUD_PLAN",
+            AccountAction::InspectCloudUsageWorkspaces => "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES",
+            AccountAction::InspectCloudUsageDocuments => "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1683,6 +1704,8 @@ impl AccountAction {
             "ACCOUNT_ACTION_START_EMAIL" => Some(Self::StartEmail),
             "ACCOUNT_ACTION_START_APPLE" => Some(Self::StartApple),
             "ACCOUNT_ACTION_INSPECT_CLOUD_PLAN" => Some(Self::InspectCloudPlan),
+            "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES" => Some(Self::InspectCloudUsageWorkspaces),
+            "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS" => Some(Self::InspectCloudUsageDocuments),
             _ => None,
         }
     }
