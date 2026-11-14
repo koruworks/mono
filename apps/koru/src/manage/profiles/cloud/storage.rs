@@ -40,7 +40,7 @@ pub(crate) struct Storage {
     pub snapshot: Option<Snapshot>,
     pub failed: bool,
     due: bool,
-    expiry_refresh_revision: Option<i64>,
+    expiry_refresh_used: bool,
     pending: Option<Request>,
 }
 impl Default for Storage {
@@ -49,7 +49,7 @@ impl Default for Storage {
             snapshot: None,
             failed: false,
             due: true,
-            expiry_refresh_revision: None,
+            expiry_refresh_used: false,
             pending: None,
         }
     }
@@ -57,6 +57,13 @@ impl Default for Storage {
 impl Storage {
     pub fn refresh(&mut self) {
         if self.pending.is_none() {
+            self.due = true;
+            self.expiry_refresh_used = false;
+        }
+    }
+    fn refresh_expired(&mut self) {
+        if !self.expiry_refresh_used {
+            self.expiry_refresh_used = true;
             self.due = true;
         }
     }
@@ -75,9 +82,8 @@ impl Storage {
         }
         if let Some(snapshot) = self.snapshot.as_mut() {
             snapshot.stale = true;
-            self.expiry_refresh_revision = Some(snapshot.plan.revision.get());
         }
-        self.refresh();
+        self.refresh_expired();
         true
     }
     pub fn take(&mut self, now: Instant) -> Option<AccountCommand> {
@@ -160,11 +166,10 @@ impl Storage {
             Some(snapshot) => {
                 // One automatic refresh for a response that expired in transit;
                 // repeated expired replies stay stale until explicit retry.
-                if snapshot.stale
-                    && self.expiry_refresh_revision != Some(snapshot.plan.revision.get())
-                {
-                    self.expiry_refresh_revision = Some(snapshot.plan.revision.get());
-                    self.due = true;
+                if snapshot.stale {
+                    self.refresh_expired();
+                } else {
+                    self.expiry_refresh_used = false;
                 }
                 self.snapshot = Some(snapshot);
             }
@@ -391,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn expired_replies_refresh_once_and_wrong_generation_cannot_replace_the_snapshot() {
+    fn differing_revision_expired_replies_refresh_once_and_wrong_generation_is_refused() {
         let now = Instant::now();
         let mut storage = Storage::default();
         for attempt in 0..2 {
@@ -405,7 +410,10 @@ mod tests {
                 generation: 5
             }));
             assert!(!storage.result(4, request_id, Some(&payload()), 0, now));
-            assert!(storage.result(5, request_id, Some(&payload()), 10001, now));
+            let mut changed: serde_json::Value = serde_json::from_str(payload().as_str()).unwrap();
+            changed["revision"] = (42 + attempt).to_string().into();
+            let changed = CloudPlanPayload::new(changed.to_string()).unwrap();
+            assert!(storage.result(5, request_id, Some(&changed), 10001, now));
             assert!(storage.snapshot.as_ref().unwrap().stale);
             assert_eq!(storage.checking(), attempt == 0);
         }
