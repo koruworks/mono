@@ -13,6 +13,7 @@ mod lifecycle;
 mod memory;
 mod questions;
 mod refusal;
+pub(in crate::worker::bots) mod routines;
 
 #[derive(Default)]
 struct Native {

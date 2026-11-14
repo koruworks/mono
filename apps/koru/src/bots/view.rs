@@ -165,6 +165,10 @@ pub(crate) const BOT_REFUSALS: koru_ai_ui::OwnedRefusals = &[
         super::settings::BOT_OPERATION_PENDING,
         Words::BotsErrOperationPending,
     ),
+    (
+        super::settings::ROUTINE_RETRY_UNSUPPORTED,
+        Words::BotsErrRoutineRetryUnsupported,
+    ),
 ];
 
 /// The bounded clock a Bot read left owed is asked again on: the lifecycle

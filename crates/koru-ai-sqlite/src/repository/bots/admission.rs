@@ -446,6 +446,18 @@ pub(crate) fn prepare_bot_submission_tx(
             Err(BotError::Conflict)
         };
     }
+    if let Some(run) = p.continued_from {
+        let prior: Option<String> = tx.query_row(
+            "SELECT request_id FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND planned_run_id=?3",
+            params![owner.user_scope.to_storage(), p.bot.to_storage(), run.to_storage()],
+            |row| row.get(0),
+        ).optional().map_err(bad)?;
+        if let Some(prior) = prior {
+            let prior = read_bot_submission_on(tx, owner.user_scope, prior.parse().map_err(bad)?)?
+                .ok_or(BotError::Storage)?;
+            prior.intent.require_interactive_continuation()?;
+        }
+    }
     super::policy::require_policy_settled(tx, p.bot)?;
     if expected_revision != g.revision
         || p.config_revision != g.revision

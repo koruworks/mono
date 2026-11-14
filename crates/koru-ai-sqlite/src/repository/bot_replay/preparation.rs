@@ -22,6 +22,7 @@ impl Repository {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_failed)?;
+        require_interactive_preparation_on(&tx, preparation)?;
         super::super::bots::library::prepare_library_submission_tx(
             &tx,
             intent,
@@ -68,6 +69,7 @@ impl Repository {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_failed)?;
+        require_interactive_preparation_on(&tx, preparation)?;
         super::super::bots::admission::prepare_bot_submission_tx(
             &tx,
             intent,
@@ -79,6 +81,31 @@ impl Repository {
         tx.commit().map_err(storage_failed)?;
         Ok(attempt)
     }
+}
+
+/// Last defense before either admission/capture or transcript mutation. An
+/// immutable operation already committed is validated by the replay path.
+fn require_interactive_preparation_on(
+    tx: &Connection,
+    preparation: &BotChatPreparation,
+) -> Result<(), BotPreparationError> {
+    if query_attempt(
+        tx,
+        "operation_id",
+        &preparation.attempt().operation_id.to_string(),
+    )?
+    .is_some()
+    {
+        return Ok(());
+    }
+    let prior = match preparation {
+        BotChatPreparation::Turn(_) => return Ok(()),
+        BotChatPreparation::Retry { prior_attempt, .. } => *prior_attempt,
+        BotChatPreparation::AnsweredContinuation { question, .. } => question.prior_attempt,
+    };
+    let receipt = bot_submission_for_attempt_on(tx, prior)?.ok_or_else(invariant_failed)?;
+    receipt.intent.require_interactive_continuation()?;
+    Ok(())
 }
 
 pub(super) fn bot_submission_for_attempt_on(
