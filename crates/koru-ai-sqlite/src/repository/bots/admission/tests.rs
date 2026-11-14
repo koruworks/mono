@@ -74,6 +74,9 @@ fn boot_refusal_projection_bounds_prepared_rows_and_requires_one_exact_identity(
         duplicate = Some(other);
         repo.connection.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,planned_run_id,captured_config_revision,captured_policy_revision,submission_version,submission_json,outcome_json,created_at_ms,updated_at_ms) SELECT user_scope_id,?2,bot_id,fingerprint,command_kind,stage,?3,captured_config_revision,captured_policy_revision,submission_version,submission_json,outcome_json,created_at_ms,updated_at_ms FROM bot_command_receipts WHERE request_id=?1",params![request.to_storage(),other.to_storage(),d::RunId::mint().to_storage()]).unwrap();
         let read = repo.bot_boot_snapshot(owner, bot.id, &d::BotBootAdmission::Missing {});
+        let metadata = repo.bot_policy_metadata(owner, bot.id).unwrap();
+        let projected = repo.bot_admission_barrier(&metadata, &d::BotBootAdmission::Missing {});
+        assert_eq!(read.as_ref().map(|r| &r.admission), projected.as_ref());
         if n < 50 {
             assert_eq!(read.unwrap().admission, barrier)
         } else {

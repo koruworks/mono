@@ -2,7 +2,9 @@
 
 //! Typed ai16 coordination, on the sole existing AI connection.
 use super::*;
+mod pause;
 use koru_delegate_core::{BotAdmissionBarrier, BotAdmissionView, WorkspaceScope};
+pub(super) use pause::for_metadata as pause_for_metadata;
 use rusqlite::{Transaction, TransactionBehavior};
 #[cfg(test)]
 mod tests;
@@ -129,55 +131,18 @@ pub(super) fn pause_on(
     let Some(r) = raw(conn, scope, request)? else {
         return Ok(None);
     };
-    if !matches!(r.kind.as_str(), "pause" | "resume") {
-        return Err(BotError::Conflict);
-    }
-    let data = r.outcome.ok_or(BotError::Storage)?;
-    if data.len() > 1024 * 1024 {
-        return Err(BotError::Storage);
-    }
-    let intent: BotPauseIntent = serde_json::from_str(&data).map_err(bad)?;
-    intent.validate()?;
-    let b = &intent.barrier;
-    guard(
-        conn,
-        BotOwner {
-            user_scope: b.owner.user_scope,
-            device: b.owner.device,
-        },
-        b.bot,
-    )?;
-    if b.owner.user_scope != scope
-        || b.request != request
-        || b.bot.to_storage() != r.bot
-        || r.desired != Some(b.paused)
-        || r.expected != Some(intent.expected_revision)
-        || (r.kind == "pause") != b.paused
-        || r.run.is_some()
-        || r.submission.is_some()
-    {
-        return Err(BotError::Storage);
-    }
-    let acknowledged = match r.ack.as_deref() {
-        Some("pending") => false,
-        Some("acknowledged") => true,
-        _ => return Err(BotError::Storage),
-    };
-    let stage = BotReceiptStage::parse(&r.stage).ok_or(BotError::Storage)?;
-    // A pause its owner definitely refused is `rejected`, never
-    // acknowledged; it no longer holds back the Bot's other changes.
-    if (acknowledged && stage != BotReceiptStage::Completed)
-        || (!acknowledged
-            && !matches!(stage, BotReceiptStage::Prepared | BotReceiptStage::Rejected))
-    {
-        return Err(BotError::Storage);
-    }
-    Ok(Some(BotPauseReceipt {
-        intent,
-        fingerprint: r.fingerprint,
-        stage,
-        acknowledged,
-    }))
+    pause::decode(r, scope, request, |b| {
+        guard(
+            conn,
+            BotOwner {
+                user_scope: b.owner.user_scope,
+                device: b.owner.device,
+            },
+            b.bot,
+        )?;
+        Ok(())
+    })
+    .map(Some)
 }
 /// Prepare a pause or resume barrier inside the caller's transaction (P1.3);
 /// lifecycle capture composes it with its own journal rows.

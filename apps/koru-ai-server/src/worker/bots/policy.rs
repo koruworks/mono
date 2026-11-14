@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Current policy evidence and access-change coordination on the existing writer.
+pub(in crate::worker) mod epoch;
 mod recovery;
 mod routine;
 use super::*;
@@ -26,22 +27,7 @@ pub struct NativePolicyEvidence {
 }
 
 fn epoch_key(bot: &Bot) -> ApiResult<NativePolicyRequestId> {
-    if bot.revision == 0 || bot.revision > i64::MAX as u64 {
-        return Err(bot_failure(BotError::Invalid));
-    }
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"koru.bot.native-policy.v1\0");
-    hash.update(bot.user_scope.as_uuid().as_bytes());
-    hash.update(bot.owner_device.as_uuid().as_bytes());
-    hash.update(bot.id.as_uuid().as_bytes());
-    hash.update(&bot.revision.to_be_bytes());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Uuid::from_bytes(bytes)
-        .try_into()
-        .map_err(|_| bot_failure(BotError::Invalid))
+    epoch::key(owner(bot), bot.id, bot.revision)
 }
 pub(super) fn barrier(bot: &Bot) -> ApiResult<BotPolicyBarrier> {
     Ok(BotPolicyBarrier {
