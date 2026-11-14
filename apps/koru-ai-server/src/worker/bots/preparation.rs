@@ -244,6 +244,26 @@ impl WorkerState {
             command.refuse(error);
             return None;
         }
+        if let WorkerCommand::Bots {
+            request:
+                BotCommand::CreateRoutine { bot_id, .. }
+                | BotCommand::ReadRoutineCreation { bot_id, .. }
+                | BotCommand::RetryRoutineCreation { bot_id, .. },
+            ..
+        } = &command
+        {
+            match lifecycle::readable_bot(&self.repository, *bot_id) {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    command.refuse(not_found());
+                    return None;
+                }
+                Err(error) => {
+                    command.refuse(bot_failure(error));
+                    return None;
+                }
+            }
+        }
         // Creation and its read run their own owner checks (P1.8 B2).
         let command = self.route_bot_creation(command)?;
         let targets = match bot_targets(&self.repository, &command) {
@@ -294,9 +314,7 @@ impl WorkerState {
                     BotCommand::CreateRoutine {
                         bot_id, documents, ..
                     } => {
-                        let bot = self
-                            .repository
-                            .bot(*bot_id)
+                        let bot = lifecycle::readable_bot(&self.repository, *bot_id)
                             .map_err(bot_failure)?
                             .ok_or_else(not_found)?;
                         let owner = BotOwner {
