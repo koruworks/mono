@@ -518,6 +518,13 @@ impl RunsDb {
         )
     }
 
+    /// Exact-run deny-only classification for ordinary occurrence publication.
+    /// A known negative is not permission to execute; retained Routine markers
+    /// and malformed evidence reuse the same owner as ordinary recovery.
+    pub fn validate_ordinary_schedule_run(&self, run: RunId) -> Result<(), LedgerError> {
+        crate::bots::routines::deny_run(self.conn(), run)
+    }
+
     /// The schedule slot that originated one run, including after restart.
     pub fn slot_for_run(&self, run: RunId) -> Result<Option<SlotClaim>, LedgerError> {
         let row = self.conn().query_row(

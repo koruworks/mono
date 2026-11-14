@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Neutral composition seams only. No scheduler or executable Routine is enabled.
+//! Neutral scheduler composition seams. No executable Routine is enabled.
 use super::{PortError, PortResult, ScheduleEventRef};
 use koru_delegate_core::{
     BotAdmissionBarrier, BotRoutineCloseReason, FreshBotPolicyProof, HandoffId,

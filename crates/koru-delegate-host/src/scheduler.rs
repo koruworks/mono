@@ -214,9 +214,9 @@ impl Handle {
         actor: mpsc::Sender<ActorCommand>,
         publisher_events: Box<dyn ScheduleEvents>,
         authority_gate: Arc<ScheduleEventAuthorityGate>,
+        stopped: Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let (commands, inbox) = mpsc::channel();
-        let stopped = Arc::new(AtomicBool::new(false));
         let wake_commands = commands.clone();
         let wake = ScheduleWake::new(move || {
             let _ = wake_commands.send(Command::Wake);
@@ -280,6 +280,7 @@ impl Handle {
             stopped: Arc::clone(&self.stopped),
             commands: self.commands.clone(),
             wake: self.wake.clone(),
+            authority_gate: Arc::clone(&self.authority_gate),
         }
     }
 
@@ -323,6 +324,7 @@ pub struct Control {
     stopped: Arc<AtomicBool>,
     commands: mpsc::Sender<Command>,
     wake: ScheduleWake,
+    authority_gate: Arc<ScheduleEventAuthorityGate>,
 }
 
 pub(crate) enum ScheduleWatchEvent {
@@ -455,6 +457,7 @@ impl Control {
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        self.authority_gate.stop();
         let _ = self.commands.send(Command::Stop);
     }
 }
@@ -478,6 +481,7 @@ pub(crate) fn test_control(actor: mpsc::Sender<ActorCommand>) -> Control {
         commands,
         wake,
         stopped: Arc::new(AtomicBool::new(false)),
+        authority_gate: Arc::new(ScheduleEventAuthorityGate::new()),
     }
 }
 
@@ -659,7 +663,7 @@ fn run(
     stopped: Arc<AtomicBool>,
 ) {
     let stopped_actor = actor.clone();
-    let mut effects = ActorEffects::new(actor, stopped);
+    let mut effects = ActorEffects::new(actor, stopped.clone());
     let mut exact_watch: Option<Box<dyn ScheduleChangeWatch>> = None;
     let mut exact_targets = None;
     let mut state = LoopState::default();
@@ -676,6 +680,9 @@ fn run(
     let mut fixture_completions: Vec<mpsc::SyncSender<Result<(), String>>> = Vec::new();
     wake.signal();
     loop {
+        if stopped.load(Ordering::Acquire) {
+            break;
+        }
         let now = Instant::now();
         let wall_now = wall_now_ms();
         #[cfg(feature = "test-support")]
@@ -683,15 +690,47 @@ fn run(
         #[cfg(not(feature = "test-support"))]
         let fixture_woken = false;
         let woke = wake.take() || fixture_woken;
+        if woke {
+            coordinator.wake_routine_repair();
+        }
         if state.take_evaluation(woke, wall_now, now) {
-            let Some(_authority) = authority_gate.enter() else {
-                break;
-            };
-            reconcile_schedule_events(&mut coordinator, &mut event_unhealthy);
             #[cfg(feature = "test-support")]
             let mut fixture_result = Ok(());
             let zone = koru_time_zone::SystemZone::detect();
-            match coordinator.evaluate(&mut effects, wall_now, &zone) {
+            let evaluation = effects
+                .finish_pending_routine_release(
+                    Instant::now() + koru_delegate_api::routines::ROUTINE_BRIDGE_DEADLINE,
+                )
+                .and_then(|()| {
+                    let authority = authority_gate.enter().ok_or_else(|| {
+                        PortError::new(
+                            Port::Schedules,
+                            "scheduler_stopped",
+                            "Schedule authority stopped",
+                        )
+                    })?;
+                    reconcile_schedule_events(&mut coordinator, &mut event_unhealthy);
+                    let evaluated = coordinator.evaluate(&mut effects, wall_now, &zone);
+                    drop(authority);
+                    let mut report = evaluated?;
+                    if let Some(work) = report.routine_work.take() {
+                        let routine = coordinator.evaluate_routine_work(
+                            work,
+                            &mut effects,
+                            Instant::now() + koru_delegate_api::routines::ROUTINE_BRIDGE_DEADLINE,
+                        )?;
+                        report.failures = report.failures.saturating_add(routine.failures);
+                        report.evaluated = report.evaluated.saturating_add(routine.evaluated);
+                        report.started.extend(routine.started);
+                        report.next_deadline_ms =
+                            match (report.next_deadline_ms, routine.next_deadline_ms) {
+                                (Some(a), Some(b)) => Some(a.min(b)),
+                                (a, b) => a.or(b),
+                            };
+                    }
+                    Ok(report)
+                });
+            match evaluation {
                 Ok(report) => {
                     state.deadline_ms = report.next_deadline_ms;
                     state.repair_at = None;
