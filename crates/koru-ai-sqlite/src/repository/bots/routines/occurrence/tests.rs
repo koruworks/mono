@@ -152,6 +152,10 @@ fn occurrence_worker_metadata_guard_ignores_model_but_requires_current_owner_hom
         repo.routine_occurrence_home(owner, input.slot.bot),
         Err(BotError::NotFound)
     );
+    // Deliberate damaged metadata, beyond the ordinary FK-protected writer.
+    repo.connection
+        .pragma_update(None, "foreign_keys", "OFF")
+        .unwrap();
     repo.connection
         .execute(
             "UPDATE bots SET lifecycle='active', home_workspace_id='malformed' WHERE bot_id=?1",
@@ -186,6 +190,10 @@ fn occurrence_claim_lookup_uses_sole_decoder_and_does_not_assert_claim_time_auth
         Err(BotError::Conflict)
     );
     let key = claim(&row).claim;
+    // Bypass only this in-memory fixture's CHECK to exercise bounded decoding.
+    repo.connection
+        .pragma_update(None, "ignore_check_constraints", "ON")
+        .unwrap();
     repo.connection.execute("UPDATE bot_command_receipts SET submission_version=2 WHERE command_kind='routine_draft'", []).unwrap();
     assert_eq!(
         repo.routine_preparation_for_claim(&key),
