@@ -199,6 +199,20 @@ fn routine_publication_handwritten_fired_is_refused_at_every_owner_boundary() {
             }
         }
     }
+    let f = fixture(true);
+    let mut forged = f.fact;
+    forged.schedule.schedule = ScheduleId::mint();
+    forged.run = RunId::mint();
+    forged.outcome = ScheduleFiringOutcome::Fired;
+    // Authored ID and Run both have ordinary-negative lookups, but the
+    // physical document UUID still names the retained Routine route.
+    assert!(
+        RoutineLedger::routine_route(&f.ledger, forged.schedule.schedule)
+            .unwrap()
+            .is_none()
+    );
+    f.ledger.validate_ordinary_schedule_run(forged.run).unwrap();
+    assert!(f.events.validate_occurrence_authority(forged).is_err());
 }
 
 #[test]

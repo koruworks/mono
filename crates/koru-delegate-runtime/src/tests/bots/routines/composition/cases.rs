@@ -346,6 +346,28 @@ fn routine_composition_physical_candidate_wins_before_header_alias_canonicalizat
         RoutineClaimObservation::Claimed { .. }
     ));
     c.no_launch();
+    let mut rewritten = Composition::configured(|docs, _| {
+        let mut header = docs.read().header().unwrap();
+        header.schedule = ScheduleId::mint();
+        header.definition.routine = None;
+        header.definition.revision = 1;
+        // Valid ordinary v1 bytes at the retained Routine's physical UUID.
+        // Both schema and authored identity changed; no decoder may infer that
+        // this physical document has become an ordinary execution candidate.
+        *docs.snapshot.lock().unwrap() = ScheduleDocument::create(&header)
+            .unwrap()
+            .export_snapshot()
+            .unwrap();
+    });
+    let zone = koru_time_zone::IanaZoneRules::parse("UTC").unwrap();
+    let report = rewritten
+        .coordinator
+        .evaluate(&mut rewritten.effects, 61_000, &zone)
+        .unwrap();
+    assert!(report.routine_work.is_none());
+    assert!(report.failures > 0);
+    assert!(rewritten.probe.lock().unwrap().calls.is_empty());
+    rewritten.no_launch();
 }
 
 #[test]

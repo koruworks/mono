@@ -6,15 +6,45 @@ use koru_delegate_core::{RoutineClaimObservation, RoutineSkipOutcome, RoutineSlo
 use koru_delegate_runtime::RoutineLedger;
 
 impl BusScheduleEvents {
+    fn occurrence_route(
+        &self,
+        schedule: ScheduleEventRef,
+    ) -> PortResult<Option<koru_delegate_core::RoutineRouteIdentity>> {
+        let authored = self
+            .ledger
+            .routine_route(schedule.schedule)
+            .map_err(|error| Self::error("schedule_event_route", error))?;
+        let physical_id = ScheduleId::from_uuid(schedule.document.as_uuid());
+        let physical = if physical_id == schedule.schedule {
+            authored.clone()
+        } else {
+            self.ledger
+                .routine_route(physical_id)
+                .map_err(|error| Self::error("schedule_event_route", error))?
+        };
+        match (authored, physical) {
+            (None, None) => Ok(None),
+            (Some(authored), Some(physical))
+                if authored == physical
+                    && authored.valid()
+                    && authored.workspace == schedule.workspace
+                    && authored.schedule == schedule.schedule
+                    && authored.schedule.as_uuid() == schedule.document.as_uuid() =>
+            {
+                Ok(Some(authored))
+            }
+            _ => Err(Self::error(
+                "schedule_event_route",
+                "Physical and authored Routine identities differ",
+            )),
+        }
+    }
     pub(super) fn validate_known_header(
         &self,
         schedule: ScheduleEventRef,
         header: &ScheduleHeader,
     ) -> PortResult<()> {
-        let route = self
-            .ledger
-            .routine_route(schedule.schedule)
-            .map_err(|error| Self::error("schedule_event_route", error))?;
+        let route = self.occurrence_route(schedule)?;
         if header.schedule != schedule.schedule
             || header.definition.routine.is_some() && route.is_none()
             || route.as_ref().is_some_and(|route| {
@@ -34,10 +64,7 @@ impl BusScheduleEvents {
         &self,
         fact: ScheduleOccurrenceEvent,
     ) -> PortResult<()> {
-        let route = self
-            .ledger
-            .routine_route(fact.schedule.schedule)
-            .map_err(|error| Self::error("schedule_event_route", error))?;
+        let route = self.occurrence_route(fact.schedule)?;
         let Some(route) = route else {
             // Absence alone cannot erase retained link/admission/origin markers.
             return self

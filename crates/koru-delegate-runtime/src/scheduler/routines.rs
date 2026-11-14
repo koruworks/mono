@@ -130,6 +130,31 @@ fn route_header(
 }
 
 impl Routines {
+    fn route_at(&self, location: ScheduleEventRef) -> PortResult<Option<RoutineRouteIdentity>> {
+        let authored = self
+            .ledger
+            .routine_route(location.schedule)
+            .map_err(ledger_error)?;
+        let physical_id = ScheduleId::from_uuid(location.document.as_uuid());
+        let physical = if physical_id == location.schedule {
+            authored.clone()
+        } else {
+            self.ledger
+                .routine_route(physical_id)
+                .map_err(ledger_error)?
+        };
+        match (authored, physical) {
+            (None, None) => Ok(None),
+            (Some(authored), Some(physical))
+                if authored == physical
+                    && authored.valid()
+                    && route_location(&authored) == location =>
+            {
+                Ok(Some(authored))
+            }
+            _ => Err(refused("routine_physical_route_mismatch")),
+        }
+    }
     fn new(
         ledger: Box<dyn RoutineLedger>,
         bridge: Box<dyn RoutineBridge>,

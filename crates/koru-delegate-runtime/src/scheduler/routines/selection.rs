@@ -30,15 +30,12 @@ impl ScheduleCoordinator {
             && catalog.unavailable_documents.is_empty();
         let mut attempted_seen = false;
         let mut repair_next: Option<(RoutineRouteIdentity, ScheduleEventRef)> = None;
+        let mut repair_highest = None;
         // Route classification precedes ordinary duplicate-header selection.
         // Only positive, fully decoded absence can enter that old path.
         for listed in catalog.schedules {
             let location = schedule_event_ref(&listed);
-            match routines
-                .ledger
-                .routine_route(listed.header.schedule)
-                .map_err(ledger_error)
-            {
+            match routines.route_at(location) {
                 Ok(None) if listed.header.definition.routine.is_none() => ordinary.push(listed),
                 Ok(Some(route)) if route.valid() && location == route_location(&route) => {
                     if routines
@@ -59,7 +56,19 @@ impl ScheduleCoordinator {
                     if route.owner.device != self.device {
                         continue;
                     }
+                    repair_highest = Some(
+                        repair_highest
+                            .map_or(route.schedule, |id: ScheduleId| id.max(route.schedule)),
+                    );
+                    let within_repair_pass = routines
+                        .repair
+                        .anchor
+                        .is_none_or(|anchor| route.schedule <= anchor);
+                    if routines.repair.active && !within_repair_pass {
+                        routines.repair.again = true;
+                    }
                     if routines.repair.active
+                        && within_repair_pass
                         && routines.repair.current.is_none()
                         && routines
                             .repair
@@ -106,6 +115,12 @@ impl ScheduleCoordinator {
         }
         if catalog_complete && !attempted_seen {
             routines.attempted_slot = None;
+        }
+        if routines.repair.active && routines.repair.anchor.is_none() {
+            // Freeze positive canonical knowledge, even if unrelated catalog
+            // entries are unavailable. This bounds a live keyset pass, not a
+            // snapshot: concurrent lower UUIDs may still appear in this pass.
+            routines.repair.anchor = repair_highest;
         }
         let canonical = canonical_schedule_locations(&ordinary);
         for listed in ordinary.into_iter().filter(|listed| {

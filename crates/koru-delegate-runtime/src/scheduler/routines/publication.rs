@@ -87,7 +87,6 @@ impl ScheduleCoordinator {
                 routines.repair.finish_pass();
                 return;
             };
-            routines.repair.anchor.get_or_insert(route.schedule);
             routines.repair.current = Some(RepairRoute {
                 route,
                 location,
