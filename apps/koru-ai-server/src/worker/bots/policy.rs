@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Current policy evidence and access-change coordination on the existing writer.
+pub(in crate::worker::bots) mod dispatch;
 pub(in crate::worker) mod epoch;
 mod recovery;
-mod routine;
+pub(in crate::worker::bots) mod routine;
 use super::*;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use koru_delegate_core::{

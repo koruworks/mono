@@ -89,6 +89,9 @@ impl Orchestrator {
             return Err(refused("bot_turn_stale"));
         }
         if controls {
+            if !initial_replay {
+                self.bot_execution_policy(fence.run)?;
+            }
             if !attempt.holds_lease
                 || attempt.release_owed
                 || (attempt.recovered_unowned_turn.is_some()
@@ -210,12 +213,24 @@ impl Orchestrator {
             fingerprint: *blake3::hash(&encoded).as_bytes(),
             turn: None,
         };
-        let mut durable = self
-            .bot_ledger()?
-            .prepare_bot_initial_send(fence.run, &send)?;
+        // An acknowledged retained turn is historical. An unacknowledged
+        // submission may still send input and therefore needs current proof.
+        let policy = if record
+            .initial_send
+            .as_ref()
+            .is_some_and(|s| s.turn.is_some())
+        {
+            None
+        } else {
+            self.bot_execution_policy(fence.run)?
+        };
+        let mut durable =
+            self.bot_ledger()?
+                .prepare_bot_initial_send(fence.run, &send, policy.as_ref())?;
         let turn = match durable.turn {
             Some(turn) => turn,
             None => {
+                self.bot_execution_policy(fence.run)?;
                 let turn = self
                     .ports
                     .sessions
@@ -433,8 +448,17 @@ impl Orchestrator {
             !proven_idle
                 && (attempt.pending_approvals.is_empty() || !attempt.approval_evidence_complete),
         );
+        let execution = self
+            .bot_ledger()?
+            .bot_execution(run)?
+            .ok_or(RunError::UnknownRun)?;
+        let policy = if active && execution.active_since_ms.is_none() {
+            self.bot_execution_policy(run)?
+        } else {
+            None
+        };
         self.bot_ledger()?
-            .set_bot_active(run, id, generation, active)?;
+            .set_bot_active(run, id, generation, active, policy.as_ref())?;
         Ok(())
     }
 }

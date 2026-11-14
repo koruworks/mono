@@ -7,6 +7,7 @@ use koru_delegate_core::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 mod claims;
+pub(super) mod execution;
 mod expiry;
 pub(super) use claims::settle_link;
 pub(super) use claims::stop;
@@ -14,7 +15,7 @@ mod markers;
 mod policy;
 mod recovery;
 mod rows;
-pub(crate) use markers::{deny_run, deny_run_metadata};
+pub(crate) use markers::{deny_run, deny_run_columns, deny_run_metadata};
 pub use policy::RoutinePolicyRecord;
 pub(crate) use policy::{current as current_policy, read_policy};
 pub use recovery::{

@@ -177,6 +177,23 @@ impl RunsDb {
         observation(self.conn(), slot, self.now_ms())
     }
 
+    /// A retained acknowledged initial turn, never merely a Linked admission.
+    /// The normalized decoder validates the send/attempt/session/intent binding
+    /// even after retirement; fresh policy is deliberately irrelevant here.
+    pub fn routine_firing(
+        &self,
+        slot: &RoutineSlot,
+    ) -> Result<Option<crate::SlotClaim>, BotLedgerError> {
+        let RoutineClaimObservation::Claimed { .. } =
+            observation(self.conn(), slot, self.now_ms())?
+        else {
+            return Ok(None);
+        };
+        let claim = self.slot(slot.schedule, slot.occurrence_ms)?;
+        Ok(claim
+            .filter(|claim| claim.state == crate::SlotState::Settled(crate::SlotOutcome::Fired)))
+    }
+
     pub fn acknowledge_routine_link(
         &mut self,
         acknowledgement: &RoutineLinkAcknowledgement,

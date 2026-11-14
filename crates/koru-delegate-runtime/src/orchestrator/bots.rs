@@ -241,6 +241,15 @@ impl Orchestrator {
         if record.owner != key.owner || record.bot != key.bot {
             return Err(refused("bot_owner_mismatch"));
         }
+        if record.submission_version == 2 {
+            let admitted = self
+                .bot_ledger()?
+                .bot_admission(key.run)?
+                .ok_or(RunError::UnknownRun)?;
+            if admitted.execution() != record {
+                return Err(refused("bot_provenance_mismatch"));
+            }
+        }
         Ok(record)
     }
 
@@ -366,7 +375,11 @@ impl Orchestrator {
         {
             return Ok(None);
         }
-        match self.bot_ledger()?.reserve_bot(key.run)? {
+        let routine_policy = self.bot_execution_policy(key.run)?;
+        match self
+            .bot_ledger()?
+            .reserve_bot(key.run, routine_policy.as_ref())?
+        {
             BotReservation::Acquired | BotReservation::AlreadyOwned => {}
             _ => return Ok(None),
         }

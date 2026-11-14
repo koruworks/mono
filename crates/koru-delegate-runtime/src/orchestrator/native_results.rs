@@ -53,6 +53,7 @@ impl Orchestrator {
             (Some(provenance), Some(admission))
                 if provenance == admission.submission.provenance =>
             {
+                self.linked_routine_admission(&admission)?;
                 Ok(RunToolAuthority::Bot {
                     provenance,
                     policy: admission.submission.policy,
@@ -190,11 +191,6 @@ impl Orchestrator {
             },
             device,
         )?;
-        // This checkpoint supplies no canonical AI Routine proof/cache or
-        // linked provider dispatch. A global snapshot alone cannot ready it.
-        if provenance.routine.is_some() {
-            return Err(refused("bot_routine_native_not_ready"));
-        }
         let fence = self
             .bot_admission_view(&record)?
             .fence

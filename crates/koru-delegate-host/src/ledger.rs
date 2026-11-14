@@ -171,6 +171,12 @@ impl SharedLedger {
 }
 
 impl koru_delegate_runtime::RoutineLedger for SharedLedger {
+    fn routine_firing(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<Option<koru_delegate_sqlite::SlotClaim>, koru_delegate_sqlite::BotLedgerError> {
+        self.0.lock().unwrap().routine_firing(slot)
+    }
     fn routine_route(
         &self,
         schedule: koru_delegate_core::ScheduleId,

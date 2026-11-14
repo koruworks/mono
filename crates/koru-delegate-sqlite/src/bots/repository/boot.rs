@@ -107,9 +107,14 @@ pub(super) fn has_unsettled(
 
 pub(super) fn recover(db: &mut RunsDb, key: &BotRunKey) -> Result<bool, BotLedgerError> {
     db.write_with_error(WriteOp::RecoverBotReservation, |tx, now| {
+        if execution_projection(tx,key.run)?.is_none() { return Ok(false); }
+        let record=super::super::routines::native_admission(tx,key.run)?;
+        let p = &record.submission.provenance;
+        if p.owner != key.owner || p.bot != key.bot { return Err(BotLedgerError::Fenced); }
+        super::super::routines::execution::retained(tx,&record)?;
         let changed = tx.execute(
             "UPDATE bot_admissions SET state='queued',updated_at_ms=?5
-             WHERE run_id=?1 AND user_scope=?2 AND device_id=?3 AND bot_id=?4 AND state='reserved' AND submission_version=1
+             WHERE run_id=?1 AND user_scope=?2 AND device_id=?3 AND bot_id=?4 AND state='reserved'
              AND active_elapsed_ms=0 AND active_since_ms IS NULL
              AND initial_send_key IS NULL AND initial_send_fingerprint IS NULL
              AND initial_send_attempt_id IS NULL AND initial_send_generation IS NULL AND initial_send_turn_id IS NULL

@@ -77,7 +77,6 @@ pub(super) fn fresh_policy(
     proof: &FreshBotPolicyProof,
 ) -> Result<(NativePolicyRecord, Option<crate::RoutinePolicyRecord>), BotLedgerError> {
     let fresh = &proof.global;
-    let digest = policy_digest(fresh)?;
     let provenance = &admitted.submission.provenance;
     if fence.owner != provenance.owner
         || fence.bot != provenance.bot
@@ -92,6 +91,23 @@ pub(super) fn fresh_policy(
     }
     let attempt = current_attempt(conn, key, admitted)?;
     if attempt.provider_session.and_then(|p| p.session) != Some(fence.session) {
+        return Err(BotLedgerError::Fenced);
+    }
+    current_composite(conn, admitted, proof)
+}
+
+/// Shared policy owner for native leases and Bot execution mutations. Callers
+/// separately validate their live attempt/Linked/admission phase in the same
+/// transaction; this function never turns a historical receipt into authority.
+pub(crate) fn current_composite(
+    conn: &Connection,
+    admitted: &BotAdmissionRecord,
+    proof: &FreshBotPolicyProof,
+) -> Result<(NativePolicyRecord, Option<crate::RoutinePolicyRecord>), BotLedgerError> {
+    let fresh = &proof.global;
+    let digest = policy_digest(fresh)?;
+    let provenance = &admitted.submission.provenance;
+    if fresh.key.owner != provenance.owner || fresh.key.bot != provenance.bot {
         return Err(BotLedgerError::Fenced);
     }
     if fresh.config_revision < provenance.config_revision

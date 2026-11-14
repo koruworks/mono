@@ -7,6 +7,8 @@ mod tests;
 
 #[derive(Clone)]
 enum Phase {
+    RoutineAdmission,
+    RoutineBegin,
     Admission,
     Ready,
     /// Native pictures, after the pre-turn Observe and before Begin.
@@ -123,17 +125,27 @@ pub(in crate::worker) struct StepJob {
     ingest: Option<super::attachments::IngestRead>,
     administrative: bool,
     port: Arc<dyn BotDelegatePort>,
+    routine: Option<(policy::dispatch::RoutineDispatch, Arc<dyn BotAuthority>)>,
 }
 pub(in crate::worker) struct StepResult {
     attempt: InferenceAttemptId,
     phase: Phase,
     administrative: bool,
     result: Result<BotReply, koru_delegate_api::Failure>,
+    routine: Option<policy::dispatch::RoutineDispatch>,
 }
 impl StepJob {
     pub(in crate::worker) fn run(self) -> StepResult {
         let (port, ingest, command) = (self.port, self.ingest, self.command);
         let result = catch_unwind(AssertUnwindSafe(|| {
+            if let Some((routine, authority)) = &self.routine {
+                routine.synchronize(
+                    authority.as_ref(),
+                    port.as_ref(),
+                    Instant::now() + Duration::from_secs(5),
+                )?;
+                return Ok(BotReply::Applied);
+            }
             let command = match ingest {
                 Some(read) => read.load(command)?,
                 None => command,
@@ -153,6 +165,7 @@ impl StepJob {
             phase: self.phase,
             administrative: self.administrative,
             result,
+            routine: self.routine.map(|(routine, _)| routine),
         }
     }
 }
@@ -174,11 +187,15 @@ impl WorkerState {
             .repository
             .bot_submission_for_attempt(id)?
             .ok_or_else(bot_route_error)?;
-        // Occurrence materialization is not provider launch. Until the later
-        // execution composition supplies current subject proof, this ordinary
-        // context path cannot turn a private v2 receipt into fresh input.
-        if receipt.intent.submission.provenance.routine.is_some() {
-            return Err(bot_route_error());
+        let routine = receipt.intent.submission.provenance.routine.is_some();
+        if routine {
+            // Local full identity first; authenticated owner/Store checks run
+            // on the existing finite step lane before advancing Admission.
+            policy::dispatch::RoutineDispatch::snapshot(
+                &self.repository,
+                &receipt.intent.submission,
+            )
+            .map_err(|_| bot_route_error())?;
         }
         let mut input = receipt.intent.submission.input.clone();
         input.text = koru_ai_provider_agent::compose_delegated_prompt(&request);
@@ -207,7 +224,11 @@ impl WorkerState {
                 mapper: None,
                 live: Vec::new(),
                 pending: None,
-                phase: Phase::Admission,
+                phase: if routine {
+                    Phase::RoutineAdmission
+                } else {
+                    Phase::Admission
+                },
                 due: Instant::now(),
                 busy: false,
                 control_busy: false,
@@ -223,7 +244,9 @@ impl WorkerState {
             .bot(receipt.intent.submission.provenance.bot)
             .map_err(|_| bot_route_error())?
             .ok_or_else(bot_route_error)?;
-        self.queue_bot_receipt(&bot, BotAdmissionReceipt::Submission(receipt), None);
+        if !routine {
+            self.queue_bot_receipt(&bot, BotAdmissionReceipt::Submission(receipt), None);
+        }
         Ok(())
     }
     pub(in crate::worker) fn schedule_bot_chat_step(&mut self) {
@@ -287,7 +310,7 @@ impl WorkerState {
         // conversation or its Bot (P1.7). The person's Stop ends it instead,
         // as the operation itself would; a hold that cannot be read waits.
         if let Some(chat) = self.bot_chats.get(&id)
-            && matches!(chat.phase, Phase::Begin)
+            && matches!(chat.phase, Phase::Begin | Phase::RoutineBegin)
         {
             let hold = ChatId::parse(&chat.submission.provenance.chat_id.to_string())
                 .map(|chat| self.repository.bot_chat_hold(chat));
@@ -313,16 +336,44 @@ impl WorkerState {
                 }
             }
         }
+        let routine = {
+            let chat = self.bot_chats.get(&id).expect("selected chat");
+            if matches!(chat.phase, Phase::RoutineAdmission | Phase::RoutineBegin) {
+                let prepared = self
+                    .bot_authority
+                    .clone()
+                    .ok_or_else(unavailable_failure)
+                    .and_then(|authority| {
+                        policy::dispatch::RoutineDispatch::snapshot(
+                            &self.repository,
+                            &chat.submission,
+                        )
+                        .map(|proof| (proof, authority))
+                    });
+                match prepared {
+                    Ok(prepared) => Some(prepared),
+                    Err(_) => {
+                        self.bot_chats.get_mut(&id).expect("selected").due =
+                            now + Duration::from_millis(250);
+                        return;
+                    }
+                }
+            } else {
+                None
+            }
+        };
         let chat = self.bot_chats.get_mut(&id).expect("selected chat");
         let mut ingest = None;
         let command = match chat.phase {
-            Phase::Admission => DelegateCommand::Reconcile {
-                key: BotSubmissionKey {
-                    owner: chat.submission.provenance.owner,
-                    bot: chat.submission.provenance.bot,
-                    request: chat.submission.provenance.submission,
-                },
-            },
+            Phase::RoutineAdmission | Phase::RoutineBegin | Phase::Admission => {
+                DelegateCommand::Reconcile {
+                    key: BotSubmissionKey {
+                        owner: chat.submission.provenance.owner,
+                        bot: chat.submission.provenance.bot,
+                        request: chat.submission.provenance.submission,
+                    },
+                }
+            }
             Phase::Ready | Phase::Observe => {
                 let Some(fence) = chat.fence.clone() else {
                     return;
@@ -376,6 +427,7 @@ impl WorkerState {
             ingest,
             port,
             administrative: control,
+            routine,
         };
         let sent = if control {
             self.provider_admin.as_ref().is_some_and(|pool| {
@@ -404,7 +456,14 @@ impl WorkerState {
             chat.due = now + Duration::from_millis(250);
         }
     }
-    pub(in crate::worker) fn complete_bot_chat_step(&mut self, step: StepResult) {
+    pub(in crate::worker) fn complete_bot_chat_step(&mut self, mut step: StepResult) {
+        if step.result.is_ok() {
+            if let Some(routine) = &step.routine {
+                if let Err(error) = routine.recheck(&self.repository) {
+                    step.result = Err(error);
+                }
+            }
+        }
         if step.result.is_ok() {
             self.bot_recovery_retry.answered(Instant::now());
         }
@@ -581,7 +640,11 @@ impl WorkerState {
             // Before the generic retryable arm below: retrying a staging step
             // would resend an ingest whose reply was lost. Staging lists it.
             if self.apply_bot_stage(id, chat, result)? {
-                chat.phase = Phase::Begin;
+                chat.phase = if chat.submission.provenance.routine.is_some() {
+                    Phase::RoutineBegin
+                } else {
+                    Phase::Begin
+                };
                 chat.due = Instant::now();
             }
             return Ok(true);
@@ -603,6 +666,14 @@ impl WorkerState {
             Err(_) => return Err(bot_route_error()),
         };
         match (phase, reply) {
+            (Phase::RoutineAdmission, BotReply::Applied) => {
+                chat.phase = Phase::Admission;
+                chat.due = Instant::now();
+            }
+            (Phase::RoutineBegin, BotReply::Applied) => {
+                chat.phase = Phase::Begin;
+                chat.due = Instant::now();
+            }
             (Phase::Admission, BotReply::Missing) => {
                 let r = self
                     .repository
@@ -623,7 +694,9 @@ impl WorkerState {
                     .bot(r.intent.submission.provenance.bot)
                     .map_err(|_| bot_route_error())?
                     .ok_or_else(bot_route_error)?;
-                self.queue_bot_receipt(&bot, BotAdmissionReceipt::Submission(r), None);
+                if r.intent.submission.provenance.routine.is_none() {
+                    self.queue_bot_receipt(&bot, BotAdmissionReceipt::Submission(r), None);
+                }
             }
             (Phase::Admission, BotReply::Admission { admission }) => {
                 let p = &chat.submission.provenance;
@@ -690,7 +763,11 @@ impl WorkerState {
                 // frames remain unacknowledged until the turn identity is bound.
                 // Native pictures are staged against this Session first.
                 chat.phase = if self.bot_stage_settled(id, chat) {
-                    Phase::Begin
+                    if chat.submission.provenance.routine.is_some() {
+                        Phase::RoutineBegin
+                    } else {
+                        Phase::Begin
+                    }
                 } else {
                     Phase::Stage
                 };

@@ -335,5 +335,12 @@ pub(super) fn observation_with_admission(
     if request != record.submission.request || workspace != route.workspace.to_storage() {
         return Err(bad("intent_identity"));
     }
+    if outcome == "fired" {
+        let send = admission
+            .initial_send
+            .as_ref()
+            .ok_or_else(|| bad("firing_send"))?;
+        super::execution::launch_evidence(conn, admission, send)?;
+    }
     Ok(RoutineClaimObservation::Claimed { record })
 }

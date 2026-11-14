@@ -260,6 +260,10 @@ pub use routines::*;
 /// after reading the synced document, so the ledger cannot be asked to claim
 /// from an unowned or retired schedule through this production seam.
 pub trait RoutineLedger: Send {
+    fn routine_firing(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<Option<koru_delegate_sqlite::SlotClaim>, koru_delegate_sqlite::BotLedgerError>;
     fn routine_route(
         &self,
         schedule: koru_delegate_core::ScheduleId,

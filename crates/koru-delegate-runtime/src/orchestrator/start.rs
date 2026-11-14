@@ -220,10 +220,24 @@ impl Orchestrator {
         if !self.ports.sessions.supports_delegation() {
             return Err(RunError::NotDelegatable);
         }
-        let row = self.ports.store.open_attempt(run)?;
-        if header.bot.is_some() {
+        let routine_policy = if header.bot.is_some() {
+            self.bot_execution_policy(run)?
+        } else {
+            None
+        };
+        let row = if header.bot.is_some() {
             self.bot_ledger()?
-                .activate_bot(run, row.attempt, row.generation)?;
+                .open_bot_attempt(run, routine_policy.as_ref())?
+        } else {
+            self.ports.store.open_attempt(run)?
+        };
+        if header.bot.is_some() {
+            self.bot_ledger()?.activate_bot(
+                run,
+                row.attempt,
+                row.generation,
+                routine_policy.as_ref(),
+            )?;
         }
         let key = IdempotencyKey::mint();
         let mut attempt = Attempt::new(row.attempt, row.generation);
@@ -397,6 +411,9 @@ impl Orchestrator {
             Ok(authority) => authority,
             Err(_) => return self.start_failed(run, FailureStage::Authority),
         };
+        if header.bot.is_some() {
+            self.bot_execution_policy(run)?;
+        }
         let mut delegation = match self.ports.mcp.launch(McpLaunch {
             authority: tool_authority,
             run,
@@ -432,6 +449,9 @@ impl Orchestrator {
             },
             None => None,
         };
+        if header.bot.is_some() {
+            self.bot_execution_policy(run)?;
+        }
         let created = match self.ports.sessions.create_delegated(SessionLaunch {
             is_bot: header.bot.is_some(),
             key,

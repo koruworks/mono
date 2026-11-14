@@ -488,9 +488,18 @@ impl Orchestrator {
         attempt.is_bot = self.header(run)?.bot.is_some();
         let is_bot = attempt.is_bot;
         let bot_send = if is_bot {
-            self.bot_ledger()?
+            let record = self
+                .bot_ledger()?
                 .bot_execution(run)?
-                .and_then(|record| record.initial_send)
+                .ok_or_else(|| super::bots::refused("bot_fenced"))?;
+            if record.submission_version == 2 {
+                let admitted = self
+                    .bot_ledger()?
+                    .bot_admission(run)?
+                    .ok_or(RunError::UnknownRun)?;
+                self.linked_routine_admission(&admitted)?;
+            }
+            record.initial_send
         } else {
             None
         };
