@@ -253,10 +253,51 @@ pub trait RunStore: ScheduleLedger {
     ) -> Result<WriteOutcome, LedgerError>;
 }
 
+mod routines;
+pub use routines::*;
+
 /// The local half of schedule execution. The authority token is minted only
 /// after reading the synced document, so the ledger cannot be asked to claim
 /// from an unowned or retired schedule through this production seam.
 pub trait RoutineLedger: Send {
+    fn routine_route(
+        &self,
+        schedule: koru_delegate_core::ScheduleId,
+    ) -> Result<
+        Option<koru_delegate_core::RoutineRouteIdentity>,
+        koru_delegate_sqlite::BotLedgerError,
+    >;
+    fn held_routine_page(
+        &self,
+        after: Option<koru_delegate_sqlite::RoutineHeldCursor>,
+    ) -> Result<
+        koru_delegate_sqlite::RoutinePage<
+            koru_delegate_sqlite::RoutineHeldCursor,
+            koru_delegate_sqlite::RoutineRecoveryEntry,
+        >,
+        koru_delegate_sqlite::BotLedgerError,
+    >;
+    fn queued_routine_page(
+        &self,
+        after: Option<koru_delegate_sqlite::RoutineQueuedCursor>,
+    ) -> Result<
+        koru_delegate_sqlite::RoutinePage<
+            koru_delegate_sqlite::RoutineQueuedCursor,
+            Option<koru_delegate_sqlite::RoutineRecoveryEntry>,
+        >,
+        koru_delegate_sqlite::BotLedgerError,
+    >;
+    fn routine_slots_page(
+        &self,
+        route: &koru_delegate_core::RoutineRouteIdentity,
+        after: Option<koru_delegate_sqlite::RoutineSlotCursor>,
+    ) -> Result<
+        koru_delegate_sqlite::RoutinePage<
+            koru_delegate_sqlite::RoutineSlotCursor,
+            koru_delegate_sqlite::RoutineOccurrenceFact,
+        >,
+        koru_delegate_sqlite::BotLedgerError,
+    >;
     fn record_expired_routine(
         &mut self,
         authority: koru_delegate_document::RoutineExpiryAuthority,

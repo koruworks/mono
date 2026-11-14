@@ -7,6 +7,7 @@ use koru_delegate_document::{ScheduleClaimAuthority, ScheduleClaimPlan, Schedule
 use koru_delegate_schedule::*;
 use koru_recurrence::{CronExpression, RecurrenceRule};
 mod expiry;
+mod foundation;
 mod policy;
 mod preclaim;
 

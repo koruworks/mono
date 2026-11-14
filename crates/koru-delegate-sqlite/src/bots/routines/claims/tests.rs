@@ -5,6 +5,7 @@
 //! enables an executable Routine, Store, scheduler or provider.
 use super::*;
 mod preclaim;
+mod recovery;
 use crate::{BotLedger, BotSettlement, CrashPoint, Moment, NativeResultLedger, fixtures};
 use std::sync::{
     Arc,
