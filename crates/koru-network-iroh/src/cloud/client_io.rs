@@ -22,6 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
+pub mod inspection;
 pub mod reconcile;
 
 type Pending<'a> = Pin<Box<dyn Future<Output = Result<Receipt, Error>> + Send + 'a>>;
@@ -113,6 +114,7 @@ pub struct Client<'a, R, W> {
     receipt: Option<(Receipt, u64)>,
     upload: Option<Upload<'a>>,
     batch: u64,
+    inspection_only: bool,
     receive: Box<dyn FnMut(Completed) -> Result<Pending<'a>, Error> + Send + 'a>,
     authorize: Box<dyn FnMut(Unit) -> Result<(), Refusal> + Send + 'a>,
     permission: Box<dyn FnMut(&Start) -> Decision + Send + 'a>,
@@ -176,6 +178,7 @@ where
             receipt: None,
             upload: None,
             batch: 0,
+            inspection_only: false,
             receive: Box::new(move |complete| {
                 receive(complete).map(|reply| Box::pin(reply) as Pending<'a>)
             }),
@@ -490,6 +493,28 @@ where
             .as_millis()
             .try_into()
             .map_err(|_| Error::Invalid)?;
+        // A dedicated inspection owns no Store callbacks. Refuse transfer
+        // starts and payload frames before the normal stream can admit them.
+        if self.inspection_only {
+            return match record {
+                Record::Control(control @ Control::TransferPolicy { .. }) => {
+                    self.stream
+                        .receive_control(control, first, now, &mut self.authorize)?;
+                    Ok(Event::Progress)
+                }
+                Record::Peer(frame) => {
+                    let values = metadata::decode(self.scope, frame, 1)?;
+                    if !matches!(values.as_slice(), [Metadata::Joined { live: false, .. }]) {
+                        return Err(Error::Invalid);
+                    }
+                    Ok(Event::Metadata(Messages {
+                        values,
+                        _charge: charge,
+                    }))
+                }
+                _ => Err(Error::Invalid),
+            };
+        }
         match record {
             Record::Control(control) => {
                 let start = match &control {
