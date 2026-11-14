@@ -9,6 +9,7 @@ use koru_store_server::StoreWorkerClient;
 // Keep its production helpers compiled while that wiring is implemented.
 #[allow(dead_code)]
 mod memory;
+pub(crate) mod routine;
 
 /// Semantic, title-only seed identity. No document bytes are generated on the
 /// AI writer; the original page is built/reconciled on the creation lane.
@@ -61,6 +62,15 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn prepare_routine_document(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<PreparedRoutineDocument, BotError> {
+        routine::prepare(self, owner, reader, identity, cancellation)
+    }
     fn memory_edit_history(
         &self,
         owner: BotOwner,

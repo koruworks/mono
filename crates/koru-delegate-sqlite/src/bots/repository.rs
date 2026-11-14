@@ -270,6 +270,12 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn register_routine_route(
+        &mut self,
+        identity: &koru_delegate_core::RoutineRouteIdentity,
+    ) -> Result<koru_delegate_core::RoutineRouteIdentity, BotLedgerError> {
+        RunsDb::register_routine_route(self, identity)
+    }
     fn bot_boot_inventory(
         &self,
         owner: BotOwner,
@@ -306,7 +312,11 @@ impl BotLedger for RunsDb {
         &mut self,
         submission: &BotSubmission,
     ) -> Result<BotAdmissionRecord, BotLedgerError> {
-        let submission_version = if submission.provenance.routine.is_some() { 2 } else { 1 };
+        let submission_version = if submission.provenance.routine.is_some() {
+            2
+        } else {
+            1
+        };
         if !submission.valid_for_version(submission_version) {
             return Err(BotLedgerError::Invalid);
         }

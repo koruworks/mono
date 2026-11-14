@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+mod seed;
+
 use koru_delegate_core::{
     DelegationRequest, DeviceId, HandoffId, RunContextItem, RunId, ScheduleId, WorkspaceId,
 };

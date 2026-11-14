@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! In-memory persistence fixtures; confirmations are synthetic, not Store proof.
 use super::*;
+mod recovery;
 fn hash() -> RoutineDigest32 {
     RoutineDigest32::from_bytes([7; 32])
 }

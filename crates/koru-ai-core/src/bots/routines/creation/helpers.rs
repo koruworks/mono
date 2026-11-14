@@ -1,6 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Private creation semantics and canonical digest owners, without Store access.
 use super::*;
+
+/// Trusted adapter evidence, never decoded from a public request.
+pub enum PreparedRoutineDocument {
+    Confirmed(BotRoutineStoreConfirmation),
+    Disagreement(BotRoutineCreationRefusal),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BotRoutineRecoveryCursor {
+    pub owner: crate::bots::BotOwner,
+    pub after: i64,
+    pub through: i64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BotRoutineRecoveryIdentity {
+    pub bot: BotId,
+    pub schedule: ScheduleId,
+    pub observed: BotRoutineCreationObserved,
+}
+#[derive(Debug)]
+pub struct BotRoutineRecoveryPage {
+    pub entries: Vec<Result<BotRoutineRecoveryIdentity, BotError>>,
+    pub next: Option<BotRoutineRecoveryCursor>,
+}
 use koru_delegate_schedule::{DelegationTemplate, RecurrenceRule, ScheduleContextPointer};
 use std::collections::BTreeSet;
 
