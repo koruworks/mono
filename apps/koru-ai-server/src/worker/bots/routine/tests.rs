@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Production worker/adapter/Store mutation; only state observation is test-only.
 use super::*;
-use crate::bots::routine::tests::Fixture;
+use crate::bots::routine::fixture::Fixture;
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, Ordering},

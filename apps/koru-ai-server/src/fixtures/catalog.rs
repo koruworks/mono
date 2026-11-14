@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Real AgentSessions discovery against a catalog-only named-pipe peer.
-use super::*;
 use serde_json::{Value, json};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
+use uuid::Uuid;
 
-pub(super) struct Catalog {
+pub(crate) struct Catalog {
     pub endpoint: koru_ipc::Endpoint,
     pub reads: Arc<AtomicUsize>,
+    #[cfg(test)]
     pub offered: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -72,6 +81,7 @@ impl Catalog {
         Self {
             endpoint,
             reads,
+            #[cfg(test)]
             offered,
             stop,
             thread: Some(thread),

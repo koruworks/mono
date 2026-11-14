@@ -270,3 +270,6 @@ pub(super) fn prepare(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(any(test, all(windows, feature = "fixtures")))]
+pub(crate) mod fixture;

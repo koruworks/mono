@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Production client/worker/Store path; delegate and catalog are strict peers.
 use super::*;
-use crate::bots::routine::tests::Fixture;
+use crate::bots::routine::fixture::Fixture;
 use koru_delegate_core::RoutineTerminalReason;
 use std::{
     future::Future,
@@ -10,8 +10,7 @@ use std::{
     task::{Context, Poll, Wake, Waker},
 };
 mod cases;
-mod catalog;
-use catalog::Catalog;
+use crate::fixtures::catalog::Catalog;
 
 struct Signal(SyncSender<()>);
 impl Wake for Signal {
@@ -332,69 +331,7 @@ struct Harness {
 }
 impl Harness {
     fn new() -> Self {
-        let (fixture, mut repository) = Fixture::with_pause(false);
-        let id = fixture.creation.identity.clone();
-        let PreparedRoutineDocument::Confirmed(proof) = fixture
-            .adapter
-            .prepare_routine_document(
-                fixture.owner,
-                fixture.profile,
-                &id,
-                &Cancellation::default(),
-            )
-            .unwrap()
-        else {
-            panic!("actual retained Store proof")
-        };
-        repository
-            .transition_bot_routine_creation(
-                &id,
-                fixture.creation.observed(),
-                BotRoutineCreationTransition::Confirmed(proof),
-                3,
-            )
-            .unwrap();
-        let mut definition = id.seed.header.definition.clone();
-        definition.revision += 1;
-        definition.effective_at_ms += 1;
-        definition.lifecycle = serde_json::from_str("\"active\"").unwrap();
-        let live = definition.clone();
-        fixture
-            .memory
-            .with_store(move |store| {
-                let candidate = koru_ai_core::DocumentId::from_uuid(id.schedule.as_uuid());
-                let doc = koru_delegate_document::ScheduleDocument::from_snapshot(
-                    &store.snapshot(id.home, candidate).unwrap(),
-                )
-                .unwrap();
-                doc.update_definition(id.owner.device, &live).unwrap();
-                store
-                    .apply_update(
-                        id.home,
-                        candidate,
-                        doc.export_updates_since(&loro::VersionVector::default())
-                            .unwrap(),
-                        Timestamp::from_millis(4),
-                        None,
-                    )
-                    .unwrap();
-                store
-                    .flush(id.home, candidate, Timestamp::from_millis(4))
-                    .unwrap();
-            })
-            .unwrap();
-        let occurrence_ms = Timestamp::now().millis() / 60_000 * 60_000;
-        let request = PrepareOccurrence {
-            slot: RoutineSlot {
-                owner: fixture.creation.identity.owner,
-                bot: fixture.bot.id,
-                schedule: fixture.creation.identity.schedule,
-                occurrence_ms,
-            },
-            workspace: fixture.bot.home_workspace,
-            owner_handoff: None,
-            schedule_definition: definition,
-        };
+        let (fixture, repository, request) = Fixture::occurrence();
         let catalog = Catalog::new();
         let delegate = Arc::new(Delegate::new(fixture.creation.identity.owner));
         let authority = Arc::new(Authority {
