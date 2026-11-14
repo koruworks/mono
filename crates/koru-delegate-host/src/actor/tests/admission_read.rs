@@ -3,6 +3,18 @@ use super::*;
 use koru_delegate_api::bots::{BotCommand, BotReply};
 use koru_delegate_core::{BotAdmissionBarrier, BotBootAdmission, BotId, BotOwner, BotRequestId};
 
+fn read_through_handle(actor: &mut Actor, owner: BotOwner, bot: BotId) -> BotReply {
+    let (reply, response) = mpsc::sync_channel(1);
+    actor.handle(Command::Bot {
+        command: BotCommand::ReadAdmissionBarrier { owner, bot },
+        reply,
+    });
+    let Response::Bot(reply) = response.try_recv().unwrap() else {
+        panic!("typed admission reply required")
+    };
+    reply
+}
+
 #[test]
 fn admission_read_actor_echoes_exact_absence_and_paused_without_wake_or_sessions() {
     let (mut actor, _, inbox) = actor();
@@ -13,9 +25,7 @@ fn admission_read_actor_echoes_exact_absence_and_paused_without_wake_or_sessions
     };
     let bot = BotId::mint();
     assert_eq!(
-        actor
-            .bot_command(BotCommand::ReadAdmissionBarrier { owner, bot })
-            .unwrap(),
+        read_through_handle(&mut actor, owner, bot),
         BotReply::AdmissionBarrier {
             owner,
             bot,
@@ -35,9 +45,7 @@ fn admission_read_actor_echoes_exact_absence_and_paused_without_wake_or_sessions
         .unwrap();
     for _ in 0..2 {
         assert_eq!(
-            actor
-                .bot_command(BotCommand::ReadAdmissionBarrier { owner, bot })
-                .unwrap(),
+            read_through_handle(&mut actor, owner, bot),
             BotReply::AdmissionBarrier {
                 owner,
                 bot,
