@@ -27,7 +27,10 @@ fn routine_definition_digest_has_complete_frozen_versioned_json_and_hash() {
         GOLDEN
     );
     let digest = routine_definition_digest(&definition, workspace, None).unwrap();
-    eprintln!("definition_fixture_digest={}", String::from(digest));
+    assert_eq!(
+        String::from(digest),
+        "a4d22d3a01e7972e7ff3fb2ec6258ebfc200d1f4cf3091240cd2e76037db7115"
+    );
 }
 
 #[test]
