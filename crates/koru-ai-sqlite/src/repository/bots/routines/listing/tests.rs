@@ -132,6 +132,9 @@ fn listing_common_metadata_corruption_foreign_owner_and_trash_refuse_page() {
         r.connection
             .execute("PRAGMA ignore_check_constraints=ON", [])
             .unwrap();
+        // This fixture intentionally bypasses relational protection to exercise
+        // the observational decoder on a damaged authority identity.
+        r.connection.execute("PRAGMA foreign_keys=OFF", []).unwrap();
         r.connection
             .execute(
                 &format!("UPDATE bots SET {column}=zeroblob(100000) WHERE bot_id=?1"),
