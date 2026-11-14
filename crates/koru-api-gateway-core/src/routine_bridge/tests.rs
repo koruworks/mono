@@ -793,13 +793,14 @@ async fn routine_http_one_absolute_deadline_spans_streaming_and_codec_phases() {
     assert_eq!(state.slots.available_permits(), HTTP_CAPACITY);
     let expired = Instant::now() - Duration::from_millis(1);
     assert_eq!(
-        unavailable::<ReadPreparation, _>(
-            b"invalid",
-            ReadPreparationReply::Refused {
-                code: RoutineBridgeRefusal::Unavailable
-            },
-            expired
-        ),
+        dispatch(
+            None,
+            b"invalid".to_vec(),
+            expired,
+            AiWorkerClient::read_routine_preparation,
+            |code| ReadPreparationReply::Refused { code },
+        )
+        .await,
         Err(StatusCode::GATEWAY_TIMEOUT)
     );
 }

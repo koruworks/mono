@@ -56,6 +56,8 @@ mod bootstrap;
 mod composition;
 mod discovery;
 mod lifecycle;
+#[cfg(all(test, windows))]
+mod routine_bridge;
 
 pub use lifecycle::{
     BuildIdentity, Completion, Gateway, GatewayConfig, Readiness, ShutdownRequest, StoreCompletion,
