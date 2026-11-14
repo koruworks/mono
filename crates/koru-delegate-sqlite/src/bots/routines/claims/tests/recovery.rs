@@ -251,6 +251,7 @@ fn routine_recovery_orphan_link_independently_denies_v1_manual_downgrade() {
         )
         .unwrap();
     assert_eq!(f.db.unsettled_claims().unwrap().len(), 1);
+    assert!(f.db.validate_ordinary_schedule_run(s.request.run).is_err());
     assert!(f.db.ordinary_unsettled_claims().unwrap().is_empty());
     assert!(
         f.db.queued_routine_page(None).unwrap().entries[0]

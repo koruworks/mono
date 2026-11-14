@@ -14,6 +14,7 @@ fn routine_marker_valid_ordinary_admission_and_exact_replay_remain_available() {
     let (mut db, s) = ordinary();
     deny_run_metadata(db.conn(), s.request.run).unwrap();
     deny_run(db.conn(), s.request.run).unwrap();
+    db.validate_ordinary_schedule_run(s.request.run).unwrap();
     assert_eq!(db.pending_intents().unwrap().len(), 1);
     assert_eq!(db.admit_bot(&s).unwrap().submission, s);
 }

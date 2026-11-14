@@ -13,7 +13,12 @@ pub(crate) struct Fixture {
 }
 impl Fixture {
     pub fn new() -> Self {
-        let (mut actor, _, inbox) = actor();
+        Self::with_store(Box::new(
+            RunsDb::open(std::path::Path::new(":memory:")).unwrap(),
+        ))
+    }
+    pub fn with_store(store: Box<dyn koru_delegate_runtime::RunStore>) -> Self {
+        let (mut actor, _, inbox) = actor_with_store(store);
         let mut s = bot_submission();
         s.input.text = s.request.objective.as_str().to_owned();
         let slot = RoutineSlot {

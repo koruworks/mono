@@ -26,6 +26,7 @@ use super::{
     page_retry_needed, rejected_delivery_disposition,
 };
 mod phase;
+mod routine;
 use crate::ledger::SharedLedger;
 use koru_delegate_runtime::ScheduleEvents;
 

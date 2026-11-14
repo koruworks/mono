@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use crate::actor::tests::routine::Fixture;
+mod composition;
 
 fn effects() -> (ActorEffects, mpsc::Receiver<ActorCommand>) {
     let (actor, inbox) = mpsc::channel();
@@ -226,8 +227,63 @@ fn routine_rendezvous_control_stop_sets_shared_cancellation_before_queued_stop()
         commands,
         wake: ScheduleWake::new(|| {}),
         stopped: stopped.clone(),
+        authority_gate: Arc::new(ScheduleEventAuthorityGate::new()),
     };
     control.stop();
     assert!(stopped.load(Ordering::Acquire));
     assert!(matches!(inbox.try_recv().unwrap(), Command::Stop));
+}
+
+#[test]
+fn routine_composition_control_stop_closes_the_actual_contended_phase_gate() {
+    use koru_delegate_runtime::SchedulePhaseGate;
+    let (commands, inbox) = mpsc::channel();
+    let gate = Arc::new(ScheduleEventAuthorityGate::new());
+    let stopped = Arc::new(AtomicBool::new(false));
+    let control = Control {
+        commands,
+        wake: ScheduleWake::new(|| {}),
+        stopped: stopped.clone(),
+        authority_gate: gate.clone(),
+    };
+    let held = gate.enter().unwrap();
+    let other = gate.clone();
+    let (started, ready) = mpsc::sync_channel(1);
+    let (done, answer) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
+        started.send(()).unwrap();
+        done.send(
+            other
+                .enter_until(Instant::now() + Duration::from_secs(30))
+                .is_err(),
+        )
+        .unwrap();
+    });
+    ready.recv_timeout(Duration::from_secs(1)).unwrap();
+    control.stop();
+    assert!(answer.recv_timeout(Duration::from_secs(1)).unwrap());
+    assert!(stopped.load(Ordering::Acquire));
+    assert!(matches!(inbox.try_recv().unwrap(), Command::Stop));
+    drop(held);
+    assert!(gate.enter().is_none());
+    thread.join().unwrap();
+}
+
+#[test]
+fn routine_composition_pending_cleanup_reuses_exact_receiver_before_any_new_work() {
+    let mut f = Fixture::new();
+    let (mut e, inbox) = effects();
+    let answer = held_reply(&mut f, &mut e);
+    assert_eq!(answer.recv().unwrap().unwrap(), ScheduleAdmission::Granted);
+    assert!(e.finish_pending_routine_release(Instant::now()).is_err());
+    assert!(e.no_pending_routine().is_err());
+    assert!(e.finish_pending_routine_release(Instant::now()).is_err());
+    let command = inbox.try_recv().unwrap();
+    assert!(inbox.try_recv().is_err(), "one retained release receiver");
+    f.handle(command);
+    e.finish_pending_routine_release(future()).unwrap();
+    assert!(e.no_pending_routine().is_ok());
+    assert!(!f.held());
+    e.finish_pending_routine_release(future()).unwrap();
+    assert!(inbox.try_recv().is_err());
 }
