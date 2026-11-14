@@ -338,6 +338,13 @@ pub struct RunView {
     pub timeline: TimelineWindow,
 }
 
+#[derive(Clone)]
+struct CachedNativePolicy {
+    barrier: koru_delegate_core::BotPolicyBarrier,
+    /// Exact owner-computed digest validated when this snapshot was installed.
+    digest: [u8; 32],
+}
+
 /// The runs this device executes, and the ports they are driven through.
 pub struct Orchestrator {
     pub(crate) ports: Ports,
@@ -345,7 +352,8 @@ pub struct Orchestrator {
     pub(crate) claims: ScopeClaims,
     pub(crate) runs: HashMap<RunId, RunState>,
     // Bounded transient current-policy proofs; never reconstructed from ledger hashes.
-    native_policies: Vec<koru_delegate_core::BotPolicyBarrier>,
+    native_policies: Vec<CachedNativePolicy>,
+    native_routine_policies: Vec<koru_delegate_core::RoutinePolicyBarrier>,
     bot_boot: bot_boot::BootCoordination,
 }
 
@@ -357,6 +365,7 @@ impl Orchestrator {
             claims: ScopeClaims::new(),
             runs: HashMap::new(),
             native_policies: Vec::new(),
+            native_routine_policies: Vec::new(),
             bot_boot: bot_boot::BootCoordination::new(),
         }
     }

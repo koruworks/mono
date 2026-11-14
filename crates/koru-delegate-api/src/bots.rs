@@ -19,7 +19,7 @@ pub use koru_delegate_core::{
     ConfirmNativeResult, NativeDrainReason, NativePendingEffect, NativePendingEffects,
     NativeRecoveryCursor, NativeResultDisposition, NativeResultIntentView, NativeResultKey,
     NativeResultObservation, NativeResultOperation, NativeResultRefusal, NativeResultStage,
-    PrepareNativeResult,
+    PrepareNativeResult, RoutinePolicyBarrier,
 };
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +211,9 @@ pub enum BotCommand {
     SynchronizePolicy {
         barrier: BotPolicyBarrier,
     },
+    SynchronizeRoutinePolicy {
+        barrier: RoutinePolicyBarrier,
+    },
     ReconcilePolicyBarrier {
         key: BotPolicyBarrierKey,
     },
@@ -287,6 +290,7 @@ impl BotCommand {
             | Self::HandBack { fence }
             | Self::EffectFence { fence } => Some(&fence.owner),
             Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
+            Self::SynchronizeRoutinePolicy { barrier } => Some(&barrier.owner),
             Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
             Self::ResolveRunAuthority { .. }
             | Self::ReadMemoryEditAllocation { .. }
@@ -373,6 +377,10 @@ pub enum BotReply {
     },
     PolicyBarrier {
         receipt: BotPolicyBarrierReceipt,
+    },
+    RoutinePolicyBarrier {
+        barrier: RoutinePolicyBarrier,
+        state: BotPolicyBarrierState,
     },
     NativeResult {
         intent: NativeResultIntentView,
