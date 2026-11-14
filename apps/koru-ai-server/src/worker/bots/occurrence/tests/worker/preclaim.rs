@@ -199,7 +199,8 @@ fn restart(h: &mut Harness, repository: Repository) {
 }
 fn alter(h: &mut Harness, sql: &str) {
     let repo = h.finish();
-    repo.fixture_execute_batch(sql).unwrap();
+    repo.fixture_execute_batch(sql)
+        .unwrap_or_else(|error| panic!("fixture mutation {sql}: {error:?}"));
     restart(h, repo);
 }
 fn owner_context() -> RequestContext {
@@ -364,7 +365,7 @@ fn preclaim_worker_requires_bound_exact_route_and_grant() {
         let (mut h, request) = prepared();
         alter(
             &mut h,
-            &format!("PRAGMA ignore_check_constraints=ON; {sql}"),
+            &format!("PRAGMA foreign_keys=OFF; PRAGMA ignore_check_constraints=ON; {sql}"),
         );
         assert!(matches!(
             synchronize(&h, &request),
