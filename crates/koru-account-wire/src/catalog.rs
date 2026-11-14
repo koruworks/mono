@@ -121,6 +121,7 @@ pub enum RouteId {
     DiscoverCloudCatalog,
     ReadCloudPlan,
     ReadCloudUsageWorkspaces,
+    ReadCloudUsageDocuments,
 }
 
 impl RouteId {
@@ -195,6 +196,7 @@ impl RouteId {
             Self::DiscoverCloudCatalog => "account.cloud_discovery_read",
             Self::ReadCloudPlan => "account.cloud_plan_read",
             Self::ReadCloudUsageWorkspaces => "account.cloud_usage_workspaces_read",
+            Self::ReadCloudUsageDocuments => "account.cloud_usage_documents_read",
         }
     }
 }
@@ -1055,7 +1057,26 @@ pub const ROUTES: &[Route] = &[
         Query,
         "Read a bounded page of owned retained Workspaces with current catalog placement"
     ),
+    route!(
+        ReadCloudUsageDocuments,
+        Get,
+        "/v1/account/cloud-usage/workspaces/{workspace_id}/documents",
+        AccountSession,
+        cloud_usage_documents_query,
+        cloud_usage_documents_page,
+        Query,
+        "Read a bounded authoritative durable-unit inventory; per-document file bytes overlap and do not grant editing authority"
+    ),
 ];
+
+schema_fn!(
+    cloud_usage_documents_query,
+    crate::cloud_plan::documents::CloudUsageDocumentsQueryV1
+);
+schema_fn!(
+    cloud_usage_documents_page,
+    crate::cloud_plan::documents::CloudUsageDocumentsResponseV1
+);
 
 schema_fn!(cloud_plan_response, crate::cloud_plan::CloudPlanResponseV1);
 schema_fn!(

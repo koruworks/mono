@@ -180,14 +180,19 @@ fn account_schema_has_no_canonical_document_content_shape() {
             "{forbidden} leaked into account wire"
         );
     }
-    // The one document id the account wire may name is the Workspace
-    // manifest's retained Store identity in the Cloud descriptor
-    // (ADR-358): an identifier for bootstrap, never
-    // a content shape. No other document id may appear.
+    // The reviewed read-only inventory may also name exact retained unit
+    // DocumentIds. It supplies identity/count/classification, never content or
+    // an editing capability. All other account schemas retain the bootstrap-only
+    // manifest identity boundary (ADR-358).
+    let without_inventory: std::collections::BTreeMap<_, _> = catalogue()
+        .into_iter()
+        .filter(|(name, _)| *name != "cloud_plan::documents::CloudUsageDocumentsResponseV1")
+        .collect();
+    let identity_text = serde_json::to_string(&without_inventory).unwrap();
     assert_eq!(
-        text.matches("document_id").count(),
-        text.matches("manifest_document_id").count(),
-        "a document id other than the manifest identity leaked into account wire"
+        identity_text.matches("document_id").count(),
+        identity_text.matches("manifest_document_id").count(),
+        "a document id leaked outside the reviewed inventory and manifest identity"
     );
     assert!(text.contains("manifest_document_id"));
 }
@@ -199,7 +204,7 @@ fn route_catalog_is_unique_and_schema_complete() {
     // read and decision, and the connections list, edit and revoke. Seven
     // are the v2 Cloud catalog's: binding, catalog read, unit pull and
     // push, the v2 sync token, the v2 descriptor and discovery.
-    assert_eq!(ROUTES.len(), 69);
+    assert_eq!(ROUTES.len(), 70);
     let mut ids = BTreeSet::new();
     let mut method_paths = BTreeSet::new();
     for route in ROUTES {
