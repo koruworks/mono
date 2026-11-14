@@ -54,6 +54,9 @@ fn routine_tool_subject_rejects_corrupt_receipt_or_unlinked_routine() {
         repo.connection
             .pragma_update(None, "ignore_check_constraints", "ON")
             .unwrap();
+        repo.connection
+            .pragma_update(None, "foreign_keys", "OFF")
+            .unwrap();
         repo.connection.execute(mutation, []).unwrap();
         assert!(
             repo.routine_tool_subject(owner(&input.slot), input.slot.bot, row.prepared.ids.run)
