@@ -257,6 +257,16 @@ pub trait RunStore: ScheduleLedger {
 /// after reading the synced document, so the ledger cannot be asked to claim
 /// from an unowned or retired schedule through this production seam.
 pub trait RoutineLedger: Send {
+    fn record_expired_routine(
+        &mut self,
+        authority: koru_delegate_document::RoutineExpiryAuthority,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    >;
     fn claim_bot_routine(
         &mut self,
         authority: ScheduleClaimAuthority,
@@ -660,6 +670,13 @@ pub trait ScheduleChangeWatch: Send {
 
 pub trait ScheduleDocumentHandle: Send {
     fn document(&self) -> &ScheduleDocument;
+    /// Expiry-only live authority. The implementation must bind its actual
+    /// physical Store DocumentId to the current associated header ScheduleId.
+    fn expired_routine_authority(
+        &self,
+        device: koru_delegate_core::DeviceId,
+        plan: koru_delegate_document::RoutineExpiryPlan,
+    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>>;
     /// Bind a single-use claim to this handle's real Store workspace. The
     /// caller supplies only the occurrence plan; it cannot pair the document
     /// with an arbitrary workspace or later substitute another slot/request.

@@ -122,8 +122,8 @@ pub use bots::{
     BotRoutineCloseReason, FreshBotPolicyProof, INTERACTIVE_BOT_SUBMISSION_VERSION,
     ROUTINE_BOT_SUBMISSION_VERSION, RoutineClaimFacts, RoutineClaimIdentity,
     RoutineClaimObservation, RoutineClaimRecord, RoutineDefinitionIdentity, RoutineDigest32,
-    RoutineDigestError, RoutineExecutionIds, RoutineLinkAcknowledgement, RoutineLinkOutcome,
-    RoutineLinkState, RoutinePolicyBarrier, RoutinePrepared, RoutineProvenance,
+    RoutineDigestError, RoutineExecutionIds, RoutineExpiredClaimFacts, RoutineLinkAcknowledgement,
+    RoutineLinkOutcome, RoutineLinkState, RoutinePolicyBarrier, RoutinePrepared, RoutineProvenance,
     RoutineRepresentativeMiss, RoutineRouteIdentity, RoutineSkipOutcome, RoutineSkippedClaim,
     RoutineSlot, RoutineTerminalReason, routine_digest_json,
 };

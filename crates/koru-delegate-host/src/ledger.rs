@@ -167,6 +167,21 @@ impl SharedLedger {
 }
 
 impl koru_delegate_runtime::RoutineLedger for SharedLedger {
+    fn record_expired_routine(
+        &mut self,
+        authority: koru_delegate_document::RoutineExpiryAuthority,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        koru_delegate_runtime::RoutineLedger::record_expired_routine(
+            &mut *self.0.lock().unwrap(),
+            authority,
+        )
+    }
     fn claim_bot_routine(
         &mut self,
         authority: ScheduleClaimAuthority,

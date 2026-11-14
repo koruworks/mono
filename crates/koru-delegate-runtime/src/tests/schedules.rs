@@ -318,6 +318,15 @@ struct MemoryScheduleHandle {
 }
 
 impl ScheduleDocumentHandle for MemoryScheduleHandle {
+    fn expired_routine_authority(
+        &self,
+        device: DeviceId,
+        plan: koru_delegate_document::RoutineExpiryPlan,
+    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
+        self.document
+            .expired_routine_authority(self.workspace, device, plan)
+            .map_err(Into::into)
+    }
     fn document(&self) -> &ScheduleDocument {
         &self.document
     }
@@ -542,6 +551,13 @@ struct FailFirstCommitHandle {
 }
 
 impl ScheduleDocumentHandle for FailFirstCommitHandle {
+    fn expired_routine_authority(
+        &self,
+        device: DeviceId,
+        plan: koru_delegate_document::RoutineExpiryPlan,
+    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
+        self.inner.expired_routine_authority(device, plan)
+    }
     fn document(&self) -> &ScheduleDocument {
         self.inner.document()
     }
@@ -625,6 +641,13 @@ struct FailSecondAbsorbHandle {
 }
 
 impl ScheduleDocumentHandle for FailSecondAbsorbHandle {
+    fn expired_routine_authority(
+        &self,
+        device: DeviceId,
+        plan: koru_delegate_document::RoutineExpiryPlan,
+    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
+        self.inner.expired_routine_authority(device, plan)
+    }
     fn document(&self) -> &ScheduleDocument {
         self.inner.document()
     }

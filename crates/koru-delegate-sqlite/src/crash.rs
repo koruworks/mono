@@ -35,6 +35,7 @@ pub enum WriteOp {
     AdmitBot,
     RegisterRoutineRoute,
     ClaimBotRoutine,
+    RecordExpiredRoutine,
     AcknowledgeRoutineLink,
     StopUnstartedRoutine,
     InstallRoutinePolicy,
@@ -78,7 +79,8 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 50] = [
+        Self::RecordExpiredRoutine,
         Self::ClaimBotRoutine,
         Self::AcknowledgeRoutineLink,
         Self::StopUnstartedRoutine,

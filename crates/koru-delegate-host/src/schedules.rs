@@ -177,6 +177,14 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
         &self.doc
     }
 
+    fn expired_routine_authority(
+        &self,
+        device: koru_delegate_core::DeviceId,
+        plan: koru_delegate_document::RoutineExpiryPlan,
+    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
+        expired_routine_authority_at(self.document, self.workspace, &self.doc, device, plan)
+    }
+
     fn claim_authority(
         &self,
         device: koru_delegate_core::DeviceId,
@@ -213,6 +221,20 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
             }
         }
     }
+}
+
+/// Shared production binding, separated from the network-owning handle so its
+/// exact physical-location guard can be tested without opening a Store.
+fn expired_routine_authority_at(
+    physical: DocumentId,
+    workspace: WorkspaceId,
+    doc: &ScheduleDocument,
+    device: koru_delegate_core::DeviceId,
+    plan: koru_delegate_document::RoutineExpiryPlan,
+) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
+    routine_claim_location(physical, Some(doc.header()?.schedule))?;
+    doc.expired_routine_authority(workspace, device, plan)
+        .map_err(Into::into)
 }
 
 fn routine_claim_location(
@@ -683,6 +705,68 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
     use std::sync::mpsc;
+
+    #[test]
+    fn routine_expiry_production_binding_rejects_matching_header_at_wrong_physical_document() {
+        let mut header = header();
+        let workspace = WorkspaceId::from_uuid(header.initial_owner.as_uuid());
+        let association = koru_delegate_schedule::RoutineAssociation::new(
+            koru_delegate_core::BotOwner {
+                user_scope: koru_store_core::UserScopeId::from_uuid(header.initial_owner.as_uuid()),
+                device: header.initial_owner,
+            },
+            koru_delegate_core::BotId::mint(),
+            workspace,
+            koru_delegate_core::BotRequestId::mint(),
+        )
+        .unwrap();
+        header.definition.routine = Some(association.clone());
+        header.definition.lifecycle = koru_delegate_schedule::ScheduleLifecycle::Paused {
+            reason: koru_delegate_schedule::SchedulePauseReason::Manual,
+        };
+        let doc = ScheduleDocument::create(&header).unwrap();
+        header.definition.revision = 2;
+        header.definition.effective_at_ms += 1;
+        header.definition.lifecycle = koru_delegate_schedule::ScheduleLifecycle::Active;
+        doc.update_definition(header.initial_owner, &header.definition)
+            .unwrap();
+        let plan = koru_delegate_document::RoutineExpiryPlan {
+            occurrence_ms: 60_000,
+            planned_run: koru_delegate_core::RunId::mint(),
+            representative_miss: None,
+        };
+        assert!(
+            expired_routine_authority_at(
+                DocumentId::new(),
+                workspace,
+                &doc,
+                header.initial_owner,
+                plan
+            )
+            .is_err()
+        );
+        let canonical = DocumentId::from_uuid(header.schedule.as_uuid());
+        assert!(
+            expired_routine_authority_at(
+                canonical,
+                WorkspaceId::from_uuid(DocumentId::new().as_uuid()),
+                &doc,
+                header.initial_owner,
+                plan
+            )
+            .is_err()
+        );
+        let facts =
+            expired_routine_authority_at(canonical, workspace, &doc, header.initial_owner, plan)
+                .unwrap()
+                .unwrap()
+                .into_expired_bot_routine()
+                .unwrap();
+        assert_eq!(facts.slot().schedule, header.schedule);
+        assert_eq!(facts.slot().owner, association.owner);
+        assert_eq!(facts.planned_run(), plan.planned_run);
+        assert_eq!(facts.workspace(), workspace);
+    }
 
     #[test]
     fn routine_claim_location_requires_canonical_physical_store_document() {
