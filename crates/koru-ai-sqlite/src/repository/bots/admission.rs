@@ -82,7 +82,21 @@ pub(super) fn decode_submission(
         })
         .transpose()?;
     let stage = BotReceiptStage::parse(&r.stage).ok_or(BotError::Storage)?;
-    let valid = match (&stage, &outcome) {
+    validate_outcome_stage(stage, &outcome)?;
+    Ok(BotSubmissionReceipt {
+        intent,
+        fingerprint: r.fingerprint,
+        kind,
+        stage,
+        outcome,
+    })
+}
+
+pub(super) fn validate_outcome_stage(
+    stage: BotReceiptStage,
+    outcome: &Option<BotExecutionOutcome>,
+) -> Result<(), BotError> {
+    let valid = match (&stage, outcome) {
         (BotReceiptStage::Prepared, None | Some(BotExecutionOutcome::RefusalFence { .. })) => true,
         (
             BotReceiptStage::Accepted | BotReceiptStage::Completed,
@@ -94,13 +108,7 @@ pub(super) fn decode_submission(
     if !valid {
         return Err(BotError::Storage);
     }
-    Ok(BotSubmissionReceipt {
-        intent,
-        fingerprint: r.fingerprint,
-        kind,
-        stage,
-        outcome,
-    })
+    Ok(())
 }
 pub(crate) fn read_bot_submission_on(
     conn: &Connection,

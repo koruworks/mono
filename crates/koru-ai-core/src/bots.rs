@@ -308,6 +308,12 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    ReadRoutines {
+        bot_id: BotId,
+        after_schedule: Option<koru_delegate_core::ScheduleId>,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
+        limit: u8,
+    },
     /// Vouched owner creation only: always Paused, with canonical inherited
     /// runtime/scope and an independent frozen copy of current Bot access.
     CreateRoutine {
@@ -642,6 +648,7 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
+    Routines { page: BotRoutineListPage },
     RoutineCreated { receipt: BotRoutineCreateResult },
     RoutineCreation { creation: BotRoutineCreationStatus },
     MemoryStatus { status: BotMemoryStatus },
@@ -1007,19 +1014,29 @@ pub trait BotRepository {
 }
 
 pub fn validate_config(config: &BotConfig, workspace: WorkspaceId) -> Result<(), BotError> {
+    validate_bot_model(&config.model)?;
     if config.name.trim().is_empty()
         || config.name.len() > 256
         || config.role.workspace != workspace
         || !std::path::Path::new(&config.working_folder).is_absolute()
         || config.working_folder.len() > 32768
         || config.working_folder.contains('\0')
-        || config.model.requested_model.trim().is_empty()
-        || config.model.requested_model.len() > 512
-        || !config.model.provider.as_str().starts_with("agent-")
         || config
             .mode
             .as_ref()
             .is_some_and(|mode| mode.is_empty() || mode.len() > 128)
+    {
+        return Err(BotError::Invalid);
+    }
+    Ok(())
+}
+
+/// The model portion of canonical Bot validation, also used by bounded
+/// observational readers which deliberately do not decode execution settings.
+pub fn validate_bot_model(model: &ModelSelection) -> Result<(), BotError> {
+    if model.requested_model.trim().is_empty()
+        || model.requested_model.len() > 512
+        || !model.provider.as_str().starts_with("agent-")
     {
         return Err(BotError::Invalid);
     }

@@ -341,6 +341,7 @@ fn execute_bot_command(
     let now = Timestamp::now().millis();
     match &mut request {
         BotCommand::CreateChat { .. }
+        | BotCommand::ReadRoutines { .. }
         | BotCommand::CreateRoutine { .. }
         | BotCommand::ReadRoutineCreation { .. }
         | BotCommand::RetryRoutineCreation { .. }
