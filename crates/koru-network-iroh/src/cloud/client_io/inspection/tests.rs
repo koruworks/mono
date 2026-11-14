@@ -341,3 +341,70 @@ async fn detached_read_never_takes_over_an_existing_partial_transfer() {
     ));
     assert!(!client.inspection_only);
 }
+
+#[tokio::test]
+async fn detached_read_does_not_take_over_a_receipt_already_moved_into_io() {
+    let (mut client, _reader, _writer, _stream, scope, budget) =
+        super::super::tests::pair_with_workspace(true).await;
+    let unit = unit(scope);
+    let (a, mut blocked_peer) = tokio::io::duplex(1);
+    let (reader, writer) = tokio::io::split(a);
+    let deadline = client.instant(client.stream.expires_at());
+    client.io = Duplex::new(reader, writer, deadline, budget.clone());
+    // This is the state after advance() moved the validated receipt into IO:
+    // neither Option remains, but the Ack has not completed its framed write.
+    client
+        .io
+        .send(scope.committed_ack(unit, [1; 8]).unwrap(), |v| v, deadline)
+        .unwrap();
+    client.writing = Some(Writing::Receipt);
+    client.writing_deadline = Some(client.stream.expires_at());
+    std::future::poll_fn(|cx| {
+        let mut pending = Box::pin(client.next());
+        assert!(pending.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    assert!(client.commit.is_none() && client.receipt.is_none());
+    assert!(client.status().committing);
+    assert!(matches!(
+        download(&mut client, unit).await,
+        Err(Error::Unavailable)
+    ));
+    assert!(!client.inspection_only);
+    assert!(matches!(client.writing, Some(Writing::Receipt)));
+    let sync = super::super::reconcile::Reconciler::new(
+        client,
+        |_| {
+            Ok(async {
+                Ok(super::super::reconcile::Answer::Ready(
+                    loro::VersionVector::default(),
+                ))
+            })
+        },
+        |_| Ok(async { Ok(super::super::reconcile::Answer::Ready(None)) }),
+    );
+    let mut sync = match sync.try_inspection() {
+        Err(sync) => sync,
+        Ok(_) => panic!("busy carrier admitted"),
+    };
+    let peer = async {
+        let ack = records::read(&mut blocked_peer, deadline, &budget)
+            .await
+            .unwrap();
+        let (_, Record::Peer(frame), _) = ack.into_parts() else {
+            panic!()
+        };
+        assert!(matches!(
+            metadata::decode(scope, frame, 1).unwrap().as_slice(),
+            [Metadata::Ack { ok: true, .. }]
+        ));
+    };
+    let normal = async {
+        while sync.status().transport.committing {
+            sync.next().await.unwrap();
+        }
+    };
+    tokio::join!(peer, normal);
+    assert!(!sync.status().transport.committing);
+}

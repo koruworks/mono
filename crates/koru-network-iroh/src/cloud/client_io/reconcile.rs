@@ -183,17 +183,16 @@ where
         Ok(())
     }
 
-    /// A user-requested read of the exact existing source, never Store import
-    /// or normal reconciliation. Only an idle carrier may be consumed; after
-    /// this returns the subscription must end normally and reconnect as needed.
-    pub async fn inspect_download(
-        mut self,
-        unit: Unit,
-    ) -> Result<super::inspection::ObservedDownload, Error> {
-        if self.pass.is_some() {
-            return Err(Error::Unavailable);
+    /// Transfer an actually idle carrier to a bounded user inspection. A busy
+    /// reconciler is returned unchanged, including its original pending I/O,
+    /// Store ownership and deadlines; rejection never cancels a normal transfer.
+    pub fn try_inspection(self) -> Result<super::inspection::InspectionCarrier<'a, R, W>, Self> {
+        if self.pass.is_some() || !super::inspection::idle(&self.client) {
+            return Err(self);
         }
-        super::inspection::download(&mut self.client, unit).await
+        Ok(super::inspection::InspectionCarrier {
+            client: self.client,
+        })
     }
 
     pub fn status(&self) -> Status {

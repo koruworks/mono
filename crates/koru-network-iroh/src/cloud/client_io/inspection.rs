@@ -156,6 +156,39 @@ impl std::fmt::Debug for ObservedDownload {
     }
 }
 
+pub(super) fn idle<'a, R, W>(client: &Client<'a, R, W>) -> bool
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+{
+    client.available_writer()
+        && !(client.status().committing
+            || client.writing.is_some()
+            || !client.controls.is_empty()
+            || client.policy_pending != 0
+            || client.upload.is_some()
+            || client.stream.incoming_deadline().is_some()
+            || client.stream.outgoing_deadline().is_some()
+            || client.stream.status().draining
+            || client.next_start.is_some())
+}
+
+/// Admitted only after the retained reconciler returned its idle carrier.
+/// Dropping an admitted inspection cancels that inspection, never a rejected
+/// pre-existing transfer. It owns no normal Store jobs once admitted.
+pub struct InspectionCarrier<'a, R, W> {
+    pub(super) client: Client<'a, R, W>,
+}
+impl<'a, R, W> InspectionCarrier<'a, R, W>
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+{
+    pub async fn download(mut self, unit: Unit) -> Result<ObservedDownload, Error> {
+        download(&mut self.client, unit).await
+    }
+}
+
 /// Consume an idle retained carrier for one detached read. The caller ends this
 /// session afterwards; no success Ack is sent because nothing was persisted.
 /// Empty Join knowledge requests the complete existing source, never a seed.
@@ -167,14 +200,7 @@ where
     R: AsyncRead + Unpin + Send + 'a,
     W: AsyncWrite + Unpin + Send + 'a,
 {
-    if client.commit.is_some()
-        || client.receipt.is_some()
-        || client.upload.is_some()
-        || client.stream.incoming_deadline().is_some()
-        || client.stream.outgoing_deadline().is_some()
-        || client.stream.status().draining
-        || client.next_start.is_some()
-    {
+    if !idle(client) {
         return Err(Error::Unavailable);
     }
     client.scope.object_unit(unit)?;
