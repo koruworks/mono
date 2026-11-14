@@ -84,6 +84,7 @@ impl WorkerState {
                 .repository
                 .read_routine_preparation(&operation.key.slot, *hash),
             Identity::Claim(claim) => self.repository.routine_preparation_for_claim(claim),
+            Identity::Preparation { .. } => return Err(RoutineBridgeRefusal::Invalid),
         }
         .map_err(refusal)
     }
@@ -110,6 +111,10 @@ impl WorkerState {
     ) -> Result<Phase, RoutineBridgeRefusal> {
         // This is the first repository access: no current model, Store or
         // captured content is read before exact immutable slot replay.
+        if let Request::Preclaim(request) = &operation.request {
+            return preclaim::snapshot(&self.repository, request)
+                .map(|snapshot| Phase::PreclaimRead(Box::new(snapshot)));
+        }
         let row = self.occurrence_row(operation)?;
         let Request::Prepare(request) = &operation.request else {
             return self.observation_phase(operation, row.as_ref());
@@ -169,7 +174,7 @@ impl WorkerState {
         })))
     }
 
-    fn queue_occurrence(&mut self, mut operation: Operation, phase: Phase) {
+    pub(super) fn queue_occurrence(&mut self, mut operation: Operation, phase: Phase) {
         if !operation.context.live() {
             self.refuse_occurrence(operation, RoutineBridgeRefusal::Unavailable);
             return;
@@ -218,10 +223,10 @@ impl WorkerState {
             }
         }
     }
-    fn end_occurrence(&mut self, operation: &Operation, owed: bool) {
+    pub(super) fn end_occurrence(&mut self, operation: &Operation, owed: bool) {
         self.occurrences.finish(operation, owed);
     }
-    fn refuse_occurrence(&mut self, operation: Operation, code: RoutineBridgeRefusal) {
+    pub(super) fn refuse_occurrence(&mut self, operation: Operation, code: RoutineBridgeRefusal) {
         self.end_occurrence(&operation, true);
         if operation.key.owner_epoch == self.occurrences.epoch
             && self.occurrences.owner == Some(ai_owner(operation.key.slot))
@@ -265,6 +270,10 @@ impl WorkerState {
             }
         };
         match evidence {
+            Evidence::PreclaimRead(evidence) => self.complete_preclaim_read(operation, *evidence),
+            Evidence::PreclaimInstalled(evidence) => {
+                self.complete_preclaim_install(operation, *evidence)
+            }
             Evidence::Captured(captured) => {
                 if !matches!(&operation.request, Request::Prepare(_))
                     || captured.slot != operation.key.slot

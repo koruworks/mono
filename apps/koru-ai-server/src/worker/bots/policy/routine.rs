@@ -158,4 +158,4 @@ pub(super) fn recheck(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

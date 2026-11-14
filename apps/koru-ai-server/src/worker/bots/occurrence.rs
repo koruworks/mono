@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 mod client;
 mod driver;
 mod jobs;
+mod preclaim;
 mod recovery;
 mod replies;
 #[cfg(test)]
@@ -29,6 +30,7 @@ enum Request {
     Read(ReadPreparation),
     Finalize(FinalizeOccurrence),
     Link(ReadOccurrenceLink),
+    Preclaim(SynchronizeRoutinePreclaim),
     Recover(ReadPreparation),
 }
 impl Request {
@@ -38,6 +40,7 @@ impl Request {
             Self::Read(r) | Self::Recover(r) => r.slot,
             Self::Finalize(r) => r.claim.slot,
             Self::Link(r) => r.claim.slot,
+            Self::Preclaim(r) => r.slot,
         }
     }
     fn identity(&self) -> Result<Identity, RoutineBridgeRefusal> {
@@ -54,6 +57,10 @@ impl Request {
             Self::Read(r) | Self::Recover(r) => Identity::Semantic(r.semantic_hash),
             Self::Finalize(r) => Identity::Claim(r.claim.clone()),
             Self::Link(r) => Identity::Claim(r.claim.clone()),
+            Self::Preclaim(r) => Identity::Preparation {
+                semantic_hash: r.semantic_hash,
+                preparation_hash: r.preparation_hash,
+            },
         })
     }
 }
@@ -63,6 +70,7 @@ enum Reply {
     Read(RoutineResponder<ReadPreparationReply>),
     Finalize(RoutineResponder<FinalizeOccurrenceReply>),
     Link(RoutineResponder<ReadOccurrenceLinkReply>),
+    Preclaim(RoutineResponder<SynchronizeRoutinePreclaimReply>),
     Recovery,
 }
 impl Reply {
@@ -72,6 +80,9 @@ impl Reply {
             Self::Read(reply) => reply.send(Ok(ReadPreparationReply::Refused { code })),
             Self::Finalize(reply) => reply.send(Ok(FinalizeOccurrenceReply::Refused { code })),
             Self::Link(reply) => reply.send(Ok(ReadOccurrenceLinkReply::Refused { code })),
+            Self::Preclaim(reply) => {
+                reply.send(Ok(SynchronizeRoutinePreclaimReply::Refused { code }))
+            }
             Self::Recovery => {}
         }
     }
@@ -88,6 +99,10 @@ pub(in crate::worker) struct Incoming {
 enum Identity {
     Semantic(RoutineDigest32),
     Claim(RoutineClaimIdentity),
+    Preparation {
+        semantic_hash: RoutineDigest32,
+        preparation_hash: RoutineDigest32,
+    },
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Key {
