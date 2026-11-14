@@ -6,6 +6,10 @@ use crate::LedgerError;
 mod repository;
 pub(crate) mod routines;
 pub use routines::RoutinePolicyRecord;
+pub use routines::{
+    RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutineQueuedCursor,
+    RoutineRecoveryEntry, RoutineSlotCursor,
+};
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::{

@@ -60,6 +60,46 @@ fn submission() -> BotSubmission {
 }
 
 #[test]
+fn routine_foundation_shared_owner_forwards_route_and_bounded_readers_without_execution() {
+    let mut shared = SharedLedger::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap());
+    let s = submission();
+    shared.bots().unwrap().admit_bot(&s).unwrap();
+    let route = RoutineRouteIdentity {
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        schedule: ScheduleId::mint(),
+        workspace: s.workspace,
+        creation_request: BotRequestId::mint(),
+        seed_hash: RoutineDigest32::from_bytes([9; 32]),
+        created_at_ms: 0,
+    };
+    shared
+        .bots()
+        .unwrap()
+        .register_routine_route(&route)
+        .unwrap();
+    let reader: &dyn koru_delegate_runtime::RoutineLedger = &shared;
+    assert_eq!(
+        reader.routine_route(route.schedule).unwrap(),
+        Some(route.clone())
+    );
+    assert!(reader.held_routine_page(None).unwrap().entries.is_empty());
+    let page = reader.queued_routine_page(None).unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert!(matches!(&page.entries[0].1, Ok(None)));
+    assert!(
+        reader
+            .routine_slots_page(&route, None)
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+    let mut changed = route;
+    changed.creation_request = BotRequestId::mint();
+    assert!(reader.routine_slots_page(&changed, None).is_err());
+}
+
+#[test]
 fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory_database() {
     let mut shared = SharedLedger::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap());
     let mut reader = shared.clone();
