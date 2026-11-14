@@ -3,7 +3,7 @@ use super::*;
 use koru_delegate_core::*;
 use koru_delegate_schedule::*;
 
-fn fixture() -> (ScheduleHeader, ScheduleName) {
+pub(in crate::schedule) fn fixture() -> (ScheduleHeader, ScheduleName) {
     let owner = BotOwner {
         user_scope: koru_store_core::UserScopeId::new(),
         device: DeviceId::new(),
