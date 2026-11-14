@@ -57,7 +57,7 @@ internal class CloudInventoryPresentation(
     private fun resetPage() {
         cursor = null; history.clear(); workspaceEpoch = null; documentEpoch = null
         mutableState.value = mutableState.value.copy(page = null, firstPage = true, canPrevious = false,
-            loading = false, failed = false)
+            loading = false, failed = false, restarted = false)
     }
     private suspend fun align(next: AndroidAccountStatus): Boolean {
         val changed = status.activeScope != next.activeScope || status.activeAccountId != next.activeAccountId
@@ -118,9 +118,12 @@ internal class CloudInventoryPresentation(
     private fun fail() { mutableState.value = mutableState.value.copy(page = null, loading = false, failed = true) }
     private suspend fun restart() {
         resetPage()
+        // A source/incarnation change invalidates the document selection as
+        // well as its cursor. Discover the current Workspace before opening
+        // another document page; do not retry a retired incarnation.
+        mutableState.value = mutableState.value.copy(selection = CloudInventorySelection.Workspaces, restarted = true)
         if (restarted) { fail(); return }
         restarted = true
-        mutableState.value = mutableState.value.copy(restarted = true)
         request()
     }
     suspend fun visibility(value: Boolean, next: AndroidAccountStatus) = lock.withLock {
