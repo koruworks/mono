@@ -130,6 +130,12 @@ fn context() -> RoutineCallContext {
         Cancellation::default(),
     )
 }
+fn ai_owner(subject: &RunBotSubject) -> koru_ai_core::bots::BotOwner {
+    koru_ai_core::bots::BotOwner {
+        account: subject.provenance.owner.account,
+        device: subject.provenance.owner.device,
+    }
+}
 async fn setup() -> (RoutineWorkerFixture, Arc<Peer>, RunBotSubject) {
     let mut peer = None;
     let fixture = RoutineWorkerFixture::spawn(|seed| {
@@ -275,7 +281,7 @@ async fn routine_gateway_four_tools_invoke_real_worker_with_linked_routine_subje
     assert!(peer.resolves.load(Ordering::Acquire) >= 20);
     let repo = fixture.finish().unwrap();
     assert!(
-        repo.routine_tool_creation_by_request(subject.provenance.owner, subject.provenance.bot, id)
+        repo.routine_tool_creation_by_request(ai_owner(&subject), subject.provenance.bot, id)
             .unwrap()
             .is_some()
     );
@@ -313,7 +319,7 @@ async fn routine_gateway_dropped_future_cancels_real_worker_before_journal_accep
     assert_ne!(listed.is_error, Some(true));
     let repo = fixture.finish().unwrap();
     assert!(
-        repo.routine_tool_creation_by_request(subject.provenance.owner, subject.provenance.bot, id)
+        repo.routine_tool_creation_by_request(ai_owner(&subject), subject.provenance.bot, id)
             .unwrap()
             .is_none()
     );
@@ -344,7 +350,7 @@ async fn routine_gateway_fresh_routine_create_requires_independent_current_claim
     assert_ne!(listed.is_error, Some(true));
     let repo = fixture.finish().unwrap();
     assert!(
-        repo.routine_tool_creation_by_request(subject.provenance.owner, subject.provenance.bot, id)
+        repo.routine_tool_creation_by_request(ai_owner(&subject), subject.provenance.bot, id)
             .unwrap()
             .is_none()
     );
