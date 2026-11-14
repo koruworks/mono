@@ -83,6 +83,8 @@ pub(crate) mod parts {
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
     pub const DEVICES: ControlPart = ControlPart::new("devices");
     pub const CLOUD: ControlPart = ControlPart::new("cloud");
+    pub const STORAGE_HEADING: ControlPart = ControlPart::new("cloud-storage-heading");
+    pub const STORAGE_STATUS: ControlPart = ControlPart::new("cloud-storage-status");
     pub const DIALOG: ControlPart = ControlPart::new("dialog");
     /// The Workspaces section's list of rows.
     pub const WORKSPACES: ControlPart = ControlPart::new("workspaces");
@@ -149,6 +151,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::DifferentCreate => "different-create",
         Control::DifferentSignIn => "different-sign-in",
         Control::DifferentOffline => "different-offline",
+        Control::CloudStorageRetry => "cloud-storage-retry",
         Control::CloudPrimary => "cloud-primary",
         Control::CloudLearnMore => "learn-more",
         Control::ProfileSync(_) => "manage-sync",
@@ -287,9 +290,17 @@ impl ManageView {
                     .with_toggled(self.toggled(placed.control)),
                 _ => SemanticNode::new(cx.control(placed.control), Role::Button),
             };
-            node.with_label(self.control_name(placed))
+            let mut node = node
+                .with_label(self.control_name(placed))
                 .with_bounds(scrolled(placed.rect))
-                .with_actions([Action::Click, Action::Focus])
+                .with_actions([Action::Click, Action::Focus]);
+            if placed.control == Control::CloudStorageRetry
+                && self.laid.disabled.contains(&placed.control)
+            {
+                node.disabled = true;
+                node.actions = vec![Action::Focus];
+            }
+            node
         };
         let in_list = |control: Control| {
             matches!(
@@ -323,6 +334,25 @@ impl ManageView {
                 listed = true;
                 children.push(self.workspaces_list(cx, &button));
             }
+        }
+        if let Some(storage) = self
+            .laid
+            .cloud
+            .as_ref()
+            .and_then(|cloud| cloud.storage.as_ref())
+        {
+            children.push(
+                SemanticNode::new(cx.surface(parts::STORAGE_HEADING), Role::Heading)
+                    .with_label(storage.title.clone())
+                    .with_level(2)
+                    .with_bounds(scrolled(storage.title_at)),
+            );
+            children.push(
+                SemanticNode::new(cx.surface(parts::STORAGE_STATUS), Role::Label)
+                    .with_label(storage.body.clone())
+                    .with_bounds(scrolled(storage.body_at))
+                    .with_live(accesskit::Live::Polite),
+            );
         }
         if self.content_page_open() {
             let form = self.form_rect();
@@ -610,6 +640,9 @@ impl ManageView {
         rev.bool(self.switcher.open)
             .opt_uuid(self.disclosed.map(|id| id.as_uuid()));
         if let Some(laid) = &self.laid.cloud {
+            if let Some(storage) = &laid.storage {
+                rev.str(&storage.title).str(&storage.body);
+            }
             for row in &laid.rows {
                 rev.str(&row.sub_text)
                     .bool(self.c.cloud_sync_on(row.profile));

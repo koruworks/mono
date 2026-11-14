@@ -594,14 +594,20 @@ impl ProfilesController {
             .preview_request
             .is_some()
             .then(|| std::time::Instant::now() + std::time::Duration::from_millis(16));
-        match (preview, self.progress.deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [
+            preview,
+            self.progress.deadline(),
+            self.cloud_storage_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     pub fn maintain(&mut self, now: std::time::Instant) -> bool {
-        self.drain_deletion_preview() | self.maintain_cloud_progress(now)
+        self.drain_deletion_preview()
+            | self.maintain_cloud_progress(now)
+            | self.maintain_cloud_storage(now)
     }
 }
 

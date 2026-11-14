@@ -17,6 +17,7 @@
 //! subscription read and the per-Profile read share a state struct rather than
 //! sitting in two modules that would have to agree.
 use super::*;
+mod storage;
 use crate::mainview::cloud_sync::Connection;
 use koru_agent_wire::CloudSyncProfile;
 use koru_i18n::{Key as TextKey, Lang};
@@ -48,6 +49,7 @@ pub(super) struct SyncPending {
     set: Option<(String, bool)>,
 }
 pub(super) struct State {
+    storage: storage::Storage,
     pub(super) status: Status,
     access: Option<bool>,
     due: bool,
@@ -67,6 +69,7 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            storage: Default::default(),
             status: Status::Unknown,
             access: None,
             due: true,
@@ -104,6 +107,7 @@ impl ProfilesController {
         self.cloud_visible = visible;
     }
     pub fn refresh_cloud(&mut self) {
+        self.cloud.storage.refresh();
         if self.cloud.pending.is_none() {
             self.cloud.due = true;
             self.cloud.status = Status::Unknown;
@@ -132,7 +136,7 @@ impl ProfilesController {
             });
             return Some(AccountCommand::InspectCloudSubscription { request_id: id });
         }
-        if self.cloud.sync_pending.is_some() {
+        if self.cloud.pending.is_some() || self.cloud.sync_pending.is_some() {
             return None;
         }
         // A write the person has already made is more urgent than a re-read, and
@@ -163,10 +167,13 @@ impl ProfilesController {
             });
             return Some(AccountCommand::InspectCloudSync { request_id: id });
         }
-        None
+        self.cloud.storage.take(std::time::Instant::now())
     }
     pub(super) fn cloud_submission(&self, command: &AccountCommand) -> Option<CommandSubmissionId> {
         match command {
+            AccountCommand::InspectCloudPlan { request_id } => {
+                self.cloud.storage.submission(*request_id)
+            }
             AccountCommand::InspectCloudSubscription { request_id } => self
                 .cloud
                 .pending
@@ -186,6 +193,9 @@ impl ProfilesController {
     pub(super) fn cloud_admitted(&mut self, admission: CommandAdmission) -> bool {
         if admission.owner_scope != self.account.active_scope {
             return false;
+        }
+        if self.cloud.storage.admit(admission) {
+            return true;
         }
         if let Some(pending) = self
             .cloud
@@ -208,6 +218,9 @@ impl ProfilesController {
         false
     }
     pub(super) fn cloud_failed(&mut self, failure: CommandFailure) -> bool {
+        if self.cloud.storage.fail(failure) {
+            return true;
+        }
         if self
             .cloud
             .pending
@@ -252,6 +265,17 @@ impl ProfilesController {
         result: &AccountOperationResult,
     ) -> bool {
         match result {
+            AccountOperationResult::CloudPlan {
+                request_id,
+                payload,
+                request_elapsed_millis,
+            } => self.cloud.storage.result(
+                generation,
+                *request_id,
+                payload.as_ref(),
+                *request_elapsed_millis,
+                std::time::Instant::now(),
+            ),
             AccountOperationResult::CloudSubscription {
                 request_id,
                 current,
