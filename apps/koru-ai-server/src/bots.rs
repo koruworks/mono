@@ -71,7 +71,15 @@ impl BotAuthority for BotAuthorityAdapter {
         owner_handoff: Option<koru_delegate_core::HandoffId>,
         cancellation: &koru_ai_core::Cancellation,
     ) -> Result<(), BotError> {
-        routine::verify_definition(self, owner, reader, identity, definition, owner_handoff, cancellation)
+        routine::verify_definition(
+            self,
+            owner,
+            reader,
+            identity,
+            definition,
+            owner_handoff,
+            cancellation,
+        )
     }
     fn prepare_routine_document(
         &self,

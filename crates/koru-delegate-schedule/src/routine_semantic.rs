@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Shared scheduler/AI occurrence semantics. No current policy or allocated IDs.
-use crate::{RoutineAssociation, ScheduleContextPointer, ScheduleDefinition, routine_definition_digest};
-use koru_delegate_core::{HandoffId, Objective, RoutineDefinitionIdentity, RoutineDigest32, RoutineDigestError, RoutineSlot, WorkspaceId, routine_digest_json};
+use crate::{
+    RoutineAssociation, ScheduleContextPointer, ScheduleDefinition, routine_definition_digest,
+};
+use koru_delegate_core::{
+    HandoffId, Objective, RoutineDefinitionIdentity, RoutineDigest32, RoutineDigestError,
+    RoutineSlot, WorkspaceId, routine_digest_json,
+};
 use serde::Serialize;
 
 /// Derive this before current model selection, Store capture or ID allocation.
@@ -13,9 +18,15 @@ pub fn routine_semantic_digest(
     workspace: WorkspaceId,
     owner_handoff: Option<HandoffId>,
 ) -> Result<RoutineDigest32, RoutineDigestError> {
-    let creation = definition.routine.as_ref().ok_or(RoutineDigestError::Invalid)?;
-    if !slot.valid() || !creation.valid() || creation.owner != slot.owner
-        || creation.bot != slot.bot || creation.home != workspace
+    let creation = definition
+        .routine
+        .as_ref()
+        .ok_or(RoutineDigestError::Invalid)?;
+    if !slot.valid()
+        || !creation.valid()
+        || creation.owner != slot.owner
+        || creation.bot != slot.bot
+        || creation.home != workspace
     {
         return Err(RoutineDigestError::Invalid);
     }
@@ -24,14 +35,18 @@ pub fn routine_semantic_digest(
         digest: routine_definition_digest(definition, workspace, owner_handoff)?,
         owner_handoff,
     };
-    routine_digest_json(b"koru.bot.routine.semantic.v1", &SemanticV1 {
-        version: 1,
-        slot,
-        definition: definition_identity,
-        creation,
-        objective: &definition.template.objective,
-        task_context: &definition.template.context,
-    }, 4 * 1024 * 1024)
+    routine_digest_json(
+        b"koru.bot.routine.semantic.v1",
+        &SemanticV1 {
+            version: 1,
+            slot,
+            definition: definition_identity,
+            creation,
+            objective: &definition.template.objective,
+            task_context: &definition.template.context,
+        },
+        4 * 1024 * 1024,
+    )
 }
 
 // Field order is the versioned canonical encoding. Context is an ordered list;

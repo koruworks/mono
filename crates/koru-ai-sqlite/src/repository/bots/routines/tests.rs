@@ -5,7 +5,7 @@ mod recovery;
 fn hash() -> RoutineDigest32 {
     RoutineDigest32::from_bytes([7; 32])
 }
-fn fixture() -> (Repository, Bot, BotOwner, BotRoutineCreate) {
+pub(super) fn fixture() -> (Repository, Bot, BotOwner, BotRoutineCreate) {
     let mut repo = Repository::in_memory().unwrap();
     let bot = super::super::tests::fixture_bot();
     repo.save_bot(
@@ -28,7 +28,7 @@ fn fixture() -> (Repository, Bot, BotOwner, BotRoutineCreate) {
     .unwrap();
     (repo, bot, owner, command)
 }
-fn prepared(
+pub(super) fn prepared(
     repo: &mut Repository,
     owner: BotOwner,
     command: &BotRoutineCreate,
@@ -39,7 +39,7 @@ fn prepared(
         .unwrap()
         .unwrap()
 }
-fn confirm(c: &BotRoutineCreation) -> BotRoutineCreationTransition {
+pub(super) fn confirm(c: &BotRoutineCreation) -> BotRoutineCreationTransition {
     BotRoutineCreationTransition::Confirmed(BotRoutineStoreConfirmation {
         identity: c.identity.clone(),
         origin_edit_revision: vec![1, 2, 3],

@@ -256,7 +256,9 @@ impl BotCommand {
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
         match self {
             Self::ReadRoutineClaim { slot } => Some(&slot.owner),
-            Self::AcknowledgeRoutineLink { acknowledgement } => Some(&acknowledgement.claim.slot.owner),
+            Self::AcknowledgeRoutineLink { acknowledgement } => {
+                Some(&acknowledgement.claim.slot.owner)
+            }
             Self::RegisterRoutineRoute { identity } => Some(&identity.owner),
             Self::Hello { owner, .. }
             | Self::PendingNativeEffects { owner, .. }

@@ -24,11 +24,17 @@ impl ScheduleDocument {
         let doc = Self::adopt(raw)?;
         let header = doc.header()?;
         let handoff = doc.handoff_state()?;
-        if !doc.is_writable() || header.schedule != schedule
+        if !doc.is_writable()
+            || header.schedule != schedule
             || header.definition != *definition
-            || definition.routine.as_ref().is_none_or(|a| !a.valid() || a.owner.device != owner)
+            || definition
+                .routine
+                .as_ref()
+                .is_none_or(|a| !a.valid() || a.owner.device != owner)
             || definition.lifecycle != ScheduleLifecycle::Active
-            || handoff.owner != owner || handoff.epoch != epoch || !handoff.pending.is_empty()
+            || handoff.owner != owner
+            || handoff.epoch != epoch
+            || !handoff.pending.is_empty()
             || doc.root().get(K_RETIRED).is_some()
         {
             return Err(invalid());

@@ -106,11 +106,19 @@ impl Actor {
         let device = self.device;
         let reply = match command {
             BotCommand::ReadRoutineClaim { slot } => BotReply::RoutineClaim {
-                observation: self.orchestrator.read_routine_claim(&slot, device).map_err(bot_failure)?,
+                observation: self
+                    .orchestrator
+                    .read_routine_claim(&slot, device)
+                    .map_err(bot_failure)?,
             },
-            BotCommand::AcknowledgeRoutineLink { acknowledgement } => BotReply::RoutineLinkAcknowledged {
-                record: self.orchestrator.acknowledge_routine_link(&acknowledgement, device).map_err(bot_failure)?,
-            },
+            BotCommand::AcknowledgeRoutineLink { acknowledgement } => {
+                BotReply::RoutineLinkAcknowledged {
+                    record: self
+                        .orchestrator
+                        .acknowledge_routine_link(&acknowledgement, device)
+                        .map_err(bot_failure)?,
+                }
+            }
             BotCommand::RegisterRoutineRoute { identity } => BotReply::RoutineRoute {
                 identity: self
                     .orchestrator

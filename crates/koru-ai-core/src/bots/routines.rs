@@ -10,14 +10,14 @@ use koru_delegate_schedule::{
 use serde::{Deserialize, Serialize};
 
 mod creation;
-mod preparation;
 mod occurrence;
-pub use occurrence::*;
+mod preparation;
 pub use creation::*;
-use koru_delegate_schedule::routine_wire as strict;
-pub use preparation::*;
 /// Existing neutral definition, re-exported for trusted adapter signatures.
 pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
+use koru_delegate_schedule::routine_wire as strict;
+pub use occurrence::*;
+pub use preparation::*;
 
 pub const BOT_ROUTINE_SCOPE: &str = "koru.bot.routine.v1";
 pub const BOT_ROUTINE_SEED_BYTES: usize = 4 * 1024 * 1024;

@@ -6,11 +6,20 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
-    fn read_routine_claim(&self, slot: &RoutineSlot) -> Result<RoutineClaimObservation, BotLedgerError> {
+    fn read_routine_claim(
+        &self,
+        slot: &RoutineSlot,
+    ) -> Result<RoutineClaimObservation, BotLedgerError> {
         self.0.lock().unwrap().read_routine_claim(slot)
     }
-    fn acknowledge_routine_link(&mut self, acknowledgement: &RoutineLinkAcknowledgement) -> Result<RoutineClaimRecord, BotLedgerError> {
-        self.0.lock().unwrap().acknowledge_routine_link(acknowledgement)
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &RoutineLinkAcknowledgement,
+    ) -> Result<RoutineClaimRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .acknowledge_routine_link(acknowledgement)
     }
     fn register_routine_route(
         &mut self,

@@ -39,6 +39,7 @@ pub(crate) fn prepare_library_submission_tx(
 mod bounded;
 mod capture;
 mod memory;
+pub(crate) use capture::capture_on as library_capture_on;
 pub(crate) use capture::insert_library_capture_tx;
 #[cfg(test)]
 mod tests;

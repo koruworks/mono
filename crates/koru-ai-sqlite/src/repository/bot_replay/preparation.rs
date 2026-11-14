@@ -144,6 +144,45 @@ pub(super) fn prepare_association_on(
     now: Timestamp,
 ) -> Result<InferenceAttempt, AiError> {
     validate_prepared_submission(tx, preparation, submission)?;
+    prepare_checked_association_on(tx, preparation, submission, now)
+}
+
+/// Only the occurrence writer calls this, after its exact durable claim check
+/// and draft-to-v2/Linked CAS in the same transaction. Ordinary entry points
+/// retain their v1 and canonical predecessor guards above.
+pub(crate) fn prepare_routine_association_on(
+    tx: &Connection,
+    turn: &PendingTurn,
+    prepared: &koru_delegate_core::RoutinePrepared,
+    now: Timestamp,
+) -> Result<InferenceAttempt, AiError> {
+    if !prepared.valid() || turn.user_message.id.as_uuid() != prepared.ids.user_message {
+        return Err(invariant_failed());
+    }
+    let preparation = BotChatPreparation::Turn(turn.clone());
+    validate_prepared_identity(&preparation, &prepared.submission)?;
+    let p = &prepared.submission.provenance;
+    let exact:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_routine_preparations d JOIN bot_command_receipts r ON r.user_scope_id=d.user_scope_id AND r.request_id=d.submission_request_id WHERE d.user_scope_id=?1 AND d.owner_device_id=?2 AND d.bot_id=?3 AND d.schedule_id=?4 AND d.occurrence_ms=?5 AND d.stage='linked' AND d.preparation_hash=?6 AND d.submission_request_id=?7 AND d.run_id=?8 AND d.chat_id=?9 AND d.attempt_id=?10 AND d.user_message_id=?11 AND d.assistant_message_id=?12 AND r.command_kind='routine_occurrence' AND r.submission_version=2 AND r.stage='prepared')",
+        params![p.owner.user_scope.to_storage(),p.owner.device.to_storage(),p.bot.to_storage(),prepared.slot.schedule.to_storage(),prepared.slot.occurrence_ms,prepared.preparation_hash.as_bytes().as_slice(),prepared.ids.submission.to_storage(),prepared.ids.run.to_storage(),prepared.ids.chat.to_string(),prepared.ids.attempt.to_string(),prepared.ids.user_message.to_string(),prepared.ids.assistant_message.to_string()], |r|r.get(0)).map_err(storage_failed)?;
+    if !exact {
+        return Err(invariant_failed());
+    }
+    let receipt =
+        super::super::bots::admission::read_bot_submission_on(tx, p.owner.user_scope, p.submission)
+            .map_err(|_| invariant_failed())?
+            .ok_or_else(invariant_failed)?;
+    if receipt.intent.submission != prepared.submission {
+        return Err(invariant_failed());
+    }
+    prepare_checked_association_on(tx, &preparation, &prepared.submission, now)
+}
+
+fn prepare_checked_association_on(
+    tx: &Connection,
+    preparation: &BotChatPreparation,
+    submission: &BotSubmission,
+    now: Timestamp,
+) -> Result<InferenceAttempt, AiError> {
     let attempt = preparation.attempt();
     let assistant = preparation.assistant();
     let p = &submission.provenance;
