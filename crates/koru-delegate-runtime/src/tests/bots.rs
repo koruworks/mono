@@ -3,6 +3,7 @@
 mod boot;
 mod host_gone;
 mod native_results;
+mod routines;
 
 use super::*;
 use koru_delegate_core::*;
@@ -13,6 +14,12 @@ impl BotLedger for RecordingStore {
         identity: &RoutineRouteIdentity,
     ) -> Result<RoutineRouteIdentity, BotLedgerError> {
         self.inner.lock().unwrap().register_routine_route(identity)
+    }
+    fn stop_unstarted_routine(
+        &mut self,
+        key: &BotRunKey,
+    ) -> Result<Option<koru_delegate_core::RoutineClaimRecord>, BotLedgerError> {
+        self.inner.lock().unwrap().stop_unstarted_routine(key)
     }
     fn bot_boot_inventory(
         &self,

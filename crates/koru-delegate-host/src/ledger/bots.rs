@@ -12,6 +12,12 @@ impl BotLedger for SharedLedger {
     ) -> Result<RoutineRouteIdentity, BotLedgerError> {
         self.0.lock().unwrap().register_routine_route(identity)
     }
+    fn stop_unstarted_routine(
+        &mut self,
+        key: &BotRunKey,
+    ) -> Result<Option<RoutineClaimRecord>, BotLedgerError> {
+        self.0.lock().unwrap().stop_unstarted_routine(key)
+    }
     fn bot_boot_inventory(
         &self,
         owner: BotOwner,

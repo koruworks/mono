@@ -182,6 +182,13 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
         device: koru_delegate_core::DeviceId,
         plan: ScheduleClaimPlan,
     ) -> PortResult<Option<ScheduleClaimAuthority>> {
+        routine_claim_location(
+            self.document,
+            match &plan {
+                ScheduleClaimPlan::BotRoutine { prepared, .. } => Some(prepared.slot.schedule),
+                _ => None,
+            },
+        )?;
         self.doc
             .claim_authority(self.workspace, device, plan)
             .map_err(Into::into)
@@ -206,6 +213,16 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
             }
         }
     }
+}
+
+fn routine_claim_location(
+    document: DocumentId,
+    schedule: Option<koru_delegate_core::ScheduleId>,
+) -> Result<(), ScheduleDocumentError> {
+    if schedule.is_some_and(|schedule| schedule.as_uuid() != document.as_uuid()) {
+        return Err(ScheduleDocumentError::ClaimBindingMismatch);
+    }
+    Ok(())
 }
 
 struct Watch {
@@ -666,6 +683,15 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
     use std::sync::mpsc;
+
+    #[test]
+    fn routine_claim_location_requires_canonical_physical_store_document() {
+        let schedule = koru_delegate_core::ScheduleId::mint();
+        let canonical = DocumentId::from_uuid(schedule.as_uuid());
+        assert!(routine_claim_location(canonical, Some(schedule)).is_ok());
+        assert!(routine_claim_location(DocumentId::new(), Some(schedule)).is_err());
+        assert!(routine_claim_location(DocumentId::new(), None).is_ok());
+    }
 
     fn header() -> ScheduleHeader {
         ScheduleHeader {

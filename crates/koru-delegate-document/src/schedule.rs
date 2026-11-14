@@ -8,7 +8,9 @@ use std::fmt;
 mod seed;
 
 use koru_delegate_core::{
-    DelegationRequest, DeviceId, HandoffId, RunContextItem, RunId, ScheduleId, WorkspaceId,
+    DelegationRequest, DeviceId, HandoffId, RoutineClaimFacts, RoutineDefinitionIdentity,
+    RoutinePrepared, RoutineRepresentativeMiss, RoutineSlot, RunContextItem, RunId, ScheduleId,
+    WorkspaceId,
 };
 use koru_delegate_schedule::{
     DelegationTemplate, HandoffEvent, HandoffState, ScheduleDefinition, ScheduleFiring,
@@ -47,6 +49,10 @@ pub enum ScheduleWrite {
 /// its authoritative template.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ScheduleClaimPlan {
+    BotRoutine {
+        prepared: RoutinePrepared,
+        representative_miss: Option<RoutineRepresentativeMiss>,
+    },
     Run {
         occurrence_ms: i64,
         run: RunId,
@@ -61,6 +67,10 @@ pub enum ScheduleClaimPlan {
 }
 
 enum BoundScheduleClaim {
+    BotRoutine {
+        prepared: RoutinePrepared,
+        representative_miss: Option<RoutineRepresentativeMiss>,
+    },
     Run {
         occurrence_ms: i64,
         request: DelegationRequest,
@@ -181,11 +191,14 @@ impl ScheduleClaimAuthority {
                     request,
                 })
             }
-            BoundScheduleClaim::Skip { .. } => Err(ScheduleDocumentError::ClaimBindingMismatch),
+            _ => Err(ScheduleDocumentError::ClaimBindingMismatch),
         }
     }
 
     pub fn into_skip(self) -> Result<ScheduleSkipClaim> {
+        if self.definition.routine.is_some() {
+            return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
+        }
         self.validate_current()?;
         match self.binding {
             BoundScheduleClaim::Skip {
@@ -202,8 +215,42 @@ impl ScheduleClaimAuthority {
                 outcome,
                 busy_holder,
             }),
-            BoundScheduleClaim::Run { .. } => Err(ScheduleDocumentError::ClaimBindingMismatch),
+            _ => Err(ScheduleDocumentError::ClaimBindingMismatch),
         }
+    }
+
+    /// Consume actual live authority. Document versions are not compared:
+    /// unrelated name/history changes do not alter the authority state above.
+    pub fn into_bot_routine(self) -> Result<RoutineClaimFacts> {
+        self.validate_current()?;
+        let association = self
+            .definition
+            .routine
+            .as_ref()
+            .ok_or(ScheduleDocumentError::ClaimBindingMismatch)?;
+        let BoundScheduleClaim::BotRoutine {
+            prepared,
+            representative_miss,
+        } = self.binding
+        else {
+            return Err(ScheduleDocumentError::ClaimBindingMismatch);
+        };
+        let slot = RoutineSlot {
+            owner: association.owner,
+            bot: association.bot,
+            schedule: self.schedule,
+            occurrence_ms: prepared.slot.occurrence_ms,
+        };
+        let definition = routine_identity(&self.definition, self.workspace, self.epoch)?;
+        RoutineClaimFacts::from_consumed_authority(
+            prepared,
+            slot,
+            definition,
+            self.workspace,
+            association.creation_request,
+            representative_miss,
+        )
+        .ok_or(ScheduleDocumentError::ClaimBindingMismatch)
     }
 }
 
@@ -547,14 +594,29 @@ impl ScheduleDocument {
         self.writable()?;
         self.firings()?;
         let header = self.header()?;
-        if header.definition.routine.is_some() {
+        if header.definition.routine.is_some()
+            && !matches!(plan, ScheduleClaimPlan::BotRoutine { .. })
+        {
             return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
         }
         if !self.may_claim(device)? {
             return Ok(None);
         }
-        let binding = bind_plan(&header.definition.template, device, plan)?;
         let handoff = self.handoff_state()?;
+        let binding = match plan {
+            ScheduleClaimPlan::BotRoutine {
+                prepared,
+                representative_miss,
+            } => bind_routine(
+                &header,
+                workspace,
+                device,
+                handoff.epoch,
+                prepared,
+                representative_miss,
+            )?,
+            ordinary => bind_plan(&header.definition.template, device, ordinary)?,
+        };
         Ok(Some(ScheduleClaimAuthority {
             doc: self.doc.clone(),
             compatibility: self.compatibility,
@@ -952,6 +1014,77 @@ fn decode_list<T: DeserializeOwned>(list: LoroList, part: &'static str) -> Resul
         .into_iter()
         .map(|value| decode(value, part))
         .collect()
+}
+
+fn routine_identity(
+    definition: &ScheduleDefinition,
+    workspace: WorkspaceId,
+    epoch: Option<HandoffId>,
+) -> Result<RoutineDefinitionIdentity> {
+    Ok(RoutineDefinitionIdentity {
+        revision: definition.revision,
+        digest: koru_delegate_schedule::routine_definition_digest(definition, workspace, epoch)
+            .map_err(|_| ScheduleDocumentError::ClaimBindingMismatch)?,
+        owner_handoff: epoch,
+    })
+}
+
+fn bind_routine(
+    header: &ScheduleHeader,
+    workspace: WorkspaceId,
+    device: DeviceId,
+    epoch: Option<HandoffId>,
+    prepared: RoutinePrepared,
+    representative_miss: Option<RoutineRepresentativeMiss>,
+) -> Result<BoundScheduleClaim> {
+    let definition = &header.definition;
+    let association = definition
+        .routine
+        .as_ref()
+        .ok_or(ScheduleDocumentError::ClaimBindingMismatch)?;
+    let submission = &prepared.submission;
+    let slot = RoutineSlot {
+        owner: association.owner,
+        bot: association.bot,
+        schedule: header.schedule,
+        occurrence_ms: prepared.slot.occurrence_ms,
+    };
+    // The prepared union may also contain Role and Knowledge documents. Explicit
+    // task pointers must each be present; inert template execution settings are
+    // deliberately not copied over the independently captured Bot submission.
+    if !prepared.valid()
+        || prepared.slot != slot
+        || association.home != workspace
+        || association.owner.device != device
+        || submission.workspace != workspace
+        || prepared.definition != routine_identity(definition, workspace, epoch)?
+        || submission.request.objective != definition.template.objective
+        || koru_delegate_core::Objective::new(&submission.input.text).ok().as_ref()
+            != Some(&definition.template.objective)
+        || !submission.input.attachment_ids.is_empty()
+        || !submission.input.references.is_empty()
+        || !submission.input.skills.is_empty()
+        || submission.request.context.len() > 33
+        || definition.template.context.len() > 16
+        || !definition.template.context.iter().all(|pointer| {
+            matches!(pointer, koru_delegate_schedule::ScheduleContextPointer::Document { workspace: home, .. } if *home == workspace)
+                && submission.request.context.iter().any(|pin|
+                    context_matches(std::slice::from_ref(pointer), std::slice::from_ref(pin)))
+        })
+        || prepared.slot.occurrence_ms < definition.effective_at_ms
+        || representative_miss.is_some_and(|miss| {
+            miss.occurrence_ms < definition.effective_at_ms
+                || miss.occurrence_ms >= prepared.slot.occurrence_ms
+                || miss.planned_run == prepared.ids.run
+                || miss.planned_run.to_storage().parse::<RunId>().ok() != Some(miss.planned_run)
+        })
+    {
+        return Err(ScheduleDocumentError::ClaimBindingMismatch);
+    }
+    Ok(BoundScheduleClaim::BotRoutine {
+        prepared,
+        representative_miss,
+    })
 }
 
 fn bind_plan(

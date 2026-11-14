@@ -544,7 +544,11 @@ impl Orchestrator {
                 );
             }
             None if fence.is_some() => return Err(refused("bot_fenced")),
-            None => {}
+            None => {
+                if self.bot_ledger()?.stop_unstarted_routine(key)?.is_some() {
+                    return Ok(());
+                }
+            }
         }
         // cancel specializes Bot retirement below; it never needs a human lease.
         self.cancel(key.run)?;

@@ -256,6 +256,28 @@ pub trait RunStore: ScheduleLedger {
 /// The local half of schedule execution. The authority token is minted only
 /// after reading the synced document, so the ledger cannot be asked to claim
 /// from an unowned or retired schedule through this production seam.
+pub trait RoutineLedger: Send {
+    fn claim_bot_routine(
+        &mut self,
+        authority: ScheduleClaimAuthority,
+        fresh: &koru_delegate_core::FreshBotPolicyProof,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    >;
+    fn read_routine_claim(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<koru_delegate_core::RoutineClaimObservation, koru_delegate_sqlite::BotLedgerError>;
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
+    ) -> Result<koru_delegate_core::RoutineClaimRecord, koru_delegate_sqlite::BotLedgerError>;
+}
+
 pub trait ScheduleLedger: Send {
     fn claim_run(
         &mut self,
@@ -641,6 +663,9 @@ pub trait ScheduleDocumentHandle: Send {
     /// Bind a single-use claim to this handle's real Store workspace. The
     /// caller supplies only the occurrence plan; it cannot pair the document
     /// with an arbitrary workspace or later substitute another slot/request.
+    /// For BotRoutine, implementations must also bind the physical Store
+    /// DocumentId to the candidate ScheduleId. Header identity alone cannot
+    /// prove the canonical physical location of a copied Schedule document.
     fn claim_authority(
         &self,
         device: koru_delegate_core::DeviceId,
