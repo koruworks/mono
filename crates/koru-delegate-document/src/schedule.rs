@@ -7,8 +7,10 @@ use std::fmt;
 
 mod expiry;
 mod occurrence;
+mod overview;
 mod seed;
 pub use expiry::{RoutineExpiryAuthority, RoutineExpiryPlan};
+pub use overview::RoutineOverview;
 
 use koru_delegate_core::{
     DelegationRequest, DeviceId, HandoffId, RoutineClaimFacts, RoutineDefinitionIdentity,

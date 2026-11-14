@@ -62,6 +62,15 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn read_routine_overview(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<RoutineOverviewObservation, BotError> {
+        routine::overview::read(self, owner, reader, identity, cancellation)
+    }
     fn verify_routine_definition(
         &self,
         owner: BotOwner,
