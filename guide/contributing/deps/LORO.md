@@ -249,6 +249,14 @@ object: replacing that object with the fork could discard pending device ops.
 the explicit SQLite Cloud disk lane verifies refusal, ancestor arrival, retry
 and reopen for both documents and workspace manifests.
 
+The pinned 1.13.9 public API has no query for parked missing-ancestor imports on
+an existing `LoroDoc`. `get_pending_txn_len()` counts local uncommitted operations,
+not pending imported dependencies. An attached document with equal `oplog_vv()`
+and `state_vv()` proves the coherently applied state, not that all parked device
+updates are absent. A fork can omit those pending updates, so inspecting it
+cannot establish synchronization completeness. Read-only projections must state
+this limitation; import/claim authority must retain its separate causal checks.
+
 ### Export length is known after allocation
 
 The pinned Rust `LoroDoc::export(&self, ExportMode)` returns

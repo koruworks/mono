@@ -3,8 +3,8 @@
 //! Engine-owned Bot configuration. No execution, HTTP or database owner lives here.
 
 use crate::{Chat, ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
-pub use koru_delegate_core::{BotId, BotRequestId, DeviceId, RunId};
 use koru_delegate_core::Objective;
+pub use koru_delegate_core::{BotId, BotRequestId, DeviceId, RunId};
 use koru_delegate_schedule::{RecurrenceRule, ScheduleName};
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
@@ -202,6 +202,18 @@ pub trait BotAuthority: Send + Sync {
         _cancellation: &crate::Cancellation,
     ) -> Result<PreparedMemoryPage, MemoryAuthorityError> {
         Err(BotError::Unavailable.into())
+    }
+
+    /// Private bounded current-state observation for an independently validated
+    /// Bound creation. It grants no execution authority and creates no content.
+    fn read_routine_overview(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotRoutineCreationIdentity,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<RoutineOverviewObservation, BotError> {
+        Err(BotError::Unavailable)
     }
 
     /// Current complete Schedule definition and human/Profile proof, performed
