@@ -48,6 +48,9 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# Existing owner edges, opt-in fixtures only when compiling this crate's tests.
+koru-ai-server = { path = "../../apps/koru-ai-server", features = ["fixtures"] }
+koru-api-gateway-core = { path = "../koru-api-gateway-core", features = ["fixtures"] }
 # **What is left is what the colocated tests need**, which is much less than
 # before: the six integration suites that lived in `tests/` moved to
 # `apps/koru-agent/tests/` with the executable they spawned, in Plan 7 of the

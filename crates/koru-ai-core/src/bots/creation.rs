@@ -10,6 +10,8 @@
 //! is derived only from the BotId under the AI root. Nothing here deletes a
 //! folder or moves a page to Trash.
 use super::*;
+mod identity;
+pub use identity::{BotCreationIdentity, bot_creation_identity};
 
 /// The Store scope a Bot's Role page is created under. Distinct from every
 /// other creation namespace, so a key here never replays another's page.

@@ -4,6 +4,31 @@
 use super::*;
 use koru_delegate_core::{BotPolicyBarrier, CapturedBotPolicy};
 
+/// Current authority metadata only. No execution configuration or content.
+/// Repository readers validate the bounded projection; this is not a grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotPolicyMetadata {
+    pub owner: BotOwner,
+    pub id: BotId,
+    pub home_workspace: WorkspaceId,
+    pub main_chat: ChatId,
+    pub revision: u64,
+    pub policy_revision: u64,
+    pub lifecycle: BotLifecycle,
+    pub paused: bool,
+    pub access: BotAccess,
+    pub selected_pages: Vec<BotPage>,
+    /// An unfinished whole-Bot operation, including a parked operation.
+    /// Chat-only lifecycle operations do not fence a fresh Routine.
+    pub pending_lifecycle: Option<BotRequestId>,
+    pub pending_change: Option<(BotRequestId, BotOperationKind)>,
+}
+impl BotPolicyMetadata {
+    pub fn policy(&self) -> CapturedBotPolicy {
+        bot_native_policy_from(self.home_workspace, self.access, &self.selected_pages)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotAccessReceipt {
     pub request: BotRequestId,
@@ -31,14 +56,23 @@ impl BotAccessReceipt {
 
 /// Canonical current policy only. Task capture is intersected by the delegate.
 pub fn bot_native_policy(bot: &Bot) -> CapturedBotPolicy {
+    bot_native_policy_from(bot.home_workspace, bot.access, &bot.selected_pages)
+}
+
+/// Shared policy construction for full Bot and bounded authority-only reads.
+pub fn bot_native_policy_from(
+    home: WorkspaceId,
+    access: BotAccess,
+    pages: &[BotPage],
+) -> CapturedBotPolicy {
     CapturedBotPolicy {
-        workspace: bot.home_workspace,
-        destination: bot.home_workspace,
-        access: match bot.access {
+        workspace: home,
+        destination: home,
+        access: match access {
             BotAccess::Default => koru_delegate_core::BotAccess::Default,
             BotAccess::Workspace => koru_delegate_core::BotAccess::Workspace,
         },
-        selected_pages: bot.selected_pages.iter().map(|p| p.document).collect(),
+        selected_pages: pages.iter().map(|p| p.document).collect(),
     }
 }
 

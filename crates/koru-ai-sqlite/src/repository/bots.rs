@@ -6,6 +6,7 @@ pub(crate) mod admission;
 pub(crate) mod policy;
 
 mod boot;
+mod metadata;
 mod branch;
 pub use boot::BotBootSnapshot;
 pub(crate) mod lifecycle;
