@@ -51,6 +51,8 @@ fun AccountScreen(
     onSwitchAccount: (String) -> Unit = {},
     hiddenProfileCount: Int = 0,
     onSelectProfiles: (List<ProfileId>) -> Unit = {},
+    cloudStorage: CloudStorageState = CloudStorageState(),
+    onRefreshCloudStorage: () -> Unit = {},
 ) {
     var drafts by rememberSaveable(stateSaver = ProfileDraftSaver) { mutableStateOf(emptyMap<String, ProfileSelectionDraft>()) }
     val scope = "${state.activeScope}:${state.activeAccountId.orEmpty()}"
@@ -153,6 +155,10 @@ fun AccountScreen(
                 TextButton(onClick = { onAction(AccountIntent.Cancel, null) }) { Text(stringResource(R.string.account_cancel)) }
             }
             if (state.signedIn) {
+                item {
+                    CloudStorageSection(cloudStorage.forAccount(state.activeScope, state.activeAccountId,
+                        android.os.SystemClock.elapsedRealtime()), onRefreshCloudStorage)
+                }
                 item {
                     Text(stringResource(R.string.account_choose), style = MaterialTheme.typography.titleLarge)
                     TextButton(enabled = state.pending == null && !state.switchPending, onClick = { onAction(AccountIntent.RefreshProfiles, null) }) {

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_storage_refresh">Refresh</string>
+    <string name="cloud_storage_title">Cloud storage</string>
+    <string name="cloud_storage_available">Available: %1$s of %2$s bytes</string>
+    <string name="cloud_storage_used">Used: %1$s bytes</string>
+    <string name="cloud_storage_total">Total: %1$s bytes</string>
+    <string name="cloud_storage_no_limit">No storage limit</string>
+    <string name="cloud_storage_allowance_unknown">Storage allowance unavailable</string>
+    <string name="cloud_storage_checking">Checking Cloud storage…</string>
+    <string name="cloud_storage_calculating">Calculating Cloud storage…</string>
+    <string name="cloud_storage_unknown">Cloud storage usage is unavailable</string>
+    <string name="cloud_storage_schema">Cloud storage cannot be calculated until this data format is supported.</string>
+    <string name="cloud_storage_failed">Could not check Cloud storage</string>
+    <string name="cloud_storage_stale">Last checked %1$s; may be out of date</string>
+    <string name="cloud_storage_explanation">Files count by their original size. Writing does not count yet.</string>
+    <string name="cloud_storage_reserved">Uploads in progress: %1$s bytes</string>
+    <string name="cloud_storage_details">Details</string>
+    <string name="cloud_storage_checked">Last checked %1$s</string>
+</resources>

@@ -293,6 +293,11 @@ fun KoruApp(
         }
         composable(Routes.Account) {
             val account by model.account.collectAsState()
+            val cloudStorage by model.cloudStorage.collectAsStateWithLifecycle()
+            DisposableEffect(model) {
+                model.cloudStorageVisible(true)
+                onDispose { model.cloudStorageVisible(false) }
+            }
             val renderedScope = account.activeScope
             val localProfiles by model.visibleProfiles.collectAsState()
             AccountScreen(account, localProfiles.rows,
@@ -304,7 +309,8 @@ fun KoruApp(
                 },
                 onSwitchAccount = { model.accountAction(AccountIntent.SwitchAccount, appearance.language, renderedScope, accountId = it) },
                 hiddenProfileCount = localProfiles.hiddenCount,
-                onSelectProfiles = { model.accountAction(AccountIntent.SelectProfiles, appearance.language, renderedScope, profiles = it) })
+                onSelectProfiles = { model.accountAction(AccountIntent.SelectProfiles, appearance.language, renderedScope, profiles = it) },
+                cloudStorage = cloudStorage, onRefreshCloudStorage = model::refreshCloudStorage)
         }
         composable(Routes.Diagnostics) {
             val account by model.accountDiagnostics.collectAsState()

@@ -46,6 +46,11 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         },
     )
     val cloudSyncState = cloudSync.state
+    private val cloudStorage = CloudStoragePresentation(scope, android.os.SystemClock::elapsedRealtime,
+        command = { owner -> adapter.command(AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_PLAN, expectedOwnerScope = owner) },
+        cancel = { owner, generation -> adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation,
+            expectedOwnerScope = owner) })
+    val cloudStorageState = cloudStorage.state
     private val cycle = AccountPresentationCycle(presentation) {
         try {
             if (adapter.tick()) AccountObservation(adapter.status.value, adapter.results.value) else null
@@ -85,6 +90,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
             while (isActive) {
                 cycle.tick()
                 cloudSync.observe(adapter.status.value, adapter.results.value)
+                cloudStorage.observe(adapter.status.value, adapter.results.value)
                 cloudSync.inspect(adapter.status.value)
                 delay(200)
             }
@@ -96,6 +102,13 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
      *  is left free for what only it can do. */
     fun setCloudSync(profile: ProfileId, enabled: Boolean, ownerScope: Long) {
         scope.launch { cloudSync.set(profile, enabled, ownerScope) }
+    }
+
+    fun cloudStorageVisible(visible: Boolean) {
+        scope.launch { cloudStorage.visibility(visible, adapter.status.value) }
+    }
+    fun refreshCloudStorage() {
+        scope.launch { cloudStorage.retry(adapter.status.value) }
     }
 
     fun act(intent: AccountIntent, ownerScope: Long, locale: String = "", profile: ProfileId? = null, accountId: String? = null, profiles: List<ProfileId> = emptyList()) {
@@ -114,6 +127,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         dialog.foreground(value)
         browser.foreground(value)
         adapter.foreground(true)
+        scope.launch { cloudStorage.foreground(true, adapter.status.value) }
         if (returning) scope.launch { cycle.foregrounded() }
     }
 
@@ -123,6 +137,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         if (activity === value) {
             activity = null
             adapter.foreground(false)
+            scope.launch { cloudStorage.foreground(false, adapter.status.value) }
         }
     }
 }

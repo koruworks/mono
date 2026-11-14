@@ -67,6 +67,9 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun accountAction(intent: app.koru.mobile.services.AccountIntent, locale: String, ownerScope: Long, profile: ProfileId? = null, accountId: String? = null, profiles: List<ProfileId> = emptyList()) =
         container.account.act(intent, ownerScope, locale, profile, accountId, profiles)
     val cloudSync = container.account.cloudSyncState
+    val cloudStorage = container.account.cloudStorageState
+    fun cloudStorageVisible(visible: Boolean) = container.account.cloudStorageVisible(visible)
+    fun refreshCloudStorage() = container.account.refreshCloudStorage()
     fun setProfileCloudSync(profile: ProfileId, enabled: Boolean, ownerScope: Long) =
         container.account.setCloudSync(profile, enabled, ownerScope)
     /** **How far one Profile's Cloud sync has got**, for the Sync status
