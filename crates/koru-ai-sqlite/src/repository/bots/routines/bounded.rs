@@ -138,9 +138,14 @@ fn decode(
         })
     }).optional().map_err(bad)?;
     if let Some(c) = &creation {
-        c.validate().map_err(bad)?;
-        c.identity.validate_digests().map_err(bad)?;
-        receipt.outcome.validate(&c.identity).map_err(bad)?;
+        c.validate().map_err(|_| BotError::Storage)?;
+        c.identity
+            .validate_digests()
+            .map_err(|_| BotError::Storage)?;
+        receipt
+            .outcome
+            .validate(&c.identity)
+            .map_err(|_| BotError::Storage)?;
         let home: String = conn.query_row(
             "SELECT CASE WHEN typeof(home_workspace_id)='text' AND length(CAST(home_workspace_id AS BLOB))=36 THEN home_workspace_id END FROM bots WHERE bot_id=?1",
             [bot.to_storage()], |r| r.get(0),
