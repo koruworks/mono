@@ -516,6 +516,105 @@ public object MobileAccountResultKt {
     public fun clearCloudPlanRequestElapsedMillis() {
       _builder.clearCloudPlanRequestElapsedMillis()
     }
+
+    /**
+     * ```
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * ```
+     *
+     * `optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];`
+     */
+    public var cloudInventoryJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudInventoryJson")
+        get() = _builder.cloudInventoryJson
+      @kotlin.jvm.JvmName("setCloudInventoryJson")
+        set(value) {
+        _builder.cloudInventoryJson = value
+      }
+    /**
+     * ```
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * ```
+     *
+     * `optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];`
+     */
+    public fun clearCloudInventoryJson() {
+      _builder.clearCloudInventoryJson()
+    }
+    /**
+     * ```
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * ```
+     *
+     * `optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];`
+     * @return Whether the cloudInventoryJson field is set.
+     */
+    public fun hasCloudInventoryJson(): kotlin.Boolean {
+      return _builder.hasCloudInventoryJson()
+    }
+
+    /**
+     * ```
+     * Exact request selectors, echoed for documents on success and failure.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];`
+     */
+    public var cloudWorkspaceId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudWorkspaceId")
+        get() = _builder.cloudWorkspaceId
+      @kotlin.jvm.JvmName("setCloudWorkspaceId")
+        set(value) {
+        _builder.cloudWorkspaceId = value
+      }
+    /**
+     * ```
+     * Exact request selectors, echoed for documents on success and failure.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];`
+     */
+    public fun clearCloudWorkspaceId() {
+      _builder.clearCloudWorkspaceId()
+    }
+    /**
+     * ```
+     * Exact request selectors, echoed for documents on success and failure.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];`
+     * @return Whether the cloudWorkspaceId field is set.
+     */
+    public fun hasCloudWorkspaceId(): kotlin.Boolean {
+      return _builder.hasCloudWorkspaceId()
+    }
+
+    /**
+     * `optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];`
+     */
+    public var cloudIncarnationId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudIncarnationId")
+        get() = _builder.cloudIncarnationId
+      @kotlin.jvm.JvmName("setCloudIncarnationId")
+        set(value) {
+        _builder.cloudIncarnationId = value
+      }
+    /**
+     * `optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];`
+     */
+    public fun clearCloudIncarnationId() {
+      _builder.clearCloudIncarnationId()
+    }
+    /**
+     * `optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];`
+     * @return Whether the cloudIncarnationId field is set.
+     */
+    public fun hasCloudIncarnationId(): kotlin.Boolean {
+      return _builder.hasCloudIncarnationId()
+    }
   }
 }
 public inline fun app.koru.contract.api.v1.MobileAccountResult.copy(block: `app.koru.contract.api.v1`.MobileAccountResultKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.MobileAccountResult =

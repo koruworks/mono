@@ -585,6 +585,26 @@ impl MobileAccount {
                 profile_id: request.profile_id.clone(),
                 enabled: request.cloud_sync_enabled.unwrap_or(false),
             },
+            wire::AccountAction::InspectCloudUsageWorkspaces => {
+                AccountCommand::InspectCloudUsageWorkspaces {
+                    request_id: request.requester,
+                    cursor: request.cloud_cursor.clone(),
+                }
+            }
+            wire::AccountAction::InspectCloudUsageDocuments => {
+                AccountCommand::InspectCloudUsageDocuments {
+                    request_id: request.requester,
+                    workspace_id: request
+                        .cloud_workspace_id
+                        .clone()
+                        .ok_or("account_payload_invalid")?,
+                    incarnation_id: request
+                        .cloud_incarnation_id
+                        .clone()
+                        .ok_or("account_payload_invalid")?,
+                    cursor: request.cloud_cursor.clone(),
+                }
+            }
             wire::AccountAction::InspectCloudPlan => AccountCommand::InspectCloudPlan {
                 request_id: request.requester,
             },
@@ -893,6 +913,26 @@ fn operation_result(
             result.selected_scope = Some(scope_id);
             result.selected_account_id = account_id;
             "account_selected"
+        }
+        AccountOperationResult::CloudUsageWorkspaces {
+            payload, failure, ..
+        } => {
+            result.cloud_inventory_json = payload.map(|payload| payload.as_str().to_owned());
+            result.error_code = failure.map(|failure| failure.code().to_owned());
+            "cloud_usage_workspaces"
+        }
+        AccountOperationResult::CloudUsageDocuments {
+            workspace_id,
+            incarnation_id,
+            payload,
+            failure,
+            ..
+        } => {
+            result.cloud_inventory_json = payload.map(|payload| payload.as_str().to_owned());
+            result.error_code = failure.map(|failure| failure.code().to_owned());
+            result.cloud_workspace_id = Some(workspace_id);
+            result.cloud_incarnation_id = Some(incarnation_id);
+            "cloud_usage_documents"
         }
         AccountOperationResult::CloudPlan {
             payload,

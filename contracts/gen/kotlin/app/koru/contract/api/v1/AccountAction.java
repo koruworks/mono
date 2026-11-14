@@ -120,6 +120,14 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;</code>
    */
   ACCOUNT_ACTION_INSPECT_CLOUD_PLAN(18),
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES(19),
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS(20),
   UNRECOGNIZED(-1),
   ;
 
@@ -226,6 +234,14 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;</code>
    */
   public static final int ACCOUNT_ACTION_INSPECT_CLOUD_PLAN_VALUE = 18;
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES_VALUE = 19;
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS_VALUE = 20;
 
 
   @java.lang.Override
@@ -266,6 +282,8 @@ public enum AccountAction
       case 16: return ACCOUNT_ACTION_START_EMAIL;
       case 17: return ACCOUNT_ACTION_START_APPLE;
       case 18: return ACCOUNT_ACTION_INSPECT_CLOUD_PLAN;
+      case 19: return ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES;
+      case 20: return ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS;
       default: return null;
     }
   }

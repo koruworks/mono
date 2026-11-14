@@ -19,6 +19,9 @@ public  final class AccountCommandRequest extends
     profileId_ = "";
     accountId_ = "";
     profileIds_ = emptyProtobufList();
+    cloudWorkspaceId_ = "";
+    cloudIncarnationId_ = "";
+    cloudCursor_ = "";
   }
   private int bitField0_;
   public static final int HOST_FIELD_NUMBER = 1;
@@ -551,6 +554,204 @@ public  final class AccountCommandRequest extends
   private void clearCloudSyncEnabled() {
     bitField0_ = (bitField0_ & ~0x00000004);
     cloudSyncEnabled_ = false;
+  }
+
+  public static final int CLOUD_WORKSPACE_ID_FIELD_NUMBER = 12;
+  private java.lang.String cloudWorkspaceId_;
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return Whether the cloudWorkspaceId field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudWorkspaceId() {
+    return ((bitField0_ & 0x00000008) != 0);
+  }
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return The cloudWorkspaceId.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudWorkspaceId() {
+    return cloudWorkspaceId_;
+  }
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return The bytes for cloudWorkspaceId.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudWorkspaceIdBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudWorkspaceId_);
+  }
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @param value The cloudWorkspaceId to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudWorkspaceId(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000008;
+    cloudWorkspaceId_ = value;
+  }
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   */
+  private void clearCloudWorkspaceId() {
+    bitField0_ = (bitField0_ & ~0x00000008);
+    cloudWorkspaceId_ = getDefaultInstance().getCloudWorkspaceId();
+  }
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @param value The bytes for cloudWorkspaceId to set.
+   */
+  private void setCloudWorkspaceIdBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudWorkspaceId_ = value.toStringUtf8();
+    bitField0_ |= 0x00000008;
+  }
+
+  public static final int CLOUD_INCARNATION_ID_FIELD_NUMBER = 13;
+  private java.lang.String cloudIncarnationId_;
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return Whether the cloudIncarnationId field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudIncarnationId() {
+    return ((bitField0_ & 0x00000010) != 0);
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return The cloudIncarnationId.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudIncarnationId() {
+    return cloudIncarnationId_;
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return The bytes for cloudIncarnationId.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudIncarnationIdBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudIncarnationId_);
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @param value The cloudIncarnationId to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudIncarnationId(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000010;
+    cloudIncarnationId_ = value;
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   */
+  private void clearCloudIncarnationId() {
+    bitField0_ = (bitField0_ & ~0x00000010);
+    cloudIncarnationId_ = getDefaultInstance().getCloudIncarnationId();
+  }
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @param value The bytes for cloudIncarnationId to set.
+   */
+  private void setCloudIncarnationIdBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudIncarnationId_ = value.toStringUtf8();
+    bitField0_ |= 0x00000010;
+  }
+
+  public static final int CLOUD_CURSOR_FIELD_NUMBER = 14;
+  private java.lang.String cloudCursor_;
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return Whether the cloudCursor field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudCursor() {
+    return ((bitField0_ & 0x00000020) != 0);
+  }
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return The cloudCursor.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudCursor() {
+    return cloudCursor_;
+  }
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return The bytes for cloudCursor.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudCursorBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudCursor_);
+  }
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @param value The cloudCursor to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudCursor(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000020;
+    cloudCursor_ = value;
+  }
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   */
+  private void clearCloudCursor() {
+    bitField0_ = (bitField0_ & ~0x00000020);
+    cloudCursor_ = getDefaultInstance().getCloudCursor();
+  }
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @param value The bytes for cloudCursor to set.
+   */
+  private void setCloudCursorBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudCursor_ = value.toStringUtf8();
+    bitField0_ |= 0x00000020;
   }
 
   public static app.koru.contract.api.v1.AccountCommandRequest parseFrom(
@@ -1195,6 +1396,207 @@ public  final class AccountCommandRequest extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+     * @return Whether the cloudWorkspaceId field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudWorkspaceId() {
+      return instance.hasCloudWorkspaceId();
+    }
+    /**
+     * <pre>
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+     * @return The cloudWorkspaceId.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudWorkspaceId() {
+      return instance.getCloudWorkspaceId();
+    }
+    /**
+     * <pre>
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+     * @return The bytes for cloudWorkspaceId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudWorkspaceIdBytes() {
+      return instance.getCloudWorkspaceIdBytes();
+    }
+    /**
+     * <pre>
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+     * @param value The cloudWorkspaceId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudWorkspaceId(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudWorkspaceId(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudWorkspaceId() {
+      copyOnWrite();
+      instance.clearCloudWorkspaceId();
+      return this;
+    }
+    /**
+     * <pre>
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+     * @param value The bytes for cloudWorkspaceId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudWorkspaceIdBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudWorkspaceIdBytes(value);
+      return this;
+    }
+
+    /**
+     * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+     * @return Whether the cloudIncarnationId field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudIncarnationId() {
+      return instance.hasCloudIncarnationId();
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+     * @return The cloudIncarnationId.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudIncarnationId() {
+      return instance.getCloudIncarnationId();
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+     * @return The bytes for cloudIncarnationId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudIncarnationIdBytes() {
+      return instance.getCloudIncarnationIdBytes();
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+     * @param value The cloudIncarnationId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudIncarnationId(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudIncarnationId(value);
+      return this;
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudIncarnationId() {
+      copyOnWrite();
+      instance.clearCloudIncarnationId();
+      return this;
+    }
+    /**
+     * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+     * @param value The bytes for cloudIncarnationId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudIncarnationIdBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudIncarnationIdBytes(value);
+      return this;
+    }
+
+    /**
+     * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+     * @return Whether the cloudCursor field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudCursor() {
+      return instance.hasCloudCursor();
+    }
+    /**
+     * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+     * @return The cloudCursor.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudCursor() {
+      return instance.getCloudCursor();
+    }
+    /**
+     * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+     * @return The bytes for cloudCursor.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudCursorBytes() {
+      return instance.getCloudCursorBytes();
+    }
+    /**
+     * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+     * @param value The cloudCursor to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudCursor(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudCursor(value);
+      return this;
+    }
+    /**
+     * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudCursor() {
+      copyOnWrite();
+      instance.clearCloudCursor();
+      return this;
+    }
+    /**
+     * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+     * @param value The bytes for cloudCursor to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudCursorBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudCursorBytes(value);
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.AccountCommandRequest)
   }
   @java.lang.Override
@@ -1223,11 +1625,14 @@ public  final class AccountCommandRequest extends
             "expectedOwnerScope_",
             "profileIds_",
             "cloudSyncEnabled_",
+            "cloudWorkspaceId_",
+            "cloudIncarnationId_",
+            "cloudCursor_",
           };
           java.lang.String info =
-              "\u0000\u000b\u0000\u0001\u0001\u000b\u000b\u0000\u0001\u0000\u0001\u1009\u0000\u0002" +
+              "\u0000\u000e\u0000\u0001\u0001\u000e\u000e\u0000\u0001\u0000\u0001\u1009\u0000\u0002" +
               "\u000b\u0003\u0003\u0004\f\u0005\u0003\u0006\u0208\u0007\u0208\b\u0208\t\u1003\u0001" +
-              "\n\u021a\u000b\u1007\u0002";
+              "\n\u021a\u000b\u1007\u0002\f\u1208\u0003\r\u1208\u0004\u000e\u1208\u0005";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {
