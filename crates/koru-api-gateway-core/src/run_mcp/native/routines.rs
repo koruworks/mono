@@ -3,14 +3,15 @@
 use super::*;
 use crate::GatewayState;
 use koru_ai_core::bots::{
-    BotRequestId, BotRoutineCreationObserved, RoutineScheduleName, validate_routine_list_bytes,
+    BotRequestId, BotRoutineCreationObserved, RoutineRecurrenceRule, RoutineScheduleName,
+    validate_routine_list_bytes,
 };
 use koru_ai_core::{Cancellation, DocumentId};
 use koru_ai_server::{
     AiWorkerClient, RunBotSubject, RunRoutineCreate, RunRoutineOperation, RunRoutineRequest,
     RunRoutineResult,
 };
-use koru_delegate_core::{BotProvenance, CapturedBotPolicy, Objective, RecurrenceRule, ScheduleId};
+use koru_delegate_core::{BotProvenance, CapturedBotPolicy, Objective, ScheduleId};
 use rmcp::model::CallToolRequestParams;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -27,7 +28,7 @@ struct Create {
     objective: Objective,
     #[schemars(length(max = 16))]
     documents: Vec<DocumentId>,
-    recurrence: RecurrenceRule,
+    recurrence: RoutineRecurrenceRule,
 }
 #[cfg(test)]
 mod tests;

@@ -17,6 +17,8 @@ mod overview;
 mod owner;
 mod preparation;
 pub use creation::*;
+/// Existing recurrence owner, reused without adding an adapter dependency edge.
+pub use koru_delegate_schedule::RecurrenceRule as RoutineRecurrenceRule;
 pub use koru_delegate_schedule::ScheduleContextPointer as RoutineScheduleContextPointer;
 /// Existing neutral definition, re-exported for trusted adapter signatures.
 pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;

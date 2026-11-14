@@ -2,8 +2,7 @@
 //! Trusted Rust composition only. No serialized principal or owner facade.
 use super::*;
 use koru_delegate_core::{
-    AttemptGeneration, BotProvenance, CapturedBotPolicy, Objective, RecurrenceRule, RunId,
-    ScheduleId,
+    AttemptGeneration, BotProvenance, CapturedBotPolicy, Objective, RunId, ScheduleId,
 };
 
 #[derive(Clone)]
@@ -20,7 +19,7 @@ pub struct RunRoutineCreate {
     pub name: RoutineScheduleName,
     pub objective: Objective,
     pub documents: Vec<koru_ai_core::DocumentId>,
-    pub recurrence: RecurrenceRule,
+    pub recurrence: RoutineRecurrenceRule,
 }
 #[derive(Clone)]
 pub enum RunRoutineOperation {
