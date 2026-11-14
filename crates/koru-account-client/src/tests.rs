@@ -55,6 +55,67 @@ fn flow_id() -> AuthFlowId {
 }
 
 #[test]
+fn cloud_plan_reads_are_typed_bounded_and_use_account_routes() {
+    use koru_account_wire::cloud_plan::*;
+    let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+        "../../koru-account-wire/src/cloud_plan.fixtures.json"
+    ))
+    .unwrap();
+    let token = AccessToken("account-token".into());
+    let authorization = AccountAuthorization::Bearer(&token);
+    for fixture in fixtures["fixtures"].as_array().unwrap() {
+        let value = &fixture["response"];
+        let transport = FakeTransport::responding(value);
+        let client = AccountClient::with_transport(transport.clone());
+        if value["contract"] == "cloud-plan-v1" {
+            let response = client.cloud_plan(&authorization).unwrap();
+            assert_eq!(serde_json::to_value(response).unwrap(), *value);
+            assert_eq!(
+                transport.requests.lock().unwrap()[0].path_and_query,
+                "/v1/account/cloud-plan"
+            );
+        } else {
+            let response = client
+                .cloud_usage_workspaces(&authorization, &CloudUsageWorkspacesQueryV1::default())
+                .unwrap();
+            assert_eq!(serde_json::to_value(response).unwrap(), *value);
+            assert_eq!(
+                transport.requests.lock().unwrap()[0].path_and_query,
+                "/v1/account/cloud-usage/workspaces?limit=100"
+            );
+        }
+    }
+    let transport = FakeTransport::empty();
+    let client = AccountClient::with_transport(transport.clone());
+    for query in [
+        CloudUsageWorkspacesQueryV1 {
+            limit: Some(0),
+            cursor: None,
+        },
+        CloudUsageWorkspacesQueryV1 {
+            limit: Some(101),
+            cursor: None,
+        },
+        CloudUsageWorkspacesQueryV1 {
+            limit: None,
+            cursor: Some("x".repeat(2049)),
+        },
+        CloudUsageWorkspacesQueryV1 {
+            limit: None,
+            cursor: Some("x&account_id=foreign".into()),
+        },
+    ] {
+        assert_eq!(
+            client
+                .cloud_usage_workspaces(&authorization, &query)
+                .unwrap_err(),
+            ClientError::InvalidRequest
+        );
+    }
+    assert!(transport.requests.lock().unwrap().is_empty());
+}
+
+#[test]
 fn callback_query_and_request_debug_never_disclose_secrets() {
     let request = HttpRequest {
         method: HttpMethod::Get,
