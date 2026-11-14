@@ -21,9 +21,10 @@ use koru_session_protocol::{
 };
 
 use super::*;
-mod native_lookup;
-mod routine_route;
 mod admission_read;
+mod native_lookup;
+pub(crate) mod routine;
+mod routine_route;
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {
@@ -224,7 +225,7 @@ fn create(run: RunId) -> CreateRunRequest {
 #[test]
 fn a_live_schedule_admission_defers_create_and_resume_in_arrival_order() {
     let (mut actor, _commands, _inbox) = actor();
-    actor.schedule_admission = Some(RunId::mint());
+    actor.schedule_admission = Some(ScheduleLease::Ordinary(RunId::mint()));
     let (create_reply, _create_answer) = mpsc::sync_channel(1);
     let (resume_reply, _resume_answer) = mpsc::sync_channel(1);
     actor.handle(Command::Create {
@@ -245,7 +246,7 @@ fn a_live_schedule_admission_defers_create_and_resume_in_arrival_order() {
 fn stopped_scheduler_ack_releases_a_retained_postclaim_lease() {
     let (mut actor, commands, inbox) = actor();
     let admission = RunId::mint();
-    actor.schedule_admission = Some(admission);
+    actor.schedule_admission = Some(ScheduleLease::Ordinary(admission));
     actor.attach_scheduler(crate::scheduler::test_control(commands));
     let (stop, stopped) = mpsc::channel();
     stop.send("test stop").unwrap();
@@ -257,8 +258,8 @@ fn stopped_scheduler_ack_releases_a_retained_postclaim_lease() {
 fn a_failed_postclaim_finish_can_retry_without_reopening_a_preclaim_lease() {
     let (mut actor, _commands, _inbox) = actor();
     let run = RunId::mint();
-    let scope = ScopeIdentity::of_directory(std::path::Path::new(".")).unwrap();
-    actor.schedule_admission = Some(run);
+    let scope = ScopeIdentity::fixture_canonical(std::path::Path::new("C:/ordinary-fixture"));
+    actor.schedule_admission = Some(ScheduleLease::Ordinary(run));
     assert!(actor.may_finish_schedule(run));
 
     actor.record_schedule_finish(run, WorkspaceScope::Temporary, scope.clone(), false);

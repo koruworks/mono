@@ -8,6 +8,17 @@ use koru_delegate_schedule::*;
 use koru_recurrence::{CronExpression, RecurrenceRule};
 mod expiry;
 mod policy;
+mod preclaim;
+
+fn admission(p: &RoutinePrepared) -> BotAdmissionBarrier {
+    BotAdmissionBarrier {
+        owner: p.slot.owner,
+        bot: p.slot.bot,
+        request: BotRequestId::from_uuid(v4(0xc1)),
+        epoch: p.submission.provenance.config_revision,
+        paused: false,
+    }
+}
 
 fn fixture() -> (
     Harness,
@@ -123,6 +134,7 @@ fn fixture() -> (
     };
     {
         let mut db = h.schedule_store.inner.lock().unwrap();
+        db.apply_bot_barrier(&admission(&prepared)).unwrap();
         db.register_routine_route(&RoutineRouteIdentity {
             owner: association.owner,
             bot: association.bot,
@@ -168,6 +180,7 @@ fn claim(
     let (outcome, skip) = crate::RoutineLedger::claim_bot_routine(
         &mut *h.schedule_store.inner.lock().unwrap(),
         token(doc, p, missed),
+        &admission(p),
         fresh,
     )
     .unwrap();
@@ -286,7 +299,10 @@ fn routine_live_adapter_revalidates_pause_retirement_schema_and_definition() {
             }
         }
         let mut db = h.schedule_store.inner.lock().unwrap();
-        assert!(crate::RoutineLedger::claim_bot_routine(&mut *db, authority, &fresh).is_err());
+        assert!(
+            crate::RoutineLedger::claim_bot_routine(&mut *db, authority, &admission(&p), &fresh)
+                .is_err()
+        );
         assert!(matches!(
             db.read_routine_claim(&p.slot).unwrap(),
             RoutineClaimObservation::Absent { .. }
@@ -308,6 +324,7 @@ fn routine_live_adapter_ignores_unrelated_name_version_and_preserves_stored_winn
     let (winner, _) = crate::RoutineLedger::claim_bot_routine(
         &mut *h.schedule_store.inner.lock().unwrap(),
         authority,
+        &admission(&p),
         &fresh,
     )
     .unwrap();
@@ -317,6 +334,7 @@ fn routine_live_adapter_ignores_unrelated_name_version_and_preserves_stored_winn
     let (replay, _) = crate::RoutineLedger::claim_bot_routine(
         &mut *h.schedule_store.inner.lock().unwrap(),
         token(&doc, &p, false),
+        &admission(&p),
         &fresh,
     )
     .unwrap();
@@ -403,8 +421,12 @@ fn routine_live_claim_requires_exact_current_policy_and_writer_deadline() {
             _ => h.schedule_clock.store(60_900, Ordering::SeqCst),
         }
         let mut db = h.schedule_store.inner.lock().unwrap();
-        let result =
-            crate::RoutineLedger::claim_bot_routine(&mut *db, token(&doc, &p, false), &fresh);
+        let result = crate::RoutineLedger::claim_bot_routine(
+            &mut *db,
+            token(&doc, &p, false),
+            &admission(&p),
+            &fresh,
+        );
         if change == 4 {
             assert!(matches!(
                 result.unwrap().0,
@@ -440,8 +462,13 @@ fn routine_second_slot_records_actual_held_busy_holder() {
         revision: p.definition.revision,
     };
     let mut db = h.schedule_store.inner.lock().unwrap();
-    let (outcome, _) =
-        crate::RoutineLedger::claim_bot_routine(&mut *db, token(&doc, &p, false), &fresh).unwrap();
+    let (outcome, _) = crate::RoutineLedger::claim_bot_routine(
+        &mut *db,
+        token(&doc, &p, false),
+        &admission(&p),
+        &fresh,
+    )
+    .unwrap();
     let RoutineClaimObservation::Skipped { record } = outcome else {
         panic!("skip")
     };
