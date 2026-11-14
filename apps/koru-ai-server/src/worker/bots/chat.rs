@@ -30,7 +30,9 @@ pub(in crate::worker) use steering::{
     SteerBinding, SteerJob, SteerReadJob, SteerReadResult, SteerResult,
 };
 
-pub(in crate::worker) use preparation::{chat_capture, retry_anchor, retry_input};
+pub(in crate::worker) use preparation::{
+    chat_capture, require_interactive_predecessor, retry_anchor, retry_input,
+};
 pub(in crate::worker) use questions::TerminalQuestionProof;
 pub(in crate::worker) use settings::{SettingsProof, settings_capture};
 

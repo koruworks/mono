@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 mod branch;
-mod chat;
+pub(in crate::worker::bots) mod chat;
 mod conversations;
 mod defaults;
 mod holds;

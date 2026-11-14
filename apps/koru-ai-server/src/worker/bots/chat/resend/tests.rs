@@ -3,6 +3,28 @@ use super::*;
 use koru_ai_core::ProfileId;
 use koru_delegate_core as d;
 
+#[test]
+fn routine_automatic_resend_selection_refuses_canonical_receipt_without_mutating_failure() {
+    let (repo, bot, _, _, _, turn, intent) = crate::worker::bots::tests::chat::routines::seeded();
+    assert!(resend_candidate(&repo, turn.attempt.id).is_none());
+    assert_eq!(repo.attempts_for_chat(bot.main_chat).unwrap().len(), 1);
+    assert_eq!(
+        repo.attempt(turn.attempt.id)
+            .unwrap()
+            .unwrap()
+            .stop_reason
+            .as_deref(),
+        Some("original-refusal")
+    );
+    assert_eq!(
+        repo.bot_submission_for_attempt(turn.attempt.id)
+            .unwrap()
+            .unwrap()
+            .intent,
+        intent
+    );
+}
+
 fn fixture(overlap: bool) -> (InferenceAttempt, d::BotSubmission, Vec<PinnedDocument>) {
     let (mut repo, authority, create) = super::super::super::tests::fixture();
     let bot = super::super::super::tests::created(&mut repo, authority, create);

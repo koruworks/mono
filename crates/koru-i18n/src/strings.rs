@@ -3721,6 +3721,9 @@ pub enum Key {
     BotsErrNotReady,
     /// The owner's `bot_operation_pending`: an earlier pause, resume or access change of the Bot is still being delivered to what runs it. Retryable, soon.
     BotsErrOperationPending,
+    /// A new retry/continuation of a Routine needs the later reviewed linkage contract.
+    /// Non-English columns are machine-written, awaiting a native read.
+    BotsErrRoutineRetryUnsupported,
     /// A Bot's Archive, Trash or Restore is on its way and Koru AI does not answer: the tab keeps asking, and says so rather than *Finishing…*.
     BotsLifecycleUnanswered,
     /// A link led to a Bot conversation that went to the Trash with its Bot; the toast's Restore brings back the Bot, and the conversation with it.
@@ -3797,7 +3800,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2557] = [
+    pub const ALL: [Key; 2558] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6320,6 +6323,7 @@ impl Key {
         Key::BotsErrRestoreConflict,
         Key::BotsErrNotReady,
         Key::BotsErrOperationPending,
+        Key::BotsErrRoutineRetryUnsupported,
         Key::BotsLifecycleUnanswered,
         Key::BotsLinkInTrashWithBot,
         Key::BotsLinkRestoreBotFirst,
@@ -20256,6 +20260,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsErrRestoreConflict, en: "This was already restored, or the bot changed somewhere else.", es: "Esto ya se restauró, o el bot cambió en otro lugar.", pt_br: "Isso já foi restaurado, ou o bot mudou em outro lugar.", de: "Das wurde bereits wiederhergestellt, oder der Bot wurde an anderer Stelle geändert.", fr: "Cet élément a déjà été restauré, ou le bot a été modifié ailleurs.", ar: "تمت استعادة هذا بالفعل، أو تغيّر البوت في مكان آخر.", zh_hans: "它已被恢复，或者 Bot 已在别处更改。", ja: "これはすでに復元されたか、Bot が別の場所で変更されました。" },
     Row { key: Key::BotsErrNotReady, en: "Koru couldn't reach what this bot needs. Try again in a moment.", es: "Koru no pudo acceder a lo que necesita este bot. Inténtalo de nuevo en un momento.", pt_br: "O Koru não conseguiu acessar o que este bot precisa. Tente de novo em instantes.", de: "Koru konnte nicht erreichen, was dieser Bot braucht. Versuchen Sie es gleich noch einmal.", fr: "Koru n'a pas pu joindre ce dont ce bot a besoin. Réessayez dans un instant.", ar: "تعذّر على Koru الوصول إلى ما يحتاجه هذا البوت. حاول مجددًا بعد لحظة.", zh_hans: "Koru 无法连接到此 Bot 所需的内容。请稍后再试。", ja: "Koru はこの Bot に必要なものに接続できませんでした。少し待ってからもう一度お試しください。" },
     Row { key: Key::BotsErrOperationPending, en: "An earlier change to this bot is still being delivered. Try again in a moment.", es: "Un cambio anterior en este bot todavía se está entregando. Inténtalo de nuevo en un momento.", pt_br: "Uma alteração anterior neste bot ainda está sendo entregue. Tente de novo em instantes.", de: "Eine frühere Änderung an diesem Bot wird noch übermittelt. Versuchen Sie es gleich noch einmal.", fr: "Une modification précédente de ce bot est encore en cours de transmission. Réessayez dans un instant.", ar: "لا يزال تغيير سابق على هذا البوت قيد التسليم. حاول مجددًا بعد لحظة.", zh_hans: "此 Bot 之前的一项更改仍在传达中。请稍后再试。", ja: "この Bot への以前の変更をまだ届けています。少し待ってからもう一度お試しください。" },
+    Row { key: Key::BotsErrRoutineRetryUnsupported, en: "Routine retries aren’t available. Send a new manual message or wait for the next occurrence. New messages use Bot access.", es: "Los reintentos de rutinas no están disponibles. Envía un nuevo mensaje manual o espera a la próxima ejecución. Los mensajes nuevos usan el acceso del Bot.", pt_br: "Novas tentativas de rotinas não estão disponíveis. Envie uma nova mensagem manual ou aguarde a próxima execução. Novas mensagens usam o acesso do Bot.", de: "Routinen können nicht erneut versucht werden. Senden Sie eine neue manuelle Nachricht oder warten Sie auf die nächste Ausführung. Neue Nachrichten verwenden den Bot-Zugriff.", fr: "Les nouvelles tentatives de routines ne sont pas disponibles. Envoyez un nouveau message manuel ou attendez la prochaine exécution. Les nouveaux messages utilisent l’accès du Bot.", ar: "إعادة محاولة الروتين غير متاحة. أرسل رسالة يدوية جديدة أو انتظر التنفيذ التالي. تستخدم الرسائل الجديدة صلاحيات البوت.", zh_hans: "暂不支持重试例程。请手动发送新消息或等待下一次执行。新消息使用 Bot 的访问权限。", ja: "ルーチンの再試行は利用できません。新しい手動メッセージを送信するか、次回の実行をお待ちください。新しいメッセージには Bot のアクセス権が使われます。" },
     Row { key: Key::BotsLifecycleUnanswered, en: "Koru AI isn't answering. Koru keeps checking whether this change finished.", es: "Koru AI no responde. Koru sigue comprobando si este cambio terminó.", pt_br: "O Koru AI não está respondendo. O Koru continua verificando se esta alteração terminou.", de: "Koru AI antwortet nicht. Koru prüft weiter, ob diese Änderung abgeschlossen ist.", fr: "Koru AI ne répond pas. Koru continue de vérifier si cette modification est terminée.", ar: "لا يستجيب Koru AI. يواصل Koru التحقق مما إذا كان هذا التغيير قد انتهى.", zh_hans: "Koru AI 没有响应。Koru 会继续检查这项更改是否已完成。", ja: "Koru AI が応答していません。Koru はこの変更が完了したかどうかを確認し続けます。" },
     Row { key: Key::BotsLinkInTrashWithBot, en: "That conversation went to the Trash with its bot. Restoring the bot brings it back.", es: "Esa conversación fue a la papelera con su bot. Restaurar el bot la recupera.", pt_br: "Essa conversa foi para a lixeira com o bot. Restaurar o bot a traz de volta.", de: "Diese Unterhaltung kam mit ihrem Bot in den Papierkorb. Wenn Sie den Bot wiederherstellen, kommt sie zurück.", fr: "Cette conversation est partie dans la corbeille avec son bot. Restaurer le bot la ramène.", ar: "ذهبت تلك المحادثة إلى سلة المهملات مع البوت الخاص بها. استعادة البوت تعيدها.", zh_hans: "该对话与它的 Bot 一起进入了回收站。恢复 Bot 即可将其找回。", ja: "その会話は Bot と一緒にごみ箱に移動しました。Bot を復元すると会話も戻ります。" },
     Row { key: Key::BotsLinkRestoreBotFirst, en: "That conversation is in the Trash, and so is its bot. Restore the bot from the Trash first, then the conversation.", es: "Esa conversación está en la papelera, y su bot también. Restaura primero el bot desde la papelera y después la conversación.", pt_br: "Essa conversa está na lixeira, e o bot também. Restaure primeiro o bot da lixeira e depois a conversa.", de: "Diese Unterhaltung liegt im Papierkorb, ihr Bot ebenfalls. Stellen Sie zuerst den Bot aus dem Papierkorb wieder her, dann die Unterhaltung.", fr: "Cette conversation est dans la corbeille, tout comme son bot. Restaurez d'abord le bot depuis la corbeille, puis la conversation.", ar: "تلك المحادثة في سلة المهملات، وكذلك البوت الخاص بها. استعِد البوت من سلة المهملات أولًا، ثم المحادثة.", zh_hans: "该对话在回收站中，它的 Bot 也在。请先从回收站恢复 Bot，再恢复该对话。", ja: "その会話はごみ箱にあり、Bot もごみ箱にあります。先にごみ箱から Bot を復元してから、会話を復元してください。" },

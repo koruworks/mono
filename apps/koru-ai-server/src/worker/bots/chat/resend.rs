@@ -365,9 +365,8 @@ impl WorkerState {
     /// Whether `id` is a refused Bot task whose re-send is owed now, from
     /// durable state only, and the Retry that sends it again.
     fn bot_resend_plan(&self, id: InferenceAttemptId) -> Option<Plan> {
-        let attempt = self.repository.attempt(id).ok()??;
+        let (attempt, receipt) = resend_candidate(&self.repository, id)?;
         let (chat, reply) = (attempt.chat_id?, attempt.assistant_message_id?);
-        let receipt = self.repository.bot_submission_for_attempt(id).ok()??;
         let kind = if attempt.status == AttemptStatus::Interrupted && refused_as_stale(&receipt) {
             // Exactly once: a Retry of a reply that was itself refused as
             // stale is never sent again by itself, however often the
@@ -463,6 +462,18 @@ impl WorkerState {
                 )
             })
     }
+}
+
+/// Canonical automatic-selection gate, before any new operation, probe or
+/// context/pin read. A Routine keeps its original historic failure untouched.
+fn resend_candidate(
+    repository: &Repository,
+    id: InferenceAttemptId,
+) -> Option<(InferenceAttempt, BotSubmissionReceipt)> {
+    let attempt = repository.attempt(id).ok()??;
+    let receipt = repository.bot_submission_for_attempt(id).ok()??;
+    receipt.intent.require_interactive_continuation().ok()?;
+    Some((attempt, receipt))
 }
 
 /// Recover the selected set, in deterministic original Run-pin order. This is

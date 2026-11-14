@@ -167,6 +167,7 @@ impl WorkerState {
                 true,
             ));
         }
+        super::require_interactive_predecessor(&self.repository, row.attempt_id)?;
         if !self.bot_next_message_ids.contains(&row.id)
             || self.next_message_rows.get(&row.id) != Some(&row.chat_id)
             || self
@@ -241,11 +242,6 @@ impl WorkerState {
         {
             return Ok(None);
         }
-        let proof = context
-            .prepared
-            .as_ref()
-            .and_then(|p| p.terminal_question.as_ref())
-            .ok_or_else(closed)?;
         let receipt = self
             .repository
             .bot_submission_for_attempt(row.attempt_id)
@@ -255,6 +251,17 @@ impl WorkerState {
             .repository
             .attempt(row.attempt_id)
             .map_err(ai_failure)?
+            .ok_or_else(closed)?;
+        if prior.status.is_terminal() {
+            receipt
+                .intent
+                .require_interactive_continuation()
+                .map_err(bot_failure)?;
+        }
+        let proof = context
+            .prepared
+            .as_ref()
+            .and_then(|p| p.terminal_question.as_ref())
             .ok_or_else(closed)?;
         let replay = self
             .repository

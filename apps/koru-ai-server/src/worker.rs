@@ -4532,6 +4532,15 @@ impl WorkerState {
             .repository
             .bot_for_chat(chat_id)
             .map_err(bots::bot_failure)?;
+        if let Some(prior) = self
+            .repository
+            .attempt_for_message(failed.id)
+            .map_err(ai_failure)?
+        {
+            if prior.chat_id == Some(chat_id) {
+                bots::chat::require_interactive_predecessor(&self.repository, prior.id)?;
+            }
+        }
         let user = messages
             .iter()
             .rev()

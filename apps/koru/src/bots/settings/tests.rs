@@ -306,6 +306,7 @@ fn refused_codes_map_to_sentences() {
         BotError::FolderLocked,
         BotError::Storage,
         BotError::Settling,
+        BotError::RoutineRetryUnsupported,
     ];
     let mut seen = Vec::new();
     for error in errors {

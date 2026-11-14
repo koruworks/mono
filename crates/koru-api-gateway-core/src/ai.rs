@@ -2170,6 +2170,7 @@ fn status_for(failure: &Failure) -> StatusCode {
         | "folder_locked"
         | "bot_operation_pending"
         | "unsupported_capability"
+        | "routine_retry_unsupported"
         | "idempotency_conflict"
         | "model_pull_active"
         | "steer_unavailable"
@@ -2207,3 +2208,6 @@ fn ai_failure(status: StatusCode, failure: Failure) -> Response {
     *response.status_mut() = status;
     response
 }
+
+#[cfg(test)]
+mod tests;

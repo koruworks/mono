@@ -78,6 +78,7 @@ pub(in crate::worker) fn chat_capture(
     repository: &Repository,
     command: &WorkerCommand,
 ) -> ApiResult<Option<ChatCapture>> {
+    require_interactive_chat_action(repository, command)?;
     let (chat_id, destination, refs, replace, reasoning, operation) = match command {
         WorkerCommand::SendTurn { request, .. } => (
             request.chat_id,
@@ -186,6 +187,68 @@ pub(in crate::worker) fn chat_capture(
         library_sources,
         chat,
     }))
+}
+
+/// Preflight before Library reads, capture jobs or fresh AI/Run identities.
+/// A lost response still takes the immutable operation replay path first.
+pub(in crate::worker) fn require_interactive_chat_action(
+    repository: &Repository,
+    command: &WorkerCommand,
+) -> ApiResult<()> {
+    let (operation, chat, prior) = match command {
+        WorkerCommand::RetryTurn { chat, request, .. } => {
+            (request.operation_id, *chat, Some(request.message_id))
+        }
+        WorkerCommand::SendTurn { request, .. } if request.answers.is_some() => {
+            (request.operation_id, request.chat_id, None)
+        }
+        _ => return Ok(()),
+    };
+    if repository
+        .attempt_by_operation(operation)
+        .map_err(ai_failure)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let attempt = if let Some(message) = prior {
+        repository
+            .attempt_for_message(message)
+            .map_err(ai_failure)?
+    } else if let WorkerCommand::SendTurn { request, .. } = command {
+        let row = repository
+            .tool_activity(request.answers.as_ref().unwrap().invocation)
+            .map_err(ai_failure)?;
+        let Some(row) = row.filter(|row| row.chat_id == chat) else {
+            return Ok(());
+        };
+        repository
+            .attempt(row.attempt_id)
+            .map_err(ai_failure)?
+            .filter(|attempt| attempt.status.is_terminal())
+    } else {
+        None
+    };
+    if let Some(attempt) = attempt.filter(|attempt| attempt.chat_id == Some(chat)) {
+        require_interactive_predecessor(repository, attempt.id)?;
+    }
+    Ok(())
+}
+
+pub(in crate::worker) fn require_interactive_predecessor(
+    repository: &Repository,
+    attempt: InferenceAttemptId,
+) -> ApiResult<()> {
+    if let Some(receipt) = repository
+        .bot_submission_for_attempt(attempt)
+        .map_err(ai_failure)?
+    {
+        receipt
+            .intent
+            .require_interactive_continuation()
+            .map_err(bot_failure)?;
+    }
+    Ok(())
 }
 
 fn fingerprint(kind: &str, request: &impl Serialize) -> ApiResult<String> {
@@ -306,6 +369,23 @@ impl WorkerState {
             return Err(bot_failure(BotError::RevisionConflict));
         }
         let attempt = preparation.attempt();
+        if self
+            .repository
+            .attempt_by_operation(attempt.operation_id)
+            .map_err(ai_failure)?
+            .is_none()
+        {
+            let prior = match &preparation {
+                BotChatPreparation::Turn(_) => None,
+                BotChatPreparation::Retry { prior_attempt, .. } => Some(*prior_attempt),
+                BotChatPreparation::AnsweredContinuation { question, .. } => {
+                    Some(question.prior_attempt)
+                }
+            };
+            if let Some(prior) = prior {
+                require_interactive_predecessor(&self.repository, prior)?;
+            }
+        }
         bot.config.model = chat.current_model.clone();
         bot.config.model.default_reasoning = attempt.requested_reasoning;
         bot.config.mode = chat.agent_mode.clone();
