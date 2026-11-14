@@ -75,6 +75,7 @@ pub(crate) fn is_endpoint(path: &str) -> bool {
     matches!(
         path,
         ROUTINE_PREPARE_ROUTE
+            | ROUTINE_PRECLAIM_ROUTE
             | ROUTINE_PREPARATION_ROUTE
             | ROUTINE_FINALIZE_ROUTE
             | ROUTINE_LINK_ROUTE
@@ -87,6 +88,7 @@ fn routes() -> Router<Arc<HttpState>> {
         .route(ROUTINE_PREPARATION_ROUTE, any(handle))
         .route(ROUTINE_FINALIZE_ROUTE, any(handle))
         .route(ROUTINE_LINK_ROUTE, any(handle))
+        .route(ROUTINE_PRECLAIM_ROUTE, any(handle))
 }
 
 pub(crate) fn router(state: Arc<HttpState>) -> Router<Arc<crate::GatewayState>> {
@@ -267,6 +269,16 @@ async fn handle_until(
                 deadline,
                 AiWorkerClient::read_routine_occurrence_link,
                 |code| ReadOccurrenceLinkReply::Refused { code },
+            )
+            .await
+        }
+        ROUTINE_PRECLAIM_ROUTE => {
+            dispatch(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::synchronize_routine_preclaim,
+                |code| SynchronizeRoutinePreclaimReply::Refused { code },
             )
             .await
         }
