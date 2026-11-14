@@ -31,7 +31,7 @@ fn rows(conn: &Connection, table: &str, columns: &[String]) -> Vec<Vec<Value>> {
 fn seven(h: &Harness) -> Connection {
     historical(h, 7)
 }
-pub(in crate::native_results::tests) fn historical(h: &Harness, version: u32) -> Connection {
+pub(in crate::native_results::tests) fn historical(h: &Harness, version: i64) -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
     koru_sqlite::prepare(
         &koru_sqlite::Schema {

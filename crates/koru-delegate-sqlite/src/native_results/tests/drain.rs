@@ -280,7 +280,7 @@ fn migration_preserves_populated_six_and_nullable_drain_guards_refuse_partial_pr
     let before = h.db.native_result(&h.request.key).unwrap().unwrap();
     let mut conn = super::memory::migration::historical(&h, 6);
     assert_eq!(
-        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
         6
     );
@@ -292,7 +292,7 @@ fn migration_preserves_populated_six_and_nullable_drain_guards_refuse_partial_pr
     koru_sqlite::prepare(&schema, &mut conn).unwrap();
     koru_sqlite::prepare(&schema, &mut conn).unwrap();
     assert_eq!(
-        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
         crate::RUNS_SCHEMA_VERSION
     );
