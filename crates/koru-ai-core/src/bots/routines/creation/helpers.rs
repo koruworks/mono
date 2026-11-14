@@ -236,12 +236,6 @@ impl BotRoutineCreationIdentity {
     }
 }
 
-fn digest(domain: &[u8], bytes: &[u8]) -> RoutineDigest32 {
-    let mut hash = blake3::Hasher::new();
-    hash.update(domain);
-    hash.update(bytes);
-    RoutineDigest32::from_bytes(*hash.finalize().as_bytes())
-}
 impl BotRoutineSeed {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, BotError> {
         // BotRoutineSeed is already the explicit v1 {version,name,header}
@@ -250,35 +244,42 @@ impl BotRoutineSeed {
         serde_json::to_vec(self).map_err(|_| BotError::Invalid)
     }
     pub fn canonical_digest(&self) -> Result<RoutineDigest32, BotError> {
-        Ok(digest(
+        koru_delegate_core::routine_digest_json(
             b"koru.bot.routine.seed.v1",
-            &self.canonical_bytes()?,
-        ))
+            self,
+            BOT_ROUTINE_SEED_BYTES,
+        )
+        .map_err(|_| BotError::Invalid)
     }
 }
+#[derive(Serialize)]
+struct GrantEncoding<'a> {
+    version: u8,
+    source_bot_policy_revision: u64,
+    grant_revision: u64,
+    policy: &'a CapturedBotPolicy,
+}
 impl BotRoutineGrant {
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>, BotError> {
-        #[derive(Serialize)]
-        struct Grant<'a> {
-            version: u8,
-            source_bot_policy_revision: u64,
-            grant_revision: u64,
-            policy: &'a CapturedBotPolicy,
-        }
-        let grant = Grant {
+    fn encoding(&self) -> GrantEncoding<'_> {
+        GrantEncoding {
             version: 1,
             source_bot_policy_revision: self.source_bot_policy_revision,
             grant_revision: self.grant_revision,
             policy: &self.policy,
-        };
+        }
+    }
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, BotError> {
+        let grant = self.encoding();
         bounded(&grant, BOT_ROUTINE_GRANT_BYTES)?;
         serde_json::to_vec(&grant).map_err(|_| BotError::Invalid)
     }
     pub fn canonical_digest(&self) -> Result<RoutineDigest32, BotError> {
-        Ok(digest(
+        koru_delegate_core::routine_digest_json(
             b"koru.bot.routine.grant.v1",
-            &self.canonical_bytes()?,
-        ))
+            &self.encoding(),
+            BOT_ROUTINE_GRANT_BYTES,
+        )
+        .map_err(|_| BotError::Invalid)
     }
 }
 
