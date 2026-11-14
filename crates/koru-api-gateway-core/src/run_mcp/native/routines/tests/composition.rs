@@ -227,7 +227,7 @@ async fn routine_gateway_four_tools_invoke_real_worker_with_linked_routine_subje
         parse("list_routines", json!({})).unwrap(),
     )
     .await;
-    assert_ne!(listed.is_error, Some(true));
+    assert_ne!(listed.is_error, Some(true), "{listed:?}");
     let revision = listed.structured_content.as_ref().unwrap()["bot_revision"]
         .as_u64()
         .unwrap();
@@ -316,7 +316,7 @@ async fn routine_gateway_dropped_future_cancels_real_worker_before_journal_accep
         parse("list_routines", json!({})).unwrap(),
     )
     .await;
-    assert_ne!(listed.is_error, Some(true));
+    assert_ne!(listed.is_error, Some(true), "{listed:?}");
     let repo = fixture.finish().unwrap();
     assert!(
         repo.routine_tool_creation_by_request(ai_owner(&subject), subject.provenance.bot, id)
@@ -347,7 +347,7 @@ async fn routine_gateway_fresh_routine_create_requires_independent_current_claim
         parse("list_routines", json!({})).unwrap(),
     )
     .await;
-    assert_ne!(listed.is_error, Some(true));
+    assert_ne!(listed.is_error, Some(true), "{listed:?}");
     let repo = fixture.finish().unwrap();
     assert!(
         repo.routine_tool_creation_by_request(ai_owner(&subject), subject.provenance.bot, id)
