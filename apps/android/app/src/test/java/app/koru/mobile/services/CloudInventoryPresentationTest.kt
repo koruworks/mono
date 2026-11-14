@@ -98,6 +98,15 @@ class CloudInventoryPresentationTest {
         assertEquals(3, calls.reads.size)
         advanceTimeBy(60_000); runCurrent()
         assertEquals(3, calls.reads.size)
+        presenter.first(1)
+        assertFalse(presenter.state.value.restarted)
+        assertEquals(4, calls.reads.size)
+        presenter.observe(status(), listOf(result(4, 13, null, "usage_revision_changed")))
+        assertTrue(presenter.state.value.restarted)
+        presenter.foreground(false, status())
+        presenter.first(1)
+        assertFalse(presenter.state.value.restarted)
+        assertEquals(5, calls.reads.size)
     }
 
     @Test fun boundedBackHistoryKeepsFirstAndAllForwardPagesReachable() = runTest {
@@ -132,6 +141,26 @@ class CloudInventoryPresentationTest {
         assertTrue(presenter.state.value.restarted)
         assertNull(presenter.state.value.page)
         assertEquals(4, calls.reads.size)
+        assertEquals(CloudInventorySelection.Workspaces, calls.reads.last().selection)
+        assertNull(calls.reads.last().cursor)
+    }
+
+    @Test fun documentRevisionFailureRequiresFreshWorkspaceSelectionAndStillRestartsOnlyOnce() = runTest {
+        val calls = Calls(); val presenter = presenter(calls); presenter.enter()
+        presenter.observe(status(), listOf(result(1, 10)))
+        val row = (presenter.state.value.page as CloudInventoryPage.Workspaces).rows.single()
+        presenter.documents(row, 1)
+        presenter.observe(status(), listOf(result(2, 11, null, "usage_revision_changed", docs = true)))
+        assertEquals(CloudInventorySelection.Workspaces, presenter.state.value.selection)
+        assertEquals(CloudInventorySelection.Workspaces, calls.reads.last().selection)
+        assertNull(calls.reads.last().cursor)
+        assertTrue(presenter.state.value.restarted)
+        assertNull(presenter.state.value.page)
+        presenter.observe(status(), listOf(result(3, 12, null, "usage_revision_changed")))
+        assertTrue(presenter.state.value.failed)
+        assertEquals(3, calls.reads.size)
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(3, calls.reads.size)
     }
 
     @Test fun wrongSelectorMixedFailureAndAccountSwitchCannotRestoreOldRows() = runTest {
