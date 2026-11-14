@@ -726,6 +726,7 @@ mod tests {
         };
         let doc = ScheduleDocument::create(&header).unwrap();
         header.definition.revision = 2;
+        header.definition.effective_at_ms += 1;
         header.definition.lifecycle = koru_delegate_schedule::ScheduleLifecycle::Active;
         doc.update_definition(header.initial_owner, &header.definition)
             .unwrap();

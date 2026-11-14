@@ -60,6 +60,7 @@ fn routine_expiry_adapter_records_no_draft_miss_without_policies_or_executable_r
     };
     let doc = ScheduleDocument::create(&header).unwrap();
     header.definition.revision = 2;
+    header.definition.effective_at_ms = 1;
     header.definition.lifecycle = ScheduleLifecycle::Active;
     doc.update_definition(association.owner.device, &header.definition)
         .unwrap();
