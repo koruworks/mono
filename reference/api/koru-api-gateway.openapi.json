@@ -2935,6 +2935,45 @@
         "oneOf": [
           {
             "additionalProperties": false,
+            "properties": {
+              "after_schedule": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ScheduleId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read_routines"
+                ],
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint8",
+                "maximum": 16,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Vouched owner creation only: always Paused, with canonical inherited\nruntime/scope and an independent frozen copy of current Bot access.",
             "properties": {
               "bot_id": {
@@ -5911,6 +5950,24 @@
         "oneOf": [
           {
             "properties": {
+              "page": {
+                "$ref": "#/components/schemas/BotRoutineListPage"
+              },
+              "result": {
+                "enum": [
+                  "routines"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "page"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "receipt": {
                 "$ref": "#/components/schemas/BotRoutineCreateResult"
               },
@@ -6349,6 +6406,13 @@
           }
         ]
       },
+      "BotRoutineConversationVisibility": {
+        "enum": [
+          "available",
+          "unavailable"
+        ],
+        "type": "string"
+      },
       "BotRoutineCreateResult": {
         "additionalProperties": false,
         "description": "Immutable creation receipt projection; mutable state is read separately.",
@@ -6384,6 +6448,40 @@
           "bot_id",
           "schedule_id",
           "state"
+        ],
+        "type": "object"
+      },
+      "BotRoutineCreationObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineCreationRefusal"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/BotRequestId"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BotRoutineCreationState"
+          },
+          "updated_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "request_id",
+          "state",
+          "updated_at_ms"
         ],
         "type": "object"
       },
@@ -6477,6 +6575,292 @@
           "grant_revision"
         ],
         "type": "object"
+      },
+      "BotRoutineGrantSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/BotAccess"
+          },
+          "grant_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_page_count": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_bot_policy_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_bot_policy_revision",
+          "grant_revision",
+          "access",
+          "selected_page_count"
+        ],
+        "type": "object"
+      },
+      "BotRoutineListItem": {
+        "additionalProperties": false,
+        "properties": {
+          "creation": {
+            "$ref": "#/components/schemas/BotRoutineCreationObservation"
+          },
+          "grant": {
+            "$ref": "#/components/schemas/BotRoutineGrantSummary"
+          },
+          "live": {
+            "$ref": "#/components/schemas/BotRoutineLiveObservation"
+          },
+          "local_conversations": {
+            "$ref": "#/components/schemas/BotRoutineLocalConversations"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          }
+        },
+        "required": [
+          "schedule_id",
+          "creation",
+          "grant",
+          "live",
+          "local_conversations"
+        ],
+        "type": "object"
+      },
+      "BotRoutineListPage": {
+        "additionalProperties": false,
+        "properties": {
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "bot_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effective_model": {
+            "$ref": "#/components/schemas/BotRoutineModelObservation"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BotRoutineListItem"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "next_schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "bot_id",
+          "bot_revision",
+          "effective_model",
+          "items"
+        ],
+        "type": "object"
+      },
+      "BotRoutineLiveObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "definition_revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "$ref": "#/components/schemas/ScheduleName"
+              },
+              "observation": {
+                "enum": [
+                  "current"
+                ],
+                "type": "string"
+              },
+              "state": {
+                "$ref": "#/components/schemas/StrictState"
+              }
+            },
+            "required": [
+              "observation",
+              "name",
+              "definition_revision",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "not_live"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotRoutineLocalConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "chat_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/BotRoutineConversationVisibility"
+          },
+          "occurrence_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/RunId"
+          }
+        },
+        "required": [
+          "occurrence_ms",
+          "run_id",
+          "chat_id",
+          "attempt_id",
+          "conversation"
+        ],
+        "type": "object"
+      },
+      "BotRoutineLocalConversations": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/BotRoutineLocalConversation"
+                },
+                "maxItems": 4,
+                "type": "array"
+              },
+              "more": {
+                "type": "boolean"
+              },
+              "state": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "items",
+              "more"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotRoutineModelObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "$ref": "#/components/schemas/AiProviderId"
+              },
+              "requested_model": {
+                "description": "Runtime validation limits this to 512 UTF-8 bytes. JSON Schema's\nmaxLength counts scalars and is only a necessary upper bound.",
+                "maxLength": 512,
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "configured"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "provider",
+              "requested_model"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "BotSummary": {
         "properties": {
@@ -19758,6 +20142,168 @@
         ],
         "type": "object"
       },
+      "StrictReason": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "enum": [
+                  "manual"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "enum": [
+                  "provider_not_delegatable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "enum": [
+                  "scope_unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "item": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason": {
+                "enum": [
+                  "context_unavailable"
+                ],
+                "type": "string"
+              },
+              "stage": {
+                "$ref": "#/components/schemas/ScheduleContextFailureStage"
+              }
+            },
+            "required": [
+              "reason",
+              "item",
+              "stage"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "StrictState": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "active"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "owner"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/StrictReason"
+              },
+              "state": {
+                "enum": [
+                  "paused"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "owner",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "type": "string"
+              },
+              "requests": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "handoff_pending"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "owner",
+              "requests"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "retired"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Subject": {
         "description": "What the event is about, when it is about one thing. A reference, never\ncontent: the consumer fetches the thing through the store.",
         "properties": {
@@ -23482,7 +24028,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine creation status does not claim current Schedule lifecycle or permission. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
+        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -23503,7 +24049,7 @@
                 }
               }
             },
-            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine creation status does not claim current Schedule lifecycle or permission. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
+            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -23563,7 +24109,7 @@
             ]
           }
         ],
-        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine or read/retry its creation, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
+        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation or list current Routine observations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
       }
     },
     "/v1/ai/bots/list": {

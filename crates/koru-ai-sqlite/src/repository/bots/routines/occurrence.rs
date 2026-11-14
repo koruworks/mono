@@ -8,6 +8,7 @@ use koru_delegate_core::{
 };
 mod finalize;
 mod preclaim;
+pub(super) mod recent;
 mod recovery;
 mod rows;
 #[cfg(test)]
