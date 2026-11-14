@@ -1498,8 +1498,9 @@ fn while_archive_is_unfinished_native_evidence_is_its_effects_off_barrier() {
         .unwrap();
     // The very barrier the operation installed: effects off, same request,
     // same revision. The gateway installing it again is a no-op.
-    assert!(!evidence.barrier.effects_allowed);
-    assert_eq!(evidence.barrier, installed);
+    assert!(!evidence.proof.global.effects_allowed);
+    assert_eq!(evidence.proof.global, installed);
+    assert!(evidence.proof.routine.is_none());
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
