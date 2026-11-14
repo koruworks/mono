@@ -24,6 +24,41 @@ use koru_delegate_sqlite::{
 use crate::{RunStore, ScheduleLedger, counters};
 use koru_delegate_document::ScheduleClaimAuthority;
 
+impl crate::RoutineLedger for RunsDb {
+    fn claim_bot_routine(
+        &mut self,
+        authority: ScheduleClaimAuthority,
+        fresh: &koru_delegate_core::FreshBotPolicyProof,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        // This is the sole production conversion into neutral claim facts. The
+        // host already holds its writer mutex. No await or external port lies
+        // between consuming the actual live token and the ledger transaction.
+        let facts = authority
+            .into_bot_routine()
+            .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
+        RunsDb::claim_bot_routine(self, facts, fresh)
+    }
+    fn read_routine_claim(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<koru_delegate_core::RoutineClaimObservation, koru_delegate_sqlite::BotLedgerError>
+    {
+        RunsDb::read_routine_claim(self, slot)
+    }
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
+    ) -> Result<koru_delegate_core::RoutineClaimRecord, koru_delegate_sqlite::BotLedgerError> {
+        RunsDb::acknowledge_routine_link(self, acknowledgement)
+    }
+}
+
 impl RunStore for RunsDb {
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
         Some(self)

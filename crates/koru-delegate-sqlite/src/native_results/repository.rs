@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) const VERIFIED_RUN_QUERY: &str = "SELECT run_id,operation_id,attempt_id,generation,turn_id FROM native_result_intents WHERE run_id=?1 AND stage='verified' ORDER BY operation_id LIMIT 1";
 
-pub(super) fn policy_digest(barrier: &BotPolicyBarrier) -> Result<[u8; 32], BotLedgerError> {
+pub(crate) fn policy_digest(barrier: &BotPolicyBarrier) -> Result<[u8; 32], BotLedgerError> {
     if !barrier.policy.valid()
         || barrier.config_revision == 0
         || barrier.config_revision > i64::MAX as u64

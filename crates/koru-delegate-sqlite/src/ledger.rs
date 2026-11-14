@@ -104,11 +104,11 @@ impl RunsDb {
         let _ = op;
         #[cfg(any(test, feature = "crash-points"))]
         self.crash.check(op, crate::Moment::BeforeWrite)?;
-        let now = self.clock.now_ms();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| LedgerError::sql("begin a write", error))?;
+        let now = self.clock.now_ms();
         let out = body(&tx, now)?;
         #[cfg(any(test, feature = "crash-points"))]
         self.crash
