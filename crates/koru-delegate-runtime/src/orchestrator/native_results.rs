@@ -173,6 +173,11 @@ impl Orchestrator {
             },
             device,
         )?;
+        // This checkpoint supplies no canonical AI Routine proof/cache or
+        // linked provider dispatch. A global snapshot alone cannot ready it.
+        if record.submission_version != 1 {
+            return Err(refused("bot_routine_native_not_ready"));
+        }
         let fence = self
             .bot_admission_view(&record)?
             .fence
@@ -197,7 +202,10 @@ impl Orchestrator {
             &request.key,
             request.request_fingerprint,
             &fence,
-            &policy,
+            &FreshBotPolicyProof {
+                global: policy,
+                routine: None,
+            },
         )?;
         let mut view = leased.intent.view();
         if leased.execute.is_some() {

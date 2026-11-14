@@ -51,7 +51,7 @@ fn bounded(column: &str, size: usize, kind: &str) -> String {
     )
 }
 
-pub(super) fn bounded_admission(conn: &Connection, run: RunId) -> Result<(), BotLedgerError> {
+pub(crate) fn bounded_admission(conn: &Connection, run: RunId) -> Result<(), BotLedgerError> {
     let mut conditions=vec!["typeof(payload_json)='text' AND length(CAST(payload_json AS BLOB))<=4194304".to_owned(),
         "delivery_outcome IN ('unconfirmed','confirmed')".to_owned(),"state IN ('queued','reserved','executing','settled','refused')".to_owned(),
         "initial_send_fingerprint IS NULL OR (typeof(initial_send_fingerprint)='blob' AND length(initial_send_fingerprint)=32)".to_owned()];
@@ -97,6 +97,15 @@ pub(super) fn observation(
     conn: &Connection,
     slot: &RoutineSlot,
     now: i64,
+) -> Result<RoutineClaimObservation, BotLedgerError> {
+    observation_with_admission(conn, slot, now, None)
+}
+
+pub(super) fn observation_with_admission(
+    conn: &Connection,
+    slot: &RoutineSlot,
+    now: i64,
+    admitted: Option<&crate::BotAdmissionRecord>,
 ) -> Result<RoutineClaimObservation, BotLedgerError> {
     let route = subject(conn, slot)?;
     let query = format!(
@@ -170,8 +179,17 @@ pub(super) fn observation(
         return Err(bad("holder"));
     }
     // Bound payload before the existing exact v1/v2 admission decoder allocates.
-    bounded_admission(conn, run)?;
-    let admission = super::super::repository::read(conn, run)?.ok_or_else(|| bad("admission"))?;
+    let loaded;
+    let admission = if let Some(admission) = admitted {
+        if admission.submission.request.run != run {
+            return Err(bad("admission_run"));
+        }
+        admission
+    } else {
+        bounded_admission(conn, run)?;
+        loaded = super::super::repository::read(conn, run)?.ok_or_else(|| bad("admission"))?;
+        &loaded
+    };
     let mut fields = vec![
         "definition_revision".to_owned(),
         bounded("definition_digest", 32, "blob"),

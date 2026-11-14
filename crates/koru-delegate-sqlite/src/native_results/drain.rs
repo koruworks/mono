@@ -3,6 +3,103 @@ use super::{rows::*, *};
 use crate::RunsDb;
 use rusqlite::params;
 
+/// Page the held owner/Bot index before subject filtering. An empty target page
+/// can have a continuation: other subjects still consumed this bounded page.
+/// Every candidate is validated, so missing or forged linkage cannot disappear
+/// from a Routine drain and manufacture positive absence.
+pub(super) fn pending_routine(
+    conn: &rusqlite::Connection,
+    owner: BotOwner,
+    bot: BotId,
+    schedule: ScheduleId,
+    after: Option<&NativeRecoveryCursor>,
+    limit: u16,
+) -> Result<NativePendingEffects, BotLedgerError> {
+    if !(RoutineSlot {
+        owner,
+        bot,
+        schedule,
+        occurrence_ms: 0,
+    })
+    .valid()
+        || limit == 0
+        || limit > 64
+    {
+        return Err(BotLedgerError::Invalid);
+    }
+    let (time, run, operation) = after
+        .map(|c| {
+            (
+                c.created_at_ms,
+                c.run.to_storage(),
+                c.operation_id.to_string(),
+            )
+        })
+        .unwrap_or((i64::MIN, String::new(), String::new()));
+    let mut statement = conn.prepare(BOT_QUERY).map_err(sql)?;
+    let keys = statement
+        .query_map(
+            params![
+                owner.user_scope.to_storage(),
+                owner.device.to_storage(),
+                bot.to_storage(),
+                time,
+                run,
+                operation,
+                i64::from(limit)
+            ],
+            |r| Ok(key(r)),
+        )
+        .map_err(sql)?
+        .map(|r| r.map_err(sql)?)
+        .collect::<Result<Vec<_>, _>>()?;
+    let full = keys.len() == usize::from(limit);
+    let mut targets = Vec::new();
+    let mut last = None;
+    for key in keys {
+        let record = required(conn, &key)?;
+        let target = record.pending_effect()?;
+        if record.lease_state != NativeLeaseState::Held
+            || target.owner != owner
+            || target.bot != bot
+        {
+            return Err(corrupt("drain_owner"));
+        }
+        last = Some(target.cursor.clone());
+        if record
+            .lease
+            .as_ref()
+            .and_then(|l| l.routine.as_ref())
+            .is_some_and(|r| r.schedule == schedule)
+        {
+            targets.push(target);
+        }
+    }
+    Ok(NativePendingEffects {
+        targets,
+        next: if full { last } else { None },
+    })
+}
+
+pub(crate) fn held_routine(
+    conn: &rusqlite::Connection,
+    owner: BotOwner,
+    bot: BotId,
+    schedule: ScheduleId,
+) -> Result<bool, BotLedgerError> {
+    let mut after = None;
+    loop {
+        let page = pending_routine(conn, owner, bot, schedule, after.as_ref(), 64)?;
+        if !page.targets.is_empty() {
+            return Ok(true);
+        }
+        match page.next {
+            Some(next) => after = Some(next),
+            None => return Ok(false),
+        }
+    }
+}
+
 pub(super) fn pending(
     db: &RunsDb,
     owner: BotOwner,
@@ -58,8 +155,8 @@ pub(super) fn pending(
     for key in keys {
         let record = required(db.conn(), &key)?;
         let target = record.pending_effect()?;
-        // Recovery reads only immutable owner columns, never the admission's
-        // task input or captured policy payload.
+        // The full native read above validates retained subject evidence. This
+        // final indexed owner check binds discovery to the requested owner.
         let admission_matches: bool = db.conn().query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE run_id=?1 AND user_scope=?2 AND device_id=?3 AND bot_id=?4)",params![key.run.to_storage(),owner.user_scope.to_storage(),owner.device.to_storage(),target.bot.to_storage()],|row|row.get(0)).map_err(sql)?;
         if record.lease_state != NativeLeaseState::Held
             || target.owner != owner

@@ -22,16 +22,14 @@ pub(crate) fn policy_digest(barrier: &BotPolicyBarrier) -> Result<[u8; 32], BotL
     Ok(*hash.finalize().as_bytes())
 }
 pub(super) fn admission(db: &RunsDb, run: RunId) -> Result<BotAdmissionRecord, BotLedgerError> {
-    db.bot_admission(run)?.ok_or(BotLedgerError::Invalid)
+    routine::admission(db.conn(), run)
 }
 pub(super) fn current_attempt(
     conn: &Connection,
     key: &NativeResultKey,
     admission: &BotAdmissionRecord,
 ) -> Result<crate::AttemptRow, BotLedgerError> {
-    if admission.submission_version != 1 {
-        return Err(BotLedgerError::Fenced);
-    }
+    routine::linked(conn, admission)?;
     let latest = attempts::latest(conn, key.run)?.ok_or(BotLedgerError::Fenced)?;
     let executing: bool = conn
         .query_row(
@@ -68,12 +66,9 @@ pub(super) fn fresh_policy(
     key: &NativeResultKey,
     admitted: &BotAdmissionRecord,
     fence: &BotExecutionFence,
-    fresh: &BotPolicyBarrier,
-) -> Result<NativePolicyRecord, BotLedgerError> {
-    // Routine policy and native lease authority are not implemented yet.
-    if admitted.submission_version != 1 {
-        return Err(BotLedgerError::Fenced);
-    }
+    proof: &FreshBotPolicyProof,
+) -> Result<(NativePolicyRecord, Option<crate::RoutinePolicyRecord>), BotLedgerError> {
+    let fresh = &proof.global;
     let digest = policy_digest(fresh)?;
     let provenance = &admitted.submission.provenance;
     if fence.owner != provenance.owner
@@ -107,7 +102,8 @@ pub(super) fn fresh_policy(
     {
         return Err(BotLedgerError::Fenced);
     }
-    Ok(current)
+    let routine = routine::current(conn, admitted, proof)?;
+    Ok((current, routine))
 }
 fn permits(policy: &CapturedBotPolicy, record: &NativeIntentRecord, created: bool) -> bool {
     policy.valid()
@@ -131,6 +127,24 @@ fn evidence_matches(record: &NativeIntentRecord, evidence: &NativeResultReferenc
 }
 
 impl NativeResultLedger for RunsDb {
+    fn pending_routine_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError> {
+        super::drain::pending_routine(self.conn(), owner, bot, schedule, after, limit)
+    }
+    fn current_routine_native_policy(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+    ) -> Result<Option<crate::RoutinePolicyRecord>, BotLedgerError> {
+        self.current_routine_policy(owner, bot, schedule)
+    }
     fn memory_edit_allocation(
         &self,
         run: RunId,
@@ -144,7 +158,7 @@ impl NativeResultLedger for RunsDb {
         request: &AllocateMemoryEditRequest,
         source_run_document: DocumentId,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError> {
         memory::allocate(self, request, source_run_document, fence, fresh)
     }
@@ -154,7 +168,7 @@ impl NativeResultLedger for RunsDb {
         caller_fingerprint: [u8; 32],
         resolution: &MemoryBaseResolution,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError> {
         memory::resolve(self, key, caller_fingerprint, resolution, fence, fresh)
     }
@@ -249,35 +263,36 @@ impl NativeResultLedger for RunsDb {
         key: &NativeResultKey,
         fingerprint: [u8; 32],
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<NativeLeaseOutcome, BotLedgerError> {
         let admitted = admission(self, key.run)?;
-        policy_digest(fresh)?;
         self.write_with_error(WriteOp::LeaseNativeResult,|tx,now|{
-            let record=required(tx,key)?;
+            let record=read_admitted(tx,key,Some(&admitted))?.ok_or(BotLedgerError::Invalid)?;
             if record.fingerprint!=fingerprint {return Err(BotLedgerError::Conflict);}
             let provenance=&admitted.submission.provenance;
-            if fence.owner!=provenance.owner || fence.bot!=provenance.bot || fence.run!=key.run || fence.attempt!=key.attempt || fence.generation!=key.generation || fence.turn!=Some(key.turn) || fresh.key.owner!=provenance.owner || fresh.key.bot!=provenance.bot {return Err(BotLedgerError::Fenced);}
+            if fence.owner!=provenance.owner || fence.bot!=provenance.bot || fence.run!=key.run || fence.attempt!=key.attempt || fence.generation!=key.generation || fence.turn!=Some(key.turn) {return Err(BotLedgerError::Fenced);}
             if record.stage!=NativeResultStage::Prepared || record.lease_state!=NativeLeaseState::None {return Ok(NativeLeaseOutcome {intent:record,execute:None});}
-            let current=fresh_policy(tx,key,&admitted,fence,fresh)?;
+            let (current,companion)=fresh_policy(tx,key,&admitted,fence,fresh)?;
+            let permissions=routine::current_permissions(fresh);
             match &record.purpose {
                 NativeEffectPurpose::Result {} => {
-                    let owned=if record.kind==NativeResultOperation::EditPage {created(tx,provenance.owner,provenance.bot,record.destination,record.target)?}else{false};
-                    if !permits(&admitted.submission.policy,&record,owned) || !permits(&fresh.policy,&record,owned) {return Err(BotLedgerError::Fenced);}
+                    let owned=if record.kind==NativeResultOperation::EditPage {created(tx,&admitted,record.destination,record.target)?}else{false};
+                    if !permits(&admitted.submission.policy,&record,owned) || !permits(permissions,&record,owned) {return Err(BotLedgerError::Fenced);}
                 }
                 NativeEffectPurpose::Memory { authority } => {
                     if !authority.subject().matches(provenance) || authority.workspace!=record.destination
                         || authority.memory_document!=record.target
-                        || !admitted.submission.policy.valid() || !fresh.policy.valid()
+                        || !admitted.submission.policy.valid() || !permissions.valid()
                         || admitted.submission.policy.workspace!=authority.workspace
-                        || fresh.policy.workspace!=authority.workspace
+                        || permissions.workspace!=authority.workspace
                     {return Err(BotLedgerError::Fenced);}
                 }
             }
             let id=Uuid::new_v4();
+            if let Some(companion)=&companion { routine::insert(tx,key,companion)?; }
             tx.execute("UPDATE native_result_intents SET lease_id=?3,lease_user_scope=?4,lease_device_id=?5,lease_bot_id=?6,lease_barrier_request_id=?7,lease_config_revision=?8,lease_policy_revision=?9,lease_payload_digest=?10,lease_state='held',updated_at_ms=?11 WHERE run_id=?1 AND operation_id=?2",params![key.run.to_storage(),key.operation_id.to_string(),id.to_string(),current.key.owner.user_scope.to_storage(),current.key.owner.device.to_storage(),current.key.bot.to_storage(),current.key.request.to_storage(),current.config_revision,current.policy_revision,current.payload_digest.as_slice(),now]).map_err(sql)?;
             let intent=required(tx,key)?;
-            Ok(NativeLeaseOutcome {intent,execute:Some(NativeEffectLease{id,policy:current})})
+            Ok(NativeLeaseOutcome {intent,execute:Some(NativeEffectLease{id,policy:current,routine:companion})})
         })
     }
     fn native_result(
@@ -300,31 +315,25 @@ impl NativeResultLedger for RunsDb {
                 )
             })
             .unwrap_or((i64::MIN, String::new(), String::new()));
-        let mut statement=self.conn().prepare("SELECT run_id,operation_id,attempt_id,generation,turn_id,stage,lease_state,created_at_ms,effect_purpose,memory_authority_json FROM native_result_intents WHERE stage IN ('prepared','unconfirmed','verified') AND (created_at_ms,run_id,operation_id)>(?1,?2,?3) ORDER BY created_at_ms,run_id,operation_id LIMIT ?4").map_err(sql)?;
+        let mut statement=self.conn().prepare("SELECT run_id,operation_id,attempt_id,generation,turn_id FROM native_result_intents WHERE stage IN ('prepared','unconfirmed','verified') AND (created_at_ms,run_id,operation_id)>(?1,?2,?3) ORDER BY created_at_ms,run_id,operation_id LIMIT ?4").map_err(sql)?;
         let rows = statement
             .query_map(params![time, run, operation, limit.clamp(1, 256)], |row| {
-                Ok((
-                    key(row),
-                    row.get::<_, String>("stage"),
-                    row.get::<_, String>("lease_state"),
-                    row.get::<_, i64>("created_at_ms"),
-                    purpose(row),
-                ))
+                Ok(key(row))
             })
             .map_err(sql)?;
         rows.map(|r| {
-            let (key, s, l, time, purpose) = r.map_err(sql)?;
-            let key = key?;
+            let key = r.map_err(sql)??;
+            let record = required(self.conn(), &key)?;
             Ok(PendingNativeResult {
-                purpose: purpose?,
+                purpose: record.purpose,
                 cursor: NativeRecoveryCursor {
-                    created_at_ms: time.map_err(sql)?,
+                    created_at_ms: record.created_at_ms,
                     run: key.run,
                     operation_id: key.operation_id,
                 },
                 key,
-                stage: stage(&s.map_err(sql)?)?,
-                lease_state: lease_state(&l.map_err(sql)?)?,
+                stage: record.stage,
+                lease_state: record.lease_state,
             })
         })
         .collect()
@@ -400,11 +409,18 @@ impl NativeResultLedger for RunsDb {
     }
     fn created_native_page(
         &self,
-        owner: BotOwner,
-        bot: BotId,
+        execution: &BotRunKey,
         workspace: WorkspaceId,
         document: DocumentId,
     ) -> Result<bool, BotLedgerError> {
-        created(self.conn(), owner, bot, workspace, document)
+        let admitted = admission(self, execution.run)?;
+        let p = &admitted.submission.provenance;
+        if p.owner != execution.owner
+            || p.bot != execution.bot
+            || admitted.submission.workspace != workspace
+        {
+            return Err(BotLedgerError::Fenced);
+        }
+        created(self.conn(), &admitted, workspace, document)
     }
 }

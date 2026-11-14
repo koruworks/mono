@@ -219,6 +219,12 @@ pub enum NativeDrainReason {
     PolicyPending {
         key: BotPolicyBarrierKey,
     },
+    RoutinePolicyPending {
+        owner: crate::BotOwner,
+        bot: crate::BotId,
+        schedule: crate::ScheduleId,
+        request: crate::NativePolicyRequestId,
+    },
     OwnerStop,
     TerminalTurn,
     UnconfirmedOperation,
@@ -234,7 +240,15 @@ impl<'de> Deserialize<'de> for NativeDrainReason {
         #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
         enum Wire {
             RunRecovery {},
-            PolicyPending { key: BotPolicyBarrierKey },
+            PolicyPending {
+                key: BotPolicyBarrierKey,
+            },
+            RoutinePolicyPending {
+                owner: crate::BotOwner,
+                bot: crate::BotId,
+                schedule: crate::ScheduleId,
+                request: crate::NativePolicyRequestId,
+            },
             OwnerStop {},
             TerminalTurn {},
             UnconfirmedOperation {},
@@ -243,6 +257,17 @@ impl<'de> Deserialize<'de> for NativeDrainReason {
         Ok(match Wire::deserialize(deserializer)? {
             Wire::RunRecovery {} => Self::RunRecovery,
             Wire::PolicyPending { key } => Self::PolicyPending { key },
+            Wire::RoutinePolicyPending {
+                owner,
+                bot,
+                schedule,
+                request,
+            } => Self::RoutinePolicyPending {
+                owner,
+                bot,
+                schedule,
+                request,
+            },
             Wire::OwnerStop {} => Self::OwnerStop,
             Wire::TerminalTurn {} => Self::TerminalTurn,
             Wire::UnconfirmedOperation {} => Self::UnconfirmedOperation,

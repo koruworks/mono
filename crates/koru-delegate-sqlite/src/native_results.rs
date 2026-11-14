@@ -10,7 +10,9 @@ use uuid::Uuid;
 mod drain;
 mod memory;
 mod repository;
+mod routine;
 mod rows;
+pub(crate) use drain::held_routine;
 pub(crate) use repository::policy_digest;
 pub(crate) use rows::current_policy;
 #[cfg(test)]
@@ -30,6 +32,8 @@ pub struct NativePolicyRecord {
 pub struct NativeEffectLease {
     pub id: Uuid,
     pub policy: NativePolicyRecord,
+    /// Immutable independent fence; present exactly for a leased Routine.
+    pub routine: Option<crate::RoutinePolicyRecord>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,7 +143,7 @@ pub trait NativeResultLedger {
         request: &AllocateMemoryEditRequest,
         source_run_document: DocumentId,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError>;
     fn resolve_memory_edit_base(
         &mut self,
@@ -147,7 +151,7 @@ pub trait NativeResultLedger {
         caller_fingerprint: [u8; 32],
         resolution: &MemoryBaseResolution,
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<MemoryEditAllocation, BotLedgerError>;
     fn prepare_memory_edit(
         &mut self,
@@ -162,6 +166,21 @@ pub trait NativeResultLedger {
         after: Option<&NativeRecoveryCursor>,
         limit: u16,
     ) -> Result<NativePendingEffects, BotLedgerError>;
+    /// Subject-filtered discovery only, never permission to acquire or drain.
+    fn pending_routine_native_effects(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+        after: Option<&NativeRecoveryCursor>,
+        limit: u16,
+    ) -> Result<NativePendingEffects, BotLedgerError>;
+    fn current_routine_native_policy(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        schedule: ScheduleId,
+    ) -> Result<Option<crate::RoutinePolicyRecord>, BotLedgerError>;
     fn native_outcomes_unknown(&self, run: RunId) -> Result<bool, BotLedgerError>;
     /// Held effects may still commit; verified evidence still needs publication.
     /// Neither condition permits releasing the Run's execution capacity.
@@ -192,7 +211,7 @@ pub trait NativeResultLedger {
         key: &NativeResultKey,
         fingerprint: [u8; 32],
         fence: &BotExecutionFence,
-        fresh: &BotPolicyBarrier,
+        fresh: &FreshBotPolicyProof,
     ) -> Result<NativeLeaseOutcome, BotLedgerError>;
     fn native_result(
         &self,
@@ -224,8 +243,7 @@ pub trait NativeResultLedger {
     ) -> Result<NativeIntentRecord, BotLedgerError>;
     fn created_native_page(
         &self,
-        owner: BotOwner,
-        bot: BotId,
+        execution: &BotRunKey,
         workspace: WorkspaceId,
         document: DocumentId,
     ) -> Result<bool, BotLedgerError>;
