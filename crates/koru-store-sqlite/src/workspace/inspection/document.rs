@@ -38,7 +38,7 @@ impl SqliteWorkspace {
         let fields: Option<(i64, Option<i64>)> = self
             .connection
             .query_row(
-                "SELECT length(version_vector)+length(frontiers)+length(kind),latest_checkpoint_seq FROM loro_documents WHERE id=?1",
+                "SELECT length(CAST(version_vector AS BLOB))+length(CAST(frontiers AS BLOB))+length(CAST(kind AS BLOB)),latest_checkpoint_seq FROM loro_documents WHERE id=?1",
                 [document.to_storage()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -59,7 +59,7 @@ impl SqliteWorkspace {
         let doc = loro::LoroDoc::new();
         if let Some(sequence) = state.latest_checkpoint_seq {
             let sizes: Option<(i64,i64)> = self.connection.query_row(
-                "SELECT length(snapshot),length(version_vector)+length(frontiers)+length(checksum) FROM loro_checkpoints WHERE document_id=?1 AND seq=?2",
+                "SELECT length(CAST(snapshot AS BLOB)),length(CAST(version_vector AS BLOB))+length(CAST(frontiers AS BLOB))+length(CAST(checksum AS BLOB)) FROM loro_checkpoints WHERE document_id=?1 AND seq=?2",
                 params![document.to_storage(),sequence as i64], |row| Ok((row.get(0)?,row.get(1)?)),
             ).optional().map_err(sql_failed)?;
             let (bytes, fields) = sizes.ok_or_else(|| Error::bare(Code::CorruptState))?;
@@ -82,7 +82,7 @@ impl SqliteWorkspace {
         }
         let after = state.latest_checkpoint_seq.unwrap_or(0);
         let mut headers = self.connection.prepare(
-            "SELECT length(update_bytes) FROM loro_updates WHERE document_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3"
+            "SELECT length(CAST(update_bytes AS BLOB)) FROM loro_updates WHERE document_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3"
         ).map_err(sql_failed)?;
         let rows = headers
             .query_map(
