@@ -14,10 +14,12 @@ use uuid::Uuid;
 
 mod auth;
 mod codec;
+mod preclaim;
 pub use auth::RoutineBridgeAuthority;
 pub use codec::{
     RoutineBridgeCodecError, RoutineBridgeEnvelope, RoutineBridgePayload, RoutineBridgeReply,
 };
+pub use preclaim::{SynchronizeRoutinePreclaim, SynchronizeRoutinePreclaimReply};
 
 pub const ROUTINE_BRIDGE_BODY_LIMIT: usize = 4 * 1024 * 1024;
 /// One total transport deadline; this vocabulary does not start a timer.
@@ -27,6 +29,7 @@ pub const ROUTINE_PREPARE_ROUTE: &str = "/internal/bots/routines/v1/prepare";
 pub const ROUTINE_PREPARATION_ROUTE: &str = "/internal/bots/routines/v1/preparation";
 pub const ROUTINE_FINALIZE_ROUTE: &str = "/internal/bots/routines/v1/finalize";
 pub const ROUTINE_LINK_ROUTE: &str = "/internal/bots/routines/v1/link";
+pub const ROUTINE_PRECLAIM_ROUTE: &str = "/internal/bots/routines/v1/synchronize-preclaim";
 
 fn v4(id: Uuid) -> bool {
     id.get_version() == Some(uuid::Version::Random) && id.get_variant() == uuid::Variant::RFC4122
