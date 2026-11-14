@@ -4,6 +4,7 @@ use super::*;
 mod drain;
 mod interrupt;
 mod memory;
+mod policy;
 mod settle;
 
 impl NativeResultLedger for RecordingStore {
@@ -82,6 +83,24 @@ impl NativeResultLedger for RecordingStore {
         self.inner.lock().unwrap().native_effects_pending(run)
     }
 
+    fn install_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<koru_delegate_sqlite::RoutinePolicyRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .install_routine_native_policy(barrier)
+    }
+    fn settle_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<koru_delegate_sqlite::RoutinePolicyRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .settle_routine_native_policy(barrier)
+    }
     fn install_native_policy(
         &mut self,
         barrier: &BotPolicyBarrier,
@@ -92,7 +111,13 @@ impl NativeResultLedger for RecordingStore {
         &self,
         key: &BotPolicyBarrierKey,
     ) -> Result<Option<NativePolicyRecord>, BotLedgerError> {
-        self.inner.lock().unwrap().native_policy(key)
+        let mut row = self.inner.lock().unwrap().native_policy(key)?;
+        if self.script.lock().unwrap().corrupt_native_policy_digest {
+            if let Some(row) = row.as_mut() {
+                row.payload_digest[0] ^= 1;
+            }
+        }
+        Ok(row)
     }
     fn current_native_policy(
         &self,
@@ -100,7 +125,17 @@ impl NativeResultLedger for RecordingStore {
         bot: BotId,
     ) -> Result<Option<NativePolicyRecord>, BotLedgerError> {
         self.check("bot_current_policy")?;
-        self.inner.lock().unwrap().current_native_policy(owner, bot)
+        let mut row = self
+            .inner
+            .lock()
+            .unwrap()
+            .current_native_policy(owner, bot)?;
+        if self.script.lock().unwrap().corrupt_native_policy_digest {
+            if let Some(row) = row.as_mut() {
+                row.payload_digest[0] ^= 1;
+            }
+        }
+        Ok(row)
     }
     fn settle_native_policy(
         &mut self,
@@ -198,6 +233,7 @@ impl NativeResultLedger for RecordingStore {
         bot: BotId,
         schedule: ScheduleId,
     ) -> Result<Option<koru_delegate_sqlite::RoutinePolicyRecord>, BotLedgerError> {
+        self.check("bot_current_routine_policy")?;
         self.inner
             .lock()
             .unwrap()

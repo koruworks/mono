@@ -181,6 +181,14 @@ pub trait NativeResultLedger {
         bot: BotId,
         schedule: ScheduleId,
     ) -> Result<Option<crate::RoutinePolicyRecord>, BotLedgerError>;
+    fn install_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<crate::RoutinePolicyRecord, BotLedgerError>;
+    fn settle_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<crate::RoutinePolicyRecord, BotLedgerError>;
     fn native_outcomes_unknown(&self, run: RunId) -> Result<bool, BotLedgerError>;
     /// Held effects may still commit; verified evidence still needs publication.
     /// Neither condition permits releasing the Run's execution capacity.

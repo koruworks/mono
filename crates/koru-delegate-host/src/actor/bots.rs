@@ -175,6 +175,13 @@ impl Actor {
                     .reconcile_native_policy(&key, device)
                     .map_err(bot_failure)?,
             },
+            BotCommand::SynchronizeRoutinePolicy { barrier } => {
+                let state = self
+                    .orchestrator
+                    .synchronize_routine_policy(barrier.clone(), device)
+                    .map_err(bot_failure)?;
+                BotReply::RoutinePolicyBarrier { barrier, state }
+            }
             BotCommand::PrepareNativeResult { request } => BotReply::NativeResult {
                 intent: self
                     .orchestrator

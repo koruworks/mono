@@ -6,6 +6,7 @@ use super::*;
 use koru_delegate_document::{ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument};
 use koru_delegate_schedule::*;
 use koru_recurrence::{CronExpression, RecurrenceRule};
+mod policy;
 
 fn fixture() -> (
     Harness,
