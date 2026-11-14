@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Composite checks and exact private acknowledgements, without execution.
 use super::*;
+use koru_store_core::UserScopeId;
 use std::sync::Mutex;
 use uuid::Uuid;
 

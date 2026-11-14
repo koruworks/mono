@@ -2,6 +2,7 @@
 
 //! Composite identity and fresh synchronization, separate from retained replay.
 use super::*;
+use koru_artifact_wire::run_tools::ToolFailure;
 use koru_delegate_core::*;
 
 pub(super) fn matches(
