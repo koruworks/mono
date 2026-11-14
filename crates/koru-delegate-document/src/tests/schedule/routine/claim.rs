@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use koru_delegate_core::*;
 
 fn prepared_document() -> (ScheduleDocument, RoutinePrepared) {
     let doc = ScheduleDocument::create(&routine_header()).unwrap();

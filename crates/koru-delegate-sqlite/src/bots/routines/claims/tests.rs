@@ -294,6 +294,7 @@ fn routine_link_ack_exact_identity_and_terminal_monotonicity_survive_lost_reply(
                 reason: RoutineTerminalReason::ConfigurationChanged,
             },
         };
+        f.clock.store(900,Ordering::SeqCst);
         f.db.arm_crash(CrashPoint {
             op: WriteOp::AcknowledgeRoutineLink,
             at,

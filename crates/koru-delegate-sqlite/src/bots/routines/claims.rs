@@ -232,28 +232,16 @@ pub(in crate::bots) fn stop(
     key: &BotRunKey,
     now: i64,
 ) -> Result<Option<RoutineClaimRecord>, BotLedgerError> {
-    bounded_admission(conn, key.run)?;
-    let Some(admission) = super::super::repository::read(conn, key.run)? else {
-        return Err(BotLedgerError::Invalid);
-    };
-    if admission.submission.provenance.owner != key.owner
-        || admission.submission.provenance.bot != key.bot
-    {
-        return Err(BotLedgerError::Fenced);
-    }
-    if admission.submission_version == 1 {
-        return Ok(None);
-    }
-    let provenance = admission
-        .submission
-        .provenance
-        .routine
-        .ok_or_else(|| bad("routine"))?;
+    // The ordinary Stop path needs no extra payload copy. For v2 use the
+    // bounded link slot to enter the single full cross-representation decoder.
+    let metadata: Option<(u8,bool)> = conn.query_row("SELECT submission_version,user_scope=?2 AND device_id=?3 AND bot_id=?4 FROM bot_admissions WHERE run_id=?1",params![key.run.to_storage(),key.owner.user_scope.to_storage(),key.owner.device.to_storage(),key.bot.to_storage()],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
+    match metadata {Some((_,false))=>return Err(BotLedgerError::Fenced),Some((1,true))=>return Ok(None),Some((2,true))=>{},_=>return Err(BotLedgerError::Invalid)}
+    let (schedule,occurrence_ms)=conn.query_row("SELECT CASE WHEN typeof(schedule_id)='text' AND length(CAST(schedule_id AS BLOB))=36 THEN schedule_id END,occurrence_ms FROM bot_routine_links WHERE run_id=?1",[key.run.to_storage()],|r|Ok((parse_cell(r,0),r.get::<_,i64>(1)))).optional().map_err(sql)?.ok_or_else(||bad("link"))?;
     let slot = RoutineSlot {
         owner: key.owner,
         bot: key.bot,
-        schedule: provenance.schedule,
-        occurrence_ms: provenance.occurrence_ms,
+        schedule: schedule?,
+        occurrence_ms: occurrence_ms.map_err(sql)?,
     };
     let RoutineClaimObservation::Claimed { record } = observation(conn, &slot, now)? else {
         return Err(bad("claim"));
