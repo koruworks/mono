@@ -23,7 +23,7 @@ use super::*;
 use koru_ai_core::{
     AGENT_DEFAULT_MODEL, AgentToolKind, CallShape, DocumentId, ProfileId, ToolActivity,
     ToolActivityStatus, ToolMode, WorkspaceId,
-    mini_apps::{self, HostContext, RefinementTarget},
+    mini_apps::{self, HostContext, RefinementContext, RefinementTarget},
 };
 use koru_ai_wire::{StreamEvent, UpdateChatFolderRequest, UpdateChatToolPolicyRequest};
 use std::{
@@ -581,6 +581,7 @@ fn turn(
     stack: &mut Stack,
     seed: &Seed,
     host: HostContext,
+    refinement: Option<RefinementContext>,
     prompt: String,
     allowed: &[&str],
 ) -> Result<(Offer, BTreeSet<String>), String> {
@@ -590,6 +591,7 @@ fn turn(
         .ai()
         .send_turn(&SendTurnRequest {
             mini_app_host: Some(host),
+            mini_app_refinement: refinement,
             operation_id: Uuid::new_v4(),
             chat_id: seed.chat,
             surface: AiSurface::ContextPane,
@@ -758,6 +760,7 @@ fn exercise(stack: &mut Stack, provider: &str) -> Result<(), String> {
         stack,
         &seed,
         host,
+        None,
         format!(
             "{restriction} First call {} with query {LIST_NAME:?}. Then call {} to create a mini app using that list, documentId {}, and document on the left/tasks on the right. Use the declared task/document catalog. Return the app by actually invoking the MCP tool, not by printing JSON or describing a hypothetical app.",
             mini_apps::LIST_TOOL,
@@ -794,6 +797,10 @@ fn exercise(stack: &mut Stack, provider: &str) -> Result<(), String> {
         stack,
         &seed,
         refined_host,
+        Some(RefinementContext {
+            target,
+            declaration: declaration.envelope.clone(),
+        }),
         format!(
             "{restriction} Call {} for the current live surface from Koru's injected context. Put tasks on the left and the document on the right (tasks-first). Keep the same selector, tasks, search and document children; change only the root arrangement. Do not create a second app or change list/document bindings.",
             mini_apps::UPDATE_TOOL

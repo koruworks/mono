@@ -400,13 +400,7 @@ impl View for BuiltInDocument {
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
-        // A lifted viewer has the window's size, which the container keeps
-        // current through `set_viewer_lift`; the pane's size is not its.
-        if self.viewer_lift.is_none()
-            && let Some(viewer) = &mut self.viewer
-        {
-            viewer.set_viewport(w, h);
-        }
+        self.prepare_media_viewport(w, h);
         Editing::set_viewport(self, w, h)
     }
 
@@ -1293,6 +1287,22 @@ impl View for BuiltInDocument {
 }
 
 impl BuiltInDocument {
+    fn prepare_media_viewport(&mut self, w: f32, h: f32) {
+        // A lifted viewer keeps the window geometry supplied by its host.
+        if self.viewer_lift.is_none()
+            && let Some(viewer) = &mut self.viewer
+        {
+            viewer.set_viewport(w, h);
+        }
+    }
+
+    /// Retained document activation keeps native viewer geometry and performs
+    /// editor catch-up at the final size, with one editor reflow.
+    pub fn catch_up_at_viewport(&mut self, ws: &WorkspaceDoc, w: f32, h: f32) {
+        self.prepare_media_viewport(w, h);
+        Editing::catch_up_at_viewport(self, ws, w, h);
+    }
+
     pub(crate) fn frame_document<'a>(
         &self,
         active: &'a WorkspaceDoc,

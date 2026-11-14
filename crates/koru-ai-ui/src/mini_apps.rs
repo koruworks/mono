@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Live-only native mini-app requests. Transcript/recovery cannot enqueue one.
 use super::*;
-use koru_ai_core::mini_apps::{Declaration, Envelope, HostContext};
+use koru_ai_core::mini_apps::{Declaration, Envelope, HostContext, RefinementContext};
 
 #[derive(Clone, Debug)]
 pub struct MiniAppRefinement {
@@ -11,11 +11,12 @@ pub struct MiniAppRefinement {
     pub envelope: koru_ai_core::mini_apps::UpdateEnvelope,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QueuedTarget {
     profile: Option<ProfileId>,
     workspace: Option<WorkspaceId>,
     target: Option<koru_ai_core::mini_apps::RefinementTarget>,
+    context: Option<std::sync::Arc<RefinementContext>>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +29,7 @@ pub struct MiniAppCreation {
 }
 struct Pending {
     host: HostContext,
+    refinement: Option<std::sync::Arc<RefinementContext>>,
     chat: ChatId,
     message: Option<MessageId>,
     attempt: Option<koru_ai_core::InferenceAttemptId>,
@@ -42,6 +44,8 @@ pub(crate) struct NativeApps {
     ready: Option<MiniAppCreation>,
     update: Option<MiniAppRefinement>,
     target: Option<koru_ai_core::mini_apps::RefinementTarget>,
+    context: Option<std::sync::Arc<RefinementContext>>,
+    queued: Option<QueuedTarget>,
     pub(super) unavailable: bool,
     interrupted: bool,
     refinement_refused: bool,
@@ -55,6 +59,8 @@ impl Default for NativeApps {
             ready: None,
             update: None,
             target: None,
+            context: None,
+            queued: None,
             unavailable: false,
             interrupted: false,
             refinement_refused: false,
@@ -74,11 +80,35 @@ impl NativeApps {
 
 impl ChatSurface {
     pub(crate) fn queued_mini_app_target(&self) -> QueuedTarget {
+        if let Some(queued) = &self.native_apps.queued {
+            return queued.clone();
+        }
         QueuedTarget {
             profile: self.profile,
             workspace: self.context_workspace,
             target: self.native_apps.target,
+            context: self.native_apps.context.clone(),
         }
+    }
+    pub(crate) fn capture_queued_mini_app(&mut self, captured: Option<QueuedTarget>) {
+        self.native_apps.queued = captured;
+    }
+    pub fn mini_app_refinement_target(&self) -> Option<koru_ai_core::mini_apps::RefinementTarget> {
+        self.native_apps.target
+    }
+    pub fn set_mini_app_refinement_context(&mut self, context: Option<RefinementContext>) {
+        let context = context.filter(|context| context.validate().is_ok());
+        self.set_mini_app_refinement_target(context.as_ref().map(|context| context.target));
+        self.native_apps.context = context.map(std::sync::Arc::new);
+    }
+    pub(super) fn mini_app_request_refinement(
+        &self,
+        host: Option<HostContext>,
+    ) -> Option<RefinementContext> {
+        let pending = self.native_apps.pending.as_ref()?;
+        (Some(pending.host) == host)
+            .then(|| pending.refinement.as_deref().cloned())
+            .flatten()
     }
     pub(crate) fn accepts_queued_mini_app_target(&mut self, captured: QueuedTarget) -> bool {
         let current = self.queued_mini_app_target();
@@ -108,6 +138,14 @@ impl ChatSurface {
             self.refresh_mini_app_status();
         }
         self.native_apps.target = target;
+        if self
+            .native_apps
+            .context
+            .as_ref()
+            .is_some_and(|context| Some(context.target) != target)
+        {
+            self.native_apps.context = None;
+        }
     }
     pub fn mini_app_refined(&mut self, request: uuid::Uuid, applied: bool) {
         self.mini_app_opened(request, applied);
@@ -210,6 +248,7 @@ impl ChatSurface {
         }
     }
     pub(super) fn begin_mini_app_request(&mut self, chat: ChatId) -> Option<HostContext> {
+        let captured = self.queued_mini_app_target();
         self.native_apps.clear();
         if !self.mini_app_available() {
             return None;
@@ -218,10 +257,11 @@ impl ChatSurface {
             renderer_id: self.native_apps.renderer,
             request_id: uuid::Uuid::new_v4(),
             workspace_id: self.context_workspace?,
-            refinement: self.native_apps.target,
+            refinement: captured.target,
         };
         self.native_apps.pending = Some(Pending {
             host,
+            refinement: captured.context,
             chat,
             message: None,
             attempt: None,

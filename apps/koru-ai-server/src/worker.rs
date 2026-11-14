@@ -3598,6 +3598,10 @@ impl WorkerState {
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
+        mini_apps::validate_refinement(
+            request.mini_app_host,
+            request.mini_app_refinement.as_ref(),
+        )?;
         self.admit_chat_work(Some(request.chat_id))?;
         if let Some(existing) = self
             .repository
@@ -3803,8 +3807,12 @@ impl WorkerState {
         self.cancellations.insert(attempt_id, cancellation.clone());
         // Another message passes over the chat's open sets (D108).
         self.pass_over_questions(chat.id, attempt_id);
-        let native_tools =
-            self.mini_app_tools(attempt_id, &attempt.provider, request.mini_app_host);
+        let native_tools = self.mini_app_tools(
+            attempt_id,
+            &attempt.provider,
+            request.mini_app_host,
+            request.mini_app_refinement,
+        );
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -3868,6 +3876,10 @@ impl WorkerState {
         request: RetryTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
+        mini_apps::validate_refinement(
+            request.mini_app_host,
+            request.mini_app_refinement.as_ref(),
+        )?;
         if let Some(existing) = self
             .repository
             .attempt_by_operation(request.operation_id)
@@ -4017,8 +4029,12 @@ impl WorkerState {
         );
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
-        let native_tools =
-            self.mini_app_tools(attempt_id, &attempt.provider, request.mini_app_host);
+        let native_tools = self.mini_app_tools(
+            attempt_id,
+            &attempt.provider,
+            request.mini_app_host,
+            request.mini_app_refinement,
+        );
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -6346,7 +6362,7 @@ fn run_provider_job(
         // Keep this on one physical log line. `run-all` follows only records
         // carrying this marker; pretty JSON would leave the continuation lines
         // indistinguishable from unrelated gateway output.
-        match serde_json::to_string(&job.request) {
+        match mini_apps::payload_for_log(&job.request) {
             Ok(payload) => tracing::warn!(
                 target: "koru_ai::payload",
                 attempt = %attempt_id,

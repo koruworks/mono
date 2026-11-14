@@ -1,6 +1,33 @@
 {
   "components": {
     "schemas": {
+      "Action": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "document": {
+                "$ref": "#/components/schemas/DocumentReference"
+              },
+              "target": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "SelectDocument"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "target",
+              "document"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ActionId": {
         "format": "uuid",
         "type": "string"
@@ -1159,6 +1186,15 @@
           "source"
         ],
         "type": "object"
+      },
+      "Align": {
+        "enum": [
+          "Start",
+          "Center",
+          "End",
+          "Stretch"
+        ],
+        "type": "string"
       },
       "AmendmentRevision": {
         "description": "The monotonic amendment revision of a usage fact. A retry repeats it; a\ncorrection raises it.",
@@ -3581,6 +3617,19 @@
       "Component": {
         "additionalProperties": false,
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Action"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "arrangement": {
             "nullable": true,
             "type": "string"
@@ -3599,6 +3648,19 @@
           "component": {
             "type": "string"
           },
+          "decoration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Decoration"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "document": {
             "anyOf": [
               {
@@ -3615,6 +3677,32 @@
           "id": {
             "type": "string"
           },
+          "ink": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ink"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Layout"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "list": {
             "anyOf": [
               {
@@ -3627,6 +3715,36 @@
                 "nullable": true
               }
             ]
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextRole"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "space": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Space"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "text": {
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -4198,6 +4316,38 @@
             "default": null,
             "nullable": true,
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Decoration": {
+        "additionalProperties": false,
+        "properties": {
+          "radius": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Radius"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "surface": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Surface"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
           }
         },
         "type": "object"
@@ -7480,6 +7630,15 @@
         "format": "uuid",
         "type": "string"
       },
+      "Ink": {
+        "enum": [
+          "Primary",
+          "Secondary",
+          "Hint",
+          "Accent"
+        ],
+        "type": "string"
+      },
       "InstantWindow": {
         "description": "A half-open instant window, `[after_ms, before_ms)`, in epoch milliseconds\nUTC. Absent means unbounded on that side.",
         "properties": {
@@ -7631,6 +7790,77 @@
             "type": "object"
           }
         ]
+      },
+      "Layout": {
+        "additionalProperties": false,
+        "properties": {
+          "align": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Align"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Space"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "height": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sizing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "padding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Space"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "width": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sizing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "type": "object"
       },
       "Lifecycle": {
         "description": "Whether a hit's document is in the trash.\n\n**Not a property of a fragment.** Trash is a flag on the manifest entry\n([ADR-95](../../../docs/decisions/ADR-076-100.md#adr-95-trash--a-document-in-the-trash-is-a-flag-on-its-manifest-entry)), so it is a property\nof the *document*, resolved by joining the mirrored listing. Storing it on\nevery fragment is what used to let a hit and its own document title disagree\nabout whether they were binned.",
@@ -10569,6 +10799,18 @@
         ],
         "type": "object"
       },
+      "Radius": {
+        "enum": [
+          "None",
+          "S",
+          "M",
+          "L",
+          "XL",
+          "XXL",
+          "Full"
+        ],
+        "type": "string"
+      },
       "RateRunRequest": {
         "description": "`POST /v1/runs/{run}/rate`: one gesture on a finished run (D44).\n\nThe note travels here because it lives in the run's own content and\nnowhere else — never an event attribute, never a metric. The event the\nworker publishes carries the rating and whether a note exists, and not\na byte of the note itself.",
         "properties": {
@@ -10993,6 +11235,23 @@
           "id",
           "kind",
           "path"
+        ],
+        "type": "object"
+      },
+      "RefinementContext": {
+        "additionalProperties": false,
+        "description": "Transient model-visible placement metadata for an exact active native owner.\nNever place this in persisted chat, events, provider continuity or sessions.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/components/schemas/Envelope"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RefinementTarget"
+          }
+        },
+        "required": [
+          "target",
+          "declaration"
         ],
         "type": "object"
       },
@@ -12005,6 +12264,20 @@
                 "nullable": true
               }
             ]
+          },
+          "mini_app_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Exact captured declaration paired with the live target; never persisted."
           },
           "operation_id": {
             "type": "string"
@@ -14136,6 +14409,20 @@
             ],
             "description": "Native host provenance for this live request only. Never persisted or\naccepted from a model tool argument."
           },
+          "mini_app_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Exact captured declaration paired with the live target; never persisted."
+          },
           "operation_id": {
             "type": "string"
           },
@@ -14980,6 +15267,13 @@
         },
         "type": "object"
       },
+      "Sizing": {
+        "enum": [
+          "Hug",
+          "Fill"
+        ],
+        "type": "string"
+      },
       "SnapshotRequest": {
         "properties": {
           "columns": {
@@ -15036,6 +15330,26 @@
           "title"
         ],
         "type": "object"
+      },
+      "Space": {
+        "enum": [
+          "S0",
+          "S0_5",
+          "S1",
+          "S1_5",
+          "S2",
+          "S2_5",
+          "S3",
+          "S3_5",
+          "S4",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S10",
+          "S12"
+        ],
+        "type": "string"
       },
       "Status": {
         "description": "`GET /v1/status`.",
@@ -15756,6 +16070,14 @@
         "type": "object"
       },
       "Surface": {
+        "enum": [
+          "Ground",
+          "Raised",
+          "Chip"
+        ],
+        "type": "string"
+      },
+      "Surface2": {
         "additionalProperties": false,
         "properties": {
           "catalogId": {
@@ -16835,6 +17157,16 @@
           "controller_lease"
         ],
         "type": "object"
+      },
+      "TextRole": {
+        "enum": [
+          "Ui",
+          "Row",
+          "Hint",
+          "Meta",
+          "PopoverHeading"
+        ],
+        "type": "string"
       },
       "ThemeChoice": {
         "description": "`theme=` in `preferences.conf`, and the terminal row's `theme=`.\n\nMatches `koru_draw::theme::ThemePreference`: case-sensitive, because\nthat is what the existing parser does and a file written in another\ncase has never been produced by any build.",

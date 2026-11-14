@@ -10,7 +10,21 @@ fn mini_app_refinement_requires_exact_live_target_and_has_one_delivery() {
         surface_id: uuid::Uuid::new_v4(),
         base_revision: 8,
     });
-    context.mini_app = Some(mini_apps::Authority::new(host));
+    let target = host.refinement.unwrap();
+    let mut declaration = Declaration::parse(mini_apps::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    context.mini_app = Some(
+        mini_apps::Authority::with_refinement(
+            host,
+            Some(mini_apps::RefinementContext {
+                target,
+                declaration,
+            }),
+        )
+        .unwrap(),
+    );
     let mut root = Declaration::parse(mini_apps::FIXTURE.as_bytes())
         .unwrap()
         .envelope
@@ -112,6 +126,138 @@ fn fixture() -> (MiniAppTools, Arc<Fake>, AiToolExecutionContext, AiToolCall) {
         thought_signatures: Vec::new(),
     };
     (MiniAppTools::new(registry.clone()), registry, context, call)
+}
+
+struct CompositionMetadata {
+    reads: AtomicUsize,
+    documents: Vec<DocumentId>,
+}
+impl MiniAppRegistry for CompositionMetadata {
+    fn read(
+        &self,
+        _: &AiToolExecutionContext,
+        lists: bool,
+        documents: bool,
+    ) -> Result<Registry, AiError> {
+        assert!(!lists);
+        assert!(documents);
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        Ok(Registry {
+            lists: vec![],
+            documents: self.documents.clone(),
+        })
+    }
+}
+
+#[test]
+fn composition_creation_validates_action_only_documents_in_one_metadata_read() {
+    let declaration = Declaration::parse(mini_apps::composition::FIXTURE.as_bytes()).unwrap();
+    let documents = declaration.document_references();
+    assert_eq!(documents.len(), 4);
+    for missing_action_document in [false, true] {
+        let (_, _, context, mut call) = fixture();
+        let mut allowed = documents.clone();
+        if missing_action_document {
+            allowed.pop();
+        }
+        let metadata = Arc::new(CompositionMetadata {
+            reads: AtomicUsize::new(0),
+            documents: allowed,
+        });
+        let tools = MiniAppTools::new(metadata.clone());
+        call.arguments = serde_json::to_value(&declaration.envelope).unwrap();
+        let result = tools.invoke(&context, &call, &Cancellation::default());
+        assert_eq!(result.is_err(), missing_action_document);
+        assert_eq!(metadata.reads.load(Ordering::Relaxed), 1);
+        if let Ok(result) = result {
+            assert!(matches!(
+                creation_event(&context, &result).unwrap(),
+                koru_ai_wire::PublicAiEvent::MiniAppCreated { .. }
+            ));
+        }
+    }
+}
+
+#[test]
+fn composition_refinement_checks_snapshot_before_io_and_rechecks_before_delivery() {
+    let (_, _, mut context, mut call) = fixture();
+    let mut host = context.mini_app.as_ref().unwrap().host;
+    let target = mini_apps::RefinementTarget {
+        tab_id: 5,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 9,
+    };
+    host.refinement = Some(target);
+    let mut declaration = Declaration::parse(mini_apps::composition::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    let snapshot = mini_apps::RefinementContext {
+        target,
+        declaration: declaration.clone(),
+    };
+    let documents = snapshot.validate().unwrap().document_references();
+    let metadata = Arc::new(CompositionMetadata {
+        reads: AtomicUsize::new(0),
+        documents: documents.clone(),
+    });
+    let tools = MiniAppTools::new(metadata.clone());
+    context.mini_app =
+        Some(mini_apps::Authority::with_refinement(host, Some(snapshot.clone())).unwrap());
+    let mut components = declaration.surface.components;
+    components
+        .iter_mut()
+        .find(|c| c.id == "root")
+        .unwrap()
+        .component = "Row".into();
+    call.name = mini_apps::UPDATE_TOOL.into();
+    call.arguments = json!({"version":"1.0","updateComponents":{"surfaceId":target.surface_name(),"components":components}});
+    let mut redirect = call.clone();
+    redirect.arguments["updateComponents"]["components"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["component"] == "Button")
+        .unwrap()["action"]["document"]["documentId"] = json!(DocumentId::new());
+    assert!(
+        tools
+            .invoke(&context, &redirect, &Cancellation::default())
+            .is_err()
+    );
+    assert_eq!(metadata.reads.load(Ordering::Relaxed), 0);
+    let result = tools
+        .invoke(&context, &call, &Cancellation::default())
+        .unwrap();
+    assert_eq!(metadata.reads.load(Ordering::Relaxed), 1);
+    let mut tampered = result.clone();
+    tampered.content = redirect.arguments;
+    assert!(creation_event(&context, &tampered).is_err());
+    assert!(matches!(
+        creation_event(&context, &result).unwrap(),
+        koru_ai_wire::PublicAiEvent::MiniAppUpdated { .. }
+    ));
+
+    let mut removed = documents;
+    removed.pop();
+    let metadata = Arc::new(CompositionMetadata {
+        reads: AtomicUsize::new(0),
+        documents: removed,
+    });
+    let tools = MiniAppTools::new(metadata.clone());
+    context.mini_app = Some(mini_apps::Authority::with_refinement(host, Some(snapshot)).unwrap());
+    assert!(
+        tools
+            .invoke(&context, &call, &Cancellation::default())
+            .is_err()
+    );
+    assert_eq!(metadata.reads.load(Ordering::Relaxed), 1);
+    context.mini_app = Some(mini_apps::Authority::new(host));
+    assert!(
+        tools
+            .invoke(&context, &call, &Cancellation::default())
+            .is_err()
+    );
+    assert_eq!(metadata.reads.load(Ordering::Relaxed), 1);
 }
 #[test]
 fn mini_app_bounds_and_scope_are_checked_before_registry_access() {

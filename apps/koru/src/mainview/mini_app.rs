@@ -15,7 +15,13 @@ impl MainView {
         } else {
             None
         };
-        self.ai_chat.set_mini_app_refinement_target(target);
+        if self.ai_chat.mini_app_refinement_target() != target {
+            let context = target.and_then(|_| match &self.tabs().active_tab().view {
+                TabView::MiniApp(app) => Some(app.refinement_context()),
+                _ => None,
+            });
+            self.ai_chat.set_mini_app_refinement_context(context);
+        }
     }
 
     pub(super) fn open_pending_mini_apps(&mut self) -> bool {
@@ -81,6 +87,13 @@ impl MainView {
         let Some(target) = refinement.host.refinement else {
             return false;
         };
+        let references = match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) => app.effective_definition().document_references(),
+            _ => return false,
+        };
+        if !self.mini_app_documents_available(&references) {
+            return false;
+        }
         let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view else {
             return false;
         };
@@ -104,6 +117,9 @@ impl MainView {
         else {
             return false;
         };
+        if !self.mini_app_documents_available(&declaration.document_references()) {
+            return false;
+        }
         if let Some(koru_ai_core::mini_apps::TaskSelection::List(id)) = declaration.task_selection()
             && !self
                 .list_table
@@ -124,7 +140,7 @@ impl MainView {
             return false;
         }
         tab.home = Some(workspace);
-        tab.label = koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle).into();
+        tab.label = app.default_title().into();
         app.artifact.owner = Some(*profile);
         app.artifact.title = tab.label.clone();
         tab.view = TabView::MiniApp(Box::new(app));
@@ -156,6 +172,20 @@ impl MainView {
         self.relayout();
         self.size_visible_groups();
         true
+    }
+
+    pub(super) fn mini_app_documents_available(
+        &self,
+        documents: &[koru_ai_core::DocumentId],
+    ) -> bool {
+        documents.iter().all(|document| {
+            self.entries.as_ref().is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry.id.as_uuid() == document.as_uuid()
+                        && entry.kind == koru_core::explore::KIND_DOCUMENT
+                })
+            }) && !self.entity_trashed.contains(&document.to_storage())
+        })
     }
 
     pub(super) fn accept_mini_app_document(

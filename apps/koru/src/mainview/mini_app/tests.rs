@@ -5,6 +5,48 @@ use koru_core::{DocumentId, node::Node, schema::Parent};
 use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot, WindowSlot};
 
 #[test]
+fn cached_mini_app_documents_remain_owned_until_the_tab_closes() {
+    let (mut view, workspace, first, _) = fixture();
+    let workspace_id = workspace.ws.id().unwrap();
+    let second = DocumentId::new();
+    let mut other = koru_core::schema::WorkspaceDoc::create(workspace_id, "second").unwrap();
+    koru_workspace::document(&mut other, "Second").unwrap();
+    other.stamp_document_id(second).unwrap();
+    let TabView::MiniApp(app) = &mut view.tabs_mut().active_mut().view else {
+        panic!()
+    };
+    assert!(app.land(&workspace.ws, first));
+    let owner = app.leaf().unwrap().native_ime_owner();
+    app.request_document(second, None);
+    let request = View::child_document_request(&view).unwrap();
+    assert!(view.land_mini_app_document(request, &other));
+    assert!(view.shown_documents().contains(&first));
+    assert!(view.shown_documents().contains(&second));
+    assert!(
+        !view.pane_requests.iter().any(
+            |r| matches!(r, koru_workspace_host::PaneRequest::CloseDocument(id) if *id == first)
+        )
+    );
+    let TabView::MiniApp(app) = &mut view.tabs_mut().active_mut().view else {
+        panic!()
+    };
+    app.request_document(first, None);
+    let request = View::child_document_request(&view).unwrap();
+    assert!(view.land_mini_app_document(request, &workspace.ws));
+    let TabView::MiniApp(app) = &view.tabs().active_tab().view else {
+        panic!()
+    };
+    assert_eq!(app.leaf().unwrap().native_ime_owner(), owner);
+    let index = view.tabs().active();
+    view.close(index);
+    for document in [first, second] {
+        assert!(view.pane_requests.iter().any(
+            |r| matches!(r, koru_workspace_host::PaneRequest::CloseDocument(id) if *id == document)
+        ));
+    }
+}
+
+#[test]
 fn mini_app_scripted_refinement_reaches_retained_host_and_refuses_stale_or_closed_target() {
     check_scripted_refinement(false);
 }
@@ -48,6 +90,8 @@ fn check_scripted_refinement(mcp: bool) {
         panic!()
     };
     let leaf_owner = app.leaf().unwrap().native_ime_owner();
+    let snapshot = app.refinement_context();
+    assert_eq!(Some(snapshot.target), host.refinement);
     let task_owner = &app.tasks as *const crate::tasks_view::TasksView;
     let count = view.tabs().len();
     let events = (if mcp {
@@ -61,7 +105,7 @@ fn check_scripted_refinement(mcp: bool) {
             invocation_id: ToolInvocationId::new(),
             profile_id: Some(profile),
             workspace_ids: vec![workspace_id],
-            mini_app: Some(mini_apps::Authority::new(host)),
+            mini_app: Some(mini_apps::Authority::with_refinement(host, Some(snapshot)).unwrap()),
         },
         recorded["result"].clone(),
     )
@@ -128,13 +172,16 @@ fn check_scripted_creation(mcp: bool) {
     let before = view.tabs().len();
     let chat = ChatId::new();
     let attempt = InferenceAttemptId::new();
+    let document = koru_ai_core::DocumentId::new();
+    view.entries = Some(vec![document_entry(DocumentId::from_uuid(
+        document.as_uuid(),
+    ))]);
     let TabView::AiChat(origin) = &mut view.tabs_mut().active_mut().view else {
         panic!()
     };
     let host = origin
         .dictation_surface_mut()
         .arm_mini_app_for_test(profile, workspace, chat, attempt);
-    let document = koru_ai_core::DocumentId::new();
     let mut declaration: serde_json::Value = serde_json::from_str(mini_apps::FIXTURE).unwrap();
     declaration["createSurface"]["components"][0]["arrangement"] = "document-first".into();
     declaration["createSurface"]["components"][2]
@@ -212,6 +259,20 @@ fn check_scripted_creation(mcp: bool) {
     );
 }
 
+fn document_entry(document: DocumentId) -> koru_core::explore::ExploreEntry {
+    koru_core::explore::ExploreEntry {
+        id: document,
+        parent: None,
+        ordinal: 0,
+        title: "Source".into(),
+        kind: koru_core::explore::KIND_DOCUMENT.into(),
+        mime: None,
+        note: None,
+        trashed_at: None,
+        trashed_by: None,
+    }
+}
+
 fn fixture() -> (MainView, Workspace, DocumentId, NodeId) {
     let (mut view, mut workspace) = container();
     let root = a_document(&mut workspace.ws, "Source");
@@ -227,6 +288,7 @@ fn fixture() -> (MainView, Workspace, DocumentId, NodeId) {
     .unwrap();
     let document = DocumentId::new();
     workspace.ws.stamp_document_id(document).unwrap();
+    view.entries = Some(vec![document_entry(document)]);
     assert!(view.open_mini_app_fixture());
     if let TabView::MiniApp(app) = &mut view.tabs_mut().active_mut().view {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 12).unwrap();

@@ -166,7 +166,7 @@ impl MainView {
             };
             let tab = *tab;
             let owner = *profile;
-            let workspace = operation.snapshot.bindings.workspace;
+            let workspace = operation.snapshot.workspace();
             if self.mini_app_artifacts.send(command).is_err() {
                 for (_, group) in self.panes.iter_groups_mut() {
                     for candidate in group.tabs_mut().iter_mut() {
@@ -217,8 +217,9 @@ impl MainView {
                 let Some(workspace) = self.current_workspace() else {
                     return false;
                 };
-                if envelope.bindings.workspace.as_uuid() != workspace.as_uuid()
-                    || envelope.bindings.task_list.is_some_and(|id| {
+                if envelope.workspace().as_uuid() != workspace.as_uuid()
+                    || !self.mini_app_documents_available(&envelope.document_references())
+                    || envelope.task_list().is_some_and(|id| {
                         !self
                             .list_table
                             .iter()
@@ -236,7 +237,7 @@ impl MainView {
                 }
                 let mut tab = Tab::welcome();
                 let declaration = envelope.instantiate(
-                    envelope.bindings.workspace,
+                    envelope.workspace(),
                     format!("mini-app-{}", uuid::Uuid::new_v4()),
                 );
                 let Ok(declaration) = declaration else {

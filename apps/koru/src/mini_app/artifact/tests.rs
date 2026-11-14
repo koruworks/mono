@@ -153,7 +153,7 @@ fn authoritative_metadata_precedes_mime_download_and_scope_is_checked() {
     let op = SaveOperation::capture(snapshot(), 0, "App", None).unwrap();
     let version = save(&fake, &op).unwrap();
     let profile = koru_core::ProfileId::new();
-    let workspace = koru_core::WorkspaceId::from_uuid(op.snapshot.bindings.workspace.as_uuid());
+    let workspace = koru_core::WorkspaceId::from_uuid(op.snapshot.workspace().as_uuid());
     assert!(open(&fake, profile, koru_core::WorkspaceId::new(), version.id).is_err());
     assert_eq!(fake.reads.get(), 0);
     fake.version.borrow_mut().as_mut().unwrap().mime = MediaType::new("text/markdown").unwrap();

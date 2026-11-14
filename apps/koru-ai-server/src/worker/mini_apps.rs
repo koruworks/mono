@@ -13,21 +13,84 @@ struct McpPending {
 fn scoped_definitions(
     definitions: &[AiToolDefinition],
     host: Option<HostContext>,
+    refinement: Option<&mini_apps::RefinementContext>,
 ) -> Vec<AiToolDefinition> {
     definitions.iter().filter_map(|definition| {
         let native=[mini_apps::CREATE_TOOL,mini_apps::LIST_TOOL,mini_apps::UPDATE_TOOL].contains(&definition.name.as_str());
         if native && host.is_none() { return None; }
-        if definition.name == mini_apps::UPDATE_TOOL && host.and_then(|h| h.refinement).is_none() { return None; }
+        if definition.name == mini_apps::UPDATE_TOOL && (host.and_then(|h| h.refinement).is_none() || refinement.is_none()) { return None; }
         let mut definition=definition.clone();
         if native && let Some(host)=host {
             definition.description.push_str(&format!(" This live host's current workspace_id is {}. Use that identity for existing document discovery tools.",host.workspace_id));
             if definition.name == mini_apps::UPDATE_TOOL && let Some(target) = host.refinement {
                 definition.input_schema["properties"]["updateComponents"]["properties"]["surfaceId"] = serde_json::json!({"const":target.surface_name()});
                 definition.description.push_str(&format!(" The current live surfaceId is {}.",target.surface_name()));
+                if let Some(instructions) = refinement.and_then(|snapshot| snapshot.model_instructions().ok()) {
+                    definition.description.push_str(&format!(" {instructions}"));
+                }
             }
         }
         Some(definition)
     }).collect()
+}
+/// Supplied snapshots must match the native target before any turn is stored.
+/// Older callers may omit one; their create/list tools remain available.
+pub(super) fn validate_refinement(
+    host: Option<HostContext>,
+    refinement: Option<&mini_apps::RefinementContext>,
+) -> ApiResult<()> {
+    if let Some(snapshot) = refinement {
+        if host.and_then(|host| host.refinement) != Some(snapshot.target)
+            || snapshot.validate().is_err()
+        {
+            return Err(failure(
+                "invalid_request",
+                "The mini-app refinement context does not match its live target.",
+                false,
+            ));
+        }
+    }
+    Ok(())
+}
+/// Payload debugging is explicit, but transient native declarations are still
+/// excluded. Sanitize a clone so the provider receives the original context.
+pub(super) fn payload_for_log(request: &AiRequest) -> Result<String, serde_json::Error> {
+    let mut logged = request.clone();
+    let definitions = mini_apps::definitions();
+    for tool in &mut logged.tools {
+        if let Some(original) = definitions
+            .iter()
+            .find(|original| original.name == tool.name)
+        {
+            *tool = original.clone();
+        }
+    }
+    for turn in &mut logged.tool_history {
+        for call in &mut turn.calls {
+            if [
+                mini_apps::CREATE_TOOL,
+                mini_apps::UPDATE_TOOL,
+                mini_apps::LIST_TOOL,
+            ]
+            .contains(&call.name.as_str())
+            {
+                call.arguments = json!({"redacted":"transient mini-app arguments"});
+                call.thought_signatures.clear();
+            }
+        }
+        for result in &mut turn.results {
+            if [
+                mini_apps::CREATE_TOOL,
+                mini_apps::UPDATE_TOOL,
+                mini_apps::LIST_TOOL,
+            ]
+            .contains(&result.name.as_str())
+            {
+                result.content = json!({"redacted":"transient mini-app result"});
+            }
+        }
+    }
+    serde_json::to_string(&logged)
 }
 #[derive(Default)]
 pub(super) struct Deliveries {
@@ -122,6 +185,7 @@ impl WorkerState {
         attempt: InferenceAttemptId,
         provider: &AiProviderId,
         host: Option<HostContext>,
+        refinement: Option<mini_apps::RefinementContext>,
     ) -> Vec<AiToolDefinition> {
         let managed = managed_tools_available(provider, self.managed_mini_apps);
         let supported = managed
@@ -156,16 +220,18 @@ impl WorkerState {
             });
         }
         if let Some(host) = host {
-            self.mini_apps
-                .authorities
-                .insert(attempt, Authority::new(host));
+            self.mini_apps.authorities.insert(
+                attempt,
+                Authority::with_refinement(host, refinement.clone())
+                    .expect("validated request-local refinement"),
+            );
             if managed {
                 self.mini_apps
                     .capabilities
                     .insert(mini_apps::Capability::mint(), attempt);
             }
         }
-        let definitions = scoped_definitions(&self.tool_definitions, host);
+        let definitions = scoped_definitions(&self.tool_definitions, host, refinement.as_ref());
         let native_count = |definitions: &[AiToolDefinition]| {
             definitions
                 .iter()
@@ -190,7 +256,7 @@ impl WorkerState {
             native_tools_configured = native_count(&self.tool_definitions),
             native_tools_admitted = native_count(&definitions),
             tools_admitted = definitions.len(),
-            refinement_available = host.and_then(|host| host.refinement).is_some(),
+            refinement_available = definitions.iter().any(|definition| definition.name == mini_apps::UPDATE_TOOL),
             "mini-app tools scoped for attempt"
         );
         definitions

@@ -19,7 +19,17 @@ impl State {
     pub fn saved(&mut self, saved: &artifact::Saved, title: &str) {
         self.saving = None;
         let title = if title.is_empty() {
-            koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
+            koru_i18n::t(
+                crate::format::lang(),
+                match &saved.snapshot {
+                    koru_ai_core::mini_apps::artifact::SavedEnvelope::TaskDocument(_) => {
+                        koru_i18n::Key::MiniAppTitle
+                    }
+                    koru_ai_core::mini_apps::artifact::SavedEnvelope::Composition(_) => {
+                        koru_i18n::Key::MiniAppCompositionTitle
+                    }
+                },
+            )
         } else {
             title
         };

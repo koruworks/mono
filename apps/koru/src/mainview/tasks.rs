@@ -307,7 +307,7 @@ impl MainView {
     pub(super) fn drain_tasks_request(&mut self) -> bool {
         let request = match &mut self.tabs_mut().active_mut().view {
             TabView::Tasks(t) => t.take_request(),
-            TabView::MiniApp(app) => app.tasks.take_request(),
+            TabView::MiniApp(app) if app.has_tasks() => app.tasks.take_request(),
             _ => None,
         };
         let Some(request) = request else {

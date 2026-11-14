@@ -17,6 +17,44 @@ use crate::attachments;
 use crate::reader::{Reader, Update};
 
 #[test]
+fn mini_app_queued_send_retains_the_captured_declaration_in_the_wire_request() {
+    let (mut surface, transcript, commands) = agent_surface(AiProviderId::OPENAI, &[]);
+    surface.context_workspace = Some(koru_ai_core::WorkspaceId::new());
+    surface.profile = Some(koru_ai_core::ProfileId::new());
+    surface.offer_mini_apps(true);
+    let target = koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 9,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 1,
+    };
+    let mut declaration = koru_ai_core::mini_apps::Declaration::parse(
+        koru_ai_core::mini_apps::composition::FIXTURE.as_bytes(),
+    )
+    .unwrap()
+    .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    let context = koru_ai_core::mini_apps::RefinementContext {
+        target,
+        declaration,
+    };
+    surface.set_mini_app_refinement_context(Some(context.clone()));
+    let attempt = send_and_accept(&mut surface, &commands, "First request");
+    type_into(&mut surface, "Change the heading");
+    assert!(press(&mut surface, NamedKey::Enter));
+    end_reply(&mut surface, &transcript, completed(attempt));
+    let requests: Vec<_> = drain(&commands)
+        .into_iter()
+        .filter_map(|command| match command {
+            Command::Send(request) => Some(request),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].mini_app_refinement, Some(context));
+    assert_eq!(requests[0].mini_app_host.unwrap().refinement, Some(target));
+}
+
+#[test]
 fn mini_app_queued_prompt_cannot_recapture_another_surface_at_dispatch() {
     let (mut surface, transcript, commands) = agent_surface(AiProviderId::OPENAI, &[]);
     let first = koru_ai_core::mini_apps::RefinementTarget {

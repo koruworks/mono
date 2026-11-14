@@ -125,14 +125,14 @@ impl TabView {
     pub(crate) fn tasks(&self) -> Option<&crate::tasks_view::TasksView> {
         match self {
             Self::Tasks(tasks) => Some(tasks),
-            Self::MiniApp(app) => Some(&app.tasks),
+            Self::MiniApp(app) if app.has_tasks() => Some(&app.tasks),
             _ => None,
         }
     }
     pub(crate) fn tasks_mut(&mut self) -> Option<&mut crate::tasks_view::TasksView> {
         match self {
             Self::Tasks(tasks) => Some(tasks),
-            Self::MiniApp(app) => Some(&mut app.tasks),
+            Self::MiniApp(app) if app.has_tasks() => Some(&mut app.tasks),
             _ => None,
         }
     }

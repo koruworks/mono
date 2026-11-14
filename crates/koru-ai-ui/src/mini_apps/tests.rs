@@ -2,6 +2,47 @@
 use super::*;
 
 #[test]
+fn refinement_snapshot_is_frozen_for_request_and_retry() {
+    let (mut surface, _, accepted, _) = fixture();
+    let target = koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 9,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 2,
+    };
+    let mut declaration =
+        Declaration::parse(koru_ai_core::mini_apps::composition::FIXTURE.as_bytes())
+            .unwrap()
+            .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    let context = RefinementContext {
+        target,
+        declaration,
+    };
+    surface.set_mini_app_refinement_context(Some(context.clone()));
+    let chat = surface.current_chat_id().unwrap();
+    let host = surface.begin_mini_app_request(chat).unwrap();
+    assert_eq!(
+        surface.mini_app_request_refinement(Some(host)),
+        Some(context.clone())
+    );
+    surface.accept_mini_app_attempt(&accepted, host);
+    let retry = surface
+        .retry_mini_app_request(chat, accepted.assistant_message_id)
+        .unwrap();
+    assert_ne!(retry.request_id, host.request_id);
+    assert_eq!(
+        surface.mini_app_request_refinement(Some(retry)),
+        Some(context)
+    );
+    surface.accept_mini_app_attempt(&accepted, retry);
+    surface.set_mini_app_refinement_target(Some(koru_ai_core::mini_apps::RefinementTarget {
+        base_revision: 3,
+        ..target
+    }));
+    assert!(!surface.can_retry_mini_app_request(chat, accepted.assistant_message_id));
+}
+
+#[test]
 fn mini_app_managed_chat_offers_host_context_without_changing_ordinary_chat() {
     for provider in [
         "agent-codex",

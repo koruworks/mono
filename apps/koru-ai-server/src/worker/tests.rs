@@ -114,6 +114,7 @@ fn send(client: &AiWorkerClient, chat_id: ChatId, operation_id: Uuid) -> AiRespo
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id,
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -695,6 +696,7 @@ fn armed_web_search_is_audited_and_citations_reach_transcript_and_usage() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -776,6 +778,7 @@ fn unsupported_web_search_is_rejected_before_an_attempt_or_provider_call() {
         context(),
         SendTurnRequest {
             mini_app_host: None,
+            mini_app_refinement: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -848,6 +851,7 @@ fn document_and_message_block_context_reach_provider_with_durable_provenance() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::ContextPane,
@@ -948,6 +952,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::ContextPane,
@@ -977,6 +982,7 @@ fn replace_pinned_documents_cleans_prior_context_for_context_pane() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::ContextPane,
@@ -1040,6 +1046,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id: target,
                 surface: AiSurface::Standalone,
@@ -1074,6 +1081,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id: source,
                 surface: AiSurface::Standalone,
@@ -1101,6 +1109,7 @@ fn private_message_blocks_are_available_only_to_their_own_chat() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id: target,
                 surface: AiSurface::Standalone,
@@ -1153,6 +1162,7 @@ fn context_failure_is_durable_and_never_calls_the_provider() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -1193,6 +1203,7 @@ fn context_failure_is_durable_and_never_calls_the_provider() {
             chat_id,
             RetryTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 message_id: response.accepted.assistant_message_id,
                 surface: AiSurface::Standalone,
@@ -2254,6 +2265,7 @@ fn debug_lifecycle_logs_exclude_chat_content_titles_and_paths() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -2340,6 +2352,7 @@ fn payload_debug_logs_one_marked_request_and_terminal_response() {
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -2696,6 +2709,7 @@ fn picked_skills_ride_an_agent_message_and_nothing_else() {
     let with_skills = |chat_id: ChatId, skills: &[&str]| {
         SendTurnRequest {
         mini_app_host: None,
+        mini_app_refinement: None,
         operation_id: Uuid::new_v4(),
         chat_id,
         surface: AiSurface::Standalone,
@@ -3773,6 +3787,7 @@ fn answers_as_a_message_are_refused_for_anything_but_an_open_set() {
     let set = asked_set(&send(&client, chat, Uuid::new_v4()));
     let answers = |invocation: ToolInvocationId, markdown: &str| SendTurnRequest {
         mini_app_host: None,
+        mini_app_refinement: None,
         operation_id: Uuid::new_v4(),
         chat_id: chat,
         surface: AiSurface::Standalone,

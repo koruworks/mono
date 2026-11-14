@@ -179,15 +179,37 @@ pub fn scripted_native_refinement(
     context: AiToolExecutionContext,
     update: serde_json::Value,
 ) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
+    let (lists, documents) = scripted_refinement_metadata(&context)?;
     scripted_native_result(
         context,
         koru_ai_core::mini_apps::UPDATE_TOOL,
         "Put the document on the left and tasks on the right",
         update,
-        vec![],
-        vec![],
+        lists,
+        documents,
         false,
     )
+}
+
+#[cfg(feature = "test-support")]
+fn scripted_refinement_metadata(
+    context: &AiToolExecutionContext,
+) -> Result<(Vec<(uuid::Uuid, String)>, Vec<koru_ai_core::DocumentId>), AiError> {
+    let snapshot = context
+        .mini_app
+        .as_ref()
+        .and_then(|authority| authority.refinement.as_ref())
+        .ok_or_else(crate::mini_apps::unavailable)?;
+    let declaration = snapshot
+        .validate()
+        .map_err(crate::mini_apps::validation_error)?;
+    let lists = match declaration.task_selection() {
+        Some(koru_ai_core::mini_apps::TaskSelection::List(id)) => {
+            vec![(*id, "Fixture list".into())]
+        }
+        _ => vec![],
+    };
+    Ok((lists, declaration.document_references()))
 }
 
 #[cfg(feature = "test-support")]
@@ -358,13 +380,14 @@ pub fn scripted_mcp_refinement(
     context: AiToolExecutionContext,
     update: serde_json::Value,
 ) -> Result<Vec<koru_ai_wire::StreamEvent>, AiError> {
+    let (lists, documents) = scripted_refinement_metadata(&context)?;
     scripted_native_result(
         context,
         koru_ai_core::mini_apps::UPDATE_TOOL,
         "Put the document on the left and tasks on the right",
         update,
-        vec![],
-        vec![],
+        lists,
+        documents,
         true,
     )
 }

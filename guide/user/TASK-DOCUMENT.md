@@ -1,5 +1,41 @@
 # Tasks and document
 
+## Composed document views
+
+The experimental composition catalog lets a model arrange Koru rows, columns,
+boxes, text, spacers, dividers, buttons and one document editor. It uses named
+Koru spacing, surface, radius and typography tokens. It is a bounded native UI
+description, with no generated JavaScript or CSS.
+
+Try this in AI chat after creating the four documents in the current workspace:
+
+> Create a mini app with four buttons across the top: Travel, What to do Next,
+> Best Restaurants and Trip Notes. Show the selected document in an editable
+> area below. Clicking a button should switch that area to its document. Use
+> Koru's composition catalog and resolve the actual documents in this workspace.
+
+The model discovers the document references and submits the layout. Subsequent
+button clicks select documents locally, without asking a model. Document text
+stays in the ordinary workspace documents; the declaration contains their
+references and the UI labels.
+
+Keep the mini-app tab selected and use its AI side pane for layout refinement.
+The model receives the current layout, including component identities and
+document references, so this also works after opening a saved composition.
+This request context contains no document text. The provider may retain its
+prompt according to its own runtime behavior.
+
+Save and Pin use the same controls described below. Composition saves use a
+new mini-app file format; old task/document saves remain readable. An older
+build refuses the newer saved format rather than rewriting it. This does not
+migrate the workspace database. Use disposable test documents for the first
+save/reopen acceptance check.
+
+The A2UI playground is a separate future discussion. This catalog does not
+expose every Koru control, arbitrary actions or complete upstream A2UI support.
+
+## The task/document view
+
 The experimental **Tasks and document** host places an existing task collection
 beside a document editor. Open **+**, then choose **Tasks and document** in the
 New launcher. Use the arrow keys and Enter, a pointer, or accessible activation

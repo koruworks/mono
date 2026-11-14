@@ -74,7 +74,7 @@ fn arguments(call: &AiToolCall) -> Result<Arguments, AiError> {
 }
 
 /// Fixed guidance only, after the authoritative parser has already refused.
-fn validation_error(reason: &'static str) -> AiError {
+pub(crate) fn validation_error(reason: &'static str) -> AiError {
     let (code, guidance) = match reason {
         "missing declaration field" => (
             "mini_app_validation_missing_field",
@@ -82,7 +82,7 @@ fn validation_error(reason: &'static str) -> AiError {
         ),
         "unknown declaration field" => (
             "mini_app_validation_unknown_field",
-            "Remove extra fields. The envelope accepts only version/createSurface; createSurface only surfaceId/catalogId/sendDataModel/components. Components accept only the fields of their exact published variant. Do not add an arguments wrapper, type, text, styles or data.",
+            "Remove extra fields. Use only the exact catalog's published envelope/component properties. Literal UI text belongs only on Text/Button; document content, styles, data and argument wrappers are unsupported.",
         ),
         "duplicate declaration field" => (
             "mini_app_validation_duplicate_field",
@@ -110,7 +110,7 @@ fn validation_error(reason: &'static str) -> AiError {
         ),
         "unsupported surface" => (
             "mini_app_validation_surface",
-            "Use version 1.0, catalogId koru:task-document:0.1-proposal1, sendDataModel false, a 1-96 character surfaceId using only letters, digits, hyphen, underscore or colon, and exactly five components.",
+            "Use version 1.0, sendDataModel false and a 1-96 ASCII surfaceId. Choose the exact published branch: koru:task-document:0.1-proposal1 with five fixed components, or koru:composition:0.1-proposal1 with one bounded root tree and one DocumentHost.",
         ),
         "missing component" | "unsupported component" => (
             "mini_app_validation_components",
@@ -133,10 +133,32 @@ fn validation_error(reason: &'static str) -> AiError {
             "DocumentHost.document, when supplied, must use workspace current and a nonnil documentId UUID.",
         ),
         "unsupported refinement"
+        | "refinement cannot change identities or bindings"
+        | "refinement surface mismatch"
         | "refinement must preserve the active editor and controls"
         | "only the named arrangement can be refined" => (
             "mini_app_validation_refinement",
-            "Use version 1.0 and updateComponents with the current surfaceId and exactly one root TaskDocument component; preserve children selector, tasks, search, document and change only arrangement.",
+            "Use version 1.0 and updateComponents with the supplied current surfaceId. Legacy replaces root TaskDocument's arrangement only. Composition replaces the full tree, preserving every ID, native kind, document binding and action; Row/Column may interchange.",
+        ),
+        "unsupported composition size"
+        | "invalid composition identity"
+        | "unsupported composition component"
+        | "unsupported composition property"
+        | "unsupported composition layout"
+        | "missing composition children"
+        | "invalid composition label"
+        | "box requires one child"
+        | "missing spacer token"
+        | "missing local action"
+        | "invalid action target"
+        | "missing document binding"
+        | "composition requires one document host"
+        | "invalid composition graph"
+        | "missing composition child"
+        | "disconnected composition graph"
+        | "action target is not the document host" => (
+            "mini_app_validation_composition",
+            "Use the exact composition schema: at most 32 unique IDs, depth 8, one connected root tree, one DocumentHost and SelectDocument actions targeting it. Keep labels within 256 UTF-8 bytes and use only published component properties/tokens.",
         ),
         "list lookup" => (
             "mini_app_validation_list_query",
@@ -182,13 +204,31 @@ impl AiToolExecutor for MiniAppTools {
         {
             return Err(unavailable());
         }
+        // A current snapshot is required for any refinement. Check bindings
+        // and identities before metadata access, including for unadvertised calls.
+        let refined = if let Arguments::Update(update) = &args {
+            let snapshot = authority.refinement.as_ref().ok_or_else(unavailable)?;
+            if authority.host.refinement != Some(snapshot.target) {
+                return Err(unavailable());
+            }
+            Some(
+                update
+                    .refine(&snapshot.validate().map_err(validation_error)?)
+                    .map_err(validation_error)?,
+            )
+        } else {
+            None
+        };
+        let declaration = match &args {
+            Arguments::Create(declaration) => Some(declaration),
+            _ => refined.as_ref(),
+        };
         let needs_lists = match &args {
             Arguments::Find(_) => true,
-            Arguments::Create(d) => matches!(d.task_selection(), Some(TaskSelection::List(_))),
-            Arguments::Update(_) => false,
+            _ => declaration
+                .is_some_and(|d| matches!(d.task_selection(), Some(TaskSelection::List(_)))),
         };
-        let needs_document =
-            matches!(&args, Arguments::Create(d) if !d.document_references().is_empty());
+        let needs_document = declaration.is_some_and(|d| !d.document_references().is_empty());
         let registry = self.registry.read(context, needs_lists, needs_document)?;
         if cancellation.is_cancelled() {
             authority.revoke();
@@ -196,6 +236,20 @@ impl AiToolExecutor for MiniAppTools {
         }
         if !authority.live() {
             return Err(unavailable());
+        }
+        if let Some(declaration) = declaration {
+            if let Some(TaskSelection::List(id)) = declaration.task_selection()
+                && !registry.lists.iter().any(|(list, _)| list == id)
+            {
+                return Err(invalid());
+            }
+            if declaration
+                .document_references()
+                .iter()
+                .any(|id| !registry.documents.contains(id))
+            {
+                return Err(invalid());
+            }
         }
         let content = match args {
             Arguments::Update(update) => {
@@ -233,18 +287,6 @@ impl AiToolExecutor for MiniAppTools {
                     return Err(unavailable());
                 }
                 let result = (|| {
-                    if let Some(TaskSelection::List(id)) = declaration.task_selection()
-                        && !registry.lists.iter().any(|(list, _)| list == id)
-                    {
-                        return Err(invalid());
-                    }
-                    if declaration
-                        .document_references()
-                        .iter()
-                        .any(|id| !registry.documents.contains(id))
-                    {
-                        return Err(invalid());
-                    }
                     serde_json::to_value(declaration.normalize(context.invocation_id).envelope)
                         .map_err(|_| invalid())
                 })();
@@ -286,6 +328,13 @@ pub(crate) fn creation_event(
         let target = authority.host.refinement.ok_or_else(unavailable)?;
         let envelope =
             mini_apps::UpdateEnvelope::from_value(&result.content).map_err(|_| invalid())?;
+        let snapshot = authority.refinement.as_ref().ok_or_else(unavailable)?;
+        if snapshot.target != target {
+            return Err(unavailable());
+        }
+        envelope
+            .refine(&snapshot.validate().map_err(validation_error)?)
+            .map_err(validation_error)?;
         if envelope.update.surface_id != target.surface_name() || !authority.claim_delivery() {
             return Err(unavailable());
         }

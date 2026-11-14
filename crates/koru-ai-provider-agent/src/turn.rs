@@ -657,9 +657,11 @@ pub(crate) fn compose_prompt(request: &AiRequest, fresh: bool) -> String {
         } else {
             koru_session_profiles::MCP_SERVER_NAME
         };
-        text.push_str(&format!("Koru live mini-app tools are available for this message only. Use the existing {server} MCP server's create_task_document_app or find_task_app_lists tools with capability {}. Current workspace_id: {}. Pass references and arrangement only, never task/document content. A tool result is an offer to the host, not confirmation a tab opened. Do not repeat this capability in your reply. Older capabilities are expired.\n\n", host.capability.0, host.workspace_id));
-        if let Some(surface) = &host.refinement_surface {
-            text.push_str(&format!("For this message update_task_document_app targets surfaceId {surface}; send only the supported updateComponents arrangement.\n\n"));
+        text.push_str(&format!("Koru live mini-app tools are available for this message only. Use the existing {server} MCP server's create_task_document_app or find_task_app_lists tools with capability {}. Current workspace_id: {}. The creation tool supports both koru:task-document:0.1-proposal1 and koru:composition:0.1-proposal1; follow its exact schema. Resolve every initial/action document through list_documents in this workspace. Composition uses native Row/Column/Box/Text/Spacer/Divider/Button/DocumentHost, named tokens and local SelectDocument actions; never task/document content. A tool result is an offer to the host, not confirmation a tab opened. Do not repeat this capability in your reply. Older capabilities are expired.\n\n", host.capability.0, host.workspace_id));
+        if let Some(snapshot) = &host.refinement
+            && let Ok(instructions) = snapshot.model_instructions()
+        {
+            text.push_str(&format!("For this message use update_task_document_app with capability {}. {instructions}\n\n", host.capability.0));
         }
     }
     if !request.context.is_empty() {

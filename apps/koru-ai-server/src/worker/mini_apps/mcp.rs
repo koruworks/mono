@@ -38,6 +38,16 @@ fn owner(
         .filter(|a| a.live())
         .cloned()
         .ok_or_else(unavailable)?;
+    if request.name == mini_apps::UPDATE_TOOL {
+        let snapshot = authority.refinement.as_ref().ok_or_else(unavailable)?;
+        if authority.host.refinement != Some(snapshot.target) {
+            return Err(unavailable());
+        }
+        mini_apps::UpdateEnvelope::from_value(&request.arguments)
+            .and_then(|update| update.refine(&snapshot.validate()?))
+            .map_err(crate::mini_apps::validation_error)
+            .map_err(ai_failure)?;
+    }
     Ok((attempt, authority))
 }
 
@@ -71,11 +81,16 @@ impl WorkerState {
             .capabilities
             .iter()
             .find(|(_, owner)| **owner == attempt)?;
-        let host = self.mini_apps.authorities.get(&attempt)?.host;
+        let authority = self.mini_apps.authorities.get(&attempt)?;
+        let host = authority.host;
         Some(mini_apps::RuntimeContext {
             capability: capability.clone(),
             workspace_id: host.workspace_id,
-            refinement_surface: host.refinement.map(|target| target.surface_name()),
+            refinement_surface: authority
+                .refinement
+                .as_ref()
+                .map(|snapshot| snapshot.target.surface_name()),
+            refinement: authority.refinement.clone(),
         })
     }
 

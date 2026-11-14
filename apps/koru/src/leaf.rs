@@ -459,7 +459,9 @@ impl Leaf {
     }
 
     pub fn set_viewport(&mut self, w: f32, h: f32) {
-        Editing::set_viewport(self, w, h)
+        match self {
+            Self::Document(document) => View::set_viewport(document, w, h),
+        }
     }
 
     pub fn adopt(&mut self, ws: &WorkspaceDoc) {
@@ -476,6 +478,13 @@ impl Leaf {
     /// go through [`Editing::catch_up`] now — Q-B4, `ADR-343-overlaycatchup`.
     pub fn catch_up(&mut self, ws: &WorkspaceDoc) {
         Editing::catch_up(self, ws)
+    }
+
+    /// The native document wrapper also sizes any unlifted media viewer.
+    pub fn catch_up_at_viewport(&mut self, ws: &WorkspaceDoc, w: f32, h: f32) {
+        match self {
+            Self::Document(document) => document.catch_up_at_viewport(ws, w, h),
+        }
     }
 
     /// Whether the body's structure changed since the last call — a row was

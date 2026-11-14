@@ -19,6 +19,7 @@ use crate::{leaf::Leaf, panes::explore::rail::RailTarget, tasks_view::TasksView}
 
 pub(crate) mod artifact;
 mod chrome;
+mod composition;
 mod declaration;
 pub(crate) mod pin;
 mod refinement;
@@ -110,6 +111,21 @@ pub(crate) struct MiniApp {
     pub tasks: TasksView,
     pub document: Option<DocumentId>,
     leaf: Option<Leaf>,
+    inactive: std::collections::VecDeque<(DocumentId, Leaf)>,
+    inactive_invalidated: std::collections::HashSet<DocumentId>,
+    composition: Option<composition::Surface>,
+    definition_cache: std::cell::RefCell<
+        Option<(
+            koru_ai_core::mini_apps::RefinementTarget,
+            koru_ai_core::mini_apps::Declaration,
+        )>,
+    >,
+    snapshot_cache: std::cell::RefCell<
+        Option<(
+            koru_ai_core::mini_apps::RefinementTarget,
+            koru_ai_core::mini_apps::artifact::SavedEnvelope,
+        )>,
+    >,
     pub regions: Regions,
     focus: Region,
     pointer: (f32, f32),
@@ -135,6 +151,11 @@ impl MiniApp {
             tasks: TasksView::new(target).collection_only(),
             document: None,
             leaf: None,
+            inactive: Default::default(),
+            inactive_invalidated: Default::default(),
+            composition: None,
+            definition_cache: Default::default(),
+            snapshot_cache: Default::default(),
             regions: Regions::solve(0.0, 0.0, false, Region::Tasks),
             focus: Region::Tasks,
             pointer: (0.0, 0.0),
@@ -155,6 +176,20 @@ impl MiniApp {
         surface: u64,
         declaration: koru_ai_core::mini_apps::Declaration,
     ) -> Result<Self, &'static str> {
+        if declaration.composition().is_some() {
+            let mut app = Self::new(
+                workspace,
+                surface,
+                RailTarget::Bucket(crate::panes::explore::rail::Bucket::Today),
+            );
+            let document = declaration
+                .initial_document()
+                .ok_or("missing document host")?;
+            app.composition = Some(composition::Surface::new(declaration, surface));
+            app.focus = Region::Document;
+            app.request_document(DocumentId::from_uuid(document.as_uuid()), None);
+            return Ok(app);
+        }
         let declaration = declaration::Declaration::from_shared(declaration)?;
         Ok(Self::with_declaration(workspace, surface, declaration))
     }
@@ -172,6 +207,13 @@ impl MiniApp {
     }
 
     pub fn request_document(&mut self, document: DocumentId, node: Option<NodeId>) {
+        if self
+            .composition
+            .as_ref()
+            .is_some_and(|surface| !surface.references(document))
+        {
+            return;
+        }
         self.reactivating = false;
         self.generation = self.generation.wrapping_add(1);
         self.pending = Some((
@@ -197,6 +239,24 @@ impl MiniApp {
     pub fn leaf(&self) -> Option<&Leaf> {
         self.leaf.as_ref()
     }
+    pub fn has_tasks(&self) -> bool {
+        self.composition.is_none()
+    }
+    pub fn default_title(&self) -> &'static str {
+        koru_i18n::t(
+            crate::format::lang(),
+            if self.has_tasks() {
+                koru_i18n::Key::MiniAppTitle
+            } else {
+                koru_i18n::Key::MiniAppCompositionTitle
+            },
+        )
+    }
+    pub fn retained_documents(&self) -> impl Iterator<Item = DocumentId> + '_ {
+        self.document
+            .into_iter()
+            .chain(self.inactive.iter().map(|(id, _)| *id))
+    }
     pub fn leaf_mut(&mut self) -> Option<&mut Leaf> {
         self.leaf.as_mut()
     }
@@ -217,6 +277,12 @@ impl MiniApp {
             && self.document == ws.own_document_id()
     }
     pub fn focus_region(&mut self, region: Region) {
+        if self.composition.is_some() && region == Region::Tasks {
+            return;
+        }
+        if let Some(surface) = &mut self.composition {
+            surface.focused = None;
+        }
         self.focus = region;
         self.chrome.search_focus = false;
         self.chrome.header_focus = None;
@@ -225,6 +291,13 @@ impl MiniApp {
     }
 
     pub fn land(&mut self, ws: &WorkspaceDoc, document: DocumentId) -> bool {
+        if self
+            .composition
+            .as_ref()
+            .is_some_and(|surface| !surface.references(document))
+        {
+            return false;
+        }
         if ws.id() != Some(self.workspace) || ws.own_document_id() != Some(document) {
             return false;
         }
@@ -232,7 +305,24 @@ impl MiniApp {
             return false;
         };
         if self.document != Some(document) {
-            self.leaf = Some(Leaf::document(ws, root));
+            let next = self
+                .inactive
+                .iter()
+                .position(|(id, _)| *id == document)
+                .and_then(|index| self.inactive.remove(index))
+                .map(|(_, leaf)| leaf)
+                .unwrap_or_else(|| Leaf::document(ws, root));
+            if let (Some(previous), Some(leaf)) = (self.document, self.leaf.take()) {
+                self.inactive.push_back((previous, leaf));
+                // Cache view state only. Store/document residency remains owned
+                // by the existing child loader; inactive leaves never reflow.
+                while self.inactive.len() >= koru_ai_core::mini_apps::composition::MAX_NODES {
+                    if let Some((document, _)) = self.inactive.pop_front() {
+                        self.inactive_invalidated.remove(&document);
+                    }
+                }
+            }
+            self.leaf = Some(next);
             self.document = Some(document);
             self.revision += 1;
         }
@@ -240,24 +330,49 @@ impl MiniApp {
             self.focus = Region::Document;
         }
         self.reactivating = false;
-        self.layout();
+        self.layout_regions();
+        let refresh_layout = self.inactive_invalidated.remove(&document);
+        let region = self.regions.document;
+        if let Some(leaf) = &mut self.leaf {
+            if refresh_layout {
+                // Appearance changes only mark inactive owners. Reshape at the
+                // final active viewport, retaining caret, scroll and undo state.
+                leaf.invalidate_deferred();
+            }
+            leaf.body_mut().defer_pending(ws);
+            if region.w > 0.0 && region.h > 0.0 {
+                if leaf.body().is_stale() {
+                    leaf.catch_up_at_viewport(ws, region.w, region.h);
+                } else if refresh_layout || leaf.view().viewport != (region.w, region.h) {
+                    leaf.set_viewport(region.w, region.h);
+                }
+            }
+        }
         true
     }
 
     fn layout(&mut self) {
-        self.regions = self.chrome.layout(self.viewport, self.swapped, self.focus);
+        self.layout_regions();
+        let doc = self.regions.document;
+        if doc.w > 0.0
+            && doc.h > 0.0
+            && let Some(leaf) = &mut self.leaf
+            && leaf.view().viewport != (doc.w, doc.h)
+        {
+            leaf.set_viewport(doc.w, doc.h);
+        }
+    }
+
+    fn layout_regions(&mut self) {
+        self.regions = if let Some(surface) = &mut self.composition {
+            surface.layout(self.viewport, self.document)
+        } else {
+            self.chrome.layout(self.viewport, self.swapped, self.focus)
+        };
         let tasks = self.regions.tasks;
         if tasks.w > 0.0 && self.tasks_viewport != Some((tasks.w, tasks.h)) {
             View::set_viewport(&mut self.tasks, tasks.w, tasks.h);
             self.tasks_viewport = Some((tasks.w, tasks.h));
-        }
-        let doc = self.regions.document;
-        if doc.w > 0.0
-            && let Some(leaf) = &mut self.leaf
-        {
-            if leaf.view().viewport != (doc.w, doc.h) {
-                leaf.set_viewport(doc.w, doc.h);
-            }
         }
     }
 
@@ -275,7 +390,17 @@ impl MiniApp {
     }
 
     pub fn adopt_cheap(&mut self, ws: &WorkspaceDoc) {
-        View::adopt(&mut self.tasks, ws);
+        if ws.id() == Some(self.workspace)
+            && let Some((_, leaf)) = self
+                .inactive
+                .iter_mut()
+                .find(|(id, _)| ws.own_document_id() == Some(*id))
+        {
+            leaf.body_mut().defer_pending(ws);
+        }
+        if self.composition.is_none() {
+            View::adopt(&mut self.tasks, ws);
+        }
         if self.owns(ws)
             && let Some(leaf) = &mut self.leaf
         {
@@ -346,6 +471,14 @@ impl View for MiniApp {
             self.chrome.changed_query(self.workspace);
             return changed;
         }
+        if matches!(event, winit::event::Ime::Disabled)
+            && ws.id() == Some(self.workspace)
+            && let Some((_, leaf)) = self.inactive.iter_mut().find(|(document, leaf)| {
+                ws.own_document_id() == Some(*document) && leaf.native_ime_owner() == target.owner
+            })
+        {
+            return leaf.native_ime_cancel(ws);
+        }
         if !self.owns(ws) {
             return false;
         }
@@ -402,6 +535,9 @@ impl View for MiniApp {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        let composition_hover = self.composition.as_ref().is_some_and(|s| {
+            s.frame.hit_at(x, y) != s.frame.hit_at(self.pointer.0, self.pointer.1)
+        });
         self.pointer = (x, y);
         if self.chrome.input.is_dragging() {
             return self
@@ -421,13 +557,14 @@ impl View for MiniApp {
             self.regions.hit(x, y)
         };
         let Some(region) = region else {
-            return false;
+            return composition_hover;
         };
         let (x, y) = self.regions.local(region, x, y);
-        match region {
-            Region::Tasks => View::mouse_move(&mut self.tasks, x, y),
-            Region::Document => self.leaf.as_mut().is_some_and(|leaf| leaf.mouse_move(x, y)),
-        }
+        composition_hover
+            | match region {
+                Region::Tasks => View::mouse_move(&mut self.tasks, x, y),
+                Region::Document => self.leaf.as_mut().is_some_and(|leaf| leaf.mouse_move(x, y)),
+            }
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
@@ -484,6 +621,14 @@ impl View for MiniApp {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if self
+            .composition
+            .as_mut()
+            .is_some_and(|surface| surface.scroll(self.pointer, delta))
+        {
+            self.layout();
+            return;
+        }
         match self.regions.hit(self.pointer.0, self.pointer.1) {
             Some(Region::Tasks) => View::scroll_by(&mut self.tasks, delta),
             Some(Region::Document) => {
@@ -505,6 +650,14 @@ impl View for MiniApp {
         }
     }
     fn cursor_icon(&self) -> CursorIcon {
+        if self.composition.as_ref().is_some_and(|surface| {
+            surface
+                .frame
+                .hit_at(self.pointer.0, self.pointer.1)
+                .is_some()
+        }) {
+            return CursorIcon::Pointer;
+        }
         match self.regions.hit(self.pointer.0, self.pointer.1) {
             Some(Region::Tasks) => View::cursor_icon(&self.tasks),
             Some(Region::Document) => self
@@ -519,6 +672,11 @@ impl View for MiniApp {
         self.catch_up(ws);
     }
     fn invalidate(&mut self) {
+        self.inactive_invalidated
+            .extend(self.inactive.iter().map(|(document, _)| *document));
+        if let Some(surface) = &mut self.composition {
+            surface.dirty = true;
+        }
         self.tasks_viewport = None;
         View::invalidate(&mut self.tasks);
         if let Some(leaf) = &mut self.leaf {

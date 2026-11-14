@@ -25,7 +25,46 @@ fn mini_app_published_schema_preserves_every_normative_branch_and_matches_valida
         .iter()
         .find(|tool| tool.name == mini_apps::CREATE_TOOL)
         .unwrap();
-    let branches=create.input_schema["properties"]["createSurface"]["properties"]["components"]["items"]["oneOf"].as_array().unwrap();
+    let catalogs = create.input_schema["properties"]["createSurface"]["oneOf"]
+        .as_array()
+        .unwrap();
+    assert_eq!(catalogs.len(), 2);
+    assert_eq!(
+        catalogs[0]["properties"]["catalogId"]["const"],
+        mini_apps::CATALOG_ID
+    );
+    assert_eq!(
+        catalogs[1]["properties"]["catalogId"]["const"],
+        mini_apps::COMPOSITION_CATALOG_ID
+    );
+    let composition = &catalogs[1]["properties"]["components"];
+    assert_eq!(composition["maxItems"], 32);
+    let components = composition["items"]["oneOf"].as_array().unwrap();
+    assert_eq!(components.len(), 7); // Row/Column share the same exact shape.
+    for component in components {
+        assert_eq!(component["additionalProperties"], false);
+        assert!(
+            component["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("id"))
+        );
+    }
+    let button = components
+        .iter()
+        .find(|c| c["properties"]["component"]["const"] == "Button")
+        .unwrap();
+    assert_eq!(
+        button["properties"]["action"]["properties"]["type"]["const"],
+        "SelectDocument"
+    );
+    let doc = &create.input_schema["$defs"]["doc"];
+    assert_eq!(doc["properties"]["workspace"]["const"], "current");
+    assert_eq!(doc["additionalProperties"], false);
+    assert!(Declaration::parse(mini_apps::composition::FIXTURE.as_bytes()).is_ok());
+    let branches = catalogs[0]["properties"]["components"]["items"]["oneOf"]
+        .as_array()
+        .unwrap();
     assert_eq!(branches.len(), 5);
     let fixture: Value = serde_json::from_str(mini_apps::FIXTURE).unwrap();
     for (id, component) in [
@@ -100,9 +139,12 @@ fn mini_app_published_schema_preserves_every_normative_branch_and_matches_valida
         crate::tool_pages::PAGE_BYTES
     );
     assert!(
-        create_bytes < crate::tool_pages::PAGE_BYTES,
+        create_bytes + 320 < crate::tool_pages::PAGE_BYTES,
         "normative creation schema must fit a shared MCP page"
     );
+    for tool in &published {
+        assert!(serde_json::to_vec(tool).unwrap().len() + 320 < crate::tool_pages::PAGE_BYTES);
+    }
 }
 struct Fake(std::sync::atomic::AtomicUsize);
 impl Backend for Fake {

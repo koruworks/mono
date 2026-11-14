@@ -5224,6 +5224,7 @@ impl ChatSurface {
         self.messages_dirty = true;
         let mini_app_host = self.begin_mini_app_request(chat_id);
         let request = SendTurnRequest {
+            mini_app_refinement: self.mini_app_request_refinement(mini_app_host),
             mini_app_host,
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
@@ -9415,6 +9416,7 @@ impl ChatSurface {
                 self.send_command(Command::Retry(
                     chat.id,
                     RetryTurnRequest {
+                        mini_app_refinement: self.mini_app_request_refinement(mini_app_host),
                         mini_app_host,
                         operation_id: uuid::Uuid::new_v4(),
                         message_id: message,

@@ -323,7 +323,7 @@ impl ChatSurface {
     /// [`Self::send_queued`]'s body, also what a granted workspace calls to
     /// send the item that was waiting on it.
     pub(crate) fn send_queued_item(&mut self, chat: ChatId, item: Queued) -> bool {
-        if !self.accepts_queued_mini_app_target(item.mini_app_target) {
+        if !self.accepts_queued_mini_app_target(item.mini_app_target.clone()) {
             self.queue_back_paused(chat, item);
             return true;
         }
@@ -335,7 +335,9 @@ impl ChatSurface {
             self.strips.push(chat, draft);
         }
         self.sending_queued = true;
+        self.capture_queued_mini_app(Some(item.mini_app_target.clone()));
         self.send_composer();
+        self.capture_queued_mini_app(None);
         self.sending_queued = false;
         if self.composer_has_content() {
             let item = Queued {

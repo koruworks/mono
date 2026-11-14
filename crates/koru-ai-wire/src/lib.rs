@@ -372,6 +372,9 @@ pub struct BranchChatResponse {
 pub struct RetryTurnRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
+    /// Exact captured declaration paired with the live target; never persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_refinement: Option<koru_ai_core::mini_apps::RefinementContext>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub message_id: MessageId,
@@ -443,6 +446,9 @@ pub struct SendTurnRequest {
     /// accepted from a model tool argument.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
+    /// Exact captured declaration paired with the live target; never persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_refinement: Option<koru_ai_core::mini_apps::RefinementContext>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub chat_id: ChatId,
@@ -1260,6 +1266,67 @@ mod tests {
             ..decoded
         };
         assert_eq!(serde_json::to_value(armed).unwrap()["web_search"], true);
+    }
+
+    #[test]
+    fn mini_app_refinement_defaults_absent_and_round_trips_only_on_turn_requests() {
+        use koru_ai_core::mini_apps::{
+            Declaration, RefinementContext, RefinementTarget, composition,
+        };
+        let mut send: SendTurnRequest = serde_json::from_value(serde_json::json!({
+            "operation_id": Uuid::new_v4(), "chat_id": ChatId::new(),
+            "surface":"standalone", "markdown":"Change the spacing"
+        }))
+        .unwrap();
+        let mut retry: RetryTurnRequest = serde_json::from_value(serde_json::json!({
+            "operation_id": Uuid::new_v4(), "message_id": MessageId::new(), "surface":"standalone"
+        }))
+        .unwrap();
+        assert!(send.mini_app_refinement.is_none());
+        assert!(retry.mini_app_refinement.is_none());
+        assert!(
+            serde_json::to_value(&send)
+                .unwrap()
+                .get("mini_app_refinement")
+                .is_none()
+        );
+        assert!(
+            serde_json::to_value(&retry)
+                .unwrap()
+                .get("mini_app_refinement")
+                .is_none()
+        );
+        let target = RefinementTarget {
+            tab_id: 5,
+            surface_id: Uuid::new_v4(),
+            base_revision: 3,
+        };
+        let mut declaration = Declaration::parse(composition::FIXTURE.as_bytes())
+            .unwrap()
+            .envelope;
+        declaration.surface.surface_id = target.surface_name();
+        let captured = RefinementContext {
+            target,
+            declaration,
+        };
+        send.mini_app_refinement = Some(captured.clone());
+        retry.mini_app_refinement = Some(captured);
+        assert_eq!(
+            serde_json::from_value::<SendTurnRequest>(serde_json::to_value(&send).unwrap())
+                .unwrap(),
+            send
+        );
+        assert_eq!(
+            serde_json::from_value::<RetryTurnRequest>(serde_json::to_value(&retry).unwrap())
+                .unwrap(),
+            retry
+        );
+        assert!(
+            serde_json::to_value(transcript())
+                .unwrap()
+                .get("mini_app_refinement")
+                .is_none()
+        );
     }
 
     #[test]

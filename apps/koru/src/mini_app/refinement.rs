@@ -29,7 +29,44 @@ impl MiniApp {
     }
 
     pub fn effective_definition(&self) -> Declaration {
+        let target = self.refinement_target();
+        if let Some((cached, definition)) = self.definition_cache.borrow().as_ref()
+            && *cached == target
+        {
+            return definition.clone();
+        }
+        let definition = self.build_definition();
+        *self.definition_cache.borrow_mut() = Some((target, definition.clone()));
+        definition
+    }
+
+    pub fn refinement_context(&self) -> koru_ai_core::mini_apps::RefinementContext {
+        koru_ai_core::mini_apps::RefinementContext {
+            target: self.refinement_target(),
+            declaration: self.effective_definition().envelope,
+        }
+    }
+
+    fn build_definition(&self) -> Declaration {
         use koru_ai_core::mini_apps::{DocumentReference, ListReference};
+        if let Some(surface) = &self.composition {
+            let mut envelope = surface.declaration.envelope.clone();
+            envelope.surface.surface_id = self.refinement_target().surface_name();
+            let host = surface.declaration.composition().unwrap().document_host();
+            if let Some(document) = self.document
+                && let Some(component) = envelope
+                    .surface
+                    .components
+                    .iter_mut()
+                    .find(|c| c.id == host)
+            {
+                component.document = Some(DocumentReference {
+                    workspace: "current".into(),
+                    document_id: koru_ai_core::DocumentId::from_uuid(document.as_uuid()),
+                });
+            }
+            return Declaration::validate(envelope).expect("retained composition is validated");
+        }
         let selection = match self.tasks.target() {
             RailTarget::List(id) => TaskSelection::List(id.as_uuid()),
             RailTarget::Bucket(bucket) => TaskSelection::Bucket(
@@ -93,7 +130,17 @@ impl MiniApp {
         {
             return Err("the mini app changed while the refinement was being prepared");
         }
-        let swapped = envelope.arrangement()?;
+        let next = envelope.refine(&self.effective_definition())?;
+        if let Some(surface) = &mut self.composition {
+            if surface.declaration.envelope.surface.components != next.envelope.surface.components {
+                surface.declaration = next;
+                surface.dirty = true;
+                self.revision += 1;
+                self.layout();
+            }
+            return Ok(());
+        }
+        let swapped = next.swapped().ok_or("catalog cannot change")?;
         if self.swapped != swapped {
             self.swapped = swapped;
             self.revision += 1;
@@ -103,6 +150,9 @@ impl MiniApp {
     }
 
     pub(crate) fn select_tasks(&mut self, target: RailTarget) {
+        if self.composition.is_some() {
+            return;
+        }
         if self.tasks.set_target(target) {
             self.revision += 1;
         }

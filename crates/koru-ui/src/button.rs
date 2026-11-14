@@ -238,6 +238,45 @@ impl<'a> ActionButton<'a> {
         }
     }
 
+    /// Draw a compact action whose label fits its allocated rectangle. The
+    /// caller keeps the original label for accessibility; only paint elides it.
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_focused_elided(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        hovered: bool,
+        focused: bool,
+    ) {
+        let (label, icon) = self.elided_content(engine, rect.w);
+        ActionButton::new(&label, self.style, icon)
+            .draw_focused(canvas, root, engine, rect, hovered, focused);
+    }
+
+    fn elided_content(self, engine: &mut TextEngine, width: f32) -> (String, Option<char>) {
+        let available = (width - Self::PAD_X * 2.0).max(0.0);
+        let icon = self
+            .trailing_icon
+            .filter(|glyph| engine.icon_layout(*glyph, Self::ICON_SIZE).width() <= available);
+        let icon_width = icon.map_or(0.0, |glyph| {
+            engine.icon_layout(glyph, Self::ICON_SIZE).width() + Self::GAP
+        });
+        let room = (available - icon_width).max(0.0);
+        let label = engine.elided(self.label, theme::role::row(), room);
+        // The text engine returns an ellipsis even when that single glyph is
+        // wider than the room. Tiny controls must still respect their bounds.
+        let label = if engine.simple_layout(&label, theme::role::row()).width() <= room {
+            label
+        } else {
+            String::new()
+        };
+        let icon = icon.filter(|_| !label.is_empty() || icon_width <= available);
+        (label, icon)
+    }
+
     /// Draw the same stable geometry without presenting it as actionable.
     #[track_caller]
     pub fn draw_disabled(

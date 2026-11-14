@@ -1376,6 +1376,7 @@ mod tests {
         let refused = (chat, failure.clone());
         let send = |chat_id| {
             Command::Send(koru_ai_wire::SendTurnRequest {
+                mini_app_refinement: None,
                 mini_app_host: None,
                 operation_id: uuid::Uuid::new_v4(),
                 chat_id,

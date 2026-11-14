@@ -19,6 +19,105 @@ fn mini_app_managed_bridge_follows_registered_providers() {
     }
 }
 
+#[test]
+fn mini_app_snapshot_pair_validation_and_payload_debug_keep_transient_data_out() {
+    let target = mini_apps::RefinementTarget {
+        tab_id: 31,
+        surface_id: Uuid::new_v4(),
+        base_revision: 17,
+    };
+    let h = HostContext {
+        refinement: Some(target),
+        ..host()
+    };
+    let mut declaration = mini_apps::Declaration::parse(mini_apps::composition::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    declaration
+        .surface
+        .components
+        .iter_mut()
+        .find(|c| c.component == "Button")
+        .unwrap()
+        .text = Some("PRIVATE_SNAPSHOT_LABEL".into());
+    let snapshot = mini_apps::RefinementContext {
+        target,
+        declaration,
+    };
+    assert!(validate_refinement(Some(h), Some(&snapshot)).is_ok());
+    assert!(validate_refinement(None, Some(&snapshot)).is_err());
+    assert!(
+        validate_refinement(
+            Some(HostContext {
+                refinement: Some(mini_apps::RefinementTarget {
+                    base_revision: 18,
+                    ..target
+                }),
+                ..h
+            }),
+            Some(&snapshot)
+        )
+        .is_err()
+    );
+    assert!(validate_refinement(Some(h), None).is_ok());
+    let mut malformed = snapshot.clone();
+    malformed.declaration.surface.surface_id = "other".into();
+    assert!(validate_refinement(Some(h), Some(&malformed)).is_err());
+    let arguments = serde_json::to_value(&snapshot.declaration).unwrap();
+    let request = AiRequest {
+        attempt_id: InferenceAttemptId::new(),
+        provider: AiProviderId::parse("mock").unwrap(),
+        model: "default".into(),
+        reasoning: ReasoningChoice::Default,
+        prompt_template_version: "test".into(),
+        system: String::new(),
+        messages: vec![],
+        context: vec![],
+        tools: scoped_definitions(&mini_apps::definitions(), Some(h), Some(&snapshot)),
+        tool_history: vec![koru_ai_core::AiToolTurn {
+            calls: vec![AiToolCall {
+                call_id: "call".into(),
+                name: mini_apps::CREATE_TOOL.into(),
+                arguments: arguments.clone(),
+                thought_signatures: vec![],
+            }],
+            results: vec![AiToolResult {
+                call_id: "call".into(),
+                name: mini_apps::CREATE_TOOL.into(),
+                content: arguments,
+                is_error: false,
+            }],
+        }],
+        options: AiRequestOptions {
+            mini_app: Some(mini_apps::RuntimeContext {
+                capability: mini_apps::Capability::mint(),
+                workspace_id: h.workspace_id,
+                refinement_surface: Some(target.surface_name()),
+                refinement: Some(snapshot.clone()),
+            }),
+            ..Default::default()
+        },
+    };
+    let before = request.clone();
+    let payload = payload_for_log(&request).unwrap();
+    assert!(!payload.contains("PRIVATE_SNAPSHOT_LABEL"));
+    for id in snapshot.validate().unwrap().document_references() {
+        assert!(!payload.contains(&id.to_string()));
+    }
+    assert!(!payload.contains(&target.surface_name()));
+    assert_eq!(request, before);
+    assert!(
+        request
+            .tools
+            .iter()
+            .find(|tool| tool.name == mini_apps::UPDATE_TOOL)
+            .unwrap()
+            .description
+            .contains("PRIVATE_SNAPSHOT_LABEL")
+    );
+}
+
 fn host() -> HostContext {
     HostContext {
         renderer_id: Uuid::new_v4(),
@@ -33,19 +132,46 @@ fn mini_app_descriptors_name_only_the_request_local_workspace() {
     let global = mini_apps::definitions();
     let original = global.clone();
     let h = host();
-    let scoped = scoped_definitions(&global, Some(h));
+    let scoped = scoped_definitions(&global, Some(h), None);
     assert!(!scoped.iter().any(|d| d.name == mini_apps::UPDATE_TOOL));
     let target = mini_apps::RefinementTarget {
         tab_id: 23,
         surface_id: Uuid::new_v4(),
         base_revision: 7,
     };
+    let mut declaration = mini_apps::Declaration::parse(mini_apps::composition::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    let snapshot = mini_apps::RefinementContext {
+        target,
+        declaration,
+    };
+    let missing_snapshot = scoped_definitions(
+        &global,
+        Some(HostContext {
+            refinement: Some(target),
+            ..h
+        }),
+        None,
+    );
+    assert!(
+        missing_snapshot
+            .iter()
+            .any(|tool| tool.name == mini_apps::CREATE_TOOL)
+    );
+    assert!(
+        !missing_snapshot
+            .iter()
+            .any(|tool| tool.name == mini_apps::UPDATE_TOOL)
+    );
     let refined = scoped_definitions(
         &global,
         Some(HostContext {
             refinement: Some(target),
             ..h
         }),
+        Some(&snapshot),
     );
     let update = refined
         .iter()
@@ -60,6 +186,8 @@ fn mini_app_descriptors_name_only_the_request_local_workspace() {
             .get("baseRevision")
             .is_none()
     );
+    assert!(update.description.contains("SelectDocument"));
+    assert!(!update.input_schema.to_string().contains("Travel"));
     assert!(
         scoped
             .iter()
@@ -72,9 +200,9 @@ fn mini_app_descriptors_name_only_the_request_local_workspace() {
                 && !d.description.contains(&h.renderer_id.to_string()))
     );
     assert_eq!(global, original);
-    assert!(scoped_definitions(&global, None).is_empty());
+    assert!(scoped_definitions(&global, None, None).is_empty());
     let other = host();
-    let differently_scoped = scoped_definitions(&global, Some(other));
+    let differently_scoped = scoped_definitions(&global, Some(other), None);
     assert!(
         differently_scoped
             .iter()

@@ -70,7 +70,7 @@ fn an_accepted_save_blocks_close_until_its_exact_outcome_arrives() {
         .send(Answer::Saved {
             tab,
             profile,
-            workspace: operation.snapshot.bindings.workspace,
+            workspace: operation.snapshot.workspace(),
             registration: operation.registration.registration_id,
             captured_revision: operation.captured_revision,
             result: Err(artifact::invalid("refused")),
@@ -140,10 +140,9 @@ fn immutable_reopen_preserves_a_dirty_or_pending_original_and_uses_fresh_tab_ide
     let TabView::MiniApp(app) = &mut view.tabs_mut().active_mut().view else {
         panic!()
     };
-    app.tasks
-        .set_target(crate::panes::explore::rail::RailTarget::Bucket(
-            koru_core::tasks::Bucket::Later,
-        ));
+    app.select_tasks(crate::panes::explore::rail::RailTarget::Bucket(
+        koru_core::tasks::Bucket::Later,
+    ));
     assert!(view.apply_artifact_open(Ok(opened(&op, version.clone()))));
     assert_eq!(view.tabs().len(), count + 1);
     assert_ne!(view.tabs().active_tab().id, first);
@@ -182,7 +181,7 @@ fn exact_save_receipt_settles_the_retained_tab_while_another_workspace_is_curren
         .send(Answer::Saved {
             tab,
             profile,
-            workspace: operation.snapshot.bindings.workspace,
+            workspace: operation.snapshot.workspace(),
             registration: operation.registration.registration_id,
             captured_revision: operation.captured_revision,
             result: Ok(version(&operation)),
@@ -311,18 +310,26 @@ fn missing_local_list_and_foreign_workspace_refuse_without_opening_a_tab() {
         panic!()
     };
     let mut snapshot = app.artifact_snapshot().unwrap();
-    snapshot.definition.tasks = Tasks::List {
+    let koru_ai_core::mini_apps::artifact::SavedEnvelope::TaskDocument(legacy) = &mut snapshot
+    else {
+        panic!()
+    };
+    legacy.definition.tasks = Tasks::List {
         parameter: ListParameter::TaskList,
     };
-    snapshot.bindings.task_list = Some(uuid::Uuid::new_v4());
+    legacy.bindings.task_list = Some(uuid::Uuid::new_v4());
     let op = SaveOperation::capture(snapshot, 0, "App", None).unwrap();
     let saved = version(&op);
     let count = view.tabs().len();
     assert!(view.apply_artifact_open(Ok(opened(&op, saved.clone()))));
     assert_eq!(view.tabs().len(), count);
     let mut foreign = op.clone();
-    foreign.snapshot.bindings.workspace =
-        koru_ai_core::WorkspaceId::from_uuid(uuid::Uuid::new_v4());
+    let koru_ai_core::mini_apps::artifact::SavedEnvelope::TaskDocument(legacy) =
+        &mut foreign.snapshot
+    else {
+        panic!()
+    };
+    legacy.bindings.workspace = koru_ai_core::WorkspaceId::from_uuid(uuid::Uuid::new_v4());
     assert!(view.apply_artifact_open(Ok(opened(&foreign, saved))));
     assert_eq!(view.tabs().len(), count);
 }

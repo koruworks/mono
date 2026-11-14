@@ -5640,6 +5640,25 @@ fn a_lifted_viewer_takes_the_window_and_reads_presses_in_it() {
     assert_eq!(view.diagram_viewer().unwrap().viewport(), (800.0, 500.0));
 }
 
+#[test]
+fn combined_viewport_catch_up_sizes_native_media_and_preserves_lifted_geometry() {
+    let (ws, mut view, node) = drawn_diagram_document();
+    assert!(view.open_diagram_viewer(node));
+    let before = view.editor.view.reflows;
+    view.catch_up_at_viewport(&ws, 740.0, 480.0);
+    assert_eq!(view.editor.view.reflows, before + 1);
+    assert_eq!(view.editor.view.viewport, (740.0, 480.0));
+    assert_eq!(view.diagram_viewer().unwrap().viewport(), (740.0, 480.0));
+    view.set_viewer_lift(Some(crate::ViewerLift {
+        origin: (100.0, 50.0),
+        size: (1200.0, 700.0),
+    }));
+    view.catch_up_at_viewport(&ws, 640.0, 400.0);
+    assert_eq!(view.editor.view.reflows, before + 2);
+    assert_eq!(view.editor.view.viewport, (640.0, 400.0));
+    assert_eq!(view.diagram_viewer().unwrap().viewport(), (1200.0, 700.0));
+}
+
 /// A click on the dimmed page closes the viewer on release; a press that
 /// starts on the drawing does not, and the page underneath hears none of
 /// it — the caret stays where it was.

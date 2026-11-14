@@ -391,14 +391,29 @@ fn menu_instance(rows: usize) -> u64 {
 
 impl MiniApp {
     pub fn header_focused(&self) -> bool {
+        if let Some(surface) = &self.composition {
+            return surface.focused.is_some();
+        }
         self.chrome.header_focus.is_some()
     }
     pub fn blur_header(&mut self) {
+        if let Some(surface) = &mut self.composition {
+            surface.focused = None;
+        }
         self.chrome.header_focus = None;
         self.chrome.search_focus = false;
         self.chrome.menu = None;
     }
     pub fn focus_header(&mut self) {
+        if let Some(surface) = &mut self.composition {
+            surface.focused = surface
+                .frame
+                .nodes
+                .iter()
+                .find(|n| n.focusable)
+                .and_then(|n| n.key);
+            return;
+        }
         self.set_header(if self.chrome.selector.w > 0.0 {
             "selector"
         } else {
@@ -424,9 +439,22 @@ impl MiniApp {
         .collect()
     }
     pub fn tasks_focused(&self) -> bool {
-        self.focus == Region::Tasks && self.chrome.menu.is_none() && !self.header_focused()
+        self.composition.is_none()
+            && self.focus == Region::Tasks
+            && self.chrome.menu.is_none()
+            && !self.header_focused()
     }
     pub fn revise_accessibility(&self, rev: &mut Revision) {
+        rev.u64(self.revision);
+        if let Some(surface) = &self.composition {
+            rev.str(&format!("{:?}", surface.focused));
+            for node in &surface.frame.nodes {
+                rev.f32(node.rect.x)
+                    .f32(node.rect.y)
+                    .f32(node.rect.w)
+                    .f32(node.rect.h);
+            }
+        }
         rev.u64(self.surface)
             .bool(self.chrome.search_focus)
             .bool(self.focus == Region::Tasks);
@@ -461,6 +489,9 @@ impl MiniApp {
         view: ViewSlot,
         pane: Rect,
     ) -> Vec<SemanticNode> {
+        if self.composition.is_some() {
+            return self.composition_semantics(window, view, pane);
+        }
         let occurrence = |part| {
             Occurrence::instance(
                 window,
@@ -575,6 +606,9 @@ impl MiniApp {
         window: WindowSlot,
         view: ViewSlot,
     ) -> Option<Occurrence> {
+        if self.composition.is_some() {
+            return self.composition_accessibility_focus(window, view);
+        }
         if let Some(menu) = &self.chrome.menu {
             return Some(Occurrence::instance(
                 window,
@@ -599,6 +633,9 @@ impl MiniApp {
     }
 
     pub fn chrome_accessibility_action(&mut self, target: Occurrence, action: Action) -> bool {
+        if self.composition.is_some() {
+            return self.composition_accessibility_action(target, action);
+        }
         if !matches!(action, Action::Click | Action::Focus) {
             return false;
         }
@@ -688,6 +725,9 @@ impl MiniApp {
     }
 
     pub(super) fn chrome_down(&mut self, x: f32, y: f32) -> bool {
+        if self.composition.is_some() {
+            return self.composition_down(x, y);
+        }
         if self.chrome.pin.w > 0.0 && self.chrome.pin.contains(x, y) {
             self.set_header("pin");
             self.request_pin();
@@ -743,6 +783,9 @@ impl MiniApp {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        if self.composition.is_some() {
+            return self.composition_key(key, mods);
+        }
         if self.header_focused()
             && *key == Key::Named(NamedKey::Tab)
             && !mods.control_key()
@@ -843,6 +886,10 @@ impl MiniApp {
         caret_on: bool,
         pointer: (f32, f32),
     ) {
+        if self.composition.is_some() {
+            self.draw_composition(scene, workspace, images, root, caret_on, pointer);
+            return;
+        }
         let target_label = self.chrome.query_label(self.tasks.target());
         let save_label = self.save_label();
         let pin_label = self.pin_label();

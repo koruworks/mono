@@ -59,6 +59,7 @@ fn mini_app_capability_is_runtime_only_redacted_and_keys_cannot_echo_it() {
         capability: capability.clone(),
         workspace_id: WorkspaceId::new(),
         refinement_surface: None,
+        refinement: None,
     };
     let options = crate::AiRequestOptions {
         mini_app: Some(context),
@@ -174,4 +175,75 @@ fn authority_allows_one_success_and_revokes_in_flight_jobs() {
     other.clone().revoke();
     assert!(!other.finish(true));
     assert!(!other.live());
+}
+
+#[test]
+fn refinement_authority_requires_the_exact_snapshot_and_redacts_debug() {
+    let target = RefinementTarget {
+        tab_id: 8,
+        surface_id: Uuid::new_v4(),
+        base_revision: 12,
+    };
+    let mut declaration = Declaration::parse(composition::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    declaration
+        .surface
+        .components
+        .iter_mut()
+        .find(|c| c.component == "Button")
+        .unwrap()
+        .text = Some("PRIVATE_UI_LABEL".into());
+    let context = RefinementContext {
+        target,
+        declaration,
+    };
+    let host = HostContext {
+        renderer_id: Uuid::new_v4(),
+        request_id: Uuid::new_v4(),
+        workspace_id: WorkspaceId::new(),
+        refinement: Some(target),
+    };
+    let authority = Authority::with_refinement(host, Some(context.clone())).unwrap();
+    assert!(!format!("{authority:?}").contains("PRIVATE_UI_LABEL"));
+    let runtime = RuntimeContext {
+        capability: Capability::mint(),
+        workspace_id: host.workspace_id,
+        refinement_surface: Some(target.surface_name()),
+        refinement: Some(context.clone()),
+    };
+    let options = crate::AiRequestOptions {
+        mini_app: Some(runtime),
+        ..Default::default()
+    };
+    assert!(!format!("{options:?}").contains("PRIVATE_UI_LABEL"));
+    assert!(
+        !serde_json::to_string(&options)
+            .unwrap()
+            .contains("PRIVATE_UI_LABEL")
+    );
+    let instructions = context.model_instructions().unwrap();
+    assert!(instructions.contains("PRIVATE_UI_LABEL"));
+    assert!(!instructions.contains("base_revision"));
+    assert!(!instructions.contains("tab_id"));
+    let wrong = HostContext {
+        refinement: Some(RefinementTarget {
+            base_revision: 13,
+            ..target
+        }),
+        ..host
+    };
+    assert!(Authority::with_refinement(wrong, Some(context.clone())).is_err());
+    assert!(
+        Authority::with_refinement(
+            HostContext {
+                refinement: None,
+                ..host
+            },
+            Some(context)
+        )
+        .is_err()
+    );
+    assert!(Authority::with_refinement(host, None).is_ok());
 }

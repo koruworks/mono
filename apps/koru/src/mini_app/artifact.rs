@@ -3,7 +3,9 @@
 //! Frozen saves and bounded background I/O. A failed call retains its entire
 //! operation: a later click retries the same bytes and registration identity.
 use super::*;
-use koru_ai_core::mini_apps::artifact::{Envelope, MAX_BYTES, MIME};
+use koru_ai_core::mini_apps::artifact::{
+    MAX_FILE_BYTES as MAX_BYTES, MIME, SavedEnvelope as Envelope,
+};
 use koru_artifact_wire::{
     ArtifactFamilyId, ArtifactTitle, ArtifactVersion, ArtifactVersionId, BlobHash,
     CreateFamilyRequest, Failure, FamilyResponse, MediaType, RegisterVersionRequest,
@@ -39,7 +41,7 @@ impl SaveOperation {
         let create = if prior.is_none() {
             Some(CreateFamilyRequest {
                 family_id: family,
-                workspace: snapshot.bindings.workspace,
+                workspace: snapshot.workspace(),
                 title: ArtifactTitle::new(title).map_err(|_| invalid("invalid artifact title"))?,
                 created_by_run: None,
             })
@@ -120,7 +122,7 @@ impl MiniApp {
             return;
         }
         let title = if self.artifact.title.is_empty() {
-            koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
+            self.default_title()
         } else {
             &self.artifact.title
         };
@@ -144,11 +146,19 @@ impl MiniApp {
         if self.pending.is_some() {
             return Err(invalid("document binding is unsettled"));
         }
-        Envelope::capture(
+        let target = self.refinement_target();
+        if let Some((cached, snapshot)) = self.snapshot_cache.borrow().as_ref()
+            && *cached == target
+        {
+            return Ok(snapshot.clone());
+        }
+        let snapshot = Envelope::capture(
             koru_ai_core::WorkspaceId::from_uuid(self.workspace.as_uuid()),
             &self.effective_definition(),
         )
-        .map_err(invalid)
+        .map_err(invalid)?;
+        *self.snapshot_cache.borrow_mut() = Some((target, snapshot.clone()));
+        Ok(snapshot)
     }
     pub fn save_label(&self) -> &'static str {
         use koru_i18n::Key::*;
@@ -164,33 +174,11 @@ impl MiniApp {
         koru_i18n::t(crate::format::lang(), key)
     }
     pub fn saved_arrangement_is_current(&self) -> bool {
-        use koru_ai_core::mini_apps::artifact::{Arrangement, Tasks};
         let Some(saved) = &self.artifact.saved else {
             return false;
         };
-        let value = &saved.snapshot;
-        self.pending.is_none()
-            && value.bindings.workspace.as_uuid() == self.workspace.as_uuid()
-            && value.bindings.document.map(|id| id.as_uuid())
-                == self.document.map(|id| id.as_uuid())
-            && (value.definition.arrangement == Arrangement::DocumentFirst) == self.swapped
-            && match (&value.definition.tasks, self.tasks.target()) {
-                (Tasks::List { .. }, RailTarget::List(id)) => {
-                    value.bindings.task_list == Some(id.as_uuid())
-                }
-                (Tasks::Bucket { bucket }, RailTarget::Bucket(current)) => {
-                    use crate::panes::explore::rail::Bucket;
-                    bucket.as_str()
-                        == match current {
-                            Bucket::Today => "today",
-                            Bucket::Next => "next",
-                            Bucket::Upcoming => "upcoming",
-                            Bucket::Later => "later",
-                            Bucket::Completed => "completed",
-                        }
-                }
-                _ => false,
-            }
+        self.artifact_snapshot()
+            .is_ok_and(|current| current == saved.snapshot)
     }
 }
 
@@ -311,7 +299,7 @@ impl Io {
                                 profile,
                                 operation,
                             } => {
-                                let workspace = operation.snapshot.bindings.workspace;
+                                let workspace = operation.snapshot.workspace();
                                 let registration = operation.registration.registration_id;
                                 let captured_revision = operation.captured_revision;
                                 let result = client.and_then(|client| {
@@ -418,7 +406,7 @@ pub fn save(port: &impl Port, operation: &SaveOperation) -> Result<ArtifactVersi
     }
     let family = port.family(operation.family)?.family;
     if family.id != operation.family
-        || family.workspace != operation.snapshot.bindings.workspace
+        || family.workspace != operation.snapshot.workspace()
         || family.is_retired()
         || operation.create.as_ref().is_some_and(|c| {
             c.family_id != family.id
@@ -477,7 +465,7 @@ pub fn open(
         return Err(invalid("artifact bytes do not match immutable version"));
     }
     let envelope = Envelope::decode(&bytes).map_err(invalid)?;
-    if envelope.bindings.workspace.as_uuid() != workspace.as_uuid() {
+    if envelope.workspace().as_uuid() != workspace.as_uuid() {
         return Err(invalid("mini app workspace mismatch"));
     }
     port.scope(profile, workspace, &envelope)?;
@@ -498,7 +486,7 @@ impl Port for ClientPort<'_> {
     fn upload(&self, op: &SaveOperation) -> Result<BlobHash> {
         self.0
             .store()
-            .put_blob(op.snapshot.bindings.workspace, op.bytes.clone(), MIME, None)
+            .put_blob(op.snapshot.workspace(), op.bytes.clone(), MIME, None)
             .map(|b| b.hash)
             .map_err(store_failure)
     }
@@ -532,12 +520,15 @@ impl Port for ClientPort<'_> {
                     && w.deleted_at.is_none()
             })
             .ok_or_else(|| invalid("workspace is unavailable"))?;
-        if let Some(document) = envelope.bindings.document {
+        let documents = envelope.document_references();
+        if !documents.is_empty() {
             let entries = self.0.store().documents(scope.id).map_err(store_failure)?;
-            if !entries.iter().any(|e| {
-                e.id == document
-                    && e.kind == koru_core::explore::KIND_DOCUMENT
-                    && e.trashed_at.is_none()
+            if !documents.iter().all(|document| {
+                entries.iter().any(|e| {
+                    e.id == *document
+                        && e.kind == koru_core::explore::KIND_DOCUMENT
+                        && e.trashed_at.is_none()
+                })
             }) {
                 return Err(invalid("document binding is unavailable"));
             }

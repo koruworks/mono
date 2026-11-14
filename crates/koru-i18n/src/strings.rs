@@ -3244,6 +3244,7 @@ pub enum Key {
     MiniAppSaveClosingPending,
     MiniAppArtifactOpenFailed,
     MiniAppTitle,
+    MiniAppCompositionTitle,
     MiniAppGenerationInterrupted,
     MiniAppRefinementRefused,
     MiniAppToolsUnavailable,
@@ -3271,7 +3272,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2295] = [
+    pub const ALL: [Key; 2296] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5546,6 +5547,7 @@ impl Key {
         Key::MiniAppSaveClosingPending,
         Key::MiniAppArtifactOpenFailed,
         Key::MiniAppTitle,
+        Key::MiniAppCompositionTitle,
         Key::MiniAppGenerationInterrupted,
         Key::MiniAppRefinementRefused,
         Key::MiniAppToolsUnavailable,
@@ -17009,6 +17011,7 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::MiniAppSaveClosingPending, en: "A mini app is still saving. Wait for the result, then try closing again.", es: "Una miniaplicación sigue guardándose. Espera el resultado y vuelve a intentar cerrar.", pt_br: "Um miniapp ainda está sendo salvo. Aguarde o resultado e tente fechar novamente.", de: "Eine Mini-App wird noch gespeichert. Warte auf das Ergebnis und versuche dann erneut zu schließen.", fr: "Une mini-app est encore en cours d’enregistrement. Attendez le résultat, puis réessayez de fermer.", ar: "لا يزال حفظ تطبيق مصغّر جاريًا. انتظر النتيجة، ثم حاول الإغلاق مجددًا.", zh_hans: "小应用仍在保存中。请等待结果，然后再次尝试关闭。", ja: "ミニアプリを保存中です。結果を待ってから、もう一度閉じてください。" },
     Row { key: Key::MiniAppArtifactOpenFailed, en: "Couldn't open this artifact in the current workspace. It may be unavailable, unsupported, or linked to missing lists or documents. Its saved data is unchanged.", es: "No se pudo abrir este artefacto aquí. Puede no estar disponible, no ser compatible o estar vinculado a listas o documentos que faltan. Sus datos guardados no han cambiado.", pt_br: "Não foi possível abrir este artefato aqui. Pode estar indisponível, sem suporte ou vinculado a listas ou documentos ausentes. Os dados salvos não mudaram.", de: "Dieses Artefakt konnte hier nicht geöffnet werden. Es ist möglicherweise nicht verfügbar, nicht unterstützt oder mit fehlenden Listen oder Dokumenten verknüpft. Gespeicherte Daten bleiben unverändert.", fr: "Impossible d’ouvrir cet artefact ici. Il peut être indisponible, non pris en charge ou lié à des listes ou documents manquants. Ses données enregistrées sont inchangées.", ar: "تعذّر فتح هذا الأثر هنا. قد يكون غير متاح أو غير مدعوم أو مرتبطًا بقوائم أو مستندات مفقودة. بياناته المحفوظة لم تتغير.", zh_hans: "无法在当前工作区打开此产物。它可能不可用、不受支持或链接到缺失的列表或文档。已保存的数据保持不变。", ja: "現在のワークスペースでこの成果物を開けませんでした。利用不可、未対応、またはリンク先のリストや文書の不足が考えられます。保存済みデータは変更されていません。" },
     Row { key: Key::MiniAppTitle, en: "Tasks and document", es: "Tareas y documento", pt_br: "Tarefas e documento", de: "Aufgaben und Dokument", fr: "Tâches et document", ar: "المهام والمستند", zh_hans: "任务与文档", ja: "タスクと文書" },
+    Row { key: Key::MiniAppCompositionTitle, en: "Mini app", es: "Miniaplicación", pt_br: "Miniaplicativo", de: "Mini-App", fr: "Mini-application", ar: "تطبيق مصغر", zh_hans: "小应用", ja: "ミニアプリ" },
     Row { key: Key::MiniAppGenerationInterrupted, en: "The mini-app request was interrupted. Check the current app before using Retry or sending a new request when Retry is unavailable.", es: "Se interrumpió la solicitud de la miniaplicación. Comprueba su estado antes de usar Reintentar o enviar una nueva solicitud si no está disponible.", pt_br: "A solicitação do miniapp foi interrompida. Confira seu estado antes de tentar novamente ou enviar uma nova solicitação se a opção não estiver disponível.", de: "Die Mini-App-Anfrage wurde unterbrochen. Prüfe die aktuelle App, bevor du es erneut versuchst oder eine neue Anfrage sendest, falls Wiederholen fehlt.", fr: "La demande de mini-app a été interrompue. Vérifiez l’app actuelle avant de réessayer ou d’envoyer une nouvelle demande si Réessayer est indisponible.", ar: "توقّف طلب التطبيق المصغّر. تحقّق من التطبيق الحالي قبل إعادة المحاولة أو إرسال طلب جديد إن لم تتوفر إعادة المحاولة.", zh_hans: "小应用请求已中断。请先检查当前应用，再重试；若无法重试，请发送新请求。", ja: "ミニアプリのリクエストが中断しました。現在のアプリを確認してから再試行し、再試行できない場合は新しいリクエストを送信してください。" },
     Row { key: Key::MiniAppRefinementRefused, en: "The mini app changed or is no longer selected. Its arrangement was kept. Select it and send a new request.", es: "La miniaplicación cambió o ya no está seleccionada. Se conservó su disposición. Selecciónala y envía una nueva solicitud.", pt_br: "O miniapp mudou ou não está mais selecionado. Sua disposição foi mantida. Selecione-o e envie uma nova solicitação.", de: "Die Mini-App wurde geändert oder ist nicht mehr ausgewählt. Ihre Anordnung blieb erhalten. Wähle sie aus und sende eine neue Anfrage.", fr: "La mini-app a changé ou n’est plus sélectionnée. Sa disposition a été conservée. Sélectionnez-la et envoyez une nouvelle demande.", ar: "تغيّر التطبيق المصغّر أو لم يعد محدّدًا. تم الاحتفاظ بترتيبه. حدّده وأرسل طلبًا جديدًا.", zh_hans: "小应用已更改或不再被选中。其布局已保留。请选中它并发送新请求。", ja: "ミニアプリが変更されたか、選択されていません。配置は保持されています。選択して新しいリクエストを送信してください。" },
     Row { key: Key::MiniAppToolsUnavailable, en: "Tools are unavailable for this reply; mini apps cannot be created.", es: "Las herramientas no están disponibles para esta respuesta; no se pueden crear miniaplicaciones.", pt_br: "As ferramentas estão indisponíveis nesta resposta; não é possível criar miniapps.", de: "Für diese Antwort sind keine Werkzeuge verfügbar; Mini-Apps können nicht erstellt werden.", fr: "Les outils sont indisponibles pour cette réponse ; aucune mini-app ne peut être créée.", ar: "الأدوات غير متاحة لهذا الرد؛ لا يمكن إنشاء تطبيقات مصغّرة.", zh_hans: "此回复的工具不可用，无法创建小应用。", ja: "この返信ではツールを利用できないため、ミニアプリは作成できません。" },

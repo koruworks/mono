@@ -52,6 +52,19 @@ use koru_workspace::{self, Workspace};
 /// after a page-down does not wait, long enough to read as motion rather than
 /// a jump.
 const SCROLL_ANIM_SECS: f32 = 0.15;
+
+/// Prepare the editor's final geometry without shaping rows. Both resize and
+/// combined catch-up use the same effective-width invalidation rule.
+fn prepare_viewport(body: &mut Body, view: &mut ViewState, w: f32, h: f32) {
+    let mode = view.view_mode;
+    let old = mode.effective_w(view.viewport.0);
+    let new = mode.effective_w(w);
+    if (old - new).abs() > 0.5 {
+        body.invalidate();
+    }
+    view.viewport = (w, h);
+    view.content_x = mode.content_x(w);
+}
 /// Selection drags begin scrolling before the pointer has to leave the window.
 const DRAG_SCROLL_EDGE: f32 = 48.0;
 /// Maximum edge-drag speed. Distance into the edge band scales up to this.
@@ -1499,20 +1512,23 @@ pub trait Editing {
 
     // ------------------------------------------------------------ layout
 
+    /// Settle a retained editor at its new viewport in one reflow, preserving
+    /// the full catch-up path's stable overlay anchors and picker refresh.
+    /// The host drains pending changes before calling, as for `catch_up`.
+    fn catch_up_at_viewport(&mut self, ws: &WorkspaceDoc, w: f32, h: f32) {
+        let (body, view) = self.parts();
+        prepare_viewport(body, view, w, h);
+        self.catch_up(ws);
+    }
+
     fn set_viewport(&mut self, w: f32, h: f32) {
-        let mode = self.view().view_mode;
         // Compare *effective* widths, not raw ones: in Page/Narrow the rows wrap
         // to the page width, so growing the window past it leaves the wrap
         // unchanged and there is nothing to invalidate. This is also what keeps
         // a live resize cheap in a page mode — only a change that actually
         // moves the wrap pays for a reflow.
-        let old = mode.effective_w(self.view().viewport.0);
-        let new = mode.effective_w(w);
-        if (old - new).abs() > 0.5 {
-            self.body_mut().invalidate();
-        }
-        self.view_mut().viewport = (w, h);
-        self.view_mut().content_x = mode.content_x(w);
+        let (body, view) = self.parts();
+        prepare_viewport(body, view, w, h);
         self.reflow();
     }
 

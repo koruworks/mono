@@ -39,7 +39,7 @@ fn save_receipt_to_pin_write_has_no_close_gap_and_failure_retries_exact_version(
         .send(crate::mini_app::artifact::Answer::Saved {
             tab,
             profile,
-            workspace: operation.snapshot.bindings.workspace,
+            workspace: operation.snapshot.workspace(),
             registration: operation.registration.registration_id,
             captured_revision: operation.captured_revision,
             result: Ok(version.clone()),

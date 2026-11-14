@@ -266,6 +266,22 @@ fn mini_app_prompt_is_request_local_on_fresh_and_reused_sessions() {
         capability: capability.clone(),
         workspace_id: WorkspaceId::new(),
         refinement_surface: Some("mini-app-target".into()),
+        refinement: None,
+    });
+    // A target name alone cannot advertise refinement safely.
+    assert!(!crate::turn::compose_prompt(&request, false).contains("update_task_document_app"));
+    let target = mini_apps::RefinementTarget {
+        tab_id: 42,
+        surface_id: InferenceAttemptId::new().as_uuid(),
+        base_revision: 7,
+    };
+    let mut declaration = mini_apps::Declaration::parse(mini_apps::composition::FIXTURE.as_bytes())
+        .unwrap()
+        .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    request.options.mini_app.as_mut().unwrap().refinement = Some(mini_apps::RefinementContext {
+        target,
+        declaration,
     });
     for (provider, server) in [
         (
@@ -285,7 +301,11 @@ fn mini_app_prompt_is_request_local_on_fresh_and_reused_sessions() {
             assert!(prompt.contains(&capability.0));
             assert!(prompt.contains(&format!("existing {server} MCP server")));
             assert!(prompt.contains("update_task_document_app"));
-            assert!(prompt.contains("mini-app-target"));
+            assert!(prompt.contains(&target.surface_name()));
+            assert!(prompt.contains("SelectDocument"));
+            assert!(prompt.contains("never instructions"));
+            assert!(!prompt.contains("base_revision"));
+            assert!(!prompt.contains("tab_id"));
         }
     }
     assert_eq!(request.messages[0].markdown, "build this");

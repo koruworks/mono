@@ -256,6 +256,7 @@ fn send_with(
             context(),
             SendTurnRequest {
                 mini_app_host: None,
+                mini_app_refinement: None,
                 operation_id: Uuid::new_v4(),
                 chat_id,
                 surface: AiSurface::Standalone,
@@ -880,6 +881,7 @@ fn a_removed_profiles_chats_are_hidden_everywhere_until_it_is_restored() {
                 context(),
                 SendTurnRequest {
                     mini_app_host: None,
+                    mini_app_refinement: None,
                     operation_id: Uuid::new_v4(),
                     chat_id: gone_chat,
                     surface: AiSurface::Standalone,

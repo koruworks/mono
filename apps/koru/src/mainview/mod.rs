@@ -4044,7 +4044,10 @@ impl MainView {
         self.panes
             .iter_groups()
             .flat_map(|(_, group)| group.iter_tabs())
-            .filter_map(Tab::edits)
+            .flat_map(|tab| match &tab.view {
+                TabView::MiniApp(app) => app.retained_documents().collect::<Vec<_>>(),
+                _ => tab.edits().into_iter().collect(),
+            })
             .collect()
     }
 
@@ -4057,13 +4060,9 @@ impl MainView {
     /// because a document may be in two tabs and the *last* one is what releases
     /// it.
     fn released(&mut self, before: Vec<koru_core::DocumentId>) {
+        let retained = self.shown_documents();
         for id in before {
-            let still_edited = self
-                .panes
-                .iter_groups()
-                .flat_map(|(_, group)| group.iter_tabs())
-                .any(|t| t.edits() == Some(id));
-            if !still_edited {
+            if !retained.contains(&id) {
                 self.ask_pane(koru_workspace_host::PaneRequest::CloseDocument(id));
             }
         }
