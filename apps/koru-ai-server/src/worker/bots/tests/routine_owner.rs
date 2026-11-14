@@ -374,8 +374,7 @@ fn routine_owner_lifecycle_and_cross_kind_receipt_refuse_before_task_pages() {
             *request_id = chat_request;
         }
         let expected = match lifecycle {
-            BotLifecycle::Active => "request_conflict",
-            BotLifecycle::Archived => "bot_archived",
+            BotLifecycle::Active | BotLifecycle::Archived => "request_conflict",
             _ => "not_found",
         };
         assert_eq!(
@@ -390,7 +389,11 @@ fn routine_owner_lifecycle_and_cross_kind_receipt_refuse_before_task_pages() {
         if lifecycle != BotLifecycle::Active {
             assert_eq!(
                 client.bots(context(true), retry).unwrap_err().code,
-                expected
+                if lifecycle == BotLifecycle::Archived {
+                    "bot_archived"
+                } else {
+                    "not_found"
+                }
             );
         }
         assert!(authority.pages.lock().unwrap().is_empty());
