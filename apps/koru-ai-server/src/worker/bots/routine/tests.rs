@@ -262,7 +262,7 @@ fn routine_job_never_reaches_store_without_exact_route_ack_or_after_cancellation
 }
 
 #[test]
-fn routine_worker_late_store_proof_cannot_bind_after_settings_edit_and_reads_stay_responsive() {
+fn routine_worker_late_store_proof_cannot_bind_after_library_revision_and_reads_stay_responsive() {
     let (f, repo) = Fixture::new();
     let (delegate, authority) = ports(&f);
     let (entered, reached) = sync_channel(1);
@@ -274,17 +274,15 @@ fn routine_worker_late_store_proof_cannot_bind_after_settings_edit_and_reads_sta
         .client()
         .bots(context(), BotCommand::ReadLibrary { bot_id: f.bot.id })
         .unwrap();
-    let mut config = f.bot.config.clone();
-    config.name = "Changed during Store work".into();
     worker
         .client()
         .bots(
             context(),
-            BotCommand::Update {
+            BotCommand::SetKnowledge {
                 request_id: BotRequestId::mint(),
                 bot_id: f.bot.id,
                 expected_revision: 1,
-                config,
+                pages: vec![f.bot.config.role.clone()],
             },
         )
         .unwrap();
@@ -492,9 +490,22 @@ fn held_memory_creation_keeps_the_physical_slot_then_routine_progresses() {
     }
     let (f, mut repo) = Fixture::new();
     let (delegate, authority) = ports(&f);
+    // Memory binding advances its Bot's canonical revision. Use a different
+    // Bot so this test measures physical fairness rather than Routine drift.
+    let mut memory_bot = f.bot.clone();
+    memory_bot.id = BotId::mint();
+    memory_bot.main_chat = ChatId::new();
+    repo.save_bot(
+        &memory_bot,
+        f.profile,
+        BotRequestId::mint(),
+        &"e".repeat(64),
+        None,
+    )
+    .unwrap();
     repo.prepare_bot_memory_creation(
         f.owner,
-        f.bot.id,
+        memory_bot.id,
         BotRequestId::mint(),
         f.bot.revision,
         &crate::bots::memory_seed(f.bot.home_workspace, "Memory").unwrap(),
@@ -524,7 +535,7 @@ fn held_memory_creation_keeps_the_physical_slot_then_routine_progresses() {
     drop(worker);
     let repo = returned.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(
-        repo.bot_library(f.owner, f.bot.id)
+        repo.bot_library(f.owner, memory_bot.id)
             .unwrap()
             .binding
             .is_some()
