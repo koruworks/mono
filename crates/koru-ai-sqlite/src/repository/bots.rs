@@ -397,7 +397,16 @@ impl BotRepository for Repository {
             params![scope.to_storage(),request.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(bad)?;
         match row {
             None => Ok(None),
-            Some((_, _, kind)) if matches!(kind.as_str(), "set_knowledge" | "ensure_memory") => {
+            Some((_, _, kind))
+                if matches!(
+                    kind.as_str(),
+                    "set_knowledge"
+                        | "ensure_memory"
+                        | "create_routine"
+                        | "routine_draft"
+                        | "routine_occurrence"
+                ) =>
+            {
                 Err(BotError::Conflict)
             }
             Some((f, b, _)) if f == fingerprint => {

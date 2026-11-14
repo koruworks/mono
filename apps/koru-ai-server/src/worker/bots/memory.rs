@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Trusted in-process Memory transport; the shared exposure gate remains closed.
+//! Trusted in-process Memory transport with the shared availability gate.
 use crate::worker::*;
 use koru_ai_core::Cancellation;
 use koru_ai_core::bots::{BotMemoryDetailPage, BotMemoryListPage, MemoryReadOperation};
@@ -38,7 +38,7 @@ pub enum RunMemoryReadResult {
 
 impl AiWorkerClient {
     /// Trusted-host interface, deliberately absent from AiServerPort/HTTP.
-    /// The closed gate refuses before queuing or contacting the Store/delegate.
+    /// Availability is checked before queuing or contacting the Store/delegate.
     pub fn read_bot_memory(&self, request: RunMemoryReadRequest) -> ApiResult<RunMemoryReadResult> {
         if !koru_ai_core::bots::BOT_MEMORY_AVAILABLE {
             return Err(failure(

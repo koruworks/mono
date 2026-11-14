@@ -123,7 +123,7 @@ async fn only_positive_owner_classification_selects_a_catalog() {
 }
 
 #[test]
-fn four_shared_native_tools_publish_only_owner_supported_identity_and_creation_fields() {
+fn nine_bot_tools_publish_only_owner_supported_identity_and_creation_fields() {
     let tools = definitions();
     let names: std::collections::BTreeSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert_eq!(
@@ -132,10 +132,42 @@ fn four_shared_native_tools_publish_only_owner_supported_identity_and_creation_f
             "search_documents",
             "read_document",
             "create_document",
-            "edit_document"
+            "edit_document",
+            "list_memory",
+            "read_memory",
+            "remember_memory",
+            "correct_memory",
+            "forget_memory"
         ]
         .into()
     );
+    let ordinary = super::super::tools::definitions();
+    assert_eq!(ordinary.len(), 6);
+    assert!(
+        !ordinary
+            .iter()
+            .any(|tool| memory::recognizes(tool.name.as_ref()))
+    );
+    for name in [
+        "list_memory",
+        "read_memory",
+        "remember_memory",
+        "correct_memory",
+        "forget_memory",
+    ] {
+        // The actual native call routes recognized names to Memory before the
+        // generic executor; recognition carries no generic document grant.
+        assert!(memory::recognizes(name));
+    }
+    for name in [
+        "read_document",
+        "edit_document",
+        "create",
+        "ensure_memory",
+        "unknown",
+    ] {
+        assert!(!memory::recognizes(name));
+    }
     for tool in &tools {
         let schema = serde_json::Value::Object((*tool.input_schema).clone());
         if matches!(tool.name.as_ref(), "create_document" | "edit_document") {

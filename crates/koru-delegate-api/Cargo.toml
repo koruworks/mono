@@ -24,5 +24,6 @@ schemars = { workspace = true, features = ["uuid1"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+blake3 = { workspace = true }
 
 [dev-dependencies]

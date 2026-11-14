@@ -37,17 +37,24 @@ pub(super) fn decode_submission(
     request: BotRequestId,
 ) -> Result<BotSubmissionReceipt, BotError> {
     let kind = BotOperationKind::parse(&r.kind)
-        .filter(|k| matches!(k, BotOperationKind::Start | BotOperationKind::Continue))
+        .filter(|k| {
+            matches!(
+                k,
+                BotOperationKind::Start
+                    | BotOperationKind::Continue
+                    | BotOperationKind::RoutineOccurrence
+            )
+        })
         .ok_or(BotError::Conflict)?;
     let data = r.submission.ok_or(BotError::Storage)?;
     if data.len() > 4 * 1024 * 1024 {
         return Err(BotError::Storage);
     }
     let intent: BotSubmissionIntent = serde_json::from_str(&data).map_err(bad)?;
-    intent.validate()?;
+    intent.validate_for_kind(kind)?;
     let s = &intent.submission;
     let p = &s.provenance;
-    if r.version != Some(1)
+    if r.version != Some(intent.version)
         || p.owner.user_scope != scope
         || p.submission != request
         || p.bot.to_storage() != r.bot
@@ -57,6 +64,7 @@ pub(super) fn decode_submission(
         || (kind == BotOperationKind::Continue) != p.continued_from.is_some()
         || r.desired.is_some()
         || r.ack.is_some()
+        || (kind == BotOperationKind::RoutineOccurrence && r.expected.is_some())
     {
         return Err(BotError::Storage);
     }
@@ -448,7 +456,7 @@ pub(crate) fn prepare_bot_submission_tx(
     require_pause_settled(tx, owner.user_scope, p.bot)?;
     // This is an unacknowledged-intent bound, not a second runtime queue.
     // Exact durable retries above remain possible when the bound is full.
-    let unresolved:u64=tx.query_row("SELECT COUNT(*) FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND command_kind IN ('start','continue') AND stage='prepared'",params![owner.user_scope.to_storage(),p.bot.to_storage()],|r|r.get(0)).map_err(bad)?;
+    let unresolved:u64=tx.query_row("SELECT COUNT(*) FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND command_kind IN ('start','continue','routine_occurrence') AND stage='prepared'",params![owner.user_scope.to_storage(),p.bot.to_storage()],|r|r.get(0)).map_err(bad)?;
     if unresolved >= 50 {
         return Err(BotError::Conflict);
     }
@@ -515,7 +523,7 @@ pub(crate) fn prepare_bot_submission_tx(
         }
         // Also refuse an inconsistent old pending receipt; absence of its lock
         // is not authority to submit a second first-task binding.
-        let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_command_receipts WHERE bot_id=?1 AND user_scope_id=?2 AND command_kind IN ('start','continue') AND stage IN ('prepared','accepted'))",params![p.bot.to_storage(),owner.user_scope.to_storage()],|r|r.get(0)).map_err(bad)?;
+        let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_command_receipts WHERE bot_id=?1 AND user_scope_id=?2 AND command_kind IN ('start','continue','routine_occurrence') AND stage IN ('prepared','accepted'))",params![p.bot.to_storage(),owner.user_scope.to_storage()],|r|r.get(0)).map_err(bad)?;
         if pending {
             return Err(BotError::FolderLocked);
         }
@@ -963,7 +971,7 @@ impl Repository {
             if g.lock.as_deref() != Some(request.to_storage().as_str()) {
                 return Err(BotError::FolderLocked);
             }
-            let other:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_command_receipts WHERE bot_id=?1 AND user_scope_id=?2 AND request_id<>?3 AND command_kind IN ('start','continue') AND stage IN ('prepared','accepted','completed'))",params![bot.to_storage(),owner.user_scope.to_storage(),request.to_storage()],|r|r.get(0)).map_err(bad)?;
+            let other:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_command_receipts WHERE bot_id=?1 AND user_scope_id=?2 AND request_id<>?3 AND command_kind IN ('start','continue','routine_occurrence') AND stage IN ('prepared','accepted','completed'))",params![bot.to_storage(),owner.user_scope.to_storage(),request.to_storage()],|r|r.get(0)).map_err(bad)?;
             if other {
                 return Err(BotError::FolderLocked);
             }
@@ -982,7 +990,10 @@ impl Repository {
         after: i64,
         limit: u16,
     ) -> Result<Vec<(i64, BotId, UserScopeId, BotRequestId)>, BotError> {
-        let mut q=self.connection.prepare("SELECT rowid,bot_id,user_scope_id,request_id FROM bot_command_receipts INDEXED BY bot_unresolved_coordination WHERE rowid>?1 AND stage IN ('prepared','accepted') AND command_kind IN ('start','continue','pause','resume') ORDER BY rowid LIMIT ?2").map_err(bad)?;
+        let mut q = self
+            .connection
+            .prepare(BOT_PENDING_OPERATIONS_SQL)
+            .map_err(bad)?;
         q.query_map(params![after, limit.clamp(1, 64)], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -1004,3 +1015,11 @@ impl Repository {
         .collect()
     }
 }
+
+// SQLite partial-index implication needs the widened predicate verbatim. The
+// second filter keeps Routine work out of ordinary pending-submit recovery.
+pub(crate) const BOT_PENDING_OPERATIONS_SQL: &str = "SELECT rowid,bot_id,user_scope_id,request_id
+ FROM bot_command_receipts INDEXED BY bot_unresolved_coordination
+ WHERE rowid>?1 AND stage IN ('prepared','accepted')
+ AND command_kind IN ('start','continue','pause','resume','routine_occurrence')
+ AND command_kind IN ('start','continue','pause','resume') ORDER BY rowid LIMIT ?2";

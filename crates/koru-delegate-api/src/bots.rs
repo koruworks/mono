@@ -41,6 +41,12 @@ impl From<BotDelegateAuthority> for String {
     }
 }
 impl BotDelegateAuthority {
+    /// Derive the private reverse-bridge capability without exposing this
+    /// bootstrap secret. A model/session scope does not supply this trusted
+    /// bootstrap capability.
+    pub fn routine_bridge_authority(&self) -> crate::routines::RoutineBridgeAuthority {
+        crate::routines::RoutineBridgeAuthority::from_parent_bytes(self.0.as_bytes())
+    }
     pub fn new(value: String) -> Option<Self> {
         (value.len() >= 32 && value.len() <= 256 && !value.contains('\0')).then_some(Self(value))
     }

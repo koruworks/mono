@@ -67,12 +67,23 @@ fn private_submission_closes_nested_intent_and_input_without_changing_ordinary_t
             );
         }
     }
-    for key in ["requested_by", "scope", "origin"] {
+    for key in ["requested_by", "scope", "origin", "agent"] {
         let mut changed = encoded.clone();
         changed["request"][key]["undeclared_authority"] = serde_json::json!(true);
         assert!(
             serde_json::from_value::<BotSubmission>(changed).is_err(),
             "{key}"
+        );
+    }
+    for noncanonical in [
+        "ABCDEF01-2345-4678-8ABC-1234567890AB",
+        "abcdef01234546788abc1234567890ab",
+    ] {
+        let mut changed = encoded.clone();
+        changed["request"]["agent"] = serde_json::json!({"kind":"custom","value":noncanonical});
+        assert!(
+            serde_json::from_value::<BotSubmission>(changed).is_err(),
+            "v1 profile {noncanonical}"
         );
     }
     let mut changed = encoded;
@@ -83,6 +94,35 @@ fn private_submission_closes_nested_intent_and_input_without_changing_ordinary_t
     assert!(serde_json::from_value::<BotSubmission>(changed.clone()).is_ok());
     changed["request"]["context"][0]["undeclared_authority"] = serde_json::json!(true);
     assert!(serde_json::from_value::<BotSubmission>(changed).is_err());
+}
+
+#[test]
+fn strict_private_profile_keeps_legacy_custom_uuid_domain_and_public_tolerance() {
+    #[derive(Deserialize)]
+    struct Private {
+        #[serde(deserialize_with = "crate::bot_wire::deserialize_profile")]
+        agent: crate::SessionProfileKey,
+    }
+    for value in [
+        "abcdef01-2345-4678-8abc-1234567890ab",
+        "ABCDEF01-2345-4678-8ABC-1234567890AB",
+        "abcdef01234546788abc1234567890ab",
+        "00000000-0000-0000-0000-000000000000",
+    ] {
+        let public = serde_json::from_value::<crate::SessionProfileKey>(
+            serde_json::json!({"kind":"custom","value":value}),
+        );
+        let private = serde_json::from_value::<Private>(
+            serde_json::json!({"agent":{"kind":"custom","value":value}}),
+        );
+        assert_eq!(private.is_ok(), public.is_ok(), "{value}");
+        if let (Ok(private), Ok(public)) = (private, public) {
+            assert_eq!(private.agent, public)
+        }
+    }
+    let unknown = serde_json::json!({"kind":"built_in","value":"codex","extra":true});
+    assert!(serde_json::from_value::<crate::SessionProfileKey>(unknown.clone()).is_ok());
+    assert!(serde_json::from_value::<Private>(serde_json::json!({"agent":unknown})).is_err());
 }
 #[test]
 fn folders_are_absolute_portable_and_redacted() {
