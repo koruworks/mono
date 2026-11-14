@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Production client/worker/Store path; delegate and catalog are strict peers.
 use super::*;
+use koru_delegate_core::RoutineTerminalReason;
 use crate::bots::routine::tests::Fixture;
 use std::{
     future::Future,

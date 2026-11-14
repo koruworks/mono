@@ -11,7 +11,7 @@ mod worker;
 fn slot() -> RoutineSlot {
     RoutineSlot {
         owner: koru_delegate_core::BotOwner {
-            user_scope: koru_ai_core::UserScopeId::new(),
+            user_scope: koru_ai_core::bots::UserScopeId::new(),
             device: koru_delegate_core::DeviceId::new(),
         },
         bot: BotId::mint(),

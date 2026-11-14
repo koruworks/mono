@@ -11,7 +11,6 @@ use koru_delegate_api::{
 use koru_delegate_core::{
     RoutineClaimIdentity, RoutineClaimObservation, RoutineClaimRecord, RoutineDigest32,
     RoutineLinkAcknowledgement, RoutineLinkOutcome, RoutineLinkState, RoutinePrepared, RoutineSlot,
-    RoutineTerminalReason,
 };
 use std::collections::{BTreeMap, VecDeque};
 
