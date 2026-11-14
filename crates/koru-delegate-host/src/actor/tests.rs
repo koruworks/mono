@@ -21,10 +21,10 @@ use koru_session_protocol::{
 };
 
 use super::*;
+mod admission_read;
 mod native_lookup;
 pub(crate) mod routine;
 mod routine_route;
-mod admission_read;
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {
