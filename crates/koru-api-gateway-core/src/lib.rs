@@ -4,6 +4,7 @@
 
 mod ai;
 mod artifacts;
+mod routine_bridge;
 mod run_mcp;
 mod runs;
 mod schedules;
@@ -1053,6 +1054,9 @@ pub struct GatewayState {
     delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::DelegatePort>>,
     /// Private bootstrap capability, never a provider or public request principal.
     bot_delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
+    /// Derived bootstrap authority and bounded HTTP-body admission only. The
+    /// private shell does not own an AI job or a physical execution permit.
+    routine_bridge: Arc<routine_bridge::HttpState>,
     native_mutations: std::sync::OnceLock<Arc<koru_ai_server::NativeMutationGate>>,
     artifacts: std::sync::OnceLock<Arc<dyn koru_artifact_api::ArtifactDomain>>,
     /// `http://127.0.0.1:<port>`, handed down by the host once its listener
@@ -1151,6 +1155,7 @@ impl GatewayState {
             artifacts: std::sync::OnceLock::new(),
             delegate: std::sync::OnceLock::new(),
             bot_delegate: std::sync::OnceLock::new(),
+            routine_bridge: Arc::new(routine_bridge::HttpState::default()),
             native_mutations: std::sync::OnceLock::new(),
             public_endpoint: std::sync::OnceLock::new(),
             openapi: public_openapi(),
@@ -1216,6 +1221,15 @@ impl GatewayState {
 
     fn bot_delegate_port(&self) -> Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> {
         self.bot_delegate.get().cloned()
+    }
+
+    /// Install the independently derived private capability once, before
+    /// serving, including hosts where the AI worker is unavailable.
+    pub fn set_routine_bridge_authority(
+        &self,
+        authority: koru_delegate_api::routines::RoutineBridgeAuthority,
+    ) -> bool {
+        self.routine_bridge.install(authority)
     }
 
     /// Same process-scoped gate given to AI recovery, composed before serving.
@@ -1451,6 +1465,9 @@ pub fn router(state: Arc<GatewayState>) -> Router {
         // and `/v1/oauth/*` fall through to the Store like any unknown path
         // (docs/developers/API.md).
         .merge(ai::router())
+        // Private bootstrap authentication, absent from the public catalog.
+        // Valid envelopes refuse Unavailable until the real AI owner is wired.
+        .merge(routine_bridge::router(Arc::clone(&state.routine_bridge)))
         // The Artifact Store's own namespace (D13). Its routes exist whether
         // or not `artifacts.db` opened, and answer 503 when it did not.
         .merge(artifacts::router())
@@ -1499,6 +1516,11 @@ async fn authenticate(
     // authority never minted one and must not be asked. The route resolves
     // the bearer itself, on every call.
     if run_mcp::is_run_endpoint(request.uri().path()) {
+        return next.run(request).await;
+    }
+    // Only these exact paths bypass the ordinary session bearer. Their own
+    // handler checks the derived capability before it ever polls a body.
+    if routine_bridge::is_endpoint(request.uri().path()) {
         return next.run(request).await;
     }
     let bearer = request

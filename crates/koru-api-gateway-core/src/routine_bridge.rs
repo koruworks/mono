@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Authenticated, bounded private HTTP shell. No AI work is dispatched here.
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
+
+use axum::Router;
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::any;
+use futures_util::StreamExt;
+use koru_delegate_api::routines::*;
+use serde::{Serialize, de::DeserializeOwned};
+use tokio::sync::Semaphore;
+
+const HTTP_CAPACITY: usize = 8;
+
+pub(crate) struct HttpState {
+    authority: OnceLock<RoutineBridgeAuthority>,
+    /// Logical/body capacity only; never a future AI physical-work permit.
+    slots: Arc<Semaphore>,
+    #[cfg(test)]
+    test_budget: std::time::Duration,
+}
+impl Default for HttpState {
+    fn default() -> Self {
+        Self {
+            authority: OnceLock::new(),
+            slots: Arc::new(Semaphore::new(HTTP_CAPACITY)),
+            #[cfg(test)]
+            test_budget: ROUTINE_BRIDGE_DEADLINE,
+        }
+    }
+}
+impl HttpState {
+    pub(crate) fn install(&self, authority: RoutineBridgeAuthority) -> bool {
+        self.authority.set(authority).is_ok()
+    }
+
+    fn budget(&self) -> std::time::Duration {
+        #[cfg(test)]
+        {
+            self.test_budget
+        }
+        #[cfg(not(test))]
+        {
+            ROUTINE_BRIDGE_DEADLINE
+        }
+    }
+}
+
+pub(crate) fn is_endpoint(path: &str) -> bool {
+    matches!(
+        path,
+        ROUTINE_PREPARE_ROUTE
+            | ROUTINE_PREPARATION_ROUTE
+            | ROUTINE_FINALIZE_ROUTE
+            | ROUTINE_LINK_ROUTE
+    )
+}
+
+fn routes() -> Router<Arc<HttpState>> {
+    Router::new()
+        .route(ROUTINE_PREPARE_ROUTE, any(handle))
+        .route(ROUTINE_PREPARATION_ROUTE, any(handle))
+        .route(ROUTINE_FINALIZE_ROUTE, any(handle))
+        .route(ROUTINE_LINK_ROUTE, any(handle))
+}
+
+pub(crate) fn router(state: Arc<HttpState>) -> Router<Arc<crate::GatewayState>> {
+    routes().with_state(state)
+}
+
+async fn handle(State(state): State<Arc<HttpState>>, request: Request) -> Response {
+    let started = Instant::now();
+    let Some(deadline) = started.checked_add(state.budget()) else {
+        return StatusCode::GATEWAY_TIMEOUT.into_response();
+    };
+    match handle_until(&state, request, deadline).await {
+        Ok(body) => {
+            let mut response = Response::new(Body::from(body));
+            response.headers_mut().insert(
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("application/json"),
+            );
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            );
+            response
+        }
+        Err(status) => {
+            let mut response = status.into_response();
+            if status == StatusCode::METHOD_NOT_ALLOWED {
+                response
+                    .headers_mut()
+                    .insert(header::ALLOW, axum::http::HeaderValue::from_static("POST"));
+            }
+            response
+        }
+    }
+}
+
+fn remaining(deadline: Instant) -> Result<(), StatusCode> {
+    if Instant::now() >= deadline {
+        Err(StatusCode::GATEWAY_TIMEOUT)
+    } else {
+        Ok(())
+    }
+}
+
+fn authorized(state: &HttpState, headers: &HeaderMap) -> bool {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let Some(value) = values.next() else {
+        return false;
+    };
+    values.next().is_none()
+        && state
+            .authority
+            .get()
+            .is_some_and(|authority| authority.matches_authorization(value.as_bytes()))
+}
+
+fn framing(headers: &HeaderMap) -> Result<Option<usize>, StatusCode> {
+    let bad = StatusCode::BAD_REQUEST;
+    let mut types = headers.get_all(header::CONTENT_TYPE).iter();
+    let content_type = types.next().ok_or(bad)?.to_str().map_err(|_| bad)?;
+    if types.next().is_some() {
+        return Err(bad);
+    }
+    let mut parts = content_type.split(';').map(str::trim);
+    if !parts
+        .next()
+        .is_some_and(|part| part.eq_ignore_ascii_case("application/json"))
+        || parts
+            .next()
+            .is_some_and(|part| !part.eq_ignore_ascii_case("charset=utf-8"))
+        || parts.next().is_some()
+        || headers.contains_key(header::CONTENT_ENCODING)
+    {
+        return Err(bad);
+    }
+    let mut lengths = headers.get_all(header::CONTENT_LENGTH).iter();
+    let length = lengths
+        .next()
+        .map(|value| {
+            let value = value.to_str().map_err(|_| bad)?;
+            if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(bad);
+            }
+            let length = value.parse::<u64>().map_err(|_| bad)?;
+            if length > ROUTINE_BRIDGE_BODY_LIMIT as u64 {
+                return Err(StatusCode::PAYLOAD_TOO_LARGE);
+            }
+            Ok(length as usize)
+        })
+        .transpose()?;
+    if lengths.next().is_some() {
+        return Err(bad);
+    }
+    let mut transfers = headers.get_all(header::TRANSFER_ENCODING).iter();
+    if let Some(value) = transfers.next() {
+        if length.is_some()
+            || transfers.next().is_some()
+            || !value.as_bytes().eq_ignore_ascii_case(b"chunked")
+        {
+            return Err(bad);
+        }
+    }
+    Ok(length)
+}
+
+async fn handle_until(
+    state: &Arc<HttpState>,
+    request: Request,
+    deadline: Instant,
+) -> Result<Vec<u8>, StatusCode> {
+    // Do not use Json/Bytes extractors: they can read before this capability.
+    if !authorized(state, request.headers()) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if request.method() != Method::POST {
+        return Err(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    remaining(deadline)?;
+    let _permit = state
+        .slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
+    if request.uri().query().is_some() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let expected = framing(request.headers())?;
+    let path = request.uri().path().to_owned();
+    let bytes = read_body(request.into_body(), expected, deadline).await?;
+    remaining(deadline)?;
+    // HTTP200 carries a domain Refused reply understood by the committed
+    // client. No successful domain state or physical call exists in this shell.
+    let reply = match path.as_str() {
+        ROUTINE_PREPARE_ROUTE => unavailable::<PrepareOccurrence, _>(
+            &bytes,
+            PrepareOccurrenceReply::Refused {
+                code: RoutineBridgeRefusal::Unavailable,
+            },
+            deadline,
+        ),
+        ROUTINE_PREPARATION_ROUTE => unavailable::<ReadPreparation, _>(
+            &bytes,
+            ReadPreparationReply::Refused {
+                code: RoutineBridgeRefusal::Unavailable,
+            },
+            deadline,
+        ),
+        ROUTINE_FINALIZE_ROUTE => unavailable::<FinalizeOccurrence, _>(
+            &bytes,
+            FinalizeOccurrenceReply::Refused {
+                code: RoutineBridgeRefusal::Unavailable,
+            },
+            deadline,
+        ),
+        ROUTINE_LINK_ROUTE => unavailable::<ReadOccurrenceLink, _>(
+            &bytes,
+            ReadOccurrenceLinkReply::Refused {
+                code: RoutineBridgeRefusal::Unavailable,
+            },
+            deadline,
+        ),
+        _ => Err(StatusCode::NOT_FOUND),
+    }?;
+    remaining(deadline)?;
+    Ok(reply)
+}
+
+async fn read_body(
+    body: Body,
+    expected: Option<usize>,
+    deadline: Instant,
+) -> Result<Vec<u8>, StatusCode> {
+    remaining(deadline)?;
+    let mut stream = body.into_data_stream();
+    let mut bytes = Vec::new();
+    loop {
+        let chunk =
+            tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), stream.next())
+                .await
+                .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?;
+        remaining(deadline)?;
+        let Some(chunk) = chunk else {
+            break;
+        };
+        let chunk = chunk.map_err(|_| StatusCode::BAD_REQUEST)?;
+        let take = chunk.len().min(ROUTINE_BRIDGE_BODY_LIMIT + 1 - bytes.len());
+        let needed = bytes.len() + take;
+        if needed > bytes.capacity() {
+            // Amortized copies for tiny chunks, with every requested capacity
+            // capped at the single overflow byte. No unauthenticated reserve.
+            let target = needed
+                .max(bytes.capacity().saturating_mul(2).max(4096))
+                .min(ROUTINE_BRIDGE_BODY_LIMIT + 1);
+            bytes
+                .try_reserve_exact(target - bytes.len())
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        }
+        bytes.extend_from_slice(&chunk[..take]);
+        if take < chunk.len() || bytes.len() > ROUTINE_BRIDGE_BODY_LIMIT {
+            return Err(StatusCode::PAYLOAD_TOO_LARGE);
+        }
+    }
+    if expected.is_some_and(|length| length != bytes.len()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    remaining(deadline)?;
+    Ok(bytes)
+}
+
+fn unavailable<Q, R>(bytes: &[u8], refusal: R, deadline: Instant) -> Result<Vec<u8>, StatusCode>
+where
+    Q: RoutineBridgePayload + DeserializeOwned,
+    R: RoutineBridgeReply<Q> + Serialize,
+{
+    remaining(deadline)?;
+    let request = RoutineBridgeEnvelope::<Q>::decode(bytes).map_err(|error| match error {
+        RoutineBridgeCodecError::ContextTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        _ => StatusCode::BAD_REQUEST,
+    })?;
+    remaining(deadline)?;
+    let reply = RoutineBridgeEnvelope::reply_to(&request, refusal)
+        .and_then(|reply| reply.encode())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    remaining(deadline)?;
+    Ok(reply)
+}
+
+#[cfg(test)]
+mod tests;

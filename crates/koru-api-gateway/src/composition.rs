@@ -163,11 +163,16 @@ pub(crate) fn open(
     };
     // One private capability, composed independently of AI startup. Discovery
     // must also work while an AI worker is unavailable; effects still require it.
-    let bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> =
-        config.bootstrap.as_ref().and_then(|bootstrap| {
-            let authority = koru_delegate_api::bots::BotDelegateAuthority::new(
-                bootstrap.bot_delegate.as_ref()?.expose().to_owned(),
-            )?;
+    let bot_authority = config.bootstrap.as_ref().and_then(|bootstrap| {
+        koru_delegate_api::bots::BotDelegateAuthority::new(
+            bootstrap.bot_delegate.as_ref()?.expose().to_owned(),
+        )
+    });
+    let routine_bridge_authority = bot_authority
+        .as_ref()
+        .map(|authority| authority.routine_bridge_authority());
+    let bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> = bot_authority
+        .and_then(|authority| {
             let endpoint = koru_ipc::Endpoint::for_service_channel_root(
                 koru_ipc::DELEGATE,
                 segment,
@@ -220,6 +225,9 @@ pub(crate) fn open(
 
     if let Some(delegate) = bot_delegate {
         state.set_bot_delegate_port(delegate);
+    }
+    if let Some(authority) = routine_bridge_authority {
+        state.set_routine_bridge_authority(authority);
     }
     state.set_native_mutation_gate(native_mutations);
 
