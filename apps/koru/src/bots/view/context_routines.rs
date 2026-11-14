@@ -234,15 +234,17 @@ impl Data {
                         }
                     }))
                     .child(
-                        surface
-                            .button(
-                                engine,
-                                details_key(item.schedule_id),
-                                t(lang, Words::BotsConversations).into(),
-                                false,
-                            )
-                            .selected(self.expanded == Some(item.schedule_id))
-                            .name_text(fill(t(lang, Words::BotsRoutineHistory), &[&name])),
+                        row("Routine history disclosure").child(
+                            surface
+                                .button(
+                                    engine,
+                                    details_key(item.schedule_id),
+                                    t(lang, Words::BotsConversations).into(),
+                                    false,
+                                )
+                                .selected(self.expanded == Some(item.schedule_id))
+                                .name_text(fill(t(lang, Words::BotsRoutineHistory), &[&name])),
+                        ),
                     );
                 if self.expanded == Some(item.schedule_id) {
                     match &item.local_conversations {
@@ -262,14 +264,16 @@ impl Data {
                                     && reference.conversation
                                         == BotRoutineConversationVisibility::Available;
                                 group = group.child(
-                                    surface
-                                        .button(
-                                            engine,
-                                            chat_key(reference.chat_id),
-                                            date(lang, reference.occurrence_ms),
-                                            !enabled,
-                                        )
-                                        .name_text(label),
+                                    row("Routine conversation reference").child(
+                                        surface
+                                            .button(
+                                                engine,
+                                                chat_key(reference.chat_id),
+                                                date(lang, reference.occurrence_ms),
+                                                !enabled,
+                                            )
+                                            .name_text(label),
+                                    ),
                                 );
                                 if reference.conversation
                                     == BotRoutineConversationVisibility::Unavailable
@@ -309,7 +313,9 @@ impl Data {
     }
 }
 fn line(value: impl Into<String>) -> El {
-    text(value.into())
+    let value = value.into();
+    text(value.clone())
+        .name_text(value)
         .named("Routine observation")
         .role(roles::META)
         .ink(Ink::Secondary)

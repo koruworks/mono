@@ -376,6 +376,10 @@ fn routine_context_retires_old_press_and_accessibility_occurrence() {
     v.bot_context.focus = Some(key);
     v.bot_context.reveal();
     let r = rect(&v, key);
+    assert!(
+        r.w > 0.0 && r.h > 0.0,
+        "focused action has physical geometry"
+    );
     assert!(v.mouse_down(&mut w.ws, r.x + r.w / 2.0, r.y + r.h / 2.0, false));
     v.bot_context_action(crate::bots::view::context_routines::REFRESH);
     assert!(v.bot_context.pressed.is_none());
