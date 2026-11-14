@@ -129,6 +129,7 @@ impl RunsDb {
                     Err(LedgerError::IntentConflict)
                 };
             }
+            crate::bots::routines::deny_request(tx, request)?;
             tx.execute(
                 "INSERT INTO run_intents
                    (run_id, workspace_id, payload_json, state, created_at_ms, updated_at_ms)
@@ -218,13 +219,23 @@ impl RunsDb {
         for row in rows {
             let (run, workspace, payload, created_at_ms) =
                 row.map_err(|error| LedgerError::sql("list pending intents", error))?;
-            pending.push(PendingIntent {
-                run: parse_run(&run)?,
-                workspace: parse_workspace(&workspace)?,
-                payload: serde_json::from_str(&payload).map_err(|_| LedgerError::Corrupt {
+            let run = parse_run(&run)?;
+            let payload: DelegationRequest =
+                serde_json::from_str(&payload).map_err(|_| LedgerError::Corrupt {
                     table: "run_intents",
                     column: "payload_json",
-                })?,
+                })?;
+            match crate::bots::routines::deny_run_metadata(self.conn(), run)
+                .and_then(|()| crate::bots::routines::deny_request(self.conn(), &payload))
+            {
+                Err(LedgerError::InvalidScheduleAuthority) => continue,
+                Err(error) => return Err(error),
+                Ok(()) => {}
+            }
+            pending.push(PendingIntent {
+                run,
+                workspace: parse_workspace(&workspace)?,
+                payload,
                 created_at_ms,
             });
         }

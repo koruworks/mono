@@ -26,8 +26,9 @@ pub use koru_sqlite::OpenError;
 /// admission, reservation accounting, delivery correlation and pause barriers;
 /// schema 6 adds native-result intents and ordered effect-policy barriers;
 /// schema 7 retains exact Store drain proofs separately from result certainty;
-/// schema 8 separates Memory effects and their stable allocation identities.
-pub const RUNS_SCHEMA_VERSION: i64 = 8;
+/// schema 8 separates Memory effects and their stable allocation identities;
+/// schema 9 retains Routine routing, linkage and independent policy defenses.
+pub const RUNS_SCHEMA_VERSION: i64 = 9;
 /// The file's name inside the delegate root.
 pub const DATABASE_NAME: &str = "runs.db";
 
@@ -80,6 +81,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/027_runs_memory_effects_migration.sql"),
         columns: &[],
     },
+    Migration {
+        to: 9,
+        name: "028_runs_bot_routines.sql",
+        sql: include_str!("../migrations/028_runs_bot_routines.sql"),
+        columns: &[],
+    },
 ];
 
 const SCHEMA: Schema = Schema {
@@ -106,3 +113,5 @@ pub(crate) fn user_version(connection: &Connection) -> Result<i64, OpenError> {
 mod bot_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod routine_tests;

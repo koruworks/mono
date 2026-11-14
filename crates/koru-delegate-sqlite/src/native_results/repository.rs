@@ -29,6 +29,9 @@ pub(super) fn current_attempt(
     key: &NativeResultKey,
     admission: &BotAdmissionRecord,
 ) -> Result<crate::AttemptRow, BotLedgerError> {
+    if admission.submission_version != 1 {
+        return Err(BotLedgerError::Fenced);
+    }
     let latest = attempts::latest(conn, key.run)?.ok_or(BotLedgerError::Fenced)?;
     let executing: bool = conn
         .query_row(
@@ -67,6 +70,10 @@ pub(super) fn fresh_policy(
     fence: &BotExecutionFence,
     fresh: &BotPolicyBarrier,
 ) -> Result<NativePolicyRecord, BotLedgerError> {
+    // Routine policy and native lease authority are not implemented yet.
+    if admitted.submission_version != 1 {
+        return Err(BotLedgerError::Fenced);
+    }
     let digest = policy_digest(fresh)?;
     let provenance = &admitted.submission.provenance;
     if fence.owner != provenance.owner
