@@ -2,10 +2,10 @@
 use super::*;
 use crate::{RoutineCall, RoutineCallContext};
 use koru_delegate_api::bots::{BotCommand, BotReply};
-use koru_delegate_core::{
-    BotHello, DelegateBootId, PrepareOccurrenceReply, ReadPreparation, ReadPreparationReply,
-    RoutineBridgeRefusal, RoutineClaimObservation,
+use koru_delegate_api::routines::{
+    PrepareOccurrenceReply, ReadPreparation, ReadPreparationReply, RoutineBridgeRefusal,
 };
+use koru_delegate_core::{BotHello, DelegateBootId, RoutineClaimObservation};
 use std::{
     future::Future,
     pin::Pin,

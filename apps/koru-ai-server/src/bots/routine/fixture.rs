@@ -158,8 +158,13 @@ impl Fixture {
 
 #[cfg(windows)]
 impl Fixture {
-    pub(crate) fn occurrence() -> (Self, Repository, koru_delegate_core::PrepareOccurrence) {
-        use koru_delegate_core::{PrepareOccurrence, RoutineSlot};
+    pub(crate) fn occurrence() -> (
+        Self,
+        Repository,
+        koru_delegate_api::routines::PrepareOccurrence,
+    ) {
+        use koru_delegate_api::routines::PrepareOccurrence;
+        use koru_delegate_core::RoutineSlot;
         let (fixture, mut repository) = Self::with_pause(false);
         let id = fixture.creation.identity.clone();
         let PreparedRoutineDocument::Confirmed(proof) = fixture
