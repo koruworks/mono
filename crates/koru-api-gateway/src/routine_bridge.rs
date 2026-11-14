@@ -412,7 +412,7 @@ fn retry_wait(end: Instant) {
     );
     let lock = Mutex::new(());
     let changed = Condvar::new();
-    let _ = changed
+    let (_guard, _elapsed) = changed
         .wait_timeout(
             lock.lock().unwrap(),
             remaining.min(Duration::from_millis(20)),
