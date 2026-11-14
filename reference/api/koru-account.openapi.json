@@ -2334,6 +2334,699 @@
           }
         ]
       },
+      "CloudUsageDocumentsQueryV1": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "nullable": true,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          "incarnation_id": {
+            "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint16",
+            "maximum": 100,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "incarnation_id"
+        ],
+        "type": "object"
+      },
+      "CloudUsageDocumentsResponseV1": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "else": {
+              "properties": {
+                "items": {
+                  "items": {
+                    "properties": {
+                      "usage": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "known",
+                              "unknown"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "if": {
+              "properties": {
+                "generation": {
+                  "enum": [
+                    null
+                  ],
+                  "nullable": true
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "items": {
+                  "items": {
+                    "properties": {
+                      "usage": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "building",
+                              "unknown"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "manifest": {
+                  "properties": {
+                    "state": {
+                      "enum": [
+                        "unknown"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "items": {
+                  "items": {
+                    "properties": {
+                      "display_name": {
+                        "enum": [
+                          null
+                        ],
+                        "nullable": true
+                      },
+                      "membership": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "unknown",
+                              "structural"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "algorithm": {
+            "enum": [
+              "files-plain-v0"
+            ]
+          },
+          "contract": {
+            "enum": [
+              "cloud-usage-documents-v1"
+            ]
+          },
+          "evaluated_at_millis": {
+            "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+            "maxLength": 19,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "generation": {
+            "oneOf": [
+              {
+                "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "incarnation_id": {
+            "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "inventory_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "else": {
+                    "properties": {
+                      "document_id": {
+                        "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "if": {
+                    "properties": {
+                      "unit_role": {
+                        "enum": [
+                          "unknown"
+                        ]
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "display_name": {
+                        "enum": [
+                          null
+                        ],
+                        "nullable": true
+                      },
+                      "document_id": {
+                        "enum": [
+                          null
+                        ],
+                        "nullable": true
+                      },
+                      "membership": {
+                        "properties": {
+                          "reason": {
+                            "enum": [
+                              "unit_identity_unknown"
+                            ]
+                          },
+                          "state": {
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        }
+                      },
+                      "usage": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "unknown"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "unit_role": {
+                        "enum": [
+                          "structure"
+                        ]
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "display_name": {
+                        "enum": [
+                          null
+                        ],
+                        "nullable": true
+                      },
+                      "membership": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "structural"
+                            ]
+                          }
+                        }
+                      },
+                      "usage": {
+                        "if": {
+                          "properties": {
+                            "state": {
+                              "enum": [
+                                "known"
+                              ]
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "files_bytes": {
+                              "enum": [
+                                "0"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "unit_role": {
+                        "enum": [
+                          "content"
+                        ]
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "membership": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "listed",
+                              "trash",
+                              "unfiled",
+                              "unknown"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "membership": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "unfiled",
+                              "unknown",
+                              "structural"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "display_name": {
+                        "enum": [
+                          null
+                        ],
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "usage": {
+                        "properties": {
+                          "state": {
+                            "enum": [
+                              "known"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "source_head_digest": {
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ],
+              "properties": {
+                "cloud_unit_id": {
+                  "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                  "type": "string"
+                },
+                "display_name": {
+                  "oneOf": [
+                    {
+                      "maxLength": 128,
+                      "type": "string"
+                    },
+                    {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true
+                    }
+                  ]
+                },
+                "document_id": {
+                  "oneOf": [
+                    {
+                      "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                      "type": "string"
+                    },
+                    {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true
+                    }
+                  ]
+                },
+                "membership": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "reason": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true
+                        },
+                        "state": {
+                          "enum": [
+                            "listed",
+                            "trash",
+                            "unfiled",
+                            "structural"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "reason": {
+                          "enum": [
+                            "manifest_unavailable",
+                            "cloud_schema_update_required",
+                            "unit_identity_unknown"
+                          ]
+                        },
+                        "state": {
+                          "enum": [
+                            "unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "source_head_digest": {
+                  "oneOf": [
+                    {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "enum": [
+                        null
+                      ],
+                      "nullable": true
+                    }
+                  ]
+                },
+                "unit_role": {
+                  "enum": [
+                    "content",
+                    "structure",
+                    "unknown"
+                  ]
+                },
+                "usage": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "files_bytes": {
+                          "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+                          "maxLength": 19,
+                          "pattern": "^(0|[1-9][0-9]*)$",
+                          "type": "string"
+                        },
+                        "reason": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true
+                        },
+                        "state": {
+                          "enum": [
+                            "known"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason",
+                        "files_bytes"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "files_bytes": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true
+                        },
+                        "reason": {
+                          "enum": [
+                            "usage_unknown",
+                            "cloud_schema_update_required"
+                          ]
+                        },
+                        "state": {
+                          "enum": [
+                            "unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason",
+                        "files_bytes"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "files_bytes": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true
+                        },
+                        "reason": {
+                          "enum": [
+                            null
+                          ],
+                          "nullable": true
+                        },
+                        "state": {
+                          "enum": [
+                            "building"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "reason",
+                        "files_bytes"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "cloud_unit_id",
+                "document_id",
+                "unit_role",
+                "source_head_digest",
+                "display_name",
+                "membership",
+                "usage"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "manifest": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "proof_digest": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "reason": {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  },
+                  "source_head_digest": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "state": {
+                    "enum": [
+                      "verified"
+                    ]
+                  }
+                },
+                "required": [
+                  "state",
+                  "reason",
+                  "source_head_digest",
+                  "proof_digest"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "proof_digest": {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  },
+                  "reason": {
+                    "enum": [
+                      "manifest_unavailable",
+                      "cloud_schema_update_required"
+                    ]
+                  },
+                  "source_head_digest": {
+                    "oneOf": [
+                      {
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      {
+                        "enum": [
+                          null
+                        ],
+                        "nullable": true
+                      }
+                    ]
+                  },
+                  "state": {
+                    "enum": [
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "state",
+                  "reason",
+                  "source_head_digest",
+                  "proof_digest"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "next_cursor": {
+            "oneOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "revision": {
+            "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+            "maxLength": 19,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "row_totals": {
+            "enum": [
+              "non_additive"
+            ]
+          },
+          "source_revision": {
+            "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+            "maxLength": 19,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract",
+          "algorithm",
+          "row_totals",
+          "revision",
+          "generation",
+          "evaluated_at_millis",
+          "workspace_id",
+          "incarnation_id",
+          "source_revision",
+          "inventory_digest",
+          "manifest",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "CloudUsageWorkspacesQueryV1": {
         "additionalProperties": false,
         "description": "Bounded page query. Hosts reject unknown/duplicate keys and validate these\nbounds before starting the database read; no account identifier is accepted.",
@@ -6740,6 +7433,134 @@
           }
         ],
         "summary": "Read a bounded page of owned retained Workspaces with current catalog placement"
+      }
+    },
+    "/v1/account/cloud-usage/workspaces/{workspace_id}/documents": {
+      "get": {
+        "operationId": "account.cloud_usage_documents_read",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "incarnation_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudUsageDocumentsResponseV1"
+                }
+              }
+            },
+            "description": "Read a bounded authoritative durable-unit inventory; per-document file bytes overlap and do not grant editing authority",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "private, no-store",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid query or invalid_usage_cursor"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "A live account session is required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "workspace_not_found: no current retained owned Workspace"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "usage_revision_changed: restart pagination"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [
+          {
+            "accountBearer": []
+          },
+          {
+            "accountWebSession": []
+          }
+        ],
+        "summary": "Read a bounded authoritative durable-unit inventory; per-document file bytes overlap and do not grant editing authority"
       }
     },
     "/v1/account/cloud/catalog": {

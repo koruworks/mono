@@ -8,7 +8,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::Value;
 use std::borrow::Cow;
 
-fn expand(value: &Value, definitions: &Value) -> Value {
+pub(super) fn expand(value: &Value, definitions: &Value) -> Value {
     match value {
         Value::Object(fields) => {
             if let Some(reference) = fields.get("$ref").and_then(Value::as_str) {

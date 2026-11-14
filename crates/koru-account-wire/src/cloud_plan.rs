@@ -484,3 +484,5 @@ impl Validate for CloudUsageWorkspacesResponseV1 {
 
 #[cfg(test)]
 mod tests;
+
+pub mod documents;

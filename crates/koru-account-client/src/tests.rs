@@ -50,6 +50,83 @@ impl Transport for FakeTransport {
     }
 }
 
+#[test]
+fn document_inventory_reads_bind_scope_and_reject_unbounded_or_mismatched_pages() {
+    use koru_account_wire::cloud_plan::{ReadUuid, documents::*};
+    let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+        "../../koru-account-wire/src/cloud_documents.fixtures.json"
+    ))
+    .unwrap();
+    let token = AccessToken("account-token".into());
+    let authorization = AccountAuthorization::Bearer(&token);
+    for fixture in fixtures["fixtures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["http_status"] == 200)
+    {
+        let value = &fixture["response"];
+        let transport = FakeTransport::responding(value);
+        let client = AccountClient::with_transport(transport.clone());
+        let workspace: ReadUuid = serde_json::from_value(value["workspace_id"].clone()).unwrap();
+        let query = CloudUsageDocumentsQueryV1 {
+            incarnation_id: serde_json::from_value(value["incarnation_id"].clone()).unwrap(),
+            limit: Some(100),
+            cursor: None,
+        };
+        let response = client
+            .cloud_usage_documents(&authorization, workspace, &query)
+            .unwrap();
+        assert_eq!(serde_json::to_value(response).unwrap(), *value);
+        assert_eq!(
+            transport.requests.lock().unwrap()[0].path_and_query,
+            format!(
+                "/v1/account/cloud-usage/workspaces/{}/documents?incarnation_id={}&limit=100",
+                workspace.0, query.incarnation_id.0
+            )
+        );
+    }
+    let value = &fixtures["fixtures"][0]["response"];
+    let workspace: ReadUuid = serde_json::from_value(value["workspace_id"].clone()).unwrap();
+    let mut query = CloudUsageDocumentsQueryV1 {
+        incarnation_id: serde_json::from_value(value["incarnation_id"].clone()).unwrap(),
+        limit: Some(0),
+        cursor: None,
+    };
+    let transport = FakeTransport::empty();
+    let client = AccountClient::with_transport(transport.clone());
+    for limit in [0, 101] {
+        query.limit = Some(limit);
+        assert_eq!(
+            client
+                .cloud_usage_documents(&authorization, workspace, &query)
+                .unwrap_err(),
+            ClientError::InvalidRequest
+        );
+    }
+    query.limit = Some(100);
+    for cursor in ["x".repeat(2049), "x&account_id=other".into()] {
+        query.cursor = Some(cursor);
+        assert_eq!(
+            client
+                .cloud_usage_documents(&authorization, workspace, &query)
+                .unwrap_err(),
+            ClientError::InvalidRequest
+        );
+    }
+    assert!(transport.requests.lock().unwrap().is_empty());
+    query.cursor = None;
+    let transport = FakeTransport::responding(value);
+    let client = AccountClient::with_transport(transport);
+    query.incarnation_id = workspace;
+    assert_eq!(
+        client
+            .cloud_usage_documents(&authorization, workspace, &query)
+            .unwrap_err(),
+        ClientError::InvalidResponse
+    );
+}
+
 fn flow_id() -> AuthFlowId {
     AuthFlowId::from_str("00000000-0000-4000-8000-000000000001").unwrap()
 }

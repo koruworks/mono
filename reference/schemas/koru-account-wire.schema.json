@@ -11092,5 +11092,609 @@
     ],
     "title": "CloudUsageWorkspacesResponseV1",
     "type": "object"
+  },
+  "cloud_plan::documents::CloudUsageDocumentsQueryV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9_-]+$",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "incarnation_id": {
+        "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "limit": {
+        "format": "uint16",
+        "maximum": 100,
+        "minimum": 1,
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "incarnation_id"
+    ],
+    "title": "CloudUsageDocumentsQueryV1",
+    "type": "object"
+  },
+  "cloud_plan::documents::CloudUsageDocumentsResponseV1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "else": {
+          "properties": {
+            "items": {
+              "items": {
+                "properties": {
+                  "usage": {
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "known",
+                          "unknown"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "if": {
+          "properties": {
+            "generation": {
+              "type": "null"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "items": {
+              "items": {
+                "properties": {
+                  "usage": {
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "building",
+                          "unknown"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "manifest": {
+              "properties": {
+                "state": {
+                  "const": "unknown"
+                }
+              }
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "items": {
+              "items": {
+                "properties": {
+                  "display_name": {
+                    "type": "null"
+                  },
+                  "membership": {
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "unknown",
+                          "structural"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "properties": {
+      "algorithm": {
+        "const": "files-plain-v0"
+      },
+      "contract": {
+        "const": "cloud-usage-documents-v1"
+      },
+      "evaluated_at_millis": {
+        "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+        "maxLength": 19,
+        "pattern": "^(0|[1-9][0-9]*)$",
+        "type": "string"
+      },
+      "generation": {
+        "oneOf": [
+          {
+            "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "incarnation_id": {
+        "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "inventory_digest": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "else": {
+                "properties": {
+                  "document_id": {
+                    "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                }
+              },
+              "if": {
+                "properties": {
+                  "unit_role": {
+                    "const": "unknown"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "display_name": {
+                    "type": "null"
+                  },
+                  "document_id": {
+                    "type": "null"
+                  },
+                  "membership": {
+                    "properties": {
+                      "reason": {
+                        "const": "unit_identity_unknown"
+                      },
+                      "state": {
+                        "const": "unknown"
+                      }
+                    }
+                  },
+                  "usage": {
+                    "properties": {
+                      "state": {
+                        "const": "unknown"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "unit_role": {
+                    "const": "structure"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "display_name": {
+                    "type": "null"
+                  },
+                  "membership": {
+                    "properties": {
+                      "state": {
+                        "const": "structural"
+                      }
+                    }
+                  },
+                  "usage": {
+                    "if": {
+                      "properties": {
+                        "state": {
+                          "const": "known"
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "files_bytes": {
+                          "const": "0"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "unit_role": {
+                    "const": "content"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "membership": {
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "listed",
+                          "trash",
+                          "unfiled",
+                          "unknown"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "membership": {
+                    "properties": {
+                      "state": {
+                        "enum": [
+                          "unfiled",
+                          "unknown",
+                          "structural"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "display_name": {
+                    "type": "null"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "usage": {
+                    "properties": {
+                      "state": {
+                        "const": "known"
+                      }
+                    }
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "source_head_digest": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "cloud_unit_id": {
+              "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "display_name": {
+              "oneOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "document_id": {
+              "oneOf": [
+                {
+                  "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "membership": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reason": {
+                      "type": "null"
+                    },
+                    "state": {
+                      "enum": [
+                        "listed",
+                        "trash",
+                        "unfiled",
+                        "structural"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "reason": {
+                      "enum": [
+                        "manifest_unavailable",
+                        "cloud_schema_update_required",
+                        "unit_identity_unknown"
+                      ]
+                    },
+                    "state": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "reason"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "source_head_digest": {
+              "oneOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "unit_role": {
+              "enum": [
+                "content",
+                "structure",
+                "unknown"
+              ]
+            },
+            "usage": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "files_bytes": {
+                      "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+                      "maxLength": 19,
+                      "pattern": "^(0|[1-9][0-9]*)$",
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "null"
+                    },
+                    "state": {
+                      "const": "known"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "reason",
+                    "files_bytes"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "files_bytes": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "enum": [
+                        "usage_unknown",
+                        "cloud_schema_update_required"
+                      ]
+                    },
+                    "state": {
+                      "const": "unknown"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "reason",
+                    "files_bytes"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "files_bytes": {
+                      "type": "null"
+                    },
+                    "reason": {
+                      "type": "null"
+                    },
+                    "state": {
+                      "const": "building"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "reason",
+                    "files_bytes"
+                  ],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cloud_unit_id",
+            "document_id",
+            "unit_role",
+            "source_head_digest",
+            "display_name",
+            "membership",
+            "usage"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "manifest": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "proof_digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "reason": {
+                "type": "null"
+              },
+              "source_head_digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "state": {
+                "const": "verified"
+              }
+            },
+            "required": [
+              "state",
+              "reason",
+              "source_head_digest",
+              "proof_digest"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "proof_digest": {
+                "type": "null"
+              },
+              "reason": {
+                "enum": [
+                  "manifest_unavailable",
+                  "cloud_schema_update_required"
+                ]
+              },
+              "source_head_digest": {
+                "oneOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "const": "unknown"
+              }
+            },
+            "required": [
+              "state",
+              "reason",
+              "source_head_digest",
+              "proof_digest"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "next_cursor": {
+        "oneOf": [
+          {
+            "maxLength": 2048,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "revision": {
+        "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+        "maxLength": 19,
+        "pattern": "^(0|[1-9][0-9]*)$",
+        "type": "string"
+      },
+      "row_totals": {
+        "const": "non_additive"
+      },
+      "source_revision": {
+        "description": "Runtime ceiling 9223372036854775807; never a JSON number.",
+        "maxLength": 19,
+        "pattern": "^(0|[1-9][0-9]*)$",
+        "type": "string"
+      },
+      "workspace_id": {
+        "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "contract",
+      "algorithm",
+      "row_totals",
+      "revision",
+      "generation",
+      "evaluated_at_millis",
+      "workspace_id",
+      "incarnation_id",
+      "source_revision",
+      "inventory_digest",
+      "manifest",
+      "items",
+      "next_cursor"
+    ],
+    "title": "CloudUsageDocumentsResponseV1",
+    "type": "object"
   }
 }
