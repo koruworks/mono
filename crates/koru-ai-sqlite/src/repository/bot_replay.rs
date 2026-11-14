@@ -6,6 +6,7 @@ use koru_ai_core::bots::replay::*;
 use std::io::Write;
 pub(super) mod context;
 mod preparation;
+pub(crate) use preparation::prepare_routine_association_on;
 
 /// How a Bot attempt ends on the AI side before any native terminal arrives.
 enum LocalEnd<'a> {
@@ -15,6 +16,56 @@ enum LocalEnd<'a> {
         class: AiErrorClass,
         reason: &'a str,
     },
+}
+
+/// Exact independently observed Routine terminal truth, never fresh execution.
+/// Existing terminal presentation is absorbing; no current provider is started.
+pub(crate) fn settle_routine_attempt_on(
+    conn: &Connection,
+    attempt: InferenceAttemptId,
+    reason: koru_delegate_core::RoutineTerminalReason,
+    now: Timestamp,
+) -> Result<(), AiError> {
+    let current = query_attempt(conn, "id", &attempt.to_storage())?.ok_or_else(invariant_failed)?;
+    if current.status.is_terminal() {
+        return Ok(());
+    }
+    let (status, message, reason) = match reason {
+        koru_delegate_core::RoutineTerminalReason::Stopped => {
+            ("cancelled", MessageState::Interrupted, "routine_stopped")
+        }
+        koru_delegate_core::RoutineTerminalReason::ConfigurationChanged => (
+            "failed",
+            MessageState::Failed,
+            "routine_configuration_changed",
+        ),
+        koru_delegate_core::RoutineTerminalReason::AuthorityChanged => {
+            ("failed", MessageState::Failed, "routine_authority_changed")
+        }
+        koru_delegate_core::RoutineTerminalReason::AlreadyTerminal => {
+            ("failed", MessageState::Failed, "routine_already_terminal")
+        }
+    };
+    conn.execute("UPDATE inference_attempts SET status=?2,completed_at_ms=MAX(queued_at_ms,?3),stop_reason=?4 WHERE id=?1 AND status IN ('pending','streaming')",params![attempt.to_storage(),status,now.millis(),reason]).map_err(storage_failed)?;
+    complete_message(
+        conn,
+        current
+            .assistant_message_id
+            .map(MessageId::to_storage)
+            .as_deref(),
+        message,
+        None,
+        now,
+    )?;
+    finish_agent_rows_on(
+        conn,
+        attempt,
+        &BotTerminalCleanup {
+            retained_question_ids: Vec::new(),
+        },
+        now,
+    )?;
+    Ok(())
 }
 
 impl Repository {
@@ -594,17 +645,10 @@ fn validate_prepared_submission(
     submission: &BotSubmission,
 ) -> Result<(), AiError> {
     let p = &submission.provenance;
-    if !submission.valid()
-        || p.ai_attempt_id != Some(preparation.attempt().id.as_uuid())
-        || p.assistant_message_id != Some(preparation.assistant().id.as_uuid())
-        || p.chat_id != preparation.assistant().chat_id.as_uuid()
-        || preparation.attempt().chat_id != Some(preparation.assistant().chat_id)
-        || preparation.attempt().assistant_message_id != Some(preparation.assistant().id)
-        || matches!(preparation, BotChatPreparation::Turn(turn)
-            if turn.user_message.markdown != submission.input.text)
-    {
+    if !submission.valid() {
         return Err(invariant_failed());
     }
+    validate_prepared_identity(preparation, submission)?;
     // Retain the replay owner's current association/placement guards; the
     // admission owner supplies the sole strict receipt decoder below.
     let _:i64=connection.query_row("SELECT 1 FROM bot_command_receipts r
@@ -625,6 +669,24 @@ fn validate_prepared_submission(
     .map_err(|_| invariant_failed())?
     .ok_or_else(invariant_failed)?;
     if stored.intent.submission != *submission {
+        return Err(invariant_failed());
+    }
+    Ok(())
+}
+
+fn validate_prepared_identity(
+    preparation: &BotChatPreparation,
+    submission: &BotSubmission,
+) -> Result<(), AiError> {
+    let p = &submission.provenance;
+    if p.ai_attempt_id != Some(preparation.attempt().id.as_uuid())
+        || p.assistant_message_id != Some(preparation.assistant().id.as_uuid())
+        || p.chat_id != preparation.assistant().chat_id.as_uuid()
+        || preparation.attempt().chat_id != Some(preparation.assistant().chat_id)
+        || preparation.attempt().assistant_message_id != Some(preparation.assistant().id)
+        || matches!(preparation, BotChatPreparation::Turn(turn)
+            if turn.user_message.markdown != submission.input.text)
+    {
         return Err(invariant_failed());
     }
     Ok(())

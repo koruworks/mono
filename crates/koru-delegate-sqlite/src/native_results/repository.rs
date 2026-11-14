@@ -203,6 +203,23 @@ impl NativeResultLedger for RunsDb {
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError> {
         self.conn().query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND (lease_state='held' OR stage='verified'))", [run.to_storage()], |row| row.get(0)).map_err(sql)
     }
+    fn install_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<crate::RoutinePolicyRecord, BotLedgerError> {
+        self.install_routine_policy(barrier)
+    }
+    fn settle_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<crate::RoutinePolicyRecord, BotLedgerError> {
+        self.settle_routine_policy(
+            barrier.owner,
+            barrier.bot,
+            barrier.schedule,
+            barrier.request,
+        )
+    }
     fn install_native_policy(
         &mut self,
         barrier: &BotPolicyBarrier,

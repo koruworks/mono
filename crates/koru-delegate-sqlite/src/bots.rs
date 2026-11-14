@@ -164,6 +164,14 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn read_routine_claim(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<koru_delegate_core::RoutineClaimObservation, BotLedgerError>;
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
+    ) -> Result<koru_delegate_core::RoutineClaimRecord, BotLedgerError>;
     /// Retain a deny-only route. Exact retries return the immutable original;
     /// changed payloads conflict. No execution authority is granted.
     fn register_routine_route(

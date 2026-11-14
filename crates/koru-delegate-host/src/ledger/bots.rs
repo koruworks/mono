@@ -6,6 +6,21 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn read_routine_claim(
+        &self,
+        slot: &RoutineSlot,
+    ) -> Result<RoutineClaimObservation, BotLedgerError> {
+        self.0.lock().unwrap().read_routine_claim(slot)
+    }
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &RoutineLinkAcknowledgement,
+    ) -> Result<RoutineClaimRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .acknowledge_routine_link(acknowledgement)
+    }
     fn register_routine_route(
         &mut self,
         identity: &RoutineRouteIdentity,
@@ -217,6 +232,21 @@ impl NativeResultLedger for SharedLedger {
     }
     fn native_effects_pending(&self, run: RunId) -> Result<bool, BotLedgerError> {
         self.0.lock().unwrap().native_effects_pending(run)
+    }
+    fn install_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<koru_delegate_sqlite::RoutinePolicyRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .install_routine_native_policy(barrier)
+    }
+    fn settle_routine_native_policy(
+        &mut self,
+        barrier: &RoutinePolicyBarrier,
+    ) -> Result<koru_delegate_sqlite::RoutinePolicyRecord, BotLedgerError> {
+        self.0.lock().unwrap().settle_routine_native_policy(barrier)
     }
     fn install_native_policy(
         &mut self,

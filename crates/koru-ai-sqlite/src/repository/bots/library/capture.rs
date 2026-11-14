@@ -42,7 +42,7 @@ fn validate_links(
     Ok(())
 }
 
-fn capture_on(
+pub(crate) fn capture_on(
     conn: &Connection,
     owner: BotOwner,
     bot: BotId,

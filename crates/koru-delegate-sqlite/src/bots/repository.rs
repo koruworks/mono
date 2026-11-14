@@ -273,6 +273,18 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn read_routine_claim(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<koru_delegate_core::RoutineClaimObservation, BotLedgerError> {
+        RunsDb::read_routine_claim(self, slot)
+    }
+    fn acknowledge_routine_link(
+        &mut self,
+        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
+    ) -> Result<koru_delegate_core::RoutineClaimRecord, BotLedgerError> {
+        RunsDb::acknowledge_routine_link(self, acknowledgement)
+    }
     fn register_routine_route(
         &mut self,
         identity: &koru_delegate_core::RoutineRouteIdentity,

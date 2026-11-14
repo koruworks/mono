@@ -11,10 +11,14 @@ use koru_delegate_schedule::{
 use serde::{Deserialize, Serialize};
 
 mod creation;
+mod occurrence;
 mod owner;
 mod preparation;
 pub use creation::*;
+/// Existing neutral definition, re-exported for trusted adapter signatures.
+pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
 use koru_delegate_schedule::routine_wire as strict;
+pub use occurrence::*;
 pub use owner::*;
 pub use preparation::*;
 

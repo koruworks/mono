@@ -50,22 +50,16 @@ impl Orchestrator {
         {
             return Err(refused("bot_fenced"));
         }
-        let policy = self
-            .native_policies
-            .iter()
-            .find(|p| p.key.owner == fence.owner && p.key.bot == fence.bot)
-            .cloned()
-            .ok_or_else(|| refused("bot_policy_refresh_required"))?;
-        if policy.config_revision != config_revision || policy.policy_revision != policy_revision {
-            return Err(refused("bot_policy_stale"));
-        }
-        Ok((
-            fence,
-            FreshBotPolicyProof {
-                global: policy,
-                routine: None,
+        let fresh = self.native_policy_for_run(
+            &BotRunKey {
+                owner: fence.owner,
+                bot: fence.bot,
+                run: fence.run,
             },
-        ))
+            config_revision,
+            policy_revision,
+        )?;
+        Ok((fence, fresh))
     }
 
     pub fn read_memory_edit_allocation(

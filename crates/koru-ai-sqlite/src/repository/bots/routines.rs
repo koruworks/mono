@@ -3,6 +3,7 @@
 use super::*;
 use koru_delegate_core::{RoutineDigest32, ScheduleId};
 mod bounded;
+mod occurrence;
 mod page;
 mod recovery;
 #[cfg(test)]

@@ -13,6 +13,99 @@ fn cancelled(cancel: &Cancellation) -> Result<(), BotError> {
         Ok(())
     }
 }
+
+pub(super) fn verify_definition(
+    adapter: &BotAuthorityAdapter,
+    owner: BotOwner,
+    reader: ProfileId,
+    identity: &BotRoutineCreationIdentity,
+    definition: &RoutineScheduleDefinition,
+    epoch: Option<koru_delegate_core::HandoffId>,
+    cancel: &Cancellation,
+) -> Result<(), BotError> {
+    identity.validate_digests()?;
+    let route = identity.route();
+    if !route.valid()
+        || route.owner.user_scope != owner.user_scope
+        || route.owner.device != owner.device
+        || adapter.device != owner.device
+        || definition.template.requested_by
+            != (koru_delegate_core::ActorRef::Person { profile: reader })
+        || definition.routine.as_ref().is_none_or(|a| {
+            a.owner != route.owner
+                || a.bot != route.bot
+                || a.home != route.workspace
+                || a.creation_request != route.creation_request
+        })
+    {
+        return Err(BotError::Forbidden);
+    }
+    let owned = route.clone();
+    let creation = identity.clone();
+    let cancellation = cancel.clone();
+    let (fork, origin) = adapter
+        .client
+        .with_store(move |store| {
+            authority(store, owner, reader, owned.workspace, &cancellation)?;
+            let document = koru_ai_core::DocumentId::from_uuid(owned.schedule.as_uuid());
+            let origin = match store
+                .bounded_creation_origin(owned.workspace, document)
+                .map_err(|_| BotError::Unavailable)?
+            {
+                CreationOriginLookup::Known(origin) => origin,
+                _ => return Err(BotError::Unavailable),
+            };
+            if origin.document != document
+                || origin.scope != BOT_ROUTINE_SCOPE
+                || origin.request_key != creation.store_request.to_string()
+                || origin.request_hash != String::from(creation.seed_hash)
+            {
+                return Err(BotError::Conflict);
+            }
+            let entry = store
+                .document_entry_live(owned.workspace, document)
+                .map_err(|_| BotError::Unavailable)?
+                .ok_or(BotError::NotFound)?;
+            if entry.kind != SCHEDULE_KIND {
+                return Err(BotError::Forbidden);
+            }
+            // A matching header elsewhere never aliases this physical candidate.
+            let fork = store
+                .fork_document(owned.workspace, document)
+                .map_err(|_| BotError::Unavailable)?;
+            Ok((fork, origin))
+        })
+        .map_err(|_| BotError::Unavailable)??;
+    cancelled(cancel)?;
+    // Imports and validation run off the Store and AI writers.
+    ScheduleDocument::verify_routine_seed(
+        &origin.initial_update,
+        &identity.seed.header,
+        &identity.seed.name,
+    )
+    .map_err(|_| BotError::Conflict)?;
+    let document = ScheduleDocument::adopt(fork).map_err(|_| BotError::Invalid)?;
+    // Export is outside the Store closure. The import bound is encoded bytes,
+    // not a claim about heap usage or cold document opening.
+    let snapshot = document
+        .export_snapshot()
+        .map_err(|_| BotError::Unavailable)?;
+    ScheduleDocument::verify_routine_occurrence_snapshot(
+        &snapshot,
+        route.schedule,
+        definition,
+        owner.device,
+        epoch,
+    )
+    .map_err(|_| BotError::Conflict)?;
+    let owned = route.clone();
+    let cancellation = cancel.clone();
+    adapter
+        .client
+        .with_store(move |store| authority(store, owner, reader, owned.workspace, &cancellation))
+        .map_err(|_| BotError::Unavailable)??;
+    cancelled(cancel)
+}
 fn authority(
     store: &mut WorkerStore,
     owner: BotOwner,

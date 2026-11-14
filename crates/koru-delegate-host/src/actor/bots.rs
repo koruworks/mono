@@ -105,6 +105,20 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
+            BotCommand::ReadRoutineClaim { slot } => BotReply::RoutineClaim {
+                observation: self
+                    .orchestrator
+                    .read_routine_claim(&slot, device)
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::AcknowledgeRoutineLink { acknowledgement } => {
+                BotReply::RoutineLinkAcknowledged {
+                    record: self
+                        .orchestrator
+                        .acknowledge_routine_link(&acknowledgement, device)
+                        .map_err(bot_failure)?,
+                }
+            }
             BotCommand::RegisterRoutineRoute { identity } => BotReply::RoutineRoute {
                 identity: self
                     .orchestrator
@@ -175,6 +189,13 @@ impl Actor {
                     .reconcile_native_policy(&key, device)
                     .map_err(bot_failure)?,
             },
+            BotCommand::SynchronizeRoutinePolicy { barrier } => {
+                let state = self
+                    .orchestrator
+                    .synchronize_routine_policy(barrier.clone(), device)
+                    .map_err(bot_failure)?;
+                BotReply::RoutinePolicyBarrier { barrier, state }
+            }
             BotCommand::PrepareNativeResult { request } => BotReply::NativeResult {
                 intent: self
                     .orchestrator
