@@ -4,6 +4,8 @@ use super::*;
 use crate::cloud::object::tests::*;
 use serde_json::Value;
 
+mod references;
+
 pub(super) fn fixture(index: usize) -> Value {
     serde_json::from_str::<Value>(LORO).unwrap()["fixtures"][index].clone()
 }
