@@ -18,6 +18,9 @@ pub(crate) struct Fixture {
 }
 impl Fixture {
     pub(crate) fn new() -> (Self, Repository) {
+        Self::with_pause(true)
+    }
+    pub(crate) fn with_pause(paused: bool) -> (Self, Repository) {
         let memory = MemoryStore::open("routine-store-fixture").unwrap();
         let (profile, other, home, role) = memory
             .with_store(|store| {
@@ -79,7 +82,7 @@ impl Fixture {
             revision: 1,
             policy_revision: 1,
             main_chat: ChatId::new(),
-            paused: true,
+            paused,
             folder_lock_request: None,
             folder_frozen_at_ms: None,
             created_at_ms: 1,

@@ -189,6 +189,11 @@ impl BotDelegatePort for RunOwner {
         command: D,
         within: Duration,
     ) -> Result<BotReply, koru_delegate_api::Failure> {
+        // Boot uses finite IPC on its own admin lane. Keep the existing
+        // deliberate startup refusal without treating it as a Run read.
+        if matches!(&command, D::Hello { .. }) {
+            return self.execute(command);
+        }
         assert_eq!(
             std::thread::current().name(),
             Some("koru-ai-provider-run-read"),
