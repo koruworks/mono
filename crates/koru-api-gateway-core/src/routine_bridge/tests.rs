@@ -49,6 +49,14 @@ fn claim() -> RoutineClaimIdentity {
         claimed_at_ms: 60_001,
     }
 }
+fn preclaim() -> RoutineBridgeEnvelope<SynchronizeRoutinePreclaim> {
+    RoutineBridgeEnvelope::new(SynchronizeRoutinePreclaim {
+        slot: read().payload.slot,
+        semantic_hash: read().payload.semantic_hash,
+        preparation_hash: claim().preparation_hash,
+    })
+    .unwrap()
+}
 fn prepare() -> RoutineBridgeEnvelope<PrepareOccurrence> {
     let slot = read().payload.slot;
     RoutineBridgeEnvelope::new(
@@ -121,7 +129,7 @@ async fn routine_http_response_permits_follow_unpolled_bodies_until_drop() {
     let polls = Arc::new(AtomicUsize::new(0));
     let saturated = send(
         state.clone(),
-        request(ROUTINE_PREPARATION_ROUTE, unpolled(polls.clone())),
+        request(ROUTINE_PRECLAIM_ROUTE, unpolled(polls.clone())),
     )
     .await;
     assert_eq!(saturated.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -148,11 +156,11 @@ async fn routine_http_response_permits_follow_unpolled_bodies_until_drop() {
 #[tokio::test]
 async fn routine_http_response_permits_follow_yielded_chunks_and_their_last_clone() {
     let state = state();
-    let envelope = read();
+    let envelope = preclaim();
     let response = send(
         state.clone(),
         request(
-            ROUTINE_PREPARATION_ROUTE,
+            ROUTINE_PRECLAIM_ROUTE,
             Body::from(envelope.encode().unwrap()),
         ),
     )
@@ -160,7 +168,7 @@ async fn routine_http_response_permits_follow_yielded_chunks_and_their_last_clon
     assert_eq!(response.status(), StatusCode::OK);
     let mut stream = response.into_body().into_data_stream();
     let chunk = stream.next().await.unwrap().unwrap();
-    RoutineBridgeEnvelope::<ReadPreparationReply>::decode(&chunk)
+    RoutineBridgeEnvelope::<SynchronizeRoutinePreclaimReply>::decode(&chunk)
         .unwrap()
         .validate_reply_to(&envelope)
         .unwrap();
@@ -271,7 +279,7 @@ async fn routine_http_response_error_paths_release_before_error_body_consumption
 }
 
 #[tokio::test]
-async fn routine_http_all_four_routes_return_only_correlated_unavailable() {
+async fn routine_http_all_five_routes_return_only_correlated_unavailable() {
     let state = state();
     async fn call<Q, R>(state: Arc<HttpState>, path: &str, envelope: RoutineBridgeEnvelope<Q>)
     where
@@ -304,20 +312,24 @@ async fn routine_http_all_four_routes_return_only_correlated_unavailable() {
     )
     .await;
     call::<_, ReadOccurrenceLinkReply>(
-        state,
+        state.clone(),
         ROUTINE_LINK_ROUTE,
         RoutineBridgeEnvelope::new(ReadOccurrenceLink { claim: claim() }).unwrap(),
     )
     .await;
+    call::<_, SynchronizeRoutinePreclaimReply>(state, ROUTINE_PRECLAIM_ROUTE, preclaim()).await;
 }
 
 #[tokio::test]
 async fn routine_http_authentication_and_rotation_precede_any_body_poll() {
     let state = state();
     assert!(!state.install(authority(ROTATED_PARENT)));
-    for case in 0..9 {
+    for (path, case) in [ROUTINE_PREPARATION_ROUTE, ROUTINE_PRECLAIM_ROUTE]
+        .into_iter()
+        .flat_map(|path| (0..9).map(move |case| (path, case)))
+    {
         let polls = Arc::new(AtomicUsize::new(0));
-        let mut request = request(ROUTINE_PREPARATION_ROUTE, unpolled(polls.clone()));
+        let mut request = request(path, unpolled(polls.clone()));
         match case {
             0 => {
                 request.headers_mut().remove(header::AUTHORIZATION);
@@ -421,6 +433,7 @@ async fn routine_http_exact_paths_methods_and_public_catalog_exclusion() {
         ROUTINE_PREPARATION_ROUTE,
         ROUTINE_FINALIZE_ROUTE,
         ROUTINE_LINK_ROUTE,
+        ROUTINE_PRECLAIM_ROUTE,
     ] {
         assert!(is_endpoint(path));
         for method in [
@@ -448,6 +461,8 @@ async fn routine_http_exact_paths_methods_and_public_catalog_exclusion() {
         "/v1/ai/bots/routines",
         "/internal/bots/routines/v1",
         "/INTERNAL/bots/routines/v1/link",
+        "/internal/bots/routines/v1/synchronize-preclaim/",
+        "/internal/bots/routines/v2/synchronize-preclaim",
     ] {
         assert!(!is_endpoint(path));
         assert_eq!(
@@ -467,6 +482,22 @@ async fn routine_http_exact_paths_methods_and_public_catalog_exclusion() {
 #[tokio::test]
 async fn routine_http_strict_envelopes_and_nested_objects_refuse_unknown_or_invalid_data() {
     let state = state();
+    for key in ["version", "payload", "slot", "owner"] {
+        let mut value = serde_json::to_value(preclaim()).unwrap();
+        match key {
+            "version" => value["version"] = 2.into(),
+            "payload" => value["payload"]["unexpected"] = true.into(),
+            "slot" => value["payload"]["slot"]["unexpected"] = true.into(),
+            _ => value["payload"]["slot"]["owner"]["unexpected"] = true.into(),
+        }
+        let response = send(
+            state.clone(),
+            request(ROUTINE_PRECLAIM_ROUTE, Body::from(value.to_string())),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(bytes(response).await.is_empty());
+    }
     let base = serde_json::to_value(read()).unwrap();
     let mut cases = vec![serde_json::json!({})];
     for path in [
