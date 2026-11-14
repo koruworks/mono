@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Authenticated, bounded private HTTP shell. No AI work is dispatched here.
+//! Authenticated, bounded private HTTP over the concrete AI occurrence owner.
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -10,6 +10,8 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use futures_util::StreamExt;
+use koru_ai_core::Cancellation;
+use koru_ai_server::{AiWorkerClient, RoutineCall, RoutineCallContext};
 use koru_delegate_api::routines::*;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -31,6 +33,7 @@ impl AsRef<[u8]> for ResponseAllocation {
 
 pub(crate) struct HttpState {
     authority: OnceLock<RoutineBridgeAuthority>,
+    worker: Option<AiWorkerClient>,
     /// Request and application response-buffer capacity, never AI physical work
     /// or socket/kernel buffering. Encoded responses retain their own slot.
     slots: Arc<Semaphore>,
@@ -39,15 +42,19 @@ pub(crate) struct HttpState {
 }
 impl Default for HttpState {
     fn default() -> Self {
+        Self::new(None)
+    }
+}
+impl HttpState {
+    pub(crate) fn new(worker: Option<AiWorkerClient>) -> Self {
         Self {
             authority: OnceLock::new(),
+            worker,
             slots: Arc::new(Semaphore::new(HTTP_CAPACITY)),
             #[cfg(test)]
             test_budget: ROUTINE_BRIDGE_DEADLINE,
         }
     }
-}
-impl HttpState {
     pub(crate) fn install(&self, authority: RoutineBridgeAuthority) -> bool {
         self.authority.set(authority).is_ok()
     }
@@ -83,6 +90,16 @@ fn routes() -> Router<Arc<HttpState>> {
 }
 
 pub(crate) fn router(state: Arc<HttpState>) -> Router<Arc<crate::GatewayState>> {
+    routes().with_state(state)
+}
+
+#[cfg(feature = "fixtures")]
+pub(crate) fn fixture_router(
+    authority: RoutineBridgeAuthority,
+    worker: Option<AiWorkerClient>,
+) -> Router {
+    let state = Arc::new(HttpState::new(worker));
+    assert!(state.install(authority));
     routes().with_state(state)
 }
 
@@ -210,37 +227,49 @@ async fn handle_until(
     let path = request.uri().path().to_owned();
     let bytes = read_body(request.into_body(), expected, deadline).await?;
     remaining(deadline)?;
-    // HTTP200 carries a domain Refused reply understood by the committed
-    // client. No successful domain state or physical call exists in this shell.
+    // Each call keeps the entry deadline and concrete worker-owned physical
+    // capacity. HTTP200 may carry a typed refusal, never invented absence.
     let reply = match path.as_str() {
-        ROUTINE_PREPARE_ROUTE => unavailable::<PrepareOccurrence, _>(
-            &bytes,
-            PrepareOccurrenceReply::Refused {
-                code: RoutineBridgeRefusal::Unavailable,
-            },
-            deadline,
-        ),
-        ROUTINE_PREPARATION_ROUTE => unavailable::<ReadPreparation, _>(
-            &bytes,
-            ReadPreparationReply::Refused {
-                code: RoutineBridgeRefusal::Unavailable,
-            },
-            deadline,
-        ),
-        ROUTINE_FINALIZE_ROUTE => unavailable::<FinalizeOccurrence, _>(
-            &bytes,
-            FinalizeOccurrenceReply::Refused {
-                code: RoutineBridgeRefusal::Unavailable,
-            },
-            deadline,
-        ),
-        ROUTINE_LINK_ROUTE => unavailable::<ReadOccurrenceLink, _>(
-            &bytes,
-            ReadOccurrenceLinkReply::Refused {
-                code: RoutineBridgeRefusal::Unavailable,
-            },
-            deadline,
-        ),
+        ROUTINE_PREPARE_ROUTE => {
+            dispatch(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::prepare_routine_occurrence,
+                |code| PrepareOccurrenceReply::Refused { code },
+            )
+            .await
+        }
+        ROUTINE_PREPARATION_ROUTE => {
+            dispatch(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::read_routine_preparation,
+                |code| ReadPreparationReply::Refused { code },
+            )
+            .await
+        }
+        ROUTINE_FINALIZE_ROUTE => {
+            dispatch(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::finalize_routine_occurrence,
+                |code| FinalizeOccurrenceReply::Refused { code },
+            )
+            .await
+        }
+        ROUTINE_LINK_ROUTE => {
+            dispatch(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::read_routine_occurrence_link,
+                |code| ReadOccurrenceLinkReply::Refused { code },
+            )
+            .await
+        }
         _ => Err(StatusCode::NOT_FOUND),
     }?;
     remaining(deadline)?;
@@ -292,18 +321,43 @@ async fn read_body(
     Ok(bytes)
 }
 
-fn unavailable<Q, R>(bytes: &[u8], refusal: R, deadline: Instant) -> Result<Vec<u8>, StatusCode>
+type Starter<Q, R> =
+    fn(&AiWorkerClient, RoutineCallContext, Q) -> Result<RoutineCall<R>, RoutineBridgeRefusal>;
+
+async fn dispatch<Q, R>(
+    worker: Option<&AiWorkerClient>,
+    bytes: Vec<u8>,
+    deadline: Instant,
+    start: Starter<Q, R>,
+    refused: fn(RoutineBridgeRefusal) -> R,
+) -> Result<Vec<u8>, StatusCode>
 where
-    Q: RoutineBridgePayload + DeserializeOwned,
+    Q: RoutineBridgePayload + DeserializeOwned + Clone,
     R: RoutineBridgeReply<Q> + Serialize,
 {
     remaining(deadline)?;
-    let request = RoutineBridgeEnvelope::<Q>::decode(bytes).map_err(|error| match error {
+    let request = RoutineBridgeEnvelope::<Q>::decode(&bytes).map_err(|error| match error {
         RoutineBridgeCodecError::ContextTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         _ => StatusCode::BAD_REQUEST,
     })?;
+    drop(bytes);
     remaining(deadline)?;
-    let reply = RoutineBridgeEnvelope::reply_to(&request, refusal)
+    let payload = match worker {
+        Some(worker) => {
+            let context =
+                RoutineCallContext::new(request.request_id, deadline, Cancellation::default());
+            match start(worker, context, request.payload.clone()) {
+                Ok(call) => tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), call)
+                    .await
+                    .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?
+                    .unwrap_or_else(refused),
+                Err(code) => refused(code),
+            }
+        }
+        None => refused(RoutineBridgeRefusal::Unavailable),
+    };
+    remaining(deadline)?;
+    let reply = RoutineBridgeEnvelope::reply_to(&request, payload)
         .and_then(|reply| reply.encode())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     remaining(deadline)?;
