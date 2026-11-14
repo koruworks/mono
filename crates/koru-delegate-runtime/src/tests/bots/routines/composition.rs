@@ -2,7 +2,6 @@
 
 //! Actual coordinator, live Loro and SQLite memory; no Store or provider.
 use super::*;
-use crate::*;
 use std::time::{Duration, Instant};
 
 mod cases;

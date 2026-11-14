@@ -13,7 +13,7 @@ struct RecoverySelection {
 }
 
 impl ScheduleCoordinator {
-    pub(super) fn evaluate_routine_catalog<R: ZoneRules + ?Sized>(
+    pub(in crate::scheduler) fn evaluate_routine_catalog<R: ZoneRules + ?Sized>(
         &mut self,
         routines: &mut Routines,
         catalog: ScheduleCatalog,
