@@ -23,6 +23,7 @@ uuid.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 koru-core = { path = "../koru-core" }
+koru-blob-sync = { path = "../koru-blob-sync" }
 
 [dev-dependencies]
 ed25519-dalek.workspace = true

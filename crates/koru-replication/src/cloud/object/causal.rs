@@ -5,7 +5,10 @@ use koru_store_core::Manifest;
 use koru_store_core::profile_units::{IdentityManifest, PersonalManifest, PrivateManifest};
 use loro::{EncodedBlobMode, ExportMode, Frontiers, LoroDoc, VersionVector};
 use std::collections::HashSet;
+mod references;
 mod stage;
+pub use koru_core::schema::file_references::{ReferenceBudget, StrictReferenceError};
+pub use references::StrictBlobReferences;
 pub use stage::{StagedObject, stage_initial_checkpoint, starts_from_empty};
 
 /// A caller-supplied fact to correlate, never inferred from empty payload.

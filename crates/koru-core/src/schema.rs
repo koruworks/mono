@@ -27,6 +27,8 @@ use loro::{
 };
 use uuid::Uuid;
 
+pub mod file_references;
+
 use crate::change::ChangeTracker;
 
 use crate::ids::{AttrId, DocRef, DocumentId, NodeId, ProfileId, Ref, WorkspaceId, genesis_peer};

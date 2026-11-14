@@ -11,8 +11,9 @@ mod codec;
 mod identity;
 
 pub use causal::{
-    CheckpointOrigin, ContentProof, HeadCommitment, RestoredContent, StagedObject, restore_chain,
-    stage_initial_checkpoint, starts_from_empty, verify_chain,
+    CheckpointOrigin, ContentProof, HeadCommitment, ReferenceBudget, RestoredContent, StagedObject,
+    StrictBlobReferences, StrictReferenceError, restore_chain, stage_initial_checkpoint,
+    starts_from_empty, verify_chain,
 };
 pub use codec::{decode, encode, preflight_length};
 pub use identity::{StagingName, Unit, logical_key, staging_name};
