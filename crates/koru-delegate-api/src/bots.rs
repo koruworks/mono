@@ -77,6 +77,13 @@ pub struct BotObservation {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    /// IPC 15: independent durable winner evidence, never caller assertion.
+    ReadRoutineClaim {
+        slot: koru_delegate_core::RoutineSlot,
+    },
+    AcknowledgeRoutineLink {
+        acknowledgement: koru_delegate_core::RoutineLinkAcknowledgement,
+    },
     /// IPC 15: retain the deny-only Schedule route before Store creation.
     RegisterRoutineRoute {
         identity: koru_delegate_core::RoutineRouteIdentity,
@@ -248,6 +255,8 @@ impl BotCommand {
     /// commands instead resolve their immutable Run binding inside the actor.
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
         match self {
+            Self::ReadRoutineClaim { slot } => Some(&slot.owner),
+            Self::AcknowledgeRoutineLink { acknowledgement } => Some(&acknowledgement.claim.slot.owner),
             Self::RegisterRoutineRoute { identity } => Some(&identity.owner),
             Self::Hello { owner, .. }
             | Self::PendingNativeEffects { owner, .. }
@@ -300,6 +309,12 @@ impl std::fmt::Debug for BotCommand {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotReply {
+    RoutineClaim {
+        observation: koru_delegate_core::RoutineClaimObservation,
+    },
+    RoutineLinkAcknowledged {
+        record: koru_delegate_core::RoutineClaimRecord,
+    },
     RoutineRoute {
         identity: koru_delegate_core::RoutineRouteIdentity,
     },

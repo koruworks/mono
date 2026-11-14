@@ -111,7 +111,7 @@ fn settled(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<admission::
     Ok(guard)
 }
 
-fn knowledge_on(
+pub(super) fn knowledge_on(
     conn: &Connection,
     bot: BotId,
     home: WorkspaceId,

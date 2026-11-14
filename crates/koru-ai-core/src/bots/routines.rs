@@ -11,9 +11,13 @@ use serde::{Deserialize, Serialize};
 
 mod creation;
 mod preparation;
+mod occurrence;
+pub use occurrence::*;
 pub use creation::*;
 use koru_delegate_schedule::routine_wire as strict;
 pub use preparation::*;
+/// Existing neutral definition, re-exported for trusted adapter signatures.
+pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
 
 pub const BOT_ROUTINE_SCOPE: &str = "koru.bot.routine.v1";
 pub const BOT_ROUTINE_SEED_BYTES: usize = 4 * 1024 * 1024;

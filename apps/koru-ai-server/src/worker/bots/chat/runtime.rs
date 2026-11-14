@@ -174,6 +174,12 @@ impl WorkerState {
             .repository
             .bot_submission_for_attempt(id)?
             .ok_or_else(bot_route_error)?;
+        // Occurrence materialization is not provider launch. Until the later
+        // execution composition supplies current subject proof, this ordinary
+        // context path cannot turn a private v2 receipt into fresh input.
+        if receipt.intent.submission.provenance.routine.is_some() {
+            return Err(bot_route_error());
+        }
         let mut input = receipt.intent.submission.input.clone();
         input.text = koru_ai_provider_agent::compose_delegated_prompt(&request);
         if !memory.bytes.is_empty() {

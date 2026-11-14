@@ -204,6 +204,18 @@ pub trait BotAuthority: Send + Sync {
 
     /// Private off-writer creation/reconciliation after the delegate has
     /// acknowledged the exact deny-only route. Never launch authority.
+    fn verify_routine_definition(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotRoutineCreationIdentity,
+        _definition: &koru_delegate_schedule::ScheduleDefinition,
+        _owner_handoff: Option<koru_delegate_core::HandoffId>,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<(), BotError> {
+        Err(BotError::Unavailable)
+    }
+
     fn prepare_routine_document(
         &self,
         _owner: BotOwner,

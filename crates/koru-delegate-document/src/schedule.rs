@@ -6,6 +6,7 @@
 use std::fmt;
 
 mod seed;
+mod occurrence;
 
 use koru_delegate_core::{
     DelegationRequest, DeviceId, HandoffId, RoutineClaimFacts, RoutineDefinitionIdentity,

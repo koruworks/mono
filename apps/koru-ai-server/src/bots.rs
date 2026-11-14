@@ -62,6 +62,17 @@ impl BotAuthorityAdapter {
     }
 }
 impl BotAuthority for BotAuthorityAdapter {
+    fn verify_routine_definition(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        definition: &koru_ai_core::bots::RoutineScheduleDefinition,
+        owner_handoff: Option<koru_delegate_core::HandoffId>,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<(), BotError> {
+        routine::verify_definition(self, owner, reader, identity, definition, owner_handoff, cancellation)
+    }
     fn prepare_routine_document(
         &self,
         owner: BotOwner,

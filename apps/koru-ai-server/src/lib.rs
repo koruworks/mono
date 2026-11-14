@@ -27,6 +27,7 @@ pub use worker::bots::memory::{
 };
 pub use worker::bots::memory::{RunMemoryReadRequest, RunMemoryReadResult};
 pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
+pub use worker::routine_call::{RoutineCall, RoutineCallContext};
 pub use worker::native_recovery::{
     NativeMutationGate, NativeRecoveryAdmission, NativeRecoveryRefusal,
 };

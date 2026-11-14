@@ -5,6 +5,7 @@ use koru_delegate_core::{RoutineDigest32, ScheduleId};
 mod bounded;
 mod page;
 mod recovery;
+mod occurrence;
 #[cfg(test)]
 mod tests;
 
