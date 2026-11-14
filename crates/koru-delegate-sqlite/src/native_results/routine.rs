@@ -122,8 +122,8 @@ pub(super) fn validate_record(
             // by changing the admission version column.
             routines::deny_run_metadata(conn, record.key.run)?;
             let owner = BotOwner {
-                user_scope: user.parse().map_err(|_| corrupt("owner"))?,
-                device: device.parse().map_err(|_| corrupt("device"))?,
+                user_scope: serde_json::from_value(user.into()).map_err(|_| corrupt("owner"))?,
+                device: DeviceId::parse(&device).ok_or_else(|| corrupt("device"))?,
             };
             let bot: BotId = bot.parse().map_err(|_| corrupt("bot"))?;
             let companion:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM native_routine_leases WHERE run_id=?1 AND operation_id=?2)",params![record.key.run.to_storage(),record.key.operation_id.to_string()],|r|r.get(0)).map_err(rows::sql)?;
@@ -200,7 +200,7 @@ pub(super) fn validate_record(
     if record.lease_state == NativeLeaseState::Held
         && matches!(
             admitted.state,
-            crate::BotAdmissionState::Settled | crate::BotAdmissionState::Refused
+            BotAdmissionState::Settled | BotAdmissionState::Refused
         )
     {
         return Err(corrupt("terminal_held"));

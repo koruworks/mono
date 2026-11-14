@@ -211,7 +211,7 @@ fn routine_native_composite_subject_current_policy_and_attempt_defenses() {
             4 => proof.routine.as_mut().unwrap().grant_revision = 2,
             5 => proof.routine.as_mut().unwrap().effects_allowed = false,
             6 => proof.global.effects_allowed = false,
-            7 => h.fence.session = SessionId::from_uuid(Uuid::new_v4()),
+            7 => h.fence.session = SessionId::mint(),
             8 => {
                 h.db.conn()
                     .execute("UPDATE bot_routine_links SET state='held'", [])
