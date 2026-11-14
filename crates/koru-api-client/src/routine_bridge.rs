@@ -162,6 +162,15 @@ impl Drop for Permit<'_> {
 }
 
 impl RoutineBridgeClient {
+    /// Synchronize current policy for an exact immutable draft. The reply is
+    /// evidence to recheck, never a claim token or permission to execute.
+    pub fn synchronize_preclaim(
+        &self,
+        request: &RoutineBridgeEnvelope<SynchronizeRoutinePreclaim>,
+    ) -> RoutineBridgeTransportResult<RoutineBridgeEnvelope<SynchronizeRoutinePreclaimReply>> {
+        self.call(ROUTINE_PRECLAIM_ROUTE, request, ROUTINE_BRIDGE_DEADLINE)
+    }
+
     pub fn prepare(
         &self,
         request: &RoutineBridgeEnvelope<PrepareOccurrence>,
