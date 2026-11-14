@@ -270,6 +270,7 @@ pub trait RoutineLedger: Send {
     fn claim_bot_routine(
         &mut self,
         authority: ScheduleClaimAuthority,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
         fresh: &koru_delegate_core::FreshBotPolicyProof,
     ) -> Result<
         (

@@ -34,6 +34,7 @@ use crate::{actor::Command as ActorCommand, schedule_events::ScheduleEventAuthor
 const REPAIR_BACKOFF: Duration = Duration::from_secs(1);
 const SCHEDULER_RECONCILE_BATCH: usize = 1;
 const EVENT_PUBLISHER_STOP_BOUND: Duration = Duration::from_secs(8);
+mod routine;
 
 #[derive(Default)]
 struct LoopState {
@@ -196,6 +197,7 @@ impl Drop for EventPublisher {
 }
 
 pub struct Handle {
+    stopped: Arc<AtomicBool>,
     commands: mpsc::Sender<Command>,
     wake: ScheduleWake,
     catalog: Arc<CatalogControl>,
@@ -214,6 +216,7 @@ impl Handle {
         authority_gate: Arc<ScheduleEventAuthorityGate>,
     ) -> Result<Self, String> {
         let (commands, inbox) = mpsc::channel();
+        let stopped = Arc::new(AtomicBool::new(false));
         let wake_commands = commands.clone();
         let wake = ScheduleWake::new(move || {
             let _ = wake_commands.send(Command::Wake);
@@ -238,6 +241,7 @@ impl Handle {
         let publisher_wake = publisher.wake();
         let thread_wake = wake.clone();
         let thread_authority_gate = Arc::clone(&authority_gate);
+        let thread_stopped = Arc::clone(&stopped);
         let thread = match std::thread::Builder::new()
             .name("delegate-scheduler".to_owned())
             .spawn(move || {
@@ -248,6 +252,7 @@ impl Handle {
                     thread_wake,
                     publisher_wake,
                     inbox,
+                    thread_stopped,
                 )
             }) {
             Ok(thread) => thread,
@@ -259,6 +264,7 @@ impl Handle {
             }
         };
         Ok(Self {
+            stopped,
             commands,
             wake,
             catalog,
@@ -271,6 +277,7 @@ impl Handle {
 
     pub fn control(&self) -> Control {
         Control {
+            stopped: Arc::clone(&self.stopped),
             commands: self.commands.clone(),
             wake: self.wake.clone(),
         }
@@ -281,6 +288,7 @@ impl Handle {
     }
 
     fn shutdown(&mut self) {
+        self.stopped.store(true, Ordering::Release);
         let publisher_deadline = Instant::now()
             + self
                 .publisher
@@ -312,6 +320,7 @@ impl Handle {
 
 #[derive(Clone)]
 pub struct Control {
+    stopped: Arc<AtomicBool>,
     commands: mpsc::Sender<Command>,
     wake: ScheduleWake,
 }
@@ -445,6 +454,7 @@ impl Control {
     }
 
     pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
         let _ = self.commands.send(Command::Stop);
     }
 }
@@ -464,7 +474,11 @@ pub(crate) fn test_control(actor: mpsc::Sender<ActorCommand>) -> Control {
             }
         }
     });
-    Control { commands, wake }
+    Control {
+        commands,
+        wake,
+        stopped: Arc::new(AtomicBool::new(false)),
+    }
 }
 
 impl Drop for Handle {
@@ -642,9 +656,10 @@ fn run(
     wake: ScheduleWake,
     publisher_wake: ScheduleWake,
     inbox: mpsc::Receiver<Command>,
+    stopped: Arc<AtomicBool>,
 ) {
     let stopped_actor = actor.clone();
-    let mut effects = ActorEffects { actor };
+    let mut effects = ActorEffects::new(actor, stopped);
     let mut exact_watch: Option<Box<dyn ScheduleChangeWatch>> = None;
     let mut exact_targets = None;
     let mut state = LoopState::default();
@@ -1088,6 +1103,8 @@ fn answer_then_publish<T, E>(
 
 struct ActorEffects {
     actor: mpsc::Sender<ActorCommand>,
+    stopped: Arc<AtomicBool>,
+    routine: Option<routine::PendingRoutine>,
 }
 
 impl ActorEffects {
@@ -1101,12 +1118,29 @@ impl ActorEffects {
 }
 
 impl ScheduleEffects for ActorEffects {
+    fn begin_routine(
+        &mut self,
+        prepared: &koru_delegate_core::RoutinePrepared,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
+        proof: &koru_delegate_core::FreshBotPolicyProof,
+        scope: ScopeIdentity,
+        authored_scope: koru_delegate_core::WorkspaceScope,
+        deadline: Instant,
+    ) -> PortResult<ScheduleAdmission> {
+        self.begin_routine_wait(prepared, admission, proof, scope, authored_scope, deadline)
+    }
+
+    fn release_routine(&mut self, run: RunId, deadline: Instant) -> PortResult<()> {
+        self.release_routine_wait(run, deadline)
+    }
+
     fn begin(
         &mut self,
         run: RunId,
         scope: ScopeIdentity,
         authored_scope: koru_delegate_core::WorkspaceScope,
     ) -> PortResult<ScheduleAdmission> {
+        self.no_pending_routine()?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.actor
             .send(ActorCommand::ScheduleBegin {
@@ -1126,6 +1160,7 @@ impl ScheduleEffects for ActorEffects {
         scope: koru_delegate_scope::ResolvedScope,
         authored_scope: koru_delegate_core::WorkspaceScope,
     ) -> PortResult<Option<Started>> {
+        self.no_pending_routine()?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.actor
             .send(ActorCommand::ScheduleFinish {
@@ -1149,6 +1184,7 @@ impl ScheduleEffects for ActorEffects {
         claim: SlotClaim,
         authored_scope: koru_delegate_core::WorkspaceScope,
     ) -> PortResult<Option<Started>> {
+        self.no_pending_routine()?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.actor
             .send(ActorCommand::ScheduleReconcile {

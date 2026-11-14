@@ -185,6 +185,7 @@ impl koru_delegate_runtime::RoutineLedger for SharedLedger {
     fn claim_bot_routine(
         &mut self,
         authority: ScheduleClaimAuthority,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
         fresh: &koru_delegate_core::FreshBotPolicyProof,
     ) -> Result<
         (
@@ -197,6 +198,7 @@ impl koru_delegate_runtime::RoutineLedger for SharedLedger {
         koru_delegate_runtime::RoutineLedger::claim_bot_routine(
             &mut *self.0.lock().unwrap(),
             authority,
+            admission,
             fresh,
         )
     }
