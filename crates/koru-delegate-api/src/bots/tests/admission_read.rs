@@ -48,7 +48,8 @@ impl BotDelegatePort for Port {
     ) -> Result<BotReply, crate::Failure> {
         self.calls.lock().unwrap().push((command, within));
         if !self.delay.is_zero() {
-            std::thread::sleep(self.delay);
+            // Consume the supplied remaining budget only after known entry.
+            std::thread::sleep(within.saturating_add(self.delay));
         }
         self.answer.clone()
     }
@@ -190,9 +191,9 @@ fn admission_read_helper_refuses_zero_invalid_and_late_completion_without_retrie
     );
     assert!(port.calls.lock().unwrap().is_empty());
     let mut port = port;
-    port.delay = Duration::from_millis(2);
+    port.delay = Duration::from_millis(1);
     assert!(
-        port.read_admission_barrier(owner, bot, Duration::from_millis(1))
+        port.read_admission_barrier(owner, bot, Duration::from_millis(100))
             .is_err()
     );
     assert_eq!(port.calls.lock().unwrap().len(), 1);
