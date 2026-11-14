@@ -280,7 +280,7 @@ fn routine_worker_late_store_proof_cannot_bind_after_settings_edit_and_reads_sta
         .client()
         .bots(
             context(),
-            BotCommand::UpdateSettings {
+            BotCommand::Update {
                 request_id: BotRequestId::mint(),
                 bot_id: f.bot.id,
                 expected_revision: 1,

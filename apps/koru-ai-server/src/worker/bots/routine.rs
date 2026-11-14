@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Durable Routine recovery shares the existing physical creation lane.
 use super::*;
+use koru_ai_core::ProfileId;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use std::collections::VecDeque;
 #[cfg(test)]
