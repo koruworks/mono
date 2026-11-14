@@ -737,14 +737,38 @@ struct Running {
 
 /// The worker's only way to the Store in these tests: the authority port.
 /// Its reads (owner, workspace, page, inspect) are authority checks; its
-/// `capture` reads Store history and is counted, since lifecycle never
-/// needs it. No native-recovery Store client is configured, so nothing
+/// `capture` reads fresh Store history and is counted, since lifecycle never
+/// needs it. Captured history metadata and Absent Memory replay use the inner
+/// authority fixture's strict checks. No native-recovery Store client is configured, so nothing
 /// else can reach a Store at all.
 struct StoreSpy {
     inner: Arc<Authority>,
     port: Arc<Archiving>,
 }
 impl BotAuthority for StoreSpy {
+    fn pinned_document_revision(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        reader: ProfileId,
+        document: DocumentId,
+        version: d::DocumentVersionId,
+    ) -> Result<koru_ai_core::StoreRevision, BotError> {
+        self.inner
+            .pinned_document_revision(owner, workspace, reader, document, version)
+    }
+    fn replay_memory_index(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        home: WorkspaceId,
+        capture: &BotLibraryCapture,
+        binding: Option<&BotMemoryBinding>,
+        cancellation: &Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        self.inner
+            .replay_memory_index(owner, reader, home, capture, binding, cancellation)
+    }
     fn owner(&self) -> Result<BotOwner, BotError> {
         self.inner.owner()
     }
@@ -866,7 +890,12 @@ fn started_with(native: Native, holding: bool) -> Running {
         .recv_timeout(Duration::from_secs(5))
         .unwrap()
         .unwrap();
-    begins.recv_timeout(Duration::from_secs(10)).unwrap();
+    begins
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|error| {
+            let events = stream.events.try_iter().collect::<Vec<_>>();
+            panic!("fixture task did not begin: {error:?}; accepted stream: {events:?}");
+        });
     let client = worker.client();
     Running {
         worker,
@@ -1498,8 +1527,9 @@ fn while_archive_is_unfinished_native_evidence_is_its_effects_off_barrier() {
         .unwrap();
     // The very barrier the operation installed: effects off, same request,
     // same revision. The gateway installing it again is a no-op.
-    assert!(!evidence.barrier.effects_allowed);
-    assert_eq!(evidence.barrier, installed);
+    assert!(!evidence.proof.global.effects_allowed);
+    assert_eq!(evidence.proof.global, installed);
+    assert!(evidence.proof.routine.is_none());
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }

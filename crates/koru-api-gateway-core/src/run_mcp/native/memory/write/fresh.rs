@@ -44,7 +44,15 @@ pub(super) fn run(
         }
     }
     live(cancel)?;
-    let fence = synchronize(port, record, subject_request, barrier)?;
+    let proof = composite(
+        client,
+        record,
+        subject_request,
+        barrier,
+        current.profile,
+        None,
+    )?;
+    let fence = synchronize(port, record, subject_request, &proof)?;
     let key = NativeResultKey {
         run: record.run,
         attempt: fence.attempt,
@@ -259,7 +267,15 @@ pub(super) fn run(
     }
     validate_barrier(&fresh.barrier, &current.subject, record.workspace)?;
     live(cancel)?;
-    if synchronize(port, record, subject_request, &fresh.barrier)? != fence {
+    let proof = composite(
+        client,
+        record,
+        subject_request,
+        &fresh.barrier,
+        fresh.profile,
+        Some(authority.memory_document),
+    )?;
+    if synchronize(port, record, subject_request, &proof)? != fence {
         return Err(failure("native_request_refused"));
     }
     live(cancel)?; // Last cooperative cancellation before acquiring a possible lease.
@@ -375,24 +391,45 @@ fn validate_barrier(
     }
     Ok(())
 }
+fn composite(
+    client: &dyn WritePort,
+    record: &RunAuthorityRecord,
+    subject: &RunMemoryWriteSubjectRequest,
+    expected: &BotPolicyBarrier,
+    profile: koru_ai_core::ProfileId,
+    target: Option<DocumentId>,
+) -> Result<FreshBotPolicyProof, ToolFailure> {
+    live(&subject.cancellation)?;
+    let evidence = client.policy(NativePolicyRequest {
+        run: record.run,
+        provenance: subject.provenance.clone(),
+        captured: subject.captured.clone(),
+        target,
+    })?;
+    if evidence.profile != profile
+        || evidence.proof.global != *expected
+        || !composite_policy::matches(
+            &evidence.proof,
+            &subject.provenance,
+            &subject.captured,
+            record.workspace,
+        )
+    {
+        return Err(failure("permission_denied"));
+    }
+    live(&subject.cancellation)?;
+    Ok(evidence.proof)
+}
+
 fn synchronize(
     port: &dyn BotDelegatePort,
     record: &RunAuthorityRecord,
     subject: &RunMemoryWriteSubjectRequest,
-    barrier: &BotPolicyBarrier,
+    proof: &FreshBotPolicyProof,
 ) -> Result<BotExecutionFence, ToolFailure> {
     live(&subject.cancellation)?;
-    match owner_call(
-        port,
-        BotCommand::SynchronizePolicy {
-            barrier: barrier.clone(),
-        },
-    )? {
-        BotReply::PolicyBarrier { receipt }
-            if receipt.barrier == *barrier && receipt.state == BotPolicyBarrierState::Effective => {
-        }
-        _ => return Err(failure("native_policy_pending")),
-    }
+    composite_policy::synchronize(proof, |command| owner_call(port, command))
+        .map_err(|error| failure(&error.code))?;
     let key = BotSubmissionKey {
         owner: subject.provenance.owner,
         bot: subject.provenance.bot,
