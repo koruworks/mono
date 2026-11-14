@@ -164,6 +164,9 @@ mod tests;
 
 // The neutral state remains the field's owning type. Close only this public
 // observation's wire representation, without changing ordinary Schedule APIs.
+// Serde's internally tagged unit variants accept extra fields even with the
+// enum's deny_unknown_fields. Empty struct variants close that hole while
+// preserving the exact JSON spelling (including nested pause reasons).
 mod state {
     use super::*;
     #[derive(Serialize, Deserialize)]

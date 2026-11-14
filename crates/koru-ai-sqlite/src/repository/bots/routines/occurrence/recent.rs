@@ -107,7 +107,7 @@ pub(in super::super) fn read(
                 r.get::<_, Vec<u8>>(i)
                     .map_err(bad)?
                     .try_into()
-                    .map_err(bad)?,
+                    .map_err(|_| BotError::Storage)?,
             ))
         };
         let ids = RoutineExecutionIds {
@@ -177,7 +177,7 @@ pub(in super::super) fn read(
                     c.ids.run,
                     c.config,
                 )
-                .map_err(bad)?;
+                .map_err(|_| BotError::Storage)?;
         }
         admission::validate_outcome_stage(stage, &outcome)?;
         let correlations:i64 = conn.query_row("SELECT count(*) FROM bot_chat_runs WHERE run_id=?1 OR (user_scope_id=?2 AND submission_id=?3) OR ai_attempt_id=?4",
