@@ -531,7 +531,10 @@ fn listing_worker_cancelled_physical_phase_keeps_waiter_and_public_preparation_u
     finish(worker, returned);
 }
 
-struct RefusingDelegate;
+#[derive(Default)]
+struct RefusingDelegate {
+    calls: Mutex<Vec<&'static str>>,
+}
 impl BotDelegatePort for RefusingDelegate {
     fn execute(&self, _: DelegateCommand) -> Result<BotReply, koru_delegate_api::Failure> {
         panic!("finite lane calls only")
@@ -541,15 +544,21 @@ impl BotDelegatePort for RefusingDelegate {
         c: DelegateCommand,
         _: Duration,
     ) -> Result<BotReply, koru_delegate_api::Failure> {
-        assert!(matches!(
-            c,
-            DelegateCommand::Read { .. } | DelegateCommand::Stop { .. }
-        ));
-        Err(koru_delegate_api::Failure::new(
-            "unknown_run",
-            "fixture absent",
-            false,
-        ))
+        match c {
+            DelegateCommand::Read { .. } => {
+                self.calls.lock().unwrap().push("read");
+                Err(koru_delegate_api::Failure::new(
+                    "unknown_run",
+                    "fixture absent",
+                    false,
+                ))
+            }
+            DelegateCommand::Reconcile { .. } => {
+                self.calls.lock().unwrap().push("reconcile");
+                Ok(BotReply::Missing)
+            }
+            _ => panic!("only Read and the Stop lane's initial Reconcile are expected"),
+        }
     }
 }
 #[test]
@@ -588,7 +597,7 @@ fn listing_prepared_run_read_and_stop_lanes_are_independent_of_held_store_phase(
     );
     entered.recv_timeout(Duration::from_secs(5)).unwrap();
     let (delegate, deadline) = (
-        Arc::new(RefusingDelegate),
+        Arc::new(RefusingDelegate::default()),
         Instant::now() + Duration::from_secs(3),
     );
     let (r, read) = sync_channel(1);
@@ -612,12 +621,29 @@ fn listing_prepared_run_read_and_stop_lanes_are_independent_of_held_store_phase(
     );
     assert!(
         pool.try_submit(ProviderAdminJob::BotTaskStop(BotTaskStopJob::fixture(
-            delegate, deadline, s
+            delegate.clone(),
+            deadline,
+            s
         )))
         .is_ok()
     );
-    assert!(read.recv_timeout(Duration::from_secs(3)).unwrap().is_err());
-    assert!(stop.recv_timeout(Duration::from_secs(3)).unwrap().is_err());
+    assert_eq!(
+        read.recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+    assert_eq!(
+        stop.recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+    let mut calls = delegate.calls.lock().unwrap().clone();
+    calls.sort_unstable();
+    assert_eq!(calls, ["read", "reconcile"]);
     assert!(matches!(completion.try_recv(), Err(TryRecvError::Empty)));
     release.open();
     assert!(matches!(
