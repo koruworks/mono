@@ -173,6 +173,24 @@ pub(super) async fn handle(
         Err(error) => return refuse(StatusCode::SERVICE_UNAVAILABLE, error),
     };
     let is_bot = matches!(classification, RunToolAuthority::Bot { .. });
+    authenticated_message(is_bot, body, |params| async move {
+        match classification {
+            RunToolAuthority::Bot { provenance, policy } => {
+                native::call(&state, authority, provenance, policy, params).await
+            }
+            RunToolAuthority::Ordinary {} => tools::call(&state, authority, params).await,
+        }
+    })
+    .await
+}
+
+/// Shared transport after bearer authentication and current Run classification.
+/// The callback owns dispatch only; this function never establishes authority.
+async fn authenticated_message<F, R>(is_bot: bool, body: Bytes, dispatch: F) -> Response
+where
+    F: FnOnce(rmcp::model::CallToolRequestParams) -> R,
+    R: std::future::Future<Output = rmcp::model::CallToolResult>,
+{
     let limit = if is_bot {
         4 * 1024 * 1024
     } else {
@@ -239,12 +257,7 @@ pub(super) async fn handle(
                     return refusal;
                 }
             }
-            let result = ServerResult::CallToolResult(match classification {
-                RunToolAuthority::Bot { provenance, policy } => {
-                    native::call(&state, authority, provenance, policy, call.params).await
-                }
-                RunToolAuthority::Ordinary {} => tools::call(&state, authority, call.params).await,
-            });
+            let result = ServerResult::CallToolResult(dispatch(call.params).await);
             if routine {
                 routine_bounds::answer(id, result, mutation)
             } else {

@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 #[serde(deny_unknown_fields)]
 struct Create {
     request_id: BotRequestId,
+    #[schemars(range(min = 1, max = 9223372036854775807u64))]
     expected_bot_revision: u64,
     name: RoutineScheduleName,
     objective: Objective,
@@ -28,6 +29,8 @@ struct Create {
     documents: Vec<DocumentId>,
     recurrence: RecurrenceRule,
 }
+#[cfg(test)]
+mod tests;
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Read {

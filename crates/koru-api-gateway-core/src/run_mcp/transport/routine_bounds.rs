@@ -39,3 +39,5 @@ pub(super) fn answer(id: RequestId, result: ServerResult, mutation: bool) -> Res
         overflow()
     }
 }
+#[cfg(test)]
+mod tests;

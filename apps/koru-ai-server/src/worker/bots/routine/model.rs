@@ -5,6 +5,8 @@ use koru_ai_sqlite::RoutineToolSubject;
 mod contract;
 mod driver;
 mod job;
+#[cfg(test)]
+mod tests;
 pub use contract::*;
 pub(in crate::worker) use job::{RunRoutineCompletion, RunRoutineJob};
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod routines;
 
 #[test]
 fn bot_initialize_separates_memory_receipts_from_results_and_ordinary_stays_artifact_only() {

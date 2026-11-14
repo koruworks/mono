@@ -43,9 +43,11 @@ fn routine_tool_subject_rejects_corrupt_receipt_or_unlinked_routine() {
     for mutation in [
         "UPDATE bot_command_receipts SET submission_json='{}' WHERE command_kind='routine_occurrence'",
         "UPDATE bot_command_receipts SET submission_json=zeroblob(4194305) WHERE command_kind='routine_occurrence'",
+        "UPDATE bot_command_receipts SET submission_version=1 WHERE command_kind='routine_occurrence'",
         "UPDATE bot_routine_preparations SET capture_json='{}'",
         "UPDATE bot_routine_preparations SET stage='prepared'",
         "UPDATE bot_routine_preparations SET linked_request_id=NULL",
+        "DELETE FROM bot_chat_runs",
     ] {
         let (repo, input, row) = materialized();
         // Deliberate damaged retained evidence, not a supported writer mutation.
