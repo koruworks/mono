@@ -5,6 +5,54 @@ use super::*;
 use koru_delegate_api::ipc::Caller;
 
 #[test]
+fn admission_read_server_requires_private_capability_device_and_current_frame() {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    let capability =
+        BotDelegateAuthority::new("admission-read-private-capability-01234567890123456789".into())
+            .unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let mut identity = Identity {
+        launch_id: "fixture".into(),
+        authority: "ordinary-stop".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
+    };
+    let owner = serde_json::from_value(
+        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":device}),
+    )
+    .unwrap();
+    let command = BotCommand::ReadAdmissionBarrier {
+        owner,
+        bot: koru_delegate_core::BotId::mint(),
+    };
+    assert!(admits_bot_command(&identity, &capability, &command));
+    let other =
+        BotDelegateAuthority::new("ordinary-scope-label-01234567890123456789".into()).unwrap();
+    assert!(!admits_bot_command(&identity, &other, &command));
+    identity.device_id = koru_delegate_core::DeviceId::new().to_storage();
+    assert!(!admits_bot_command(&identity, &capability, &command));
+    identity.device_id = uuid::Uuid::nil().to_string();
+    assert!(!admits_bot_command(&identity, &capability, &command));
+    identity.device_id = device.to_storage();
+    identity.bot_authority = None;
+    assert!(!admits_bot_command(&identity, &capability, &command));
+    let request = Request::Bot {
+        authority: capability,
+        command,
+    };
+    assert_eq!(
+        read_current_request(&mut frame::encode(15, &request).unwrap().as_slice()).unwrap(),
+        Some(request.clone())
+    );
+    assert!(
+        read_current_request(&mut frame::encode(14, &request).unwrap().as_slice())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn stale_wire_versions_cannot_reach_dispatch() {
     let caller = Caller {
         product: "test".into(),

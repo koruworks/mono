@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 mod boot;
+mod admission_read;
 mod host_gone;
 mod native_results;
 mod routines;

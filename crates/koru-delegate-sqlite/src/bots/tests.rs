@@ -2,6 +2,7 @@
 
 use super::*;
 mod boot;
+mod admission_read;
 use crate::{AttemptPhase, CrashPoint, LedgerError, Moment, RunsDb, WriteOp, fixtures};
 use koru_delegate_core::{
     BotAccess, BotProvenance, BotWorkingFolder, CapturedBotPolicy, PendingInput, WorkspaceScope,
