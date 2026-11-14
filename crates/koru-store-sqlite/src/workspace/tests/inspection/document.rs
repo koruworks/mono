@@ -207,3 +207,77 @@ fn detached_unknown_schema_is_refused_without_migration() {
         assert_eq!(repo.schema_version().unwrap(), version);
     }
 }
+
+#[test]
+fn detached_metadata_limits_charge_sqlite_bytes_including_nul_and_multibyte_text() {
+    let (backend, workspace, _, mut repo, _) = fixture();
+    let id = DocumentId::new();
+    let doc = content(&mut repo, id, "bounded");
+    let snapshot = doc.export(loro::ExportMode::Snapshot).unwrap();
+    repo.commit_checkpoint(
+        id,
+        &Checkpoint {
+            seq: 1,
+            checksum: checksum(&snapshot),
+            snapshot,
+            version_vector: doc.state_vv().encode(),
+            frontiers: doc.state_frontiers().encode(),
+            created_at: at(),
+        },
+    )
+    .unwrap();
+    for bad in [
+        format!("document\0{}", "x".repeat(20_000)),
+        "\u{20ac}".repeat(2000),
+    ] {
+        repo.connection
+            .execute(
+                "UPDATE loro_documents SET kind=?1 WHERE id=?2",
+                params![bad, id.to_storage()],
+            )
+            .unwrap();
+        assert_eq!(
+            backend.prepare_document_inspection(workspace, id, budget())()
+                .unwrap_err()
+                .code(),
+            Code::PayloadTooLarge
+        );
+    }
+    repo.connection
+        .execute(
+            "UPDATE loro_documents SET kind='document' WHERE id=?1",
+            [id.to_storage()],
+        )
+        .unwrap();
+    for bad in [
+        format!("hash\0{}", "x".repeat(20_000)),
+        "\u{20ac}".repeat(2000),
+    ] {
+        repo.connection
+            .execute(
+                "UPDATE loro_checkpoints SET checksum=?1 WHERE document_id=?2",
+                params![bad, id.to_storage()],
+            )
+            .unwrap();
+        assert_eq!(
+            backend.prepare_document_inspection(workspace, id, budget())()
+                .unwrap_err()
+                .code(),
+            Code::PayloadTooLarge
+        );
+    }
+    // SQLite is not STRICT: a TEXT value in a nominal BLOB column must use
+    // its byte length before the typed decoder sees the invalid storage type.
+    repo.connection
+        .execute(
+            "UPDATE loro_documents SET version_vector=?1 WHERE id=?2",
+            params![format!("\0{}", "x".repeat(20_000)), id.to_storage()],
+        )
+        .unwrap();
+    assert_eq!(
+        backend.prepare_document_inspection(workspace, id, budget())()
+            .unwrap_err()
+            .code(),
+        Code::PayloadTooLarge
+    );
+}
