@@ -66,13 +66,13 @@ fn creation_seed_and_grant_have_digest_free_golden_bytes() {
     let seed = r#"{"version":1,"name":"Private name","header":{"schedule":"00000000-0000-4000-8000-000000000005","created_at_ms":0,"initial_owner":"00000000-0000-4000-8000-000000000002","definition":{"revision":1,"effective_at_ms":0,"template":{"requested_by":{"kind":"person","profile":"00000000-0000-4000-8000-000000000008"},"objective":"Private objective","agent":{"kind":"built_in","value":"codex"},"requested_model":"fixture-model","scope":{"kind":"bot_folder","folder":"FOLDER"},"grants":["00000000-0000-4000-8000-000000000003"],"context":[{"kind":"document","workspace":"00000000-0000-4000-8000-000000000003","document":"00000000-0000-4000-8000-000000000009"}]},"recurrence":{"type":"floating","cron":"0 9 * * *"},"lifecycle":{"paused":{"reason":{"reason":"manual"}}},"routine":{"owner":{"user_scope":"00000000-0000-4000-8000-000000000001","device":"00000000-0000-4000-8000-000000000002"},"bot":"00000000-0000-4000-8000-000000000004","home":"00000000-0000-4000-8000-000000000003","creation_request":"00000000-0000-4000-8000-000000000006"}}}}"#;
     let actual = String::from_utf8(frozen.seed.canonical_bytes().unwrap()).unwrap();
     assert_eq!(actual, seed.replace("FOLDER", &fixture().1.folder));
-    println!(
-        "grant golden hash {}",
-        String::from(frozen.grant.canonical_digest().unwrap())
+    assert_eq!(
+        String::from(frozen.grant.canonical_digest().unwrap()),
+        "3216545206e20bd147a806109d66a11379c695962ed4eb90fe42584ca07d8b6e"
     );
-    println!(
-        "seed golden hash {}",
-        String::from(frozen.seed.canonical_digest().unwrap())
+    assert_eq!(
+        String::from(frozen.seed.canonical_digest().unwrap()),
+        "d5719c02651cf67ab1851d6c6bea1d7a77f1318a35ec8a3c57fd908dff1863aa"
     );
     frozen.validate_digests().unwrap();
     let mut changed = frozen.clone();
