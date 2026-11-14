@@ -4,6 +4,9 @@
 
 mod ai;
 mod artifacts;
+#[cfg(feature = "fixtures")]
+#[doc(hidden)]
+pub mod fixtures;
 mod routine_bridge;
 mod run_mcp;
 mod runs;
@@ -1140,6 +1143,12 @@ impl GatewayState {
         events: Option<koru_events_server::EventsHandle>,
         session_bridge: Option<SessionBridge>,
     ) -> Arc<Self> {
+        // Snapshot the concrete private client once. No worker-handle lock is
+        // retained by HTTP calls, including while they await physical work.
+        let routine_worker = ai.as_ref().and_then(|ai| {
+            let worker = ai.worker.lock().ok()?;
+            worker.as_ref().map(|worker| worker.client())
+        });
         Arc::new(Self {
             instance_id: uuid::Uuid::new_v4().to_string(),
             channel,
@@ -1155,7 +1164,7 @@ impl GatewayState {
             artifacts: std::sync::OnceLock::new(),
             delegate: std::sync::OnceLock::new(),
             bot_delegate: std::sync::OnceLock::new(),
-            routine_bridge: Arc::new(routine_bridge::HttpState::default()),
+            routine_bridge: Arc::new(routine_bridge::HttpState::new(routine_worker)),
             native_mutations: std::sync::OnceLock::new(),
             public_endpoint: std::sync::OnceLock::new(),
             openapi: public_openapi(),
