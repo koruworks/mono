@@ -36,7 +36,7 @@ impl Orchestrator {
             },
             device,
         )?;
-        if record.submission_version != 1 {
+        if provenance.routine.is_some() {
             return Err(refused("bot_routine_native_not_ready"));
         }
         let fence = self

@@ -175,7 +175,7 @@ impl Orchestrator {
         )?;
         // This checkpoint supplies no canonical AI Routine proof/cache or
         // linked provider dispatch. A global snapshot alone cannot ready it.
-        if record.submission_version != 1 {
+        if provenance.routine.is_some() {
             return Err(refused("bot_routine_native_not_ready"));
         }
         let fence = self
