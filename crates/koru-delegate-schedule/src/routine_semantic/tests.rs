@@ -25,7 +25,7 @@ fn semantic_hash_is_shared_replay_identity_before_current_policy_or_ids() {
         old,
         routine_semantic_digest(&changed, &definition, association.home, None).unwrap()
     );
-    definition.template.requested_model = Some(ModelName::new("inert changed model").unwrap());
+    definition.template.requested_model = Some(ModelName::new("inert-changed-model").unwrap());
     assert_ne!(
         old,
         routine_semantic_digest(&slot, &definition, association.home, None).unwrap()
@@ -62,10 +62,8 @@ fn semantic_encoding_has_frozen_field_order_and_no_allocated_or_current_fields()
         encoded,
         r#"{"version":1,"slot":{"owner":{"user_scope":"00000000-0000-4000-8000-000000000004","device":"00000000-0000-4000-8000-000000000005"},"bot":"00000000-0000-4000-8000-000000000006","schedule":"00000000-0000-4000-8000-000000000008","occurrence_ms":60000},"definition":{"revision":1,"digest":"a4d22d3a01e7972e7ff3fb2ec6258ebfc200d1f4cf3091240cd2e76037db7115","owner_handoff":null},"creation":{"owner":{"user_scope":"00000000-0000-4000-8000-000000000004","device":"00000000-0000-4000-8000-000000000005"},"bot":"00000000-0000-4000-8000-000000000006","home":"00000000-0000-4000-8000-000000000002","creation_request":"00000000-0000-4000-8000-000000000007"},"objective":"task","task_context":[]}"#
     );
-    // Pin the independent digest after this authored byte fixture is verified
-    // in the first named run; no production serializer ordering is adjusted.
-    eprintln!(
-        "SEMANTIC_GOLDEN_HASH={}",
-        String::from(routine_semantic_digest(&slot, &definition, creation.home, None).unwrap())
+    assert_eq!(
+        String::from(routine_semantic_digest(&slot, &definition, creation.home, None).unwrap()),
+        "622de77ed4def4d0455892130ddc2775ecbb83fc5d471e3e4742b67584fd0700"
     );
 }

@@ -46,14 +46,7 @@ fn expand(input: &str) -> String {
         value = value.replace(&format!("$D{n}"), &format!("{n:02x}").repeat(32));
     }
     value = value.replace("$ONES", &vec!["1"; 32].join(","));
-    value = value.replace(
-        "$FOLDER",
-        if cfg!(windows) {
-            "C:/fixture/work"
-        } else {
-            "/fixture/work"
-        },
-    );
+    value = value.replace("$FOLDER", "C:/fixture/work");
     assert!(!value.contains('$'));
     value
 }
@@ -62,7 +55,15 @@ fn expand(input: &str) -> String {
 fn private_capture_and_preparation_have_frozen_digest_free_bytes() {
     // These byte vectors deliberately use constant digest fields. Separate
     // validation tests recompute the complete valid chain of nested digests.
-    let row = super::super::super::tests::preparation();
+    let mut row = super::super::super::tests::preparation();
+    // The neutral folder type accepts this absolute spelling on every host;
+    // the encoding vector must not depend on the machine running the test.
+    let scope = WorkspaceScope::BotFolder {
+        folder: BotWorkingFolder::new("C:/fixture/work".into()).unwrap(),
+    };
+    row.capture.schedule_definition.template.scope = scope.clone();
+    row.prepared.submission.request.scope = scope;
+    row.capture.canonical.config.working_folder = "C:/fixture/work".into();
     let capture = expand(CAPTURE);
     assert_eq!(serde_json::to_string(&row.capture).unwrap(), capture);
     let p = &row.prepared;
@@ -83,12 +84,11 @@ fn private_capture_and_preparation_have_frozen_digest_free_bytes() {
         serde_json::to_string(&projection).unwrap(),
         expand(PREPARATION)
     );
-    eprintln!(
-        "CAPTURE_GOLDEN_HASH={}",
-        String::from(row.capture.canonical_digest().unwrap())
+    assert_eq!(
+        String::from(row.capture.canonical_digest().unwrap()),
+        "b1d5c81fdddc9bf8b8d6f75028f1d778cee11ebb42972dd6db8687055713da7b"
     );
-    eprintln!(
-        "PREPARATION_GOLDEN_HASH={}",
+    assert_eq!(
         String::from(
             routine_digest_json(
                 b"koru.bot.routine.preparation.v1",
@@ -96,6 +96,7 @@ fn private_capture_and_preparation_have_frozen_digest_free_bytes() {
                 BOT_ROUTINE_SUBMISSION_BYTES + BOT_ROUTINE_RECEIPT_BYTES
             )
             .unwrap()
-        )
+        ),
+        "abf61fd3b0905236c073472fdf808745db99cdfb0287dc6d7211bf5e174a6bfc"
     );
 }
