@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Actual Bot link, selected context frame and navigation host, all in memory.
 use super::*;
+use crate::bots::link::Failure;
 use crate::bots::view::{
     context_library::{LIBRARY_SECTION, ROUTINES_SECTION},
     context_routines::{chat_key, details_key},
