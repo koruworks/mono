@@ -904,6 +904,7 @@ pub(crate) const BOT_TRASHED_BOT: &str = "bot_trashed";
 /// until it is acknowledged, and offers it again at once, so a retry soon
 /// succeeds. Retryable; never a reused request id.
 pub(crate) const BOT_OPERATION_PENDING: &str = "bot_operation_pending";
+pub(crate) const ROUTINE_RETRY_UNSUPPORTED: &str = "routine_retry_unsupported";
 /// **The folder chosen is Koru's own data**, or inside it
 /// (`koru_ai_wire::bot_creation_codes::FOLDER_RESERVED`), on creation and on
 /// a change of folder. Not retryable: another folder is. A folder that does
@@ -957,6 +958,7 @@ fn known_refusal(code: &str) -> Option<Words> {
         BOT_TRASHED_BOT => Words::BotsErrBotTrashed,
         BOT_PENDING => Words::BotsErrPending,
         BOT_OPERATION_PENDING => Words::BotsErrOperationPending,
+        ROUTINE_RETRY_UNSUPPORTED => Words::BotsErrRoutineRetryUnsupported,
         FOLDER_RESERVED => Words::BotsErrFolderReserved,
         "not_found" => Words::BotsErrNotFound,
         "wrong_owner" => Words::BotsErrWrongOwner,

@@ -295,3 +295,44 @@ fn explicit_receipt_decoder_preserves_v1_continue_and_refuses_kind_drift() {
         Some(p.submission)
     );
 }
+
+#[test]
+fn routine_continuation_refuses_before_receipt_or_folder_mutation_but_exact_replay_wins() {
+    let (mut repo, bot, owner, mut continuation) = fixture();
+    let occurrence = routine(intent(&bot));
+    let run = occurrence.submission.request.run;
+    continuation.submission.provenance.continued_from = Some(run);
+    // A historical immutable Continue is returned even if its predecessor is
+    // now recognized as Routine. No new attempt is authorized by this replay.
+    let saved = repo
+        .prepare_bot_submission(&continuation, HASH, 1, 2)
+        .unwrap();
+    insert_routine(&repo, &occurrence);
+    let before = repo.connection.total_changes();
+    assert_eq!(
+        repo.prepare_bot_submission(&continuation, HASH, 999, 3)
+            .unwrap(),
+        saved
+    );
+    assert_eq!(repo.connection.total_changes(), before);
+    let mut fresh = intent(&bot);
+    fresh.submission.provenance.continued_from = Some(run);
+    assert!(matches!(
+        repo.prepare_bot_submission(&fresh, HASH, 1, 4),
+        Err(BotError::RoutineRetryUnsupported)
+    ));
+    assert_eq!(repo.connection.total_changes(), before);
+    assert!(
+        raw(
+            &repo.connection,
+            owner.user_scope,
+            fresh.submission.provenance.submission
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        repo.bot(bot.id).unwrap().unwrap().folder_lock_request,
+        Some(continuation.submission.provenance.submission)
+    );
+}

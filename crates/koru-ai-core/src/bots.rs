@@ -916,6 +916,8 @@ pub enum BotError {
     /// still `pending`, waiting for its owner to acknowledge it; retry once
     /// that operation reads accepted. Not a reused request id.
     Settling,
+    /// A new attempt cannot convert a Routine Run into a Manual continuation.
+    RoutineRetryUnsupported,
 }
 impl BotError {
     pub const fn code(self) -> &'static str {
@@ -930,6 +932,7 @@ impl BotError {
             Self::FolderLocked => "folder_locked",
             Self::Storage => "storage_error",
             Self::Settling => "bot_operation_pending",
+            Self::RoutineRetryUnsupported => "routine_retry_unsupported",
         }
     }
 }

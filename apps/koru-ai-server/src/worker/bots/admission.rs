@@ -233,10 +233,6 @@ impl WorkerState {
                     task,
                     ..
                 } => {
-                    if self.bot_delegate.is_none() {
-                        return Err(bot_failure(BotError::Unavailable));
-                    }
-                    proof.runtime.clone()?;
                     task.validate(*destination).map_err(bot_failure)?;
                     if *destination != bot.home_workspace {
                         return Err(bot_failure(BotError::Forbidden));
@@ -254,7 +250,15 @@ impl WorkerState {
                         if prior.intent.submission.provenance.chat_id != chat_id.as_uuid() {
                             return Err(bot_failure(BotError::Forbidden));
                         }
+                        prior
+                            .intent
+                            .require_interactive_continuation()
+                            .map_err(bot_failure)?;
                     }
+                    if self.bot_delegate.is_none() {
+                        return Err(bot_failure(BotError::Unavailable));
+                    }
+                    proof.runtime.clone()?;
                     let sources = proof
                         .library_sources
                         .as_ref()
