@@ -165,3 +165,145 @@ fn storage_read_is_targeted_typed_and_preserves_sign_in_on_failure() {
         }
     );
 }
+
+struct InventoryRead {
+    documents: bool,
+    status: u16,
+    response: Vec<u8>,
+}
+impl Transport for InventoryRead {
+    fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
+        let expected = if self.documents {
+            "/v1/account/cloud-usage/workspaces/00000000-0000-0000-0000-000000000050/documents?incarnation_id=00000000-0000-0000-0000-000000000051&limit=100"
+        } else {
+            "/v1/account/cloud-usage/workspaces?limit=100"
+        };
+        assert_eq!(request.path_and_query, expected);
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(name, value)| name == "authorization" && value == "Bearer memory-only")
+        );
+        Ok(HttpResponse {
+            status: self.status,
+            body: self.response.clone(),
+        })
+    }
+}
+#[test]
+fn inventory_pages_are_typed_exact_scoped_and_revision_failure_never_means_empty() {
+    use koru_agent_wire::CloudInventoryFailure;
+    for documents in [false, true] {
+        for status in [200, 409, 503] {
+            let fixtures: serde_json::Value = serde_json::from_str(if documents {
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../koru-account-wire/src/cloud_documents.fixtures.json"
+                ))
+            } else {
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../koru-account-wire/src/cloud_plan.fixtures.json"
+                ))
+            })
+            .unwrap();
+            let page = if documents {
+                fixtures["fixtures"][0]["response"].clone()
+            } else {
+                fixtures["fixtures"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|v| v["name"] == "workspace_page")
+                    .unwrap()["response"]
+                    .clone()
+            };
+            let body = match status {
+                200 => serde_json::to_vec(&page).unwrap(),
+                409 => br#"{"code":"usage_revision_changed","message":"changed"}"#.to_vec(),
+                _ => Vec::new(),
+            };
+            let mut service = ProductionAccountService::with_client(
+                AccountClient::with_transport(Arc::new(InventoryRead {
+                    documents,
+                    status,
+                    response: body,
+                })),
+                signed_descriptor(),
+                "test".into(),
+            );
+            service.access = Some(AccessToken("memory-only".into()));
+            service.access_expires_at_millis = Some(2_000_000_000_000);
+            let restored = SessionCredential::new(
+                "20000000-0000-4000-8000-000000000002".into(),
+                "refresh-vault-only".into(),
+            )
+            .unwrap();
+            let command = if documents {
+                AccountCommand::InspectCloudUsageDocuments {
+                    request_id: 42,
+                    workspace_id: "00000000-0000-0000-0000-000000000050".into(),
+                    incarnation_id: "00000000-0000-0000-0000-000000000051".into(),
+                    cursor: None,
+                }
+            } else {
+                AccountCommand::InspectCloudUsageWorkspaces {
+                    request_id: 42,
+                    cursor: None,
+                }
+            };
+            let outcome = service
+                .execute(
+                    70,
+                    command.clone(),
+                    Some(&restored),
+                    &Cancel(Arc::new(AtomicBool::new(false))),
+                    &mut |_| {},
+                )
+                .unwrap();
+            assert_eq!(outcome.state.stage, AccountStage::SignedIn);
+            assert!(matches!(outcome.credential, CredentialChange::Keep));
+            let (request_id, payload, failure) = match outcome.result {
+                AccountOperationResult::CloudUsageWorkspaces {
+                    request_id,
+                    payload,
+                    failure,
+                } => (request_id, payload, failure),
+                AccountOperationResult::CloudUsageDocuments {
+                    request_id,
+                    workspace_id,
+                    incarnation_id,
+                    payload,
+                    failure,
+                } => {
+                    assert_eq!(workspace_id, "00000000-0000-0000-0000-000000000050");
+                    assert_eq!(incarnation_id, "00000000-0000-0000-0000-000000000051");
+                    (request_id, payload, failure)
+                }
+                _ => panic!(),
+            };
+            assert_eq!(request_id, 42);
+            assert_eq!(
+                failure,
+                match status {
+                    200 => None,
+                    409 => Some(CloudInventoryFailure::RevisionChanged),
+                    _ => Some(CloudInventoryFailure::Unavailable),
+                }
+            );
+            assert_eq!(payload.is_some(), status == 200);
+            if let Some(payload) = payload {
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(payload.as_str()).unwrap(),
+                    page
+                );
+            }
+            assert!(matches!(
+                command_failure(&command, "cancelled"),
+                AccountOperationResult::CloudUsageWorkspaces { payload: None, .. }
+                    | AccountOperationResult::CloudUsageDocuments { payload: None, .. }
+            ));
+        }
+    }
+}

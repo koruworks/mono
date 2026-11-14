@@ -2,6 +2,7 @@
 
 //! Bounded account worker and its hosted-account service.
 
+mod cloud_inventory;
 mod cloud_status;
 pub mod cloud_sync;
 mod creation;
@@ -808,6 +809,25 @@ fn publish_cancelled(
 /// remembered state could not be read.
 fn command_failure(command: &AccountCommand, code: &str) -> AccountOperationResult {
     match command {
+        AccountCommand::InspectCloudUsageWorkspaces { request_id, .. } => {
+            AccountOperationResult::CloudUsageWorkspaces {
+                request_id: *request_id,
+                payload: None,
+                failure: Some(koru_agent_wire::CloudInventoryFailure::Unavailable),
+            }
+        }
+        AccountCommand::InspectCloudUsageDocuments {
+            request_id,
+            workspace_id,
+            incarnation_id,
+            ..
+        } => AccountOperationResult::CloudUsageDocuments {
+            request_id: *request_id,
+            workspace_id: workspace_id.clone(),
+            incarnation_id: incarnation_id.clone(),
+            payload: None,
+            failure: Some(koru_agent_wire::CloudInventoryFailure::Unavailable),
+        },
         AccountCommand::InspectCloudPlan { request_id } => AccountOperationResult::CloudPlan {
             request_id: *request_id,
             payload: None,
@@ -2506,6 +2526,8 @@ impl AccountService for ProductionAccountService {
             AccountCommand::InspectAccountSession
                 | AccountCommand::InspectCloudSubscription { .. }
                 | AccountCommand::InspectCloudPlan { .. }
+                | AccountCommand::InspectCloudUsageWorkspaces { .. }
+                | AccountCommand::InspectCloudUsageDocuments { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
         ) && restored.is_none()
@@ -2517,6 +2539,8 @@ impl AccountService for ProductionAccountService {
             AccountCommand::InspectAccountSession
                 | AccountCommand::InspectCloudSubscription { .. }
                 | AccountCommand::InspectCloudPlan { .. }
+                | AccountCommand::InspectCloudUsageWorkspaces { .. }
+                | AccountCommand::InspectCloudUsageDocuments { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
                 | AccountCommand::ListProfiles
@@ -2564,6 +2588,22 @@ impl AccountService for ProductionAccountService {
                     }),
                 }
             }
+            AccountCommand::InspectCloudUsageWorkspaces { request_id, cursor } => {
+                self.workspace_inventory(generation, request_id, cursor, cancel)
+            }
+            AccountCommand::InspectCloudUsageDocuments {
+                request_id,
+                workspace_id,
+                incarnation_id,
+                cursor,
+            } => self.document_inventory(
+                generation,
+                request_id,
+                workspace_id,
+                incarnation_id,
+                cursor,
+                cancel,
+            ),
             AccountCommand::InspectCloudPlan { request_id } => {
                 let started = self.clock.monotonic();
                 let payload = self
@@ -3519,6 +3559,12 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
             KoruIdentityId::from_str(erased_identity_id)
                 .map(|_| ())
                 .map_err(|_| ServiceError::terminal("invalid_request"))
+        }
+        AccountCommand::InspectCloudUsageWorkspaces { cursor, .. } => cloud_inventory::validate_cursor(cursor),
+        AccountCommand::InspectCloudUsageDocuments { workspace_id, incarnation_id, cursor, .. } => {
+            cloud_inventory::read_uuid(workspace_id)?;
+            cloud_inventory::read_uuid(incarnation_id)?;
+            cloud_inventory::validate_cursor(cursor)
         }
         AccountCommand::Status
         | AccountCommand::Cancel { .. }

@@ -803,6 +803,8 @@ enum AccountAction {
   ACCOUNT_ACTION_START_APPLE = 17;
   // Read the exact current account Cloud plan and storage count.
   ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;
 }
 message AccountCommandRequest {
   HostContext host = 1;
@@ -819,6 +821,11 @@ message AccountCommandRequest {
   // SET_PROFILE_CLOUD_SYNC only: the switch's new position for profile_id.
   // Absent on every other action; a missing value is never read as "off".
   optional bool cloud_sync_enabled = 11;
+  // Inventory reads only. The exact Workspace/incarnation pair is required
+  // only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+  optional string cloud_workspace_id = 12;
+  optional string cloud_incarnation_id = 13;
+  optional string cloud_cursor = 14;
 }
 message AccountCommandReply {
   uint64 requester = 1;
@@ -904,6 +911,12 @@ message MobileAccountResult {
   // failed cloud_plan read; never interpreted as known zero.
   optional string cloud_plan_json = 14;
   uint64 cloud_plan_request_elapsed_millis = 15;
+  // One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+  // has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+  optional string cloud_inventory_json = 16;
+  // Exact request selectors, echoed for documents on success and failure.
+  optional string cloud_workspace_id = 17;
+  optional string cloud_incarnation_id = 18;
 }
 
 // One Profile's Cloud sync state on this device. Ids, booleans, counts and a

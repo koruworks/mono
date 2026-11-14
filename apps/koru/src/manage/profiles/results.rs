@@ -363,6 +363,8 @@ impl ProfilesController {
         match result {
             // Only the scope/request-correlated branch may accept this result.
             AccountOperationResult::CloudPlan { .. }
+            | AccountOperationResult::CloudUsageWorkspaces { .. }
+            | AccountOperationResult::CloudUsageDocuments { .. }
             | AccountOperationResult::CloudSubscription { .. }
             | AccountOperationResult::CloudSync { .. } => return false,
             AccountOperationResult::AccountCreationRequired => {
