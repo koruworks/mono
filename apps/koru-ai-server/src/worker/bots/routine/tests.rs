@@ -289,21 +289,60 @@ fn routine_worker_late_store_proof_cannot_bind_after_settings_edit_and_reads_sta
         )
         .unwrap();
     release.send(()).unwrap();
-    // Observations share the writer; the late proof must never commit Bound.
-    for _ in 0..10 {
-        assert_ne!(observe(&worker, &f).state, BotRoutineCreationState::Bound);
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let conflict = wait_state(&worker, &f, BotRoutineCreationState::Conflict);
+    assert_eq!(conflict.identity, f.creation.identity);
+    assert_eq!(
+        conflict.refusal,
+        Some(BotRoutineCreationRefusal::AuthorityChanged)
+    );
     drop(worker);
     let repo = returned.recv_timeout(Duration::from_secs(10)).unwrap();
-    assert_ne!(
+    assert_eq!(
         repo.bot_routine_creation(f.owner, f.bot.id, f.creation.identity.schedule)
             .unwrap()
             .unwrap()
             .state,
-        BotRoutineCreationState::Bound
+        BotRoutineCreationState::Conflict
     );
     assert_eq!(authority.calls.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn routine_worker_rejects_positive_prejob_drift_without_registering_or_creating() {
+    let (f, mut repo) = Fixture::new();
+    let mut updated = f.bot.clone();
+    updated.revision += 1;
+    updated.config.name = "Changed before recovery".into();
+    repo.save_bot(
+        &updated,
+        f.profile,
+        BotRequestId::mint(),
+        &"d".repeat(64),
+        Some(f.bot.revision),
+    )
+    .unwrap();
+    let (delegate, authority) = ports(&f);
+    let (worker, returned) = start(repo, authority.clone(), delegate.clone());
+    let conflict = wait_state(&worker, &f, BotRoutineCreationState::Conflict);
+    assert_eq!(conflict.identity, f.creation.identity);
+    assert_eq!(
+        conflict.refusal,
+        Some(BotRoutineCreationRefusal::AuthorityChanged)
+    );
+    assert!(authority.calls.lock().unwrap().is_empty());
+    assert!(delegate.calls.lock().unwrap().is_empty());
+    drop(worker);
+    let mut repo = returned.recv_timeout(Duration::from_secs(10)).unwrap();
+    let retry = repo
+        .prepare_bot_routine_creation(
+            f.owner,
+            &f.command,
+            koru_delegate_core::RoutineDigest32::from_bytes([7; 32]),
+            99,
+        )
+        .unwrap();
+    assert_eq!(retry.state, BotRoutineCreationState::Conflict);
+    assert_eq!(retry.route, f.creation.identity.route());
 }
 
 #[test]

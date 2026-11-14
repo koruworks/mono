@@ -254,6 +254,19 @@ impl WorkerState {
                     }
                     return;
                 }
+                Err(BotError::RevisionConflict) => {
+                    if self
+                        .repository
+                        .reject_changed_bot_routine_creation(
+                            owner,
+                            &entry,
+                            Timestamp::now().millis(),
+                        )
+                        .is_err()
+                    {
+                        self.routine_recovery.owed = true;
+                    }
+                }
                 Err(_) => self.routine_recovery.owed = true,
             }
         }
@@ -312,6 +325,24 @@ impl WorkerState {
                 let current = self
                     .repository
                     .bot_routine_recovery_candidate(owner, &entry);
+                if matches!(&current, Err(BotError::RevisionConflict))
+                    && self.routine_recovery.owner == Some(owner)
+                {
+                    // This rejection uses fresh SQL evidence, never the late
+                    // Store result or a failed authority lookup as proof.
+                    if self
+                        .repository
+                        .reject_changed_bot_routine_creation(
+                            owner,
+                            &entry,
+                            Timestamp::now().millis(),
+                        )
+                        .is_err()
+                    {
+                        self.routine_recovery.owed = true;
+                    }
+                    return;
+                }
                 if !matches!(current, Ok((ref current, current_profile)) if current == &creation && current_profile == profile)
                     || self.routine_recovery.owner != Some(owner)
                 {

@@ -14,6 +14,7 @@ pub(crate) struct Fixture {
     pub other: ProfileId,
     pub bot: Bot,
     pub creation: BotRoutineCreation,
+    pub command: BotRoutineCreate,
 }
 impl Fixture {
     pub(crate) fn new() -> (Self, Repository) {
@@ -114,6 +115,7 @@ impl Fixture {
                 other,
                 bot,
                 creation,
+                command,
             },
             repository,
         )

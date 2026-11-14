@@ -230,8 +230,8 @@ impl BotRoutineCreationIdentity {
         }
         Ok(())
     }
-    pub fn matches_source(&self, source: &BotRoutineCreationSource) -> Result<bool, BotError> {
-        let command = BotRoutineCreate {
+    fn semantic_command(&self) -> Result<BotRoutineCreate, BotError> {
+        Ok(BotRoutineCreate {
             request: self.creation_request,
             bot: self.bot,
             expected_bot_revision: self.expected_bot_revision,
@@ -250,7 +250,20 @@ impl BotRoutineCreationIdentity {
                 })
                 .collect::<Result<_, _>>()?,
             recurrence: self.seed.header.definition.recurrence.clone(),
-        };
+        })
+    }
+    /// Validate the current source fully before treating any mismatch as
+    /// positive drift. A changed revision must not mask a corrupt template.
+    pub fn validate_current_source(
+        &self,
+        source: &BotRoutineCreationSource,
+    ) -> Result<(), BotError> {
+        let mut command = self.semantic_command()?;
+        command.expected_bot_revision = source.revision;
+        source.validate_for(&command)
+    }
+    pub fn matches_source(&self, source: &BotRoutineCreationSource) -> Result<bool, BotError> {
+        let command = self.semantic_command()?;
         Ok(self.owner == source.owner
             && self.bot == source.bot
             && self.home == source.home

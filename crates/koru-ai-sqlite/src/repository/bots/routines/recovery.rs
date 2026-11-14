@@ -2,6 +2,42 @@
 use super::*;
 
 impl Repository {
+    /// Reject only positively decoded canonical drift, in the same transaction
+    /// as the exact pending-row CAS and terminal receipt. Unknown/corrupt source
+    /// or owner/lifecycle refusal never becomes disagreement evidence.
+    pub fn reject_changed_bot_routine_creation(
+        &mut self,
+        owner: BotOwner,
+        entry: &BotRoutineRecoveryIdentity,
+        now: i64,
+    ) -> Result<BotRoutineCreation, BotError> {
+        let tx = self.connection.transaction().map_err(bad)?;
+        visible(&tx, owner, entry.bot)?;
+        let mut creation = bounded::by_schedule(&tx, owner, entry.bot, entry.schedule)?
+            .ok_or(BotError::NotFound)?;
+        if creation.observed() != entry.observed
+            || !matches!(
+                creation.state,
+                BotRoutineCreationState::Prepared | BotRoutineCreationState::Unconfirmed
+            )
+        {
+            return Err(BotError::Conflict);
+        }
+        settled(&tx, owner, entry.bot)?;
+        let source = bounded::source(&tx, owner, entry.bot)?;
+        // matches_source short-circuits on a changed revision. Validate all of
+        // today's template/grant fields first, even when the revision differs.
+        creation.identity.validate_current_source(&source)?;
+        if creation.identity.matches_source(&source)? {
+            return Err(BotError::Conflict);
+        }
+        creation.state = BotRoutineCreationState::Conflict;
+        creation.refusal = Some(BotRoutineCreationRefusal::AuthorityChanged);
+        persist_transition(&tx, &mut creation, entry.observed, now)?;
+        tx.commit().map_err(bad)?;
+        Ok(creation)
+    }
+
     /// Scheduling hint only, never owner or effect authority.
     pub fn bot_routine_recovery_needed(&self) -> Result<bool, BotError> {
         self.connection.query_row("SELECT EXISTS(SELECT 1 FROM bot_routines WHERE creation_state IS NULL OR typeof(creation_state)<>'text' OR creation_state NOT IN ('bound','conflict'))", [], |r| r.get(0)).map_err(bad)
