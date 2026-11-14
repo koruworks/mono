@@ -363,13 +363,6 @@ pub(super) fn read_admitted(
                 return Err(corrupt("lease_policy"));
             }
         }
-        let loaded;
-        let admitted = if let Some(admitted) = admitted {
-            admitted
-        } else {
-            loaded = routine::admission(conn, key.run)?;
-            &loaded
-        };
         routine::validate_record(conn, record, admitted)?;
         memory::validate_record(conn, record)?;
     }
@@ -415,7 +408,8 @@ pub(super) fn created(
     };
     // The index locates one unique creation; it is not itself authority.
     // Validate its full evidence and exact retained lease-owner binding.
-    let record = required(conn, &key)?;
+    let source = routine::admission(conn, key.run)?;
+    let record = read_admitted(conn, &key, Some(&source))?.ok_or(BotLedgerError::Invalid)?;
     if record
         .lease
         .as_ref()

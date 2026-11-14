@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{rows::*, *};
-use crate::{AttemptPhase, BotAdmissionRecord, BotLedger, RunsDb, WriteOp, attempts};
+use crate::{AttemptPhase, BotAdmissionRecord, RunsDb, WriteOp, attempts};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) const VERIFIED_RUN_QUERY: &str = "SELECT run_id,operation_id,attempt_id,generation,turn_id FROM native_result_intents WHERE run_id=?1 AND stage='verified' ORDER BY operation_id LIMIT 1";

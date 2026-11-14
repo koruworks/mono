@@ -44,7 +44,7 @@ fn allocate(h: &mut Harness, request: &AllocateMemoryEditRequest) -> MemoryEditA
     )
     .unwrap()
 }
-fn authority(request: &AllocateMemoryEditRequest) -> MemoryEditAuthorityV1 {
+pub(super) fn authority(request: &AllocateMemoryEditRequest) -> MemoryEditAuthorityV1 {
     MemoryEditAuthorityV1 {
         version: 1,
         owner: request.subject.owner,
@@ -57,7 +57,7 @@ fn authority(request: &AllocateMemoryEditRequest) -> MemoryEditAuthorityV1 {
         action: request.subject.action,
     }
 }
-fn resolution(request: &AllocateMemoryEditRequest) -> MemoryBaseResolution {
+pub(super) fn resolution(request: &AllocateMemoryEditRequest) -> MemoryBaseResolution {
     MemoryBaseResolution::Resolved {
         authority: authority(request),
         version: match request.base {
@@ -84,7 +84,7 @@ fn resolve(
     )
     .unwrap()
 }
-fn prepare(
+pub(super) fn prepare(
     h: &mut Harness,
     request: &AllocateMemoryEditRequest,
     resolution: &MemoryBaseResolution,

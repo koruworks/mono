@@ -246,6 +246,79 @@ fn routine_native_composite_subject_current_policy_and_attempt_defenses() {
 }
 
 #[test]
+fn routine_native_retained_marker_refuses_v1_manual_downgrade_for_result_and_memory() {
+    for (memory, orphan) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (mut h, proof) = fixture();
+        if memory {
+            let request = super::memory::request(&h, true);
+            h.db.allocate_memory_edit(&request, fixtures::document(0xd0), &h.fence, &proof)
+                .unwrap();
+            let resolution = super::memory::resolution(&request);
+            h.db.resolve_memory_edit_base(
+                &request.key,
+                request.caller_fingerprint,
+                &resolution,
+                &h.fence,
+                &proof,
+            )
+            .unwrap();
+            super::memory::prepare(&mut h, &request, &resolution);
+        } else {
+            h.prepare();
+        }
+        let mut s = h.db.bot_admission(h.fence.run).unwrap().unwrap().submission;
+        s.provenance.routine = None;
+        s.request.origin = RunOrigin::Manual;
+        assert!(s.valid_for_version(1));
+        h.db.conn()
+            .execute(
+                "UPDATE bot_admissions SET submission_version=1,payload_json=?2 WHERE run_id=?1",
+                params![h.fence.run.to_storage(), serde_json::to_string(&s).unwrap()],
+            )
+            .unwrap();
+        h.db.conn()
+            .execute(
+                "UPDATE run_intents SET payload_json=?2 WHERE run_id=?1",
+                params![
+                    h.fence.run.to_storage(),
+                    serde_json::to_string(&s.request).unwrap()
+                ],
+            )
+            .unwrap();
+        if orphan {
+            h.db.conn().execute_batch("PRAGMA foreign_keys=OFF; DELETE FROM schedule_claims; DELETE FROM bot_routine_routes;").unwrap();
+            assert_eq!(
+                h.db.conn()
+                    .query_row("SELECT count(*) FROM bot_routine_links", [], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+        }
+        let ordinary = FreshBotPolicyProof {
+            global: proof.global,
+            routine: None,
+        };
+        assert!(lease(&mut h, &ordinary).is_err(), "memory {memory}");
+        assert!(h.db.native_result(&h.request.key).is_err());
+        h.request.key.operation_id = Uuid::new_v4();
+        assert!(h.db.prepare_native_result(&h.request).is_err());
+        let fresh_memory = super::memory::request(&h, true);
+        assert!(
+            h.db.allocate_memory_edit(&fresh_memory, fixtures::document(0xd0), &h.fence, &ordinary)
+                .is_err()
+        );
+        assert_eq!(
+            h.db.conn()
+                .query_row("SELECT count(*) FROM native_routine_leases", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
 fn routine_native_created_authority_is_partitioned_and_prior_occurrence_survives() {
     for (from, to, expected) in [
         (0, 1, false),
@@ -293,6 +366,66 @@ fn routine_native_created_authority_is_partitioned_and_prior_occurrence_survives
             expected,
             "{from}->{to} lease"
         );
+    }
+}
+
+#[test]
+fn routine_native_created_fallback_requires_complete_source_link_and_provenance() {
+    for field in 0..3 {
+        let (mut h, proof) = fixture();
+        h.prepare();
+        lease(&mut h, &proof).unwrap();
+        let source = h.fence.run;
+        let source_key = h.request.key.clone();
+        let target = finish(&mut h);
+        next(&mut h);
+        let offered = bind(&mut h, proof.routine.as_ref().unwrap().schedule, 1900);
+        assert!(
+            h.db.created_native_page(&execution(&h), h.request.destination, target)
+                .unwrap()
+        );
+        match field {
+            0 => {
+                h.db.conn()
+                    .execute_batch("PRAGMA foreign_keys=OFF;")
+                    .unwrap();
+                h.db.conn()
+                    .execute(
+                        "DELETE FROM bot_routine_links WHERE run_id=?1",
+                        [source.to_storage()],
+                    )
+                    .unwrap();
+            }
+            1 => {
+                h.db.conn()
+                    .execute(
+                        "UPDATE bot_routine_links SET definition_digest=?2 WHERE run_id=?1",
+                        params![source.to_storage(), [9u8; 32].as_slice()],
+                    )
+                    .unwrap();
+            }
+            _ => {
+                let mut s = h.db.bot_admission(source).unwrap().unwrap().submission;
+                s.provenance.routine.as_mut().unwrap().grant_revision = 2;
+                h.db.conn()
+                    .execute(
+                        "UPDATE bot_admissions SET payload_json=?2 WHERE run_id=?1",
+                        params![source.to_storage(), serde_json::to_string(&s).unwrap()],
+                    )
+                    .unwrap();
+            }
+        }
+        assert!(h.db.native_result(&source_key).is_err());
+        assert!(
+            !h.db
+                .created_native_page(&execution(&h), h.request.destination, target)
+                .unwrap_or(false)
+        );
+        h.request.kind = NativeResultOperation::EditPage;
+        h.request.target = Some(target);
+        h.request.expected_revision = Some(vec![1]);
+        h.prepare();
+        assert!(lease(&mut h, &offered).is_err());
     }
 }
 
@@ -453,6 +586,15 @@ fn routine_native_corrupt_companions_never_read_drain_or_make_policy_effective()
         );
         let retained = h.db.native_result(&h.request.key).unwrap().unwrap();
         let binding = retained.pending_effect().unwrap().binding;
+        let evidence = NativeResultReference {
+            operation_id: retained.key.operation_id,
+            workspace: retained.destination,
+            document: retained.target,
+            version: vec![1],
+            title: "Result".into(),
+            confirmed_at_ms: 1000,
+            kind: NativeResultKind::CreatedPage,
+        };
         // Inject malformed retained storage, never a production repair path.
         h.db.conn().execute_batch("PRAGMA foreign_keys=OFF; DROP TRIGGER native_routine_lease_retained; DROP TRIGGER native_routine_lease_immutable;").unwrap();
         match field {
@@ -528,6 +670,11 @@ fn routine_native_corrupt_companions_never_read_drain_or_make_policy_effective()
             "effective {field}"
         );
         assert!(lease(&mut h, &proof).is_err(), "replay {field}");
+        assert!(
+            h.db.register_native_result(&h.request.key, &evidence)
+                .is_err(),
+            "register {field}"
+        );
         assert!(
             h.db.confirm_native_result(&ConfirmNativeResult {
                 key: h.request.key.clone(),
@@ -628,6 +775,25 @@ fn routine_native_query_plans_keep_target_lookup_and_held_history_indexes() {
     h.prepare();
     lease(&mut h, &proof).unwrap();
     let target = finish(&mut h);
+    for _ in 0..32 {
+        h.request.key.operation_id = Uuid::new_v4();
+        h.prepare();
+        lease(&mut h, &proof).unwrap();
+        finish(&mut h);
+    }
+    h.request.key.operation_id = Uuid::new_v4();
+    h.prepare();
+    lease(&mut h, &proof).unwrap();
+    assert_eq!(
+        h.db.conn()
+            .query_row(
+                "SELECT count(*) FROM native_result_intents WHERE lease_state='settled'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        33
+    );
     let p = proof.routine.as_ref().unwrap();
     let query = format!("EXPLAIN QUERY PLAN {}", rows::CREATED_ROUTINE_QUERY);
     let mut statement = h.db.conn().prepare(&query).unwrap();

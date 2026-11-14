@@ -29,7 +29,10 @@ pub(super) fn subject(
         admitted.submission_version,
         admitted.submission.provenance.routine.as_ref(),
     ) {
-        (1, None) => Ok(None),
+        (1, None) => {
+            routines::deny_run_metadata(conn, admitted.submission.request.run)?;
+            Ok(None)
+        }
         (2, Some(r)) => {
             routines::validate_admission(conn, admitted)?;
             Ok(Some(r.schedule))
@@ -46,7 +49,10 @@ pub(super) fn linked(
         admitted.submission_version,
         admitted.submission.provenance.routine.as_ref(),
     ) {
-        (1, None) => Ok(()),
+        (1, None) => Ok(routines::deny_run_metadata(
+            conn,
+            admitted.submission.request.run,
+        )?),
         (2, Some(_))
             if matches!(
                 routines::validate_admission(conn, admitted)?.link_state,
@@ -98,8 +104,45 @@ pub(super) fn insert(
 pub(super) fn validate_record(
     conn: &Connection,
     record: &mut NativeIntentRecord,
-    admitted: &BotAdmissionRecord,
+    admitted: Option<&BotAdmissionRecord>,
 ) -> Result<(), BotLedgerError> {
+    let loaded;
+    let admitted = if let Some(admitted) = admitted {
+        admitted
+    } else {
+        // Preserve ordinary retained reads without copying their task/policy
+        // body. v2 alone needs the complete cross-representation validator.
+        let (version,user,device,bot):(u8,String,String,String)=conn.query_row("SELECT submission_version,
+            CASE WHEN typeof(user_scope)='text' AND length(CAST(user_scope AS BLOB))=36 THEN user_scope END,
+            CASE WHEN typeof(device_id)='text' AND length(CAST(device_id AS BLOB))=36 THEN device_id END,
+            CASE WHEN typeof(bot_id)='text' AND length(CAST(bot_id AS BLOB))=36 THEN bot_id END
+            FROM bot_admissions WHERE run_id=?1",[record.key.run.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(rows::sql)?;
+        if version == 1 {
+            // A retained Routine marker cannot be reclassified as Interactive
+            // by changing the admission version column.
+            routines::deny_run_metadata(conn, record.key.run)?;
+            let owner = BotOwner {
+                user_scope: user.parse().map_err(|_| corrupt("owner"))?,
+                device: device.parse().map_err(|_| corrupt("device"))?,
+            };
+            let bot: BotId = bot.parse().map_err(|_| corrupt("bot"))?;
+            let companion:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM native_routine_leases WHERE run_id=?1 AND operation_id=?2)",params![record.key.run.to_storage(),record.key.operation_id.to_string()],|r|r.get(0)).map_err(rows::sql)?;
+            if companion
+                || record
+                    .lease
+                    .as_ref()
+                    .is_some_and(|l| l.policy.key.owner != owner || l.policy.key.bot != bot)
+            {
+                return Err(corrupt("interactive_subject"));
+            }
+            return Ok(());
+        }
+        if version != 2 {
+            return Err(corrupt("submission_version"));
+        }
+        loaded = admission(conn, record.key.run)?;
+        &loaded
+    };
     let schedule = subject(conn, admitted)?;
     let p = &admitted.submission.provenance;
     let found = conn.query_row("SELECT
