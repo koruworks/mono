@@ -119,6 +119,7 @@ impl RunsDb {
 pub(super) fn fresh(
     conn: &Connection,
     submission: &BotSubmission,
+    admission: &BotAdmissionBarrier,
     proof: &FreshBotPolicyProof,
 ) -> Result<(), BotLedgerError> {
     if !proof.effects_allowed_for(submission) {
@@ -128,13 +129,20 @@ pub(super) fn fresh(
     // A new claim binds the current captured execution configuration. Native
     // lease freshness permits newer fences; it cannot authorize stale task
     // configuration at this earlier admission boundary.
-    if proof.global.config_revision != p.config_revision {
+    if proof.global.config_revision != p.config_revision
+        || proof.global.policy_revision != p.policy_revision
+        || proof.routine.as_ref().map(|r| r.grant_revision)
+            != p.routine.map(|r| r.grant_revision)
+    {
         return Err(BotLedgerError::Stale);
     }
-    if let Some(barrier) = super::super::repository::barrier(conn, p.owner, p.bot)? {
-        if barrier.paused || p.config_revision < barrier.epoch {
-            return Err(BotLedgerError::Fenced);
-        }
+    if admission.owner != p.owner
+        || admission.bot != p.bot
+        || admission.paused
+        || admission.epoch != p.config_revision
+        || super::super::repository::barrier(conn, p.owner, p.bot)?.as_ref() != Some(admission)
+    {
+        return Err(BotLedgerError::Fenced);
     }
     let global = crate::native_results::current_policy(conn, p.owner, p.bot)?
         .ok_or(BotLedgerError::Fenced)?;

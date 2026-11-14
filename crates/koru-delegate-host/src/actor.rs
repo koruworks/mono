@@ -76,6 +76,20 @@ pub enum Command {
         authored_scope: koru_delegate_core::WorkspaceScope,
         reply: mpsc::SyncSender<PortResult<ScheduleAdmission>>,
     },
+    RoutineBegin {
+        prepared: Box<koru_delegate_core::RoutinePrepared>,
+        admission: koru_delegate_core::BotAdmissionBarrier,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        scope: ScopeIdentity,
+        authored_scope: koru_delegate_core::WorkspaceScope,
+        deadline: Instant,
+        cancelled: Arc<AtomicBool>,
+        reply: mpsc::SyncSender<PortResult<ScheduleAdmission>>,
+    },
+    RoutineRelease {
+        run: RunId,
+        reply: mpsc::SyncSender<PortResult<()>>,
+    },
     ScheduleFinish {
         run: RunId,
         claim: SlotClaim,
@@ -157,8 +171,9 @@ pub enum Command {
 }
 
 mod bots;
+mod routine;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 struct Watcher {
     next_index: u64,
@@ -195,9 +210,15 @@ fn failed_created_start_disposition(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScheduleLease {
+    Ordinary(RunId),
+    Routine(RunId),
+}
+
 pub struct Actor {
     orchestrator: Orchestrator,
-    schedule_admission: Option<RunId>,
+    schedule_admission: Option<ScheduleLease>,
     claimed_schedule_retries: Vec<ScheduledScopeReservation>,
     deferred_restart_starts: VecDeque<RunId>,
     deferred_restart_retry_at: Option<Instant>,
@@ -252,7 +273,7 @@ impl Actor {
     }
 
     fn may_finish_schedule(&self, run: RunId) -> bool {
-        self.schedule_admission == Some(run)
+        self.schedule_admission == Some(ScheduleLease::Ordinary(run))
             || (self.schedule_admission.is_none()
                 && self
                     .claimed_schedule_retries
@@ -600,6 +621,13 @@ impl Actor {
                 }
             }
             Command::Stop { .. } | Command::ScheduleStopped => {}
+            Command::RoutineBegin { prepared, admission, proof, scope, authored_scope, deadline, cancelled, reply } => {
+                self.begin_routine(*prepared, admission, proof, scope, authored_scope, deadline, cancelled, reply);
+            }
+            Command::RoutineRelease { run, reply } => {
+                let result = self.release_routine(run);
+                let _ = reply.send(result);
+            }
             Command::ScheduleBegin {
                 run,
                 scope,
@@ -625,7 +653,7 @@ impl Actor {
                 {
                     Ok(ScheduleAdmission::Busy(holder))
                 } else {
-                    self.schedule_admission = Some(run);
+                    self.schedule_admission = Some(ScheduleLease::Ordinary(run));
                     Ok(ScheduleAdmission::Granted)
                 };
                 let _ = reply.send(result);
@@ -637,6 +665,10 @@ impl Actor {
                 authored_scope,
                 reply,
             } => {
+                if matches!(self.schedule_admission, Some(ScheduleLease::Routine(_))) {
+                    let _ = reply.send(Err(routine::refused("admission_phase")));
+                    return;
+                }
                 let result = if self.may_finish_schedule(run) {
                     let identity = scope.identity.clone();
                     let result = ScheduleEffects::finish(
@@ -669,7 +701,7 @@ impl Actor {
                 self.wake_bots();
             }
             Command::ScheduleAbort { run } => {
-                if self.schedule_admission == Some(run) {
+                if self.schedule_admission == Some(ScheduleLease::Ordinary(run)) {
                     self.schedule_admission = None;
                     self.drain_deferred_starts();
                     self.wake_bots();
@@ -680,6 +712,10 @@ impl Actor {
                 authored_scope,
                 reply,
             } => {
+                if matches!(self.schedule_admission, Some(ScheduleLease::Routine(_))) {
+                    let _ = reply.send(Err(routine::refused("admission_phase")));
+                    return;
+                }
                 let run = claim.run;
                 let identity = self
                     .orchestrator

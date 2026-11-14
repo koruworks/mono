@@ -186,6 +186,22 @@ pub enum ScheduleAdmission {
 /// defers manual scope-claiming commands until `finish` or `abort` releases the
 /// lease. None of this runs on a socket connection thread.
 pub trait ScheduleEffects {
+    /// Routine arbitration needs the actor's acknowledged lease owner. Ordinary
+    /// direct Orchestrator implementations deliberately cannot grant this phase.
+    fn begin_routine(
+        &mut self,
+        _prepared: &koru_delegate_core::RoutinePrepared,
+        _admission: &koru_delegate_core::BotAdmissionBarrier,
+        _proof: &koru_delegate_core::FreshBotPolicyProof,
+        _scope: ScopeIdentity,
+        _authored_scope: koru_delegate_core::WorkspaceScope,
+        _deadline: std::time::Instant,
+    ) -> PortResult<ScheduleAdmission> {
+        Err(PortError::new(Port::Schedules, "routine_actor_required", "Routine arbitration requires the actor"))
+    }
+    fn release_routine(&mut self, _run: RunId, _deadline: std::time::Instant) -> PortResult<()> {
+        Err(PortError::new(Port::Schedules, "routine_actor_required", "Routine release requires the actor"))
+    }
     fn begin(
         &mut self,
         run: RunId,

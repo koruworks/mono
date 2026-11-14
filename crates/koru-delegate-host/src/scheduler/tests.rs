@@ -247,6 +247,7 @@ fn full_handle_shutdown_wakes_a_scheduler_waiting_behind_a_blocked_publisher() {
 
     let (commands, _inbox) = mpsc::channel();
     let handle = Handle {
+        stopped: Arc::new(AtomicBool::new(false)),
         commands,
         wake: ScheduleWake::new(|| {}),
         catalog: Arc::new(CatalogControl::new()),
