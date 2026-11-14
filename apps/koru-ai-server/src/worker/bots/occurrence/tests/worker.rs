@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Production client/worker/Store path; delegate and catalog are strict peers.
 use super::*;
-use koru_delegate_core::RoutineTerminalReason;
 use crate::bots::routine::tests::Fixture;
+use koru_delegate_core::RoutineTerminalReason;
 use std::{
     future::Future,
     pin::Pin,
@@ -78,6 +78,8 @@ fn gate() -> (Gate, Receiver<()>, Release) {
 }
 
 struct Delegate {
+    owner: koru_delegate_core::BotOwner,
+    boot: koru_delegate_core::DelegateBootId,
     records: Mutex<BTreeMap<i64, RoutineClaimRecord>>,
     calls: Mutex<Vec<&'static str>>,
     unknown_ack: AtomicBool,
@@ -87,9 +89,11 @@ struct Delegate {
     read_gate: Mutex<Option<Gate>>,
     ack_gate: Mutex<Option<Gate>>,
 }
-impl Default for Delegate {
-    fn default() -> Self {
+impl Delegate {
+    fn new(owner: koru_delegate_core::BotOwner) -> Self {
         Self {
+            owner,
+            boot: koru_delegate_core::DelegateBootId::mint(),
             records: Default::default(),
             calls: Default::default(),
             unknown_ack: AtomicBool::new(false),
@@ -145,9 +149,17 @@ impl BotDelegatePort for Delegate {
         within: Duration,
     ) -> Result<BotReply, koru_delegate_api::Failure> {
         match command {
-            DelegateCommand::Hello { .. } | DelegateCommand::PendingNativeEffects { .. } => {
-                Err(unavailable())
+            DelegateCommand::Hello { owner, .. } => {
+                assert_eq!(owner, self.owner);
+                Ok(BotReply::Hello {
+                    hello: koru_delegate_core::BotHello {
+                        boot: self.boot,
+                        entries: vec![],
+                        next: None,
+                    },
+                })
             }
+            DelegateCommand::PendingNativeEffects { .. } => Err(unavailable()),
             DelegateCommand::ReadRoutineClaim { slot } => {
                 assert!(within <= ROUTINE_BRIDGE_DEADLINE);
                 self.calls.lock().unwrap().push("read");
@@ -384,7 +396,7 @@ impl Harness {
             schedule_definition: definition,
         };
         let catalog = Catalog::new();
-        let delegate = Arc::new(Delegate::default());
+        let delegate = Arc::new(Delegate::new(fixture.creation.identity.owner));
         let authority = Arc::new(Authority {
             adapter: fixture.adapter.clone(),
             captures: AtomicUsize::new(0),
