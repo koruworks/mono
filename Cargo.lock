@@ -6681,6 +6681,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "koru-account-core",
  "koru-account-session",
+ "koru-blob-sync",
  "koru-core",
  "koru-device",
  "koru-store-core",
