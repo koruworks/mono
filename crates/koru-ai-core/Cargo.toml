@@ -12,6 +12,7 @@ default = []
 schema = ["dep:schemars", "koru-store-core/schema", "koru-delegate-core/schema", "koru-delegate-schedule/schema"]
 
 [dependencies]
+blake3.workspace = true
 koru-delegate-core = { path = "../koru-delegate-core" }
 koru-delegate-schedule = { path = "../koru-delegate-schedule" }
 koru-link = { path = "../koru-link" }
