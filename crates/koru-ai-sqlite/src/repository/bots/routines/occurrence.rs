@@ -7,6 +7,7 @@ use koru_delegate_core::{
     RoutineLinkState, RoutinePrepared, RoutineSlot, RoutineTerminalReason,
 };
 mod finalize;
+mod preclaim;
 mod recovery;
 mod rows;
 #[cfg(test)]
