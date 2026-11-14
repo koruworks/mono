@@ -663,6 +663,9 @@ pub trait ScheduleDocumentHandle: Send {
     /// Bind a single-use claim to this handle's real Store workspace. The
     /// caller supplies only the occurrence plan; it cannot pair the document
     /// with an arbitrary workspace or later substitute another slot/request.
+    /// For BotRoutine, implementations must also bind the physical Store
+    /// DocumentId to the candidate ScheduleId. Header identity alone cannot
+    /// prove the canonical physical location of a copied Schedule document.
     fn claim_authority(
         &self,
         device: koru_delegate_core::DeviceId,

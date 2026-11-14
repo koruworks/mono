@@ -1074,21 +1074,11 @@ fn bind_routine(
             miss.occurrence_ms < definition.effective_at_ms
                 || miss.occurrence_ms >= prepared.slot.occurrence_ms
                 || miss.planned_run == prepared.ids.run
+                || miss.planned_run.to_storage().parse::<RunId>().ok() != Some(miss.planned_run)
         })
     {
         return Err(ScheduleDocumentError::ClaimBindingMismatch);
     }
-    // Validate the remaining neutral identity constraints at mint time as well
-    // as consumption. No clone of these process-local facts leaves this method.
-    RoutineClaimFacts::from_consumed_authority(
-        prepared.clone(),
-        slot,
-        prepared.definition,
-        workspace,
-        association.creation_request,
-        representative_miss,
-    )
-    .ok_or(ScheduleDocumentError::ClaimBindingMismatch)?;
     Ok(BoundScheduleClaim::BotRoutine {
         prepared,
         representative_miss,

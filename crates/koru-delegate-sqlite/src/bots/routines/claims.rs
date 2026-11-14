@@ -2,10 +2,37 @@
 
 use super::{policy, rows::*, *};
 use crate::BOT_PENDING_LIMIT;
+
+#[cfg(test)]
+mod tests;
+
+const BUSY_EXECUTION: &str = "SELECT CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END FROM bot_admissions INDEXED BY bot_admissions_execution WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state IN ('reserved','executing')";
+const BUSY_QUEUE: &str = "SELECT CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END FROM bot_admissions INDEXED BY bot_admissions_queue WHERE state='queued' AND user_scope=?1 AND device_id=?2 AND bot_id=?3 ORDER BY queue_sequence LIMIT 1";
+fn busy_holder(conn: &Connection, slot: &RoutineSlot) -> Result<Option<RunId>, BotLedgerError> {
+    for query in [BUSY_EXECUTION, BUSY_QUEUE] {
+        let holder = conn
+            .query_row(
+                query,
+                params![
+                    slot.owner.user_scope.to_storage(),
+                    slot.owner.device.to_storage(),
+                    slot.bot.to_storage()
+                ],
+                |r| Ok(parse_cell(r, 0)),
+            )
+            .optional()
+            .map_err(sql)?
+            .transpose()?;
+        if holder.is_some() {
+            return Ok(holder);
+        }
+    }
+    Ok(None)
+}
 use koru_delegate_core::*;
 
 /// Check size without allocating a serialized copy of a malformed candidate.
-fn bounded_json(value: &impl serde::Serialize) -> Result<String, BotLedgerError> {
+fn bounded_payloads(value: &BotSubmission) -> Result<(String, String), BotLedgerError> {
     struct Count(usize);
     impl std::io::Write for Count {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -21,7 +48,11 @@ fn bounded_json(value: &impl serde::Serialize) -> Result<String, BotLedgerError>
         }
     }
     serde_json::to_writer(&mut Count(0), value).map_err(|_| BotLedgerError::Invalid)?;
-    serde_json::to_string(value).map_err(|_| BotLedgerError::Invalid)
+    serde_json::to_writer(&mut Count(0), &value.request).map_err(|_| BotLedgerError::Invalid)?;
+    Ok((
+        serde_json::to_string(value).map_err(|_| BotLedgerError::Invalid)?,
+        serde_json::to_string(&value.request).map_err(|_| BotLedgerError::Invalid)?,
+    ))
 }
 
 fn skip(
@@ -114,17 +145,15 @@ impl RunsDb {
             // O85: the existing 50 pending entries are per owner/device/Bot;
             // any actual unsettled holder shadows that defensive queue check.
             // Host capacity two is still enforced only at reservation time.
-            let holder: Option<RunId> = tx.query_row("SELECT CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state IN ('queued','reserved','executing') ORDER BY CASE state WHEN 'executing' THEN 0 WHEN 'reserved' THEN 1 ELSE 2 END,queue_sequence LIMIT 1",
-                params![slot.owner.user_scope.to_storage(),slot.owner.device.to_storage(),slot.bot.to_storage()],|r|Ok(parse_cell(r,0))).optional().map_err(sql)?.transpose()?;
+            let holder = busy_holder(tx,slot)?;
             if let Some(holder) = holder {
                 if holder == prepared.ids.run { return Err(BotLedgerError::Conflict); }
                 let record = skip(tx,*slot,prepared.definition.revision,prepared.ids.run,RoutineSkipOutcome::SkippedBusy {holder},now)?;
                 return Ok((RoutineClaimObservation::Skipped {record},representative(tx,&facts,now)?));
             }
-            let pending: i64 = tx.query_row("SELECT count(*) FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state='queued'",params![slot.owner.user_scope.to_storage(),slot.owner.device.to_storage(),slot.bot.to_storage()],|r|r.get(0)).map_err(sql)?;
+            let pending: i64 = tx.query_row("SELECT count(*) FROM bot_admissions INDEXED BY bot_admissions_queue WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state='queued'",params![slot.owner.user_scope.to_storage(),slot.owner.device.to_storage(),slot.bot.to_storage()],|r|r.get(0)).map_err(sql)?;
             if pending >= BOT_PENDING_LIMIT as i64 { return Err(BotLedgerError::Capacity); }
-            let payload = bounded_json(&prepared.submission)?;
-            let ordinary = bounded_json(&prepared.submission.request)?;
+            let (payload,ordinary) = bounded_payloads(&prepared.submission)?;
             let p = &prepared.submission.provenance;
             let ids = &prepared.ids;
             let sequence: i64 = tx.query_row("SELECT COALESCE(MAX(queue_sequence),0)+1 FROM bot_admissions",[],|r|r.get(0)).map_err(sql)?;

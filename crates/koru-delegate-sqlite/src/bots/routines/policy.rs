@@ -39,7 +39,7 @@ fn read_policy(
         effects_allowed, CASE WHEN state IN ('pending','effective') THEN state END
         FROM bot_routine_policy_barriers WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND schedule_id=?4
         AND (?5 IS NULL OR request_id=?5) ORDER BY grant_revision DESC LIMIT 1",
-        params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage(),schedule.to_storage(),request.map(|r|r.to_string())], |r| Ok((|| {
+        params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage(),schedule.to_storage(),request.map(|r|r.to_storage())], |r| Ok((|| {
             let grant_revision: u64 = r.get(1).map_err(sql)?;
             if grant_revision == 0 { return Err(bad("grant_revision")); }
             Ok(RoutinePolicyRecord {
@@ -78,7 +78,7 @@ impl RunsDb {
             }
             let state = if held(tx,offered.owner,offered.bot,offered.schedule)? { "pending" } else { "effective" };
             tx.execute("INSERT INTO bot_routine_policy_barriers(user_scope,device_id,bot_id,schedule_id,request_id,grant_revision,payload_digest,effects_allowed,state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)",
-                params![offered.owner.user_scope.to_storage(),offered.owner.device.to_storage(),offered.bot.to_storage(),offered.schedule.to_storage(),offered.request.to_string(),offered.grant_revision,digest.as_bytes().as_slice(),offered.effects_allowed,state,now]).map_err(sql)?;
+                params![offered.owner.user_scope.to_storage(),offered.owner.device.to_storage(),offered.bot.to_storage(),offered.schedule.to_storage(),offered.request.to_storage(),offered.grant_revision,digest.as_bytes().as_slice(),offered.effects_allowed,state,now]).map_err(sql)?;
             read_policy(tx,offered.owner,offered.bot,offered.schedule,Some(offered.request))?.ok_or_else(|| bad("policy"))
         })
     }
@@ -110,7 +110,7 @@ impl RunsDb {
             let old = read_policy(tx,owner,bot,schedule,Some(request))?.ok_or(BotLedgerError::Invalid)?;
             if old.state == BotPolicyBarrierState::Pending && !held(tx,owner,bot,schedule)? {
                 tx.execute("UPDATE bot_routine_policy_barriers SET state='effective',updated_at_ms=?6 WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND schedule_id=?4 AND request_id=?5",
-                    params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage(),schedule.to_storage(),request.to_string(),now]).map_err(sql)?;
+                    params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage(),schedule.to_storage(),request.to_storage(),now]).map_err(sql)?;
             }
             read_policy(tx,owner,bot,schedule,Some(request))?.ok_or_else(|| bad("policy"))
         })

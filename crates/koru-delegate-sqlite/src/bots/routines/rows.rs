@@ -141,6 +141,14 @@ pub(super) fn observation(
         });
     };
     if matches!(outcome.as_str(), "skipped_missed" | "skipped_busy") {
+        if let Some(holder) = holder {
+            // Admissions are retained. The holder may since have settled, but
+            // it must still be an actual admission of this exact owner/Bot.
+            let same_subject: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE run_id=?1 AND user_scope=?2 AND device_id=?3 AND bot_id=?4)",params![holder.to_storage(),slot.owner.user_scope.to_storage(),slot.owner.device.to_storage(),slot.bot.to_storage()],|r|r.get(0)).map_err(sql)?;
+            if !same_subject {
+                return Err(bad("busy_holder_subject"));
+            }
+        }
         let record = RoutineSkippedClaim {
             slot: *slot,
             definition_revision: revision,
