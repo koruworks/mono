@@ -430,7 +430,25 @@ fn context_library_bound_memory_and_geometry_are_host_fed() {
         lang: koru_i18n::Lang::En,
     };
     let semantic = v.bot_context_semantics(&cx).unwrap();
-    assert_eq!(semantic.children.len(), 5);
+    assert_eq!(
+        semantic.children.len(),
+        7,
+        "two selectors, three links, refresh and manage"
+    );
+    for (index, key, selected) in [
+        (0, crate::bots::view::context_library::LIBRARY_SECTION, true),
+        (
+            1,
+            crate::bots::view::context_library::ROUTINES_SECTION,
+            false,
+        ),
+    ] {
+        assert_eq!(
+            semantic.children[index].occurrence,
+            v.context_occurrence(&cx, key).unwrap()
+        );
+        assert_eq!(semantic.children[index].selected, Some(selected));
+    }
     let manage = semantic.children.last().unwrap().occurrence;
     assert!(v.accessibility_action(&mut w.ws, manage, accesskit::Action::Focus, None));
     assert_eq!(v.bot_context.focus, Some(MANAGE));
