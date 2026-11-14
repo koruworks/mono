@@ -40,6 +40,7 @@ mod documents;
 mod events;
 mod ledger;
 mod roots;
+mod routine_bridge;
 mod schedule_events;
 mod scheduler;
 pub mod schedules;
@@ -221,6 +222,13 @@ fn serve(
             ..Options::default()
         },
     );
+    let schedule_event_authority = Arc::new(schedule_events::ScheduleEventAuthorityGate::new());
+    let schedule_stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let routine_bridge = routine_bridge::HostRoutineBridge::new(
+        &gateway.client,
+        bootstrap.bot_authority(),
+        Arc::clone(&schedule_stopped),
+    );
     let scheduler = ScheduleCoordinator::new(
         Box::new(schedules::StoreSchedules::new(gateway.client.clone())),
         Box::new(ledger.clone()),
@@ -231,8 +239,12 @@ fn serve(
     .with_events(Box::new(schedule_events::BusScheduleEvents::new(
         gateway.client.clone(),
         ledger.clone(),
-    )));
-    let schedule_event_authority = Arc::new(schedule_events::ScheduleEventAuthorityGate::new());
+    )))
+    .with_routines(
+        Box::new(ledger.clone()),
+        Box::new(routine_bridge),
+        Box::new(schedule_event_authority.as_ref().clone()),
+    );
     let schedule_publisher = Box::new(schedule_events::BusScheduleEvents::publisher(
         gateway.client.clone(),
         ledger.clone(),
@@ -247,6 +259,7 @@ fn serve(
         commands.clone(),
         schedule_publisher,
         schedule_event_authority,
+        schedule_stopped,
     )?;
     actor.attach_scheduler(scheduler.control());
     let listener = koru_ipc::Listener::bind(
