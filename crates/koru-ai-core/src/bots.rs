@@ -4,7 +4,7 @@
 
 use crate::{Chat, ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
 pub use koru_delegate_core::{BotId, BotRequestId, DeviceId, RunId};
-use koru_delegate_core::{Objective, ScheduleId};
+use koru_delegate_core::Objective;
 use koru_delegate_schedule::{RecurrenceRule, ScheduleName};
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
