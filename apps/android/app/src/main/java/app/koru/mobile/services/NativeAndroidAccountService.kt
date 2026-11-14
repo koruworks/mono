@@ -51,6 +51,16 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         cancel = { owner, generation -> adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation,
             expectedOwnerScope = owner) })
     val cloudStorageState = cloudStorage.state
+    private val cloudInventory = CloudInventoryPresentation(scope,
+        read = { owner, selection, cursor ->
+            val documents = selection as? CloudInventorySelection.Documents
+            adapter.command(if (documents == null) AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES
+                else AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS,
+                expectedOwnerScope = owner, cloudWorkspaceId = documents?.workspace,
+                cloudIncarnationId = documents?.incarnation, cloudCursor = cursor)
+        },
+        cancel = { owner, generation -> adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation, expectedOwnerScope = owner) })
+    val cloudInventoryState = cloudInventory.state
     private val cycle = AccountPresentationCycle(presentation) {
         try {
             if (adapter.tick()) AccountObservation(adapter.status.value, adapter.results.value) else null
@@ -91,6 +101,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
                 cycle.tick()
                 cloudSync.observe(adapter.status.value, adapter.results.value)
                 cloudStorage.observe(adapter.status.value, adapter.results.value)
+                cloudInventory.observe(adapter.status.value, adapter.results.value)
                 cloudSync.inspect(adapter.status.value)
                 delay(200)
             }
@@ -110,6 +121,12 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
     fun refreshCloudStorage() {
         scope.launch { cloudStorage.retry(adapter.status.value) }
     }
+    fun cloudInventoryVisible(visible: Boolean) { scope.launch { cloudInventory.visibility(visible, adapter.status.value) } }
+    fun cloudInventoryFirst(owner: Long) { scope.launch { cloudInventory.first(owner) } }
+    fun cloudInventoryNext(owner: Long) { scope.launch { cloudInventory.next(owner) } }
+    fun cloudInventoryPrevious(owner: Long) { scope.launch { cloudInventory.previous(owner) } }
+    fun cloudInventoryWorkspaces(owner: Long) { scope.launch { cloudInventory.workspaces(owner) } }
+    fun cloudInventoryDocuments(row: CloudWorkspaceRow, owner: Long) { scope.launch { cloudInventory.documents(row, owner) } }
 
     fun act(intent: AccountIntent, ownerScope: Long, locale: String = "", profile: ProfileId? = null, accountId: String? = null, profiles: List<ProfileId> = emptyList()) {
         if (intent == AccountIntent.RelinkDevices && !presentation.queueRelink(ownerScope)) return
@@ -128,6 +145,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         browser.foreground(value)
         adapter.foreground(true)
         scope.launch { cloudStorage.foreground(true, adapter.status.value) }
+        scope.launch { cloudInventory.foreground(true, adapter.status.value) }
         if (returning) scope.launch { cycle.foregrounded() }
     }
 
@@ -138,6 +156,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
             activity = null
             adapter.foreground(false)
             scope.launch { cloudStorage.foreground(false, adapter.status.value) }
+            scope.launch { cloudInventory.foreground(false, adapter.status.value) }
         }
     }
 }

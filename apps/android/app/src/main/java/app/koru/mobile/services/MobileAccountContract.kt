@@ -14,6 +14,16 @@ internal object MobileAccountContract {
         require(command.action != AccountAction.ACCOUNT_ACTION_UNSPECIFIED && command.action != AccountAction.UNRECOGNIZED)
         if (command.action !in setOf(AccountAction.ACCOUNT_ACTION_ADD_ACCOUNT, AccountAction.ACCOUNT_ACTION_SWITCH_ACCOUNT)) require(command.hasExpectedOwnerScope())
         require(command.locale.toByteArray(Charsets.UTF_8).size <= 64 && command.profileId.length <= 36 && command.accountId.length <= 36)
+        if (command.action == AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS) {
+            require(command.hasCloudWorkspaceId() && command.hasCloudIncarnationId())
+            listOf(command.cloudWorkspaceId, command.cloudIncarnationId).forEach {
+                require(UUID.fromString(it).toString() == it)
+            }
+        } else require(!command.hasCloudWorkspaceId() && !command.hasCloudIncarnationId())
+        if (command.action in setOf(AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES,
+                AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS)) {
+            if (command.hasCloudCursor()) CloudInventoryDecoder.requireCursor(command.cloudCursor)
+        } else require(!command.hasCloudCursor())
         if (command.action == AccountAction.ACCOUNT_ACTION_CANCEL) require(command.generation != 0L)
         if (command.action == AccountAction.ACCOUNT_ACTION_SELECT_PROFILES) {
             require(command.profileIdsList == command.profileIdsList.distinct().sorted())

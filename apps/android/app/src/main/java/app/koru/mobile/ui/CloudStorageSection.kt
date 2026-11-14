@@ -21,7 +21,7 @@ import java.util.Date
 /** Native account-screen composition: text carries every meaning, exact values
  * wrap with enlarged fonts, and refresh never changes keyboard/TalkBack focus. */
 @Composable
-internal fun CloudStorageSection(state: CloudStorageState, refresh: () -> Unit) {
+internal fun CloudStorageSection(state: CloudStorageState, refresh: () -> Unit, files: () -> Unit) {
     val locale = LocalConfiguration.current.locales[0]
     val snapshot = state.snapshot
     var details by remember(state.ownerScope, state.accountId) { mutableStateOf(false) }
@@ -51,6 +51,7 @@ internal fun CloudStorageSection(state: CloudStorageState, refresh: () -> Unit) 
             snapshot.used?.let { Text(stringResource(R.string.cloud_storage_used, cloudStorageInteger(it, locale))) }
         }
         Text(stringResource(R.string.cloud_storage_explanation), style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = files) { Text(stringResource(R.string.cloud_inventory_view)) }
         TextButton(onClick = refresh, enabled = !state.loading) {
             Text(stringResource(if (state.failed || state.stale || snapshot?.usage != CloudStorageUsage.Known ||
                 snapshot.allowance == CloudStorageAllowance.Unavailable) R.string.account_retry else R.string.cloud_storage_refresh))
