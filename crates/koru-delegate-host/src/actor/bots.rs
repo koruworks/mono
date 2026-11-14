@@ -294,6 +294,14 @@ impl Actor {
                     .bot_barrier(&barrier, device)
                     .map_err(bot_failure)?,
             },
+            BotCommand::ReadAdmissionBarrier { owner, bot } => BotReply::AdmissionBarrier {
+                owner,
+                bot,
+                admission: self
+                    .orchestrator
+                    .bot_read_admission_barrier(owner, bot, device)
+                    .map_err(bot_failure)?,
+            },
             BotCommand::UnsettledWork { owner, bot, limit } => BotReply::UnsettledWork {
                 work: self
                     .orchestrator

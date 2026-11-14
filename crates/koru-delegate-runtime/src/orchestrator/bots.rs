@@ -190,6 +190,25 @@ impl Orchestrator {
         })
     }
 
+    /// Independent current metadata; no boot invalidation or dispatch wake.
+    pub fn bot_read_admission_barrier(
+        &mut self,
+        owner: BotOwner,
+        bot: koru_delegate_core::BotId,
+        device: DeviceId,
+    ) -> Result<koru_delegate_core::BotBootAdmission, RunError> {
+        owner_device(owner, device)?;
+        if DeviceId::parse(&device.to_storage()) != Some(device)
+            || bot.to_storage().parse::<koru_delegate_core::BotId>() != Ok(bot)
+        {
+            return Err(refused("bot_invalid"));
+        }
+        Ok(match self.bot_ledger()?.bot_barrier(owner, bot)? {
+            Some(barrier) => koru_delegate_core::BotBootAdmission::Present { barrier },
+            None => koru_delegate_core::BotBootAdmission::Missing {},
+        })
+    }
+
     pub fn bot_barrier(
         &mut self,
         barrier: &BotAdmissionBarrier,

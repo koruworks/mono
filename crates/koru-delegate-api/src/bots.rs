@@ -120,6 +120,11 @@ pub enum BotCommand {
     Barrier {
         barrier: BotAdmissionBarrier,
     },
+    /// IPC 15: independent current admission metadata, including positive absence.
+    ReadAdmissionBarrier {
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+    },
     /// IPC 12: one Bot's unsettled admissions, read from the ledger now (at
     /// most one reserved or executing, then up to `limit` queued, 1..=64).
     UnsettledWork {
@@ -265,6 +270,7 @@ impl BotCommand {
             Self::RegisterRoutineRoute { identity } => Some(&identity.owner),
             Self::Hello { owner, .. }
             | Self::PendingNativeEffects { owner, .. }
+            | Self::ReadAdmissionBarrier { owner, .. }
             | Self::UnsettledWork { owner, .. } => Some(owner),
             Self::Submit { submission } => Some(&submission.provenance.owner),
             Self::Reconcile { key } => Some(&key.owner),
@@ -346,6 +352,11 @@ pub enum BotReply {
     Barrier {
         barrier: BotAdmissionBarrier,
     },
+    AdmissionBarrier {
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+        admission: koru_delegate_core::BotBootAdmission,
+    },
     UnsettledWork {
         work: BotUnsettledWork,
     },
@@ -400,6 +411,58 @@ impl std::fmt::Debug for BotReply {
 /// substitute an ordinary diagnostic principal label for it.
 pub trait BotDelegatePort: Send + Sync {
     fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure>;
+    /// Read the exact subject once within the remaining caller budget. Paused
+    /// metadata is not readiness. A legacy port may ignore its I/O bound; this
+    /// helper rejects a late answer but cannot interrupt that implementation.
+    fn read_admission_barrier(
+        &self,
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+        within: std::time::Duration,
+    ) -> Result<koru_delegate_core::BotBootAdmission, crate::Failure> {
+        let started = std::time::Instant::now();
+        let unknown = || crate::Failure::unavailable();
+        if within.is_zero()
+            || owner.device.as_uuid().is_nil()
+            || koru_delegate_core::DeviceId::parse(&owner.device.to_storage()) != Some(owner.device)
+            || bot.to_storage().parse::<koru_delegate_core::BotId>() != Ok(bot)
+        {
+            return Err(unknown());
+        }
+        let remaining = within
+            .checked_sub(started.elapsed())
+            .filter(|left| !left.is_zero())
+            .ok_or_else(unknown)?;
+        let answer =
+            self.execute_within(BotCommand::ReadAdmissionBarrier { owner, bot }, remaining)?;
+        if started.elapsed() >= within {
+            return Err(unknown());
+        }
+        match answer {
+            BotReply::AdmissionBarrier {
+                owner: observed_owner,
+                bot: observed_bot,
+                admission,
+            } if observed_owner == owner && observed_bot == bot => match &admission {
+                koru_delegate_core::BotBootAdmission::Missing {} => Ok(admission),
+                koru_delegate_core::BotBootAdmission::Present { barrier }
+                    if barrier.owner == owner
+                        && barrier.bot == bot
+                        && barrier.epoch > 0
+                        && barrier.epoch <= i64::MAX as u64
+                        && barrier
+                            .request
+                            .to_storage()
+                            .parse::<koru_delegate_core::BotRequestId>()
+                            == Ok(barrier.request) =>
+                {
+                    Ok(admission)
+                }
+                _ => Err(unknown()),
+            },
+            _ => Err(unknown()),
+        }
+    }
     /// The same, waiting at most `within` for the answer; past it the call
     /// fails `delegate_unavailable` (retryable) and whatever the owner does
     /// with it is not reported, so only reads use it, and the AI owner's
