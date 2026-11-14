@@ -167,7 +167,7 @@ impl RoutineCallGates {
             (&self.mutation, 2)
         };
         counter
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < limit).then_some(n + 1)
             })
             .map_err(|_| RoutineBridgeRefusal::Capacity)?;

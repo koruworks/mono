@@ -151,6 +151,7 @@ fn routine_current_definition_uses_retained_origin_and_actual_store_location() {
     let origin = f.origin();
     let mut definition = f.creation.identity.seed.header.definition.clone();
     definition.revision += 1;
+    definition.effective_at_ms += 1;
     definition.lifecycle = serde_json::from_str("\"active\"").unwrap();
     definition.template.objective =
         koru_delegate_core::Objective::new("Edited current task").unwrap();
