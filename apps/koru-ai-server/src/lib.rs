@@ -9,6 +9,9 @@ use std::path::PathBuf;
 
 mod attachments;
 mod bots;
+#[cfg(any(test, feature = "fixtures"))]
+#[doc(hidden)]
+pub mod fixtures;
 pub use bots::BotAuthorityAdapter;
 mod chat_tools;
 mod store_context;

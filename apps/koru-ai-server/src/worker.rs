@@ -107,10 +107,10 @@ pub struct WorkerConfig {
     session_host: Option<koru_ipc::Endpoint>,
     #[cfg(test)]
     panic_after_open: bool,
-    #[cfg(test)]
-    test_repository: Option<Repository>,
-    #[cfg(test)]
-    test_repository_return: Option<SyncSender<Repository>>,
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) test_repository: Option<Repository>,
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) test_repository_return: Option<SyncSender<Repository>>,
     #[cfg(test)]
     test_context_completion: Option<SyncSender<InferenceAttemptId>>,
     #[cfg(test)]
@@ -171,9 +171,9 @@ impl WorkerConfig {
             session_host: None,
             #[cfg(test)]
             panic_after_open: false,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             test_repository: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             test_repository_return: None,
             #[cfg(test)]
             test_context_completion: None,
@@ -204,9 +204,9 @@ impl WorkerConfig {
             session_host: None,
             #[cfg(test)]
             panic_after_open: false,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             test_repository: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             test_repository_return: None,
             #[cfg(test)]
             test_context_completion: None,
@@ -242,9 +242,9 @@ impl WorkerConfig {
             session_host: None,
             #[cfg(test)]
             panic_after_open: false,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             test_repository: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "fixtures"))]
             test_repository_return: None,
             #[cfg(test)]
             test_context_completion: None,
@@ -1765,7 +1765,7 @@ fn run_worker(
     routine_calls: routine_call::RoutineCallGates,
 ) -> Result<(), String> {
     let database = config.root.join(koru_ai_sqlite::DATABASE_FILE);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fixtures"))]
     let (mut repository, cleanup_enabled) = match config.test_repository.take() {
         Some(repository) => (repository, false),
         None => (
@@ -1773,7 +1773,7 @@ fn run_worker(
             true,
         ),
     };
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "fixtures")))]
     let (mut repository, cleanup_enabled) = (
         Repository::open(&database).map_err(|error| error.to_string())?,
         true,
@@ -2174,7 +2174,7 @@ fn run_worker(
     state.tool_pool.stop();
     state.provider_pool.stop();
     state.cleanup.stop();
-    #[cfg(test)]
+    #[cfg(any(test, feature = "fixtures"))]
     if let Some(return_repository) = config.test_repository_return {
         let _ = return_repository.send(state.repository);
     }

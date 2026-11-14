@@ -11,6 +11,9 @@ description = "Hostable Koru AI domain server and local worker."
 name = "koru-ai-server"
 path = "src/main.rs"
 
+[features]
+fixtures = ["koru-ai-sqlite/fixtures"]
+
 [dependencies]
 base64.workspace = true
 blake3.workspace = true
