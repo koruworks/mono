@@ -183,6 +183,19 @@ where
         Ok(())
     }
 
+    /// A user-requested read of the exact existing source, never Store import
+    /// or normal reconciliation. Only an idle carrier may be consumed; after
+    /// this returns the subscription must end normally and reconnect as needed.
+    pub async fn inspect_download(
+        mut self,
+        unit: Unit,
+    ) -> Result<super::inspection::ObservedDownload, Error> {
+        if self.pass.is_some() {
+            return Err(Error::Unavailable);
+        }
+        super::inspection::download(&mut self.client, unit).await
+    }
+
     pub fn status(&self) -> Status {
         Status {
             unit: self.pass.as_ref().map(|p| p.unit),

@@ -196,3 +196,123 @@ async fn cancelling_an_unanswered_probe_closes_the_carrier_without_store_work() 
     let (result, ()) = tokio::join!(work, peer);
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn missing_local_source_downloads_to_detached_memory_without_ack_or_store() {
+    let (mut client, mut reader, mut writer, mut stream, scope, budget) =
+        super::super::tests::pair_with_workspace(true).await;
+    client.receive = Box::new(|_| panic!("detached read cannot import into Store"));
+    let unit = unit(scope);
+    let doc = loro::LoroDoc::new();
+    doc.get_text("body")
+        .insert(0, "Cold unfiled Cloud source")
+        .unwrap();
+    let version = doc.oplog_vv().encode();
+    let bytes = doc.export(loro::ExportMode::Snapshot).unwrap();
+    let peer = async {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let request = records::read(&mut reader, deadline, &budget).await.unwrap();
+        let (_, Record::Peer(frame), _) = request.into_parts() else {
+            panic!()
+        };
+        let Metadata::Request(request) = metadata::decode(scope, frame, 1).unwrap().remove(0)
+        else {
+            panic!()
+        };
+        assert!(request.known_version.is_none());
+        records::write(
+            &mut writer,
+            &request.response(scope, version.clone()).unwrap().unwrap(),
+            deadline,
+            &budget,
+        )
+        .await
+        .unwrap();
+        let (start, admission) = stream
+            .begin_outgoing(unit, [7; 8], bytes, 0, 0, |_| Ok(()))
+            .unwrap();
+        assert_eq!(admission, Admission::Automatic);
+        records::write(&mut writer, &Record::Control(start), deadline, &budget)
+            .await
+            .unwrap();
+        while let Some(record) = stream.next_outgoing(0, |_| Ok(())).unwrap() {
+            records::write(&mut writer, record.record(), deadline, &budget)
+                .await
+                .unwrap();
+        }
+        stream.outbound_written(0).unwrap();
+        // The peer sees close, never a success Ack for ephemeral inspection.
+        assert!(records::read(&mut reader, deadline, &budget).await.is_err());
+    };
+    let device = async move {
+        let result = download(&mut client, unit).await;
+        drop(client);
+        result
+    };
+    let (read, ()) = tokio::join!(device, peer);
+    let read = read.unwrap();
+    let detached = read.replay().unwrap();
+    assert_eq!(
+        detached.get_text("body").to_string(),
+        "Cold unfiled Cloud source"
+    );
+    assert!(read.observed().matches(
+        scope,
+        unit,
+        koru_store_core::sync_digest::revision(&version),
+        &detached.oplog_vv().encode()
+    ));
+    assert_eq!(format!("{read:?}"), "ObservedDownload(<redacted>)");
+}
+
+#[tokio::test]
+async fn detached_replay_refuses_corrupt_pending_and_wrong_version_payloads() {
+    let doc = loro::LoroDoc::new();
+    doc.get_text("body").insert(0, "ancestor").unwrap();
+    let prior = doc.oplog_vv();
+    let first = doc.export(loro::ExportMode::Snapshot).unwrap();
+    doc.get_text("body").insert(8, " child").unwrap();
+    let version = doc.oplog_vv().encode();
+    for bytes in [
+        vec![255],
+        doc.export(loro::ExportMode::updates(&prior)).unwrap(),
+        first,
+    ] {
+        let (mut client, mut reader, mut writer, mut stream, scope, budget) =
+            super::super::tests::pair_with_workspace(true).await;
+        client.receive = Box::new(|_| panic!("invalid detached data must never enter Store"));
+        let unit = unit(scope);
+        let peer = async {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let request = records::read(&mut reader, deadline, &budget).await.unwrap();
+            let (_, Record::Peer(frame), _) = request.into_parts() else {
+                panic!()
+            };
+            let Metadata::Request(request) = metadata::decode(scope, frame, 1).unwrap().remove(0)
+            else {
+                panic!()
+            };
+            records::write(
+                &mut writer,
+                &request.response(scope, version.clone()).unwrap().unwrap(),
+                deadline,
+                &budget,
+            )
+            .await
+            .unwrap();
+            let (start, _) = stream
+                .begin_outgoing(unit, [7; 8], bytes, 0, 0, |_| Ok(()))
+                .unwrap();
+            records::write(&mut writer, &Record::Control(start), deadline, &budget)
+                .await
+                .unwrap();
+            while let Some(record) = stream.next_outgoing(0, |_| Ok(())).unwrap() {
+                records::write(&mut writer, record.record(), deadline, &budget)
+                    .await
+                    .unwrap();
+            }
+        };
+        let (read, ()) = tokio::join!(download(&mut client, unit), peer);
+        assert!(matches!(read.unwrap().replay(), Err(Error::Invalid)));
+    }
+}

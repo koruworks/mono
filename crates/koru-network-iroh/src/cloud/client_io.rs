@@ -115,6 +115,8 @@ pub struct Client<'a, R, W> {
     upload: Option<Upload<'a>>,
     batch: u64,
     inspection_only: bool,
+    inspection_download: Option<Unit>,
+    inspection_joined: bool,
     receive: Box<dyn FnMut(Completed) -> Result<Pending<'a>, Error> + Send + 'a>,
     authorize: Box<dyn FnMut(Unit) -> Result<(), Refusal> + Send + 'a>,
     permission: Box<dyn FnMut(&Start) -> Decision + Send + 'a>,
@@ -179,6 +181,8 @@ where
             upload: None,
             batch: 0,
             inspection_only: false,
+            inspection_download: None,
+            inspection_joined: false,
             receive: Box::new(move |complete| {
                 receive(complete).map(|reply| Box::pin(reply) as Pending<'a>)
             }),
@@ -422,7 +426,10 @@ where
 
     fn advance(&mut self) -> Result<(), Error> {
         self.check()?;
-        if self.stream.status().incoming_complete && !self.status().committing {
+        if self.stream.status().incoming_complete
+            && !self.status().committing
+            && self.inspection_download.is_none()
+        {
             let deadline = self.stream.incoming_deadline().ok_or(Error::Invalid)?;
             let complete = self
                 .stream
@@ -495,7 +502,13 @@ where
             .map_err(|_| Error::Invalid)?;
         // A dedicated inspection owns no Store callbacks. Refuse transfer
         // starts and payload frames before the normal stream can admit them.
-        if self.inspection_only {
+        if let Some(unit) = self.inspection_download
+            && let Record::Control(Control::TransferStart(start)) = &record
+            && (!self.inspection_joined || start.unit != unit)
+        {
+            return Err(Error::Invalid);
+        }
+        if self.inspection_only && (self.inspection_download.is_none() || !self.inspection_joined) {
             return match record {
                 Record::Control(control @ Control::TransferPolicy { .. }) => {
                     self.stream
