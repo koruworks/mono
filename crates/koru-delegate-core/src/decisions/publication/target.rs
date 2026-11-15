@@ -73,21 +73,36 @@ impl std::fmt::Debug for DecisionProjectionEffects {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DecisionControlAction {
     Preserve {},
+    /// Retains the exact stopping request without claiming physical cleanup or
+    /// changing the canonical Run status. Only the cleanup owner can finalize it.
+    CleanupRequested {
+        cause: DecisionClosureReason,
+    },
     DecisionWaiting {},
-    DecisionResolved { outcome: crate::ApprovalOutcome },
+    DecisionResolved {
+        outcome: crate::ApprovalOutcome,
+    },
     Stop {},
-    Interrupt { prior_attempt: crate::PriorAttempt },
-    Resume { via: crate::ResumeSeam },
+    Interrupt {
+        prior_attempt: crate::PriorAttempt,
+    },
+    Resume {
+        via: crate::ResumeSeam,
+    },
     HandoverRequested {},
-    ControlTaken { discovered: bool },
+    ControlTaken {
+        discovered: bool,
+    },
     ControlReturned {},
-    Delivery { outcome: DecisionDeliveryOutcome },
+    Delivery {
+        outcome: DecisionDeliveryOutcome,
+    },
 }
 impl DecisionControlAction {
     fn mapping(self) -> (Option<RunEvent>, Option<crate::StepKind>) {
         use crate::{RunEvent as E, StepKind as S};
         match self {
-            Self::Preserve {} => (None, None),
+            Self::Preserve {} | Self::CleanupRequested { .. } => (None, None),
             Self::DecisionWaiting {} => (Some(E::ApprovalRequired), Some(S::ApprovalRequired)),
             Self::DecisionResolved { outcome } => (
                 Some(E::ApprovalResolved),
@@ -384,9 +399,52 @@ impl DecisionValidate for RunProjectionTargetV1 {
                 disposition,
                 retained_bookkeeping,
                 action,
+                wait_phase,
+                reason,
+                flush,
+                delivery,
                 ..
             } => {
                 action.validate_effects(before, effects)?;
+                if let DecisionControlAction::CleanupRequested { cause } = action {
+                    let authorization = match cause {
+                        DecisionClosureReason::Canceled
+                        | DecisionClosureReason::AuthorityChanged => {
+                            DecisionAuthorization::Canceled
+                        }
+                        DecisionClosureReason::Expired | DecisionClosureReason::ClockUncertain => {
+                            DecisionAuthorization::Expired
+                        }
+                        _ => return Err(DecisionError::Invalid),
+                    };
+                    require(
+                        *wait_phase == BotWaitPhase::CleanupPending
+                            && effects.event.is_none()
+                            && effects.steps.as_slice().is_empty()
+                            && effects.publications.as_slice().is_empty()
+                            && flush.as_slice().is_empty()
+                            && delivery.is_none(),
+                    )?;
+                    match (disposition, reason) {
+                        (
+                            Some(DecisionDisposition::Open { state }),
+                            BotWaitReason::Decision { .. },
+                        ) => {
+                            require(
+                                state.phase == DecisionPhase::StopPending
+                                    && (state.authorization == authorization
+                                        || state.authorization == DecisionAuthorization::Consumed),
+                            )?;
+                        }
+                        (
+                            None,
+                            BotWaitReason::Capacity {}
+                            | BotWaitReason::NativeExpired {}
+                            | BotWaitReason::OverlappingPrompt {},
+                        ) => {}
+                        _ => return Err(DecisionError::Invalid),
+                    }
+                }
                 if let Some(disposition) = disposition {
                     disposition.validate()?;
                 }

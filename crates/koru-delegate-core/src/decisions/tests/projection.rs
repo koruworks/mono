@@ -31,6 +31,187 @@ fn target() -> RunProjectionTargetV1 {
     }
 }
 
+fn cleanup_target(cause: DecisionClosureReason) -> RunProjectionTargetV1 {
+    let mut target = target();
+    if let RunProjectionTargetV1::Control {
+        predecessor,
+        effects,
+        action,
+        wait_phase,
+        ..
+    } = &mut target
+    {
+        *action = DecisionControlAction::CleanupRequested { cause };
+        *wait_phase = BotWaitPhase::CleanupPending;
+        effects.event = None;
+        effects.status = predecessor.status.clone();
+    }
+    if let RunProjectionTargetV1::Control {
+        retained_bookkeeping,
+        ..
+    } = &mut target
+    {
+        *retained_bookkeeping = Some(DecisionSourceBookkeeping {
+            boundary: DecisionSourceBoundary {
+                fence: edit().origin(),
+                producer_epoch: uuid(80),
+                stream: DecisionSourceStream::Agent,
+                sequence: StreamSequence::new(2).unwrap(),
+                resulting: DecisionSourceFrontiers {
+                    agent_after: Some(StreamSequence::new(2).unwrap()),
+                    session_after: None,
+                },
+            },
+            unflushed: DecisionList::default(),
+            usage: None,
+            allocated_steps: DecisionList::default(),
+        });
+    }
+    target
+}
+
+#[test]
+fn decision_cleanup_request_retains_cause_without_claiming_terminal_status() {
+    use DecisionClosureReason as C;
+    for (cause, authorization) in [
+        (C::Canceled, DecisionAuthorization::Canceled),
+        (C::AuthorityChanged, DecisionAuthorization::Canceled),
+        (C::Expired, DecisionAuthorization::Expired),
+        (C::ClockUncertain, DecisionAuthorization::Expired),
+    ] {
+        let mut target = cleanup_target(cause);
+        for reason in [
+            BotWaitReason::Capacity {},
+            BotWaitReason::NativeExpired {},
+            BotWaitReason::OverlappingPrompt {},
+        ] {
+            if let RunProjectionTargetV1::Control {
+                reason: offered, ..
+            } = &mut target
+            {
+                *offered = reason;
+            }
+            let bytes = target.canonical_bytes().unwrap();
+            assert_eq!(
+                RunProjectionTargetV1::decode(bytes.as_slice()).unwrap(),
+                target
+            );
+            assert_eq!(target.effects().status, RunStatus::running());
+            assert!(target.projected_steps().unwrap().is_empty());
+            assert!(target.publications().is_empty());
+            assert_eq!(
+                target.resulting_bookkeeping().unwrap().as_ref(),
+                target.bookkeeping()
+            );
+        }
+        for authorization in [authorization, DecisionAuthorization::Consumed] {
+            if let RunProjectionTargetV1::Control {
+                disposition,
+                reason,
+                ..
+            } = &mut target
+            {
+                *reason = BotWaitReason::Decision { decision: id(72) };
+                *disposition = Some(DecisionDisposition::Open {
+                    state: DecisionState {
+                        kind: DecisionKind::KoruEdit,
+                        authorization,
+                        phase: DecisionPhase::StopPending,
+                        revision: rev(3),
+                    },
+                });
+            }
+            assert!(target.validate().is_ok());
+        }
+    }
+    assert_ne!(
+        cleanup_target(C::Canceled).digest().unwrap(),
+        cleanup_target(C::AuthorityChanged).digest().unwrap()
+    );
+    assert_ne!(
+        cleanup_target(C::Expired).digest().unwrap(),
+        cleanup_target(C::ClockUncertain).digest().unwrap()
+    );
+}
+
+#[test]
+fn decision_cleanup_request_refuses_wrong_phase_authorization_and_effects() {
+    for cause in [
+        DecisionClosureReason::Completed,
+        DecisionClosureReason::Denied,
+        DecisionClosureReason::Unsupported,
+        DecisionClosureReason::EffectNotApplied,
+        DecisionClosureReason::EffectUnknown,
+        DecisionClosureReason::NativeUnknown,
+        DecisionClosureReason::AiTerminal,
+    ] {
+        assert!(cleanup_target(cause).validate().is_err());
+    }
+    let good = cleanup_target(DecisionClosureReason::Canceled);
+    let mut raw = json(&good);
+    raw["wait_phase"] = serde_json::json!(BotWaitPhase::Fenced);
+    assert!(RunProjectionTargetV1::decode(&serde_json::to_vec(&raw).unwrap()).is_err());
+    let mut wrong = good.clone();
+    if let RunProjectionTargetV1::Control { reason, .. } = &mut wrong {
+        *reason = BotWaitReason::Decision { decision: id(72) };
+    }
+    assert!(
+        wrong.validate().is_err(),
+        "decision wait needs its exact disposition"
+    );
+    if let RunProjectionTargetV1::Control { disposition, .. } = &mut wrong {
+        *disposition = Some(DecisionDisposition::Open {
+            state: DecisionState {
+                kind: DecisionKind::KoruEdit,
+                authorization: DecisionAuthorization::Expired,
+                phase: DecisionPhase::StopPending,
+                revision: rev(3),
+            },
+        });
+    }
+    assert!(
+        wrong.validate().is_err(),
+        "cause and authorization must agree"
+    );
+    let mut wrong = good.clone();
+    if let RunProjectionTargetV1::Control { effects, .. } = &mut wrong {
+        effects.event = Some(RunEvent::Cancel);
+        effects.status = RunStatus::Cancelled;
+    }
+    assert!(
+        wrong.validate().is_err(),
+        "request is not confirmed cancellation"
+    );
+    let mut wrong = good.clone();
+    if let RunProjectionTargetV1::Control { flush, .. } = &mut wrong {
+        *flush = DecisionList::new(vec![DecisionControlFlush {
+            turn: id(91),
+            step: id(92),
+            event: id(93),
+            at_ms: 4,
+        }])
+        .unwrap();
+    }
+    assert!(
+        wrong.validate().is_err(),
+        "cleanup request does not flush source progress"
+    );
+    let mut terminal = good;
+    if let RunProjectionTargetV1::Control {
+        predecessor,
+        effects,
+        ..
+    } = &mut terminal
+    {
+        predecessor.status = RunStatus::Completed;
+        effects.status = RunStatus::Completed;
+    }
+    assert!(
+        terminal.validate().is_ok(),
+        "retained successful status remains absorbing"
+    );
+}
+
 #[test]
 fn decision_projection_target_strict_closed_class_and_nested_leaves() {
     let t = target();
