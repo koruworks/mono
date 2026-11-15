@@ -16,7 +16,9 @@ fn stop_cause(
     })
 }
 
-fn disposition(receipt: &DecisionReceipt) -> Result<DecisionDisposition, BotLedgerError> {
+pub(super) fn disposition(
+    receipt: &DecisionReceipt,
+) -> Result<DecisionDisposition, BotLedgerError> {
     Ok(match &receipt.closure {
         None => DecisionDisposition::Open {
             state: receipt.state.clone(),
@@ -40,66 +42,132 @@ impl RunsDb {
         transition: DecisionTransitionId,
         cause: DecisionClosureReason,
     ) -> Result<DecisionProjectionRecord, BotLedgerError> {
-        let stop = stop_cause(cause)?;
-        self.write_with_error(crate::WriteOp::RecordDecisionProjection,|tx,now| {
-            authority::owner(tx,expected.owner,expected.run)?;
-            if let Some(old)=read(tx,expected.owner,expected.run,transition)? {
-                require(old.identity.wait==expected.wait)?;
-                let RunProjectionTargetV1::Control {action:DecisionControlAction::CleanupRequested {
-                    cause:retained,expected_wait_revision},disposition,..}=&old.target else {return Err(BotLedgerError::Conflict)};
-                require(*retained==cause && *expected_wait_revision==expected.revision)?;
-                match (&expected.decision,&old.identity.decision,disposition) {
-                    (Some(wanted),Some(stored),Some(disposition))=>{
-                        require(wanted.owner==expected.owner && wanted.run==expected.run && wanted.decision==stored.decision)?;
-                        let record=super::super::rows::read(tx,expected.owner,expected.run,wanted.decision)?.ok_or(BotLedgerError::Stale)?;
-                        require(record.receipt.binding_digest==wanted.binding_digest)?;
-                        let resulting=match disposition {
-                            DecisionDisposition::Open {..}=>next(wanted.revision)?,
-                            DecisionDisposition::Settled {..}=>wanted.revision,
-                        };
-                        require(stored.revision==resulting)?;
-                    }
-                    (None,None,None)=>{}
-                    _=>return Err(BotLedgerError::Conflict),
-                }
-                return Ok(old)
-            }
-            let observed=super::super::observation::execution(tx,expected.owner,expected.run)?.ok_or(BotLedgerError::Stale)?;
-            require(observed.expected==*expected)?;
-            let context=context(tx,expected.owner,expected.run,expected.wait)?;
-            let next_wait=next(expected.revision)?;
-            let disposition=if let Some(decision)=&expected.decision {
-                let old=super::super::rows::read(tx,expected.owner,expected.run,decision.decision)?.ok_or(BotLedgerError::Stale)?;
-                if old.receipt.state.phase==DecisionPhase::Settled {
-                    require(matches!(cause,DecisionClosureReason::Canceled|DecisionClosureReason::AuthorityChanged))?;
-                    tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",
-                        params![expected.wait.to_storage(),next_wait.get(),now,expected.revision.get()]).map_err(sql)?;
-                    Some(disposition(&old.receipt)?)
-                }else{
-                    let mutation=super::super::write::phase_on(tx,expected.owner,expected.run,decision.decision,decision.revision,stop,now)?;
-                    require(mutation.record.wait.revision==next_wait)?;
-                    Some(disposition(&mutation.record.receipt)?)
-                }
-            }else{
-                require(!matches!(observed.wait.reason,BotWaitReason::Decision {..}))?;
-                tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",
-                    params![expected.wait.to_storage(),next_wait.get(),now,expected.revision.get()]).map_err(sql)?;
-                None
-            };
-            let target=RunProjectionTargetV1::Control {
-                version:DecisionVersionV1,predecessor:context.predecessor.clone(),
-                effects:DecisionProjectionEffects {event:None,status:context.predecessor.status.clone(),
-                    failure_reason:context.predecessor.failure_reason,economics_at_ms:None,
-                    steps:DecisionList::default(),models:DecisionList::default(),publications:DecisionList::default()},
-                fence:observed.wait.origin,disposition,wait_phase:BotWaitPhase::CleanupPending,reason:observed.wait.reason,
-                action:DecisionControlAction::CleanupRequested {cause,expected_wait_revision:expected.revision},
-                retained_bookkeeping:context.bookkeeping,flush:DecisionList::default(),delivery:None,
-            };
-            insert::insert_on(tx,expected.owner,transition,expected.wait,&context.base,&target,now)
+        self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
+            request_on(tx, expected, transition, cause, now)
         })
     }
 }
 
+pub(super) fn request_on(
+    tx: &Transaction<'_>,
+    expected: &DecisionWaitExpected,
+    transition: DecisionTransitionId,
+    cause: DecisionClosureReason,
+    now: i64,
+) -> Result<DecisionProjectionRecord, BotLedgerError> {
+    let stop = stop_cause(cause)?;
+    authority::owner(tx, expected.owner, expected.run)?;
+    if let Some(old) = read(tx, expected.owner, expected.run, transition)? {
+        require(old.identity.wait == expected.wait)?;
+        let RunProjectionTargetV1::Control {
+            action:
+                DecisionControlAction::CleanupRequested {
+                    cause: retained,
+                    expected_wait_revision,
+                },
+            disposition,
+            ..
+        } = &old.target
+        else {
+            return Err(BotLedgerError::Conflict);
+        };
+        require(*retained == cause && *expected_wait_revision == expected.revision)?;
+        match (&expected.decision, &old.identity.decision, disposition) {
+            (Some(wanted), Some(stored), Some(disposition)) => {
+                require(
+                    wanted.owner == expected.owner
+                        && wanted.run == expected.run
+                        && wanted.decision == stored.decision,
+                )?;
+                let record =
+                    super::super::rows::read(tx, expected.owner, expected.run, wanted.decision)?
+                        .ok_or(BotLedgerError::Stale)?;
+                require(record.receipt.binding_digest == wanted.binding_digest)?;
+                let resulting = match disposition {
+                    DecisionDisposition::Open { .. } => next(wanted.revision)?,
+                    DecisionDisposition::Settled { .. } => wanted.revision,
+                };
+                require(stored.revision == resulting)?;
+            }
+            (None, None, None) => {}
+            _ => return Err(BotLedgerError::Conflict),
+        }
+        return Ok(old);
+    }
+    let observed = super::super::observation::execution(tx, expected.owner, expected.run)?
+        .ok_or(BotLedgerError::Stale)?;
+    require(observed.expected == *expected)?;
+    let context = context(tx, expected.owner, expected.run, expected.wait)?;
+    let next_wait = next(expected.revision)?;
+    let disposition = if let Some(decision) = &expected.decision {
+        let old = super::super::rows::read(tx, expected.owner, expected.run, decision.decision)?
+            .ok_or(BotLedgerError::Stale)?;
+        if old.receipt.state.phase == DecisionPhase::Settled {
+            require(matches!(
+                cause,
+                DecisionClosureReason::Canceled | DecisionClosureReason::AuthorityChanged
+            ))?;
+            tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",
+                        params![expected.wait.to_storage(),next_wait.get(),now,expected.revision.get()]).map_err(sql)?;
+            Some(disposition(&old.receipt)?)
+        } else {
+            let mutation = super::super::write::phase_on(
+                tx,
+                expected.owner,
+                expected.run,
+                decision.decision,
+                decision.revision,
+                stop,
+                now,
+            )?;
+            require(mutation.record.wait.revision == next_wait)?;
+            Some(disposition(&mutation.record.receipt)?)
+        }
+    } else {
+        require(!matches!(
+            observed.wait.reason,
+            BotWaitReason::Decision { .. }
+        ))?;
+        tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",
+                    params![expected.wait.to_storage(),next_wait.get(),now,expected.revision.get()]).map_err(sql)?;
+        None
+    };
+    let target = RunProjectionTargetV1::Control {
+        version: DecisionVersionV1,
+        predecessor: context.predecessor.clone(),
+        effects: DecisionProjectionEffects {
+            event: None,
+            status: context.predecessor.status.clone(),
+            failure_reason: context.predecessor.failure_reason,
+            economics_at_ms: None,
+            steps: DecisionList::default(),
+            models: DecisionList::default(),
+            publications: DecisionList::default(),
+        },
+        fence: observed.wait.origin,
+        disposition,
+        wait_phase: BotWaitPhase::CleanupPending,
+        reason: observed.wait.reason,
+        action: DecisionControlAction::CleanupRequested {
+            cause,
+            expected_wait_revision: expected.revision,
+        },
+        retained_bookkeeping: context.bookkeeping,
+        flush: DecisionList::default(),
+        delivery: None,
+    };
+    insert::insert_on(
+        tx,
+        expected.owner,
+        transition,
+        expected.wait,
+        &context.base,
+        &target,
+        now,
+    )
+}
+
+#[derive(Clone)]
 pub(super) struct ControlContext {
     pub base: DecisionPublicationBase,
     pub predecessor: DecisionProjectionPredecessor,

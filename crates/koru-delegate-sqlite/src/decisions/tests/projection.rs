@@ -3,7 +3,7 @@
 use super::*;
 mod cleanup;
 
-fn base(h: &Harness) -> DecisionPublicationBase {
+pub(super) fn base(h: &Harness) -> DecisionPublicationBase {
     let f = h.origin();
     let admitted = h.db.bot_admission(f.run).unwrap().unwrap();
     let intent = h.db.intent(f.run).unwrap().unwrap();
@@ -27,7 +27,11 @@ fn base(h: &Harness) -> DecisionPublicationBase {
     }
 }
 
-fn source(h: &Harness, base: &DecisionPublicationBase, sequence: u64) -> RunProjectionTargetV1 {
+pub(super) fn source(
+    h: &Harness,
+    base: &DecisionPublicationBase,
+    sequence: u64,
+) -> RunProjectionTargetV1 {
     let sequence = StreamSequence::new(sequence).unwrap();
     RunProjectionTargetV1::Source {
         version: DecisionVersionV1,
@@ -60,7 +64,7 @@ fn source(h: &Harness, base: &DecisionPublicationBase, sequence: u64) -> RunProj
     }
 }
 
-fn prepared(record: &DecisionProjectionRecord) -> DecisionPreparedProjection {
+pub(super) fn prepared(record: &DecisionProjectionRecord) -> DecisionPreparedProjection {
     let delta = DecisionPreparedDelta::new(vec![5, 6]).unwrap();
     DecisionPreparedProjection {
         identity: record.identity.clone(),
@@ -72,7 +76,10 @@ fn prepared(record: &DecisionProjectionRecord) -> DecisionPreparedProjection {
     }
 }
 
-fn apply(h: &mut Harness, record: &DecisionProjectionRecord) -> DecisionProjectionRecord {
+pub(super) fn apply(
+    h: &mut Harness,
+    record: &DecisionProjectionRecord,
+) -> DecisionProjectionRecord {
     let prepared = prepared(record);
     h.db.record_decision_preparation(h.origin().owner, &prepared)
         .unwrap();
@@ -87,7 +94,7 @@ fn apply(h: &mut Harness, record: &DecisionProjectionRecord) -> DecisionProjecti
     .unwrap()
 }
 
-fn advance_base(base: &mut DecisionPublicationBase, record: &DecisionProjectionRecord) {
+pub(super) fn advance_base(base: &mut DecisionPublicationBase, record: &DecisionProjectionRecord) {
     base.source_schema = 5u8.try_into().unwrap();
     base.predecessor = DecisionProjectionPredecessor {
         observed_created_at_ms: record.target.predecessor().observed_created_at_ms,

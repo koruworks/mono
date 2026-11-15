@@ -328,7 +328,7 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
 pub(super) fn decode_historical(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
     decode(row)
 }
-pub(super) fn read(
+pub(crate) fn read(
     conn: &Connection,
     key: &NativeResultKey,
 ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
@@ -372,6 +372,7 @@ pub(super) fn read_admitted(
         }
         routine::validate_record(conn, record, admitted)?;
         memory::validate_record(conn, record)?;
+        crate::decisions::validate_native_on(conn, record)?;
     }
     Ok(record)
 }

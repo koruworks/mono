@@ -257,7 +257,7 @@ pub(in crate::decisions) fn correlate_release(
             || wait.enrollment.is_none()
             || !original.retired
             || !original.phase.is_terminal()
-            || original.provider_session.and_then(|p|p.session)!=Some(wait.origin.session)
+            || original.provider_session.and_then(|p| p.session) != Some(wait.origin.session)
             || original.host_instance != Some(creation_retirement.host)
             || !creation_retirement.matches_target(&target)
             || native_drain.run != wait.origin.run

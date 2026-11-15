@@ -52,6 +52,20 @@ pub(crate) fn phase_on(
     let updated = now.max(old.receipt.updated_at_ms);
     tx.execute("UPDATE bot_decisions SET authorization=?2,phase='stop_pending',revision=?3,last_observed_at_ms=max(last_observed_at_ms,?4),updated_at_ms=?4 WHERE decision_id=?1 AND revision=?5",params![id.to_storage(),token(auth)?,next(expected)?.get(),updated,expected.get()]).map_err(sql)?;
     tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",params![old.wait.wait.to_storage(),next(old.wait.revision)?.get(),updated,old.wait.revision.get()]).map_err(sql)?;
+    if let Some(resume) = &old.resume {
+        super::resume::close_resume_on(
+            tx,
+            &DecisionExpected {
+                owner,
+                run,
+                decision: id,
+                revision: next(expected)?,
+                binding_digest: old.receipt.binding_digest,
+            },
+            resume.input_key,
+            updated,
+        )?;
+    }
     done(tx, owner, run, id, crate::WriteOutcome::Applied)
 }
 

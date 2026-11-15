@@ -4,10 +4,14 @@
 //! coverage stay in the document adapter; no raw delta is a SQL authority.
 
 use super::*;
-mod insert;
+mod cleanup_owner;
 mod control;
+mod fallback;
 mod initial;
+mod insert;
+mod lifecycle;
 mod rows;
+mod settle;
 mod write;
 
 pub(super) fn read(

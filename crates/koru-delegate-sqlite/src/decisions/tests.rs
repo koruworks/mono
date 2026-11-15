@@ -7,8 +7,11 @@ use crate::{BotLedger, NativeResultLedger, WriteOutcome, fixtures};
 use write::*;
 
 mod answers;
+mod completion;
+mod consume;
 mod corruption;
 mod enrollment;
+mod lifecycle;
 mod native_completion;
 mod observation;
 mod occupancy;
@@ -25,13 +28,13 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         let (db, fence, global) = crate::native_results::tests::decision_base();
-        Self::subject(db,fence,global)
+        Self::subject(db, fence, global)
     }
-    fn with_db(db:RunsDb)->Self{
-        let (db,fence,global)=crate::native_results::tests::decision_base_in(db,RunId::mint());
-        Self::subject(db,fence,global)
+    fn with_db(db: RunsDb) -> Self {
+        let (db, fence, global) = crate::native_results::tests::decision_base_in(db, RunId::mint());
+        Self::subject(db, fence, global)
     }
-    fn subject(db:RunsDb,fence:BotExecutionFence,global:BotPolicyBarrier)->Self{
+    fn subject(db: RunsDb, fence: BotExecutionFence, global: BotPolicyBarrier) -> Self {
         let admission = db.bot_admission(fence.run).unwrap().unwrap();
         let ActorRef::Person { profile } = admission.submission.request.requested_by else {
             panic!("fixture person")
@@ -53,7 +56,8 @@ impl Harness {
             action: DecisionEditAction::EditDocument,
             operation_id: uuid::Uuid::new_v4(),
             edit_fingerprint: [3; 32],
-            expected_revision: DecisionBytes::new(vec![1]).unwrap(),
+            // A real semantic VV, also used by the consume owner's comparison.
+            expected_revision: DecisionBytes::new(vec![2, 1, 2, 2, 4]).unwrap(),
             payload_version: DecisionVersionV1,
             payload: DecisionBytes::new(b"PRIVATE-EDIT".to_vec()).unwrap(),
             captured_policy: admission.submission.policy,

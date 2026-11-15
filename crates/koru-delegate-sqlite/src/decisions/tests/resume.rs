@@ -142,8 +142,17 @@ fn decision_resume_late_input_ack_records_history_without_reopening_stop() {
     let late = input(&mut h, &record, Some(&ack)).unwrap().record;
     assert_eq!(late.receipt.state.phase, DecisionPhase::StopPending);
     assert_eq!(late.wait.phase, BotWaitPhase::CleanupPending);
-    assert!(matches!(
+    // Stop closed the retained input identity in the same writer. The late
+    // exact acknowledgment is kept as history on the closed row; it never
+    // reopens the resume into an acknowledged, consumable state.
+    assert_eq!(
         late.resume.unwrap().state,
-        DecisionResumeState::InputAcknowledged { .. }
-    ));
+        DecisionResumeState::Closed {
+            acknowledgment: Some(ack.clone())
+        }
+    );
+    assert_eq!(
+        input(&mut h, &record, Some(&ack)).unwrap().outcome,
+        WriteOutcome::AlreadyApplied
+    );
 }

@@ -4,18 +4,20 @@
 use super::*;
 use rusqlite::{params_from_iter, types::Value};
 mod answer;
+mod cleanup;
+mod consume;
+pub(super) use consume::{consume_on, settle_effect_on};
 mod native;
 mod phase;
 mod resume;
-#[cfg(test)]
-pub(super) use answer::{AnswerDecision, answer_on};
-#[cfg(test)]
+pub use answer::AnswerDecision;
+pub(super) use answer::answer_on;
+pub(super) use cleanup::validate_cleanup_on;
+pub(super) use cleanup::{consumer_cleanup_on, origin_stop_on};
 pub(super) use native::record_native_answer_on;
 pub(super) use phase::{DecisionStopCause, phase_on};
-#[cfg(test)]
 pub(super) use phase::{enroll_on, record_enrollment_on};
-#[cfg(test)]
-pub(super) use resume::{bind_resume_session_on, record_resume_input_on};
+pub(super) use resume::{bind_resume_session_on, record_resume_input_on, reserve_successor_on};
 
 #[derive(Debug)]
 pub(crate) struct DecisionMutation {

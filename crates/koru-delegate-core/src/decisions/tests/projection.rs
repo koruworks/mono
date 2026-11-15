@@ -74,7 +74,8 @@ fn decision_source_preserves_ordinary_subject_refs_without_fabricated_attempt_re
         let entry = TimelineEntry {
             id: id(90),
             kind,
-            refs: TimelineRefs::new([TimelineRef::Turn { turn: fence.turn }, subject]).unwrap(),
+            refs: TimelineRefs::new([TimelineRef::Turn { turn: fence.turn }, subject.clone()])
+                .unwrap(),
             at_ms: 8,
         };
         let source = RunProjectionTargetV1::Source {
@@ -124,7 +125,7 @@ fn decision_source_preserves_ordinary_subject_refs_without_fabricated_attempt_re
 
         for refs in [
             vec![TimelineRef::Turn { turn: fence.turn }],
-            vec![TimelineRef::Turn { turn: id(94) }, subject],
+            vec![TimelineRef::Turn { turn: id(94) }, subject.clone()],
             vec![
                 TimelineRef::Turn { turn: fence.turn },
                 subject,

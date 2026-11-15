@@ -8,7 +8,12 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Serialize, de::DeserializeOwned};
 
 mod authority;
+mod current;
 mod drain;
+pub(crate) use current::fresh_native_input_on;
+pub(crate) use current::{acknowledged_continuation_on, fresh_activity_on, retained_consumer_on};
+mod effect;
+pub(crate) use effect::validate_native_on;
 mod observation;
 mod occupancy;
 pub(crate) use occupancy::inventory as execution_inventory_on;
@@ -20,6 +25,36 @@ mod rows;
 mod tests;
 #[allow(dead_code)]
 mod write;
+pub use write::AnswerDecision;
+
+/// Immutable identity of a cleanup mutation, independent of the projection
+/// transition which currently carries it. This is not a wire request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecisionCleanupOrigin {
+    Requested {
+        wait: BotWaitId,
+        expected_wait_revision: DecisionRevision,
+        cause: DecisionClosureReason,
+    },
+    Denied {
+        wait: BotWaitId,
+        decision: DecisionId,
+        answer: DecisionAnswerId,
+        answer_revision: DecisionRevision,
+    },
+    NoDecision {
+        wait: BotWaitId,
+        reason: BotWaitReason,
+        origin: DecisionFence,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionCleanupOwnership {
+    pub expected: DecisionWaitExpected,
+    pub projection: DecisionTransitionId,
+    pub origin: DecisionCleanupOrigin,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionRecord {
