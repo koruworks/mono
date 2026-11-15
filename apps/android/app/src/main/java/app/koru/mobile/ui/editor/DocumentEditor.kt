@@ -188,8 +188,8 @@ fun DocumentViewer(
             verticalArrangement = Arrangement.spacedBy(KoruSpacing.sm),
         ) {
             itemsIndexed(visible, key = { _, block -> block.id.value }) { _, block ->
-                BlockRow(block, all, depths[block.id] ?: 0, calloutHeads.containsValue(block.id),
-                    document.runs, model, follow,
+                DocumentBlockRow(block, all, depths[block.id] ?: 0, calloutHeads.containsValue(block.id),
+                    document.runs, { blob, label -> BlobImage(blob, model, label) }, follow,
                     editing, localDrafts[BlockEditKey(document.id, block.id)],
                     { before, text ->
                         finishRequested = false
@@ -225,14 +225,14 @@ fun DocumentViewer(
 }
 
 @Composable
-private fun BlockRow(
+internal fun DocumentBlockRow(
     block: Block,
     all: List<Block>,
     depth: Int,
     calloutHead: Boolean,
     runs: Map<DocumentId, RunSnapshot>,
-    model: AppViewModel,
-    follow: (EntityReference) -> Unit,
+    image: @Composable (BlobReference, String?) -> Unit,
+    follow: ((EntityReference) -> Unit)?,
     editing: Boolean,
     draft: BlockDraft?,
     onText: (String, String) -> Unit,
@@ -240,8 +240,9 @@ private fun BlockRow(
     onSplit: (String, String) -> Unit,
     requestFocus: Boolean,
     onFocused: () -> Unit,
+    indexed: PassiveBlockLayout? = null,
 ) {
-    val pillLabel = runPillLabels(runs)
+    val pillLabel = runPillLabels(runs, passive = follow == null)
     val editor: (@Composable (RichText, TextStyle, Modifier) -> Unit)? = if (editing) {
         { rich, style, modifier ->
             NativeRichEditor(rich, style, draft?.displayedText, onText, onDone, onSplit,
@@ -250,12 +251,12 @@ private fun BlockRow(
                 hint = stringResource(R.string.document_type_here), modifier = modifier.fillMaxWidth())
         }
     } else null
-    val listParent = block.parentId
+    val listParent = if (indexed != null) indexed.listParent else block.parentId
         ?.let { id -> all.firstOrNull { it.id == id }?.content as? BlockContent.ListContainer }
     // A line inside a callout box draws on the box's tint, the way a list
     // item finds its container; the box's first line leads with its icon and
     // the others keep the icon's column so the text lines up under it.
-    val calloutBox = calloutBox(all, block)
+    val calloutBox = if (indexed != null) indexed.callout else calloutBox(all, block)
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val tint = calloutBox?.let { calloutTint(it.properties.color, dark) ?: MaterialTheme.colorScheme.surfaceVariant }
     Row(
@@ -271,7 +272,7 @@ private fun BlockRow(
                 if (calloutHead) Text(calloutBox.properties.calloutIcon(), style = MaterialTheme.typography.bodyLarge)
             }
         }
-        Marker(block, all, listParent)
+        Marker(block, all, listParent, indexed?.ordinal)
         Box(Modifier.weight(1f)) {
             when (val content = block.content) {
                 is BlockContent.Paragraph -> RichTextBlock(content.richText, block.properties, follow, pillLabel = pillLabel, editor = editor)
@@ -293,8 +294,8 @@ private fun BlockRow(
                 is BlockContent.Code -> CodeBlock(content, block.properties, follow, pillLabel, editor)
                 is BlockContent.Table -> TableBlock(content.richText.text)
                 BlockContent.Divider -> HorizontalDivider(Modifier.padding(vertical = KoruSpacing.md))
-                is BlockContent.Image -> BlobImage(content.blob, model, block.properties.name)
-                is BlockContent.Canvas -> BlobImage(content.blob, model, block.properties.name)
+                is BlockContent.Image -> image(content.blob, block.properties.name)
+                is BlockContent.Canvas -> image(content.blob, block.properties.name)
                 is BlockContent.Embed -> ReferenceCard(
                     content.reference,
                     (content.reference as? EntityReference.Run)?.let { runs[it.documentId] }
@@ -317,14 +318,14 @@ private fun BlockRow(
 }
 
 @Composable
-private fun Marker(block: Block, all: List<Block>, listParent: BlockContent.ListContainer?) {
+private fun Marker(block: Block, all: List<Block>, listParent: BlockContent.ListContainer?, indexedOrdinal: Int? = null) {
     val modifier = Modifier.width(30.dp).padding(top = 3.dp)
     when {
         block.content is BlockContent.Task || listParent?.style == ListStyle.Checkbox ->
             Checkbox(block.properties.done, onCheckedChange = null, modifier = Modifier.size(24.dp))
         listParent?.style == ListStyle.Bullet -> Text("•", modifier, textAlign = TextAlign.Center)
         listParent != null -> Text(
-            listOrdinal(listParent.style, ordinal(all, block)),
+            listOrdinal(listParent.style, indexedOrdinal ?: ordinal(all, block)),
             modifier,
             textAlign = TextAlign.End,
             style = MaterialTheme.typography.bodyMedium,
@@ -341,10 +342,10 @@ private fun Marker(block: Block, all: List<Block>, listParent: BlockContent.List
  * are read in composition and the text builder stays pure.
  */
 @Composable
-private fun runPillLabels(runs: Map<DocumentId, RunSnapshot>): (InlineObject) -> String {
+private fun runPillLabels(runs: Map<DocumentId, RunSnapshot>, passive: Boolean = false): (InlineObject) -> String {
     val fallback = androidx.compose.ui.res.stringResource(R.string.run_pill_fallback)
     val anotherDevice = androidx.compose.ui.res.stringResource(R.string.run_another_device)
-    val unlabelled = rememberReferenceFallback()
+    val unlabelled = rememberReferenceFallback(passive)
     return remember(runs, fallback, anotherDevice, unlabelled) {
         { pill ->
             when (val reference = pill.reference) {
@@ -366,14 +367,16 @@ private fun defaultPillLabel(): (InlineObject) -> String {
 private fun RichTextBlock(
     rich: RichText,
     properties: BlockProperties,
-    follow: (EntityReference) -> Unit,
+    follow: ((EntityReference) -> Unit)?,
     modifier: Modifier = Modifier,
     italic: Boolean = false,
     pillLabel: (InlineObject) -> String = defaultPillLabel(),
     editor: (@Composable (RichText, TextStyle, Modifier) -> Unit)? = null,
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
-    val annotated = remember(rich, linkColor, pillLabel) { annotatedRichText(rich, linkColor, pillLabel) }
+    val annotated = remember(rich, linkColor, pillLabel, follow == null) {
+        annotatedRichText(rich, linkColor, pillLabel, activeReferences = follow != null)
+    }
     val style = when (properties.headingLevel) {
         1 -> MaterialTheme.typography.headlineLarge
         2 -> MaterialTheme.typography.headlineMedium
@@ -395,6 +398,10 @@ private fun RichTextBlock(
         editor(rich, style.copy(color = MaterialTheme.colorScheme.onSurface), modifier)
         return
     }
+    if (follow == null) {
+        Text(annotated, modifier.fillMaxWidth(), style = style.copy(color = MaterialTheme.colorScheme.onSurface))
+        return
+    }
     @Suppress("DEPRECATION")
     ClickableText(
         text = annotated,
@@ -408,7 +415,7 @@ private fun RichTextBlock(
 private fun CodeBlock(
     content: BlockContent.Code,
     properties: BlockProperties,
-    follow: (EntityReference) -> Unit,
+    follow: ((EntityReference) -> Unit)?,
     pillLabel: (InlineObject) -> String,
     editor: (@Composable (RichText, TextStyle, Modifier) -> Unit)? = null,
 ) {
@@ -418,12 +425,15 @@ private fun CodeBlock(
                 Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(KoruSpacing.xs))
             }
-            val annotated = annotatedRichText(content.richText, MaterialTheme.colorScheme.primary, pillLabel)
+            val annotated = annotatedRichText(content.richText, MaterialTheme.colorScheme.primary, pillLabel,
+                activeReferences = follow != null)
             val style = MaterialTheme.typography.bodyMedium.copy(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
             )
-            if (editor != null) editor(content.richText, style, Modifier) else {
+            if (editor != null) editor(content.richText, style, Modifier)
+            else if (follow == null) Text(annotated, Modifier.fillMaxWidth(), style = style)
+            else {
                 @Suppress("DEPRECATION")
                 ClickableText(
                     text = annotated,
@@ -591,21 +601,21 @@ private fun BlobImage(blob: BlobReference, model: AppViewModel, label: String?) 
 }
 
 @Composable
-private fun ReferenceCard(reference: EntityReference, label: String?, follow: (EntityReference) -> Unit) {
-    OutlinedCard(Modifier.fillMaxWidth().clickable { follow(reference) }) {
+private fun ReferenceCard(reference: EntityReference, label: String?, follow: ((EntityReference) -> Unit)?) {
+    OutlinedCard(Modifier.fillMaxWidth().then(if (follow != null) Modifier.clickable { follow(reference) } else Modifier)) {
         Row(Modifier.padding(KoruSpacing.md), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Link, contentDescription = null)
             Spacer(Modifier.width(KoruSpacing.sm))
             Text(
-                label ?: rememberReferenceFallback()(reference),
-                color = MaterialTheme.colorScheme.primary,
+                label ?: rememberReferenceFallback(passive = follow == null)(reference),
+                color = if (follow != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
         }
     }
 }
 
 @Composable
-private fun ContactCard(name: RichText, follow: (EntityReference) -> Unit, pillLabel: (InlineObject) -> String) {
+private fun ContactCard(name: RichText, follow: ((EntityReference) -> Unit)?, pillLabel: (InlineObject) -> String) {
     OutlinedCard(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(KoruSpacing.md), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.AccountCircle, contentDescription = null)
@@ -626,6 +636,7 @@ internal fun annotatedRichText(
     rich: RichText,
     linkColor: Color,
     pillLabel: (InlineObject) -> String,
+    activeReferences: Boolean = true,
 ): AnnotatedString {
     val builder = AnnotatedString.Builder()
     val boundaries = mutableMapOf(0 to 0)
@@ -643,8 +654,10 @@ internal fun annotatedRichText(
             val start = builder.length
             builder.append(pillLabel(link.value))
             val end = builder.length
-            builder.addStringAnnotation(REFERENCE_TAG, link.index.toString(), start, end)
-            builder.addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), start, end)
+            if (activeReferences) {
+                builder.addStringAnnotation(REFERENCE_TAG, link.index.toString(), start, end)
+                builder.addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), start, end)
+            }
         } else {
             builder.append(source)
         }
@@ -740,19 +753,19 @@ private fun roman(value: Int): String {
  * is read so a language change recomposes this the way `stringResource` would.
  */
 @Composable
-internal fun rememberReferenceFallback(): (EntityReference) -> String {
+internal fun rememberReferenceFallback(passive: Boolean = false): (EntityReference) -> String {
     val configuration = LocalConfiguration.current
     val resources = LocalContext.current.resources
-    return remember(configuration, resources) { referenceFallback(resources) }
+    return remember(configuration, resources, passive) { referenceFallback(resources, passive) }
 }
 
 /**
  * The same table for a caller with no composition — the native editor renders
  * its spans from an `EditText`'s resources. One table, two ways in.
  */
-internal fun referenceFallback(resources: Resources): (EntityReference) -> String {
-    val document = resources.getString(R.string.open_document)
-    val block = resources.getString(R.string.open_block)
+internal fun referenceFallback(resources: Resources, passive: Boolean = false): (EntityReference) -> String {
+    val document = resources.getString(if (passive) R.string.document_subtitle else R.string.open_document)
+    val block = resources.getString(if (passive) R.string.insert_reference else R.string.open_block)
     val person = resources.getString(R.string.person)
     val run = resources.getString(R.string.run_pill_fallback)
     return { reference: EntityReference ->
