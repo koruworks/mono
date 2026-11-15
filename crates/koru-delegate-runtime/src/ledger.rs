@@ -133,6 +133,13 @@ impl crate::RoutineLedger for RunsDb {
 }
 
 impl RunStore for RunsDb {
+    fn decision_projection_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<RunId>, LedgerError> {
+        RunsDb::decision_projection_runs(self, after, limit)
+    }
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {

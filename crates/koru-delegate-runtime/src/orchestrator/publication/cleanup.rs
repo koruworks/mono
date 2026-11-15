@@ -66,6 +66,7 @@ impl Orchestrator {
         if owned_cleanup {
             state.decision_cleanup = Some(DecisionCleanupRetry {
                 request: None,
+                confirm: None,
                 due: Instant::now(),
                 round: 0,
             });
@@ -114,6 +115,7 @@ impl Orchestrator {
                 .decision_cleanup
                 .get_or_insert(DecisionCleanupRetry {
                     request: None,
+                    confirm: None,
                     due: Instant::now(),
                     round: 0,
                 })
@@ -129,10 +131,20 @@ impl Orchestrator {
                     transition: DecisionTransitionId::mint(),
                     cause,
                 }),
+                confirm: None,
                 due: Instant::now(),
                 round: 0,
             });
-        let request = retry.request.clone().ok_or_else(publication_pending)?;
+        // No owner exists (checked above): an armed retry without a request,
+        // such as an accepted native end, mints its one exact request now.
+        let request = retry
+            .request
+            .get_or_insert_with(|| DecisionCleanupRequest {
+                expected: execution.expected.clone(),
+                transition: DecisionTransitionId::mint(),
+                cause,
+            })
+            .clone();
         self.bot_ledger()?.request_decision_cleanup(
             &request.expected,
             request.transition,
@@ -181,11 +193,20 @@ impl Orchestrator {
         if retry.due > now {
             return Ok(Some(false));
         }
+        // An accepted positive native end with no person's request is not an
+        // owner Stop: it changes what the open decision can still authorize.
+        let process_ended = self.runs.get(&run).is_some_and(|state| {
+            state.source_obligation == Some(super::source::SourceObligation::ProcessEnded)
+        });
         let cause = retry
             .request
             .as_ref()
             .map(|request| request.cause)
-            .unwrap_or(DecisionClosureReason::Canceled);
+            .unwrap_or(if process_ended {
+                DecisionClosureReason::AuthorityChanged
+            } else {
+                DecisionClosureReason::Canceled
+            });
         let requested = self.request_publication_cleanup(run, cause);
         // A writer may have committed despite returning an error. Physical
         // cleanup independently re-reads the retained current consumer.
@@ -199,9 +220,171 @@ impl Orchestrator {
             retry.round = (retry.round + 1).min(5);
         }
         requested?;
-        observed?;
         // Observation alone cannot settle publication or release capacity.
+        // Only a positive exact observation may become final cleanup evidence.
+        if let Some(observed) = observed? {
+            self.confirm_decision_cleanup(run, observed)?;
+        }
         Ok(Some(false))
+    }
+
+    /// Final Confirmed cleanup for the exact retained current consumer, from
+    /// positive proof only: the C cleanup owner, CleanupPending, a qualified
+    /// creation retirement, no held or pending native effect, the attempt row
+    /// actually retired here, and a complete native drain. Anything else keeps
+    /// the wait, admission and capacity occupied. Admission settlement and the
+    /// folder claim release remain later and separate.
+    pub(crate) fn confirm_decision_cleanup(
+        &mut self,
+        run: RunId,
+        observed: ObservedCreationRetirement,
+    ) -> Result<bool, RunError> {
+        use koru_delegate_core::decisions::{
+            ConsumerCleanup, DecisionAttemptRetirement, DecisionList, DecisionNativeDrain,
+        };
+        use koru_delegate_sqlite::AttemptPhase;
+        let owner = self.publication_owner(run)?;
+        let Some(ownership) = self.bot_ledger()?.decision_cleanup_ownership(owner, run)? else {
+            return Ok(false);
+        };
+        let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+            return Ok(false);
+        };
+        if execution.wait.phase != BotWaitPhase::CleanupPending
+            || ownership.expected.wait != execution.wait.wait
+            || !observed.matches_target(&execution.cleanup_target)
+        {
+            return Ok(false);
+        }
+        let retained = self
+            .runs
+            .get(&run)
+            .and_then(|state| state.decision_cleanup.as_ref())
+            .and_then(|retry| retry.confirm.clone());
+        if execution.wait.cleanup.is_some() && retained.is_none() {
+            // Recorded by an earlier process; its Control is the owed
+            // projection. Never mint a second final record.
+            return Ok(false);
+        }
+        let (transition, cleanup) = match retained {
+            Some(retained) => retained,
+            None => {
+                // A held lease may still commit; pending verified evidence
+                // still needs its owner. Neither is drained absence.
+                if self.native_effects_pending(run)? {
+                    return Ok(false);
+                }
+                let (attempt, generation) = execution.cleanup_target.attempt();
+                let row = &execution.current_attempt;
+                if row.attempt != attempt
+                    || row.generation != generation
+                    || row.host_instance != Some(observed.host)
+                {
+                    return Ok(false);
+                }
+                if !row.retired {
+                    if !row.phase.is_terminal() {
+                        // Unknown host evidence is not a clean provider end.
+                        let phase = match observed.result {
+                            ObservedRetirementResult::NoEvidence {} => AttemptPhase::Unknown,
+                            _ => AttemptPhase::Ended,
+                        };
+                        self.ports.store.advance(run, generation, phase)?;
+                    }
+                    self.ports.store.retire(run, generation)?;
+                }
+                // Re-read the retained consumer after the actual retirement.
+                let Some(current) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+                    return Ok(false);
+                };
+                let row = &current.current_attempt;
+                if current.wait.wait != execution.wait.wait
+                    || current.cleanup_target != execution.cleanup_target
+                    || row.attempt != attempt
+                    || row.generation != generation
+                    || !row.retired
+                    || !row.phase.is_terminal()
+                {
+                    return Ok(false);
+                }
+                let now = self.ports.clock.now_ms();
+                // An empty drain list: the C correlation refuses it whenever
+                // any fenced or drained effect exists for this attempt, so a
+                // Run that drained effects stays occupied until a bounded
+                // drained-receipt reader supplies the complete list.
+                let cleanup = ConsumerCleanup::Confirmed {
+                    cleanup_revision: current.expected.revision,
+                    target: current.cleanup_target.clone(),
+                    creation_retirement: observed,
+                    attempt_retirement: DecisionAttemptRetirement {
+                        run,
+                        attempt,
+                        generation,
+                        retired_at_ms: row.updated_at_ms,
+                    },
+                    native_drain: DecisionNativeDrain {
+                        run,
+                        attempt,
+                        generation,
+                        observed_at_ms: now,
+                        effects: DecisionList::new(Vec::new())
+                            .map_err(|_| publication_pending())?,
+                    },
+                    retained_effect_outcome: None,
+                };
+                let transition = DecisionTransitionId::mint();
+                if let Some(retry) = self
+                    .runs
+                    .get_mut(&run)
+                    .and_then(|state| state.decision_cleanup.as_mut())
+                {
+                    retry.confirm = Some((transition, cleanup.clone()));
+                }
+                (transition, cleanup)
+            }
+        };
+        let current = self
+            .bot_ledger()?
+            .decision_wait_execution(owner, run)?
+            .ok_or_else(publication_pending)?;
+        let written = if current.expected.decision.is_some() {
+            self.bot_ledger()?
+                .record_decision_consumer_cleanup(
+                    &current.expected,
+                    ownership.projection,
+                    transition,
+                    &cleanup,
+                )
+                .map(|_| ())
+        } else {
+            self.bot_ledger()?
+                .record_nondecision_cleanup(
+                    &current.expected,
+                    ownership.projection,
+                    transition,
+                    &cleanup,
+                )
+                .map(|_| ())
+        };
+        if let Err(error) = written {
+            // A lost reply is resolved by the exact retained Control, never
+            // by a second record or recomputed evidence.
+            if self
+                .bot_ledger()?
+                .decision_projection(owner, run, transition)?
+                .is_none()
+            {
+                return Err(error.into());
+            }
+        }
+        if let Some(state) = self.runs.get_mut(&run) {
+            if let Some(retry) = state.decision_cleanup.as_mut() {
+                retry.confirm = None;
+            }
+            // The consumer is retired: no producer reconnects for it.
+            state.source_obligation = Some(super::source::SourceObligation::ProcessEnded);
+        }
+        Ok(true)
     }
 
     /// Permission to reconcile an existing Held effect while canonical status

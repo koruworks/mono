@@ -205,6 +205,13 @@ impl RecordingStore {
 }
 
 impl RunStore for RecordingStore {
+    fn decision_projection_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<RunId>, LedgerError> {
+        self.inner.lock().unwrap().decision_projection_runs(after, limit)
+    }
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {

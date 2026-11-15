@@ -632,6 +632,17 @@ impl Orchestrator {
                 .max(frontiers.session_after);
             if retry.ends_process {
                 state.source_obligation = Some(SourceObligation::ProcessEnded);
+                // Retiring the ended consumer needs the C cleanup owner first.
+                // The existing cleanup tick requests it (AuthorityChanged, or
+                // adopts an earlier owner), observes and confirms positively.
+                state.decision_cleanup.get_or_insert(
+                    crate::orchestrator::state::DecisionCleanupRetry {
+                        request: None,
+                        confirm: None,
+                        due: std::time::Instant::now(),
+                        round: 0,
+                    },
+                );
             }
         }
         // Applied usage is a document fact whatever consumer is current now.

@@ -192,6 +192,12 @@ pub struct BotCleanupRetry {
 
 pub(crate) struct DecisionCleanupRetry {
     pub request: Option<DecisionCleanupRequest>,
+    /// One exact final cleanup record (transition and complete positive
+    /// evidence). An unknown writer result retries these same values.
+    pub confirm: Option<(
+        koru_delegate_core::decisions::DecisionTransitionId,
+        koru_delegate_core::decisions::ConsumerCleanup,
+    )>,
     pub due: std::time::Instant,
     pub round: u8,
 }

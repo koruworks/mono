@@ -292,3 +292,100 @@ fn decision_wait_settlement_needs_private_return_proof_and_a_settled_decision() 
             .contains(&"decision_wait_settle")
     );
 }
+
+#[test]
+fn decision_projection_selection_is_a_bounded_rotating_keyset_over_open_rows() {
+    let (mut h, _, fence) = waiting_with_memory(true);
+    let run = fence.run;
+    // The open decision Control is found through the partial indexes.
+    assert_eq!(h.orchestrator.publication_runs(None).unwrap(), vec![run]);
+    // A cursor at the Run wraps once to reach it; nothing is skipped forever.
+    assert_eq!(
+        h.orchestrator.publication_runs(Some(run)).unwrap(),
+        vec![run]
+    );
+    apply_next(&mut h, run);
+    assert!(h.orchestrator.publication_runs(None).unwrap().is_empty());
+    assert!(
+        h.orchestrator
+            .publication_runs(Some(run))
+            .unwrap()
+            .is_empty()
+    );
+    // The reader refuses an unbounded page rather than scanning history.
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .decision_projection_runs(None, 17)
+            .is_err()
+    );
+}
+
+#[test]
+fn decision_cleanup_confirms_retired_consumer_then_settles_only_the_wait() {
+    let (mut h, submission, fence) = waiting_with_memory(true);
+    let run = fence.run;
+    apply_next(&mut h, run);
+    let _ = h
+        .orchestrator
+        .bot_stop(&key(&submission), fence.owner.device, Some(&fence));
+    assert!(!h.attempt(run).retired, "a request alone retires nothing");
+    // The cleanup tick observes the exact consumer, retires its attempt row
+    // and records the complete positive evidence once.
+    let _ = h.orchestrator.bot_budget_tick(run);
+    assert!(h.attempt(run).retired);
+    let execution = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .decision_wait_execution(fence.owner, run)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        execution.wait.cleanup,
+        Some(ConsumerCleanup::Confirmed { .. })
+    ));
+    assert_eq!(
+        h.schedule_store.bot_execution(run).unwrap().unwrap().state,
+        BotAdmissionState::Executing,
+        "physical cleanup never settles the admission"
+    );
+    // A later tick neither retires again nor mints a second final record.
+    let records = latest(&h, &fence).identity.sequence;
+    let _ = h.orchestrator.bot_budget_tick(run);
+    assert_eq!(latest(&h, &fence).identity.sequence, records);
+    // The owed Controls publish in order; then the wait settles with D's
+    // private return proof, and the fence ends without resuming a stream.
+    for _ in 0..3 {
+        let Some(start) = h.orchestrator.next_run_publication(run).unwrap() else {
+            break;
+        };
+        h.orchestrator.cancel_unstarted_publication(start);
+        apply_next(&mut h, run);
+    }
+    assert!(
+        h.orchestrator
+            .settle_publication_wait(run)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .decision_wait_execution(fence.owner, run)
+            .unwrap()
+            .is_none(),
+        "the runtime wait is settled"
+    );
+    assert!(!h.orchestrator.run_publication_pending(run));
+    assert_eq!(
+        h.schedule_store.bot_execution(run).unwrap().unwrap().state,
+        BotAdmissionState::Executing,
+        "wait settlement never settles the admission"
+    );
+}

@@ -497,12 +497,14 @@ impl Orchestrator {
         if let RunDocumentOwner::Attached { exclusive, .. } = &mut state.doc {
             *exclusive = false;
         }
+        // A retired or natively ended consumer has no stream to resume.
+        let ended = state.source_obligation == Some(source::SourceObligation::ProcessEnded);
         state.publication_returned = None;
         state.source_epoch = None;
         state.source_obligation = None;
         state.source_usage.clear();
         state.decision_cleanup = None;
-        let Some(attempt) = state.attempt.as_ref() else {
+        let Some(attempt) = state.attempt.as_ref().filter(|_| !ended) else {
             return Ok(None);
         };
         let (attempt_id, generation) = (attempt.id, attempt.generation);
@@ -519,6 +521,37 @@ impl Orchestrator {
             status,
             events: Some(events),
         }))
+    }
+
+    /// Runs to offer the single physical ticket, rotating after `after`: one
+    /// bounded keyset page over the approved open-projection indexes, one
+    /// wrapped page at or before the cursor, then read-only observations
+    /// (which have no SQL row) from the bounded in-memory inventory. Durable
+    /// rows are found even when no RunState exists, as after a restart.
+    pub fn publication_runs(&mut self, after: Option<RunId>) -> Result<Vec<RunId>, RunError> {
+        use koru_delegate_sqlite::DECISION_PROJECTION_RUN_PAGE as PAGE;
+        let mut runs = self.ports.store.decision_projection_runs(after, PAGE)?;
+        if let Some(cursor) = after {
+            for run in self.ports.store.decision_projection_runs(None, PAGE)? {
+                if run <= cursor && !runs.contains(&run) {
+                    runs.push(run);
+                }
+            }
+        }
+        let mut observing: Vec<RunId> = self
+            .runs
+            .iter()
+            .filter(|(run, state)| {
+                matches!(
+                    state.source_obligation,
+                    Some(source::SourceObligation::Usage(_))
+                ) && !runs.contains(run)
+            })
+            .map(|(run, _)| *run)
+            .collect();
+        observing.sort();
+        runs.extend(observing);
+        Ok(runs)
     }
 
     /// Runs whose publication is owned exclusively here, in RunId order. This

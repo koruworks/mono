@@ -98,12 +98,16 @@ impl Actor {
         {
             return;
         }
-        let candidates = self.orchestrator.publication_candidates();
-        let split = self
-            .publication_cursor
-            .map_or(0, |cursor| candidates.partition_point(|run| *run <= cursor));
-        let (before, after) = candidates.split_at(split);
-        for run in after.iter().chain(before).copied() {
+        // Durable open projections come from the bounded keyset reader (also
+        // after a restart, with no RunState); observations from memory.
+        let candidates = match self.orchestrator.publication_runs(self.publication_cursor) {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                tracing::debug!(target: "koru::delegate", %error, "publication selection unavailable");
+                return;
+            }
+        };
+        for run in candidates {
             match self.start_run_publication(run) {
                 Ok(true) => {
                     self.publication_cursor = Some(run);

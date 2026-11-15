@@ -164,6 +164,13 @@ pub type PortResult<T> = Result<T, PortError>;
 /// test. The method set is the ledger's own; the port exists so the
 /// orchestrator can be driven with no file.
 pub trait RunStore: ScheduleLedger {
+    /// Bounded keyset selection over the three approved open-projection
+    /// partial indexes: at most `limit` (<= 16) distinct Runs after `after`.
+    fn decision_projection_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<RunId>, LedgerError>;
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError>;

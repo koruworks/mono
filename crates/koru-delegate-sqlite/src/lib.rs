@@ -87,7 +87,7 @@ pub use native_results::{
     NativePolicyRecord, NativeRecoveryCursor, NativeResultLedger, PendingNativeResult,
 };
 pub use publications::{
-    OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek, PublicationBody,
+    DECISION_PROJECTION_RUN_PAGE, OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek, PublicationBody,
     PublicationRecord,
 };
 pub use restart::{LookupAnswer, RestartVerdict, ResumePolicy, classify_at_restart};

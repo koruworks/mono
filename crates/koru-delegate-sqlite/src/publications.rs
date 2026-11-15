@@ -675,5 +675,8 @@ fn attempts_of(value: i64) -> Result<u32, LedgerError> {
     })
 }
 
+mod decision_runs;
+pub use decision_runs::DECISION_PROJECTION_RUN_PAGE;
+
 #[cfg(test)]
 mod tests;
