@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+mod cleanup;
 
 fn base(h: &Harness) -> DecisionPublicationBase {
     let f = h.origin();

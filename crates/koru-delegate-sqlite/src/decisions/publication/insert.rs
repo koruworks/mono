@@ -31,6 +31,10 @@ fn base_on(
     authority::owner(tx, owner, run)?;
     crate::bots::routines::bounded_admission(tx, run)?;
     let admitted = crate::bots::routines::native_admission(tx, run)?;
+    require(matches!(
+        admitted.state,
+        BotAdmissionState::Reserved | BotAdmissionState::Executing
+    ))?;
     let (intent, request) = crate::intents::retained_bounded(tx, run)?;
     require(
         intent.state == crate::IntentState::Satisfied
@@ -164,6 +168,17 @@ pub(super) fn insert_on(
             && target.fence().owner == owner
             && target.fence().bot == wait.origin.bot,
     )?;
+    if let RunProjectionTargetV1::Control {
+        action:
+            DecisionControlAction::CleanupRequested {
+                expected_wait_revision,
+                ..
+            },
+        ..
+    } = target
+    {
+        require(wait.revision == next(*expected_wait_revision)?)?;
+    }
     let mut resume = None;
     let decision = match wait.reason {
         BotWaitReason::Decision { decision } => {
@@ -196,9 +211,19 @@ pub(super) fn insert_on(
                 )?;
                 match (disposition, &record.receipt.closure) {
                     (DecisionDisposition::Open { .. }, None) => {}
-                    (DecisionDisposition::Settled { reason, .. }, Some(closure)) => {
-                        require(*reason == closure.reason)?
-                    }
+                    (
+                        DecisionDisposition::Settled {
+                            reason,
+                            outcome_digest,
+                            ..
+                        },
+                        Some(closure),
+                    ) => require(
+                        *reason == closure.reason
+                            && *outcome_digest
+                                == decision_outcome_digest(&record.receipt)
+                                    .map_err(|_| BotLedgerError::Invalid)?,
+                    )?,
                     _ => return Err(BotLedgerError::Conflict),
                 }
             }

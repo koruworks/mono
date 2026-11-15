@@ -307,6 +307,23 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn prepare_bot_decision(
+        &mut self,
+        binding: &DecisionBindingV1,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::prepare_bot_decision(self, binding, proof, boot, base)
+    }
+    fn request_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        cause: DecisionClosureReason,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::request_decision_cleanup(self, expected, transition, cause)
+    }
     fn decision_wait_execution(
         &self,
         owner: BotOwner,
