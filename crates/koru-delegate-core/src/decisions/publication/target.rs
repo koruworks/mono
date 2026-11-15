@@ -77,6 +77,7 @@ pub enum DecisionControlAction {
     /// changing the canonical Run status. Only the cleanup owner can finalize it.
     CleanupRequested {
         cause: DecisionClosureReason,
+        expected_wait_revision: DecisionRevision,
     },
     DecisionWaiting {},
     DecisionResolved {
@@ -406,7 +407,7 @@ impl DecisionValidate for RunProjectionTargetV1 {
                 ..
             } => {
                 action.validate_effects(before, effects)?;
-                if let DecisionControlAction::CleanupRequested { cause } = action {
+                if let DecisionControlAction::CleanupRequested { cause, .. } = action {
                     let authorization = match cause {
                         DecisionClosureReason::Canceled
                         | DecisionClosureReason::AuthorityChanged => {
@@ -435,6 +436,19 @@ impl DecisionValidate for RunProjectionTargetV1 {
                                     && (state.authorization == authorization
                                         || state.authorization == DecisionAuthorization::Consumed),
                             )?;
+                        }
+                        (
+                            Some(DecisionDisposition::Settled { .. }),
+                            BotWaitReason::Decision { .. },
+                        ) => {
+                            // A settled answer/closure remains immutable while
+                            // its occupied runtime wait still owes publication
+                            // or cleanup. C qualifies the exact retained value.
+                            require(matches!(
+                                cause,
+                                DecisionClosureReason::Canceled
+                                    | DecisionClosureReason::AuthorityChanged
+                            ))?;
                         }
                         (
                             None,
