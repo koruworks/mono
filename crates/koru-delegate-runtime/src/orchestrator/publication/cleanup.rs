@@ -34,6 +34,13 @@ impl Orchestrator {
         let retained = ledger
             .latest_decision_projection(admission.owner, run)?
             .ok_or_else(publication_pending)?;
+        // The sole C owner decides cleanup ownership: a Requested Stop/expiry/
+        // authority change, a Koru Deny answer (O109), or a no-decision
+        // obligation. Placement still comes from the retained projection.
+        let owned_cleanup = execution.is_some()
+            && ledger
+                .decision_cleanup_ownership(admission.owner, run)?
+                .is_some();
         let intent = self
             .ports
             .store
@@ -56,14 +63,7 @@ impl Orchestrator {
             retained.identity.document,
             RunDocumentOwner::Unopened,
         );
-        // The sole C owner decides cleanup ownership: a Requested Stop/expiry/
-        // authority change, a Koru Deny answer (O109), or a no-decision
-        // obligation. Placement still comes from the retained projection above.
-        if execution.is_some()
-            && ledger
-                .decision_cleanup_ownership(admission.owner, run)?
-                .is_some()
-        {
+        if owned_cleanup {
             state.decision_cleanup = Some(DecisionCleanupRetry {
                 request: None,
                 due: Instant::now(),
