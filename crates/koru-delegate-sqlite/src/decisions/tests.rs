@@ -46,7 +46,7 @@ impl Harness {
             payload: DecisionBytes::new(b"PRIVATE-EDIT".to_vec()).unwrap(),
             captured_policy: admission.submission.policy,
             global_policy: DecisionGlobalPolicy {
-                key: global.key,
+                key: global.key.clone(),
                 config_revision: rev(global.config_revision),
                 policy_revision: rev(global.policy_revision),
                 digest: DecisionDigest::from_bytes(

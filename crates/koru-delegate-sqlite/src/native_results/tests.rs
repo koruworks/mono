@@ -21,7 +21,7 @@ pub(crate) fn decision_base() -> (RunsDb, BotExecutionFence, BotPolicyBarrier) {
     h.db.conn()
         .execute(
             "UPDATE bot_admissions SET payload_json=?1 WHERE run_id=?2",
-            params![
+            rusqlite::params![
                 serde_json::to_string(&admission).unwrap(),
                 h.fence.run.to_storage()
             ],

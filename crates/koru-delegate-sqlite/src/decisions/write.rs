@@ -57,7 +57,7 @@ fn done(
         outcome,
     })
 }
-fn cap(tx: &Connection, owner: BotOwner) -> Result<(), BotLedgerError> {
+pub(super) fn cap(tx: &Connection, owner: BotOwner) -> Result<(), BotLedgerError> {
     // Identity-only bounded device probe, including nondecision cleanup. The
     // 53rd row detects overflow of 50 retained waits + two occupied Runs. Do
     // not scan an unbounded excluded prefix to find this owner's decisions.

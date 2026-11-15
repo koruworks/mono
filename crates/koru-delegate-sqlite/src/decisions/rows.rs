@@ -5,7 +5,7 @@ use rusqlite::{Row, types::FromSql};
 mod native;
 mod resume;
 mod wait;
-pub(super) use wait::read_wait;
+use wait::read_wait;
 
 /// Fixed source-owned column descriptions, never caller SQL. SQLite checks
 /// every type/byte length in the selected row before Rust allocates any body.

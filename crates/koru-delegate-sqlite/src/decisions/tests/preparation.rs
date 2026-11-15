@@ -94,7 +94,7 @@ fn decision_prepare_requires_real_selected_write_denial() {
     h.proof.global.config_revision = 2;
     h.db.install_native_policy(&h.proof.global).unwrap();
     let global = DecisionGlobalPolicy {
-        key: h.proof.global.key,
+        key: h.proof.global.key.clone(),
         config_revision: rev(2),
         policy_revision: rev(1),
         digest: DecisionDigest::from_bytes(
