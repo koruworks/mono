@@ -881,6 +881,8 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
             .unwrap();
         assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
     }
+    // The owed Controls of the chain publish before any delivery is recorded.
+    publish_owed(&mut h, run);
     // The successor turn completed natively.
     {
         let memory = h

@@ -98,6 +98,15 @@ impl Orchestrator {
         let retry = match retained {
             Some(retry) => retry,
             None => {
+                // An earlier owed projection publishes first: a fresh Delivery
+                // Control never supersedes an intermediate Control it follows.
+                if self
+                    .bot_ledger()?
+                    .next_decision_projection(key.owner, run)?
+                    .is_some()
+                {
+                    return Err(refused("bot_delivery_pending"));
+                }
                 let outcome = if header.status.is_terminal()
                     || matches!(header.status, RunStatus::Interrupted { .. })
                 {
