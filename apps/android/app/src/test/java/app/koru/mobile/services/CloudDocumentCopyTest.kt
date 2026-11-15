@@ -3,6 +3,8 @@ package app.koru.mobile.services
 
 import app.koru.mobile.domain.BlockId
 import app.koru.mobile.ui.editor.CloudCopyPhase
+import app.koru.mobile.ui.editor.CloudCopyViewKey
+import app.koru.mobile.ui.editor.CloudCopyConfirmation
 import app.koru.mobile.ui.editor.cloudCopyRemovableNodes
 import app.koru.mobile.ui.editor.cloudCopyRemovalEnabled
 import org.json.JSONArray
@@ -141,5 +143,22 @@ class CloudDocumentCopyTest {
             assertFalse(row.getValue("cloud_copy_block_reference").contains("Insert"))
         }
         assertEquals("Block reference", rows.first().getValue("cloud_copy_block_reference"))
+    }
+
+    @Test fun confirmationNeverRetargetsIdenticalContentAcrossScopeSessionOrSource() {
+        val key = CloudCopyViewKey(1, 7, selection)
+        val pending = CloudCopyConfirmation(key, BlockId(id(6)))
+        val allowed = setOf(BlockId(id(6)))
+        assertTrue(pending.validFor(key, CloudCopyPhase.Verified, allowed))
+        val changed = listOf(key.copy(ownerScope = 2), key.copy(accountGeneration = 8),
+            key.copy(selection = selection.copy(accountId = id(99))),
+            key.copy(selection = selection.copy(workspaceId = id(99))),
+            key.copy(selection = selection.copy(incarnationId = id(99))),
+            key.copy(selection = selection.copy(cloudUnitId = id(99))),
+            key.copy(selection = selection.copy(documentId = id(99))),
+            key.copy(selection = selection.copy(sourceHeadDigest = "b".repeat(64))))
+        changed.forEach { assertFalse(pending.validFor(it, CloudCopyPhase.Verified, allowed)) }
+        assertFalse(pending.validFor(key, CloudCopyPhase.Removing, allowed))
+        assertFalse(pending.validFor(key, CloudCopyPhase.Verified, emptySet()))
     }
 }

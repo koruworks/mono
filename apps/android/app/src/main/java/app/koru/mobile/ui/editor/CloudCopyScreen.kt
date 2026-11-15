@@ -11,11 +11,18 @@ import app.koru.mobile.domain.BlockId
 import app.koru.mobile.domain.DocumentSnapshot
 import app.koru.mobile.services.CloudCopyFile
 import app.koru.mobile.services.CloudCopyStructure
+import app.koru.mobile.services.CloudCopySelection
 import app.koru.mobile.ui.theme.KoruSpacing
 
 /** Presentation states; only the authenticated native adapter can supply content/actions. */
 internal enum class CloudCopyPhase {
     Loading, Verified, Unavailable, SourceChanged, Removing, OutcomeUnknown, Acknowledged,
+}
+
+internal data class CloudCopyViewKey(val ownerScope: Long, val accountGeneration: Long, val selection: CloudCopySelection)
+internal data class CloudCopyConfirmation(val key: CloudCopyViewKey, val node: BlockId) {
+    fun validFor(current: CloudCopyViewKey, phase: CloudCopyPhase, removable: Set<BlockId>): Boolean =
+        key == current && cloudCopyRemovalEnabled(phase, removable, node)
 }
 
 internal fun cloudCopyRemovableNodes(document: DocumentSnapshot?, permittedNodes: Set<BlockId>): Set<BlockId> {
@@ -35,6 +42,7 @@ internal fun cloudCopyRemovalEnabled(phase: CloudCopyPhase, removable: Set<Block
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CloudCopyScreen(
+    key: CloudCopyViewKey,
     document: DocumentSnapshot?,
     phase: CloudCopyPhase,
     permittedNodes: Set<BlockId>,
@@ -42,13 +50,13 @@ internal fun CloudCopyScreen(
     trashedNodes: Set<BlockId>,
     structure: Map<BlockId, CloudCopyStructure>,
     onBack: () -> Unit,
-    onReload: () -> Unit,
-    onRemove: (BlockId) -> Unit,
+    onReload: (CloudCopyViewKey) -> Unit,
+    onRemove: (CloudCopyViewKey, BlockId) -> Unit,
 ) {
-    var confirmation by remember(document) { mutableStateOf<BlockId?>(null) }
+    var confirmation by remember(key, document) { mutableStateOf<CloudCopyConfirmation?>(null) }
     val removable = remember(document, permittedNodes) { cloudCopyRemovableNodes(document, permittedNodes) }
     LaunchedEffect(phase, removable) {
-        if (confirmation?.let { !cloudCopyRemovalEnabled(phase, removable, it) } == true)
+        if (confirmation?.validFor(key, phase, removable) == false)
             confirmation = null
     }
     Scaffold(topBar = {
@@ -74,7 +82,7 @@ internal fun CloudCopyScreen(
                 status?.let { Text(stringResource(it)) }
                 if (phase == CloudCopyPhase.Loading || phase == CloudCopyPhase.Removing) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (phase != CloudCopyPhase.Loading && phase != CloudCopyPhase.Removing) {
-                    TextButton(onClick = { confirmation = null; onReload() }) { Text(stringResource(R.string.cloud_copy_reload)) }
+                    TextButton(onClick = { confirmation = null; onReload(key) }) { Text(stringResource(R.string.cloud_copy_reload)) }
                 }
             }
             if (document != null && phase in setOf(CloudCopyPhase.Verified, CloudCopyPhase.Removing)) {
@@ -82,23 +90,23 @@ internal fun CloudCopyScreen(
                     if (block.id in removable) {
                         TextButton(
                             enabled = cloudCopyRemovalEnabled(phase, removable, block.id),
-                            onClick = { confirmation = block.id },
+                            onClick = { confirmation = CloudCopyConfirmation(key, block.id) },
                         ) { Text(stringResource(R.string.cloud_copy_remove)) }
                     }
                 }
             }
         }
     }
-    confirmation?.let { node ->
+    confirmation?.takeIf { it.validFor(key, phase, removable) }?.let { pending ->
         AlertDialog(
             onDismissRequest = { confirmation = null },
             title = { Text(stringResource(R.string.cloud_copy_remove_question)) },
             text = { Text(stringResource(R.string.cloud_copy_remove_explanation)) },
             confirmButton = {
                 TextButton(
-                    enabled = cloudCopyRemovalEnabled(phase, removable, node),
+                    enabled = pending.validFor(key, phase, removable),
                     onClick = {
-                        if (cloudCopyRemovalEnabled(phase, removable, node)) onRemove(node)
+                        if (pending.validFor(key, phase, removable)) onRemove(pending.key, pending.node)
                         confirmation = null
                     },
                 ) { Text(stringResource(R.string.cloud_copy_remove)) }

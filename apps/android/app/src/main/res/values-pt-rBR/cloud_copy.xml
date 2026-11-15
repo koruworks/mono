@@ -6,14 +6,14 @@
     <string name="cloud_copy_loading">Verificando a cópia na Cloud…</string>
     <string name="cloud_copy_unavailable">A cópia na Cloud está indisponível.</string>
     <string name="cloud_copy_changed">A cópia na Cloud mudou. Recarregue antes de fazer alterações.</string>
-    <string name="cloud_copy_removing">Removendo referência ao arquivo…</string>
+    <string name="cloud_copy_removing">Removendo item de arquivo…</string>
     <string name="cloud_copy_unknown">O resultado é desconhecido. Recarregue a cópia na Cloud antes de tentar novamente.</string>
     <string name="cloud_copy_acknowledged">A Cloud confirmou a alteração. Atualize o uso de arquivos para ver o valor atual.</string>
-    <string name="cloud_copy_no_actions">Não é possível remover referências a arquivos desta cópia no momento.</string>
+    <string name="cloud_copy_no_actions">Não é possível remover itens de arquivo desta cópia no momento.</string>
     <string name="cloud_copy_reload">Recarregar cópia na Cloud</string>
-    <string name="cloud_copy_remove">Remover referência ao arquivo</string>
-    <string name="cloud_copy_remove_question">Remover esta referência ao arquivo da cópia na Cloud?</string>
-    <string name="cloud_copy_remove_explanation">Apenas esta referência será removida. Outras referências podem manter o arquivo no armazenamento da Cloud.</string>
+    <string name="cloud_copy_remove">Remover item de arquivo</string>
+    <string name="cloud_copy_remove_question">Remover este item de arquivo da cópia na Cloud?</string>
+    <string name="cloud_copy_remove_explanation">O item de arquivo selecionado será removido. Um destino incorporado não será excluído. Outras referências podem manter o arquivo no armazenamento da Cloud.</string>
     <string name="cloud_copy_block_reference">Referência a bloco</string>
     <string name="cloud_copy_preview_unavailable">Prévia do arquivo indisponível</string>
 </resources>

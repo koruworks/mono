@@ -6,14 +6,14 @@
     <string name="cloud_copy_loading">Comprobando la copia en Cloud…</string>
     <string name="cloud_copy_unavailable">La copia en Cloud no está disponible.</string>
     <string name="cloud_copy_changed">La copia en Cloud ha cambiado. Vuelve a cargarla antes de hacer cambios.</string>
-    <string name="cloud_copy_removing">Eliminando la referencia al archivo…</string>
+    <string name="cloud_copy_removing">Eliminando elemento de archivo…</string>
     <string name="cloud_copy_unknown">El resultado es desconocido. Vuelve a cargar la copia en Cloud antes de intentarlo de nuevo.</string>
     <string name="cloud_copy_acknowledged">Cloud ha confirmado el cambio. Actualiza el uso de archivos para ver el valor actual.</string>
-    <string name="cloud_copy_no_actions">Por ahora no se pueden eliminar referencias a archivos de esta copia.</string>
+    <string name="cloud_copy_no_actions">Por ahora no se pueden eliminar elementos de archivo de esta copia.</string>
     <string name="cloud_copy_reload">Volver a cargar la copia en Cloud</string>
-    <string name="cloud_copy_remove">Eliminar referencia al archivo</string>
-    <string name="cloud_copy_remove_question">¿Eliminar esta referencia al archivo de la copia en Cloud?</string>
-    <string name="cloud_copy_remove_explanation">Solo se elimina esta referencia al archivo. Otras referencias pueden mantener el archivo en el almacenamiento de Cloud.</string>
+    <string name="cloud_copy_remove">Eliminar elemento de archivo</string>
+    <string name="cloud_copy_remove_question">¿Eliminar este elemento de archivo de la copia en Cloud?</string>
+    <string name="cloud_copy_remove_explanation">Se elimina el elemento de archivo seleccionado. No se elimina el destino incrustado. Otras referencias pueden mantener el archivo en el almacenamiento de Cloud.</string>
     <string name="cloud_copy_block_reference">Referencia a un bloque</string>
     <string name="cloud_copy_preview_unavailable">Vista previa del archivo no disponible</string>
 </resources>

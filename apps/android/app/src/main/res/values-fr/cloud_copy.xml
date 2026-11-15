@@ -6,14 +6,14 @@
     <string name="cloud_copy_loading">Vérification de la copie Cloud…</string>
     <string name="cloud_copy_unavailable">La copie Cloud est indisponible.</string>
     <string name="cloud_copy_changed">La copie Cloud a changé. Rechargez-la avant de la modifier.</string>
-    <string name="cloud_copy_removing">Suppression de la référence au fichier…</string>
+    <string name="cloud_copy_removing">Suppression de l’élément de fichier…</string>
     <string name="cloud_copy_unknown">Le résultat est inconnu. Rechargez la copie Cloud avant de réessayer.</string>
     <string name="cloud_copy_acknowledged">Cloud a confirmé la modification. Actualisez le stockage des fichiers pour voir la valeur actuelle.</string>
-    <string name="cloud_copy_no_actions">Aucune référence de fichier ne peut être supprimée de cette copie pour le moment.</string>
+    <string name="cloud_copy_no_actions">Aucun élément de fichier ne peut être supprimé de cette copie pour le moment.</string>
     <string name="cloud_copy_reload">Recharger la copie Cloud</string>
-    <string name="cloud_copy_remove">Supprimer la référence au fichier</string>
-    <string name="cloud_copy_remove_question">Supprimer cette référence au fichier de la copie Cloud ?</string>
-    <string name="cloud_copy_remove_explanation">Seule cette référence sera supprimée. D’autres références peuvent conserver le fichier dans le stockage Cloud.</string>
+    <string name="cloud_copy_remove">Supprimer l’élément de fichier</string>
+    <string name="cloud_copy_remove_question">Supprimer cet élément de fichier de la copie Cloud ?</string>
+    <string name="cloud_copy_remove_explanation">L’élément de fichier sélectionné sera supprimé. Une cible intégrée ne sera pas supprimée. D’autres références peuvent conserver le fichier dans le stockage Cloud.</string>
     <string name="cloud_copy_block_reference">Référence à un bloc</string>
     <string name="cloud_copy_preview_unavailable">Aperçu du fichier indisponible</string>
 </resources>

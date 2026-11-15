@@ -6,14 +6,14 @@
     <string name="cloud_copy_loading">Checking Cloud copy…</string>
     <string name="cloud_copy_unavailable">The Cloud copy is unavailable.</string>
     <string name="cloud_copy_changed">The Cloud copy changed. Reload it before making changes.</string>
-    <string name="cloud_copy_removing">Removing file reference…</string>
+    <string name="cloud_copy_removing">Removing file item…</string>
     <string name="cloud_copy_unknown">The outcome is unknown. Reload the Cloud copy before trying again.</string>
     <string name="cloud_copy_acknowledged">Cloud confirmed the change. Refresh file usage to see the current count.</string>
-    <string name="cloud_copy_no_actions">No file references can be removed from this copy right now.</string>
+    <string name="cloud_copy_no_actions">No file items can be removed from this copy right now.</string>
     <string name="cloud_copy_reload">Reload Cloud copy</string>
-    <string name="cloud_copy_remove">Remove file reference</string>
-    <string name="cloud_copy_remove_question">Remove this file reference from the Cloud copy?</string>
-    <string name="cloud_copy_remove_explanation">This removes only this file reference. Other references may keep the file in Cloud storage.</string>
+    <string name="cloud_copy_remove">Remove file item</string>
+    <string name="cloud_copy_remove_question">Remove this file item from the Cloud copy?</string>
+    <string name="cloud_copy_remove_explanation">This removes the selected file item. An embedded target is not deleted. Other references may keep the file in Cloud storage.</string>
     <string name="cloud_copy_block_reference">Block reference</string>
     <string name="cloud_copy_preview_unavailable">File preview unavailable</string>
 </resources>

@@ -6,14 +6,14 @@
     <string name="cloud_copy_loading">正在检查 Cloud 副本…</string>
     <string name="cloud_copy_unavailable">Cloud 副本不可用。</string>
     <string name="cloud_copy_changed">Cloud 副本已更改。请重新加载后再进行修改。</string>
-    <string name="cloud_copy_removing">正在移除文件引用…</string>
+    <string name="cloud_copy_removing">正在移除文件项…</string>
     <string name="cloud_copy_unknown">结果未知。请重新加载 Cloud 副本后再重试。</string>
     <string name="cloud_copy_acknowledged">Cloud 已确认更改。请刷新文件用量以查看当前数值。</string>
-    <string name="cloud_copy_no_actions">目前无法从此副本中移除任何文件引用。</string>
+    <string name="cloud_copy_no_actions">目前无法从此副本中移除任何文件项。</string>
     <string name="cloud_copy_reload">重新加载 Cloud 副本</string>
-    <string name="cloud_copy_remove">移除文件引用</string>
-    <string name="cloud_copy_remove_question">要从 Cloud 副本中移除此文件引用吗？</string>
-    <string name="cloud_copy_remove_explanation">只会移除此文件引用。其他引用可能会使文件继续保留在 Cloud 存储中。</string>
+    <string name="cloud_copy_remove">移除文件项</string>
+    <string name="cloud_copy_remove_question">要从 Cloud 副本中移除此文件项吗？</string>
+    <string name="cloud_copy_remove_explanation">将移除选中的文件项，但不会删除嵌入的目标。其他引用可能会使文件继续保留在 Cloud 存储中。</string>
     <string name="cloud_copy_block_reference">块引用</string>
     <string name="cloud_copy_preview_unavailable">文件预览不可用</string>
 </resources>
