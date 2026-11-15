@@ -44,6 +44,11 @@ use std::time::Duration;
 /// Availability gate for answerable edit decisions. While `false` the native
 /// edit path is exactly the ordinary one and no decision command is sent.
 /// Opening it is an availability transition the delivery lead reviews.
+///
+/// **Must stay `false` until the decision-wait mutation fence lands (O147):**
+/// the authenticated `BotDecisionWait` classification that refuses
+/// unrelated model mutations, including AI Routine Create/Retry, while a
+/// decision waits. That fence is a wire change and is not in this build.
 pub(super) const EDIT_DECISIONS_AVAILABLE: bool = false;
 
 /// How long the immediate response may wait for the initial projection's

@@ -719,12 +719,14 @@ fn a_typed_owner_refusal_of_the_decision_falls_back_to_the_existing_refusal() {
     let first = denied_edit(&f);
     let owner = DecisionOwner::new(&f);
     assert_eq!(
-        edit(&f, &owner, first).unwrap_err().code,
+        edit(&f, &owner, first.clone()).unwrap_err().code,
         "permission_pending"
     );
     owner.script().publication_pending = true;
-    let mut second = denied_edit(&f);
+    // New work: another operation (here on the same page, other text).
+    let mut second = first;
     second["operation_id"] = json!(Uuid::new_v4());
+    second["operations"][0]["text"] = json!("Other work");
     let answer = edit(&f, &owner, second.clone()).unwrap_err();
     assert_eq!(answer.code, "decision_in_progress");
     assert_eq!(
@@ -832,7 +834,10 @@ fn single_consumption_the_acknowledged_consumer_runs_the_store_effect_once() {
     let saved = edit(&f, &owner, arguments.clone()).unwrap();
     assert_eq!(saved["status"], "saved");
     assert_eq!(saved["operation_id"], operation_of(&arguments));
-    assert_eq!(text_count(&f, &arguments, "Needs approval"), 1);
+    // The read shows one paragraph's text in more than one field; whatever
+    // that count is after the one effect, a retry must not change it.
+    let once = text_count(&f, &arguments, "Needs approval");
+    assert!(once > 0, "the approved edit was applied");
     // A retry while the decision still owns the Run: the consume replays
     // (no Execute) and the retained receipt answers. Never a second effect.
     owner.script().hide_intent = true;
@@ -848,7 +853,7 @@ fn single_consumption_the_acknowledged_consumer_runs_the_store_effect_once() {
     assert_eq!((s.consumes, s.leases), (2, 1));
     assert!(!s.log.contains(&"ordinary_prepare"));
     drop(s);
-    assert_eq!(text_count(&f, &arguments, "Needs approval"), 1);
+    assert_eq!(text_count(&f, &arguments, "Needs approval"), once);
 }
 
 #[test]
