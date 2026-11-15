@@ -907,6 +907,10 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
         });
     }
     let receipt = successor_receipt(&s, run, attempt, generation);
+    let native = (
+        h.orchestrator.native_effects_pending(run).map_err(|e| e.to_string()),
+        h.orchestrator.native_outcomes_unknown(run).map_err(|e| e.to_string()),
+    );
     let error = h
         .orchestrator
         .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
@@ -927,7 +931,7 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
             execution.current_attempt.clone(),
         )
     });
-    assert!(pending_code(error), "{shown}: {state:?}");
+    assert!(pending_code(error), "{shown}: {native:?} {state:?}");
     let control = latest(&h, &fence);
     assert!(matches!(
         &control.target,
