@@ -98,6 +98,8 @@ impl Actor {
         // After the drain (an enrollment reply also wakes the actor here):
         // one Run's decision wait per turn, rotating.
         self.advance_decision_resume();
+        // A completed projection may have settled a wait (O147).
+        self.sync_decision_authorities();
     }
 
     /// One maintenance step: start at most one physical workflow, then offer

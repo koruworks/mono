@@ -122,6 +122,54 @@ async fn only_positive_owner_classification_selects_a_catalog() {
     );
 }
 
+/// O147: a Bot Run waiting on a decision is still positively classified
+/// (never Ordinary, never unavailable) with the same subject checks.
+#[tokio::test]
+async fn a_waiting_bot_run_is_classified_with_the_same_subject_checks() {
+    let record = record();
+    let RunToolAuthority::Bot { provenance, policy } = bot(&record) else {
+        unreachable!()
+    };
+    let waiting =
+        |provenance: BotProvenance, policy: CapturedBotPolicy| RunToolAuthority::BotDecisionWait {
+            provenance,
+            policy,
+            decision: koru_delegate_core::decisions::DecisionId::mint(),
+            phase: koru_delegate_core::decisions::DecisionPhase::Holding,
+        };
+    let accepted = waiting(provenance.clone(), policy.clone());
+    assert!(
+        classify(
+            port(
+                &record,
+                BotReply::RunAuthority {
+                    authority: accepted.clone()
+                }
+            ),
+            &record
+        )
+        .await
+        .unwrap()
+            == accepted
+    );
+    // Another workspace is refused exactly as for the Bot value.
+    let mut foreign = policy;
+    foreign.workspace = WorkspaceId::new();
+    assert!(
+        classify(
+            port(
+                &record,
+                BotReply::RunAuthority {
+                    authority: waiting(provenance, foreign)
+                }
+            ),
+            &record
+        )
+        .await
+        .is_err()
+    );
+}
+
 #[test]
 fn thirteen_bot_tools_publish_only_owner_supported_identity_and_creation_fields() {
     let tools = definitions();

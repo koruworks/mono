@@ -88,7 +88,7 @@ fn launch_tools(
     authority: &koru_delegate_core::RunToolAuthority,
     ordinary: &McpToolAllowlist,
 ) -> McpToolAllowlist {
-    if matches!(authority, koru_delegate_core::RunToolAuthority::Bot { .. }) {
+    if authority.bot_subject().is_some() {
         McpToolAllowlist::new(
             BOT_RUN_TOOLS
                 .into_iter()
@@ -147,6 +147,18 @@ impl McpEndpoints for GatewayAuthority {
         self.projection
             .publish(run, generation, authority)
             .map_err(|e| PortError::new(Port::Mcp, e.code, "Run classification"))
+    }
+    fn publish_decision_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    ) -> PortResult<()> {
+        self.projection
+            .publish_wait(run, wait)
+            .map_err(|e| PortError::new(Port::Mcp, e.code, "Run decision wait"))
     }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let run = launch.run;

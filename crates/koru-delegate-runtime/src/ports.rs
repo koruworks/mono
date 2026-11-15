@@ -1345,6 +1345,20 @@ pub trait McpEndpoints {
         Ok(())
     }
 
+    /// Publish (`Some`) or clear (`None`) the Run's open decision wait as the
+    /// ledger holds it (O147), so a Bot Run classifies as `BotDecisionWait`
+    /// while it waits. No default: an adapter that dropped this would leave
+    /// a waiting Bot unfenced.
+    #[allow(clippy::type_complexity)]
+    fn publish_decision_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    ) -> PortResult<()>;
+
     /// Issue this attempt's authority — or advance the generation, when the
     /// run already has one — and answer with what the adapter must render:
     /// the endpoint, the bearer shown once, and the tools.

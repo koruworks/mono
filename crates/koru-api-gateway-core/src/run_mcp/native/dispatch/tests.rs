@@ -287,6 +287,7 @@ impl Fixture {
             tool,
             arguments,
             EditDecisions::Closed,
+            false,
         )
     }
     fn retain_prepared(&self, tool: &str, mut arguments: Value, held: bool) -> PreparedNativeWrite {

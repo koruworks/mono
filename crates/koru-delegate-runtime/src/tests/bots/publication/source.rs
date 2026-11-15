@@ -1242,3 +1242,76 @@ fn decision_edit_resume_chain_runs_through_runtime_steps_to_an_unacknowledged_su
         Some(DecisionResumeState::SessionBound { .. })
     ));
 }
+
+/// O147: the Run's classification follows the ledger's open decision wait,
+/// is seeded once per process (as after a restart) and lifts only when a
+/// read proves the wait settled. Real in-memory SQL; no Store or provider.
+#[test]
+fn decision_wait_classification_is_published_from_the_ledger_and_lifts_when_settled() {
+    let (mut h, submission, fence) = waiting_with_memory(true);
+    let run = fence.run;
+    let open = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .decision_wait_execution(fence.owner, run)
+        .unwrap()
+        .unwrap();
+    let decision = open.expected.decision.as_ref().unwrap().decision;
+    let published = |h: &Harness| h.authority.lock().unwrap().waits.clone();
+    // Nothing is published until the first sync, which seeds from the ledger.
+    assert!(published(&h).is_empty());
+    h.orchestrator.sync_decision_authorities().unwrap();
+    let phase = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .bot_decision(fence.owner, run, decision)
+        .unwrap()
+        .unwrap()
+        .receipt
+        .state
+        .phase;
+    assert_eq!(published(&h), vec![(run, Some((decision, phase)))]);
+    // While open, every sync republishes the same exact value.
+    h.orchestrator.sync_decision_authorities().unwrap();
+    assert_eq!(published(&h).last(), Some(&(run, Some((decision, phase)))));
+    // Stop, cleanup and the owed Controls settle the wait (as in
+    // decision_cleanup_confirms_retired_consumer_then_settles_only_the_wait).
+    apply_next(&mut h, run);
+    let _ = h
+        .orchestrator
+        .bot_stop(&key(&submission), fence.owner.device, Some(&fence));
+    let _ = h.orchestrator.bot_budget_tick(run);
+    for _ in 0..3 {
+        let Some(start) = h.orchestrator.next_run_publication(run).unwrap() else {
+            break;
+        };
+        h.orchestrator.cancel_unstarted_publication(start);
+        apply_next(&mut h, run);
+    }
+    let _ = h.orchestrator.settle_publication_wait(run).unwrap();
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .decision_wait_execution(fence.owner, run)
+            .unwrap()
+            .is_none(),
+        "the runtime wait is settled"
+    );
+    // A still-open phase may have been republished in between; the first
+    // sync after settlement clears it, and the Run is no longer tracked.
+    h.orchestrator.sync_decision_authorities().unwrap();
+    assert_eq!(published(&h).last(), Some(&(run, None)));
+    let count = published(&h).len();
+    h.orchestrator.sync_decision_authorities().unwrap();
+    assert_eq!(
+        published(&h).len(),
+        count,
+        "nothing tracked, nothing republished"
+    );
+}

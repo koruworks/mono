@@ -59,16 +59,25 @@ impl RunRoutineJob {
             )
             .map_err(|_| unavailable_failure())?;
         self.live()?;
-        match reply {
-            BotReply::RunAuthority {
-                authority: RunToolAuthority::Bot { provenance, policy },
-            } if provenance == self.request.subject.provenance
-                && policy == self.request.subject.captured =>
-            {
-                Ok(())
-            }
-            _ => Err(denied()),
+        let BotReply::RunAuthority { authority } = reply else {
+            return Err(denied());
+        };
+        match authority.bot_subject() {
+            Some((provenance, policy))
+                if *provenance == self.request.subject.provenance
+                    && *policy == self.request.subject.captured => {}
+            _ => return Err(denied()),
         }
+        // O147: while the Run's decision wait is open, a new Create or Retry
+        // is refused; reads, and the truthful reply of work this job already
+        // committed (O93's journal finishes on its own), stay available.
+        if matches!(authority, RunToolAuthority::BotDecisionWait { .. })
+            && self.request.operation.mutation()
+            && !self.committed
+        {
+            return Err(decision_in_progress());
+        }
+        Ok(())
     }
     fn human(&self, pages: &[BotPage]) -> ApiResult<()> {
         self.live()?;

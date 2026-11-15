@@ -377,3 +377,72 @@ fn ipc16_native_answer_carries_a_stable_request_key_and_refuses_the_ipc15_shape(
     malformed["request"] = serde_json::json!("not-a-key");
     assert!(serde_json::from_value::<BotCommand>(malformed).is_err());
 }
+
+/// O147: the waiting classification inside IPC16 (decision contract §3).
+#[test]
+fn ipc16_run_authority_decision_wait_roundtrips_strictly_and_old_or_unknown_values_refuse() {
+    use koru_delegate_core::RunToolAuthority;
+    use koru_delegate_core::decisions::DecisionPhase;
+    let f = fence(owner());
+    let provenance = koru_delegate_core::BotProvenance {
+        routine: None,
+        owner: f.owner,
+        bot: f.bot,
+        submission: BotRequestId::mint(),
+        chat_id: Uuid::new_v4(),
+        ai_attempt_id: None,
+        assistant_message_id: None,
+        config_revision: 1,
+        policy_revision: 1,
+        continued_from: None,
+    };
+    let policy = proof(&f).global.policy;
+    let decision = DecisionId::mint();
+    let waiting = RunToolAuthority::BotDecisionWait {
+        provenance: provenance.clone(),
+        policy: policy.clone(),
+        decision,
+        phase: DecisionPhase::Holding,
+    };
+    let reply = BotReply::RunAuthority {
+        authority: waiting.clone(),
+    };
+    let json = serde_json::to_value(&reply).unwrap();
+    assert_eq!(json["authority"]["kind"], "bot_decision_wait");
+    assert_eq!(json["authority"]["phase"], "holding");
+    assert_eq!(json["authority"]["decision"], serde_json::json!(decision));
+    assert!(serde_json::from_value::<BotReply>(json.clone()).unwrap() == reply);
+    // The same subject as the Bot value, and no content in diagnostics.
+    assert_eq!(waiting.bot_subject(), Some((&provenance, &policy)));
+    assert_eq!(format!("{waiting:?}"), "RunToolAuthority([REDACTED])");
+    // Strict: an extra field, a missing field, an unknown phase or an
+    // unknown kind never decodes.
+    let mut extra = json.clone();
+    extra["authority"]["lease"] = serde_json::json!(true);
+    let mut missing = json.clone();
+    missing["authority"]
+        .as_object_mut()
+        .unwrap()
+        .remove("decision");
+    let mut phase = json.clone();
+    phase["authority"]["phase"] = serde_json::json!("paused");
+    let mut kind = json.clone();
+    kind["authority"]["kind"] = serde_json::json!("bot_waiting");
+    for bad in [extra, missing, phase, kind] {
+        assert!(serde_json::from_value::<BotReply>(bad).is_err());
+    }
+    // A peer that predates the value refuses it rather than reading Bot.
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+    #[allow(dead_code)]
+    enum OlderAuthority {
+        Ordinary {},
+        Bot {
+            provenance: koru_delegate_core::BotProvenance,
+            policy: CapturedBotPolicy,
+        },
+    }
+    assert!(serde_json::from_value::<OlderAuthority>(json["authority"].clone()).is_err());
+    let bot = serde_json::to_value(RunToolAuthority::Bot { provenance, policy }).unwrap();
+    assert!(serde_json::from_value::<OlderAuthority>(bot).is_ok());
+}

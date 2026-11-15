@@ -472,6 +472,7 @@ fn edit_with(
         "edit_document",
         arguments,
         decisions,
+        false,
     )
 }
 
@@ -947,6 +948,7 @@ fn creation_and_routine_tools_never_enter_the_edit_decision_path() {
                 tool,
                 json!({}),
                 EditDecisions::Open(PACING),
+                false,
             )
             .unwrap_err()
             .code,
@@ -964,6 +966,7 @@ fn creation_and_routine_tools_never_enter_the_edit_decision_path() {
         "create_document",
         f.arguments(),
         EditDecisions::Open(PACING),
+        false,
     );
     assert!(created.is_err());
     assert!(!owner.script().log.contains(&"prepare_decision"));
@@ -1073,4 +1076,180 @@ fn a_failed_record_never_changes_the_decision_answer_and_the_next_replay_records
     assert_eq!(after.len(), attempts + 1);
     assert_eq!(after.last(), owner.script().view.as_ref());
     assert_eq!(owner.script().created, 1);
+}
+
+// ---------------------------------------------------------------- O147 fence
+
+fn tool_while(
+    f: &Fixture,
+    owner: &DecisionOwner,
+    tool: &str,
+    arguments: Value,
+    decisions: EditDecisions,
+    waiting: bool,
+) -> Result<Value, ToolFailure> {
+    invoke(
+        &f.memory.client(),
+        &f.policy,
+        owner,
+        &f.record,
+        f.provenance.clone(),
+        f.owner.policy.clone(),
+        tool,
+        arguments,
+        decisions,
+        waiting,
+    )
+}
+
+#[test]
+fn the_approved_edits_consume_still_succeeds_while_the_decision_waits() {
+    let mut f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    assert_eq!(
+        tool_while(
+            &f,
+            &owner,
+            "edit_document",
+            arguments.clone(),
+            EditDecisions::Open(PACING),
+            false
+        )
+        .unwrap_err()
+        .code,
+        "permission_pending"
+    );
+    let consumer = successor(&mut f, &owner);
+    {
+        let mut s = owner.script();
+        s.publication_pending = true;
+        s.grant(consumer);
+    }
+    // The Run classifies as waiting for the whole consume.
+    let saved = tool_while(
+        &f,
+        &owner,
+        "edit_document",
+        arguments.clone(),
+        EditDecisions::Open(PACING),
+        true,
+    )
+    .unwrap();
+    assert_eq!(saved["status"], "saved");
+    assert!(text_count(&f, &arguments, "Needs approval") > 0);
+    let s = owner.script();
+    assert_eq!((s.consumes, s.leases), (1, 1));
+    assert!(!s.log.contains(&"ordinary_prepare"));
+}
+
+#[test]
+fn while_a_decision_waits_reads_pass_and_new_mutations_are_refused_typed() {
+    let f = Fixture::new();
+    let first = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    // Reads are unaffected.
+    let read = tool_while(
+        &f,
+        &owner,
+        "read_document",
+        json!({"workspace_id":f.record.workspace,"document_id":first["document_id"]}),
+        EditDecisions::Open(PACING),
+        true,
+    )
+    .unwrap();
+    assert!(read.get("revision").is_some());
+    // A search is a read too: whatever it answers, it is never the fence.
+    assert!(
+        tool_while(
+            &f,
+            &owner,
+            "search_documents",
+            json!({"workspace_id":f.record.workspace,"query":"Native"}),
+            EditDecisions::Open(PACING),
+            true,
+        )
+        .err()
+        .is_none_or(|error| error.code != "decision_in_progress")
+    );
+    assert!(
+        owner.script().log.is_empty(),
+        "a read asks the owner nothing"
+    );
+    // A new page is a new mutation: refused, typed, before any lease.
+    let created = tool_while(
+        &f,
+        &owner,
+        "create_document",
+        f.arguments(),
+        EditDecisions::Open(PACING),
+        true,
+    )
+    .unwrap_err();
+    assert_eq!(created.code, "decision_in_progress");
+    assert!(created.details.unwrap()["operation_id"].is_string());
+    // With decisions closed (this build), an edit is refused the same way.
+    let edited = tool_while(
+        &f,
+        &owner,
+        "edit_document",
+        first.clone(),
+        EditDecisions::Closed,
+        true,
+    )
+    .unwrap_err();
+    assert_eq!(edited.code, "decision_in_progress");
+    // And with decisions open, an edit that the owner refuses as a decision
+    // never falls back to a lease while the Run waits.
+    owner.script().refuse_fresh = Some("bot_fenced");
+    let refused = tool_while(
+        &f,
+        &owner,
+        "edit_document",
+        first,
+        EditDecisions::Open(PACING),
+        true,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "decision_in_progress");
+    let s = owner.script();
+    assert!(!s.log.contains(&"ordinary_prepare"));
+    assert!(!s.log.contains(&"consume"));
+}
+
+#[test]
+fn the_fence_lifts_when_the_wait_settles_or_closes() {
+    let f = Fixture::new();
+    let owner = DecisionOwner::new(&f);
+    assert_eq!(
+        tool_while(
+            &f,
+            &owner,
+            "create_document",
+            f.arguments(),
+            EditDecisions::Closed,
+            true
+        )
+        .unwrap_err()
+        .code,
+        "decision_in_progress"
+    );
+    assert!(!owner.script().log.contains(&"ordinary_prepare"));
+    // The classification no longer reports the wait: the ordinary path runs
+    // again (its scripted lease refusal here is the existing one).
+    owner.script().ordinary_refusal = true;
+    assert_eq!(
+        tool_while(
+            &f,
+            &owner,
+            "create_document",
+            f.arguments(),
+            EditDecisions::Closed,
+            false
+        )
+        .unwrap_err()
+        .code,
+        "native_owner_unavailable"
+    );
+    assert!(owner.script().log.contains(&"ordinary_prepare"));
 }

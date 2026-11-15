@@ -90,6 +90,7 @@ pub(in crate::run_mcp) async fn call(
     record: Arc<RunAuthorityRecord>,
     provenance: BotProvenance,
     captured: CapturedBotPolicy,
+    waiting: bool,
     params: CallToolRequestParams,
 ) -> CallToolResult {
     if super::routines::recognizes(params.name.as_ref()) {
@@ -128,6 +129,7 @@ pub(in crate::run_mcp) async fn call(
             params.name.as_ref(),
             Value::Object(params.arguments.unwrap_or_default()),
             EditDecisions::production(),
+            waiting,
         )
     })
     .await;
@@ -176,6 +178,7 @@ fn invoke(
     tool: &str,
     mut arguments: Value,
     decisions: EditDecisions,
+    waiting: bool,
 ) -> Result<Value, ToolFailure> {
     let mutation = match tool {
         "create_document" | "edit_document" => true,
@@ -288,7 +291,8 @@ fn invoke(
         }
         // While a decision owns the Run's publication the owner cannot prove
         // absence; only the decision path's own exact replay can answer.
-        Err(error) if denial.is_some() && error.code == "publication_pending" => None,
+        // A waiting Run (O147) is refused below with its typed fence instead.
+        Err(error) if (denial.is_some() || waiting) && error.code == "publication_pending" => None,
         _ => return Err(failure("native_owner_unavailable")),
     };
     if let Some(intent) = &retained
@@ -344,6 +348,13 @@ fn invoke(
                 boot,
             );
         }
+    }
+    // O147: while the Run's decision wait is open, nothing new is accepted
+    // here. Reads returned above; a retained intent was settled from its own
+    // evidence above; the exact decision retry and consume took the decision
+    // path. Anything else would need a fresh lease.
+    if waiting {
+        return Err(super::decision::in_progress(&key));
     }
     if !synchronized {
         fresh_fence(port, &current.proof, &fence, &captured)?;

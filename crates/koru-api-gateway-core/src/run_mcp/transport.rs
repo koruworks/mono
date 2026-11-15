@@ -173,12 +173,17 @@ pub(super) async fn handle(
         Ok(value) => value,
         Err(error) => return refuse(StatusCode::SERVICE_UNAVAILABLE, error),
     };
-    let is_bot = matches!(classification, RunToolAuthority::Bot { .. });
+    let is_bot = classification.bot_subject().is_some();
     authenticated_message(is_bot, body, |params| async move {
         match classification {
             RunToolAuthority::Bot { provenance, policy } => {
-                native::call(&state, authority, provenance, policy, params).await
+                native::call(&state, authority, provenance, policy, false, params).await
             }
+            // O147: the same Bot tools; new unrelated mutations are refused
+            // in dispatch, and the AI owner rechecks its own Routine/Memory work.
+            RunToolAuthority::BotDecisionWait {
+                provenance, policy, ..
+            } => native::call(&state, authority, provenance, policy, true, params).await,
             RunToolAuthority::Ordinary {} => tools::call(&state, authority, params).await,
         }
     })
