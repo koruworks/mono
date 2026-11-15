@@ -411,7 +411,7 @@ async fn detached_read_does_not_take_over_a_receipt_already_moved_into_io() {
 
 #[tokio::test]
 async fn explicit_edit_uses_ordinary_delta_and_requires_exact_remote_ack() {
-    for mode in 0..4 {
+    for mode in 0..5 {
         let (mut client, mut reader, mut writer, mut stream, scope, budget) =
             super::super::tests::pair_with_workspace(true).await;
         client.receive = Box::new(|_| panic!("online Cloud edit cannot import into Store"));
@@ -506,10 +506,19 @@ async fn explicit_edit_uses_ordinary_delta_and_requires_exact_remote_ack() {
                 .await
                 .unwrap();
         };
+        let admission = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let retention = std::sync::Arc::new(admission.clone().acquire_owned().await.unwrap());
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
         let edit = InspectionCarrier { client }.edit(
             unit,
             if mode == 2 { [0; 32] } else { head },
             move |source| {
+                let _retention = retention;
+                if mode == 4 {
+                    entered.send(()).unwrap();
+                    blocked.recv().unwrap();
+                }
                 assert_ne!(mode, 2, "stale source cannot enter domain preparation");
                 if mode == 3 {
                     revoked.store(true, Ordering::SeqCst);
@@ -525,9 +534,29 @@ async fn explicit_edit_uses_ordinary_delta_and_requires_exact_remote_ack() {
                 Ok((delta, source))
             },
         );
-        let (result, ()) = tokio::join!(edit, peer);
+        let mut edit = tokio::spawn(edit);
+        if mode == 4 {
+            let cancellation = async {
+                started.await.unwrap();
+                edit.abort();
+                assert!(edit.await.unwrap_err().is_cancelled());
+                assert!(
+                    admission.try_acquire().is_err(),
+                    "aborted replay still owns admission"
+                );
+                release.send(()).unwrap();
+                let _permit = tokio::time::timeout(Duration::from_secs(2), admission.acquire())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            };
+            tokio::join!(cancellation, peer);
+            assert_eq!(remote.get_text("body").to_string(), "Cloud");
+            continue;
+        }
+        let (result, ()) = tokio::join!(&mut edit, peer);
         assert_eq!(
-            result,
+            result.unwrap(),
             match mode {
                 0 => Ok(()),
                 1 => Err(EditError::OutcomeUnknown),

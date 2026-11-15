@@ -184,3 +184,145 @@ fn canvas_attachment_leaf_uses_same_strict_targeted_removal() {
     );
     assert!(cloud.read(root).is_ok());
 }
+
+fn raw_text(doc: &loro::LoroDoc, name: &str, kind: &str, text: &str) -> NodeId {
+    let tree = doc.get_tree(name);
+    let tid = tree.create(loro::TreeParentId::Root).unwrap();
+    let meta = tree.get_meta(tid).unwrap();
+    let id = NodeId::new();
+    meta.insert("id", id.to_storage()).unwrap();
+    meta.insert("kind", kind).unwrap();
+    meta.ensure_mergeable_text("text")
+        .unwrap()
+        .insert(0, text)
+        .unwrap();
+    id
+}
+#[test]
+fn mixed_legacy_trees_project_completely_and_edit_original_lineage_only() {
+    use koru_core::schema::DocumentTree;
+    let (mut current, selection, current_root, current_file) = fixture();
+    let source = detached(&current);
+    let task = raw_text(&source, "outline", "task", "Original task");
+    let legacy_root = raw_text(&source, "library", "document", "Recover legacy note");
+    let mut legacy =
+        WorkspaceDoc::adopt_detached_tree(source.clone(), DocumentTree::Library, budget()).unwrap();
+    let legacy_file = legacy
+        .insert(
+            Parent::Node(legacy_root),
+            Node::file(
+                "legacy attachment",
+                BlobHash::new("b3", &"b".repeat(64)),
+                "text/plain",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    legacy.trash(legacy_root, 10, None).unwrap();
+    current
+        .import(&legacy.export_all_updates().unwrap())
+        .unwrap();
+    let before = current.version();
+    let expected = inspect_file_references(current.doc(), budget())
+        .unwrap()
+        .node_ids()
+        .to_vec();
+    let view = project(detached(&current), selection.clone()).unwrap();
+    let mut actual = view
+        .document
+        .blocks
+        .iter()
+        .map(|b| NodeId::parse(&b.id).unwrap())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+    assert!(
+        view.document
+            .blocks
+            .iter()
+            .any(|b| b.id == task.to_storage())
+    );
+    assert!(
+        view.document
+            .blocks
+            .iter()
+            .find(|b| b.id == legacy_file.to_storage())
+            .unwrap()
+            .in_trash
+    );
+    let delta = remove_file(
+        detached(&current),
+        &selection,
+        &legacy_file.to_storage(),
+        42,
+    )
+    .unwrap();
+    current.insert_text(current_root, 0, "Concurrent ").unwrap();
+    current.import(&delta).unwrap();
+    assert!(current.version().includes_vv(&before));
+    assert!(current.read(current_file).is_ok());
+    assert_eq!(
+        current.read(current_root).unwrap().content.as_text(),
+        Some("Concurrent Keep this note")
+    );
+    let mut legacy =
+        WorkspaceDoc::adopt_detached_tree(detached(&current), DocumentTree::Library, budget())
+            .unwrap();
+    assert!(legacy.read(legacy_file).is_err());
+    legacy.restore(legacy_root, None).unwrap();
+    assert_eq!(
+        legacy.read(legacy_root).unwrap().content.as_text(),
+        Some("Recover legacy note")
+    );
+    assert_eq!(
+        hashes(&current).unwrap(),
+        BTreeSet::from([format!("b3:{}", "a".repeat(64))])
+    );
+}
+#[test]
+fn pure_legacy_edit_never_authors_a_current_tree_and_cross_tree_duplicate_is_refused() {
+    use koru_core::schema::DocumentTree;
+    let (_, selection, _, _) = fixture();
+    let source = loro::LoroDoc::new();
+    source
+        .get_map("meta")
+        .insert("id", selection.workspace_id.clone())
+        .unwrap();
+    source
+        .get_map("meta")
+        .insert("document", selection.document_id.clone())
+        .unwrap();
+    let note = raw_text(&source, "outline", "document", "Legacy body");
+    let mut legacy =
+        WorkspaceDoc::adopt_detached_tree(source, DocumentTree::Outline, budget()).unwrap();
+    let file = legacy
+        .insert(
+            Parent::Node(note),
+            Node::image(
+                BlobHash::new("b3", &"b".repeat(64)),
+                "image/png",
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let old = detached(&legacy);
+    let delta = remove_file(detached(&legacy), &selection, &file.to_storage(), 42).unwrap();
+    old.import(&delta).unwrap();
+    assert!(!DocumentTree::Nodes.exists_in(&old));
+    assert!(
+        inspect_file_references(&old, budget())
+            .unwrap()
+            .blobs()
+            .is_empty()
+    );
+    assert!(project(old.clone(), selection.clone()).is_ok());
+    let tree = old.get_tree("library");
+    let other = tree.create(loro::TreeParentId::Root).unwrap();
+    let meta = tree.get_meta(other).unwrap();
+    meta.insert("id", note.to_storage()).unwrap();
+    meta.insert("kind", "paragraph").unwrap();
+    assert!(project(old.clone(), selection).is_err());
+    assert!(WorkspaceDoc::adopt_detached_tree(old, DocumentTree::Outline, budget()).is_err());
+}

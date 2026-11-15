@@ -151,10 +151,10 @@ fn budget() -> ReferenceBudget {
         value_bytes: MAX_INSPECTION_BYTES,
     }
 }
-fn model(
+fn models(
     doc: loro::LoroDoc,
     selection: &CloudDocumentSelection,
-) -> Result<WorkspaceDoc, CloudDocumentFailure> {
+) -> Result<Vec<WorkspaceDoc>, CloudDocumentFailure> {
     let bad = CloudDocumentFailure::Unavailable;
     let proof = inspect_file_references(&doc, budget()).map_err(|_| bad)?;
     for hash in proof.blobs() {
@@ -173,19 +173,32 @@ fn model(
         }
     }
     let expected = proof.node_ids().to_vec();
-    let model = WorkspaceDoc::adopt(doc).map_err(|_| bad)?;
-    let (walk, repeats) = model.walk_with_trash_checked().map_err(|_| bad)?;
-    let mut actual = walk.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    let mut models = Vec::new();
+    let mut actual = Vec::new();
+    for tree in koru_core::schema::DocumentTree::ALL {
+        if !tree.exists_in(&doc) {
+            continue;
+        }
+        let model =
+            WorkspaceDoc::adopt_detached_tree(doc.clone(), tree, budget()).map_err(|_| bad)?;
+        let (walk, repeats) = model.walk_with_trash_checked().map_err(|_| bad)?;
+        if !repeats.is_empty() {
+            return Err(bad);
+        }
+        for (id, _) in walk {
+            actual.push(id);
+            let node = model.read(id).map_err(|_| bad)?;
+            koru_core::Node::new(node.kind, node.content.clone()).map_err(|_| bad)?;
+        }
+        models.push(model);
+    }
     actual.sort_unstable();
-    if !repeats.is_empty() || actual != expected {
+    if actual != expected {
         return Err(bad);
     }
-    for (id, _) in walk {
-        let node = model.read(id).map_err(|_| bad)?;
-        koru_core::Node::new(node.kind, node.content.clone()).map_err(|_| bad)?;
-    }
-    Ok(model)
+    Ok(models)
 }
+
 fn hashes(model: &WorkspaceDoc) -> Result<BTreeSet<String>, CloudDocumentFailure> {
     let proof = inspect_file_references(model.doc(), budget())
         .map_err(|_| CloudDocumentFailure::Unavailable)?;
@@ -214,8 +227,11 @@ fn remove_file(
     at_ms: i64,
 ) -> Result<Vec<u8>, CloudDocumentFailure> {
     let bad = CloudDocumentFailure::Unavailable;
-    let mut model = model(doc, selection)?;
     let target = NodeId::parse(node).ok_or(bad)?;
+    let mut model = models(doc, selection)?
+        .into_iter()
+        .find(|model| model.read(target).is_ok())
+        .ok_or(bad)?;
     if !eligible(&model, target) {
         return Err(bad);
     }
@@ -249,44 +265,49 @@ fn project(
     selection: CloudDocumentSelection,
 ) -> Result<CloudDocumentInspectionV1, CloudDocumentFailure> {
     let bad = CloudDocumentFailure::Unavailable;
-    let model = model(doc, &selection)?;
-    let order = model.walk_with_trash().map_err(|_| bad)?;
+    let revision = revision_number(&doc.oplog_vv().encode());
+    let models = models(doc, &selection)?;
     let document =
         DocumentId::from_uuid(uuid::Uuid::parse_str(&selection.document_id).map_err(|_| bad)?);
-    let root = order
-        .iter()
-        .map(|(id, _)| *id)
-        .find(|id| model.kind_of(*id) == Some(Kind::Document))
-        .unwrap_or_else(|| NodeId::from_uuid(document.as_uuid()));
-    let title = model
-        .read(root)
-        .ok()
-        .and_then(|n| n.content.as_text().map(str::to_owned))
-        .filter(|s| !s.is_empty())
-        .or_else(|| model.name())
-        .unwrap_or_default();
+    let mut title = None;
     let mut blocks = Vec::new();
     let mut removable_files = Vec::new();
-    for (id, _) in order {
-        let node = model.read(id).map_err(|_| bad)?;
-        let parent = match model.parent(id).map_err(|_| bad)? {
-            Parent::Node(parent) => Some(parent.to_storage()),
-            Parent::Root => None,
-        };
-        blocks.push(view_block(&model, &node, parent, root, document).map_err(|_| bad)?);
-        if eligible(&model, id) {
-            removable_files.push(FileRemovalControl {
-                node_id: id.to_storage(),
-                in_trash: model.in_trash(id),
-            });
+    for model in models {
+        let order = model.walk_with_trash().map_err(|_| bad)?;
+        let root = order
+            .iter()
+            .map(|(id, _)| *id)
+            .find(|id| model.kind_of(*id) == Some(Kind::Document))
+            .unwrap_or_else(|| NodeId::from_uuid(document.as_uuid()));
+        if title.is_none() {
+            title = model
+                .read(root)
+                .ok()
+                .and_then(|n| n.content.as_text().map(str::to_owned))
+                .filter(|s| !s.is_empty())
+                .or_else(|| model.name());
+        }
+        for (id, _) in order {
+            let node = model.read(id).map_err(|_| bad)?;
+            let parent = match model.parent(id).map_err(|_| bad)? {
+                Parent::Node(parent) => Some(parent.to_storage()),
+                Parent::Root => None,
+            };
+            blocks.push(view_block(&model, &node, parent, root, document).map_err(|_| bad)?);
+            if eligible(&model, id) {
+                removable_files.push(FileRemovalControl {
+                    node_id: id.to_storage(),
+                    in_trash: model.in_trash(id),
+                });
+            }
         }
     }
     let value = CloudDocumentInspectionV1 {
         document: DocumentProjection {
             id: selection.document_id.clone(),
             workspace_id: selection.workspace_id.clone(),
-            title,
-            revision: revision_number(&model.version().encode()),
+            title: title.unwrap_or_default(),
+            revision,
             blocks,
         },
         selection,
