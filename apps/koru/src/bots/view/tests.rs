@@ -39,6 +39,7 @@ impl Fixture {
                 Command::ListChats { .. } | Command::ReadLibrary { .. } => continue,
                 Command::List { .. }
                 | Command::ReadRoutines { .. }
+                | Command::ReadRoutineDetail { .. }
                 | Command::RoutineLabel { .. }
                 | Command::Memory(_)
                 | Command::Write { .. }

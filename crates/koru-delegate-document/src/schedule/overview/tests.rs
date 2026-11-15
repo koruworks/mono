@@ -16,6 +16,51 @@ fn activate(doc: &ScheduleDocument) {
 }
 
 #[test]
+fn routine_detail_shares_overview_identity_state_projection() {
+    let doc = document();
+    let first = doc.routine_detail().unwrap();
+    assert_eq!(first.overview, doc.routine_overview().unwrap());
+    assert_eq!(
+        first.recurrence,
+        doc.header().unwrap().definition.recurrence
+    );
+    let mut header = doc.header().unwrap();
+    header.definition.revision += 1;
+    header.definition.effective_at_ms += 100;
+    header.definition.recurrence = koru_delegate_schedule::RecurrenceRule::zoned(
+        "0 9 * * *".parse().unwrap(),
+        "Europe/Berlin",
+    )
+    .unwrap();
+    doc.update_definition(header.initial_owner, &header.definition)
+        .unwrap();
+    let current = doc.routine_detail().unwrap();
+    assert_eq!(current.effective_at_ms, header.definition.effective_at_ms);
+    assert_eq!(current.recurrence, header.definition.recurrence);
+    assert_eq!(current.overview, doc.routine_overview().unwrap());
+    assert_ne!(current.recurrence, first.recurrence);
+}
+#[test]
+fn routine_detail_bounds_handoffs_without_firings() {
+    let doc = document();
+    // A malformed append-only firing is not part of this current projection.
+    doc.doc.get_list(FIRINGS).push(true).unwrap();
+    doc.doc.commit();
+    assert!(doc.routine_detail().is_ok());
+    for _ in 0..=HANDOFF_COUNT {
+        doc.handoff_list().push(true).unwrap();
+    }
+    doc.doc.commit();
+    assert!(doc.routine_detail().is_err());
+    doc.root().insert(K_RETIRED, true).unwrap();
+    doc.doc.commit();
+    assert!(matches!(
+        doc.routine_detail().unwrap().overview.state,
+        ScheduleState::Retired
+    ));
+}
+
+#[test]
 fn routine_overview_preserves_state_precedence_and_current_name_revision() {
     let doc = document();
     let owner = doc.header().unwrap().initial_owner;

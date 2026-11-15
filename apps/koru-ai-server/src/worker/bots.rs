@@ -342,6 +342,7 @@ fn execute_bot_command(
     match &mut request {
         BotCommand::CreateChat { .. }
         | BotCommand::ReadRoutines { .. }
+        | BotCommand::ReadRoutineDetail { .. }
         | BotCommand::CreateRoutine { .. }
         | BotCommand::ReadRoutineCreation { .. }
         | BotCommand::RetryRoutineCreation { .. }

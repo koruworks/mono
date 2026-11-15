@@ -216,6 +216,17 @@ pub trait BotAuthority: Send + Sync {
         Err(BotError::Unavailable)
     }
 
+    fn read_routine_detail(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotRoutineCreationIdentity,
+        _observed_at_ms: i64,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<RoutineDetailObservation, BotError> {
+        Err(BotError::Unavailable)
+    }
+
     /// Current complete Schedule definition and human/Profile proof, performed
     /// off-writer against the canonical physical candidate and retained origin.
     fn verify_routine_definition(
@@ -308,6 +319,13 @@ pub trait BotAuthority: Send + Sync {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotCommand {
+    ReadRoutineDetail {
+        bot_id: BotId,
+        schedule_id: koru_delegate_core::ScheduleId,
+        before_occurrence_ms: Option<i64>,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
+        history_limit: u8,
+    },
     ReadRoutines {
         bot_id: BotId,
         after_schedule: Option<koru_delegate_core::ScheduleId>,
@@ -648,28 +666,76 @@ impl BotCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub enum BotResponse {
-    Routines { page: BotRoutineListPage },
-    RoutineCreated { receipt: BotRoutineCreateResult },
-    RoutineCreation { creation: BotRoutineCreationStatus },
-    MemoryStatus { status: BotMemoryStatus },
-    MemoryList { page: BotMemoryListPage },
-    MemoryDetail { page: BotMemoryDetailPage },
-    Library { library: BotLibraryView },
-    KnowledgeSaved { receipt: BotKnowledgeReceipt },
-    TaskBots { page: BotSummaryPage },
-    TaskAnswer { answer: BotTaskAnswer },
-    Lifecycle { operation: BotLifecycleProgress },
-    Chat { reference: BotChatReference },
-    Operation { operation: BotOperation },
-    Bot { bot: Bot },
-    List { bots: Vec<Bot> },
-    Chats { page: BotChatPage },
-    TrashedChats { page: BotTrashedChatPage },
-    Activity { activity: BotActivityPage },
-    Creation { creation: BotCreation },
-    Creations { page: BotCreationPage },
-    Run { view: koru_delegate_core::RunView },
-    TaskStop { stop: BotTaskStop },
+    RoutineDetail {
+        #[serde(flatten)]
+        reply: BotRoutineDetailEnvelope,
+    },
+    Routines {
+        page: BotRoutineListPage,
+    },
+    RoutineCreated {
+        receipt: BotRoutineCreateResult,
+    },
+    RoutineCreation {
+        creation: BotRoutineCreationStatus,
+    },
+    MemoryStatus {
+        status: BotMemoryStatus,
+    },
+    MemoryList {
+        page: BotMemoryListPage,
+    },
+    MemoryDetail {
+        page: BotMemoryDetailPage,
+    },
+    Library {
+        library: BotLibraryView,
+    },
+    KnowledgeSaved {
+        receipt: BotKnowledgeReceipt,
+    },
+    TaskBots {
+        page: BotSummaryPage,
+    },
+    TaskAnswer {
+        answer: BotTaskAnswer,
+    },
+    Lifecycle {
+        operation: BotLifecycleProgress,
+    },
+    Chat {
+        reference: BotChatReference,
+    },
+    Operation {
+        operation: BotOperation,
+    },
+    Bot {
+        bot: Bot,
+    },
+    List {
+        bots: Vec<Bot>,
+    },
+    Chats {
+        page: BotChatPage,
+    },
+    TrashedChats {
+        page: BotTrashedChatPage,
+    },
+    Activity {
+        activity: BotActivityPage,
+    },
+    Creation {
+        creation: BotCreation,
+    },
+    Creations {
+        page: BotCreationPage,
+    },
+    Run {
+        view: koru_delegate_core::RunView,
+    },
+    TaskStop {
+        stop: BotTaskStop,
+    },
 }
 
 /// Internal owner projection. Run identity is for the facade's authorized

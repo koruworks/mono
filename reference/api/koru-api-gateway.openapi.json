@@ -2936,6 +2936,41 @@
           {
             "additionalProperties": false,
             "properties": {
+              "before_occurrence_ms": {
+                "format": "int64",
+                "nullable": true,
+                "type": "integer"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "read_routine_detail"
+                ],
+                "type": "string"
+              },
+              "history_limit": {
+                "format": "uint8",
+                "maximum": 16,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "schedule_id": {
+                "$ref": "#/components/schemas/ScheduleId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "schedule_id",
+              "history_limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "after_schedule": {
                 "anyOf": [
                   {
@@ -5949,6 +5984,25 @@
       "BotResponse": {
         "oneOf": [
           {
+            "description": "A strict flattened envelope closes only this new BotResponse variant. The\nordinary response enum's historical decoding remains unchanged.",
+            "properties": {
+              "detail": {
+                "$ref": "#/components/schemas/BotRoutineDetail"
+              },
+              "result": {
+                "enum": [
+                  "routine_detail"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "detail"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "page": {
                 "$ref": "#/components/schemas/BotRoutineListPage"
@@ -6573,6 +6627,61 @@
           "can_retry",
           "source_bot_policy_revision",
           "grant_revision"
+        ],
+        "type": "object"
+      },
+      "BotRoutineDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "access_at_setup": {
+            "$ref": "#/components/schemas/BotRoutineGrantSummary"
+          },
+          "bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "bot_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "configured_model": {
+            "$ref": "#/components/schemas/BotRoutineModelObservation"
+          },
+          "creation": {
+            "$ref": "#/components/schemas/BotRoutineCreationObservation"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/RoutineDestinationObservation"
+          },
+          "live": {
+            "$ref": "#/components/schemas/RoutineDetailLive"
+          },
+          "local_history": {
+            "$ref": "#/components/schemas/RoutineLocalHistoryObservation"
+          },
+          "observed_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/RoutineReadinessObservation"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          }
+        },
+        "required": [
+          "bot_id",
+          "schedule_id",
+          "bot_revision",
+          "observed_at_ms",
+          "creation",
+          "access_at_setup",
+          "configured_model",
+          "destination",
+          "live",
+          "readiness",
+          "local_history"
         ],
         "type": "object"
       },
@@ -16383,9 +16492,285 @@
         ],
         "type": "object"
       },
+      "RoutineDestinationObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "home": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              "observation": {
+                "enum": [
+                  "current"
+                ],
+                "type": "string"
+              },
+              "working_folder": {
+                "$ref": "#/components/schemas/BotWorkingFolder"
+              }
+            },
+            "required": [
+              "observation",
+              "home",
+              "working_folder"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RoutineDetailLive": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "definition_revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "effective_at_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "name": {
+                "$ref": "#/components/schemas/ScheduleName"
+              },
+              "next": {
+                "$ref": "#/components/schemas/RoutineNextObservation"
+              },
+              "observation": {
+                "enum": [
+                  "current"
+                ],
+                "type": "string"
+              },
+              "owner_zone": {
+                "$ref": "#/components/schemas/RoutineOwnerZoneObservation"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              },
+              "state": {
+                "$ref": "#/components/schemas/StrictState"
+              }
+            },
+            "required": [
+              "observation",
+              "name",
+              "definition_revision",
+              "effective_at_ms",
+              "recurrence",
+              "state",
+              "owner_zone",
+              "next"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "not_live"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "RoutineDigest32": {
         "pattern": "^[0-9a-f]{64}$",
         "type": "string"
+      },
+      "RoutineLocalHistoryObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/BotRoutineLocalConversation"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              "next_before_occurrence_ms": {
+                "format": "int64",
+                "nullable": true,
+                "type": "integer"
+              },
+              "observation": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation",
+              "items"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RoutineNextObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "at_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "next": {
+                "enum": [
+                  "exact"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "next",
+              "at_ms"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "next": {
+                "enum": [
+                  "owner_local"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "next"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "next": {
+                "enum": [
+                  "inactive"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "next"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "next": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "next"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RoutineOwnerZoneObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "iana": {
+                "type": "string"
+              },
+              "zone": {
+                "enum": [
+                  "fixed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "zone",
+              "iana"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "zone": {
+                "enum": [
+                  "owner_local"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "zone"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "RoutineProvenance": {
         "additionalProperties": false,
@@ -16413,6 +16798,74 @@
           "grant_revision"
         ],
         "type": "object"
+      },
+      "RoutineReadinessObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "readiness": {
+                "enum": [
+                  "blocked"
+                ],
+                "type": "string"
+              },
+              "reasons": {
+                "items": {
+                  "$ref": "#/components/schemas/RoutineReadinessReason"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "readiness",
+              "reasons"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "readiness": {
+                "enum": [
+                  "not_assessed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "readiness"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "readiness": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "readiness"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RoutineReadinessReason": {
+        "enum": [
+          "bot_paused",
+          "bot_archived",
+          "creation_not_bound",
+          "schedule_paused",
+          "handoff_pending",
+          "schedule_retired",
+          "schedule_not_live"
+        ],
+        "type": "string"
       },
       "RowRange": {
         "properties": {
@@ -24028,7 +24481,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
+        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, selected Routine detail with current timing, configured destination, partial blockers and a replaceable local conversation page, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -24049,7 +24502,7 @@
                 }
               }
             },
-            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
+            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, selected Routine detail with current timing, configured destination, partial blockers and a replaceable local conversation page, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
           },
           "400": {
             "content": {
@@ -24109,7 +24562,7 @@
             ]
           }
         ],
-        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation or list current Routine observations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
+        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation, list current Routine observations or read one Routine's timing and local conversations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
       }
     },
     "/v1/ai/bots/list": {

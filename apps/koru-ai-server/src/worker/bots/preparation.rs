@@ -340,7 +340,7 @@ impl WorkerState {
                     | BotCommand::RetryRoutineCreation { .. } => {}
                     // The dedicated metadata-only listing entry intercepts this
                     // command before generic preparation. It has no capture.
-                    BotCommand::ReadRoutines { .. } => {}
+                    BotCommand::ReadRoutines { .. } | BotCommand::ReadRoutineDetail { .. } => {}
                     // Only owner/workspace metadata is prepared here. Memory
                     // body reads and creation use their specialized lanes;
                     // the shared early gate stays closed until full integration.
@@ -763,6 +763,7 @@ pub(super) fn bot_targets(
             | BotCommand::AbandonMemory { bot_id, .. }
             | BotCommand::ListMemory { bot_id, .. }
             | BotCommand::ReadRoutines { bot_id, .. }
+            | BotCommand::ReadRoutineDetail { bot_id, .. }
             | BotCommand::ReadMemoryFact { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }

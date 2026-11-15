@@ -12,7 +12,7 @@ use std::{
     fmt,
 };
 
-pub use koru_recurrence::RecurrenceRule;
+pub use koru_recurrence::{CanonicalZone, RecurrenceRule, next_zoned_after_at_least};
 use serde::{Deserialize, Serialize};
 
 use koru_delegate_core::{

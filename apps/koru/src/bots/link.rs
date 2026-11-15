@@ -38,6 +38,12 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
+    ReadRoutineDetail {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        before: Option<i64>,
+    },
     ReadRoutines {
         seq: u64,
         bot: BotId,
@@ -117,6 +123,13 @@ pub(crate) enum Command {
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    RoutineDetail {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        result:
+            Result<koru_ai_core::bots::routines::BotRoutineDetail, super::routines::ReadFailure>,
+    },
     Routines {
         seq: u64,
         bot: BotId,
@@ -476,6 +489,56 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
     let mut client: Option<koru_api_client::Client> = None;
     while let Ok(command) = commands.recv() {
         match command {
+            Command::ReadRoutineDetail {
+                seq,
+                bot,
+                schedule,
+                before,
+            } => {
+                let connection_failure = if client.is_none() {
+                    match connect_checked(root.as_deref()) {
+                        Ok(connected) => {
+                            client = Some(connected);
+                            None
+                        }
+                        Err(error) => Some(super::routines::connection_failure(error.code())),
+                    }
+                } else {
+                    None
+                };
+                let result = if let Some(failure) = connection_failure {
+                    Err(failure)
+                } else {
+                    match &client {
+                        Some(connected) => super::routines::detail::detailed(
+                            connected
+                                .ai()
+                                .bots(&BotCommand::ReadRoutineDetail {
+                                    bot_id: bot,
+                                    schedule_id: schedule,
+                                    before_occurrence_ms: before,
+                                    history_limit: 16,
+                                })
+                                .map_err(|e| said(e.code, e.retryable)),
+                        ),
+                        None => Err(super::routines::ReadFailure::Other(Failure::Unanswered)),
+                    }
+                };
+                if result.is_err() {
+                    client = None;
+                }
+                if answers
+                    .send(Answer::RoutineDetail {
+                        seq,
+                        bot,
+                        schedule,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Command::ReadRoutines { seq, bot, after } => {
                 let connection_failure = if client.is_none() {
                     match connect_checked(root.as_deref()) {

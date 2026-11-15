@@ -20,7 +20,10 @@ pub use creation::BotCreationScan;
 pub(crate) mod library;
 mod reads;
 mod routines;
-pub use routines::{RoutineListCheckpoint, RoutineListSnapshot, RoutineToolSubject};
+pub use routines::{
+    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
+    RoutineToolSubject,
+};
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage

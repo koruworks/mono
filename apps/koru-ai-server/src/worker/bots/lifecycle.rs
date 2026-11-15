@@ -501,6 +501,7 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
         request,
         BotCommand::Read { .. }
             | BotCommand::ReadRoutines { .. }
+            | BotCommand::ReadRoutineDetail { .. }
             | BotCommand::ReadRoutineCreation { .. }
             | BotCommand::ReadLibrary { .. }
             | BotCommand::ReadMemory { .. }
