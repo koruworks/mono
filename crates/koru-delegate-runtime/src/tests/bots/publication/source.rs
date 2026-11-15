@@ -894,9 +894,9 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
         memory.orchestrator_turn = None;
         memory.bot_terminal_turn = Some(turn);
         let mut script = h.sessions.lock().unwrap();
-        script
-            .summaries
-            .insert(session, summary(ManagedState::Completed, None));
+        let mut completed = summary(ManagedState::Completed, None);
+        completed.id = session;
+        script.summaries.insert(session, completed);
         script.observation.events.push(SequencedAgentEvent {
             session_id: session,
             sequence: StreamSequence::new(60).unwrap(),
