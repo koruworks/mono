@@ -88,16 +88,31 @@ fn scripted_composition_drives_a_prepared_edit_decision_to_one_acknowledged_succ
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut allowed = false;
+    let (mut wakes, mut others) = (0usize, 0usize);
     loop {
+        // Bounded: a stalled chain or a wake storm fails here with counts,
+        // never hangs (the log itself is not printed; it can be long).
         assert!(
             Instant::now() < deadline,
-            "the chain did not reach the acknowledged successor: {:?}",
-            actor.resume_log
+            "the chain did not reach the acknowledged successor: steps {:?}, turns {}, wakes {wakes}, other commands {others}",
+            steps(&actor.resume_log),
+            actor.resume_log.len()
         );
         actor.maintenance_tick();
         // Every worker wake (publication completion or enrollment reply) is
-        // handled as the actor's loop handles it, which is also a turn.
-        while let Ok(command) = inbox.recv_timeout(Duration::from_millis(20)) {
+        // handled as the actor's loop handles it, which is also a turn. The
+        // drain is time-boxed so a steady stream of commands cannot starve
+        // the deadline check above.
+        let drain_until = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < drain_until {
+            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+                break;
+            };
+            if matches!(command, Command::PublicationWake) {
+                wakes += 1;
+            } else {
+                others += 1;
+            }
             actor.handle(command);
         }
         let taken = steps(&actor.resume_log);
