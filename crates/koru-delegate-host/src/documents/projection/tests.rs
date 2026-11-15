@@ -90,7 +90,8 @@ pub(crate) fn fixture() -> (RunDocument, RunProjectionIntent) {
             sequence: DecisionRevision::new(1).unwrap(),
             workspace: WorkspaceId::new(),
             document: DocumentId::new(),
-            source_schema: 3u8.try_into().unwrap(),
+            // The format this build created the Bot Run at (BotRun5).
+            source_schema: (doc.schema_version().unwrap() as u8).try_into().unwrap(),
             subject_digest: decision_projection_subject_digest(&header).unwrap(),
             kind: target.kind(),
             target_digest: target.digest().unwrap(),

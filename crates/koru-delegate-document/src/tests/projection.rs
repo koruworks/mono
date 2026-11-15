@@ -9,7 +9,7 @@ fn id<T: std::str::FromStr>(n: u8) -> T {
 fn rev(n: u64) -> DecisionRevision {
     DecisionRevision::new(n).unwrap()
 }
-fn bot(routine: bool) -> RunDocument {
+fn bot_run_header(routine: bool) -> RunHeader {
     let mut h = bots::bot_header();
     h.status = RunStatus::running();
     if routine {
@@ -30,7 +30,22 @@ fn bot(routine: bool) -> RunDocument {
         };
         h.bot.as_mut().unwrap().routine = Some(r);
     }
-    RunDocument::create(&h).unwrap()
+    h
+}
+/// A Bot Run as the previous creation default wrote it: Bot3 (Manual) or
+/// Bot4 (Routine). These are the documents a projection upgrades to Bot5.
+fn bot(routine: bool) -> RunDocument {
+    let doc = RunDocument::create(&bot_run_header(routine)).unwrap();
+    doc.doc()
+        .get_map("run")
+        .insert("schema", if routine { 4i64 } else { 3i64 })
+        .unwrap();
+    doc.doc().commit();
+    doc
+}
+/// A Bot Run as this build creates it: Bot5, Manual or Routine.
+fn bot5(routine: bool) -> RunDocument {
+    RunDocument::create(&bot_run_header(routine)).unwrap()
 }
 fn intent(doc: &RunDocument) -> RunProjectionIntent {
     let h = doc.header().unwrap();
@@ -139,6 +154,28 @@ fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> R
     };
     value.identity.target_digest = value.target.digest().unwrap();
     value
+}
+
+/// BotRun5 compatibility: a Bot Run created at 5 (Manual or Routine) is
+/// projected without a format change, stays at 5, and later ordinary writes
+/// on the same handle stay writable.
+#[test]
+fn a_bot_run_created_at_5_is_projected_and_stays_bot5() {
+    for routine in [false, true] {
+        let doc = bot5(routine);
+        assert_eq!(doc.schema_version(), Some(5));
+        let intent = intent(&doc);
+        assert_eq!(u8::from(intent.identity.source_schema), 5);
+        let h = doc.header().unwrap();
+        let mut stage = RunProjectionStaging::default();
+        let p = stage.prepare(&doc, &intent).unwrap();
+        let receipt = applied(&mut stage, &doc, &p);
+        assert_eq!(receipt.identity(), &intent.identity);
+        assert_eq!(doc.schema_version(), Some(5));
+        assert_eq!(doc.header().unwrap().bot, h.bot);
+        assert!(doc.compatibility().writable());
+        doc.set_status(&RunStatus::Cancelled).unwrap();
+    }
 }
 
 #[test]
