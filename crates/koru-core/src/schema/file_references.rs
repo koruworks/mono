@@ -145,6 +145,19 @@ pub fn inspect_file_references(
                 }
             }
             let count = tree.children_num(parent).unwrap_or(0);
+            if count > 0 {
+                if let TreeParentId::Node(id) = parent {
+                    let meta = tree.get_meta(id).map_err(|_| StrictReferenceError::Shape)?;
+                    let kind = meta
+                        .get(K_KIND)
+                        .and_then(as_string)
+                        .and_then(|s| Kind::parse(&s))
+                        .ok_or(StrictReferenceError::Shape)?;
+                    if !kind.accepts_children() {
+                        return Err(StrictReferenceError::Shape);
+                    }
+                }
+            }
             if count > budget.nodes || (count > 0 && depth > budget.depth) {
                 return Err(StrictReferenceError::Budget);
             }
