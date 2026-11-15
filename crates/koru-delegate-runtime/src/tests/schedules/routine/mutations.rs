@@ -4,7 +4,7 @@ use super::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::{
     BotLedgerError, RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutineQueuedCursor,
-    RoutineRecoveryEntry, RoutineSlotCursor,
+    RoutineRecoveryEntry, RoutineSlotCursor, SlotClaim,
 };
 use std::time::Instant;
 
@@ -143,6 +143,8 @@ pub(in crate::tests::schedules) fn with_routes(
             workspace: a.home,
             schedule: h.schedule,
             creation_request: a.creation_request,
+            created_at_ms: h.created_at_ms,
+            seed_hash: RoutineDigest32::from_bytes([7; 32]),
         })
         .unwrap();
     }
