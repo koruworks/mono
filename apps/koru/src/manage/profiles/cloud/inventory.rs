@@ -57,6 +57,68 @@ struct Retired {
     cancelled: bool,
 }
 #[derive(Default)]
+pub(crate) struct Cancellations(Vec<(u64, Retired)>);
+impl Cancellations {
+    pub(crate) fn capture(&mut self, owner: u64, inventory: &mut Inventory) {
+        inventory.hide();
+        self.0
+            .extend(inventory.retired.drain(..).map(|p| (owner, p)));
+        debug_assert!(
+            self.0.len() <= 64,
+            "inventory admission bounds shared retirements"
+        );
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub(crate) fn take(&mut self) -> Option<(u64, AccountCommand)> {
+        let (owner, retired) = self
+            .0
+            .iter_mut()
+            .find(|(_, r)| !r.cancelled && r.pending.generation.is_some())?;
+        retired.cancelled = true;
+        Some((
+            *owner,
+            AccountCommand::Cancel {
+                generation: retired.pending.generation?,
+            },
+        ))
+    }
+    pub(crate) fn admit(&mut self, admission: CommandAdmission) -> bool {
+        let Some((_, retired)) = self.0.iter_mut().find(|(owner, r)| {
+            *owner == admission.owner_scope && r.pending.submission == admission.submission
+        }) else {
+            return false;
+        };
+        retired.pending.generation = Some(admission.generation);
+        true
+    }
+    pub(crate) fn fail(&mut self, failure: CommandFailure) -> bool {
+        let before = self.0.len();
+        self.0
+            .retain(|(_, r)| r.pending.submission != failure.submission);
+        before != self.0.len()
+    }
+    pub(crate) fn result(
+        &mut self,
+        owner: u64,
+        generation: u64,
+        result: &AccountOperationResult,
+    ) -> bool {
+        let id = match result {
+            AccountOperationResult::CloudUsageWorkspaces { request_id, .. }
+            | AccountOperationResult::CloudUsageDocuments { request_id, .. } => Some(*request_id),
+            _ => None,
+        };
+        let before = self.0.len();
+        self.0.retain(|(scope, r)| {
+            *scope != owner
+                || !(r.pending.generation == Some(generation) || id == Some(r.pending.id))
+        });
+        before != self.0.len()
+    }
+}
+#[derive(Default)]
 pub(crate) struct Inventory {
     pub revision: u64,
     pub visible: bool,
@@ -264,6 +326,18 @@ impl Inventory {
             },
         })
     }
+    pub(crate) fn capacity(&mut self, reserved: usize) -> bool {
+        if reserved + self.retired.len() < 64 {
+            return true;
+        }
+        if self.pending.is_none() && self.due {
+            self.due = false;
+            self.failed = true;
+            self.page = None;
+            self.revision = self.revision.wrapping_add(1);
+        }
+        false
+    }
     pub fn submission(&self, id: u64) -> Option<CommandSubmissionId> {
         self.pending
             .as_ref()
@@ -429,6 +503,10 @@ impl Inventory {
 }
 
 impl ProfilesController {
+    pub(crate) fn retire_cloud_inventory(&mut self) {
+        self.inventory_cancellations
+            .capture(self.account.active_scope, &mut self.cloud.inventory);
+    }
     pub(crate) fn cloud_inventory(&self) -> &Inventory {
         &self.cloud.inventory
     }

@@ -134,7 +134,12 @@ impl ProfilesController {
         if !self.cloud_readable() {
             return None;
         }
-        if let Some(request) = self.cloud.inventory.take(std::time::Instant::now()) {
+        if self
+            .cloud
+            .inventory
+            .capacity(self.inventory_cancellations.len())
+            && let Some(request) = self.cloud.inventory.take(std::time::Instant::now())
+        {
             return Some(request);
         }
         if self.cloud.due && self.cloud.pending.is_none() {

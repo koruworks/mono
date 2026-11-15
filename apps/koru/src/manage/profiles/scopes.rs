@@ -130,6 +130,7 @@ impl AccountForm {
             // drained for parked scopes too (see `capture_local_effects`).
             cloud_uri: _,
             cloud_visible: _,
+            inventory_cancellations: _,
             progress: _,
             progress_owner: _,
             local_effects: _,
@@ -328,6 +329,12 @@ impl ProfilesController {
         generation: u64,
         mut result: AccountOperationResult,
     ) -> bool {
+        if self
+            .inventory_cancellations
+            .result(owner_scope, generation, &result)
+        {
+            return true;
+        }
         if matches!(
             &result,
             AccountOperationResult::CloudPlan { .. }

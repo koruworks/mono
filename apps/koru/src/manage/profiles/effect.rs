@@ -109,6 +109,13 @@ impl ProfilesController {
                 expected_identity_id,
             });
         }
+        if let Some((owner_scope, command)) = self.inventory_cancellations.take() {
+            return Some(Effect::Account {
+                owner_scope,
+                command,
+                submission: None,
+            });
+        }
         let (command, submission) = self.take_request_with_submission()?;
         Some(Effect::Account {
             owner_scope: self.account_scope(),

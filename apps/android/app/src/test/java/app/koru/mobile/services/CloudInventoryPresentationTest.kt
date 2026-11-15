@@ -13,6 +13,10 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CloudInventoryPresentationTest {
+    @Test fun duplicateWorkspaceIdentityIsRejectedAcrossIncarnations() {
+        assertNull(CloudInventoryDecoder.decode(workspaces(rows = listOf(workspace(), workspace()))))
+        assertNull(CloudInventoryDecoder.decode(workspaces(rows = listOf(workspace(), workspace().put("incarnation_id", uuid(99))))))
+    }
     private fun uuid(n: Int) = "00000000-0000-4000-8000-${n.toString().padStart(12, '0')}"
     private val digest = "a".repeat(64)
     private fun amount(state: String = "known", bytes: String = "7") = JSONObject().put("state", state)

@@ -296,3 +296,122 @@ fn actual_controller_rejects_old_account_and_wrong_generation() {
     assert!(!c.complete_scoped(1, 5, result(id, workspace_page(None))));
     assert!(c.cloud_inventory().page.is_none());
 }
+
+fn account(scope: u64) -> AccountState {
+    AccountState {
+        active_scope: scope,
+        active_account_id: Some(format!("account-{scope}")),
+        stage: AccountStage::SignedIn,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn outgoing_scope_late_admission_cancels_on_shared_lane_without_restoring_content() {
+    let mut c = ProfilesController::new();
+    c.set_account(account(1));
+    c.cloud_inventory_mut().open();
+    let id = request(c.cloud_inventory_mut(), Instant::now());
+    let submission = c.cloud_inventory().submission(id).unwrap();
+    c.set_account(account(2));
+    assert!(c.account_command_admitted(CommandAdmission {
+        submission,
+        owner_scope: 1,
+        generation: 91
+    }));
+    assert_eq!(
+        c.take_effect(),
+        Some(Effect::Account {
+            owner_scope: 1,
+            command: AccountCommand::Cancel { generation: 91 },
+            submission: None
+        })
+    );
+    assert!(c.complete_scoped(1, 91, result(id, workspace_page(None))));
+    assert_eq!(c.inventory_cancellations.len(), 0);
+    assert!(c.cloud_inventory().page.is_none());
+    assert!(!c.cloud_inventory().visible);
+    c.set_account(account(1));
+    assert!(c.cloud_inventory().page.is_none());
+    assert!(!c.cloud_inventory().checking());
+}
+
+#[test]
+fn same_scope_invalidation_preserves_cancel_and_early_result_cleanup() {
+    for early_result in [false, true] {
+        let mut c = ProfilesController::new();
+        c.set_account(account(1));
+        c.cloud_inventory_mut().open();
+        let id = request(c.cloud_inventory_mut(), Instant::now());
+        let submission = c.cloud_inventory().submission(id).unwrap();
+        let mut signed_out = account(1);
+        signed_out.stage = AccountStage::SignedOut;
+        c.set_account(signed_out);
+        if early_result {
+            assert!(c.complete_scoped(1, 91, result(id, workspace_page(None))));
+            assert!(!c.account_command_admitted(CommandAdmission {
+                submission,
+                owner_scope: 1,
+                generation: 91
+            }));
+        } else {
+            assert!(c.account_command_admitted(CommandAdmission {
+                submission,
+                owner_scope: 1,
+                generation: 91
+            }));
+            assert_eq!(
+                c.take_effect(),
+                Some(Effect::Account {
+                    owner_scope: 1,
+                    command: AccountCommand::Cancel { generation: 91 },
+                    submission: None
+                })
+            );
+            assert!(c.complete_scoped(1, 91, result(id, workspace_page(None))));
+        }
+        assert_eq!(c.inventory_cancellations.len(), 0);
+        assert!(c.cloud_inventory().page.is_none());
+    }
+}
+
+#[test]
+fn cancellation_backlog_is_globally_bounded_across_account_switches() {
+    let mut c = ProfilesController::new();
+    for scope in 1..=64 {
+        c.set_account(account(scope));
+        c.set_cloud_visible(true);
+        c.cloud_inventory_mut().open();
+        assert!(matches!(
+            c.take_cloud_request(),
+            Some(AccountCommand::InspectCloudUsageWorkspaces { .. })
+        ));
+    }
+    c.set_account(account(65));
+    c.cloud_inventory_mut().open();
+    assert_eq!(c.inventory_cancellations.len(), 64);
+    assert!(!matches!(
+        c.take_cloud_request(),
+        Some(AccountCommand::InspectCloudUsageWorkspaces { .. })
+    ));
+    assert!(c.cloud_inventory().failed);
+    assert!(!c.cloud_inventory().checking());
+}
+
+#[test]
+fn duplicate_workspace_page_never_reaches_rows_or_profile_totals() {
+    for changed_incarnation in [false, true] {
+        let mut state = Inventory::default();
+        state.open();
+        let id = request(&mut state, Instant::now());
+        let mut page = workspace_page(None);
+        let mut duplicate = page["items"][0].clone();
+        if changed_incarnation {
+            duplicate["incarnation_id"] = json!("00000000-0000-0000-0000-000000000099");
+        }
+        page["items"].as_array_mut().unwrap().push(duplicate);
+        assert!(state.result(1, &result(id, page)));
+        assert!(state.failed);
+        assert!(state.page.is_none());
+    }
+}

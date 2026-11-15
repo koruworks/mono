@@ -96,6 +96,7 @@ pub struct ProfilesController {
     cloud: cloud::State,
     cloud_uri: Option<String>,
     cloud_visible: bool,
+    inventory_cancellations: inventory::Cancellations,
     /// One Profile's Cloud sync progress, polled while it shows.
     progress: progress::Poll,
     /// Which Profile that is: the selected one, or Koru Cloud's disclosure.
@@ -180,6 +181,7 @@ impl ProfilesController {
             cloud: Default::default(),
             cloud_uri: None,
             cloud_visible: false,
+            inventory_cancellations: Default::default(),
             progress: Default::default(),
             progress_owner: ProgressOwner::Selected,
             local_effects: Default::default(),
@@ -299,6 +301,9 @@ impl ProfilesController {
             return false;
         }
         let changed_scope = self.account.active_scope != state.active_scope;
+        if changed_scope {
+            self.retire_cloud_inventory();
+        }
         self.activate_scope(state.active_scope);
         if changed_scope
             || self.account.active_account_id != state.active_account_id
@@ -310,6 +315,7 @@ impl ProfilesController {
                     | AccountStage::Unavailable
             )
         {
+            self.retire_cloud_inventory();
             self.cloud.invalidate();
             self.cloud_uri = None;
         }
