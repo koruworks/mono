@@ -18,11 +18,13 @@ fn parent() -> koru_delegate_api::bots::BotDelegateAuthority {
     )
     .unwrap()
 }
+/// A fresh canonical v4 identity; this crate does not link `uuid` directly.
+fn fresh() -> String {
+    RunId::mint().as_uuid().to_string()
+}
 fn enroll() -> DecisionBridgeEnvelope<EnrollBotWaitCleanup> {
-    let owner: BotOwner = serde_json::from_value(
-        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":uuid::Uuid::new_v4()}),
-    )
-    .unwrap();
+    let owner: BotOwner =
+        serde_json::from_value(serde_json::json!({"user_scope":fresh(),"device":fresh()})).unwrap();
     let intent = BotWaitCleanupIntentV1 {
         version: DecisionVersionV1,
         owner,
@@ -139,7 +141,7 @@ fn decision_transport_returns_only_the_exact_correlated_enrolled_reply() {
             BotWaitEnrollmentReply::Enrolled {
                 receipt_digest: key.receipt_digest,
                 key,
-                ai_attempt: uuid::Uuid::new_v4(),
+                ai_attempt: RunId::mint().as_uuid(),
             },
         )
         .unwrap();
