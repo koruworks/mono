@@ -69,6 +69,7 @@ use koru_ui::text_paragraph::KoruTextParagraph;
 use koru_ui::toggle::Toggle;
 use profiles::{CloudStatus, ProgressOwner, SyncAvailability};
 
+pub(crate) mod inventory;
 pub(crate) mod progress;
 #[cfg(test)]
 mod tests;
@@ -321,6 +322,9 @@ impl ManageView {
     // ---- layout --------------------------------------------------------------
 
     pub(super) fn lay_cloud_page(&mut self) -> profile_page::Laid {
+        if self.c.cloud_inventory().visible {
+            return self.lay_inventory();
+        }
         let column = self.column();
         let mut controls = Vec::new();
         let subscribed =
@@ -457,11 +461,18 @@ impl ManageView {
             } else {
                 TextKey::CloudStorageRefresh
             };
-            let buttons = vec![(
-                Control::CloudStorageRetry,
-                koru_i18n::t(lang, label).to_owned(),
-                ButtonRole::Secondary,
-            )];
+            let buttons = vec![
+                (
+                    Control::CloudStorageRetry,
+                    koru_i18n::t(lang, label).to_owned(),
+                    ButtonRole::Secondary,
+                ),
+                (
+                    Control::CloudInventory,
+                    koru_i18n::t(lang, TextKey::CloudInventoryView).to_owned(),
+                    ButtonRole::Secondary,
+                ),
+            ];
             let block = self.lay_words(
                 Rect::new(column.x, y, column.w, 0.0),
                 koru_i18n::t(lang, TextKey::CloudStorageTitle).to_owned(),
@@ -927,6 +938,9 @@ impl ManageView {
 
     /// What a control of this page does. `None` for one that is not.
     pub(super) fn activate_cloud_control(&mut self, control: Control) -> Option<bool> {
+        if let Some(result) = self.activate_inventory(control) {
+            return Some(result);
+        }
         let intent = match control {
             Control::Accounts => {
                 self.open_account_switcher();
@@ -991,6 +1005,10 @@ impl ManageView {
     // ---- paint ---------------------------------------------------------------
 
     pub(super) fn paint_cloud_page(&mut self, canvas: &mut Scene, root: Affine) {
+        if self.laid.inventory.is_some() {
+            self.paint_inventory(canvas, root);
+            return;
+        }
         let Some(laid) = self.laid.cloud.clone() else {
             return;
         };
