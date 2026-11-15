@@ -43,6 +43,9 @@ impl Orchestrator {
         &mut self,
         run: RunId,
     ) -> Result<Option<FreshBotPolicyProof>, RunError> {
+        if self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
+        }
         let admitted = self
             .bot_ledger()?
             .bot_admission(run)?
@@ -118,6 +121,9 @@ impl Orchestrator {
             || submission.request.run != key.run
         {
             return Err(refused("bot_provenance_mismatch"));
+        }
+        if self.run_publication_pending(key.run) {
+            return Err(crate::publication_pending().into());
         }
         self.current_policy_for_submission(&submission, config_revision, policy_revision)
     }

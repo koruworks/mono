@@ -10,6 +10,94 @@ use koru_delegate_core::decisions::{
 use koru_session_protocol::{CreationLookup, ProcessState};
 
 impl Orchestrator {
+    /// Permission to reconcile an existing Held effect while canonical status
+    /// is still owed. This is not proof that cleanup or release has completed.
+    pub(crate) fn publication_cleanup_requested(
+        &mut self,
+        run: RunId,
+        owner_stop: bool,
+    ) -> Result<bool, RunError> {
+        use koru_delegate_core::decisions::{
+            DecisionClosureReason, DecisionControlAction, RunProjectionTargetV1,
+        };
+        let owner = self.publication_owner(run)?;
+        let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+            return Err(publication_pending().into());
+        };
+        if execution.wait.phase != BotWaitPhase::CleanupPending {
+            return Ok(false);
+        }
+        if !owner_stop {
+            return Ok(true);
+        }
+        let retained = self
+            .bot_ledger()?
+            .latest_decision_projection(owner, run)?
+            .ok_or_else(publication_pending)?;
+        if retained.identity.wait != execution.wait.wait {
+            return Err(publication_pending().into());
+        }
+        Ok(matches!(
+            retained.target,
+            RunProjectionTargetV1::Control {
+                action: DecisionControlAction::CleanupRequested {
+                    cause: DecisionClosureReason::Canceled,
+                    ..
+                } | DecisionControlAction::Stop {},
+                ..
+            }
+        ))
+    }
+
+    /// Retained identity only while the sole document is unavailable/exclusive.
+    /// This must never grant a lease, fresh write or positive native absence.
+    pub(crate) fn publication_retained_subject(
+        &mut self,
+        admission: &koru_delegate_sqlite::BotAdmissionRecord,
+    ) -> Result<(), RunError> {
+        let submission = &admission.submission;
+        let provenance = &submission.provenance;
+        let run = submission.request.run;
+        if !self.run_publication_pending(run) {
+            return Err(publication_pending().into());
+        }
+        let execution = self
+            .bot_ledger()?
+            .decision_wait_execution(provenance.owner, run)?
+            .ok_or_else(publication_pending)?;
+        let retained = self
+            .bot_ledger()?
+            .latest_decision_projection(provenance.owner, run)?
+            .ok_or_else(publication_pending)?;
+        let intent = self
+            .ports
+            .store
+            .intent(run)?
+            .ok_or_else(publication_pending)?;
+        let state = self.runs.get(&run).ok_or_else(publication_pending)?;
+        if execution.wait.origin.owner != provenance.owner
+            || execution.wait.origin.bot != provenance.bot
+            || execution.wait.origin.run != run
+            || intent.state != koru_delegate_sqlite::IntentState::Satisfied
+            || intent.workspace != submission.workspace
+            || intent.run_document != Some(retained.identity.document)
+            || retained.identity.workspace != intent.workspace
+            || retained.identity.run != run
+            || retained.identity.wait != execution.wait.wait
+            || retained.target.fence().owner != provenance.owner
+            || retained.target.fence().bot != provenance.bot
+            || retained.target.fence().run != run
+            || state.workspace != intent.workspace
+            || Some(state.document) != intent.run_document
+        {
+            return Err(super::super::bots::refused("bot_provenance_mismatch"));
+        }
+        // The sole C decoder validates full retained admission/decision/Routine
+        // association and current consumer. An original effect can still name
+        // the origin attempt after that consumer has moved to a successor.
+        Ok(())
+    }
+
     /// This observation is not a released slot or a settled admission. It is
     /// available only after the sole writer retained CleanupPending; neither
     /// detached RunState.attempt=None nor an old retired attempt proves absence.

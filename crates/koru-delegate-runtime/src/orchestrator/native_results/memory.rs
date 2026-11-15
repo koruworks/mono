@@ -9,15 +9,19 @@ impl Orchestrator {
             .bot_ledger()?
             .bot_admission(run)?
             .ok_or(RunError::UnknownRun)?;
-        let provenance = admission.submission.provenance;
+        let provenance = &admission.submission.provenance;
         if device.as_uuid().is_nil() || provenance.owner.device != device {
             return Err(refused("bot_owner_mismatch"));
         }
+        if self.run_publication_pending(run) {
+            self.publication_retained_subject(&admission)?;
+            return Ok(provenance.clone());
+        }
         let header = self.open(run)?.doc.document()?.header()?;
-        if header.run != run || header.bot.as_ref() != Some(&provenance) {
+        if header.run != run || header.bot.as_ref() != Some(provenance) {
             return Err(refused("bot_provenance_mismatch"));
         }
-        Ok(provenance)
+        Ok(provenance.clone())
     }
 
     fn memory_fresh(
@@ -75,6 +79,9 @@ impl Orchestrator {
             .is_some_and(|value| !value.subject.matches(&provenance))
         {
             return Err(refused("bot_provenance_mismatch"));
+        }
+        if allocation.is_none() && self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
         }
         Ok(allocation)
     }

@@ -14,6 +14,7 @@ use koru_delegate_core::decisions::{
 };
 use koru_delegate_document::{RunDocument, RunDocumentError};
 mod cleanup;
+mod source;
 
 pub(crate) enum RunDocumentOwner {
     Attached {

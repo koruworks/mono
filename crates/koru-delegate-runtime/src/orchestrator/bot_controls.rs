@@ -40,6 +40,11 @@ impl Orchestrator {
     ) -> Result<BotExecutionRecord, RunError> {
         let record = self.bot_live_fence_inner(fence, device, controls, exact_turn, false)?;
         if controls {
+            // Attached exclusive handles permit truthful reads, not provider
+            // side effects before a later document commit discovers the fence.
+            if self.run_publication_pending(fence.run) {
+                return Err(crate::publication_pending().into());
+            }
             self.bot_execution_policy(fence.run)?;
         }
         Ok(record)
