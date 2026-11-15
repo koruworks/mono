@@ -173,6 +173,8 @@ pub(crate) struct LedgerScript {
     pub arm_failure_after: Option<(&'static str, &'static str)>,
     /// Corrupt both retained/current policy read results after real SQL install.
     pub corrupt_native_policy_digest: bool,
+    pub unavailable_decision_run: Option<RunId>,
+    pub unavailable_admission_run: Option<RunId>,
 }
 
 #[derive(Clone)]

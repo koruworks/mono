@@ -312,6 +312,7 @@ impl Orchestrator {
         device: DeviceId,
         reserved: &[koru_delegate_scope::ScopeIdentity],
     ) -> Result<Option<Started>, RunError> {
+        self.ensure_scope_recovery()?;
         let record = self.bot_record(key, device)?;
         if !matches!(
             record.state,

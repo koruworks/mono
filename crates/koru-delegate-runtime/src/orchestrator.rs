@@ -354,6 +354,9 @@ pub struct Orchestrator {
     pub(crate) ports: Ports,
     pub(crate) options: Options,
     pub(crate) claims: ScopeClaims,
+    /// A retained live Run had neither a readable scope nor a prior exact claim.
+    /// Only a later complete reconciliation may clear this fresh-work fence.
+    scope_recovery_incomplete: bool,
     pub(crate) runs: HashMap<RunId, RunState>,
     // Bounded transient current-policy proofs; never reconstructed from ledger hashes.
     native_policies: Vec<CachedNativePolicy>,
@@ -374,6 +377,7 @@ impl Orchestrator {
             native_routine_policies: Vec::new(),
             bot_boot: bot_boot::BootCoordination::new(),
             publication_ticket: None,
+            scope_recovery_incomplete: false,
             publication_retry: record::PublicationRetry::default(),
         }
     }
@@ -437,10 +441,25 @@ impl Orchestrator {
         run: RunId,
         scope: &koru_delegate_core::WorkspaceScope,
     ) -> Result<koru_delegate_scope::ResolvedScope, ScopeRefusal> {
+        if self.scope_recovery_incomplete {
+            return Err(ScopeRefusal::Busy);
+        }
         if matches!(scope, koru_delegate_core::WorkspaceScope::Temporary) {
             return self.ports.roots.planned_temporary(run);
         }
         koru_delegate_scope::ResolvedScope::resolve(scope, run, self.ports.roots.as_ref())
+    }
+
+    pub(crate) fn ensure_scope_recovery(&self) -> Result<(), RunError> {
+        if self.scope_recovery_incomplete {
+            return Err(crate::PortError::new(
+                crate::Port::Scope,
+                "scope_recovery_pending",
+                "a retained working scope has not been recovered",
+            )
+            .into());
+        }
+        Ok(())
     }
 
     /// The runs open on this device — every run with a live attempt, plus

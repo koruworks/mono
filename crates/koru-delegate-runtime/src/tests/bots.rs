@@ -50,6 +50,13 @@ impl BotLedger for RecordingStore {
         owner: BotOwner,
         run: RunId,
     ) -> Result<Option<DecisionWaitExecution>, BotLedgerError> {
+        if self.script.lock().unwrap().unavailable_decision_run == Some(run) {
+            return Err(LedgerError::Corrupt {
+                table: "bot_wait_runtime",
+                column: "release",
+            }
+            .into());
+        }
         self.inner
             .lock()
             .unwrap()
@@ -196,6 +203,13 @@ impl BotLedger for RecordingStore {
         self.inner.lock().unwrap().admit_bot(submission)
     }
     fn bot_admission(&self, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
+        if self.script.lock().unwrap().unavailable_admission_run == Some(run) {
+            return Err(LedgerError::Corrupt {
+                table: "bot_admissions",
+                column: "payload",
+            }
+            .into());
+        }
         self.check("bot_admission_read")?;
         self.inner.lock().unwrap().bot_admission(run)
     }

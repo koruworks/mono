@@ -266,3 +266,88 @@ fn decision_cleanup_deadline_read_failure_retains_retry_scheduling() {
     assert!(h.ledger.lock().unwrap().fail.is_none());
     assert!(h.orchestrator.bot_budget_runs().contains(&fence.run));
 }
+
+#[test]
+fn decision_bad_cold_owner_keeps_existing_claim_and_recovers_healthy_neighbor() {
+    let (mut h, _, fence) = waiting();
+    let old_scope = h
+        .orchestrator
+        .claims()
+        .claims()
+        .find(|claim| claim.attempt == fence.attempt)
+        .unwrap()
+        .scope
+        .clone();
+    let mut healthy = submission(2);
+    healthy.provenance.bot = BotId::mint();
+    let healthy_fence = prepared(&mut h, &healthy);
+    running_session(
+        &mut h,
+        &healthy,
+        CreationLookup::Known {
+            session: summary(ManagedState::Idle, None),
+        },
+    );
+    h.orchestrator.runs.remove(&healthy_fence.run);
+    {
+        let mut script = h.ledger.lock().unwrap();
+        script.unavailable_decision_run = Some(fence.run);
+        script.unavailable_admission_run = Some(fence.run);
+    }
+    let report = h.orchestrator.restart().unwrap();
+    assert!(report.unresolved.contains(&fence.run));
+    assert!(
+        report
+            .reattached
+            .iter()
+            .any(|started| started.run == healthy_fence.run)
+    );
+    assert!(report.claims.kept.contains(&(fence.run, fence.attempt)));
+    assert_eq!(
+        h.orchestrator
+            .claims()
+            .claims()
+            .find(|claim| claim.attempt == fence.attempt)
+            .unwrap()
+            .scope,
+        old_scope
+    );
+    assert!(
+        h.orchestrator.ensure_scope_recovery().is_ok(),
+        "an exact held scope is sufficient"
+    );
+}
+
+#[test]
+fn decision_unknown_scope_blocks_fresh_work_until_positive_reconciliation() {
+    let (mut h, submission, fence) = waiting();
+    h.orchestrator.claims.release(fence.attempt);
+    {
+        let mut script = h.ledger.lock().unwrap();
+        script.unavailable_decision_run = Some(fence.run);
+        script.unavailable_admission_run = Some(fence.run);
+    }
+    let report = h.orchestrator.restart().unwrap();
+    assert!(report.unresolved.contains(&fence.run));
+    assert!(!report.claims.kept.contains(&(fence.run, fence.attempt)));
+    let calls = h.sessions.lock().unwrap().calls.clone();
+    assert!(
+        matches!(h.orchestrator.start(run_id(99), StartOrigin::Manual),
+        Err(RunError::Port(error)) if error.code == "scope_recovery_pending")
+    );
+    assert!(matches!(h.orchestrator.resume(run_id(99), true),
+        Err(RunError::Port(error)) if error.code == "scope_recovery_pending"));
+    assert!(
+        matches!(h.orchestrator.bot_dispatch(&key(&submission), fence.owner.device),
+        Err(RunError::Port(error)) if error.code == "scope_recovery_pending")
+    );
+    assert_eq!(h.sessions.lock().unwrap().calls, calls);
+    {
+        let mut script = h.ledger.lock().unwrap();
+        script.unavailable_decision_run = None;
+        script.unavailable_admission_run = None;
+    }
+    let recovered = h.orchestrator.restart().unwrap();
+    assert!(recovered.claims.kept.contains(&(fence.run, fence.attempt)));
+    assert!(h.orchestrator.ensure_scope_recovery().is_ok());
+}
