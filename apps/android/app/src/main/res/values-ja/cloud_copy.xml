@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">選択したファイル項目を削除します。埋め込み先は削除されません。他の参照がある場合、ファイルは Cloud ストレージに保持されます。</string>
     <string name="cloud_copy_block_reference">ブロック参照</string>
     <string name="cloud_copy_preview_unavailable">ファイルのプレビューを利用できません</string>
+    <string name="cloud_copy_remove_attachment">添付ファイルを削除</string>
+    <string name="cloud_copy_remove_attachment_question">クラウドコピーからこの添付ファイルを削除しますか？</string>
+    <string name="cloud_copy_remove_attachment_explanation">添付ファイルのみを削除します。テキスト、その他の内容、埋め込み先は残ります。他の参照がある場合、ファイルはクラウドストレージに残ります。</string>
 </resources>

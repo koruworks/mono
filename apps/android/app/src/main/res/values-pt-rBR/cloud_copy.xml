@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">O item de arquivo selecionado será removido. Um destino incorporado não será excluído. Outras referências podem manter o arquivo no armazenamento da Cloud.</string>
     <string name="cloud_copy_block_reference">Referência a bloco</string>
     <string name="cloud_copy_preview_unavailable">Prévia do arquivo indisponível</string>
+    <string name="cloud_copy_remove_attachment">Remover anexo</string>
+    <string name="cloud_copy_remove_attachment_question">Remover este anexo da cópia na nuvem?</string>
+    <string name="cloud_copy_remove_attachment_explanation">Somente o anexo será removido. O texto, os outros conteúdos e os destinos incorporados permanecem. Outras referências podem manter o arquivo na nuvem.</string>
 </resources>

@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">将移除选中的文件项，但不会删除嵌入的目标。其他引用可能会使文件继续保留在 Cloud 存储中。</string>
     <string name="cloud_copy_block_reference">块引用</string>
     <string name="cloud_copy_preview_unavailable">文件预览不可用</string>
+    <string name="cloud_copy_remove_attachment">移除附件</string>
+    <string name="cloud_copy_remove_attachment_question">要从云端副本中移除此附件吗？</string>
+    <string name="cloud_copy_remove_attachment_explanation">仅移除附件。文字、其他内容和嵌入目标将保留。其他引用可能使文件继续保留在云端存储中。</string>
 </resources>

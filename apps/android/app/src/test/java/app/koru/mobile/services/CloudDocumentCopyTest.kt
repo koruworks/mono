@@ -38,7 +38,7 @@ class CloudDocumentCopyTest {
             put("blocks", JSONArray().put(block(6)).put(block(7, "paragraph")))
         })
         put("can_request_removal", true)
-        put("removable_files", JSONArray().put(JSONObject().put("node_id", id(6)).put("in_trash", true)))
+        put("removable_files", JSONArray().put(JSONObject().put("node_id", id(6)).put("in_trash", true).put("mode", "attachment_leaf")))
     }
     private fun decode(value: JSONObject) = CloudDocumentCopyDecoder.decode(value.toString(), selection)
 
@@ -112,6 +112,33 @@ class CloudDocumentCopyTest {
         range.getJSONObject("document").getJSONArray("blocks").getJSONObject(1).getJSONObject("rich_text")
             .getJSONArray("marks").put(JSONObject().put("start_utf8", 1).put("end_utf8", 2).put("kind", "bold"))
         assertNull(decode(range))
+    }
+
+    @Test fun retainedSlotControlsKeepTextChildrenAndRequireTheNativeMode() {
+        for (kind in listOf("paragraph", "document", "callout", "listblock", "trash")) {
+            val value = fixture()
+            val rows = value.getJSONObject("document").getJSONArray("blocks")
+            rows.getJSONObject(0).put("kind", kind).put("rich_text", JSONObject()
+                .put("text", "Keep this body").put("marks", JSONArray()).put("inline_objects", JSONArray()))
+            rows.getJSONObject(1).put("parent_id", id(6))
+            val control = value.getJSONArray("removable_files").getJSONObject(0)
+            control.put("mode", "retained_slot")
+            val copy = decode(value)!!
+            assertEquals(CloudCopyRemovalMode.RetainedSlot, copy.removableFiles.getValue(BlockId(id(6))).mode)
+            assertEquals(2, copy.document.blocks.size)
+            assertEquals(BlockId(id(6)), copy.document.blocks[1].parentId)
+            assertFalse(copy.files.getValue(BlockId(id(6))).attachmentLeaf)
+            assertTrue(cloudCopyRemovableNodes(copy.document, copy.permittedNodes, setOf(BlockId(id(6)))).contains(BlockId(id(6))))
+            val displayed = app.koru.mobile.ui.editor.passiveBlockLayouts(copy.document.blocks, copy.structure.keys, copy.files.keys)!!
+            assertTrue(displayed.any { it.block.id == BlockId(id(6)) })
+            control.put("mode", "attachment_leaf")
+            assertNull(decode(value))
+            control.remove("mode")
+            assertNull(decode(value))
+        }
+        val key = CloudCopyViewKey(1, 2, selection)
+        val confirmation = CloudCopyConfirmation(key, BlockId(id(6)), CloudCopyRemovalMode.RetainedSlot)
+        assertFalse(confirmation.validFor(key, CloudCopyPhase.Verified, setOf(BlockId(id(6))), CloudCopyRemovalMode.AttachmentLeaf))
     }
 
     @Test fun resourceBoundsRejectInsteadOfTruncatingOrShowingPartialContent() {

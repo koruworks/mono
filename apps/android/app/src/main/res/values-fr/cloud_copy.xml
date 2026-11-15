@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">L’élément de fichier sélectionné sera supprimé. Une cible intégrée ne sera pas supprimée. D’autres références peuvent conserver le fichier dans le stockage Cloud.</string>
     <string name="cloud_copy_block_reference">Référence à un bloc</string>
     <string name="cloud_copy_preview_unavailable">Aperçu du fichier indisponible</string>
+    <string name="cloud_copy_remove_attachment">Retirer la pièce jointe</string>
+    <string name="cloud_copy_remove_attachment_question">Retirer cette pièce jointe de la copie Cloud ?</string>
+    <string name="cloud_copy_remove_attachment_explanation">Seule la pièce jointe est retirée. Le texte, les autres contenus et les cibles intégrées sont conservés. D’autres références peuvent maintenir le fichier dans le stockage Cloud.</string>
 </resources>

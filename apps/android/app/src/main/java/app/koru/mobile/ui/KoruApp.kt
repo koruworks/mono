@@ -330,7 +330,7 @@ fun KoruApp(
                 androidx.activity.compose.BackHandler { model.closeCloudCopy() }
                 key(copyKey) {
                     CloudCopyScreen(copyKey, shownCopy.copy?.document, shownCopy.phase,
-                        shownCopy.copy?.permittedNodes.orEmpty(), shownCopy.copy?.files.orEmpty(),
+                        shownCopy.copy?.permittedNodes.orEmpty(), shownCopy.copy?.removableFiles?.mapValues { it.value.mode }.orEmpty(), shownCopy.copy?.files.orEmpty(),
                         shownCopy.copy?.trashedNodes.orEmpty(), shownCopy.copy?.structure.orEmpty(),
                         model::closeCloudCopy, model::reloadCloudCopy, model::removeCloudFile)
                 }

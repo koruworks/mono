@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">Se elimina el elemento de archivo seleccionado. No se elimina el destino incrustado. Otras referencias pueden mantener el archivo en el almacenamiento de Cloud.</string>
     <string name="cloud_copy_block_reference">Referencia a un bloque</string>
     <string name="cloud_copy_preview_unavailable">Vista previa del archivo no disponible</string>
+    <string name="cloud_copy_remove_attachment">Eliminar adjunto</string>
+    <string name="cloud_copy_remove_attachment_question">¿Eliminar este adjunto de la copia en la nube?</string>
+    <string name="cloud_copy_remove_attachment_explanation">Solo se elimina el adjunto. El texto, los demás contenidos y los destinos incrustados se conservan. Otras referencias pueden mantener el archivo en la nube.</string>
 </resources>

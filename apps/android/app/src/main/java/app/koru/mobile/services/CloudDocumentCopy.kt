@@ -35,7 +35,10 @@ internal data class CloudCopySelection(
 }
 
 /** Metadata only: deliberately not a global BlobReference usable by hydration. */
-internal data class CloudCopyFile(val mimeType: String, val sizeDecimal: String?, val reference: EntityReference? = null)
+internal data class CloudCopyFile(val mimeType: String, val sizeDecimal: String?, val reference: EntityReference? = null,
+                                  val attachmentLeaf: Boolean = true)
+internal enum class CloudCopyRemovalMode { AttachmentLeaf, RetainedSlot }
+internal data class CloudCopyRemoval(val inTrash: Boolean, val mode: CloudCopyRemovalMode)
 internal enum class CloudCopyStructure { Document, Trash }
 internal class CloudDocumentCopy(
     val selection: CloudCopySelection,
@@ -44,7 +47,7 @@ internal class CloudDocumentCopy(
     val trashedNodes: Set<BlockId>,
     val structure: Map<BlockId, CloudCopyStructure>,
     val canRequestRemoval: Boolean,
-    val removableFiles: Map<BlockId, Boolean>,
+    val removableFiles: Map<BlockId, CloudCopyRemoval>,
 ) {
     val permittedNodes: Set<BlockId> get() = if (canRequestRemoval) removableFiles.keys else emptySet()
     override fun toString() = "CloudDocumentCopy(<redacted>)"
@@ -67,7 +70,8 @@ internal object CloudDocumentCopyDecoder {
         val rows = document.getJSONArray("blocks").bounded(2_000)
         val ids = HashSet<String>()
         val parents = HashSet<String>()
-        val eligible = HashSet<String>()
+        val eligible = HashMap<String, CloudCopyRemovalMode>()
+        val leafBlobs = HashSet<String>()
         val files = HashMap<BlockId, CloudCopyFile>()
         val trashed = HashSet<BlockId>()
         val structure = HashMap<BlockId, CloudCopyStructure>()
@@ -86,10 +90,18 @@ internal object CloudDocumentCopyDecoder {
                 val mime = budget.text(it.string("mime_type"))
                 val size = it.nullInteger("size", "18446744073709551615")
                 it.nullInteger("width", "4294967295"); it.nullInteger("height", "4294967295")
-                CloudCopyFile(mime, size, reference)
+                CloudCopyFile(mime, size, reference, kind in setOf("file", "image", "canvas"))
             }
-            if (blob != null && kind in setOf("file", "image", "canvas")) files[BlockId(id)] = blob
-            if (blob != null && kind in setOf("file", "image", "canvas")) eligible.add(id)
+            if (blob != null) {
+                val mode = if (blob.attachmentLeaf) {
+                    leafBlobs.add(id); CloudCopyRemovalMode.AttachmentLeaf
+                } else {
+                    require(kind in setOf("task", "paragraph", "quote", "callout", "document", "listblock", "table", "code", "contact", "divider", "trash"))
+                    CloudCopyRemovalMode.RetainedSlot
+                }
+                files[BlockId(id)] = blob
+                eligible[id] = mode
+            }
             val content = when (kind) {
                 "document" -> {
                     structure[BlockId(id)] = CloudCopyStructure.Document
@@ -115,15 +127,21 @@ internal object CloudDocumentCopyDecoder {
             }
             Block(BlockId(id), parent?.let(::BlockId), properties, content)
         }
+        require(leafBlobs.none { it in parents })
         val controls = root.getJSONArray("removable_files").bounded(2_000)
-        val removable = HashMap<BlockId, Boolean>()
+        val removable = HashMap<BlockId, CloudCopyRemoval>()
         for (index in 0 until controls.length()) {
-            val control = controls.getJSONObject(index).fields("node_id in_trash")
+            val control = controls.getJSONObject(index).fields("node_id in_trash mode")
             val id = control.string("node_id")
-            require(id in eligible && id !in parents && BlockId(id) !in removable)
+            val mode = when (control.string("mode")) {
+                "attachment_leaf" -> CloudCopyRemovalMode.AttachmentLeaf
+                "retained_slot" -> CloudCopyRemovalMode.RetainedSlot
+                else -> error("unavailable removal mode")
+            }
+            require(eligible[id] == mode && (mode == CloudCopyRemovalMode.RetainedSlot || id !in parents) && BlockId(id) !in removable)
             val inTrash = control.bool("in_trash")
             require(inTrash == (BlockId(id) in trashed))
-            removable[BlockId(id)] = inTrash
+            removable[BlockId(id)] = CloudCopyRemoval(inTrash, mode)
         }
         CloudDocumentCopy(selection, DocumentSnapshot(DocumentId(selection.documentId), WorkspaceId(selection.workspaceId),
             title, revision, blocks), files, trashed, structure, root.bool("can_request_removal"), removable)

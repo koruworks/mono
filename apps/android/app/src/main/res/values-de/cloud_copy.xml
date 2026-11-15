@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">Das ausgewählte Dateielement wird entfernt. Ein eingebettetes Ziel wird nicht gelöscht. Andere Verweise können die Datei weiterhin im Cloud-Speicher halten.</string>
     <string name="cloud_copy_block_reference">Blockverweis</string>
     <string name="cloud_copy_preview_unavailable">Dateivorschau nicht verfügbar</string>
+    <string name="cloud_copy_remove_attachment">Anhang entfernen</string>
+    <string name="cloud_copy_remove_attachment_question">Diesen Anhang aus der Cloud-Kopie entfernen?</string>
+    <string name="cloud_copy_remove_attachment_explanation">Nur der Anhang wird entfernt. Text, andere Inhalte und eingebettete Ziele bleiben erhalten. Andere Verweise können die Datei im Cloud-Speicher halten.</string>
 </resources>

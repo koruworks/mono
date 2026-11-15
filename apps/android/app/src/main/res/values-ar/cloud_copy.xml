@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">ستتم إزالة عنصر الملف المحدد. لن يتم حذف الهدف المضمّن. قد تُبقي مراجع أخرى الملف في مساحة تخزين Cloud.</string>
     <string name="cloud_copy_block_reference">مرجع كتلة</string>
     <string name="cloud_copy_preview_unavailable">معاينة الملف غير متاحة</string>
+    <string name="cloud_copy_remove_attachment">إزالة المرفق</string>
+    <string name="cloud_copy_remove_attachment_question">هل تريد إزالة هذا المرفق من النسخة السحابية؟</string>
+    <string name="cloud_copy_remove_attachment_explanation">تتم إزالة المرفق فقط. يبقى النص والمحتوى الآخر والعناصر المشار إليها. قد تُبقي مراجع أخرى الملف في التخزين السحابي.</string>
 </resources>

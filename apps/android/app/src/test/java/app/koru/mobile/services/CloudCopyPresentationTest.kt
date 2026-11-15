@@ -28,7 +28,7 @@ class CloudCopyPresentationTest {
                 }).put("blob", JSONObject().put("id", "hash").put("mime_type", "image/png")
                     .put("size", JSONObject.NULL).put("width", JSONObject.NULL).put("height", JSONObject.NULL)))))
         .put("can_request_removal", true).put("removable_files", JSONArray().put(JSONObject()
-            .put("node_id", node.value).put("in_trash", false))).toString()
+            .put("node_id", node.value).put("in_trash", false).put("mode", "attachment_leaf"))).toString()
     private class Calls {
         var next = 10L
         val nodes = mutableListOf<BlockId?>()

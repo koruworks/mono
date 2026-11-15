@@ -12,6 +12,7 @@ import app.koru.mobile.domain.DocumentSnapshot
 import app.koru.mobile.services.CloudCopyFile
 import app.koru.mobile.services.CloudCopyStructure
 import app.koru.mobile.services.CloudCopySelection
+import app.koru.mobile.services.CloudCopyRemovalMode
 import app.koru.mobile.ui.theme.KoruSpacing
 
 /** Presentation states; only the authenticated native adapter can supply content/actions. */
@@ -20,15 +21,18 @@ internal enum class CloudCopyPhase {
 }
 
 internal data class CloudCopyViewKey(val ownerScope: Long, val viewEpoch: Long, val selection: CloudCopySelection)
-internal data class CloudCopyConfirmation(val key: CloudCopyViewKey, val node: BlockId) {
-    fun validFor(current: CloudCopyViewKey, phase: CloudCopyPhase, removable: Set<BlockId>): Boolean =
-        key == current && cloudCopyRemovalEnabled(phase, removable, node)
+internal data class CloudCopyConfirmation(val key: CloudCopyViewKey, val node: BlockId,
+                                         val mode: CloudCopyRemovalMode = CloudCopyRemovalMode.AttachmentLeaf) {
+    fun validFor(current: CloudCopyViewKey, phase: CloudCopyPhase, removable: Set<BlockId>,
+                 currentMode: CloudCopyRemovalMode = mode): Boolean =
+        key == current && mode == currentMode && cloudCopyRemovalEnabled(phase, removable, node)
 }
 
-internal fun cloudCopyRemovableNodes(document: DocumentSnapshot?, permittedNodes: Set<BlockId>): Set<BlockId> {
+internal fun cloudCopyRemovableNodes(document: DocumentSnapshot?, permittedNodes: Set<BlockId>,
+                                    retainedSlots: Set<BlockId> = emptySet()): Set<BlockId> {
     if (document == null || passiveBlockLayouts(document.blocks) == null) return emptySet()
     val parents = document.blocks.mapNotNullTo(HashSet()) { it.parentId }
-    return document.blocks.mapNotNullTo(HashSet()) { it.id.takeIf { id -> id in permittedNodes && id !in parents } }
+    return document.blocks.mapNotNullTo(HashSet()) { it.id.takeIf { id -> id in permittedNodes && (id !in parents || id in retainedSlots) } }
 }
 
 internal fun cloudCopyRemovalEnabled(phase: CloudCopyPhase, removable: Set<BlockId>, node: BlockId): Boolean =
@@ -46,6 +50,7 @@ internal fun CloudCopyScreen(
     document: DocumentSnapshot?,
     phase: CloudCopyPhase,
     permittedNodes: Set<BlockId>,
+    removalModes: Map<BlockId, CloudCopyRemovalMode>,
     files: Map<BlockId, CloudCopyFile>,
     trashedNodes: Set<BlockId>,
     structure: Map<BlockId, CloudCopyStructure>,
@@ -54,9 +59,15 @@ internal fun CloudCopyScreen(
     onRemove: (CloudCopyViewKey, BlockId) -> Unit,
 ) {
     var confirmation by remember(key, document) { mutableStateOf<CloudCopyConfirmation?>(null) }
-    val removable = remember(document, permittedNodes) { cloudCopyRemovableNodes(document, permittedNodes) }
-    LaunchedEffect(phase, removable) {
-        if (confirmation?.validFor(key, phase, removable) == false)
+    val removable = remember(document, permittedNodes, removalModes) {
+        cloudCopyRemovableNodes(document, permittedNodes,
+            removalModes.filterValues { it == CloudCopyRemovalMode.RetainedSlot }.keys)
+    }
+    fun valid(pending: CloudCopyConfirmation): Boolean = removalModes[pending.node]?.let {
+        pending.validFor(key, phase, removable, it)
+    } == true
+    LaunchedEffect(phase, removable, removalModes) {
+        if (confirmation?.let { !valid(it) } == true)
             confirmation = null
     }
     Scaffold(topBar = {
@@ -90,26 +101,28 @@ internal fun CloudCopyScreen(
                     if (block.id in removable) {
                         TextButton(
                             enabled = cloudCopyRemovalEnabled(phase, removable, block.id),
-                            onClick = { confirmation = CloudCopyConfirmation(key, block.id) },
-                        ) { Text(stringResource(R.string.cloud_copy_remove)) }
+                            onClick = { removalModes[block.id]?.let { confirmation = CloudCopyConfirmation(key, block.id, it) } },
+                        ) { Text(stringResource(if (removalModes[block.id] == CloudCopyRemovalMode.RetainedSlot)
+                            R.string.cloud_copy_remove_attachment else R.string.cloud_copy_remove)) }
                     }
                 }
             }
         }
     }
-    confirmation?.takeIf { it.validFor(key, phase, removable) }?.let { pending ->
+    confirmation?.takeIf(::valid)?.let { pending ->
+        val slot = pending.mode == CloudCopyRemovalMode.RetainedSlot
         AlertDialog(
             onDismissRequest = { confirmation = null },
-            title = { Text(stringResource(R.string.cloud_copy_remove_question)) },
-            text = { Text(stringResource(R.string.cloud_copy_remove_explanation)) },
+            title = { Text(stringResource(if (slot) R.string.cloud_copy_remove_attachment_question else R.string.cloud_copy_remove_question)) },
+            text = { Text(stringResource(if (slot) R.string.cloud_copy_remove_attachment_explanation else R.string.cloud_copy_remove_explanation)) },
             confirmButton = {
                 TextButton(
-                    enabled = pending.validFor(key, phase, removable),
+                    enabled = valid(pending),
                     onClick = {
-                        if (pending.validFor(key, phase, removable)) onRemove(pending.key, pending.node)
+                        if (valid(pending)) onRemove(pending.key, pending.node)
                         confirmation = null
                     },
-                ) { Text(stringResource(R.string.cloud_copy_remove)) }
+                ) { Text(stringResource(if (slot) R.string.cloud_copy_remove_attachment else R.string.cloud_copy_remove)) }
             },
             dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(R.string.cancel)) } },
         )

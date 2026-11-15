@@ -16,4 +16,7 @@
     <string name="cloud_copy_remove_explanation">This removes the selected file item. An embedded target is not deleted. Other references may keep the file in Cloud storage.</string>
     <string name="cloud_copy_block_reference">Block reference</string>
     <string name="cloud_copy_preview_unavailable">File preview unavailable</string>
+    <string name="cloud_copy_remove_attachment">Remove attachment</string>
+    <string name="cloud_copy_remove_attachment_question">Remove this attachment from the Cloud copy?</string>
+    <string name="cloud_copy_remove_attachment_explanation">Only the attachment is removed. Text, other content and embedded targets stay. Other references may keep the file in Cloud storage.</string>
 </resources>
