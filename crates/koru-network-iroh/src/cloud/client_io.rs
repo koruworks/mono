@@ -117,6 +117,7 @@ pub struct Client<'a, R, W> {
     inspection_only: bool,
     inspection_download: Option<Unit>,
     inspection_joined: bool,
+    inspection_finished: bool,
     receive: Box<dyn FnMut(Completed) -> Result<Pending<'a>, Error> + Send + 'a>,
     authorize: Box<dyn FnMut(Unit) -> Result<(), Refusal> + Send + 'a>,
     permission: Box<dyn FnMut(&Start) -> Decision + Send + 'a>,
@@ -183,6 +184,7 @@ where
             inspection_only: false,
             inspection_download: None,
             inspection_joined: false,
+            inspection_finished: false,
             receive: Box::new(move |complete| {
                 receive(complete).map(|reply| Box::pin(reply) as Pending<'a>)
             }),
@@ -504,7 +506,7 @@ where
         // starts and payload frames before the normal stream can admit them.
         if let Some(unit) = self.inspection_download
             && let Record::Control(Control::TransferStart(start)) = &record
-            && (!self.inspection_joined || start.unit != unit)
+            && (self.inspection_finished || !self.inspection_joined || start.unit != unit)
         {
             return Err(Error::Invalid);
         }

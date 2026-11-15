@@ -408,3 +408,141 @@ async fn detached_read_does_not_take_over_a_receipt_already_moved_into_io() {
     tokio::join!(peer, normal);
     assert!(!sync.status().transport.committing);
 }
+
+#[tokio::test]
+async fn explicit_edit_uses_ordinary_delta_and_requires_exact_remote_ack() {
+    for mode in 0..4 {
+        let (mut client, mut reader, mut writer, mut stream, scope, budget) =
+            super::super::tests::pair_with_workspace(true).await;
+        client.receive = Box::new(|_| panic!("online Cloud edit cannot import into Store"));
+        let revoked = std::sync::Arc::new(AtomicBool::new(false));
+        let authority = revoked.clone();
+        client.authorize = Box::new(move |_| {
+            if authority.load(Ordering::SeqCst) {
+                Err(Refusal::DeviceRevoked)
+            } else {
+                Ok(())
+            }
+        });
+        let unit = unit(scope);
+        let remote = loro::LoroDoc::new();
+        remote.get_text("body").insert(0, "Cloud").unwrap();
+        let version = remote.oplog_vv().encode();
+        let head = koru_store_core::sync_digest::revision(&version);
+        let bytes = remote.export(loro::ExportMode::Snapshot).unwrap();
+        let peer = async {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let request = records::read(&mut reader, deadline, &budget).await.unwrap();
+            let (_, Record::Peer(frame), _) = request.into_parts() else {
+                panic!()
+            };
+            let Metadata::Request(request) = metadata::decode(scope, frame, 1).unwrap().remove(0)
+            else {
+                panic!()
+            };
+            records::write(
+                &mut writer,
+                &request.response(scope, version).unwrap().unwrap(),
+                deadline,
+                &budget,
+            )
+            .await
+            .unwrap();
+            let (start, _) = stream
+                .begin_outgoing(unit, [7; 8], bytes, 0, 0, |_| Ok(()))
+                .unwrap();
+            records::write(&mut writer, &Record::Control(start), deadline, &budget)
+                .await
+                .unwrap();
+            while let Some(record) = stream.next_outgoing(0, |_| Ok(())).unwrap() {
+                records::write(&mut writer, record.record(), deadline, &budget)
+                    .await
+                    .unwrap();
+            }
+            stream.outbound_written(0).unwrap();
+            // First response is the independent upload Start, never a false
+            // durable Ack for the detached download.
+            let upload = records::read(&mut reader, deadline, &budget).await;
+            if mode >= 2 {
+                assert!(
+                    upload.is_err(),
+                    "no upload after stale source or revocation"
+                );
+                return;
+            }
+            let upload = upload.unwrap();
+            let (_, Record::Control(control @ Control::TransferStart(_)), _) = upload.into_parts()
+            else {
+                panic!("expected upload start, not receive Ack")
+            };
+            assert_eq!(
+                stream.receive_control(control, 0, 0, |_| Ok(())).unwrap(),
+                Admission::Automatic
+            );
+            while !stream.status().incoming_complete {
+                let received = records::read(&mut reader, deadline, &budget).await.unwrap();
+                let (_, Record::Peer(frame), _) = received.into_parts() else {
+                    panic!()
+                };
+                stream.receive_peer_owned(frame, 0, |_| Ok(())).unwrap();
+            }
+            let complete = stream.handoff(0, |_| Ok(()), |value| value).unwrap();
+            remote
+                .get_text("other")
+                .insert(0, "concurrent unrelated edit")
+                .unwrap();
+            remote.import(&complete.bytes).unwrap();
+            let ack = scope
+                .committed_ack(
+                    unit,
+                    if mode == 1 {
+                        [99; 8]
+                    } else {
+                        complete.batch_id
+                    },
+                )
+                .unwrap();
+            records::write(&mut writer, &ack, deadline, &budget)
+                .await
+                .unwrap();
+        };
+        let edit = InspectionCarrier { client }.edit(
+            unit,
+            if mode == 2 { [0; 32] } else { head },
+            move |source| {
+                assert_ne!(mode, 2, "stale source cannot enter domain preparation");
+                if mode == 3 {
+                    revoked.store(true, Ordering::SeqCst);
+                }
+                let doc = source.replay()?;
+                let before = doc.oplog_vv();
+                doc.get_text("body")
+                    .insert(5, " edited")
+                    .map_err(|_| Error::Invalid)?;
+                let delta = doc
+                    .export(loro::ExportMode::updates(&before))
+                    .map_err(|_| Error::Invalid)?;
+                Ok((delta, source))
+            },
+        );
+        let (result, ()) = tokio::join!(edit, peer);
+        assert_eq!(
+            result,
+            match mode {
+                0 => Ok(()),
+                1 => Err(EditError::OutcomeUnknown),
+                2 => Err(EditError::SourceChanged),
+                _ => Err(EditError::Unavailable),
+            }
+        );
+        if mode >= 2 {
+            assert_eq!(remote.get_text("body").to_string(), "Cloud");
+            continue;
+        }
+        assert_eq!(remote.get_text("body").to_string(), "Cloud edited");
+        assert_eq!(
+            remote.get_text("other").to_string(),
+            "concurrent unrelated edit"
+        );
+    }
+}

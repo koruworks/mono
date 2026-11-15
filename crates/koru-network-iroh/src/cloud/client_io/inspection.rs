@@ -20,6 +20,9 @@ impl std::fmt::Debug for ObservedVersion {
     }
 }
 impl ObservedVersion {
+    pub fn head(&self) -> [u8; 32] {
+        koru_store_core::sync_digest::revision(&self.version)
+    }
     /// Compare the inventory digest against original Cloud bytes, and compare
     /// the cold local state semantically. Re-encoding is never head evidence.
     pub fn matches(&self, scope: Scope, unit: Unit, head: [u8; 32], local_version: &[u8]) -> bool {
@@ -185,7 +188,9 @@ where
     W: AsyncWrite + Unpin + Send + 'a,
 {
     pub async fn download(mut self, unit: Unit) -> Result<ObservedDownload, Error> {
-        download(&mut self.client, unit).await
+        let result = download(&mut self.client, unit).await;
+        self.client.cancel(Error::Closed);
+        result
     }
 }
 
@@ -208,6 +213,7 @@ where
     client.inspection_only = true;
     client.inspection_download = Some(unit);
     client.inspection_joined = false;
+    client.inspection_finished = false;
     let result = tokio::time::timeout(Duration::from_secs(5), async {
         let mut requested = false;
         let mut observed = None;
@@ -228,6 +234,7 @@ where
                     return Err(Error::Invalid);
                 }
                 (client.authorize)(unit).map_err(Error::Authority)?;
+                client.inspection_finished = true;
                 return Ok(ObservedDownload {
                     observed: observed.take().ok_or(Error::Invalid)?,
                     complete,
@@ -268,6 +275,86 @@ where
     .await
     .map_err(|_| Error::Timeout)
     .and_then(|v| v);
-    client.cancel(Error::Closed);
     result
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditError {
+    SourceChanged,
+    Unavailable,
+    /// Publication may have happened. Reread Cloud before another attempt.
+    OutcomeUnknown,
+}
+impl<'a, R, W> InspectionCarrier<'a, R, W>
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+{
+    /// Prepare one targeted ordinary CRDT delta from the observed Cloud copy.
+    /// This is not compare-and-swap: later concurrent CRDT edits merge normally.
+    /// The original source reservation lives through the final write and exact
+    /// remote durable Ack. No local receipt or download Ack is manufactured.
+    pub async fn edit<F>(
+        mut self,
+        unit: Unit,
+        expected_head: [u8; 32],
+        prepare: F,
+    ) -> Result<(), EditError>
+    where
+        F: FnOnce(ObservedDownload) -> Result<(Vec<u8>, ObservedDownload), Error> + Send + 'static,
+    {
+        let mut publication_started = false;
+        let result = tokio::time::timeout(Duration::from_secs(10), async {
+            let source = download(&mut self.client, unit)
+                .await
+                .map_err(|_| EditError::Unavailable)?;
+            if source.observed.head() != expected_head {
+                return Err(EditError::SourceChanged);
+            }
+            let (bytes, source) = tokio::task::spawn_blocking(move || prepare(source))
+                .await
+                .map_err(|_| EditError::Unavailable)?
+                .map_err(|_| EditError::Unavailable)?;
+            if bytes.is_empty()
+                || bytes.len() > transfer::MAX_PAYLOAD
+                || source.observed.unit != unit
+                || source.observed.scope.principal != self.client.scope.principal
+                || source.observed.head() != expected_head
+            {
+                return Err(EditError::Unavailable);
+            }
+            (self.client.authorize)(unit).map_err(|_| EditError::Unavailable)?;
+            self.client
+                .upload(unit, bytes, source)
+                .map_err(|_| EditError::Unavailable)?;
+            publication_started = true;
+            loop {
+                match self
+                    .client
+                    .next()
+                    .await
+                    .map_err(|_| EditError::OutcomeUnknown)?
+                {
+                    Event::Uploaded { unit: received, .. } if received == unit => return Ok(()),
+                    Event::Progress => {}
+                    Event::Metadata(messages)
+                        if messages
+                            .values
+                            .iter()
+                            .all(|m| matches!(m, Metadata::SyncRequest)) => {}
+                    _ => return Err(EditError::OutcomeUnknown),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err(if publication_started {
+                EditError::OutcomeUnknown
+            } else {
+                EditError::Unavailable
+            })
+        });
+        self.client.cancel(Error::Closed);
+        result
+    }
 }
