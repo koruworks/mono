@@ -41,7 +41,10 @@ fn cleanup_target(cause: DecisionClosureReason) -> RunProjectionTargetV1 {
         ..
     } = &mut target
     {
-        *action = DecisionControlAction::CleanupRequested { cause };
+        *action = DecisionControlAction::CleanupRequested {
+            cause,
+            expected_wait_revision: rev(2),
+        };
         *wait_phase = BotWaitPhase::CleanupPending;
         effects.event = None;
         effects.status = predecessor.status.clone();
@@ -132,6 +135,67 @@ fn decision_cleanup_request_retains_cause_without_claiming_terminal_status() {
         cleanup_target(C::Expired).digest().unwrap(),
         cleanup_target(C::ClockUncertain).digest().unwrap()
     );
+    let mut revision = cleanup_target(C::Canceled);
+    if let RunProjectionTargetV1::Control { action, .. } = &mut revision {
+        *action = DecisionControlAction::CleanupRequested {
+            cause: C::Canceled,
+            expected_wait_revision: rev(3),
+        };
+    }
+    assert_ne!(
+        revision.digest().unwrap(),
+        cleanup_target(C::Canceled).digest().unwrap()
+    );
+}
+
+#[test]
+fn decision_cleanup_request_preserves_settled_answer_only_for_stop_or_authority_loss() {
+    for cause in [
+        DecisionClosureReason::Canceled,
+        DecisionClosureReason::AuthorityChanged,
+        DecisionClosureReason::Expired,
+        DecisionClosureReason::ClockUncertain,
+    ] {
+        for authorization in [
+            DecisionAuthorization::Consumed,
+            DecisionAuthorization::Denied,
+        ] {
+            let mut target = cleanup_target(cause);
+            let retained = DecisionDisposition::Settled {
+                state: DecisionState {
+                    kind: DecisionKind::NativeApproval,
+                    authorization,
+                    phase: DecisionPhase::Settled,
+                    revision: rev(4),
+                },
+                reason: DecisionClosureReason::Completed,
+                outcome_digest: digest(7),
+            };
+            if let RunProjectionTargetV1::Control {
+                reason,
+                disposition,
+                ..
+            } = &mut target
+            {
+                *reason = BotWaitReason::Decision { decision: id(72) };
+                *disposition = Some(retained.clone());
+            }
+            let allowed = matches!(
+                cause,
+                DecisionClosureReason::Canceled | DecisionClosureReason::AuthorityChanged
+            );
+            assert_eq!(target.validate().is_ok(), allowed);
+            if allowed {
+                let decoded =
+                    RunProjectionTargetV1::decode(target.canonical_bytes().unwrap().as_slice())
+                        .unwrap();
+                let RunProjectionTargetV1::Control { disposition, .. } = decoded else {
+                    panic!("Control")
+                };
+                assert_eq!(disposition, Some(retained));
+            }
+        }
+    }
 }
 
 #[test]
