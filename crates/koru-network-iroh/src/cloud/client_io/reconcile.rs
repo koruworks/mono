@@ -183,6 +183,18 @@ where
         Ok(())
     }
 
+    /// Transfer an actually idle carrier to a bounded user inspection. A busy
+    /// reconciler is returned unchanged, including its original pending I/O,
+    /// Store ownership and deadlines; rejection never cancels a normal transfer.
+    pub fn try_inspection(self) -> Result<super::inspection::InspectionCarrier<'a, R, W>, Self> {
+        if self.pass.is_some() || !super::inspection::idle(&self.client) {
+            return Err(self);
+        }
+        Ok(super::inspection::InspectionCarrier {
+            client: self.client,
+        })
+    }
+
     pub fn status(&self) -> Status {
         Status {
             unit: self.pass.as_ref().map(|p| p.unit),

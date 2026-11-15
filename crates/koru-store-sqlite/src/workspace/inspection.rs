@@ -7,6 +7,7 @@ use koru_store_core::ids::WorkspaceId;
 use koru_store_core::manifest::Manifest;
 use koru_store_core::ports::Opened;
 use koru_store_core::service::{VerifiedWorkspaceManifest, WorkspaceManifestInspection};
+mod document;
 
 // Explicit disposable persistence lane, never part of ordinary unit tests.
 #[cfg(all(test, feature = "disk-tests"))]
