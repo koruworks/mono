@@ -304,6 +304,14 @@ pub trait BotLedger {
         &self,
         device:koru_delegate_core::DeviceId,
     )->Result<BotExecutionInventory,BotLedgerError>;
+    /// Device restart discovery, independent of capacity/release qualification.
+    /// At most sixteen reserved/executing identities through the queue index.
+    fn owned_bot_execution_page(
+        &self,
+        device: koru_delegate_core::DeviceId,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError>;
     /// Atomically insert the ordinary Run intent and Bot admission. Exact
     /// retries return the original row; changed full typed payload conflicts.
     /// Enforce 50 queued jobs/Bot before inserting either row; a rejected call
