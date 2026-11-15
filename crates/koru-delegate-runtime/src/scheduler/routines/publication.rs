@@ -118,7 +118,25 @@ impl ScheduleCoordinator {
                         RoutineClaimObservation::Skipped { record } => {
                             self.project_routine_skip(&current.route, handle.as_mut(), &record)
                         }
-                        RoutineClaimObservation::Claimed { .. } => Ok(()),
+                        RoutineClaimObservation::Claimed { record } => {
+                            if let Some(claim) = routines
+                                .ledger
+                                .routine_firing(&record.claim.slot)
+                                .map_err(ledger_error)?
+                            {
+                                let header = handle.document().header()?;
+                                self.events.existing_created(current.location, &header)?;
+                                let event = self.events.reconcile_occurrence(
+                                    current.location,
+                                    None,
+                                    &claim,
+                                )?;
+                                append_firing(handle.as_mut(), &claim, FiringAppend::Repair)?;
+                                ready_if_some(self.events.as_mut(), event)
+                            } else {
+                                Ok(())
+                            }
+                        }
                         RoutineClaimObservation::Absent { .. } => {
                             Err(refused("routine_repair_absent"))
                         }

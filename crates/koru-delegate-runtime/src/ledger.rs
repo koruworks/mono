@@ -25,6 +25,12 @@ use crate::{RunStore, ScheduleLedger, counters};
 use koru_delegate_document::ScheduleClaimAuthority;
 
 impl crate::RoutineLedger for RunsDb {
+    fn routine_firing(
+        &self,
+        slot: &koru_delegate_core::RoutineSlot,
+    ) -> Result<Option<koru_delegate_sqlite::SlotClaim>, koru_delegate_sqlite::BotLedgerError> {
+        RunsDb::routine_firing(self, slot)
+    }
     fn routine_route(
         &self,
         schedule: koru_delegate_core::ScheduleId,

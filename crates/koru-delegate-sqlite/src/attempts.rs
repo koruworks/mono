@@ -63,40 +63,7 @@ impl RunsDb {
     pub fn open_attempt(&mut self, run: RunId) -> Result<AttemptRow, LedgerError> {
         self.write(WriteOp::OpenAttempt, |tx, now| {
             crate::bots::routines::deny_run(tx, run)?;
-            let state: Option<String> = tx
-                .query_row(
-                    "SELECT state FROM run_intents WHERE run_id = ?1",
-                    params![run.to_storage()],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(|error| LedgerError::sql("read an intent", error))?;
-            let state = IntentState::parse(&state.ok_or(LedgerError::UnknownRun)?)?;
-            if state != IntentState::Satisfied {
-                return Err(LedgerError::RunNotCreated);
-            }
-            let generation = match latest(tx, run)? {
-                Some(previous) if !previous.retired => {
-                    return Err(LedgerError::AttemptLive {
-                        generation: previous.generation,
-                    });
-                }
-                Some(previous) => previous.generation.next(),
-                None => AttemptGeneration::FIRST,
-            };
-            let attempt = RunAttemptId::mint();
-            tx.execute(
-                "INSERT INTO run_attempts (run_id, generation, attempt_id, state, updated_at_ms)
-                 VALUES (?1, ?2, ?3, 'created', ?4)",
-                params![
-                    run.to_storage(),
-                    generation.get(),
-                    attempt.to_storage(),
-                    now
-                ],
-            )
-            .map_err(|error| LedgerError::sql("open an attempt", error))?;
-            current(tx, run)
+            open_on(tx, run, now)
         })
     }
 
@@ -281,6 +248,41 @@ impl RunsDb {
             projection_cursor: self.cursor(run, Projection::HeaderSummary)?,
         }))
     }
+}
+
+/// Shared insertion owner. The public ordinary entry performs marker denial;
+/// the Bot entry validates its full subject and current execution proof first.
+pub(crate) fn open_on(
+    conn: &rusqlite::Connection,
+    run: RunId,
+    now: i64,
+) -> Result<AttemptRow, LedgerError> {
+    let state: Option<String> = conn
+        .query_row(
+            "SELECT state FROM run_intents WHERE run_id=?1",
+            [run.to_storage()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| LedgerError::sql("read an intent", error))?;
+    if IntentState::parse(&state.ok_or(LedgerError::UnknownRun)?)? != IntentState::Satisfied {
+        return Err(LedgerError::RunNotCreated);
+    }
+    let generation = match latest(conn, run)? {
+        Some(previous) if !previous.retired => {
+            return Err(LedgerError::AttemptLive {
+                generation: previous.generation,
+            });
+        }
+        Some(previous) => previous.generation.next(),
+        None => AttemptGeneration::FIRST,
+    };
+    let attempt = RunAttemptId::mint();
+    conn.execute(
+        "INSERT INTO run_attempts (run_id,generation,attempt_id,state,updated_at_ms) VALUES(?1,?2,?3,'created',?4)",
+        params![run.to_storage(),generation.get(),attempt.to_storage(),now],
+    ).map_err(|error| LedgerError::sql("open an attempt", error))?;
+    current(conn, run)
 }
 
 /// The current attempt, admitting only `generation` and only unretired.

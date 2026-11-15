@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Current policy evidence and access-change coordination on the existing writer.
+pub(in crate::worker::bots) mod dispatch;
 pub(in crate::worker) mod epoch;
 mod recovery;
-mod routine;
+pub(in crate::worker::bots) mod routine;
 use super::*;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use koru_delegate_core::{
@@ -67,7 +68,7 @@ pub(in crate::worker) fn global_barrier(
 
 pub(in crate::worker) use routine::initial_barrier as initial_routine_barrier;
 #[cfg(test)]
-pub(in crate::worker::bots) use routine::tests::preclaim_fixture;
+pub(in crate::worker::bots) use routine::tests::{dispatch_job_fixture, preclaim_fixture};
 fn owner(bot: &Bot) -> BotOwner {
     BotOwner {
         user_scope: bot.user_scope,

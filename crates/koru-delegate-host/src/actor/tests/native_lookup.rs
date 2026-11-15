@@ -41,7 +41,7 @@ fn native_reconcile_returns_missing_only_for_the_validated_durable_execution() {
     let mut db = RunsDb::open(std::path::Path::new(":memory:")).unwrap();
     db.admit_bot(&submission).unwrap();
     db.satisfy_intent(run, DocumentId::new()).unwrap();
-    db.reserve_bot(run).unwrap();
+    db.reserve_bot(run, None).unwrap();
     let attempt = db.open_attempt(run).unwrap();
     db.advance(run, attempt.generation, AttemptPhase::Starting)
         .unwrap();
@@ -69,7 +69,7 @@ fn native_reconcile_returns_missing_only_for_the_validated_durable_execution() {
     .unwrap();
     db.advance(run, attempt.generation, AttemptPhase::Running)
         .unwrap();
-    db.activate_bot(run, attempt.attempt, attempt.generation)
+    db.activate_bot(run, attempt.attempt, attempt.generation, None)
         .unwrap();
     let mut send = BotInitialSend {
         attempt: attempt.attempt,
@@ -78,7 +78,7 @@ fn native_reconcile_returns_missing_only_for_the_validated_durable_execution() {
         fingerprint: [1; 32],
         turn: None,
     };
-    db.prepare_bot_initial_send(run, &send).unwrap();
+    db.prepare_bot_initial_send(run, &send, None).unwrap();
     let turn = AgentTurnId::mint();
     send.turn = Some(turn);
     db.acknowledge_bot_initial_send(run, &send).unwrap();

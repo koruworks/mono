@@ -74,7 +74,6 @@ impl BusScheduleEvents {
         };
         if route.workspace != fact.schedule.workspace
             || route.schedule.as_uuid() != fact.schedule.document.as_uuid()
-            || fact.outcome == ScheduleFiringOutcome::Fired
         {
             return Err(Self::error(
                 "schedule_event_routine",
@@ -87,6 +86,30 @@ impl BusScheduleEvents {
             schedule: route.schedule,
             occurrence_ms: fact.occurrence_ms,
         };
+        if fact.outcome == ScheduleFiringOutcome::Fired {
+            let claim = self
+                .ledger
+                .routine_firing(&slot)
+                .map_err(|error| Self::error("schedule_event_routine", error))?
+                .ok_or_else(|| {
+                    Self::error(
+                        "schedule_event_routine",
+                        "Routine has no acknowledged initial turn",
+                    )
+                })?;
+            return if claim.run == fact.run
+                && claim.revision == fact.revision
+                && claim.claimed_at_ms == fact.claimed_at_ms
+                && fact.busy_holder.is_none()
+            {
+                Ok(())
+            } else {
+                Err(Self::error(
+                    "schedule_event_routine",
+                    "Routine firing differs from retained authority",
+                ))
+            };
+        }
         let observed = self
             .ledger
             .read_routine_claim(&slot)

@@ -34,11 +34,23 @@ pub(in crate::worker) fn initial_barrier(
 }
 
 impl RoutineLookup {
-    pub(super) fn barrier(&self) -> RoutinePolicyBarrier {
+    pub(in crate::worker::bots) fn execution_profile(
+        &self,
+        submission: &koru_delegate_core::BotSubmission,
+    ) -> ApiResult<koru_ai_core::ProfileId> {
+        if self.occurrence.prepared.submission != *submission {
+            return Err(bot_failure(BotError::Forbidden));
+        }
+        match submission.request.requested_by {
+            koru_delegate_core::ActorRef::Person { profile } => Ok(profile),
+            _ => Err(bot_failure(BotError::Forbidden)),
+        }
+    }
+    pub(in crate::worker::bots) fn barrier(&self) -> RoutinePolicyBarrier {
         super::initial_routine_barrier(&self.creation.identity)
     }
 
-    pub(super) fn verify_delegate(
+    pub(in crate::worker::bots) fn verify_delegate(
         &self,
         delegate: &dyn BotDelegatePort,
         deadline: Instant,
@@ -77,7 +89,7 @@ impl RoutineLookup {
 
 /// Reuse the single bounded repository decoder; never infer the subject from
 /// chat association or deserialize a second receipt/capture vocabulary here.
-pub(super) fn snapshot(
+pub(in crate::worker::bots) fn snapshot(
     repository: &Repository,
     bot: &Bot,
     request: &NativePolicyRequest,
@@ -140,7 +152,7 @@ pub(super) fn same_canonical(current: &Bot, prior: &Bot) -> bool {
         && current.selected_pages == prior.selected_pages
 }
 
-pub(super) fn recheck(
+pub(in crate::worker::bots) fn recheck(
     repository: &Repository,
     current_bot: Option<&Bot>,
     prior_bot: &Bot,

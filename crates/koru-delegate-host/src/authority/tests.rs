@@ -5,7 +5,7 @@ use koru_delegate_core::{
 };
 
 #[test]
-fn launch_selection_allows_nine_bot_tools_and_preserves_six_ordinary_tools() {
+fn launch_selection_allows_thirteen_bot_tools_and_preserves_six_ordinary_tools() {
     let workspace = WorkspaceId::new();
     let bot = RunToolAuthority::Bot {
         provenance: BotProvenance {
@@ -46,7 +46,11 @@ fn launch_selection_allows_nine_bot_tools_and_preserves_six_ordinary_tools() {
             "read_memory",
             "remember_memory",
             "correct_memory",
-            "forget_memory"
+            "forget_memory",
+            "create_routine",
+            "read_routine_creation",
+            "retry_routine_creation",
+            "list_routines",
         ]
         .into()
     );

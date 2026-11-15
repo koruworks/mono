@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Owner listing continuations on the existing preparation lane.
 use super::*;
-use koru_ai_sqlite::{RoutineListCheckpoint, RoutineListSnapshot};
 use koru_delegate_core::ScheduleId;
 use std::sync::atomic::AtomicU64;
+mod progress;
+pub(super) use progress::ListingProgress;
 #[cfg(test)]
 mod tests;
 
@@ -40,7 +41,7 @@ impl Listings {
         self.owner = None;
         // Deliberately retain slots. Old physical jobs still own their tickets.
     }
-    fn acquire(&mut self) -> ApiResult<Ticket> {
+    pub(super) fn acquire(&mut self) -> ApiResult<Ticket> {
         let serial = self.serial.checked_add(1).ok_or_else(unavailable_failure)?;
         let index = self
             .slots
@@ -53,7 +54,7 @@ impl Listings {
             .ok_or_else(|| {
                 failure(
                     "ai_worker_saturated",
-                    "The Routine listing lane is busy. Try again.",
+                    "The Routine setup lane is busy. Try again.",
                     true,
                 )
             })?;
@@ -65,20 +66,28 @@ impl Listings {
             serial,
         })
     }
-    fn owns(&self, ticket: &Ticket) -> bool {
+    pub(super) fn owns(&self, ticket: &Ticket) -> bool {
         Arc::ptr_eq(&self.epoch, &ticket.epoch) && ticket.valid()
+    }
+    pub(super) fn bind_owner(&mut self, owner: BotOwner) -> ApiResult<()> {
+        if self.owner.is_some_and(|old| old != owner) {
+            self.invalidate();
+            return Err(bot_failure(BotError::Forbidden));
+        }
+        self.owner = Some(owner);
+        Ok(())
     }
 }
 /// Non-Clone: there is exactly one phase/completion owner. Out-of-order
 /// workflows have separate slots; there is no global completion high water.
-struct Ticket {
+pub(super) struct Ticket {
     slots: Arc<Slots>,
     epoch: Arc<Epoch>,
     index: usize,
     serial: u64,
 }
 impl Ticket {
-    fn valid(&self) -> bool {
+    pub(super) fn valid(&self) -> bool {
         !self.epoch.cancellation.is_cancelled()
             && self.slots.0[self.index].load(Ordering::Acquire) == self.serial
     }
@@ -125,9 +134,7 @@ pub(in crate::worker) struct ListingJob {
     authority: Arc<dyn BotAuthority>,
     reply: SyncSender<ApiResult<BotResponse>>,
     phase: Phase,
-    snapshot: Option<RoutineListSnapshot>,
-    checkpoints: Vec<RoutineListCheckpoint>,
-    items: Vec<BotRoutineListItem>,
+    progress: Option<ListingProgress>,
 }
 pub(in crate::worker) struct ListingResult {
     job: ListingJob,
@@ -146,7 +153,11 @@ impl ListingJob {
     }
     fn current(&self) -> ApiResult<()> {
         self.live()?;
-        let s = self.snapshot.as_ref().ok_or_else(unavailable_failure)?;
+        let s = &self
+            .progress
+            .as_ref()
+            .ok_or_else(unavailable_failure)?
+            .snapshot;
         let proof = self
             .authority
             .inspect(&[s.metadata.home_workspace], &[])
@@ -172,7 +183,11 @@ impl ListingJob {
                 }
                 Phase::Item(creation) => {
                     self.current()?;
-                    let s = self.snapshot.as_ref().ok_or_else(unavailable_failure)?;
+                    let s = &self
+                        .progress
+                        .as_ref()
+                        .ok_or_else(unavailable_failure)?
+                        .snapshot;
                     let value = self.authority.read_routine_overview(
                         s.metadata.owner,
                         s.profile,
@@ -238,9 +253,7 @@ impl WorkerState {
                 authority: self.bot_authority.clone().ok_or_else(unavailable_failure)?,
                 reply: reply.clone(),
                 phase: Phase::Owner,
-                snapshot: None,
-                checkpoints: Vec::new(),
-                items: Vec::new(),
+                progress: None,
             })
         })();
         match prepared {
@@ -279,37 +292,31 @@ impl WorkerState {
             let phase = std::mem::replace(&mut job.phase, Phase::Finish);
             match (phase, evidence) {
                 (Phase::Owner, Evidence::Owner(owner)) => {
-                    if self.routine_listings.owner.is_some_and(|old| old != owner) {
-                        self.routine_listings.invalidate();
-                        return Err(bot_failure(BotError::Forbidden));
-                    }
-                    self.routine_listings.owner = Some(owner);
-                    job.snapshot = Some(
-                        self.repository
-                            .routine_list_snapshot(owner, job.bot, job.after, job.limit)
-                            .map_err(bot_failure)?,
-                    );
+                    self.routine_listings.bind_owner(owner)?;
+                    job.progress = Some(ListingProgress::new(
+                        &self.repository,
+                        owner,
+                        job.bot,
+                        job.after,
+                        job.limit,
+                    )?);
                     job.phase = Phase::Authority;
                     return Ok(None);
                 }
                 (Phase::Authority, Evidence::Authority) => {}
                 (Phase::Item(_), Evidence::Item(observation)) => {
-                    job.items.last_mut().ok_or_else(unavailable_failure)?.live = observation.into();
+                    job.progress
+                        .as_mut()
+                        .ok_or_else(unavailable_failure)?
+                        .observe(observation)?;
                 }
                 (Phase::Finish, Evidence::Finished) => {
-                    let snapshot = job.snapshot.as_ref().ok_or_else(unavailable_failure)?;
-                    self.repository
-                        .validate_routine_list(snapshot, &job.checkpoints)
-                        .map_err(bot_failure)?;
-                    job.live()?;
                     let response = BotResponse::Routines {
-                        page: BotRoutineListPage {
-                            bot_id: job.bot,
-                            bot_revision: snapshot.metadata.revision,
-                            effective_model: snapshot.model.clone(),
-                            items: std::mem::take(&mut job.items),
-                            next_schedule: snapshot.roster.next,
-                        },
+                        page: job
+                            .progress
+                            .as_mut()
+                            .ok_or_else(unavailable_failure)?
+                            .finish(&self.repository)?,
                     };
                     validate_routine_list_bytes(&response).map_err(bot_failure)?;
                     job.live()?;
@@ -317,21 +324,19 @@ impl WorkerState {
                 }
                 _ => return Err(unavailable_failure()),
             }
-            let snapshot = job.snapshot.as_ref().ok_or_else(unavailable_failure)?;
-            // One identity at a time; no body survives the next decode unless
-            // that exact identity is currently owned by the off-writer job.
-            while job.items.len() < snapshot.roster.items.len() {
-                job.live()?;
-                let (creation, checkpoint, item) = self
-                    .repository
-                    .routine_list_entry(snapshot, job.items.len())
-                    .map_err(bot_failure)?;
-                job.checkpoints.push(checkpoint);
-                job.items.push(item);
-                if creation.state == BotRoutineCreationState::Bound {
-                    job.phase = Phase::Item(Box::new(creation));
-                    return Ok(None);
-                }
+            job.live()?;
+            if let Some(creation) = job
+                .progress
+                .as_mut()
+                .ok_or_else(unavailable_failure)?
+                .next(&self.repository, || {
+                    job.ticket.valid()
+                        && !job.cancellation.is_cancelled()
+                        && Instant::now() < job.deadline
+                })?
+            {
+                job.phase = Phase::Item(Box::new(creation));
+                return Ok(None);
             }
             job.phase = Phase::Finish;
             Ok(None)

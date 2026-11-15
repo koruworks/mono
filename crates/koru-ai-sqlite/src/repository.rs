@@ -35,7 +35,7 @@ pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
     BotBootSnapshot, BotCreationScan, BotHold, HistoricalBotRun, LifecycleCapture, LifecycleMember,
     LifecycleMemberDraft, LifecycleOperation, ParkedCursor, ParkedForOwner, RoutineListCheckpoint,
-    RoutineListSnapshot,
+    RoutineListSnapshot, RoutineToolSubject,
 };
 
 pub struct Repository {

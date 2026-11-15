@@ -1,6 +1,48 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+#[test]
+fn routine_live_chat_proof_jobs_use_exact_linked_owner_and_return_writer_snapshot() {
+    for phase in [Phase::RoutineAdmission, Phase::RoutineBegin] {
+        let (repository, submission, authority, port) = policy::dispatch_job_fixture();
+        let proof = policy::dispatch::RoutineDispatch::snapshot(&repository, &submission).unwrap();
+        let attempt =
+            InferenceAttemptId::parse(&submission.provenance.ai_attempt_id.unwrap().to_string())
+                .unwrap();
+        // The production job performs only the three finite authenticated
+        // proof calls; the strict peer panics on a provider/Begin/Submit call.
+        let result = StepJob {
+            attempt,
+            phase,
+            command: DelegateCommand::Reconcile {
+                key: BotSubmissionKey {
+                    owner: submission.provenance.owner,
+                    bot: submission.provenance.bot,
+                    request: submission.provenance.submission,
+                },
+            },
+            ingest: None,
+            administrative: false,
+            port,
+            routine: Some((proof, authority)),
+        }
+        .run();
+        assert!(matches!(result.result, Ok(BotReply::Applied)));
+        assert_eq!(result.attempt, attempt);
+        let returned = result
+            .routine
+            .expect("completion must recheck this snapshot");
+        returned.recheck(&repository).unwrap();
+        repository
+            .fixture_execute_batch(&format!(
+                "UPDATE bots SET revision=revision+1 WHERE bot_id='{}'",
+                submission.provenance.bot,
+            ))
+            .unwrap();
+        assert!(returned.recheck(&repository).is_err());
+    }
+}
+
 struct Blocked {
     entered: SyncSender<()>,
     release: Mutex<Receiver<()>>,
@@ -25,6 +67,7 @@ impl BotDelegatePort for Administrative {
 
 fn control_job(port: Arc<dyn BotDelegatePort>) -> ProviderAdminJob {
     ProviderAdminJob::BotChatControl(StepJob {
+        routine: None,
         attempt: InferenceAttemptId::new(),
         phase: Phase::Stop,
         administrative: true,
@@ -177,6 +220,7 @@ fn native_stop_runs_while_both_providers_and_normal_admin_are_blocked() {
     };
     for _ in 0..2 {
         assert!(provider.try_submit_bot(StepJob {
+            routine: None,
             attempt: InferenceAttemptId::new(),
             phase: Phase::Admission,
             command: DelegateCommand::Reconcile { key: key.clone() },
@@ -190,6 +234,7 @@ fn native_stop_runs_while_both_providers_and_normal_admin_are_blocked() {
     let expected = InferenceAttemptId::new();
     admin
         .try_submit(ProviderAdminJob::BotChatControl(StepJob {
+            routine: None,
             attempt: expected,
             phase: Phase::Stop,
             administrative: true,

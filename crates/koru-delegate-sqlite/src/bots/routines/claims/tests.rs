@@ -4,6 +4,7 @@
 //! separately exercised by the production runtime adapter tests; neither suite
 //! enables an executable Routine, Store, scheduler or provider.
 use super::*;
+mod dispatch;
 mod preclaim;
 mod recovery;
 use crate::{BotLedger, BotSettlement, CrashPoint, Moment, NativeResultLedger, fixtures};
@@ -218,16 +219,7 @@ fn routine_representative_preserves_retained_skip_truth_and_refuses_claim_collis
         };
         let old = f.claim();
         if outcome == "fired" {
-            f.db.conn()
-                .execute("UPDATE schedule_claims SET outcome='fired'", [])
-                .unwrap();
-            f.db.acknowledge_routine_link(&RoutineLinkAcknowledgement {
-                claim: old.claim.clone(),
-                outcome: RoutineLinkOutcome::Linked {},
-            })
-            .unwrap();
-            f.db.satisfy_intent(old.claim.ids.run, fixtures::document(0xe0))
-                .unwrap();
+            dispatch::fire_existing(&mut f);
         }
         f.prepared = later;
         f.prepared.ids.run = RunId::from_uuid(uuid::Uuid::new_v4());

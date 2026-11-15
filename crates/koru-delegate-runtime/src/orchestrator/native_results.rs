@@ -53,6 +53,7 @@ impl Orchestrator {
             (Some(provenance), Some(admission))
                 if provenance == admission.submission.provenance =>
             {
+                self.linked_routine_admission(&admission)?;
                 Ok(RunToolAuthority::Bot {
                     provenance,
                     policy: admission.submission.policy,
@@ -161,7 +162,10 @@ impl Orchestrator {
         fence: &BotExecutionFence,
         device: DeviceId,
     ) -> Result<(), RunError> {
-        self.bot_live_fence(fence, device, true, true)?;
+        // Existing leased/terminal Result replay is checked after this live
+        // subject/controller fence and before fresh composite policy. Memory
+        // acquisition also performs its fresh-policy check after this helper.
+        self.bot_live_fence_inner(fence, device, true, true, false)?;
         let attempt = self.open(fence.run)?.attempt.as_ref().expect("validated");
         if fence.turn.is_none()
             || attempt.orchestrator_turn != fence.turn
@@ -190,11 +194,6 @@ impl Orchestrator {
             },
             device,
         )?;
-        // This checkpoint supplies no canonical AI Routine proof/cache or
-        // linked provider dispatch. A global snapshot alone cannot ready it.
-        if provenance.routine.is_some() {
-            return Err(refused("bot_routine_native_not_ready"));
-        }
         let fence = self
             .bot_admission_view(&record)?
             .fence

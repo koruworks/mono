@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Real live document authority crosses the production runtime adapter into
-//! SQLite memory. No executable Routine, scheduler or HTTP path is enabled.
+//! SQLite memory. Session operations use deterministic ports; these cases never
+//! launch an actual provider or open the Store.
 use super::*;
 use koru_delegate_document::{ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument};
 use koru_delegate_schedule::*;
 use koru_recurrence::{CronExpression, RecurrenceRule};
 mod composition;
+mod dispatch;
 mod expiry;
 mod foundation;
 mod policy;
@@ -210,7 +212,7 @@ fn replace_candidate(p: &mut RoutinePrepared) {
 }
 
 #[test]
-fn routine_live_adapter_commits_held_and_miss_without_enabling_execution() {
+fn routine_live_adapter_commits_held_and_miss_without_link_authority() {
     let (mut h, doc, p, fresh) = fixture();
     assert!(token(&doc, &p, false).into_run().is_err());
     assert!(token(&doc, &p, false).into_skip().is_err());
@@ -222,8 +224,8 @@ fn routine_live_adapter_commits_held_and_miss_without_enabling_execution() {
         p.submission
     );
     assert!(db.pending_intents().unwrap().is_empty());
-    assert!(db.queued_bots(0, 16).unwrap().is_empty());
-    assert!(db.reserve_bot(p.ids.run).is_err());
+    assert_eq!(db.queued_bots(0, 16).unwrap().len(), 1);
+    assert!(db.reserve_bot(p.ids.run, None).is_err());
     let linked = db
         .acknowledge_routine_link(&RoutineLinkAcknowledgement {
             claim: record.claim.clone(),
@@ -231,9 +233,9 @@ fn routine_live_adapter_commits_held_and_miss_without_enabling_execution() {
         })
         .unwrap();
     assert_eq!(linked.link_state, RoutineLinkState::Linked {});
-    assert!(db.reserve_bot(p.ids.run).is_err());
+    assert!(db.reserve_bot(p.ids.run, None).is_err());
     assert!(db.pending_intents().unwrap().is_empty());
-    assert!(db.queued_bots(0, 16).unwrap().is_empty());
+    assert_eq!(db.queued_bots(0, 16).unwrap().len(), 1);
     drop(db);
     let request = PrepareNativeResult {
         key: NativeResultKey {

@@ -5,6 +5,64 @@
 use super::*;
 
 impl Orchestrator {
+    /// The sole ledger decoder owns route/link/claim/intent agreement. This
+    /// helper adds exact runtime admission equality, never a parallel decoder.
+    pub(crate) fn linked_routine_admission(
+        &mut self,
+        admitted: &koru_delegate_sqlite::BotAdmissionRecord,
+    ) -> Result<(), RunError> {
+        let p = &admitted.submission.provenance;
+        match (admitted.submission_version, p.routine) {
+            (1, None) => Ok(()),
+            (2, Some(subject)) => {
+                let slot = RoutineSlot {
+                    owner: p.owner,
+                    bot: p.bot,
+                    schedule: subject.schedule,
+                    occurrence_ms: subject.occurrence_ms,
+                };
+                match self.bot_ledger()?.read_routine_claim(&slot)? {
+                    RoutineClaimObservation::Claimed { record }
+                        if record.valid()
+                            && record.link_state == (RoutineLinkState::Linked {})
+                            && record.submission_version == admitted.submission_version
+                            && record.submission == admitted.submission =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(refused("bot_routine_link_required")),
+                }
+            }
+            _ => Err(refused("bot_provenance_mismatch")),
+        }
+    }
+
+    /// Current Routine authority is per Run. Global boot acknowledgement is a
+    /// separate dispatch check; ordinary work never depends on this cache.
+    pub(crate) fn bot_execution_policy(
+        &mut self,
+        run: RunId,
+    ) -> Result<Option<FreshBotPolicyProof>, RunError> {
+        let admitted = self
+            .bot_ledger()?
+            .bot_admission(run)?
+            .ok_or(RunError::UnknownRun)?;
+        self.linked_routine_admission(&admitted)?;
+        let p = &admitted.submission.provenance;
+        if p.routine.is_none() {
+            return Ok(None);
+        }
+        let current = self
+            .native_ledger()?
+            .current_native_policy(p.owner, p.bot)?
+            .ok_or_else(|| refused("bot_policy_refresh_required"))?;
+        self.current_policy_for_submission(
+            &admitted.submission,
+            current.config_revision,
+            current.policy_revision,
+        )
+        .map(Some)
+    }
     pub fn synchronize_routine_policy(
         &mut self,
         barrier: RoutinePolicyBarrier,
@@ -41,7 +99,7 @@ impl Orchestrator {
 
     /// Derive the subject from the canonical admission. A returned snapshot is
     /// not a lease, a live turn or a Linked proof; the caller and SQL still own
-    /// those checks. Routine execution gates remain closed in this checkpoint.
+    /// those checks. Historical replay does not call this fresh-proof helper.
     pub(crate) fn native_policy_for_run(
         &mut self,
         key: &BotRunKey,
@@ -52,6 +110,7 @@ impl Orchestrator {
             .bot_ledger()?
             .bot_admission(key.run)?
             .ok_or(RunError::UnknownRun)?;
+        self.linked_routine_admission(&admitted)?;
         let submission = admitted.submission;
         let provenance = &submission.provenance;
         if provenance.owner != key.owner

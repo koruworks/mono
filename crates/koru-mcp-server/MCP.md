@@ -2059,8 +2059,21 @@ exact history, allocation-backed lazy Ensure and final authority/Profile proof.
 Only an exact Prepared Execute intent enters the shared Store executor and
 confirmation path. Cancellation cannot abandon an acquired lease; uncertain
 lease or settlement replies recover the known operation without reexecution.
-The Bot launch allowlist and gateway catalog expose the same nine native tools,
+The Bot launch allowlist and gateway catalog expose the same thirteen native tools,
 including `list_memory` and `read_memory`. Ordinary Runs retain their artifact
 catalog. The Memory tools cannot widen generic document permissions; their
 saved receipts do not become Run results. Actual provider/client and desktop
 acceptance remain separate from the in-memory composition evidence.
+
+The additional own-Bot tools are `create_routine`, `read_routine_creation`,
+`retry_routine_creation` and `list_routines`. Their closed arguments cannot select
+Bot, owner, model, folder, grants or execution authority. The authenticated current
+Run and its retained submission determine the Bot. Creation is initially Paused,
+copies a separate grant, and neither enables work nor creates a Run result.
+Use the current revision from listing and preserve the exact request ID/body on
+replay. Read retained creation status before Retry and supply its observed token;
+`can_retry` is a conservative hint, not permission. Listing observations and local
+conversation references do not establish execution authority. Complete JSON-RPC
+frames, including the exact ID, are bounded at4MiB. If acceptance is unknown, read
+the original identity rather than allocating a replacement. Accepted recovery may
+finish after the originating Run or caller ends.

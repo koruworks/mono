@@ -160,7 +160,7 @@ fn decode(row: &Row<'_>) -> Result<BotAdmissionRecord, LedgerError> {
     })
 }
 
-const EXECUTION_COLUMNS: &str = "run_id,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,queue_sequence,state,active_elapsed_ms,active_since_ms,initial_send_key,initial_send_fingerprint,initial_send_attempt_id,initial_send_generation,initial_send_turn_id";
+const EXECUTION_COLUMNS: &str = "run_id,submission_version,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,queue_sequence,state,active_elapsed_ms,active_since_ms,initial_send_key,initial_send_fingerprint,initial_send_attempt_id,initial_send_generation,initial_send_turn_id";
 /// The two per-Bot reads behind [`BotLedger::unsettled_bot`]. Both name
 /// their index: without statistics the planner would prefer the
 /// (user_scope, device_id, bot_id, request_id) uniqueness index, which walks
@@ -181,6 +181,7 @@ pub(crate) fn unsettled_queries() -> (String, String) {
 fn decode_execution(row: &Row<'_>) -> Result<BotExecutionRecord, LedgerError> {
     let record = BotExecutionRecord {
         run: id(&cell::<String>(row, "run_id")?, "run_id")?,
+        submission_version: cell(row, "submission_version")?,
         owner: BotOwner {
             user_scope: serde_json::from_value(serde_json::Value::String(cell(row, "user_scope")?))
                 .map_err(|_| corrupt("user_scope"))?,
@@ -196,12 +197,43 @@ fn decode_execution(row: &Row<'_>) -> Result<BotExecutionRecord, LedgerError> {
         active_since_ms: cell(row, "active_since_ms")?,
         initial_send: decode_initial_send(row)?,
     };
-    if record.sequence == 0
+    if !matches!(record.submission_version, 1 | 2)
+        || record.sequence == 0
         || record.config_revision == 0
         || record.policy_revision == 0
         || (record.active_since_ms.is_some() && record.state != BotAdmissionState::Executing)
     {
         return Err(corrupt("state"));
+    }
+    Ok(record)
+}
+fn validate_execution(
+    conn: &Connection,
+    record: &BotExecutionRecord,
+) -> Result<(), BotLedgerError> {
+    match record.submission_version {
+        1 => super::routines::deny_run_columns(conn, record.run).map_err(Into::into),
+        // This projection carries no authority. Consumers that read a subject
+        // or execute work invoke the sole full admission/occurrence owner.
+        2 => Ok(()),
+        _ => Err(BotLedgerError::Fenced),
+    }
+}
+fn execution_projection(
+    conn: &Connection,
+    run: RunId,
+) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
+    let record = conn
+        .query_row(
+            &format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE run_id=?1"),
+            [run.to_storage()],
+            |row| Ok(decode_execution(row)),
+        )
+        .optional()
+        .map_err(sql)?
+        .transpose()?;
+    if let Some(record) = &record {
+        validate_execution(conn, record)?;
     }
     Ok(record)
 }
@@ -377,33 +409,51 @@ impl BotLedger for RunsDb {
         })
     }
     fn bot_execution(&self, run: RunId) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
-        Ok(self
-            .conn()
-            .query_row(
-                &format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE run_id=?1"),
-                [run.to_storage()],
-                |row| Ok(decode_execution(row)),
-            )
-            .optional()
-            .map_err(sql)?
-            .transpose()?)
+        execution_projection(self.conn(), run)
     }
     fn reconcile_bot_execution(
         &self,
         key: &BotSubmissionKey,
     ) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
-        Ok(self.conn().query_row(&format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND request_id=?4"),
+        let record = self.conn().query_row(&format!("SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND request_id=?4"),
             params![key.owner.user_scope.to_storage(),key.owner.device.to_storage(),key.bot.to_storage(),key.request.to_storage()],
-            |row| Ok(decode_execution(row))).optional().map_err(sql)?.transpose()?)
+            |row| Ok(decode_execution(row))).optional().map_err(sql)?.transpose()?;
+        if let Some(record) = &record {
+            validate_execution(self.conn(), record)?;
+        }
+        Ok(record)
     }
     fn bot_admission(&self, run: RunId) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
-        read(self.conn(), run)
+        let version: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT submission_version FROM bot_admissions WHERE run_id=?1",
+                [run.to_storage()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        if version == Some(2) {
+            super::routines::bounded_admission(self.conn(), run)?;
+        }
+        let record = read(self.conn(), run)?;
+        if let Some(record) = &record {
+            super::routines::execution::retained(self.conn(), record)?;
+        } else {
+            // Absence of the admission does not erase retained Routine origin,
+            // route or link markers at a tool-authority boundary.
+            super::routines::deny_run(self.conn(), run)?;
+        }
+        Ok(record)
     }
     fn reconcile_bot(
         &self,
         key: &BotSubmissionKey,
     ) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
-        reconcile(self.conn(), key)
+        let Some(record) = self.reconcile_bot_execution(key)? else {
+            return Ok(None);
+        };
+        self.bot_admission(record.run)
     }
     fn queued_bots(
         &self,
@@ -413,7 +463,7 @@ impl BotLedger for RunsDb {
         let Ok(after) = i64::try_from(after) else {
             return Ok(vec![]);
         };
-        let mut stmt=self.conn().prepare("SELECT run_id,user_scope,device_id,bot_id,queue_sequence,config_revision,policy_revision FROM bot_admissions WHERE submission_version=1 AND state IN ('queued','reserved') AND queue_sequence>?1 ORDER BY queue_sequence LIMIT ?2").map_err(sql)?;
+        let mut stmt=self.conn().prepare("SELECT run_id,user_scope,device_id,bot_id,queue_sequence,config_revision,policy_revision FROM bot_admissions WHERE state IN ('queued','reserved') AND queue_sequence>?1 ORDER BY queue_sequence LIMIT ?2").map_err(sql)?;
         let rows = stmt
             .query_map(params![after, limit.clamp(1, 1000)], |r| {
                 Ok((
@@ -504,15 +554,20 @@ impl BotLedger for RunsDb {
             Ok(b.clone())
         })
     }
-    fn reserve_bot(&mut self, run: RunId) -> Result<BotReservation, BotLedgerError> {
+    fn reserve_bot(
+        &mut self,
+        run: RunId,
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<BotReservation, BotLedgerError> {
         self.write_with_error(WriteOp::ReserveBot,|tx,now| {
-            let record=required(tx,run)?;
-            if record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
+            let record=super::routines::native_admission(tx,run)?;
+            super::routines::execution::retained(tx,&record)?;
             match record.state {
                 BotAdmissionState::Reserved|BotAdmissionState::Executing=>return Ok(BotReservation::AlreadyOwned),
                 BotAdmissionState::Settled|BotAdmissionState::Refused=>return Ok(BotReservation::Settled),
                 BotAdmissionState::Queued=>{}
             }
+            super::routines::execution::fresh(tx,&record,proof,true)?;
             let p=&record.submission.provenance;
             if barrier(tx,p.owner,p.bot)?.is_some_and(|b|b.paused) {return Ok(BotReservation::Paused)}
             let busy:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state IN ('reserved','executing'))",
@@ -524,15 +579,33 @@ impl BotLedger for RunsDb {
             Ok(BotReservation::Acquired)
         })
     }
+    fn open_bot_attempt(
+        &mut self,
+        run: RunId,
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<crate::AttemptRow, BotLedgerError> {
+        self.write_with_error(WriteOp::OpenAttempt, |tx, now| {
+            let record = super::routines::native_admission(tx, run)?;
+            if record.state != BotAdmissionState::Reserved {
+                return Err(BotLedgerError::Fenced);
+            }
+            super::routines::execution::fresh(tx, &record, proof, true)?;
+            if record.submission_version == 2 && attempts::latest(tx, run)?.is_some() {
+                return Err(BotLedgerError::Fenced);
+            }
+            Ok(attempts::open_on(tx, run, now)?)
+        })
+    }
     fn activate_bot(
         &mut self,
         run: RunId,
         attempt: RunAttemptId,
         g: AttemptGeneration,
+        proof: Option<&FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError> {
         self.write_with_error(WriteOp::ActivateBot,|tx,now| {
-            let record=required(tx,run)?;
-            if record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
+            let record=super::routines::native_admission(tx,run)?;
+            super::routines::execution::fresh(tx,&record,proof,true)?;
             current(tx,run,attempt,g,true)?;
             if record.state==BotAdmissionState::Executing {return Ok(())}
             if record.state!=BotAdmissionState::Reserved || record.active_elapsed_at(now)>=BOT_ACTIVE_BUDGET_MS {return Err(BotLedgerError::Fenced)}
@@ -546,13 +619,16 @@ impl BotLedger for RunsDb {
         attempt: RunAttemptId,
         g: AttemptGeneration,
         active: bool,
+        proof: Option<&FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError> {
         self.write_with_error(WriteOp::SetBotActive,|tx,now| {
-            let record=required(tx,run)?;
-            if active && record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
+            let projection=execution_projection(tx,run)?.ok_or(BotLedgerError::Fenced)?;
             current(tx,run,attempt,g,true)?;
-            if record.state!=BotAdmissionState::Executing {return Err(BotLedgerError::Fenced)}
-            if record.active_since_ms.is_some()==active {return Ok(())}
+            if projection.state!=BotAdmissionState::Executing {return Err(BotLedgerError::Fenced)}
+            if projection.active_since_ms.is_some()==active {return Ok(())}
+            let record=super::routines::native_admission(tx,run)?;
+            super::routines::execution::retained(tx,&record)?;
+            if active { super::routines::execution::fresh(tx,&record,proof,false)?; }
             let elapsed=charge(&record,now);
             if active && elapsed>=BOT_ACTIVE_BUDGET_MS as i64 {return Err(BotLedgerError::Fenced)}
             tx.execute("UPDATE bot_admissions SET active_elapsed_ms=?2,active_since_ms=?3,updated_at_ms=?4 WHERE run_id=?1",
@@ -580,17 +656,19 @@ impl BotLedger for RunsDb {
         &mut self,
         run: RunId,
         send: &BotInitialSend,
+        proof: Option<&FreshBotPolicyProof>,
     ) -> Result<BotInitialSend, BotLedgerError> {
         if send.turn.is_some() {
             return Err(BotLedgerError::Invalid);
         }
         self.write_with_error(WriteOp::PrepareBotInitialSend,|tx,now| {
-            let record=required(tx,run)?;
-            if record.submission_version != 1 { return Err(BotLedgerError::Fenced); }
-            if let Some(old)=record.initial_send {
-                if old.attempt==send.attempt && old.generation==send.generation && old.key==send.key && old.fingerprint==send.fingerprint {return Ok(old)}
+            let record=super::routines::native_admission(tx,run)?;
+            super::routines::execution::retained(tx,&record)?;
+            if let Some(old)=record.initial_send.as_ref() {
+                if old.attempt==send.attempt && old.generation==send.generation && old.key==send.key && old.fingerprint==send.fingerprint {return Ok(old.clone())}
                 return Err(BotLedgerError::Fenced);
             }
+            super::routines::execution::fresh(tx,&record,proof,false)?;
             current(tx,run,send.attempt,send.generation,true)?;
             if record.state!=BotAdmissionState::Executing || record.active_elapsed_at(now)>=BOT_ACTIVE_BUDGET_MS {return Err(BotLedgerError::Fenced)}
             tx.execute("UPDATE bot_admissions SET initial_send_key=?2,initial_send_fingerprint=?3,initial_send_attempt_id=?4,initial_send_generation=?5,updated_at_ms=?6 WHERE run_id=?1",
@@ -607,12 +685,18 @@ impl BotLedger for RunsDb {
             return Err(BotLedgerError::Invalid);
         }
         self.write_with_error(WriteOp::AcknowledgeBotInitialSend,|tx,now| {
-            let record=required(tx,run)?;
-            let old=record.initial_send.ok_or(BotLedgerError::Fenced)?;
+            let record=super::routines::native_admission(tx,run)?;
+            super::routines::execution::retained(tx,&record)?;
+            let old=record.initial_send.as_ref().ok_or(BotLedgerError::Fenced)?;
             if old.attempt!=send.attempt || old.generation!=send.generation || old.key!=send.key || old.fingerprint!=send.fingerprint {return Err(BotLedgerError::Fenced)}
-            if old.turn.is_some() {return if old==*send {Ok(old)} else {Err(BotLedgerError::Conflict)}}
+            if old.turn.is_some() {
+                if old!=send { return Err(BotLedgerError::Conflict); }
+                super::routines::execution::acknowledged(tx,&record,send)?;
+                return Ok(old.clone());
+            }
             current(tx,run,send.attempt,send.generation,false)?;
             tx.execute("UPDATE bot_admissions SET initial_send_turn_id=?2,updated_at_ms=?3 WHERE run_id=?1",params![run.to_storage(),send.turn.map(|t|t.to_string()),now]).map_err(sql)?;
+            super::routines::execution::acknowledged(tx,&record,send)?;
             Ok(send.clone())
         })
     }

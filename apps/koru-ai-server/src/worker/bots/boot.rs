@@ -94,6 +94,7 @@ enum Work {
         bot: Bot,
         admission: koru_delegate_core::BotAdmissionBarrier,
         policy: BotPolicyBarrier,
+        routine: ApiResult<Option<policy::dispatch::RoutineDispatch>>,
     },
 }
 pub(in crate::worker) struct BotBootJob {
@@ -106,6 +107,7 @@ pub(in crate::worker) struct BotBootResult {
     serial: u64,
     work: Work,
     result: Result<(DelegateOwner, BotReply), koru_delegate_api::Failure>,
+    routine_ready: bool,
 }
 fn unavailable() -> koru_delegate_api::Failure {
     koru_delegate_api::Failure::new(
@@ -122,6 +124,8 @@ fn delegate_owner(bot: &Bot) -> DelegateOwner {
 }
 impl BotBootJob {
     pub(in crate::worker) fn run(self) -> BotBootResult {
+        let mut routine_ready = true;
+        let deadline = Instant::now() + IPC_WITHIN;
         let result = catch_unwind(AssertUnwindSafe(|| {
             let (owner, command) = match &self.work {
                 Work::Hello(scan) => {
@@ -150,6 +154,7 @@ impl BotBootJob {
                     bot,
                     admission,
                     policy,
+                    ..
                 } => {
                     let mut pages = if policy.effects_allowed {
                         bot.selected_pages.clone()
@@ -191,15 +196,39 @@ impl BotBootJob {
             };
             // A deadline is unknown execution. No completion is inferred from
             // its expiration; later passes derive the current evidence again.
-            self.delegate
-                .execute_within(command, IPC_WITHIN)
-                .map(|reply| (owner, reply))
+            if Instant::now()>=deadline { return Err(unavailable()); }
+            let reply = self
+                .delegate
+                .execute_within(command, deadline.saturating_duration_since(Instant::now()))
+                .map(|reply| (owner, reply))?;
+            // Global replay is independent. An unavailable Routine cannot
+            // erase this Bot's successful receipt or fence ordinary work.
+            if let Work::Replay { routine, boot, admission, policy, .. } = &self.work {
+                let exact = matches!(&reply.1,BotReply::BootSynchronized {receipt}
+                    if receipt.boot==*boot && receipt.barrier==*admission && receipt.policy==policy.key
+                    && receipt.config_revision==policy.config_revision && receipt.policy_revision==policy.policy_revision
+                    && receipt.state==BotBootState::Ready);
+                routine_ready = catch_unwind(AssertUnwindSafe(|| match routine {
+                    Ok(Some(routine)) if exact => routine
+                        .synchronize(
+                            self.authority.as_ref(),
+                            self.delegate.as_ref(),
+                            deadline,
+                        )
+                        .is_ok(),
+                    Ok(None) => true,
+                    _ => false,
+                }))
+                .unwrap_or(false);
+            }
+            Ok(reply)
         }))
         .unwrap_or_else(|_| Err(unavailable()));
         BotBootResult {
             serial: self.serial,
             work: self.work,
             result,
+            routine_ready,
         }
     }
 }
@@ -310,6 +339,21 @@ impl WorkerState {
                     bot: snapshot.bot,
                     admission: snapshot.admission,
                     policy,
+                    routine: self
+                        .repository
+                        .bot_submission_for_run(owner, entry.identity.bot, entry.identity.run)
+                        .map_err(bot_failure)
+                        .and_then(|receipt| {
+                            let receipt = receipt.ok_or_else(not_found)?;
+                            if receipt.intent.submission.provenance.routine.is_none() {
+                                return Ok(None);
+                            }
+                            policy::dispatch::RoutineDispatch::snapshot(
+                                &self.repository,
+                                &receipt.intent.submission,
+                            )
+                            .map(Some)
+                        }),
                 }
             } else if let Some(scan) = &self.bot_boot.next {
                 Work::Hello(scan.clone())
@@ -462,6 +506,7 @@ impl WorkerState {
                     bot,
                     admission,
                     policy,
+                    routine,
                 },
                 BotReply::BootSynchronized { receipt },
             ) => {
@@ -493,6 +538,15 @@ impl WorkerState {
                         None,
                         koru_delegate_core::NativeDrainReason::PolicyPending { key: policy.key },
                     );
+                }
+                if !result.routine_ready
+                    || match routine {
+                        Ok(Some(routine)) => routine.recheck(&self.repository).is_err(),
+                        Ok(None) => false,
+                        Err(_) => true,
+                    }
+                {
+                    self.bot_boot.retry_needed = true;
                 }
                 // Ready/NoUnsettledWork settle only transient replay work. No
                 // canonical operation receipt is acknowledged by this callback.

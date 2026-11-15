@@ -692,7 +692,7 @@ fn validate_prepared_identity(
     Ok(())
 }
 
-fn validate_link(
+pub(super) fn validate_link(
     connection: &Connection,
     attempt: InferenceAttemptId,
     submission: &BotSubmission,

@@ -584,9 +584,11 @@ fn listing_prepared_run_read_and_stop_lanes_are_independent_of_held_store_phase(
         authority: authority.clone(),
         reply,
         phase: Phase::Item(Box::new(creation)),
-        snapshot: Some(snapshot),
-        checkpoints: vec![checkpoint],
-        items: vec![item],
+        progress: Some(ListingProgress {
+            snapshot,
+            checkpoints: vec![checkpoint],
+            items: vec![item],
+        }),
     };
     let (output, completion) = sync_channel(8);
     let mut pool =

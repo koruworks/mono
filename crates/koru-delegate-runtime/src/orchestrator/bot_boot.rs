@@ -7,7 +7,7 @@ use super::{
 };
 use koru_delegate_core::*;
 use koru_delegate_sqlite::{BotSettlement, NativePolicyRecord};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Clone)]
 struct Proof {
@@ -58,10 +58,9 @@ impl Orchestrator {
         let page = self
             .bot_ledger()?
             .bot_boot_inventory(owner, after, through)?;
-        let mut seen = HashSet::new();
         let mut entries = Vec::new();
         for entry in page.entries {
-            if seen.insert(entry.bot) {
+            {
                 // A canonical AI-only config change can leave our old proof
                 // current here. Explicit passes must include acknowledged Bots.
                 let admission = match self.bot_ledger()?.bot_barrier(owner, entry.bot) {
