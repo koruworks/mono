@@ -19,7 +19,7 @@ internal enum class CloudCopyPhase {
     Loading, Verified, Unavailable, SourceChanged, Removing, OutcomeUnknown, Acknowledged,
 }
 
-internal data class CloudCopyViewKey(val ownerScope: Long, val accountGeneration: Long, val selection: CloudCopySelection)
+internal data class CloudCopyViewKey(val ownerScope: Long, val viewEpoch: Long, val selection: CloudCopySelection)
 internal data class CloudCopyConfirmation(val key: CloudCopyViewKey, val node: BlockId) {
     fun validFor(current: CloudCopyViewKey, phase: CloudCopyPhase, removable: Set<BlockId>): Boolean =
         key == current && cloudCopyRemovalEnabled(phase, removable, node)

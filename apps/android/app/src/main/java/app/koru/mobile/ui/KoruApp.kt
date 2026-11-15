@@ -61,6 +61,7 @@ import app.koru.mobile.BuildConfig
 import app.koru.mobile.R
 import app.koru.mobile.domain.*
 import app.koru.mobile.ui.editor.DocumentViewer
+import app.koru.mobile.ui.editor.CloudCopyScreen
 import app.koru.mobile.ui.run.RunScreen
 import app.koru.mobile.ui.theme.KoruSpacing
 import app.koru.mobile.ui.theme.AppearancePreferences
@@ -317,16 +318,28 @@ fun KoruApp(
         composable(Routes.CloudFiles) {
             val account by model.account.collectAsState()
             val inventory by model.cloudInventory.collectAsStateWithLifecycle()
+            val copyState by model.cloudCopy.collectAsStateWithLifecycle()
             val owner = account.activeScope
             DisposableEffect(model) {
                 model.cloudInventoryVisible(true)
-                onDispose { model.cloudInventoryVisible(false) }
+                onDispose { model.cloudInventoryVisible(false); model.closeCloudCopy() }
             }
-            CloudInventoryScreen(inventory.forAccount(owner, account.activeAccountId.takeIf { account.signedIn }),
+            val shownCopy = copyState.forAccount(owner, account.activeAccountId.takeIf { account.signedIn })
+            val copyKey = shownCopy.key
+            if (copyKey != null) {
+                androidx.activity.compose.BackHandler { model.closeCloudCopy() }
+                key(copyKey) {
+                    CloudCopyScreen(copyKey, shownCopy.copy?.document, shownCopy.phase,
+                        shownCopy.copy?.permittedNodes.orEmpty(), shownCopy.copy?.files.orEmpty(),
+                        shownCopy.copy?.trashedNodes.orEmpty(), shownCopy.copy?.structure.orEmpty(),
+                        model::closeCloudCopy, model::reloadCloudCopy, model::removeCloudFile)
+                }
+            } else CloudInventoryScreen(inventory.forAccount(owner, account.activeAccountId.takeIf { account.signedIn }),
                 account.profiles.associate { it.id.value to it.name }, nav::popBackStack,
                 first = { model.cloudInventoryFirst(owner) }, next = { model.cloudInventoryNext(owner) },
                 previous = { model.cloudInventoryPrevious(owner) }, workspaces = { model.cloudInventoryWorkspaces(owner) },
-                documents = { model.cloudInventoryDocuments(it, owner) })
+                documents = { model.cloudInventoryDocuments(it, owner) },
+                inspect = { row, epoch -> model.openCloudCopy(row, epoch, owner) })
         }
         composable(Routes.Diagnostics) {
             val account by model.accountDiagnostics.collectAsState()

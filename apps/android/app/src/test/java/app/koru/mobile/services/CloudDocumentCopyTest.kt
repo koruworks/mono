@@ -164,7 +164,7 @@ class CloudDocumentCopyTest {
         val pending = CloudCopyConfirmation(key, BlockId(id(6)))
         val allowed = setOf(BlockId(id(6)))
         assertTrue(pending.validFor(key, CloudCopyPhase.Verified, allowed))
-        val changed = listOf(key.copy(ownerScope = 2), key.copy(accountGeneration = 8),
+        val changed = listOf(key.copy(ownerScope = 2), key.copy(viewEpoch = 8),
             key.copy(selection = selection.copy(accountId = id(99))),
             key.copy(selection = selection.copy(workspaceId = id(99))),
             key.copy(selection = selection.copy(incarnationId = id(99))),

@@ -15,15 +15,15 @@ import app.koru.mobile.R
 import app.koru.mobile.services.*
 import app.koru.mobile.ui.theme.KoruSpacing
 
-/** A bounded authoritative page, not the currently projected local documents.
- * Only Workspace navigation is offered here; document open needs its separate
- * exact-scoped source inspection and never routes by DocumentId alone. */
+/** A bounded authoritative page. Cloud copy inspection carries the entire
+ * source selection; it never opens the local editor by DocumentId alone. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CloudInventoryScreen(
     state: CloudInventoryState, profileNames: Map<String, String>, back: () -> Unit,
     first: () -> Unit, next: () -> Unit, previous: () -> Unit, workspaces: () -> Unit,
     documents: (CloudWorkspaceRow) -> Unit,
+    inspect: (CloudDocumentRow, CloudDocumentEpoch) -> Unit,
 ) {
     val locale = LocalConfiguration.current.locales[0]
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.cloud_inventory_title)) },
@@ -93,6 +93,11 @@ internal fun CloudInventoryScreen(
                                     Text(row.name?.takeIf { it.isNotBlank() } ?: stringResource(R.string.document_subtitle))
                                     InventoryAmount(row.amount)
                                     if (row.name.isNullOrBlank()) IdentifierDetails(row.document ?: row.unit)
+                                    if (row.document != null && row.head != null && row.membership != CloudDocumentMembership.Structural) {
+                                        TextButton(onClick = { inspect(row, page.epoch) }, enabled = !state.loading) {
+                                            Text(stringResource(R.string.cloud_copy_title))
+                                        }
+                                    }
                                 }
                             }
                         }

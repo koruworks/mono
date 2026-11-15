@@ -21,6 +21,17 @@ internal data class CloudCopySelection(
             .put("document_id", documentId).put("source_head_digest", sourceHeadDigest).toString()
     }
     override fun toString() = "CloudCopySelection(<redacted>)"
+    companion object {
+        fun decode(raw: String): CloudCopySelection? = runCatching {
+            require(raw.length <= 1024 && raw.toByteArray(Charsets.UTF_8).size <= 1024)
+            val value = JSONObject(raw)
+            val keys = listOf("account_id", "workspace_id", "incarnation_id", "cloud_unit_id", "document_id", "source_head_digest")
+            require(value.keys().asSequence().toSet() == keys.toSet())
+            fun text(key: String) = value.get(key) as String
+            CloudCopySelection(text(keys[0]), text(keys[1]), text(keys[2]), text(keys[3]), text(keys[4]), text(keys[5]))
+                .also { require(it.valid()) }
+        }.getOrNull()
+    }
 }
 
 /** Metadata only: deliberately not a global BlobReference usable by hydration. */
