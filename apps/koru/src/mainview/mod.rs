@@ -8577,8 +8577,21 @@ impl MainView {
         // focused terminal is on screen, and an edit that arrives from the
         // bridge or a peer has to reach it as much as one in the focused pane.
         let mut changed = false;
-        for (_, group) in self.panes.iter_groups_mut() {
-            changed |= Self::catch_up_tab(group.tabs_mut().active_mut(), ws);
+        let focused = self.panes.focused_path().clone();
+        for (path, group) in self.panes.iter_groups_mut() {
+            let tab = group.tabs_mut().active_mut();
+            // Local input refreshes its own editor, and the host adopts into
+            // other windows. A sibling split is neither: drain its tracker
+            // before checking staleness. Hidden tabs still do no layout work.
+            if path != focused
+                && tab.draft.is_none()
+                && tab.whats_new.is_none()
+                && let Some(leaf) = tab.view.retained_leaf_mut()
+                && leaf.body().root.is_some_and(|root| ws.read(root).is_ok())
+            {
+                leaf.body_mut().defer_pending(ws);
+            }
+            changed |= Self::catch_up_tab(tab, ws);
         }
         if changed {
             self.explore_stale = true;
@@ -15379,18 +15392,7 @@ impl View for MainView {
             self.task_counts.deadline(),
             self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
-            // Only the tab in front has one: a Tasks tab in the background
-            // contributes no clock and therefore no wake.
-            match &self.tabs().active_tab().view {
-                TabView::Tasks(t) => t.panel().deadline(),
-                TabView::MiniApp(app)
-                    if app.regions.tasks.w > 0.0
-                        && self.current_workspace() == Some(app.workspace) =>
-                {
-                    app.tasks.panel().deadline()
-                }
-                _ => None,
-            },
+            self.task_pages_deadline(),
             self.reminders.deadline(),
             self.reminder_shell.maintenance_deadline(),
             if self.ai_visible() {
@@ -15617,31 +15619,9 @@ impl View for MainView {
             self.refresh_rail_lists();
         }
         let context_tasks_changed = self.refresh_context_tasks(ws);
-        // The Tasks tab's own page. **Visible means the tab in front**: a Tasks
-        // tab in the background has no deadline and makes no request at all,
-        // which is the other half of "a background Tasks tab costs a bool".
+        let mut page_changed = self.maintain_task_pages(now);
         let workspace = self.current_workspace();
-        let showing = match &self.tabs().active_tab().view {
-            TabView::MiniApp(app) => app.regions.tasks.w > 0.0 && workspace == Some(app.workspace),
-            view => view.tasks().is_some(),
-        };
-        let mut page_changed = false;
         let active_path = self.panes.focused_path().clone();
-        for (path, group) in self.panes.iter_groups_mut() {
-            let group_active = group.active();
-            for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
-                if let Some(t) = tab.view.tasks_mut() {
-                    let target = t.target();
-                    let in_front = showing && path == active_path && i == group_active;
-                    if t.panel_mut()
-                        .maintain(workspace, Some(target), in_front, now)
-                    {
-                        t.mark_stale();
-                        page_changed = true;
-                    }
-                }
-            }
-        }
         // Home's Today page, fed the same way: its panel asks only while the
         // tab is in front, and the facts it draws from are compared before
         // they are stored, so a frame with nothing new costs the compares.

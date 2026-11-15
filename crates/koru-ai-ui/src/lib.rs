@@ -122,6 +122,7 @@ mod dictation;
 mod doc_links;
 mod effort;
 mod file_citations;
+mod footer;
 mod layout_cache;
 mod link_card;
 mod live_markdown;
@@ -301,6 +302,7 @@ impl Drop for OpenAiCredentialRequest {
 enum Focus {
     None,
     Composer,
+    DismissNotice,
     /// The send half of an agent chat's split button.
     SendArrow,
     /// The send button's independently enabled approval-mode menu target.
@@ -750,6 +752,7 @@ pub struct ChatSurface {
     stored_document: Option<(String, DocumentId)>,
     /// *Open* where it was last drawn, for the press.
     stored_open_link: Option<Rect>,
+    footer: footer::Footer,
     staged_embedded_send: Option<SendTurnRequest>,
     durable_observations: u8,
     destinations: Vec<DestinationOption>,
@@ -1153,6 +1156,7 @@ impl ChatSurface {
             ollama_search_link: None,
             stored_document: None,
             stored_open_link: None,
+            footer: Default::default(),
             staged_embedded_send: None,
             durable_observations: 0,
             destinations: Vec::new(),
@@ -1878,6 +1882,9 @@ impl ChatSurface {
         if let Some(handled) = self.approval_modes_key(key, mods) {
             return handled;
         }
+        if let Some(handled) = self.footer_key(key, mods) {
+            return handled;
+        }
         if matches!(self.focus, Focus::SendArrow | Focus::ModeChevron) {
             if self.approval_mode_button().is_none() {
                 self.focus = Focus::Composer;
@@ -2087,7 +2094,14 @@ impl ChatSurface {
                 koru_i18n::Key::AiPressEscAgainToStop,
             ));
         }
-        self.status.as_deref()
+        self.status.as_deref().filter(|line| {
+            self.footer
+                .dismissed
+                .as_ref()
+                .is_none_or(|(chat, dismissed)| {
+                    *chat != self.current_chat_id() || dismissed != line
+                })
+        })
     }
 
     /// The document *Open* opens (D78): the one just stored, while the
@@ -2119,7 +2133,8 @@ impl ChatSurface {
         });
         let room = open
             .as_ref()
-            .map_or(0.0, |open| open.width() + STORED_OPEN_GAP);
+            .map_or(0.0, |open| open.width() + STORED_OPEN_GAP)
+            + self.footer_dismiss_room();
         let words = self
             .engine
             .simple_layout_wrapped(&line, role::meta(), (width - room).max(1.0));
@@ -2413,6 +2428,12 @@ impl ChatSurface {
             .is_some_and(|rect| rect.contains(x, y))
         {
             return self.open_stored_document();
+        }
+        if self
+            .footer_dismiss_rect()
+            .is_some_and(|rect| rect.contains(x, y))
+        {
+            return self.dismiss_footer();
         }
         if self
             .jump_button()
@@ -3224,6 +3245,12 @@ impl ChatSurface {
     }
 
     pub fn draw(&mut self, canvas: &mut Scene, root: Affine) {
+        self.draw_with_caret_phase(canvas, root, true);
+    }
+
+    /// Use the host window's document caret clock. The host owns wakeups and
+    /// resets the phase on input; drawing a blink never changes editor focus.
+    pub fn draw_with_caret_phase(&mut self, canvas: &mut Scene, root: Affine, caret_on: bool) {
         let p = theme::p();
         scene::fill(
             canvas,
@@ -3239,7 +3266,7 @@ impl ChatSurface {
         if self.showing_setup() {
             self.draw_setup(canvas, root);
         } else {
-            self.draw_chat(canvas, root);
+            self.draw_chat(canvas, root, caret_on);
         }
         if let Some(confirm) = &self.confirm {
             confirm.draw(
@@ -3288,6 +3315,9 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        if matches!(command, Command::Send(_) | Command::Retry(..)) {
+            self.footer.dismissed = None;
+        }
         if matches!(command, Command::Cancel(_)) {
             self.interrupt_mini_app();
         }
@@ -5998,7 +6028,7 @@ impl ChatSurface {
         let content = self.content_rect();
         let footer_h = self
             .footer_layouts(content.w)
-            .map_or(0.0, |(words, _)| words.height() + 5.0);
+            .map_or(0.0, |(words, _)| self.footer_height(words.height()) + 5.0);
         let top = self.chat_top();
         let rect = Rect::new(
             content.x,
@@ -6818,6 +6848,12 @@ impl ChatSurface {
             None
         } else {
             if self
+                .footer_dismiss_rect()
+                .is_some_and(|rect| rect.contains(x, y))
+            {
+                return Some((19, 0));
+            }
+            if self
                 .jump_button()
                 .is_some_and(|button| button.contains(x, y))
             {
@@ -6947,12 +6983,12 @@ impl ChatSurface {
         );
     }
 
-    fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine) {
+    fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine, caret_on: bool) {
         let focused = self.focus == Focus::Composer;
         let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
         self.composer.set_focused(focused);
         self.composer
-            .draw(canvas, root, focused, self.pointer, placeholder);
+            .draw(canvas, root, focused && caret_on, self.pointer, placeholder);
     }
 
     fn composer_placeholder_key(&self) -> koru_i18n::Key {
@@ -7218,8 +7254,7 @@ impl ChatSurface {
         );
     }
 
-    fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
-        let p = theme::p();
+    fn draw_chat(&mut self, canvas: &mut Scene, root: Affine, caret_on: bool) {
         // **No title row.** A chat's name is its tab's in a workspace and
         // its row's in the Chats list; the surface itself starts with the
         // conversation.
@@ -7229,28 +7264,7 @@ impl ChatSurface {
         let composer = self.composer_rect();
         self.draw_greeting(canvas, root);
         self.draw_queue(canvas, root);
-        self.stored_open_link = None;
-        let content = self.content_rect();
-        if let Some((layout, open)) = self.footer_layouts(content.w) {
-            let y = composer.y - COMPOSER_GAP - self.queue_band_h() - layout.height();
-            scene::draw_layout(canvas, root, &layout, content.x, y, Some(p.text_dim));
-            // *Open* after a stored reply (D78): a link in the accent, as
-            // the chat's other links are, lit under the pointer.
-            if let Some((open, dx, dy)) = open {
-                let (x, top) = (content.x + dx, y + dy);
-                let hit = Rect::new(x - 3.0, top - 2.0, open.width() + 6.0, open.height() + 4.0);
-                if hit.contains(self.pointer.0, self.pointer.1) {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.hover_tint,
-                        &scene::rrect(hit.x, hit.y, hit.w, hit.h, 4.0),
-                    );
-                }
-                scene::draw_layout_first_line(canvas, root, &open, x, top, Some(p.accent));
-                self.stored_open_link = Some(hit);
-            }
-        }
+        self.draw_footer(canvas, root, composer);
         // The shell frame resolves the box, band, editor and toolbar from
         // current state. Its ancestry stays open while each mutable host part
         // paints, so F12 sees the editor and every control under KoruComposer.
@@ -7267,7 +7281,7 @@ impl ChatSurface {
                 match node.name {
                     "ComposerBox" => self.paint_composer_box(canvas, root, node.rect),
                     "ComposerContextBand" => self.draw_strip(canvas, root, node.rect),
-                    "ComposerText" => self.paint_composer_text(canvas, root),
+                    "ComposerText" => self.paint_composer_text(canvas, root, caret_on),
                     "ComposerToolbar" => {
                         recording = self.paint_composer_toolbar_content(
                             canvas,
@@ -14269,7 +14283,7 @@ mod tests {
             .unwrap()
             .chat
             .agent_working_folder = Some("D:/work/koru".into());
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
         assert_eq!(
             surface
                 .transcript
@@ -15306,7 +15320,7 @@ mod tests {
         chat.messages.push(user_message(&chat, "hello"));
         surface.transcript = Some(chat);
         surface.validated_ready = true;
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
         let top = surface.viewport.y + 7.0 + BUTTON_H * 0.5;
         // Where the title's words were, and where the header's *Chats* was.
         for x in [
@@ -15338,7 +15352,7 @@ mod tests {
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
 
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
         assert_eq!(surface.privacy_button(), None);
         let toolbar = surface.composer_toolbar_rect();
         let plus = surface.plus_button();
@@ -15659,7 +15673,7 @@ mod tests {
     /// The composer as a person sees it: laid out at the window's width,
     /// so a long message wraps.
     fn drawn(surface: &mut ChatSurface) {
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
     }
 
     /// A surface on a chat that has been sent `asked`, in a narrow window.
@@ -16040,7 +16054,7 @@ mod tests {
         surface.validated_ready = true;
         let line = surface.greeting().expect("a chat being made greets");
         for _ in 0..4 {
-            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
             assert_eq!(surface.greeting(), Some(line), "the line holds still");
         }
         surface.transcript = Some(transcript());

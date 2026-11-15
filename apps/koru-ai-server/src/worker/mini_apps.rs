@@ -344,5 +344,8 @@ fn publish_validated(
             "The live mini-app offer could not be delivered. Local application is not acknowledged.",
         ));
     }
+    tracing::info!(target: "koru_ai::mini_apps", event = "mini_app.offer_published",
+        attempt = %context.attempt_id, request = %authority.host.request_id,
+        "mini-app offered to live stream; native application not yet acknowledged");
     Ok(())
 }

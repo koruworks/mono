@@ -363,7 +363,9 @@ impl Chrome {
             .into_iter()
             .filter(|hit| {
                 hit.workspace.as_uuid() == workspace.as_uuid()
-                    && hit.kind == "document"
+                    // EntitySearch exposes the manifest kind, not the search
+                    // fragment kind. Older indexes default to "document".
+                    && (hit.kind == koru_core::explore::KIND_DOCUMENT || hit.kind == "document")
                     && hit.node.is_none()
             })
             .take(20)

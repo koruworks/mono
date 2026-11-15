@@ -1522,6 +1522,11 @@ even if the document or Explore last held focus;
 `Alt+Down` walks forward again, and one step past the newest question returns
 the caret to the composer.
 
+Messages above the chat composer have a **Dismiss message** (×) button.
+Click it, or press Shift+Tab from the composer and then Enter or Space.
+Dismissal leaves your draft and any running request unchanged. A new request
+can show the same notice again; different notices still appear normally.
+
 The composer shows the open document and attachments as removable context
 chips inside the message box. Use **+ → Recent** to insert a recent document
 or **+ → Koru context** to open the same document picker as `@`. The band wraps

@@ -129,6 +129,16 @@ impl TabView {
             _ => None,
         }
     }
+    /// Whether a shown tab has a task region in the current workspace.
+    pub(super) fn shows_tasks(&self, workspace: Option<koru_core::WorkspaceId>) -> bool {
+        match self {
+            Self::MiniApp(app) => {
+                app.has_tasks() && app.regions.tasks.w > 0.0 && workspace == Some(app.workspace)
+            }
+            Self::Tasks(_) => true,
+            _ => false,
+        }
+    }
     pub(crate) fn tasks_mut(&mut self) -> Option<&mut crate::tasks_view::TasksView> {
         match self {
             Self::Tasks(tasks) => Some(tasks),

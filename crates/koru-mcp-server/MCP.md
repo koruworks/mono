@@ -179,8 +179,9 @@ section: [Creating a complete document](#creating-a-complete-document),
 ## Native mini apps
 
 `create_task_document_app`, `find_task_app_lists`, and
-`update_task_document_app` use the provisional bounded catalog
-`koru:task-document:0.1-proposal1`. They are native Koru host tools, distinct
+`update_task_document_app` use two provisional bounded catalogs:
+`koru:task-document:0.1-proposal1` and `koru:composition:0.1-proposal1`.
+The creation tool's historical name covers both catalogs. These are native Koru host tools, distinct
 from the browser-based MCP Apps document view described under Views.
 They use the existing desktop stdio bridge in registered managed Koru chats:
 Codex, Claude, OpenCode, Kimi, Grok, Antigravity and Devin. The service's managed
@@ -207,13 +208,60 @@ Never invent or repeat a permission in ordinary prose. The permission is
 outside the 4096-byte A2UI envelope; no renderer, tab, profile or revision
 authority comes from model arguments.
 
-Creation takes `version: "1.0"` and one `createSurface` with exactly the five
-catalog components: `TaskDocument`, `TaskListSelector`, `TaskCollection`,
-`DocumentSearch`, and `DocumentHost`. The tool schema defines their fixed IDs
-and graph. The arrangements are `tasks-first` and `document-first`. Bindings
-are references to a task bucket or list and optionally a document in the
-current workspace. Task rows, task titles, document bodies, search results,
-styles, arbitrary components and `sendDataModel: true` are refused.
+Creation takes `version: "1.0"` and one `createSurface`, with `surfaceId`,
+`catalogId`, `sendDataModel: false` and `components`. Choose one catalog:
+
+- `koru:task-document:0.1-proposal1` has exactly five fixed components:
+  `TaskDocument`, `TaskListSelector`, `TaskCollection`, `DocumentSearch`, and
+  `DocumentHost`. The schema fixes their IDs and graph. The root's `arrangement`
+  is `tasks-first` or `document-first`.
+- `koru:composition:0.1-proposal1` supports `Row`, `Column`, `Box`, `Text`,
+  `Spacer`, `Divider`, `Button` and exactly one `DocumentHost`. The tree starts
+  at `root`, has at most 32 components and depth 8, and fits in 4096 UTF-8 bytes.
+  Use this catalog for document buttons above a shared editor. Rows/columns
+  use `children` arrays of component IDs; a Box has one child. Literal labels
+  belong in `text` on Text/Button. Buttons use the typed action below; there
+  is no `Tabs`, `onClick`, `selected`, `style`, `styles` or `data` property.
+
+Composition placement belongs in `layout`: `width`/`height` are `Hug` or `Fill`,
+`gap`/`padding` use named spacing tokens (`S0`, `S0_5`, `S1`, `S1_5`, `S2`,
+`S2_5`, `S3`, `S3_5`, `S4`, `S5`, `S6`, `S7`, `S8`, `S10`, `S12`), and
+`align` is `Start`, `Center`, `End` or `Stretch`. Box decoration belongs in
+`decoration`, using the published surface/radius tokens. Text has `role` and
+`ink` tokens; a Spacer has `space`. The tool schema defines which optional
+properties apply to each component. Omit unused fields.
+
+Resolve the actual document IDs using `list_documents` in the current
+workspace. Each reference is `{"workspace":"current","documentId":"UUID"}`,
+including references inside button actions. Clicking a button selects its
+document locally; the host highlights the current document's button. Document
+bodies, task rows, raw CSS/pixels, arbitrary callbacks and `sendDataModel: true`
+are refused.
+
+Four-document composition example (replace all illustrative document UUIDs
+with the discovered IDs, and add the current message's `capability` beside
+`version` and `createSurface` when calling the MCP tool; do not add an argument
+wrapper):
+
+```json
+{
+  "version": "1.0",
+  "createSurface": {
+    "surfaceId": "four-documents",
+    "catalogId": "koru:composition:0.1-proposal1",
+    "sendDataModel": false,
+    "components": [
+      {"id":"root","component":"Column","children":["buttons","document"],"layout":{"width":"Fill","height":"Fill","gap":"S4","padding":"S4"}},
+      {"id":"buttons","component":"Row","children":["travel","next","restaurants","notes"],"layout":{"width":"Fill","gap":"S2"}},
+      {"id":"travel","component":"Button","text":"Travel","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"11111111-1111-4111-8111-111111111111"}}},
+      {"id":"next","component":"Button","text":"What to do Next","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"22222222-2222-4222-8222-222222222222"}}},
+      {"id":"restaurants","component":"Button","text":"Best Restaurants","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"33333333-3333-4333-8333-333333333333"}}},
+      {"id":"notes","component":"Button","text":"Trip Notes","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"44444444-4444-4444-8444-444444444444"}}},
+      {"id":"document","component":"DocumentHost","document":{"workspace":"current","documentId":"11111111-1111-4111-8111-111111111111"},"layout":{"width":"Fill","height":"Fill"}}
+    ]
+  }
+}
+```
 
 `find_task_app_lists` resolves named and empty lists explicitly. It takes
 `query` (at most 128 characters), `offset` (0 through 1,000,000), and `limit`
@@ -221,8 +269,11 @@ styles, arbitrary components and `sendDataModel: true` are refused.
 `name`, plus `next_offset`. Existing `list_documents` resolves document IDs
 using the exact workspace identity supplied for the current message.
 
-Refinement takes one `updateComponents` replacing only the root's named
-arrangement. Its `surfaceId` must match the current message's explicit target.
+Refinement takes one `updateComponents`. For the task/document catalog, replace
+only the root's named arrangement. For composition, provide the complete tree
+from the current declaration, preserving component IDs, kinds (Row/Column may
+interchange), document references and actions; change supported layout, labels
+and tokens only. Its `surfaceId` must match the current message's explicit target.
 The host retains the original controls/editor and rejects a changed tab,
 scope, lifetime or revision. Do not put a speculative `baseRevision` field
 inside the upstream A2UI envelope.

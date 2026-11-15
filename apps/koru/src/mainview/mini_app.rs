@@ -54,6 +54,9 @@ impl MainView {
             let renderer = creation.host.renderer_id;
             let request = creation.host.request_id;
             let opened = visible && self.open_mini_app_creation(&creation);
+            tracing::info!(target: "koru::mini_apps", event = "mini_app.host_receipt",
+                attempt = %creation.attempt, request = %request, visible, opened,
+                "mini-app native opening completed");
             if self.ai_chat.mini_app_renderer_id() == renderer {
                 self.ai_chat.mini_app_opened(request, opened);
             }
@@ -103,22 +106,42 @@ impl MainView {
         app.refine(target, &refinement.envelope).is_ok()
     }
     fn open_mini_app_creation(&mut self, creation: &koru_ai_ui::MiniAppCreation) -> bool {
+        let refuse = |reason: &'static str| {
+            tracing::warn!(target: "koru::mini_apps", event = "mini_app.host_refused",
+                attempt = %creation.attempt, request = %creation.host.request_id,
+                reason, "mini-app native opening refused");
+            false
+        };
         let Some((_, profile, _, Some(workspace))) = &self.pane_context else {
-            return false;
+            return refuse("missing_pane_context");
         };
         if profile.as_uuid() != creation.profile.as_uuid()
             || workspace.as_uuid() != creation.host.workspace_id.as_uuid()
         {
-            return false;
+            return refuse("profile_or_workspace_changed");
         }
         let workspace = *workspace;
         let Ok(declaration) =
             koru_ai_core::mini_apps::Declaration::validate(creation.envelope.clone())
         else {
-            return false;
+            return refuse("invalid_declaration");
         };
         if !self.mini_app_documents_available(&declaration.document_references()) {
-            return false;
+            for document in declaration.document_references() {
+                let entry = self.entries.as_ref().and_then(|entries| {
+                    entries
+                        .iter()
+                        .find(|entry| entry.id.as_uuid() == document.as_uuid())
+                });
+                tracing::info!(target: "koru::mini_apps", event = "mini_app.document_check",
+                    attempt = %creation.attempt, request = %creation.host.request_id,
+                    document = %document, entries_loaded = self.entries.is_some(),
+                    found = entry.is_some(), is_document = entry.is_some_and(|entry|
+                        entry.kind == koru_core::explore::KIND_DOCUMENT),
+                    trashed = self.entity_trashed.contains(&document.to_storage()),
+                    "mini-app document availability checked");
+            }
+            return refuse("document_unavailable");
         }
         if let Some(koru_ai_core::mini_apps::TaskSelection::List(id)) = declaration.task_selection()
             && !self
@@ -126,18 +149,18 @@ impl MainView {
                 .iter()
                 .any(|list| list.id.as_uuid() == *id && list.deleted_ms.is_none())
         {
-            return false;
+            return refuse("task_list_unavailable");
         }
         let mut tab = Tab::welcome();
         let Ok(mut app) =
             crate::mini_app::MiniApp::from_declaration(workspace, tab.id, declaration)
         else {
-            return false;
+            return refuse("native_construction_failed");
         };
         // Creation already minted an invocation-qualified live surface. Saved
         // artifact opening uses the constructor's fresh lifetime instead.
         if !app.adopt_created_surface(&creation.envelope.surface.surface_id) {
-            return false;
+            return refuse("surface_identity_invalid");
         }
         tab.home = Some(workspace);
         tab.label = app.default_title().into();

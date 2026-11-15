@@ -53,8 +53,10 @@ find documents outside the first twenty matches.
 
 Complete a task using its checkbox. Open its source through the task's ordinary
 open gesture or **Open document**. The document opens inside the right region of
-this tab. Search above that region to replace the displayed document, then use
-the ordinary document editor, including its find and replace controls.
+this tab. Search above that region by document title in the current workspace
+to replace the displayed document, then use the ordinary document editor,
+including its find and replace controls. This search chooses documents;
+Find searches text inside the open document.
 
 The task region operates on existing tasks. Create tasks or give an unfiled task
 a document in the ordinary Tasks view. The embedded region omits those creation
@@ -120,6 +122,7 @@ The artifact stores the arrangement and its linked list/document choices;
 tasks and document text stay in their ordinary documents. Wait for an opening
 document to settle before saving. A saved arrangement can be opened from the
 workspace's **Artifacts** list, with current source data and no model call.
+**Artifacts** and **Agents** are shown in the apps rail by default.
 It does not automatically reopen at startup. Saving again after changing the
 arrangement or its choices creates another version; earlier versions remain.
 

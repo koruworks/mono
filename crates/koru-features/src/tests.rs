@@ -83,9 +83,12 @@ fn a_set_variable_wins_in_both_directions_and_an_unset_one_keeps_the_baked_defau
 }
 
 #[test]
-fn agent_views_need_agents_and_are_off_by_default() {
-    // Off when unset, unlike agents: the tabs ship, the views do not.
-    assert!(!switch_value(None));
+fn agent_views_need_agents_and_are_on_by_default() {
+    assert!(switch_value_or(None, true));
+    assert!(
+        !switch_value_or(Some("0"), true),
+        "an explicit opt-out still wins"
+    );
     let tabs_only = Features {
         agents: true,
         ..Features::ALL_OFF

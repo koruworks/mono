@@ -495,7 +495,7 @@ impl MainView {
             self.ai_chat.set_viewport(ai);
             self.ai_chat
                 .submit_embedded_when_durable(workspace.owed() == 0);
-            self.ai_chat.draw(scene, root);
+            self.ai_chat.draw_with_caret_phase(scene, root, caret_on);
             // AI occupies Context's right-hand slot, so both panes keep their
             // divider and resize grip on the left edge.
             let edge = ai.x;

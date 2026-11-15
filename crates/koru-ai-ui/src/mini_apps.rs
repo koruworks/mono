@@ -175,11 +175,20 @@ impl ChatSurface {
     }
     pub fn take_mini_app_creation(&mut self) -> Option<MiniAppCreation> {
         let creation = self.native_apps.ready.take()?;
-        (self.native_apps.enabled
+        let eligible = self.native_apps.enabled
             && self.profile == Some(creation.profile)
             && self.context_workspace == Some(creation.host.workspace_id)
-            && self.current_chat_id() == Some(creation.chat))
-        .then_some(creation)
+            && self.current_chat_id() == Some(creation.chat);
+        if !eligible {
+            tracing::warn!(target: "koru_ai::mini_apps", event = "mini_app.handoff_refused",
+                attempt = %creation.attempt, request = %creation.host.request_id,
+                enabled = self.native_apps.enabled,
+                profile_matches = self.profile == Some(creation.profile),
+                workspace_matches = self.context_workspace == Some(creation.host.workspace_id),
+                chat_matches = self.current_chat_id() == Some(creation.chat),
+                "mini-app context changed before native handoff");
+        }
+        eligible.then_some(creation)
     }
     /// Local application receipt, never a provider/transport acknowledgement.
     pub fn mini_app_opened(&mut self, request: uuid::Uuid, opened: bool) {
@@ -403,6 +412,9 @@ impl ChatSurface {
             return;
         };
         let Some(pending) = &mut self.native_apps.pending else {
+            tracing::warn!(target: "koru_ai::mini_apps", event = "mini_app.delivery_refused",
+                attempt = %attempt_id, request = %host.request_id, reason = "no_pending_request",
+                "mini-app creation delivery refused");
             return;
         };
         if pending.host != *host
@@ -423,9 +435,24 @@ impl ChatSurface {
                 .is_none_or(|t| t.chat.id != *chat_id)
             || Declaration::validate(envelope.clone()).is_err()
         {
+            tracing::warn!(target: "koru_ai::mini_apps", event = "mini_app.delivery_refused",
+                attempt = %attempt_id, request = %host.request_id,
+                host_matches = pending.host == *host, enabled = self.native_apps.enabled,
+                retired = pending.retired, received = pending.received, applied = pending.applied,
+                attempt_matches = pending.attempt == Some(*attempt_id),
+                chat_matches = pending.chat == *chat_id,
+                profile_matches = self.profile == Some(*profile_id),
+                workspace_matches = self.context_workspace == Some(host.workspace_id),
+                surface_matches = envelope.surface.surface_id == format!("mini-app-{invocation_id}"),
+                call_id_valid = !call_id.is_empty() && call_id.len() <= 256,
+                transcript_matches = self.transcript.as_ref().is_some_and(|t| t.chat.id == *chat_id),
+                declaration_valid = Declaration::validate(envelope.clone()).is_ok(),
+                "mini-app creation delivery refused");
             return;
         }
         pending.received = true;
+        tracing::info!(target: "koru_ai::mini_apps", event = "mini_app.delivery_received",
+            attempt = %attempt_id, request = %host.request_id, "mini-app creation ready for native host");
         self.native_apps.ready = Some(MiniAppCreation {
             host: *host,
             profile: *profile_id,
@@ -434,6 +461,7 @@ impl ChatSurface {
             envelope: envelope.clone(),
         });
     }
+    #[track_caller]
     pub(super) fn interrupt_mini_app(&mut self) {
         if self
             .native_apps
@@ -441,6 +469,15 @@ impl ChatSurface {
             .as_ref()
             .is_some_and(|p| !p.applied)
         {
+            let caller = std::panic::Location::caller();
+            if let Some(pending) = &self.native_apps.pending {
+                tracing::info!(target: "koru_ai::mini_apps", event = "mini_app.interrupted",
+                    request = %pending.host.request_id, attempt = ?pending.attempt,
+                    received = pending.received, retired = pending.retired,
+                    ready = self.native_apps.ready.is_some(), enabled = self.native_apps.enabled,
+                    caller_file = caller.file(), caller_line = caller.line(),
+                    "mini-app request retired before local application");
+            }
             self.native_apps.interrupted = true;
             self.native_apps.ready = None;
             self.native_apps.update = None;

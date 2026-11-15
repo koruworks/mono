@@ -637,7 +637,7 @@ impl View for AiChatView {
         workspace: &Workspace,
         _images: &koru_draw::ImageCache,
         root: Affine,
-        _caret_on: bool,
+        caret_on: bool,
         _pointer: (f32, f32),
     ) {
         let workspace_id = workspace
@@ -647,7 +647,7 @@ impl View for AiChatView {
         self.surface.set_context_document(None);
         self.surface
             .submit_embedded_when_durable(workspace.owed() == 0);
-        self.surface.draw(scene, root);
+        self.surface.draw_with_caret_phase(scene, root, caret_on);
     }
 
     fn animating(&self) -> bool {

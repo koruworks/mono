@@ -60,6 +60,43 @@ fn tasks_target_of(tab: &Tab) -> Option<RailTarget> {
 }
 
 impl MainView {
+    /// Every split's selected tab is visible, regardless of keyboard focus.
+    /// Hidden tabs keep their invalidation but contribute no request or clock.
+    pub(super) fn maintain_task_pages(&mut self, now: std::time::Instant) -> bool {
+        let workspace = self.current_workspace();
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let active = group.active();
+            for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
+                let visible = i == active && tab.view.shows_tasks(workspace);
+                if let Some(tasks) = tab.view.tasks_mut() {
+                    let target = tasks.target();
+                    if tasks
+                        .panel_mut()
+                        .maintain(workspace, Some(target), visible, now)
+                    {
+                        tasks.mark_stale();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    pub(super) fn task_pages_deadline(&self) -> Option<std::time::Instant> {
+        let workspace = self.current_workspace();
+        self.panes
+            .iter_groups()
+            .filter_map(|(_, group)| {
+                let view = &group.tabs().active_tab().view;
+                view.shows_tasks(workspace)
+                    .then(|| view.tasks().and_then(|tasks| tasks.panel().deadline()))
+                    .flatten()
+            })
+            .min()
+    }
+
     /// Open the Tasks tab on `target`, or point the existing one at it.
     ///
     /// **One per window.** The rail holds one selection, so a second Tasks tab

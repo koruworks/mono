@@ -62,6 +62,56 @@ fn result(seq: u64) -> koru_search_ui::EntitySearchUpdate {
 }
 
 #[test]
+fn document_search_accepts_page_hits_and_keeps_document_scope() {
+    use koru_search_ui::EntityDocument;
+    use koru_store_core::ids;
+    let workspace = WorkspaceId::new();
+    let mut chrome = Chrome::new();
+    chrome.search_focus = true;
+    chrome.query = "travel".into();
+    chrome.seq = 1;
+    let page = EntityDocument {
+        profile: ids::ProfileId::new(),
+        workspace: ids::WorkspaceId::from_uuid(workspace.as_uuid()),
+        document: ids::DocumentId::new(),
+        node: None,
+        title: "Travel".into(),
+        breadcrumb: "Travel".into(),
+        kind: koru_core::explore::KIND_DOCUMENT.into(),
+        mime: None,
+    };
+    let mut legacy = page.clone();
+    legacy.document = ids::DocumentId::new();
+    legacy.kind = "document".into();
+    let mut foreign = page.clone();
+    foreign.workspace = ids::WorkspaceId::new();
+    let mut task = page.clone();
+    task.node = Some(NodeId::new().to_storage());
+    let mut file = page.clone();
+    file.kind = "file".into();
+    let mut canvas = page.clone();
+    canvas.kind = koru_core::explore::KIND_CANVAS.into();
+    let mut update = result(1);
+    update.documents = vec![page.clone(), legacy.clone(), foreign, task, file, canvas];
+    assert!(chrome.accept_result(workspace, update));
+    let documents: Vec<_> = chrome
+        .menu_choices
+        .iter()
+        .filter_map(|choice| match choice {
+            Choice::Document(id, title) => Some((*id, title.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        documents,
+        vec![
+            (DocumentId::from_uuid(page.document.as_uuid()), "Travel"),
+            (DocumentId::from_uuid(legacy.document.as_uuid()), "Travel"),
+        ]
+    );
+}
+
+#[test]
 fn every_selector_and_result_remains_reachable_in_short_windows() {
     let mut chrome = Chrome::new();
     chrome.layout((500.0, 180.0), false, Region::Tasks);

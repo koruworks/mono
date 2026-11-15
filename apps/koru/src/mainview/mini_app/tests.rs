@@ -5,6 +5,202 @@ use koru_core::{DocumentId, node::Node, schema::Parent};
 use koru_workspace_host::accessibility::{Scope, SemanticNode, ViewSlot, WindowSlot};
 
 #[test]
+fn visible_split_task_panels_refresh_without_keyboard_focus() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    let (mut view, _workspace, _, _) = fixture();
+    let target = view.tabs().active_tab().view.tasks().unwrap().target();
+    view.panes
+        .split(&PanePath::root(), SplitDir::Right, Tab::tasks(target));
+    let left = PanePath::root().child(0);
+    let right = PanePath::root().child(1);
+    view.size_visible_groups();
+    view.panes.set_focus(right.clone());
+    let now = Instant::now();
+    view.maintain_task_pages(now);
+    for path in [&left, &right] {
+        let panel = view
+            .panes
+            .group(path)
+            .unwrap()
+            .tabs()
+            .active_tab()
+            .view
+            .tasks()
+            .unwrap()
+            .panel();
+        assert!(panel.deadline().is_some(), "both visible splits refresh");
+    }
+    // Invalidation must schedule the unfocused mini app, even with a
+    // non-task tab focused beside it. No client or Store is used here.
+    view.tabs_mut().push(Tab::settings());
+    view.tasks_changed();
+    view.maintain_task_pages(now);
+    let deadline = view
+        .panes
+        .group(&left)
+        .unwrap()
+        .tabs()
+        .active_tab()
+        .view
+        .tasks()
+        .unwrap()
+        .panel()
+        .deadline()
+        .unwrap();
+    assert_eq!(view.task_pages_deadline(), Some(deadline));
+    let hidden = view
+        .panes
+        .group(&right)
+        .unwrap()
+        .tabs()
+        .iter()
+        .find_map(|tab| tab.view.tasks())
+        .unwrap();
+    assert_eq!(hidden.panel().deadline(), None, "hidden tabs have no clock");
+    // A collapsed or foreign-workspace mini app must not query either.
+    let TabView::MiniApp(app) = &mut view
+        .panes
+        .group_mut(&left)
+        .unwrap()
+        .tabs_mut()
+        .active_mut()
+        .view
+    else {
+        panic!()
+    };
+    app.regions.tasks.w = 0.0;
+    view.maintain_task_pages(now);
+    assert_eq!(view.task_pages_deadline(), None);
+}
+
+#[test]
+fn visible_split_note_edits_refresh_both_hosts_without_activation() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    let (mut view, mut workspace, document, task) = fixture();
+    let root = {
+        let TabView::MiniApp(app) = &mut view.tabs_mut().active_mut().view else {
+            panic!()
+        };
+        assert!(app.land(&workspace.ws, document));
+        app.leaf().unwrap().body().root.unwrap()
+    };
+    view.panes.split(
+        &PanePath::root(),
+        SplitDir::Right,
+        Tab::document_of(
+            Leaf::document(&workspace.ws, root),
+            "Source",
+            Some(document),
+        ),
+    );
+    let left = PanePath::root().child(0);
+    let right = PanePath::root().child(1);
+    view.size_visible_groups();
+    // Keep a third, hidden editor over the same document to guard against
+    // making every local edit lay out every open tab.
+    view.panes
+        .group_mut(&right)
+        .unwrap()
+        .tabs_mut()
+        .push(Tab::document_of(
+            Leaf::document(&workspace.ws, root),
+            "Hidden",
+            Some(document),
+        ));
+    view.panes.group_mut(&right).unwrap().tabs_mut().select(0);
+    for (source, receiver, text, bold) in [
+        (&left, &right, "Edited in mini app", true),
+        (&right, &left, "Edited in tab", false),
+    ] {
+        view.panes.set_focus(source.clone());
+        workspace.ws.set_text(task, text).unwrap();
+        workspace
+            .ws
+            .set_mark(task, 0..text.len(), koru_core::Mark::Bold, bold)
+            .unwrap();
+        // The originating editor has already settled its local gesture.
+        let leaf = view
+            .panes
+            .group_mut(source)
+            .unwrap()
+            .tabs_mut()
+            .active_mut()
+            .view
+            .retained_leaf_mut()
+            .unwrap();
+        leaf.body_mut().defer_pending(&workspace.ws);
+        leaf.catch_up(&workspace.ws);
+        let owner = leaf.native_ime_owner();
+        let reflows = leaf.view().reflows;
+        // This is the pre-draw path, with no View::adopt or activation event.
+        view.catch_up_active(&workspace.ws);
+        let leaf = view
+            .panes
+            .group_mut(receiver)
+            .unwrap()
+            .tabs_mut()
+            .active_mut()
+            .view
+            .retained_leaf_mut()
+            .unwrap();
+        let row = leaf.body().rows.iter().find(|row| row.id == task).unwrap();
+        assert_eq!(row.text, text);
+        assert!(row.runs.iter().all(|run| run.bold == bold));
+        let receiver_reflows = leaf.view().reflows;
+        view.catch_up_active(&workspace.ws);
+        let leaf = view
+            .panes
+            .group_mut(receiver)
+            .unwrap()
+            .tabs_mut()
+            .active_mut()
+            .view
+            .retained_leaf_mut()
+            .unwrap();
+        assert_eq!(
+            leaf.view().reflows,
+            receiver_reflows,
+            "idle draws do not reflow"
+        );
+        let leaf = view
+            .panes
+            .group_mut(source)
+            .unwrap()
+            .tabs_mut()
+            .active_mut()
+            .view
+            .retained_leaf_mut()
+            .unwrap();
+        assert_eq!(
+            leaf.view().reflows,
+            reflows,
+            "do not reflow the input owner again"
+        );
+        assert_eq!(leaf.native_ime_owner(), owner);
+        let hidden = view
+            .panes
+            .group_mut(&right)
+            .unwrap()
+            .tabs_mut()
+            .get_mut(1)
+            .unwrap()
+            .view
+            .retained_leaf_mut()
+            .unwrap();
+        assert_eq!(
+            hidden
+                .body()
+                .rows
+                .iter()
+                .find(|row| row.id == task)
+                .unwrap()
+                .text,
+            "Fixture task"
+        );
+    }
+}
+
+#[test]
 fn cached_mini_app_documents_remain_owned_until_the_tab_closes() {
     let (mut view, workspace, first, _) = fixture();
     let workspace_id = workspace.ws.id().unwrap();

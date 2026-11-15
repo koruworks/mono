@@ -54,7 +54,7 @@ pub struct EntityDocument {
     pub node: Option<String>,
     pub title: String,
     pub breadcrumb: String,
-    /// Manifest kind of the hit (`document` / `file`). Defaults to document
+    /// Manifest kind of the hit (`page`, `file`, `canvas`, etc.). Defaults to `document`
     /// when the store left it blank (older indexes).
     pub kind: String,
     pub mime: Option<String>,

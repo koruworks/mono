@@ -2,6 +2,39 @@
 use super::*;
 
 #[test]
+fn model_documentation_four_document_example_passes_real_mcp_and_catalog_parsers() {
+    use koru_ai_core::mini_apps::{self, Declaration};
+    let documentation = include_str!("../../MCP.md");
+    let section = documentation
+        .split("Four-document composition example")
+        .nth(1)
+        .unwrap();
+    let example = section
+        .split("```json")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap()
+        .trim();
+    let mut arguments: Value = serde_json::from_str(example).unwrap();
+    arguments["capability"] = mini_apps::Capability::mint().0.into();
+    let request = request(mini_apps::CREATE_TOOL, arguments).unwrap();
+    assert!(request.arguments.get("capability").is_none());
+    let declaration = Declaration::from_value(&request.arguments).unwrap();
+    assert_eq!(
+        declaration.envelope.surface.catalog_id,
+        mini_apps::COMPOSITION_CATALOG_ID
+    );
+    assert_eq!(declaration.document_references().len(), 4);
+    assert_eq!(declaration.envelope.surface.components.len(), 7);
+    assert_eq!(
+        declaration.initial_document(),
+        Some(declaration.document_references()[0])
+    );
+}
+
+#[test]
 fn mini_app_published_schema_preserves_every_normative_branch_and_matches_validator() {
     use koru_ai_core::mini_apps::{self, Declaration};
     let published = tools();

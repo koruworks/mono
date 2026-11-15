@@ -3,7 +3,7 @@
 //! **Which product surfaces this build shows.**
 //!
 //! Koru shows documents, files and terminal/shell sessions. Cloud sync, agent
-//! sessions, Tasks and Koru AI are on by default; agent views, reminders,
+//! sessions, agent views, Tasks and Koru AI are on by default; reminders,
 //! canvases and Socials are hidden until switched on. Each flag can be overridden:
 //!
 //! | Flag | Env var | Hides |
@@ -22,8 +22,8 @@
 //! ## Baked in, with an environment override
 //!
 //! A flag's default is decided when *this crate* is compiled, from
-//! `option_env!` on each `KORU_ENABLE_*` name: Cloud sync, agents, Tasks and
-//! Koru AI are **on** when unset; the other four flags are **off**. The release
+//! `option_env!` on each `KORU_ENABLE_*` name: Cloud sync, agents, agent views,
+//! Tasks and Koru AI are **on** when unset; the other three flags are **off**. The release
 //! tool forwards each of the eight that is set, as `1` or `0`, to
 //! `cargo build` (`koru-release::package::run_cargo`), so a release bakes a
 //! surface on or off by setting it in its environment or in
@@ -194,10 +194,10 @@ pub const ENABLE_CLOUD_SYNC: bool = switch_value_or(option_env!("KORU_ENABLE_CLO
 /// Agent sessions and artifacts, as baked into this build. **On when unset**
 /// (ADR-450's 2026-10-15 amendment); `KORU_ENABLE_AGENTS=0` bakes it off.
 pub const ENABLE_AGENTS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENTS"), true);
-/// Explore's Agents and Artifacts views, as baked into this build. Off when
-/// unset: agent *tabs* ship, the views over their runs and results do not
-/// (maintainers, 2026-10-16). Starting Delegate follows it too ([`delegate`]).
-pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT_VIEWS"));
+/// Explore's Agents and Artifacts views, as baked into this build. On when
+/// unset (maintainer request, 2026-11-15), including saved mini-app discovery.
+/// `KORU_ENABLE_AGENT_VIEWS=0` hides them. Starting Delegate follows it too.
+pub const ENABLE_AGENT_VIEWS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENT_VIEWS"), true);
 /// The Tasks view and its entry points, as baked into this build. **On when
 /// unset** (the review's note, 2026-10-26, QUESTIONS.md E52): the view ships;
 /// `KORU_ENABLE_TASKS=0` bakes it off.
@@ -264,7 +264,7 @@ pub fn ai() -> bool {
 /// task's and a document selection's *Delegate…*, a finished run's *Re-run*,
 /// and the modal they all open (`begin_delegation`, its one door). Hidden
 /// with the agent views (the user, 2026-11-03), so it follows
-/// `KORU_ENABLE_AGENT_VIEWS` — off by default — and needs Koru AI and agents
+/// `KORU_ENABLE_AGENT_VIEWS` — on by default — and needs Koru AI and agents
 /// on as well. Runs that already exist keep showing as [`ai`] says; only the
 /// ways to start one go.
 pub fn delegate() -> bool {

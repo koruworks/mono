@@ -427,6 +427,7 @@ pub enum Key {
     AiSkillListEmpty,
     // Esc twice to stop a turn, and the empty chat's greetings.
     AiPressEscAgainToStop,
+    AiDismissNotice,
     AiGreeting01,
     AiGreeting02,
     AiGreeting03,
@@ -3272,7 +3273,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2296] = [
+    pub const ALL: [Key; 2297] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -3585,6 +3586,7 @@ impl Key {
         Key::AiSkills,
         Key::AiSkillListEmpty,
         Key::AiPressEscAgainToStop,
+        Key::AiDismissNotice,
         Key::AiGreeting01,
         Key::AiGreeting02,
         Key::AiGreeting03,
@@ -8813,6 +8815,7 @@ pub const ROWS: &[Row] = &[
         zh_hans: "再按一次 Esc 即可停止",
         ja: "もう一度 Esc を押すと停止します",
     },
+    Row { key: Key::AiDismissNotice, en: "Dismiss message", es: "Descartar mensaje", pt_br: "Dispensar mensagem", de: "Meldung ausblenden", fr: "Masquer le message", ar: "إخفاء الرسالة", zh_hans: "关闭消息", ja: "メッセージを閉じる" },
     Row {
         key: Key::AiGreeting01,
         en: "What can I do for you?",
