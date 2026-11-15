@@ -34,6 +34,8 @@ pub enum CatalogRepositoryError {
     NotFound,
     Unavailable,
     Corrupt,
+    CloudPolicyUnavailable,
+    CloudPlanRequired,
     Refused(BindingRefusal),
 }
 
@@ -44,6 +46,8 @@ impl CatalogRepositoryError {
             Self::NotFound => "not_found",
             Self::Unavailable => "server_unavailable",
             Self::Corrupt => "authorization_corrupt",
+            Self::CloudPolicyUnavailable => "cloud_policy_unavailable",
+            Self::CloudPlanRequired => "cloud_plan_required",
             Self::Refused(refusal) => refusal.code(),
         }
     }
