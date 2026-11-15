@@ -142,6 +142,13 @@ impl RunsDb {
         }
     }
 
+    /// Swap in another disposable in-memory connection, such as an actual
+    /// historical schema holding copied rows. Tests never open a file.
+    #[cfg(test)]
+    pub(crate) fn replace_connection_in_memory(&mut self, conn: Connection) {
+        self.conn = conn;
+    }
+
     /// Exercise the production forward migration opener on a disposable memory fixture.
     #[cfg(test)]
     pub(crate) fn migrate_in_memory(&mut self) {

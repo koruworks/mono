@@ -693,14 +693,74 @@ fn delivery_publication_identity_is_atomic_unique_and_survives_lost_ack() {
     }
 }
 
+/// Replace `db`'s connection with an actual runs5 schema holding only the
+/// frozen v5 columns of its rows, produced by normal in-memory admission.
+fn runs_five_copy(db: &mut RunsDb) {
+    let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+    koru_sqlite::prepare(
+        &koru_sqlite::Schema {
+            database: crate::DATABASE_NAME,
+            understood: 5,
+            migrations: &crate::db::MIGRATIONS[..5],
+        },
+        &mut conn,
+    )
+    .unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=OFF").unwrap();
+    let tables: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for table in tables {
+        let columns: Vec<String> = conn
+            .prepare(&format!(
+                "SELECT name FROM pragma_table_info('{table}') ORDER BY cid"
+            ))
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let list = columns.join(",");
+        let rows: Vec<Vec<rusqlite::types::Value>> = db
+            .conn()
+            .prepare(&format!("SELECT {list} FROM {table} ORDER BY rowid"))
+            .unwrap()
+            .query_map([], |r| (0..columns.len()).map(|i| r.get(i)).collect())
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let marks = vec!["?"; columns.len()].join(",");
+        for row in rows {
+            conn.execute(
+                &format!("INSERT INTO {table}({list}) VALUES({marks})"),
+                rusqlite::params_from_iter(row),
+            )
+            .unwrap();
+        }
+    }
+    conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        5
+    );
+    db.replace_connection_in_memory(conn);
+}
+
 #[test]
 fn populated_runs_five_delivery_migrates_and_repairs_once_with_exact_receipt() {
     let (mut db, _) = memory();
     let (submission, receipt) = delivered(&mut db);
     db.record_bot_delivery(&receipt).unwrap();
-    // Remove later additions to construct the actual v5 shape,
-    // retaining populated canonical v5 admission, attempt and delivery columns.
-    db.conn().execute_batch("DROP TABLE bot_memory_edit_allocations; DROP TABLE native_result_intents; DROP TABLE bot_policy_barriers; DROP INDEX bot_delivery_publication_identity; ALTER TABLE bot_admissions DROP COLUMN delivery_publication_event_id; PRAGMA user_version=5;").unwrap();
+    // Copy the populated canonical v5 admission, attempt and delivery columns
+    // into an actual v5 schema, then run the real migration owner. A partial
+    // downgrade of the current schema is not a v5 database: runs9 Routine
+    // triggers reference the tables such a downgrade drops.
+    runs_five_copy(&mut db);
     db.migrate_in_memory();
     db.migrate_in_memory();
     let migrated = db.bot_admission(receipt.run).unwrap().unwrap();

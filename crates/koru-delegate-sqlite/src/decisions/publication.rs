@@ -10,6 +10,7 @@ mod fallback;
 mod initial;
 mod insert;
 mod lifecycle;
+mod observe;
 mod rows;
 mod settle;
 mod write;

@@ -324,6 +324,17 @@ pub trait BotLedger {
         owner: BotOwner,
         run: RunId,
     ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError>;
+    /// The delegate-owned observation behind IPC16 `ReadBotDecisionWait`.
+    /// Read-only and historical: it never grants permission to stop, and its
+    /// fresh eligibility is derived from today's exact state alone.
+    fn read_bot_decision_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_core::decisions::BotDecisionWaitObservation>, BotLedgerError>;
     fn record_decision_source(
         &mut self,
         owner: BotOwner,
