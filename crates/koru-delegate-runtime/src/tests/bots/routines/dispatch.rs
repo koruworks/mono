@@ -368,23 +368,203 @@ fn routine_dispatch_current_policy_change_blocks_new_input_but_not_acknowledged_
 
 #[test]
 fn routine_dispatch_boot_inventory_retains_each_run_of_same_bot() {
-    let (mut h, p, fresh) = linked();
-    let ordinary = submission(2);
-    h.orchestrator
-        .bot_submit(ordinary, p.slot.owner.device)
-        .unwrap();
-    let page = h
-        .orchestrator
-        .bot_hello(p.slot.owner, BotBootScan::Start {}, p.slot.owner.device)
-        .unwrap();
-    assert_eq!(page.entries.len(), 2);
+    let (mut h, original, base, base_proof) = fixture();
+    let owner = base.slot.owner;
+    let mut expected = BTreeSet::new();
+    let mut pairs = Vec::new();
+    // One unsettled Routine per Bot is the real claim limit. Interleave one
+    // ordinary Run for each of 35 Bots: repeated Bot identities cross all five
+    // pages without manufacturing impossible same-Bot concurrent claims.
+    for n in 0..35 {
+        let mut p = base.clone();
+        replace_candidate(&mut p);
+        let mut header = original.header().unwrap();
+        if n != 0 {
+            header.schedule = ScheduleId::mint();
+            p.slot.bot = BotId::mint();
+            header.definition.routine = Some(
+                RoutineAssociation::new(
+                    owner,
+                    p.slot.bot,
+                    p.submission.workspace,
+                    BotRequestId::mint(),
+                )
+                .unwrap(),
+            );
+        }
+        p.slot.schedule = header.schedule;
+        p.submission.provenance.bot = p.slot.bot;
+        p.submission.request.origin = RunOrigin::Scheduled {
+            schedule: p.slot.schedule,
+            occurrence_ms: p.slot.occurrence_ms,
+            revision: 2,
+        };
+        header.definition.revision = 1;
+        header.definition.effective_at_ms = 0;
+        header.definition.lifecycle = ScheduleLifecycle::Paused {
+            reason: SchedulePauseReason::Manual,
+        };
+        let doc = ScheduleDocument::create(&header).unwrap();
+        let mut active = header.definition.clone();
+        active.revision = 2;
+        active.effective_at_ms = 1;
+        active.lifecycle = ScheduleLifecycle::Active;
+        doc.update_definition(owner.device, &active).unwrap();
+        p.definition.digest =
+            routine_definition_digest(&active, p.submission.workspace, None).unwrap();
+        let subject = p.submission.provenance.routine.as_mut().unwrap();
+        subject.schedule = p.slot.schedule;
+        subject.definition = p.definition;
+        let mut fresh = base_proof.clone();
+        fresh.global.key.bot = p.slot.bot;
+        let independent = fresh.routine.as_mut().unwrap();
+        independent.bot = p.slot.bot;
+        independent.schedule = p.slot.schedule;
+        let association = active.routine.unwrap();
+        {
+            let mut db = h.schedule_store.inner.lock().unwrap();
+            db.register_routine_route(&RoutineRouteIdentity {
+                owner,
+                bot: p.slot.bot,
+                schedule: p.slot.schedule,
+                workspace: p.submission.workspace,
+                creation_request: association.creation_request,
+                seed_hash: RoutineDigest32::from_bytes([9; 32]),
+                created_at_ms: 0,
+            })
+            .unwrap();
+            db.apply_bot_barrier(&admission(&p)).unwrap();
+            db.install_native_policy(&fresh.global).unwrap();
+            db.install_routine_policy(fresh.routine.as_ref().unwrap())
+                .unwrap();
+        }
+        let record = claim(&h, &doc, &p, &fresh, false);
+        if n != 0 {
+            h.schedule_store
+                .inner
+                .lock()
+                .unwrap()
+                .acknowledge_routine_link(&RoutineLinkAcknowledgement {
+                    claim: record.claim,
+                    outcome: RoutineLinkOutcome::Linked {},
+                })
+                .unwrap();
+        }
+        let mut ordinary = submission(n + 100);
+        ordinary.provenance.bot = p.slot.bot;
+        h.orchestrator
+            .bot_submit(ordinary.clone(), owner.device)
+            .unwrap();
+        expected.insert(p.ids.run);
+        expected.insert(ordinary.request.run);
+        pairs.push((p, fresh, ordinary));
+    }
+    let mut observed = BTreeSet::new();
+    let mut counts = HashMap::new();
+    let mut scan = BotBootScan::Start {};
+    let mut pages = 0;
+    loop {
+        let page = h.orchestrator.bot_hello(owner, scan, owner.device).unwrap();
+        assert!(!page.entries.is_empty() && page.entries.len() <= 16);
+        pages += 1;
+        for entry in page.entries {
+            assert!(observed.insert(entry.identity.run));
+            *counts.entry(entry.identity.bot).or_insert(0) += 1;
+        }
+        match page.next {
+            Some(cursor) => scan = BotBootScan::Continue { cursor },
+            None => break,
+        }
+    }
+    assert_eq!(pages, 5);
+    assert_eq!(observed, expected);
+    assert_eq!(counts.len(), 35);
+    assert!(counts.values().all(|count| *count == 2));
+    let (held, held_proof, ordinary) = &pairs[0];
+    global(&mut h, held, held_proof);
     assert!(
-        page.entries
-            .iter()
-            .all(|entry| entry.identity.bot == p.slot.bot)
+        h.orchestrator
+            .bot_dispatch(&key(&held.submission), owner.device)
+            .is_err()
     );
-    assert_ne!(page.entries[0].identity.run, page.entries[1].identity.run);
-    global(&mut h, &p, &fresh);
+    assert!(
+        h.orchestrator
+            .bot_dispatch(&key(ordinary), owner.device)
+            .unwrap()
+            .is_some()
+    );
+    let (last, last_proof, _) = pairs.last().unwrap();
+    let _ = start(&mut h, last, last_proof);
+}
+
+#[test]
+fn routine_dispatch_retained_delivery_completes_after_current_policy_is_unavailable() {
+    let (mut h, p, fresh) = linked();
+    let fence = start(&mut h, &p, &fresh);
+    observe(&mut h, &fence);
+    let turn = h
+        .orchestrator
+        .bot_begin_turn(&fence, fence.owner.device, p.submission.input.clone())
+        .unwrap();
+    h.agent(p.ids.run, AgentEvent::TurnCompleted { turn_id: turn });
+    {
+        let mut script = h.sessions.lock().unwrap();
+        script
+            .summaries
+            .insert(fence.session, summary(ManagedState::Completed, None));
+        script.observation.events.push(SequencedAgentEvent {
+            session_id: fence.session,
+            sequence: StreamSequence::new(50).unwrap(),
+            event: AgentEvent::TurnCompleted { turn_id: turn },
+        });
+    }
+    let mut newer = fresh.routine.unwrap();
+    newer.request = BotRequestId::mint().into();
+    newer.grant_revision += 1;
+    newer.effects_allowed = false;
+    h.orchestrator
+        .synchronize_routine_policy(newer, fence.owner.device)
+        .unwrap();
+    let receipt = BotDeliveryReceipt {
+        run: fence.run,
+        attempt: fence.attempt,
+        generation: fence.generation,
+        chat_id: p.ids.chat,
+        ai_attempt_id: p.ids.attempt,
+        assistant_message_id: p.ids.assistant_message,
+        confirmed_at_ms: 1000,
+    };
+    h.orchestrator
+        .bot_acknowledge_delivery(&key(&p.submission), fence.owner.device, &receipt)
+        .unwrap();
+    assert_eq!(
+        h.orchestrator.status(fence.run).unwrap(),
+        RunStatus::Completed
+    );
+    assert_eq!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_execution(fence.run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Settled
+    );
+    h.orchestrator
+        .bot_acknowledge_delivery(&key(&p.submission), fence.owner.device, &receipt)
+        .unwrap();
+    assert_eq!(count_submits(&h), 1);
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .routine_firing(&p.slot)
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[test]
