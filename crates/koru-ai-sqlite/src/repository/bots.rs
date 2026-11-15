@@ -20,7 +20,10 @@ pub use creation::BotCreationScan;
 mod decisions;
 pub(crate) mod library;
 mod reads;
-pub use decisions::{BOT_DECISION_NEEDED_YOU, BotDecisionClosure, BotDecisionReplayRollover};
+pub use decisions::{
+    BOT_DECISION_NEEDED_YOU, BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover,
+    BotNativeDecisionLink,
+};
 mod routines;
 pub use routines::{
     RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
