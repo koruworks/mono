@@ -762,11 +762,32 @@ fn ended_prepared_intent_without_any_lease_can_be_definitively_refused() {
     h.orchestrator
         .synchronize_native_policy(policy, fence.owner.device)
         .unwrap();
+    // Effects off: the fresh proof refuses before any intent exists (since
+    // 46e2dba5 the composite proof checks effects before Prepare).
+    let refused = h
+        .orchestrator
+        .prepare_native_effect(&request, fence.owner.device);
     assert!(
-        h.orchestrator
-            .prepare_native_effect(&request, fence.owner.device)
-            .is_err()
+        matches!(&refused, Err(crate::RunError::Port(error)) if error.code == "bot_policy_stale")
     );
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .native_result(&request.key)
+            .unwrap()
+            .is_none(),
+        "no intent is created for a refused fresh effect"
+    );
+    // A Prepared intent that never obtained a lease, as a lost reply or a
+    // crash between the ledger's prepare and lease steps leaves it.
+    h.schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .prepare_native_result(&request)
+        .unwrap();
     assert!(!h.orchestrator.native_effects_pending(fence.run).unwrap());
     h.orchestrator.cancel(fence.run).unwrap();
     assert_eq!(
