@@ -100,7 +100,7 @@ fn successor_resets_high_cursor_and_old_fence_batch_is_rejected() {
         fence: result.consumer_fence.clone(),
         expected_after: None,
         events: vec![BotReplayEvent {
-            sequence: 1,
+            sequence: d::AGENT_EVENT_FIRST_SEQUENCE,
             turn: result.consumer_fence.turn,
             effects: vec![],
         }],
@@ -108,7 +108,7 @@ fn successor_resets_high_cursor_and_old_fence_batch_is_rejected() {
     repo.apply_bot_replay(&batch, at()).unwrap();
     assert_eq!(
         repo.bot_replay_state(attempt).unwrap().last_sequence,
-        Some(1)
+        Some(d::AGENT_EVENT_FIRST_SEQUENCE)
     );
     let old_batch = BotReplayBatch {
         ai_attempt: attempt,
@@ -123,7 +123,7 @@ fn successor_resets_high_cursor_and_old_fence_batch_is_rejected() {
     assert!(repo.apply_bot_replay(&old_batch, at()).is_err());
     assert_eq!(
         repo.bot_replay_state(attempt).unwrap().last_sequence,
-        Some(1)
+        Some(d::AGENT_EVENT_FIRST_SEQUENCE)
     );
     assert_eq!(rows(&repo), 1);
 }
