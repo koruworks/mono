@@ -109,5 +109,11 @@ pub use koru_delegate_sqlite::{
     PendingIntent, Projection, WriteOutcome,
 };
 
+/// Dev-only decision-chain builder for dependents' composition tests. A
+/// dependent enables `test-support` in its `[dev-dependencies]`; nothing
+/// shipped does.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 #[cfg(test)]
 mod tests;
