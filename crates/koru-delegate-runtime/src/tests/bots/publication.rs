@@ -280,6 +280,9 @@ fn decision_bad_cold_owner_keeps_existing_claim_and_recovers_healthy_neighbor() 
         .clone();
     let mut healthy = submission(2);
     healthy.provenance.bot = BotId::mint();
+    // The preparation helper asserts that this new Run sends no input. Its
+    // neighbor has already sent the turn whose decision we are recovering.
+    h.sessions.lock().unwrap().calls.clear();
     let healthy_fence = prepared(&mut h, &healthy);
     running_session(
         &mut h,
