@@ -6374,7 +6374,7 @@ fn schedules_are_a_foldable_agents_group_and_partial_rows_stay_visible() {
     );
 
     let labels = agent_labels(&view);
-    assert!(labels.contains(&("Schedules", 0)));
+    assert!(labels.contains(&("Routines", 0)));
     assert!(labels.contains(&("Daily review", 1)));
     assert!(labels.contains(&("Every weekday at 09:00", 2)));
     assert!(labels.contains(&("Next: Sep 14, 09:00", 2)));
