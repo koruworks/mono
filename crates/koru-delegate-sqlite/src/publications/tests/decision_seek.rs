@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use rusqlite::params;
 
 fn candidate(value: PendingPublicationRunSeek) -> (PendingPublicationRunCursor, RunId) {
     match value {
@@ -180,5 +181,80 @@ fn decision_publication_fifo_corrupt_oversized_head_refuses_without_skip() {
             .unwrap()
             .acknowledged_at_ms
             .is_none()
+    );
+}
+
+#[test]
+fn decision_publication_bad_event_anchor_refresh_keeps_valid_lower_bound() {
+    let root = Root::new();
+    let mut db = root.open();
+    let mut runs = [
+        created_run(&mut db, 1),
+        created_run(&mut db, 2),
+        created_run(&mut db, 3),
+    ];
+    runs.sort_by_key(|r| r.to_storage());
+    db.enqueue(event(1), runs[0], PublicationKind::Lifecycle, "{}")
+        .unwrap();
+    db.enqueue(event(2), runs[1], PublicationKind::Lifecycle, "{}")
+        .unwrap();
+    db.conn().execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,attempts,queued_at_ms) VALUES(?1,?2,'lifecycle','{}',0,0)",
+        params!["bad-event".repeat(1024),runs[2].to_storage()]).unwrap();
+    let anchor = db.pending_publication_run_anchor().unwrap().unwrap();
+    let (first, run) = candidate(db.next_pending_publication_run(None, anchor, None).unwrap());
+    assert_eq!(run, runs[0]);
+    db.acknowledge(event(1)).unwrap();
+    assert_eq!(
+        db.next_pending_publication_run(Some(first), anchor, None)
+            .unwrap(),
+        PendingPublicationRunSeek::StaleCursor
+    );
+    let refreshed = db.pending_publication_run_anchor().unwrap().unwrap();
+    let (second, run) = candidate(
+        db.next_pending_publication_run(Some(first), refreshed, None)
+            .unwrap(),
+    );
+    assert_eq!(
+        run, runs[1],
+        "refresh did not restart before the valid lower bound"
+    );
+    let PendingPublicationRunSeek::Malformed { cursor } = db
+        .next_pending_publication_run(Some(second), refreshed, None)
+        .unwrap()
+    else {
+        panic!("bad event remains explicit");
+    };
+    assert_eq!(
+        db.next_pending_publication_run(Some(cursor), refreshed, None)
+            .unwrap(),
+        PendingPublicationRunSeek::Exhausted
+    );
+}
+
+#[test]
+fn decision_publication_bad_event_epoch_rejects_rollback_and_restart() {
+    let root = Root::new();
+    let mut db = root.open();
+    let run = created_run(&mut db, 1);
+    db.conn().execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,attempts,queued_at_ms) VALUES('invalid',?1,'lifecycle','{}',0,0)",
+        [run.to_storage()]).unwrap();
+    let anchor = db.pending_publication_run_anchor().unwrap().unwrap();
+    let tx = db.conn().unchecked_transaction().unwrap();
+    tx.execute("UPDATE pending_publications SET attempts=attempts+1", [])
+        .unwrap();
+    tx.rollback().unwrap();
+    assert_eq!(
+        db.next_pending_publication_run(None, anchor, None).unwrap(),
+        PendingPublicationRunSeek::StaleCursor
+    );
+    let fresh = db.pending_publication_run_anchor().unwrap().unwrap();
+    assert!(matches!(
+        db.next_pending_publication_run(None, fresh, None).unwrap(),
+        PendingPublicationRunSeek::Malformed { .. }
+    ));
+    db.restart_in_memory();
+    assert_eq!(
+        db.next_pending_publication_run(None, fresh, None).unwrap(),
+        PendingPublicationRunSeek::StaleCursor
     );
 }

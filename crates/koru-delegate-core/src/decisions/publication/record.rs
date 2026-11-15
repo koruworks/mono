@@ -71,8 +71,10 @@ pub struct DecisionExpected {
 }
 
 /// First-entry observation from the sole attached document owner. SQL repeats
-/// physical placement and immutable request checks. Later entries use the
-/// retained publication subject and predecessor instead of accepting a new one.
+/// physical placement and immutable request checks. Same-wait entries use the
+/// retained predecessor. Re-entry after a completely settled prior wait uses
+/// a newly durable canonical baseline covering all intervening ordinary writes,
+/// while preserving the exact last marker and immutable physical subject.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionPublicationBase {
     pub workspace: WorkspaceId,

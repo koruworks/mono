@@ -307,6 +307,16 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn record_decision_source(
+        &mut self,
+        owner: BotOwner,
+        transition: DecisionTransitionId,
+        wait: BotWaitId,
+        base: &DecisionPublicationBase,
+        target: &RunProjectionTargetV1,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::record_decision_source(self, owner, transition, wait, base, target)
+    }
     fn decision_projection(
         &self,
         owner: BotOwner,

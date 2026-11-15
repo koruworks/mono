@@ -30,6 +30,8 @@ pub enum WriteOutcome {
 pub struct RunsDb {
     conn: Connection,
     clock: Box<dyn Clock>,
+    // Volatile identity for internal retry cursors; never stored or authority.
+    publication_cursor_epoch: uuid::Uuid,
     #[cfg(any(test, feature = "crash-points"))]
     crash: crate::crash::CrashArm,
 }
@@ -53,6 +55,7 @@ impl RunsDb {
         Ok(Self {
             conn,
             clock,
+            publication_cursor_epoch: uuid::Uuid::new_v4(),
             #[cfg(any(test, feature = "crash-points"))]
             crash: crate::crash::CrashArm::default(),
         })
@@ -74,6 +77,10 @@ impl RunsDb {
 
     pub(crate) fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    pub(crate) fn publication_cursor_epoch(&self) -> uuid::Uuid {
+        self.publication_cursor_epoch
     }
 
     pub(crate) fn now_ms(&self) -> i64 {
@@ -130,6 +137,7 @@ impl RunsDb {
         Self {
             conn,
             clock,
+            publication_cursor_epoch: uuid::Uuid::new_v4(),
             crash: crate::crash::CrashArm::default(),
         }
     }
@@ -153,6 +161,7 @@ impl RunsDb {
     #[cfg(test)]
     pub(crate) fn restart_in_memory(&mut self) {
         self.crash = crate::crash::CrashArm::default();
+        self.publication_cursor_epoch = uuid::Uuid::new_v4();
     }
 }
 
