@@ -239,6 +239,15 @@ fn validate_step(
         } => {
             attempt = Some(*a);
             turn = Some(*t);
+            // This historical fact deliberately has no attachment ID. Its
+            // owning step retains the single exact attachment reference.
+            require(
+                step.refs
+                    .iter()
+                    .filter(|r| matches!(r, TimelineRef::Attachment { .. }))
+                    .count()
+                    == 1,
+            )?;
             StepKind::AttachmentAccepted
         }
         RunFact::AttachmentRejected {
@@ -412,11 +421,25 @@ fn validate_step(
         _ => return Err(DecisionError::Invalid),
     };
     require(step.kind == expected && attempt == Some(fence.attempt))?;
-    require(step.refs.iter().any(|r| {
-        *r == TimelineRef::Attempt {
-            attempt: fence.attempt,
+    // These existing producers authored Turn + subject refs, never Attempt.
+    // The fact's attempt above remains mandatory authority. Do not change old
+    // step bytes merely to accommodate this new envelope's validation.
+    let attempt_optional = matches!(
+        fact,
+        RunFact::ApprovalRequired { .. }
+            | RunFact::ApprovalResolved { .. }
+            | RunFact::AttachmentAccepted { .. }
+            | RunFact::AttachmentRejected { .. }
+            | RunFact::ChildSessionDetected { .. }
+    );
+    let mut attempt_seen = false;
+    for reference in step.refs.iter() {
+        if let TimelineRef::Attempt { attempt } = reference {
+            require(*attempt == fence.attempt)?;
+            attempt_seen = true;
         }
-    }))?;
+    }
+    require(attempt_optional || attempt_seen)?;
     if let Some(turn) = turn {
         require(step.refs.iter().any(|r| *r == TimelineRef::Turn { turn }))?;
     }
