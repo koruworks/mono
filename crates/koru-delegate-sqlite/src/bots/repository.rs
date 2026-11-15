@@ -307,6 +307,56 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::decision_projection(self, owner, run, transition)
+    }
+    fn next_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::next_decision_projection(self, owner, run)
+    }
+    fn decision_projection_prefix(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Vec<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::decision_projection_prefix(self, owner, run)
+    }
+    fn latest_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::latest_decision_projection(self, owner, run)
+    }
+    fn latest_applied_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::latest_applied_decision_projection(self, owner, run)
+    }
+    fn record_decision_preparation(
+        &mut self,
+        owner: BotOwner,
+        prepared: &DecisionPreparedProjection,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::record_decision_preparation(self, owner, prepared)
+    }
+    fn acknowledge_decision_projection(
+        &mut self,
+        owner: BotOwner,
+        acknowledgment: &DecisionProjectionAcknowledgment,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::acknowledge_decision_projection(self, owner, acknowledgment)
+    }
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,

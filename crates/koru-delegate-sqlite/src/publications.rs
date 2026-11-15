@@ -359,19 +359,7 @@ impl RunsDb {
             if known.is_some() {
                 return Ok(WriteOutcome::AlreadyApplied);
             }
-            tx.execute(
-                "INSERT INTO pending_publications
-                   (event_id, run_id, kind, body_json, attempts, queued_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, 0, ?5)",
-                params![
-                    event.to_string(),
-                    run.to_storage(),
-                    publication_token(kind),
-                    body_json,
-                    now
-                ],
-            )
-            .map_err(|error| LedgerError::sql("enqueue a publication", error))?;
+            insert_on(tx, event, run, kind, body_json, now)?;
             Ok(WriteOutcome::Applied)
         })
     }
@@ -518,6 +506,60 @@ impl RunsDb {
         }
         Ok(pending)
     }
+}
+
+fn insert_on(
+    tx: &rusqlite::Transaction<'_>,
+    event: EventId,
+    run: RunId,
+    kind: PublicationKind,
+    body: &str,
+    now: i64,
+) -> Result<(), LedgerError> {
+    tx.execute(
+        "INSERT INTO pending_publications(event_id,run_id,kind,body_json,attempts,queued_at_ms)
+         VALUES(?1,?2,?3,?4,0,?5)",
+        params![
+            event.to_string(),
+            run.to_storage(),
+            publication_token(kind),
+            body,
+            now
+        ],
+    )
+    .map_err(|e| LedgerError::sql("enqueue a publication", e))?;
+    Ok(())
+}
+
+/// New exact projection owner. Ordinary enqueue's historical identity-only
+/// replay is intentionally unchanged. The caller passes only retained typed
+/// target facts serialized by their shared owning codec.
+pub(crate) fn enqueue_exact_on(
+    tx: &rusqlite::Transaction<'_>,
+    event: EventId,
+    run: RunId,
+    kind: PublicationKind,
+    body: &str,
+    now: i64,
+) -> Result<(), crate::BotLedgerError> {
+    let retained = tx.query_row(
+        "SELECT CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
+                CASE WHEN typeof(kind)='text' AND length(CAST(kind AS BLOB))<=32 THEN kind END,
+                CASE WHEN typeof(body_json)='text' AND length(CAST(body_json AS BLOB)) BETWEEN 1 AND 4194304 THEN body_json END
+         FROM pending_publications WHERE event_id=?1",
+        [event.to_string()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)),
+    ).optional().map_err(|e| LedgerError::sql("read exact retained publication", e))?;
+    if let Some((stored_run, stored_kind, stored_body)) = retained {
+        if stored_run != run.to_storage()
+            || stored_kind != publication_token(kind)
+            || stored_body != body
+        {
+            return Err(crate::BotLedgerError::Conflict);
+        }
+        return Ok(());
+    }
+    insert_on(tx, event, run, kind, body, now)?;
+    Ok(())
 }
 
 fn pending_candidate(
