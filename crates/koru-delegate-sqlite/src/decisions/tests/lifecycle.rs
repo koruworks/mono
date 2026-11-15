@@ -11,7 +11,10 @@ pub(super) fn expected(record: &DecisionRecord) -> DecisionExpected {
     }
 }
 
-pub(super) fn confirmed_cleanup(h: &mut Harness, now: i64) -> (DecisionWaitExpected, ConsumerCleanup) {
+pub(super) fn confirmed_cleanup(
+    h: &mut Harness,
+    now: i64,
+) -> (DecisionWaitExpected, ConsumerCleanup) {
     let f = h.origin();
     let mut attempt = h.db.current_attempt(f.run).unwrap().unwrap();
     if !attempt.retired {
@@ -657,32 +660,86 @@ fn decision_final_cleanup_refuses_old_origin_after_newer_settled_native_stop() {
 }
 
 #[test]
-fn decision_pending_native_ack_supersedes_truthfully_but_prepared_ack_publishes_first(){
-    for prepared in [false,true] {
-        let (mut h,record)=native_ready();let f=h.origin();let input=h.answer_input(&record,true);
-        let answered=h.db.answer_bot_decision(&input,DecisionTransitionId::mint(),&h.proof,h.boot).unwrap();
-        let Some(DecisionNativeResponse::Prepared {key})=answered.native_response else {panic!("response")};
-        let transition=DecisionTransitionId::mint();
-        let settled=h.db.record_decision_native_answer(f.owner,f.run,transition,&DecisionNativeResponse::Acknowledged {key:key.clone(),acknowledgment:key,observed_at_ms:1000}).unwrap();
-        let acknowledgment=h.db.decision_projection(f.owner,f.run,transition).unwrap().unwrap();
-        let event=acknowledgment.target.publications()[0].event;
-        if prepared {h.db.record_decision_preparation(f.owner,&projection::prepared(&acknowledgment)).unwrap();}
-        let ticket=h.db.decision_wait_execution(f.owner,f.run).unwrap().unwrap().expected;
-        let cleanup=h.db.request_decision_cleanup(&ticket,DecisionTransitionId::mint(),DecisionClosureReason::Canceled).unwrap();
-        assert_eq!(h.read(settled.receipt.decision).unwrap().receipt,settled.receipt);
-        assert_eq!(h.read(settled.receipt.decision).unwrap().native_response,settled.native_response);
-        assert!(h.db.publication(event).unwrap().is_none());
-        let prefix=h.db.decision_projection_prefix(f.owner,f.run).unwrap();
+fn decision_pending_native_ack_supersedes_truthfully_but_prepared_ack_publishes_first() {
+    for prepared in [false, true] {
+        let (mut h, record) = native_ready();
+        let f = h.origin();
+        let input = h.answer_input(&record, true);
+        let answered =
+            h.db.answer_bot_decision(&input, DecisionTransitionId::mint(), &h.proof, h.boot)
+                .unwrap();
+        let Some(DecisionNativeResponse::Prepared { key }) = answered.native_response else {
+            panic!("response")
+        };
+        let transition = DecisionTransitionId::mint();
+        let settled =
+            h.db.record_decision_native_answer(
+                f.owner,
+                f.run,
+                transition,
+                &DecisionNativeResponse::Acknowledged {
+                    key: key.clone(),
+                    acknowledgment: key,
+                    observed_at_ms: 1000,
+                },
+            )
+            .unwrap();
+        let acknowledgment =
+            h.db.decision_projection(f.owner, f.run, transition)
+                .unwrap()
+                .unwrap();
+        let event = acknowledgment.target.publications()[0].event;
         if prepared {
-            assert_eq!(prefix.len(),2);assert_eq!(prefix[0].identity.transition,transition);
-            assert!(matches!(prefix[0].state,DecisionProjectionState::Prepared {..}));
-            projection::apply(&mut h,&acknowledgment);
-            assert!(h.db.publication(event).unwrap().is_some());
-        }else{
-            assert_eq!(prefix.len(),1);assert_eq!(prefix[0].identity,cleanup.identity);
-            assert!(matches!(h.db.decision_projection(f.owner,f.run,transition).unwrap().unwrap().state,DecisionProjectionState::Superseded {..}));
+            h.db.record_decision_preparation(f.owner, &projection::prepared(&acknowledgment))
+                .unwrap();
         }
-        projection::apply(&mut h,&cleanup);
-        assert_eq!(h.db.publication(event).unwrap().is_some(),prepared,"unapplied step is never claimed delivered");
+        let ticket =
+            h.db.decision_wait_execution(f.owner, f.run)
+                .unwrap()
+                .unwrap()
+                .expected;
+        let cleanup =
+            h.db.request_decision_cleanup(
+                &ticket,
+                DecisionTransitionId::mint(),
+                DecisionClosureReason::Canceled,
+            )
+            .unwrap();
+        assert_eq!(
+            h.read(settled.receipt.decision).unwrap().receipt,
+            settled.receipt
+        );
+        assert_eq!(
+            h.read(settled.receipt.decision).unwrap().native_response,
+            settled.native_response
+        );
+        assert!(h.db.publication(event).unwrap().is_none());
+        let prefix = h.db.decision_projection_prefix(f.owner, f.run).unwrap();
+        if prepared {
+            assert_eq!(prefix.len(), 2);
+            assert_eq!(prefix[0].identity.transition, transition);
+            assert!(matches!(
+                prefix[0].state,
+                DecisionProjectionState::Prepared { .. }
+            ));
+            projection::apply(&mut h, &acknowledgment);
+            assert!(h.db.publication(event).unwrap().is_some());
+        } else {
+            assert_eq!(prefix.len(), 1);
+            assert_eq!(prefix[0].identity, cleanup.identity);
+            assert!(matches!(
+                h.db.decision_projection(f.owner, f.run, transition)
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                DecisionProjectionState::Superseded { .. }
+            ));
+        }
+        projection::apply(&mut h, &cleanup);
+        assert_eq!(
+            h.db.publication(event).unwrap().is_some(),
+            prepared,
+            "unapplied step is never claimed delivered"
+        );
     }
 }

@@ -178,8 +178,15 @@ pub(super) fn insert_on(
     } = target
     {
         if wait.revision != next(*expected_wait_revision)? {
-            let retained=super::cleanup_owner::retained_for_carry(tx,owner,run)?;
-            require(retained==Some(DecisionCleanupOrigin::Requested {wait:wait.wait,expected_wait_revision:*expected_wait_revision,cause:*cause}))?;
+            let retained = super::cleanup_owner::retained_for_carry(tx, owner, run)?;
+            require(
+                retained
+                    == Some(DecisionCleanupOrigin::Requested {
+                        wait: wait.wait,
+                        expected_wait_revision: *expected_wait_revision,
+                        cause: *cause,
+                    }),
+            )?;
         }
     }
     let mut resume = None;
@@ -372,16 +379,16 @@ impl RunsDb {
     ) -> Result<DecisionProjectionRecord, BotLedgerError> {
         require(target.kind() == DecisionProjectionKind::Source)?;
         self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
-            if read(tx,owner,target.fence().run,transition)?.is_some() {
-                let retained=insert_on(tx,owner,transition,wait,base,target,now)?;
-                super::cleanup_owner::replay_pair(tx,owner,&retained)?;
+            if read(tx, owner, target.fence().run, transition)?.is_some() {
+                let retained = insert_on(tx, owner, transition, wait, base, target, now)?;
+                super::cleanup_owner::replay_pair(tx, owner, &retained)?;
                 return Ok(retained);
             }
-            let cleanup=super::cleanup_owner::current(tx,owner,target.fence().run)?;
-            let source=insert_on(tx, owner, transition, wait, base, target, now)?;
-            if let Some(cleanup)=cleanup {
-                require(cleanup.expected.wait==wait)?;
-                super::cleanup_owner::carry(tx,owner,&source,&cleanup.origin,now)?;
+            let cleanup = super::cleanup_owner::current(tx, owner, target.fence().run)?;
+            let source = insert_on(tx, owner, transition, wait, base, target, now)?;
+            if let Some(cleanup) = cleanup {
+                require(cleanup.expected.wait == wait)?;
+                super::cleanup_owner::carry(tx, owner, &source, &cleanup.origin, now)?;
             }
             Ok(source)
         })

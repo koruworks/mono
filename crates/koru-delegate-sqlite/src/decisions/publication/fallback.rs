@@ -4,6 +4,71 @@
 //! fifty-first decision or a fabricated AI enrollment receipt.
 use super::*;
 
+/// A prompt fallback on a Run that already owns a decision wait cancels fresh
+/// authorization of that same decision. Only an unsettled decision whose native
+/// prompt expired is an expiry; every other case is an authority change.
+fn fallback_cause(reason: BotWaitReason, open: bool) -> DecisionClosureReason {
+    if reason == (BotWaitReason::NativeExpired {}) && open {
+        DecisionClosureReason::Expired
+    } else {
+        DecisionClosureReason::AuthorityChanged
+    }
+}
+
+/// Exact retry of a fallback that strengthened an existing decision's cleanup.
+/// Everything compared is retained and immutable: the request target and its
+/// disposition at that time, and the physical subject the caller named, which
+/// is the recorded consumer when a resume exists and the origin otherwise.
+fn replayed_decision_request(
+    conn: &Connection,
+    fence: &DecisionFence,
+    reason: BotWaitReason,
+    wait: &DecisionWaitRecord,
+    decision: DecisionId,
+    prior: &DecisionProjectionRecord,
+) -> Result<(), BotLedgerError> {
+    let RunProjectionTargetV1::Control {
+        action: DecisionControlAction::CleanupRequested { cause, .. },
+        disposition: Some(disposition),
+        fence: retained,
+        ..
+    } = &prior.target
+    else {
+        return Err(BotLedgerError::Conflict);
+    };
+    let open = matches!(disposition, DecisionDisposition::Open { .. });
+    require(
+        prior
+            .identity
+            .decision
+            .as_ref()
+            .is_some_and(|d| d.decision == decision)
+            && *retained == wait.origin
+            && *cause == fallback_cause(reason, open)
+            && fence.owner == wait.origin.owner
+            && fence.bot == wait.origin.bot
+            && fence.run == wait.origin.run,
+    )?;
+    let record = super::super::rows::read(conn, fence.owner, fence.run, decision)?
+        .ok_or(BotLedgerError::Stale)?;
+    let (attempt, generation, session) = match &record.resume {
+        Some(resume) => {
+            let (attempt, generation, session, _) = resume.consumer_identity();
+            (attempt, generation, session)
+        }
+        None => (
+            wait.origin.attempt,
+            wait.origin.generation,
+            Some(wait.origin.session),
+        ),
+    };
+    require(
+        fence.attempt == attempt
+            && fence.generation == generation
+            && Some(fence.session) == session,
+    )
+}
+
 impl RunsDb {
     pub fn begin_bot_wait_cleanup(
         &mut self,
@@ -24,6 +89,14 @@ impl RunsDb {
             authority::owner(tx,fence.owner,fence.run)?;
             if let Some(prior)=read(tx,fence.owner,fence.run,transition)? {
                 let old=super::super::rows::by_wait(tx,fence.run,prior.identity.wait)?.ok_or(BotLedgerError::Stale)?;
+                if let BotWaitReason::Decision {decision}=old.reason {
+                    // The shared CleanupRequested writer retained this under the
+                    // existing decision. Its owner and cause stay immutable; the
+                    // retry is checked against that retained target, never
+                    // against a no-decision Preserve or today's wait state.
+                    replayed_decision_request(tx,fence,reason,&old,decision,&prior)?;
+                    return Ok(old)
+                }
                 require(old.origin==*fence && old.reason==reason && old.observed_sequence==Some(observed.get())
                     && matches!(prior.target,RunProjectionTargetV1::Control {action:DecisionControlAction::Preserve {},..}))?;
                 return Ok(old)
@@ -34,13 +107,15 @@ impl RunsDb {
                     && current.cleanup_target.session()==Some(fence.session))?;
                 if matches!(current.wait.reason,BotWaitReason::Decision {..}) {
                     if current.wait.phase!=BotWaitPhase::CleanupPending {
-                        let cause=if reason==(BotWaitReason::NativeExpired {}) && current.decision_state.as_ref().is_some_and(|s|s.phase!=DecisionPhase::Settled) {DecisionClosureReason::Expired}else{DecisionClosureReason::AuthorityChanged};
-                        control::request_on(tx,&current.expected,transition,cause,now)?;
+                        let open=current.decision_state.as_ref().is_some_and(|s|s.phase!=DecisionPhase::Settled);
+                        control::request_on(tx,&current.expected,transition,fallback_cause(reason,open),now)?;
                     }
                     return super::super::rows::by_wait(tx,fence.run,current.wait.wait)?.ok_or(BotLedgerError::Stale)
                 }
-                require(current.wait.origin==*fence && current.wait.reason==reason
-                    && current.wait.observed_sequence==Some(observed.get()))?;
+                // Repeated overflow coalesces into the one retained obligation:
+                // its immutable reason and first observed cursor are kept, and
+                // the native session observations keep the additional prompt.
+                require(current.wait.origin==*fence)?;
                 return Ok(current.wait)
             }
             let admitted=crate::bots::routines::native_admission(tx,fence.run)?;

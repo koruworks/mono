@@ -2,6 +2,12 @@
 
 use super::*;
 
+/// A canonical status a confirmed physical cleanup may finish with. This is
+/// never the normal live/positive-ended alternative, which excludes Interrupted.
+fn cleanup_outcome(status: &RunStatus) -> bool {
+    status.is_terminal() || matches!(status, RunStatus::Interrupted { .. })
+}
+
 impl RunsDb {
     /// Internal returned-handle owner only: D has installed the actual returned
     /// sole handle, verified its durable exact marker and cleared its ticket,
@@ -41,7 +47,11 @@ impl RunsDb {
                 _=>return Err(BotLedgerError::Conflict),
             }
             if cleanup_required {
-                require(matches!(wait.cleanup,Some(ConsumerCleanup::Confirmed {..})) && applied.target.effects().status.is_terminal())?;
+                // Confirmed cleanup ends as Cancelled (Stop) or as the approved
+                // Needed-you Interrupted outcome, which is deliberately not
+                // `is_terminal()`; an earlier absorbing terminal status also
+                // stands. The normal positive-ended path below stays separate.
+                require(matches!(wait.cleanup,Some(ConsumerCleanup::Confirmed {..})) && cleanup_outcome(&applied.target.effects().status))?;
             }
             if wait.phase==BotWaitPhase::Settled {
                 require(wait.revision==next(expected.revision)?)?;

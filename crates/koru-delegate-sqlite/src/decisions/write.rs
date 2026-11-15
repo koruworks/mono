@@ -17,9 +17,7 @@ pub(super) use cleanup::{consumer_cleanup_on, origin_stop_on};
 pub(super) use native::record_native_answer_on;
 pub(super) use phase::{DecisionStopCause, phase_on};
 pub(super) use phase::{enroll_on, record_enrollment_on};
-pub(super) use resume::{
-    bind_resume_session_on, close_resume_on, record_resume_input_on, reserve_successor_on,
-};
+pub(super) use resume::{bind_resume_session_on, record_resume_input_on, reserve_successor_on};
 
 #[derive(Debug)]
 pub(crate) struct DecisionMutation {

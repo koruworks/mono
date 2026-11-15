@@ -28,16 +28,29 @@ fn decision_wait_execution_absence_is_owner_checked_and_retired_origin_is_explic
 
 pub(super) fn successor(h: &mut Harness) -> DecisionRecord {
     let f = h.origin();
-    h.db.set_bot_active(f.run, f.attempt, f.generation, false, None).unwrap();
+    h.db.set_bot_active(f.run, f.attempt, f.generation, false, None)
+        .unwrap();
     let retired = enrollment::retired(h);
     let input = h.answer_input(&retired, true);
     let allowed = h.answer(&input, 1004).unwrap().record;
     // Real reservation/attempt owner; no provider or public transport is run.
     let tx = h.db.conn().unchecked_transaction().unwrap();
-    reserve_successor_on(&tx,&DecisionExpected {
-        owner:f.owner,run:f.run,decision:allowed.receipt.decision,revision:allowed.receipt.state.revision,
-        binding_digest:allowed.receipt.binding_digest,
-    },authority::attempt(&tx,&f).unwrap().host_instance.unwrap(),[3;32],&h.proof,h.boot,1005).unwrap();
+    reserve_successor_on(
+        &tx,
+        &DecisionExpected {
+            owner: f.owner,
+            run: f.run,
+            decision: allowed.receipt.decision,
+            revision: allowed.receipt.state.revision,
+            binding_digest: allowed.receipt.binding_digest,
+        },
+        authority::attempt(&tx, &f).unwrap().host_instance.unwrap(),
+        [3; 32],
+        &h.proof,
+        h.boot,
+        1005,
+    )
+    .unwrap();
     tx.commit().unwrap();
     h.read(allowed.receipt.decision).unwrap()
 }

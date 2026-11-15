@@ -11,7 +11,7 @@ mod authority;
 mod current;
 mod drain;
 pub(crate) use current::fresh_native_input_on;
-pub(crate) use current::{retained_consumer_on,fresh_activity_on};
+pub(crate) use current::{acknowledged_continuation_on, fresh_activity_on, retained_consumer_on};
 mod effect;
 pub(crate) use effect::validate_native_on;
 mod observation;

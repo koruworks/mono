@@ -351,7 +351,8 @@ fn current(
     let row = attempts::latest(conn, run)?.ok_or(BotLedgerError::Fenced)?;
     if row.attempt != attempt
         || row.generation != g
-        || (g != AttemptGeneration::FIRST && !crate::decisions::retained_consumer_on(conn,run,&row)?)
+        || (g != AttemptGeneration::FIRST
+            && !crate::decisions::retained_consumer_on(conn, run, &row)?)
         || (live && (row.retired || row.phase.is_terminal()))
     {
         return Err(BotLedgerError::Fenced);
@@ -1039,9 +1040,18 @@ impl BotLedger for RunsDb {
             }
             current(tx, receipt.run, receipt.attempt, receipt.generation, false)?;
             let send = record.initial_send.ok_or(BotLedgerError::Fenced)?;
-            if send.attempt != receipt.attempt || send.generation != receipt.generation
-                || send.turn.is_none() || record.state == BotAdmissionState::Refused {
+            if send.turn.is_none() || record.state == BotAdmissionState::Refused {
                 return Err(BotLedgerError::Fenced);
+            }
+            // The immutable original send, or the exact recorded successor whose
+            // continuation input was acknowledged. The original InitialSend is
+            // never rewritten and a newer generation alone never qualifies.
+            let original = send.attempt == receipt.attempt && send.generation == receipt.generation;
+            if !original {
+                let latest = attempts::latest(tx, receipt.run)?.ok_or(BotLedgerError::Fenced)?;
+                if !crate::decisions::acknowledged_continuation_on(tx, receipt.run, &latest)? {
+                    return Err(BotLedgerError::Fenced);
+                }
             }
             let event = koru_delegate_core::EventId::mint();
             tx.execute("UPDATE bot_admissions SET delivery_outcome='confirmed',delivery_attempt_id=?2,delivery_generation=?3,delivery_chat_id=?4,delivery_ai_attempt_id=?5,delivery_assistant_message_id=?6,delivery_confirmed_at_ms=?7,delivery_publication_event_id=?8,updated_at_ms=?9 WHERE run_id=?1",

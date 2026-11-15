@@ -27,7 +27,11 @@ pub(super) fn base(h: &Harness) -> DecisionPublicationBase {
     }
 }
 
-pub(super) fn source(h: &Harness, base: &DecisionPublicationBase, sequence: u64) -> RunProjectionTargetV1 {
+pub(super) fn source(
+    h: &Harness,
+    base: &DecisionPublicationBase,
+    sequence: u64,
+) -> RunProjectionTargetV1 {
     let sequence = StreamSequence::new(sequence).unwrap();
     RunProjectionTargetV1::Source {
         version: DecisionVersionV1,
@@ -72,7 +76,10 @@ pub(super) fn prepared(record: &DecisionProjectionRecord) -> DecisionPreparedPro
     }
 }
 
-pub(super) fn apply(h: &mut Harness, record: &DecisionProjectionRecord) -> DecisionProjectionRecord {
+pub(super) fn apply(
+    h: &mut Harness,
+    record: &DecisionProjectionRecord,
+) -> DecisionProjectionRecord {
     let prepared = prepared(record);
     h.db.record_decision_preparation(h.origin().owner, &prepared)
         .unwrap();

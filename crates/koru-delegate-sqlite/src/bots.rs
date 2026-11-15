@@ -16,10 +16,9 @@ mod tests;
 use koru_delegate_core::decisions::{
     BotWaitEnrollmentReply, BotWaitId, BotWaitReason, ConsumerCleanup, DecisionBindingV1,
     DecisionClosureReason, DecisionExpected, DecisionFence, DecisionInputAcknowledgment,
-    DecisionNativeResponse, DecisionRetainedEffect,
-    DecisionPreparedProjection, DecisionProjectionAcknowledgment, DecisionProjectionRecord,
-    DecisionPublicationBase, DecisionTransitionId, DecisionWaitExpected, OriginWaitStop,
-    RunProjectionTargetV1,
+    DecisionNativeResponse, DecisionPreparedProjection, DecisionProjectionAcknowledgment,
+    DecisionProjectionRecord, DecisionPublicationBase, DecisionRetainedEffect,
+    DecisionTransitionId, DecisionWaitExpected, OriginWaitStop, RunProjectionTargetV1,
 };
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,

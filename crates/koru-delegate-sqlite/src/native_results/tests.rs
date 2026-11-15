@@ -16,10 +16,13 @@ mod routine;
 pub(crate) fn decision_base() -> (RunsDb, BotExecutionFence, BotPolicyBarrier) {
     decision_subject(Harness::new())
 }
-pub(crate) fn decision_base_in(db:RunsDb,run:RunId)->(RunsDb,BotExecutionFence,BotPolicyBarrier){
-    decision_subject(Harness::on(db,run))
+pub(crate) fn decision_base_in(
+    db: RunsDb,
+    run: RunId,
+) -> (RunsDb, BotExecutionFence, BotPolicyBarrier) {
+    decision_subject(Harness::on(db, run))
 }
-fn decision_subject(h:Harness)->(RunsDb,BotExecutionFence,BotPolicyBarrier){
+fn decision_subject(h: Harness) -> (RunsDb, BotExecutionFence, BotPolicyBarrier) {
     let mut admission = h.db.bot_admission(h.fence.run).unwrap().unwrap().submission;
     admission.provenance.ai_attempt_id = Some(fixtures::v4(210));
     admission.provenance.assistant_message_id = Some(fixtures::v4(211));
@@ -46,11 +49,11 @@ impl Harness {
         let db = RunsDb::in_memory(Box::new(fixtures::FakeClock(Arc::new(AtomicI64::new(
             1000,
         )))));
-        Self::on(db,fixtures::run_id(1))
+        Self::on(db, fixtures::run_id(1))
     }
-    fn on(mut db:RunsDb,run:RunId)->Self{
+    fn on(mut db: RunsDb, run: RunId) -> Self {
         let mut request = fixtures::request(1);
-        request.run=run;
+        request.run = run;
         request.scope = WorkspaceScope::BotFolder {
             folder: BotWorkingFolder::new("/fixture/bot".into()).unwrap(),
         };
@@ -98,7 +101,13 @@ impl Harness {
             db.reserve_bot(submission.request.run, None).unwrap(),
             BotReservation::Acquired
         );
-        let attempt_seed = u8::try_from(db.bot_admission(submission.request.run).unwrap().unwrap().sequence).unwrap();
+        let attempt_seed = u8::try_from(
+            db.bot_admission(submission.request.run)
+                .unwrap()
+                .unwrap()
+                .sequence,
+        )
+        .unwrap();
         let a = fixtures::running_attempt(&mut db, submission.request.run, attempt_seed);
         db.activate_bot(a.run, a.attempt, a.generation, None)
             .unwrap();
