@@ -18,6 +18,7 @@ pub(crate) use rows::current_policy;
 pub(crate) use rows::held as held_for_bot;
 pub(crate) use rows::read_policy as retained_policy_on;
 pub(crate) use rows::created as created_page_on;
+pub(crate) use rows::read as retained_result_on;
 #[cfg(test)]
 pub(crate) mod tests;
 

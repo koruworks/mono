@@ -16,7 +16,7 @@ fn stop_cause(
     })
 }
 
-fn disposition(receipt: &DecisionReceipt) -> Result<DecisionDisposition, BotLedgerError> {
+pub(super) fn disposition(receipt: &DecisionReceipt) -> Result<DecisionDisposition, BotLedgerError> {
     Ok(match &receipt.closure {
         None => DecisionDisposition::Open {
             state: receipt.state.clone(),

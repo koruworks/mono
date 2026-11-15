@@ -17,6 +17,8 @@ use koru_delegate_core::decisions::{
     BotWaitId, DecisionBindingV1, DecisionClosureReason, DecisionPreparedProjection,
     DecisionProjectionAcknowledgment, DecisionProjectionRecord, DecisionPublicationBase,
     DecisionTransitionId, DecisionWaitExpected, RunProjectionTargetV1,
+    ConsumerCleanup, DecisionExpected, DecisionNativeResponse, DecisionInputAcknowledgment,
+    BotWaitEnrollmentReply, OriginWaitStop,
 };
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
@@ -200,6 +202,16 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn decision_cleanup_ownership(&self,owner:BotOwner,run:RunId)->Result<Option<crate::DecisionCleanupOwnership>,BotLedgerError>;
+    fn answer_bot_decision(&mut self,input:&crate::AnswerDecision,transition:DecisionTransitionId,proof:&FreshBotPolicyProof,boot:koru_delegate_core::DelegateBootId)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn record_decision_native_answer(&mut self,owner:BotOwner,run:RunId,transition:DecisionTransitionId,response:&DecisionNativeResponse)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn record_decision_consumer_cleanup(&mut self,expected:&DecisionWaitExpected,cleanup_projection:DecisionTransitionId,transition:DecisionTransitionId,observation:&ConsumerCleanup)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn enroll_decision_cleanup(&mut self,expected:&DecisionWaitExpected,transition:DecisionTransitionId)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn record_decision_enrollment(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,reply:&BotWaitEnrollmentReply)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn record_decision_origin_stop(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,release:&OriginWaitStop)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn reserve_decision_successor(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,host:koru_delegate_core::HostInstanceId,fingerprint:[u8;32],proof:&FreshBotPolicyProof,boot:koru_delegate_core::DelegateBootId)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn bind_decision_successor(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,creation:IdempotencyKey,host:koru_delegate_core::HostInstanceId,session:koru_delegate_core::SessionId)->Result<crate::DecisionRecord,BotLedgerError>;
+    fn record_decision_resume_input(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,input:IdempotencyKey,fingerprint:[u8;32],acknowledgment:Option<&DecisionInputAcknowledgment>)->Result<crate::DecisionRecord,BotLedgerError>;
     fn prepare_bot_decision(
         &mut self,
         binding: &DecisionBindingV1,

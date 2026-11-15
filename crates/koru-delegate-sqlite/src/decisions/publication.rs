@@ -7,6 +7,8 @@ use super::*;
 mod insert;
 mod control;
 mod initial;
+mod lifecycle;
+mod cleanup_owner;
 mod rows;
 mod write;
 

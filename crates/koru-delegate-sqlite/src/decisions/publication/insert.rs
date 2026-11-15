@@ -369,7 +369,18 @@ impl RunsDb {
     ) -> Result<DecisionProjectionRecord, BotLedgerError> {
         require(target.kind() == DecisionProjectionKind::Source)?;
         self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
-            insert_on(tx, owner, transition, wait, base, target, now)
+            if read(tx,owner,target.fence().run,transition)?.is_some() {
+                let retained=insert_on(tx,owner,transition,wait,base,target,now)?;
+                super::cleanup_owner::replay_pair(tx,owner,&retained)?;
+                return Ok(retained);
+            }
+            let cleanup=super::cleanup_owner::current(tx,owner,target.fence().run)?;
+            let source=insert_on(tx, owner, transition, wait, base, target, now)?;
+            if let Some(cleanup)=cleanup {
+                require(cleanup.expected.wait==wait)?;
+                super::cleanup_owner::carry(tx,owner,&source,&cleanup.origin,now)?;
+            }
+            Ok(source)
         })
     }
 }

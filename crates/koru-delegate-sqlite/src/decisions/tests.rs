@@ -12,6 +12,7 @@ mod enrollment;
 mod native_completion;
 mod observation;
 mod occupancy;
+mod lifecycle;
 mod preparation;
 mod projection;
 mod resume;

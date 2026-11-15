@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: MPL-2.0
+use super::*;
+
+fn native_ready() -> (Harness, DecisionRecord) {
+    let mut h = Harness::new();
+    h.native();
+    let record =
+        h.db.prepare_bot_decision(&h.binding, &h.proof, h.boot, &projection::base(&h))
+            .unwrap();
+    let f = h.origin();
+    let initial =
+        h.db.next_decision_projection(f.owner, f.run)
+            .unwrap()
+            .unwrap();
+    projection::apply(&mut h, &initial);
+    let record = h.read(record.receipt.decision).unwrap();
+    (h, record)
+}
+
+#[test]
+fn decision_native_public_answer_and_ack_commit_stable_resolution_without_ending_run() {
+    for allow in [false, true] {
+        let (mut h, record) = native_ready();
+        let f = h.origin();
+        let input = h.answer_input(&record, allow);
+        let answer_transition = DecisionTransitionId::mint();
+        let answered =
+            h.db.answer_bot_decision(&input, answer_transition, &h.proof, h.boot)
+                .unwrap();
+        let Some(DecisionNativeResponse::Prepared { key }) = answered.native_response else {
+            panic!("prepared response")
+        };
+        let response = DecisionNativeResponse::Acknowledged {
+            key: key.clone(),
+            acknowledgment: key,
+            observed_at_ms: 1000,
+        };
+        let ack_transition = DecisionTransitionId::mint();
+        h.revoke();
+        let settled =
+            h.db.record_decision_native_answer(f.owner, f.run, ack_transition, &response)
+                .unwrap();
+        assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+        let projected =
+            h.db.decision_projection(f.owner, f.run, ack_transition)
+                .unwrap()
+                .unwrap();
+        assert_eq!(projected.target.publications().len(), 1);
+        assert!(
+            matches!(projected.target.publications()[0].fact,RunFact::ApprovalResolved {outcome,..} if outcome==if allow {ApprovalOutcome::Approved}else{ApprovalOutcome::Rejected})
+        );
+        assert!(!projected.target.effects().status.is_terminal());
+        assert_eq!(
+            h.db.bot_admission(f.run).unwrap().unwrap().state,
+            BotAdmissionState::Executing
+        );
+        assert!(!h.db.current_attempt(f.run).unwrap().unwrap().retired);
+        assert_eq!(
+            h.db.record_decision_native_answer(f.owner, f.run, ack_transition, &response)
+                .unwrap(),
+            settled
+        );
+        assert_eq!(
+            h.db.decision_projection(f.owner, f.run, ack_transition)
+                .unwrap()
+                .unwrap(),
+            projected
+        );
+        assert_eq!(
+            h.db.answer_bot_decision(&input, answer_transition, &h.proof, DelegateBootId::mint())
+                .unwrap()
+                .receipt
+                .answer,
+            settled.receipt.answer
+        );
+    }
+}
+
+#[test]
+fn decision_native_public_answer_crash_rolls_back_receipt_and_control_together() {
+    for moment in crate::Moment::ALL {
+        let (mut h, record) = native_ready();
+        let f = h.origin();
+        let input = h.answer_input(&record, true);
+        let transition = DecisionTransitionId::mint();
+        h.db.arm_crash(crate::CrashPoint {
+            op: crate::WriteOp::RecordDecisionProjection,
+            at: moment,
+        });
+        assert!(
+            h.db.answer_bot_decision(&input, transition, &h.proof, h.boot)
+                .is_err()
+        );
+        let committed = moment == crate::Moment::AfterCommit;
+        assert_eq!(
+            h.read(record.receipt.decision)
+                .unwrap()
+                .receipt
+                .answer
+                .is_some(),
+            committed
+        );
+        assert_eq!(
+            h.db.decision_projection(f.owner, f.run, transition)
+                .unwrap()
+                .is_some(),
+            committed
+        );
+        h.db.restart_in_memory();
+        let accepted =
+            h.db.answer_bot_decision(&input, transition, &h.proof, h.boot)
+                .unwrap();
+        assert!(accepted.receipt.answer.is_some());
+        assert!(
+            h.db.decision_projection(f.owner, f.run, transition)
+                .unwrap()
+                .is_some()
+        );
+    }
+}
+
+#[test]
+fn decision_successor_reservation_replays_before_revocation_and_keeps_initial_send() {
+    let mut h = Harness::new();
+    let f = h.origin();
+    let original = h.db.bot_admission(f.run).unwrap().unwrap().initial_send;
+    let reserved = observation::successor(&mut h);
+    let expected = DecisionExpected {
+        owner: f.owner,
+        run: f.run,
+        decision: reserved.receipt.decision,
+        revision: rev(1),
+        binding_digest: reserved.receipt.binding_digest,
+    };
+    let resume = reserved.resume.as_ref().unwrap();
+    let (attempt, generation, _, _) = resume.consumer_identity();
+    let host =
+        h.db.current_attempt(f.run)
+            .unwrap()
+            .unwrap()
+            .host_instance
+            .unwrap();
+    h.revoke();
+    let tx = h.db.conn().unchecked_transaction().unwrap();
+    let replay = reserve_successor_on(
+        &tx,
+        &expected,
+        host,
+        resume.input_fingerprint,
+        &h.proof,
+        DelegateBootId::mint(),
+        i64::MAX,
+    )
+    .unwrap();
+    assert_eq!(replay.outcome, WriteOutcome::AlreadyApplied);
+    assert_eq!(replay.record, reserved);
+    assert!(reserve_successor_on(&tx, &expected, host, [99; 32], &h.proof, h.boot, 1005).is_err());
+    drop(tx);
+    assert_ne!(attempt, f.attempt);
+    assert_eq!(generation.get(), f.generation.get() + 1);
+    assert_eq!(
+        h.db.bot_admission(f.run).unwrap().unwrap().initial_send,
+        original
+    );
+}
+
+#[test]
+fn decision_cleanup_source_carries_owner_and_replays_pair_after_terminal_supersession() {
+    let (mut h, _) = native_ready();
+    let f = h.origin();
+    let expected =
+        h.db.decision_wait_execution(f.owner, f.run)
+            .unwrap()
+            .unwrap()
+            .expected;
+    let request =
+        h.db.request_decision_cleanup(
+            &expected,
+            DecisionTransitionId::mint(),
+            DecisionClosureReason::Canceled,
+        )
+        .unwrap();
+    projection::apply(&mut h, &request);
+    let before =
+        h.db.decision_cleanup_ownership(f.owner, f.run)
+            .unwrap()
+            .unwrap();
+    let mut base = projection::base(&h);
+    projection::advance_base(&mut base, &request);
+    let target = projection::source(&h, &base, 1);
+    let transition = DecisionTransitionId::mint();
+    let source =
+        h.db.record_decision_source(f.owner, transition, expected.wait, &base, &target)
+            .unwrap();
+    let prefix = h.db.decision_projection_prefix(f.owner, f.run).unwrap();
+    assert_eq!(prefix.len(), 2);
+    assert_eq!(prefix[0], source);
+    assert_eq!(
+        prefix[1].identity.sequence.get(),
+        source.identity.sequence.get() + 1
+    );
+    assert_eq!(
+        h.db.decision_cleanup_ownership(f.owner, f.run)
+            .unwrap()
+            .unwrap()
+            .origin,
+        before.origin
+    );
+    assert_eq!(
+        h.db.record_decision_source(f.owner, transition, expected.wait, &base, &target)
+            .unwrap(),
+        source
+    );
+    projection::apply(&mut h, &source);
+    h.db.advance(f.run, f.generation, crate::AttemptPhase::Ended)
+        .unwrap();
+    let attempt = h.db.retire(f.run, f.generation).unwrap();
+    let observed =
+        h.db.decision_wait_execution(f.owner, f.run)
+            .unwrap()
+            .unwrap();
+    let cleanup = ConsumerCleanup::Confirmed {
+        cleanup_revision: observed.wait.revision,
+        target: observed.cleanup_target,
+        creation_retirement: ObservedCreationRetirement {
+            creation_key: attempt.provider_session.unwrap().idempotency,
+            host: attempt.host_instance.unwrap(),
+            result: ObservedRetirementResult::KnownEnded { session: f.session },
+            observed_at_ms: 1000,
+        },
+        attempt_retirement: DecisionAttemptRetirement {
+            run: f.run,
+            attempt: f.attempt,
+            generation: f.generation,
+            retired_at_ms: attempt.updated_at_ms,
+        },
+        native_drain: DecisionNativeDrain {
+            run: f.run,
+            attempt: f.attempt,
+            generation: f.generation,
+            observed_at_ms: 1000,
+            effects: DecisionList::default(),
+        },
+        retained_effect_outcome: None,
+    };
+    let final_transition = DecisionTransitionId::mint();
+    let settled =
+        h.db.record_decision_consumer_cleanup(
+            &observed.expected,
+            prefix[1].identity.transition,
+            final_transition,
+            &cleanup,
+        )
+        .unwrap();
+    assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+    assert_eq!(settled.wait.phase, BotWaitPhase::CleanupPending);
+    assert!(
+        h.db.decision_cleanup_ownership(f.owner, f.run)
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        h.db.decision_projection(f.owner, f.run, prefix[1].identity.transition)
+            .unwrap()
+            .unwrap()
+            .state,
+        DecisionProjectionState::Superseded { .. }
+    ));
+    assert_eq!(
+        h.db.record_decision_source(f.owner, transition, expected.wait, &base, &target)
+            .unwrap()
+            .identity,
+        source.identity
+    );
+    assert_eq!(
+        h.db.record_decision_consumer_cleanup(
+            &observed.expected,
+            prefix[1].identity.transition,
+            final_transition,
+            &cleanup
+        )
+        .unwrap(),
+        settled
+    );
+    assert_eq!(
+        h.db.bot_admission(f.run).unwrap().unwrap().state,
+        BotAdmissionState::Executing,
+        "publication and handle return still own admission"
+    );
+}

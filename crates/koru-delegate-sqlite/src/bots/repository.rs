@@ -342,6 +342,16 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn decision_cleanup_ownership(&self,owner:BotOwner,run:RunId)->Result<Option<crate::DecisionCleanupOwnership>,BotLedgerError>{RunsDb::decision_cleanup_ownership(self,owner,run)}
+    fn answer_bot_decision(&mut self,input:&crate::AnswerDecision,transition:DecisionTransitionId,proof:&FreshBotPolicyProof,boot:koru_delegate_core::DelegateBootId)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::answer_bot_decision(self,input,transition,proof,boot)}
+    fn record_decision_native_answer(&mut self,owner:BotOwner,run:RunId,transition:DecisionTransitionId,response:&DecisionNativeResponse)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::record_decision_native_answer(self,owner,run,transition,response)}
+    fn record_decision_consumer_cleanup(&mut self,expected:&DecisionWaitExpected,cleanup_projection:DecisionTransitionId,transition:DecisionTransitionId,observation:&ConsumerCleanup)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::record_decision_consumer_cleanup(self,expected,cleanup_projection,transition,observation)}
+    fn enroll_decision_cleanup(&mut self,expected:&DecisionWaitExpected,transition:DecisionTransitionId)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::enroll_decision_cleanup(self,expected,transition)}
+    fn record_decision_enrollment(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,reply:&BotWaitEnrollmentReply)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::record_decision_enrollment(self,expected,transition,reply)}
+    fn record_decision_origin_stop(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,release:&OriginWaitStop)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::record_decision_origin_stop(self,expected,transition,release)}
+    fn reserve_decision_successor(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,host:koru_delegate_core::HostInstanceId,fingerprint:[u8;32],proof:&FreshBotPolicyProof,boot:koru_delegate_core::DelegateBootId)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::reserve_decision_successor(self,expected,transition,host,fingerprint,proof,boot)}
+    fn bind_decision_successor(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,creation:IdempotencyKey,host:koru_delegate_core::HostInstanceId,session:koru_delegate_core::SessionId)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::bind_decision_successor(self,expected,transition,creation,host,session)}
+    fn record_decision_resume_input(&mut self,expected:&DecisionExpected,transition:DecisionTransitionId,input:IdempotencyKey,fingerprint:[u8;32],acknowledgment:Option<&DecisionInputAcknowledgment>)->Result<crate::DecisionRecord,BotLedgerError>{RunsDb::record_decision_resume_input(self,expected,transition,input,fingerprint,acknowledgment)}
     fn prepare_bot_decision(
         &mut self,
         binding: &DecisionBindingV1,
