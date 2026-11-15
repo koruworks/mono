@@ -304,3 +304,126 @@ fn decision_projection_latest_applied_refuses_all_illegal_open_shapes_before_bod
         );
     }
 }
+
+#[test]
+fn decision_initial_projection_is_atomic_and_pending_never_answers_or_enrolls() {
+    for native in [false, true] {
+        let mut h = Harness::new();
+        if native {
+            h.native();
+        }
+        let base = base(&h);
+        let first =
+            h.db.prepare_bot_decision(&h.binding, &h.proof, h.boot, &base)
+                .unwrap();
+        let f = h.origin();
+        assert_eq!(first.receipt.state.phase, DecisionPhase::Publishing);
+        let projection =
+            h.db.next_decision_projection(f.owner, f.run)
+                .unwrap()
+                .unwrap();
+        assert_eq!(projection.identity.wait, first.wait.wait);
+        assert!(projection.target.effects().steps.as_slice().is_empty());
+        assert!(
+            projection.target.publications().is_empty(),
+            "no duplicate native prompt or synthetic ApprovalId"
+        );
+        let answer = h.answer_input(&first, true);
+        assert!(h.answer(&answer, 1001).is_err());
+        let tx = h.db.conn().unchecked_transaction().unwrap();
+        assert!(
+            enroll_on(
+                &tx,
+                f.owner,
+                f.run,
+                first.receipt.decision,
+                first.receipt.state.revision,
+                first.wait.revision,
+                1001
+            )
+            .is_err()
+        );
+        drop(tx);
+        let prepared = prepared(&projection);
+        h.db.record_decision_preparation(f.owner, &prepared)
+            .unwrap();
+        assert_eq!(
+            h.read(first.receipt.decision).unwrap().receipt.state.phase,
+            DecisionPhase::Publishing
+        );
+        apply(&mut h, &projection);
+        let ready = h.read(first.receipt.decision).unwrap();
+        assert_eq!(
+            ready.receipt.state.phase,
+            if native {
+                DecisionPhase::NativeWait
+            } else {
+                DecisionPhase::Holding
+            }
+        );
+        assert_eq!(
+            h.db.prepare_bot_decision(&h.binding, &h.proof, h.boot, &base)
+                .unwrap(),
+            ready
+        );
+        assert_eq!(h.count("bot_decision_publications"), 1);
+    }
+}
+
+#[test]
+fn decision_initial_ack_crash_rolls_back_projection_and_readiness_together() {
+    for moment in [
+        crate::Moment::AfterWriteBeforeCommit,
+        crate::Moment::AfterCommit,
+    ] {
+        let mut h = Harness::new();
+        let base = base(&h);
+        let first =
+            h.db.prepare_bot_decision(&h.binding, &h.proof, h.boot, &base)
+                .unwrap();
+        let f = h.origin();
+        let projection =
+            h.db.next_decision_projection(f.owner, f.run)
+                .unwrap()
+                .unwrap();
+        let prepared = prepared(&projection);
+        h.db.record_decision_preparation(f.owner, &prepared)
+            .unwrap();
+        h.db.arm_crash(crate::CrashPoint {
+            op: crate::WriteOp::AcknowledgeDecisionProjection,
+            at: moment,
+        });
+        let ack = DecisionProjectionAcknowledgment {
+            identity: projection.identity.clone(),
+            delta_digest: prepared.delta_digest,
+            observed_version: DecisionVersionVector::new(vec![3]).unwrap(),
+        };
+        assert!(h.db.acknowledge_decision_projection(f.owner, &ack).is_err());
+        h.db.restart_in_memory();
+        let committed = moment == crate::Moment::AfterCommit;
+        assert_eq!(
+            matches!(
+                h.db.decision_projection(f.owner, f.run, projection.identity.transition)
+                    .unwrap()
+                    .unwrap()
+                    .state,
+                DecisionProjectionState::Applied { .. }
+            ),
+            committed
+        );
+        assert_eq!(
+            h.read(first.receipt.decision).unwrap().receipt.state.phase,
+            if committed {
+                DecisionPhase::Holding
+            } else {
+                DecisionPhase::Publishing
+            }
+        );
+        h.db.acknowledge_decision_projection(f.owner, &ack).unwrap();
+        assert_eq!(
+            h.read(first.receipt.decision).unwrap().receipt.state.phase,
+            DecisionPhase::Holding
+        );
+        assert_eq!(h.count("bot_decision_publications"), 1);
+    }
+}
