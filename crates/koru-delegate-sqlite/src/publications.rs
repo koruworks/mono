@@ -78,6 +78,27 @@ pub struct PublicationRecord {
     pub acknowledged_at_ms: Option<i64>,
 }
 
+/// Ephemeral seek position, not a publication identity or a persisted cursor.
+/// Event identity detects a deleted rowid that SQLite subsequently reused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingPublicationRunCursor {
+    rowid: i64,
+    event: EventId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingPublicationRunSeek {
+    Candidate {
+        cursor: PendingPublicationRunCursor,
+        run: RunId,
+    },
+    Malformed {
+        cursor: PendingPublicationRunCursor,
+    },
+    Exhausted,
+    StaleCursor,
+}
+
 const RECORD_COLUMNS: &str =
     "event_id, run_id, kind, body_json, attempts, queued_at_ms, acknowledged_at_ms";
 
@@ -120,6 +141,174 @@ fn records(
 }
 
 impl RunsDb {
+    /// Snapshot the highest unacknowledged Run key. The partial index keeps
+    /// acknowledged history out of this bounded retry walk.
+    pub fn pending_publication_run_anchor(
+        &self,
+    ) -> Result<Option<PendingPublicationRunCursor>, LedgerError> {
+        let mut query = self.conn().prepare(
+            "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
+             WHERE acknowledged_at_ms IS NULL ORDER BY run_id DESC LIMIT 1",
+        ).map_err(|e| LedgerError::sql("anchor pending publication Runs", e))?;
+        let mut rows = query
+            .query([])
+            .map_err(|e| LedgerError::sql("anchor pending publication Runs", e))?;
+        rows.next()
+            .map_err(|e| LedgerError::sql("anchor pending publication Runs", e))?
+            .map(pending_candidate)
+            .transpose()
+            .map(|v| v.map(|(cursor, _)| cursor))
+    }
+
+    /// One distinct Run seek. The actor skips at most its bounded owned set
+    /// between seeks; SQL does not scan an excluded historical prefix.
+    pub fn next_pending_publication_run(
+        &self,
+        after: Option<PendingPublicationRunCursor>,
+        through: PendingPublicationRunCursor,
+        before_or_at: Option<PendingPublicationRunCursor>,
+    ) -> Result<PendingPublicationRunSeek, LedgerError> {
+        if !cursor_present(self.conn(), through)?
+            || after
+                .map(|c| cursor_present(self.conn(), c))
+                .transpose()?
+                .is_some_and(|v| !v)
+            || before_or_at
+                .map(|c| cursor_present(self.conn(), c))
+                .transpose()?
+                .is_some_and(|v| !v)
+        {
+            return Ok(PendingPublicationRunSeek::StaleCursor);
+        }
+        // Keep malformed raw keys inside SQLite and choose the tighter wrap
+        // bound with two point lookups. An OR-filtered suffix could scan a
+        // large out-of-range backlog; the following seek has one exact bound.
+        let through = if let Some(other) = before_or_at {
+            let left: bool = self
+                .conn()
+                .query_row(
+                    "SELECT (SELECT run_id FROM pending_publications WHERE rowid=?1)
+                     <= (SELECT run_id FROM pending_publications WHERE rowid=?2)",
+                    params![through.rowid, other.rowid],
+                    |r| r.get(0),
+                )
+                .map_err(|e| LedgerError::sql("bound publication Run wrap", e))?;
+            if left { through } else { other }
+        } else {
+            through
+        };
+        let query = if after.is_some() {
+            "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
+             WHERE acknowledged_at_ms IS NULL
+               AND run_id>(SELECT run_id FROM pending_publications WHERE rowid=?1)
+               AND run_id<=(SELECT run_id FROM pending_publications WHERE rowid=?2)
+             ORDER BY run_id LIMIT 1"
+        } else {
+            "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
+             WHERE acknowledged_at_ms IS NULL
+               AND run_id<=(SELECT run_id FROM pending_publications WHERE rowid=?2)
+             ORDER BY run_id LIMIT 1"
+        };
+        let mut statement = self
+            .conn()
+            .prepare(query)
+            .map_err(|e| LedgerError::sql("seek pending publication Run", e))?;
+        let mut rows = statement
+            .query(params![after.map(|c| c.rowid), through.rowid])
+            .map_err(|e| LedgerError::sql("seek pending publication Run", e))?;
+        match rows
+            .next()
+            .map_err(|e| LedgerError::sql("seek pending publication Run", e))?
+        {
+            Some(row) => {
+                let (cursor, run) = pending_candidate(row)?;
+                Ok(match run {
+                    Some(run) => PendingPublicationRunSeek::Candidate { cursor, run },
+                    None => PendingPublicationRunSeek::Malformed { cursor },
+                })
+            }
+            None => Ok(PendingPublicationRunSeek::Exhausted),
+        }
+    }
+
+    /// Exact per-Run FIFO used by the bounded cross-Run drain. This is not a
+    /// claim that old cross-Run rowid FIFO survives keyset scheduling.
+    pub fn decision_open_publications_for(
+        &self,
+        run: RunId,
+        limit: usize,
+    ) -> Result<Vec<OpenPublication>, LedgerError> {
+        if !(1..=64).contains(&limit) {
+            return Err(LedgerError::Corrupt {
+                table: "pending_publications",
+                column: "limit",
+            });
+        }
+        let mut statement = self.conn().prepare(
+            "SELECT CASE WHEN typeof(event_id)='text' AND length(CAST(event_id AS BLOB))=36 THEN event_id END,
+                    CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
+                    CASE WHEN kind IN ('lifecycle','artifact_registration','usage') THEN kind END,
+                    CASE WHEN typeof(body_json)='text' AND length(CAST(body_json AS BLOB)) BETWEEN 1 AND 4194304 THEN body_json END,
+                    CASE WHEN typeof(attempts)='integer' THEN attempts END,
+                    CASE WHEN typeof(queued_at_ms)='integer' THEN queued_at_ms END
+             FROM pending_publications INDEXED BY pending_publications_open_run
+             WHERE acknowledged_at_ms IS NULL AND run_id=?1 ORDER BY rowid LIMIT ?2",
+        ).map_err(|e| LedgerError::sql("read bounded per-Run publications", e))?;
+        let mut cursor = statement
+            .query(params![run.to_storage(), limit as i64])
+            .map_err(|e| LedgerError::sql("read bounded per-Run publications", e))?;
+        let mut result = Vec::new();
+        let mut remaining_bytes = koru_delegate_core::decisions::DECISION_FRAME_BYTES;
+        while let Some(row) = cursor
+            .next()
+            .map_err(|e| LedgerError::sql("read bounded per-Run publications", e))?
+        {
+            let body_len = match row
+                .get_ref(3)
+                .map_err(|e| LedgerError::sql("read bounded publication body", e))?
+            {
+                rusqlite::types::ValueRef::Text(bytes) => bytes.len(),
+                _ => {
+                    return Err(LedgerError::Corrupt {
+                        table: "pending_publications",
+                        column: "body_json",
+                    });
+                }
+            };
+            // Test the borrowed SQLite value before allocating its String.
+            // Leave the first non-fitting row at the head of the next exact
+            // FIFO read; a short prefix never proves this Run is drained.
+            if body_len > remaining_bytes {
+                break;
+            }
+            remaining_bytes -= body_len;
+            let read = || -> rusqlite::Result<(String, String, String, String, i64, i64)> {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            };
+            let (event, stored_run, kind, body, attempts, queued_at_ms) =
+                read().map_err(|_| LedgerError::Corrupt {
+                    table: "pending_publications",
+                    column: "bounded_columns",
+                })?;
+            result.push(OpenPublication {
+                event: parse_event(&event)?,
+                run: parse_run(&stored_run)?,
+                kind: parse_publication_kind(&kind)?,
+                body: PublicationBody(body),
+                attempts: attempts_of(attempts)?,
+                queued_at_ms,
+            });
+        }
+        Ok(result)
+    }
+
     /// One publication by its id, acknowledged or not; `None` for an id
     /// never queued.
     pub fn publication(&self, event: EventId) -> Result<Option<PublicationRecord>, LedgerError> {
@@ -329,6 +518,44 @@ impl RunsDb {
         }
         Ok(pending)
     }
+}
+
+fn pending_candidate(
+    row: &rusqlite::Row<'_>,
+) -> Result<(PendingPublicationRunCursor, Option<RunId>), LedgerError> {
+    let bad = || LedgerError::Corrupt {
+        table: "pending_publications",
+        column: "seek_identity",
+    };
+    let event = match row.get_ref(1).map_err(|_| bad())? {
+        rusqlite::types::ValueRef::Text(bytes) if bytes.len() == 36 => {
+            parse_event(std::str::from_utf8(bytes).map_err(|_| bad())?)?
+        }
+        _ => return Err(bad()),
+    };
+    let cursor = PendingPublicationRunCursor {
+        rowid: row.get(0).map_err(|_| bad())?,
+        event,
+    };
+    let run = match row.get_ref(2).map_err(|_| bad())? {
+        rusqlite::types::ValueRef::Text(bytes) if bytes.len() == 36 => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| parse_run(s).ok()),
+        _ => None,
+    };
+    Ok((cursor, run))
+}
+
+fn cursor_present(
+    conn: &rusqlite::Connection,
+    cursor: PendingPublicationRunCursor,
+) -> Result<bool, LedgerError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_publications WHERE rowid=?1 AND event_id=?2)",
+        params![cursor.rowid, cursor.event.to_string()],
+        |r| r.get(0),
+    )
+    .map_err(|e| LedgerError::sql("check publication Run cursor", e))
 }
 
 fn parse_event(value: &str) -> Result<EventId, LedgerError> {

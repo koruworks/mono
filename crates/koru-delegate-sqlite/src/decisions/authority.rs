@@ -116,6 +116,31 @@ pub(super) fn fresh(
     proof: &FreshBotPolicyProof,
     live: bool,
 ) -> Result<BotAdmissionRecord, BotLedgerError> {
+    let admitted = current_policy(conn, binding, proof)?;
+    let f = binding.origin();
+    let original = attempt(conn, &f)?;
+    let current_generation: u32 = conn
+        .query_row(
+            "SELECT max(generation) FROM run_attempts WHERE run_id=?1",
+            [f.run.to_storage()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    require(original.generation.get() == current_generation)?;
+    if live {
+        require(!original.retired && original.phase == crate::AttemptPhase::Running)?;
+    }
+    Ok(admitted)
+}
+
+/// Same full immutable subject and current policy intersection, without
+/// substituting the original attempt for an explicitly retained consumer.
+/// Callers must separately qualify the exact current original/resume fence.
+pub(super) fn current_policy(
+    conn: &Connection,
+    binding: &DecisionBindingV1,
+    proof: &FreshBotPolicyProof,
+) -> Result<BotAdmissionRecord, BotLedgerError> {
     let admitted = retained(conn, binding)?;
     // The reused policy owner predates bounded body projections. Bound the
     // one exact current row before its existing decoder allocates strings/blob.
@@ -152,18 +177,6 @@ pub(super) fn fresh(
         )?;
     }
     require(admitted.state == BotAdmissionState::Executing)?;
-    let original = attempt(conn, &f)?;
-    let current_generation: u32 = conn
-        .query_row(
-            "SELECT max(generation) FROM run_attempts WHERE run_id=?1",
-            [f.run.to_storage()],
-            |r| r.get(0),
-        )
-        .map_err(sql)?;
-    require(original.generation.get() == current_generation)?;
-    if live {
-        require(!original.retired && original.phase == crate::AttemptPhase::Running)?;
-    }
     Ok(admitted)
 }
 

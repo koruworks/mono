@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Serialize, de::DeserializeOwned};
 
 mod authority;
+mod publication;
 mod rows;
 // These transaction bodies deliberately have no public committing wrapper yet.
 // C3 must add the control projection before committing their transaction.

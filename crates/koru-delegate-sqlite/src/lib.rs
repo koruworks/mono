@@ -82,7 +82,10 @@ pub use native_results::{
     NativeEffectLease, NativeIntentRecord, NativeLeaseOutcome, NativeLeaseState,
     NativePolicyRecord, NativeRecoveryCursor, NativeResultLedger, PendingNativeResult,
 };
-pub use publications::{OpenPublication, PublicationBody, PublicationRecord};
+pub use publications::{
+    OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek,
+    PublicationBody, PublicationRecord,
+};
 pub use restart::{LookupAnswer, RestartVerdict, ResumePolicy, classify_at_restart};
 pub use schedule_publications::{
     SchedulePublicationBody, SchedulePublicationCursor, SchedulePublicationFact,

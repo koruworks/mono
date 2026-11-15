@@ -7,6 +7,7 @@ use koru_delegate_core::PublicationKind;
 
 use super::*;
 use crate::fixtures::{BODY_SENTINEL, Root, created_run, event};
+mod decision_seek;
 
 fn body(n: u8) -> String {
     format!("{{\"sentinel\":\"{BODY_SENTINEL}\",\"n\":{n}}}")

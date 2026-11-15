@@ -4,9 +4,12 @@
 use super::*;
 use rusqlite::{params_from_iter, types::Value};
 mod answer;
+mod native;
 mod phase;
 #[cfg(test)]
 pub(super) use answer::{AnswerDecision, answer_on};
+#[cfg(test)]
+pub(super) use native::record_native_answer_on;
 #[cfg(test)]
 pub(super) use phase::{DecisionStopCause, enroll_on, phase_on, record_enrollment_on};
 

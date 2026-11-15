@@ -79,6 +79,9 @@ pub struct DecisionPublicationBase {
     pub document: DocumentId,
     pub source_schema: DecisionSourceSchema,
     pub observed_created_at_ms: i64,
+    /// Current attached document offset, checked again by the document mapper.
+    /// This is not a separately retained SQL counter or history-size proof.
+    pub timeline_len: u64,
     pub subject_digest: DecisionDigest,
     pub predecessor: DecisionProjectionPredecessor,
     pub bookkeeping: Option<DecisionSourceBookkeeping>,

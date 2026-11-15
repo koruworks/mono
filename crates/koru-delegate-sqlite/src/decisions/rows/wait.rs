@@ -67,6 +67,20 @@ pub(super) fn read_wait(
     )?;
     Ok(record)
 }
+pub(in crate::decisions) fn by_wait(
+    conn: &Connection,
+    run: RunId,
+    wait: BotWaitId,
+) -> Result<Option<DecisionWaitRecord>, BotLedgerError> {
+    conn.query_row(
+        &query("bot_wait_runtime", FIELDS, "run_id=?1 AND wait_id=?2"),
+        params![run.to_storage(), wait.to_storage()],
+        |r| Ok(decode(r)),
+    )
+    .optional()
+    .map_err(sql)?
+    .transpose()
+}
 fn decode(row: &Row<'_>) -> Result<DecisionWaitRecord, BotLedgerError> {
     let c = Cells {
         row,
