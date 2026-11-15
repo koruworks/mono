@@ -10,7 +10,7 @@ use super::*;
 /// The per-page bound of the open decision-wait enumeration.
 pub const DECISION_RESUME_RUN_PAGE: usize = 16;
 
-const SEEK: &str = "SELECT w.run_id,
+pub(super) const SEEK: &str = "SELECT w.run_id,
        CASE WHEN typeof(w.user_scope)='text' AND length(CAST(w.user_scope AS BLOB))=36 THEN w.user_scope END,
        CASE WHEN typeof(w.device_id)='text' AND length(CAST(w.device_id AS BLOB))=36 THEN w.device_id END
      FROM bot_wait_runtime AS w INDEXED BY bot_wait_runtime_open_run

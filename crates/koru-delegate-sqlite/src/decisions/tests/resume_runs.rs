@@ -81,3 +81,31 @@ fn decision_resume_runs_skips_a_row_with_a_malformed_owner() {
         vec![(f.owner, good[1])]
     );
 }
+
+#[test]
+fn decision_resume_runs_seek_is_a_range_on_the_approved_open_wait_index() {
+    let h = Harness::new();
+    let mut plan =
+        h.db.conn()
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN {}",
+                super::super::resume_runs::SEEK
+            ))
+            .unwrap();
+    let details: Vec<String> = plan
+        .query_map(params![String::new(), 16i64], |row| row.get::<_, String>(3))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("bot_wait_runtime_open_run")
+                && detail.contains("run_id>?")),
+        "{details:?}"
+    );
+    assert!(
+        !details.iter().any(|detail| detail.contains("TEMP B-TREE")),
+        "{details:?}"
+    );
+}
