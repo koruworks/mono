@@ -131,7 +131,7 @@ fn decision_inventory_rejects_changed_origin_release_and_oversized_evidence() {
         let f = h.origin();
         h.db.conn()
             .execute_batch(
-                "PRAGMA ignore_check_constraints=ON; DROP TRIGGER bot_wait_runtime_immutable;",
+                "PRAGMA ignore_check_constraints=ON; DROP TRIGGER bot_wait_runtime_immutable; DROP TRIGGER bot_wait_release_evidence_immutable;",
             )
             .unwrap();
         if mutation == 0 {
@@ -295,7 +295,7 @@ fn decision_inventory_requires_every_exact_native_drain_receipt() {
     assert!(h.db.bot_execution_inventory(f.owner.device).is_err());
     assert!(h.read(id).is_err());
     h.db.conn()
-        .execute_batch("DROP TRIGGER bot_wait_runtime_immutable")
+        .execute_batch("DROP TRIGGER bot_wait_runtime_immutable; DROP TRIGGER bot_wait_release_evidence_immutable;")
         .unwrap();
     let OriginWaitStop::Confirmed { native_drain, .. } = &mut release else {
         unreachable!()
