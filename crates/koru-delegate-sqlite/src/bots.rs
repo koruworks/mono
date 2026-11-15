@@ -335,6 +335,25 @@ pub trait BotLedger {
         wait: BotWaitId,
         decision: koru_delegate_core::decisions::DecisionId,
     ) -> Result<Option<koru_delegate_core::decisions::BotDecisionWaitObservation>, BotLedgerError>;
+    /// Complete retained native drain evidence for one exact retired attempt,
+    /// for a final cleanup proof. Refuses a live attempt, a held lease, an
+    /// overflow of the 4KiB evidence body or a corrupt row; grants nothing.
+    fn decision_native_drain(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        attempt: RunAttemptId,
+        generation: AttemptGeneration,
+        observed_at_ms: i64,
+    ) -> Result<koru_delegate_core::decisions::DecisionNativeDrain, BotLedgerError>;
+    /// The retained effect outcome a consumed Koru edit's final cleanup must
+    /// carry; `None` when none is owed, Fenced while the effect is unresolved.
+    fn decision_retained_effect(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError>;
     fn record_decision_source(
         &mut self,
         owner: BotOwner,

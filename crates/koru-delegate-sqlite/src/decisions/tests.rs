@@ -7,6 +7,7 @@ use crate::{BotLedger, NativeResultLedger, WriteOutcome, fixtures};
 use write::*;
 
 mod answers;
+mod cleanup_evidence;
 mod completion;
 mod consume;
 mod corruption;
