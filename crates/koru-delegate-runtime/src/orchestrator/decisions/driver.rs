@@ -61,16 +61,15 @@ impl Orchestrator {
     /// Advance this Run's open decision wait by at most one exact step. The
     /// enrollment HTTP call goes out through `bridge` (the host's; there is
     /// no default) only while the fixed worker is not holding the document
-    /// handle. `boot` is this delegate process's boot id, the one the
-    /// decision was prepared under. Retryable refusals become `Waiting`.
+    /// handle. The reservation runs under this process's own boot
+    /// (`delegate_boot`). Retryable refusals become `Waiting`.
     pub fn bot_advance_decision_resume(
         &mut self,
         owner: BotOwner,
         run: RunId,
-        boot: DelegateBootId,
-        bridge: Option<&mut dyn DecisionEnrollmentBridge>,
+        bridge: &mut dyn DecisionEnrollmentBridge,
     ) -> Result<DecisionResumeStep, RunError> {
-        match self.decision_resume_step(owner, run, boot, bridge) {
+        match self.decision_resume_step(owner, run, bridge) {
             Err(error) => match retry_code(&error) {
                 Some(code) => Ok(DecisionResumeStep::Waiting(code)),
                 None => Err(error),
@@ -83,8 +82,7 @@ impl Orchestrator {
         &mut self,
         owner: BotOwner,
         run: RunId,
-        boot: DelegateBootId,
-        bridge: Option<&mut dyn DecisionEnrollmentBridge>,
+        bridge: &mut dyn DecisionEnrollmentBridge,
     ) -> Result<DecisionResumeStep, RunError> {
         use DecisionResumeStep as Step;
         let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
@@ -99,7 +97,12 @@ impl Orchestrator {
             return Ok(Step::Waiting("bot_native_occupied"));
         }
         if let Some(resume) = execution.resume.clone() {
-            return self.decision_resume_successor(owner, run, &resume);
+            if execution.wait.phase != BotWaitPhase::ResumeReserved {
+                // Stop, expiry or terminal cleanup owns this consumer now.
+                return Ok(Step::Waiting("bot_cleanup_owned"));
+            }
+            let open = super::launch::resume_open(&execution);
+            return self.decision_resume_successor(owner, run, &resume, open);
         }
         match (state.authorization, state.phase, execution.wait.phase) {
             (Authorization::Pending, Phase::Publishing, _) => {
@@ -119,9 +122,6 @@ impl Orchestrator {
             (Authorization::Pending, Phase::Holding, BotWaitPhase::HoldRequested) => {
                 match &execution.wait.enrollment {
                     None => {
-                        let Some(bridge) = bridge else {
-                            return Ok(Step::Waiting("bot_enrollment_unavailable"));
-                        };
                         self.bot_enroll_decision(owner, run, bridge)?;
                         Ok(Step::Enrolled)
                     }
@@ -146,6 +146,7 @@ impl Orchestrator {
                 let host = self.ports.sessions.host_instance()?;
                 let fingerprint = self.bot_decision_continuation_fingerprint(owner, run)?;
                 let proof = self.decision_policy_proof(run)?;
+                let boot = self.delegate_boot();
                 self.bot_reserve_decision_successor(owner, run, host, fingerprint, &proof, boot)?;
                 Ok(Step::SuccessorReserved)
             }
@@ -186,6 +187,7 @@ impl Orchestrator {
         owner: BotOwner,
         run: RunId,
         resume: &koru_delegate_core::decisions::DecisionResume,
+        open: bool,
     ) -> Result<DecisionResumeStep, RunError> {
         use DecisionResumeStep as Step;
         let (attempt, generation, session, _) = resume.consumer_identity();
@@ -217,6 +219,11 @@ impl Orchestrator {
             return Ok(Step::SuccessorInstalled);
         }
         match resume.state {
+            DecisionResumeState::SessionBound {} | DecisionResumeState::InputUnconfirmed {}
+                if !open =>
+            {
+                Ok(Step::Waiting("bot_cleanup_owned"))
+            }
             DecisionResumeState::SessionBound {} | DecisionResumeState::InputUnconfirmed {} => {
                 match self.bot_submit_decision_continuation(owner, run)? {
                     Some(record) => match record.resume.map(|resume| resume.state) {

@@ -40,6 +40,7 @@ impl Orchestrator {
         proof: &FreshBotPolicyProof,
         boot: DelegateBootId,
     ) -> Result<DecisionRecord, RunError> {
+        self.decision_boot_current(boot)?;
         self.bot_live_fence(fence, device, true, true)?;
         let run = fence.run;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
@@ -114,6 +115,7 @@ impl Orchestrator {
         boot: DelegateBootId,
     ) -> Result<NativeLeaseOutcome, RunError> {
         owner_device(fence.owner, device)?;
+        self.decision_boot_current(boot)?;
         let execution = self
             .bot_ledger()?
             .decision_wait_execution(fence.owner, fence.run)?

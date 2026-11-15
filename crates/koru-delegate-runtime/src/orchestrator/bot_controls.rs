@@ -211,11 +211,9 @@ impl Orchestrator {
         // The original InitialSend is immutable and belongs to its own attempt.
         // A recorded successor's input is its decision continuation, never a
         // second initial send, so BeginTurn on any other attempt is fenced.
-        if record
-            .initial_send
-            .as_ref()
-            .is_some_and(|send| send.attempt != fence.attempt || send.generation != fence.generation)
-        {
+        if record.initial_send.as_ref().is_some_and(|send| {
+            send.attempt != fence.attempt || send.generation != fence.generation
+        }) {
             return Err(refused("bot_fenced"));
         }
         let current = self
@@ -342,6 +340,8 @@ impl Orchestrator {
         Ok(self.ports.sessions.bot_steer(fence.session, turn, input)?)
     }
 
+    /// Legacy IPC15 route: its command carries no stable request key, so
+    /// each call is its own request, exactly as the host did before.
     pub fn bot_answer_approval(
         &mut self,
         fence: &BotExecutionFence,
@@ -350,6 +350,35 @@ impl Orchestrator {
         decision: koru_delegate_core::ApprovalDecision,
         choice: Option<koru_delegate_core::ApprovalChoiceId>,
     ) -> Result<(), RunError> {
+        self.bot_answer_approval_keyed(
+            fence,
+            device,
+            koru_delegate_core::IdempotencyKey::mint(),
+            approval,
+            decision,
+            choice,
+        )
+    }
+
+    /// An ordinary (non-decision) native answer under the caller's stable
+    /// request key (O124): the same key is forwarded unchanged to the session
+    /// host, so a retry after a lost reply is the same request, never a
+    /// second answer. Refused while a decision owns the Run's publication.
+    pub fn bot_answer_approval_keyed(
+        &mut self,
+        fence: &BotExecutionFence,
+        device: DeviceId,
+        request: koru_delegate_core::IdempotencyKey,
+        approval: koru_delegate_core::ApprovalId,
+        decision: koru_delegate_core::ApprovalDecision,
+        choice: Option<koru_delegate_core::ApprovalChoiceId>,
+    ) -> Result<(), RunError> {
+        // A decision-owned native prompt is answered only through the decision
+        // owner with its journaled key; this route cannot bypass it.
+        self.restore_publication_owner(fence.run)?;
+        if self.run_publication_pending(fence.run) {
+            return Err(refused("bot_decision_owned"));
+        }
         self.bot_live_fence(fence, device, true, true)?;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
         if self
@@ -363,18 +392,9 @@ impl Orchestrator {
         {
             return Err(refused("bot_approval_stale"));
         }
-        // A decision-owned native prompt is answered only through the decision
-        // owner with its journaled key; this legacy route cannot bypass it.
-        self.restore_publication_owner(fence.run)?;
-        if self.run_publication_pending(fence.run) {
-            return Err(refused("bot_decision_owned"));
-        }
-        // Legacy non-decision route: the existing IPC15 command carries no
-        // stable request key, so each call is its own request, exactly as the
-        // host did before. A keyed IPC16 command replaces this (author A).
         Ok(self.ports.sessions.bot_answer_approval(
             fence.session,
-            koru_delegate_core::IdempotencyKey::mint(),
+            request,
             approval,
             decision,
             choice,

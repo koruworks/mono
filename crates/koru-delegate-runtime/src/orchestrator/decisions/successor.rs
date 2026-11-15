@@ -93,6 +93,22 @@ impl Orchestrator {
                     && memory.session == Some(session)
             })
             .map_or((false, false), |memory| (true, memory.holds_lease));
+        if !same {
+            // A consumer recovered by lookup (or after a restart) takes the
+            // Run's folder claim here; a launch made here already moved it.
+            let admission = self
+                .bot_ledger()?
+                .bot_admission(run)?
+                .ok_or(RunError::UnknownRun)?;
+            let submission = admission.submission;
+            self.decision_transfer_claim(
+                run,
+                execution.wait.origin.attempt,
+                attempt,
+                submission.provenance.bot,
+                &submission.request.scope,
+            )?;
+        }
         if !holds {
             // The controller is positive evidence only from the host's grant.
             self.ports.sessions.attach(session)?;

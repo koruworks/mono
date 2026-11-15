@@ -5,6 +5,8 @@
 
 use super::*;
 
+mod resume;
+
 fn source_usage(
     turn: AgentTurnId,
     sequence: u64,
@@ -994,7 +996,7 @@ fn native_decision_answer_is_forwarded_with_the_journaled_key_and_replays_it() {
         global: policy,
         routine: None,
     };
-    let boot = DelegateBootId::mint();
+    let boot = h.orchestrator.delegate_boot();
     let prepared = h
         .orchestrator
         .bot_prepare_native_decision(&fence, fence.owner.device, approval, &proof, boot)
@@ -1116,7 +1118,7 @@ fn decision_edit_resume_chain_runs_through_runtime_steps_to_an_unacknowledged_su
         global: policy,
         routine: None,
     };
-    let boot = DelegateBootId::mint();
+    let boot = h.orchestrator.delegate_boot();
     let edit = crate::DecisionEditRequest {
         target: DocumentId::new(),
         action: DecisionEditAction::EditDocument,

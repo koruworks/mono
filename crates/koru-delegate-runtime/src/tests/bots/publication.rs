@@ -133,7 +133,7 @@ fn waiting_with(
         global: policy,
         routine: None,
     };
-    let boot = DelegateBootId::mint();
+    let boot = h.orchestrator.delegate_boot();
     if let Some(drained) = effect {
         db.prepare_native_result(&request).unwrap();
         let intent = db

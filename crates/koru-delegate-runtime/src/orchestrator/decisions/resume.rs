@@ -227,6 +227,7 @@ impl Orchestrator {
         proof: &FreshBotPolicyProof,
         boot: DelegateBootId,
     ) -> Result<koru_delegate_core::decisions::DecisionResume, RunError> {
+        self.decision_boot_current(boot)?;
         let execution = self.decision_ticket(owner, run)?;
         if let Some(resume) = execution.resume {
             return Ok(resume);

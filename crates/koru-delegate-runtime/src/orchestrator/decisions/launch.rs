@@ -49,6 +49,18 @@ fn acknowledgment_digest(
     ))
 }
 
+/// The decision still wants its successor started and fed: AllowOnce with
+/// the resume prepared and the wait reserved for it. Stop, expiry, denial or
+/// authority loss moves either phase away, and nothing new is sent then.
+pub(super) fn resume_open(execution: &koru_delegate_sqlite::DecisionWaitExecution) -> bool {
+    use koru_delegate_core::decisions::{BotWaitPhase, DecisionAuthorization, DecisionPhase};
+    execution.wait.phase == BotWaitPhase::ResumeReserved
+        && execution.decision_state.as_ref().is_some_and(|state| {
+            state.authorization == DecisionAuthorization::Granted
+                && state.phase == DecisionPhase::ResumePrepared
+        })
+}
+
 impl Orchestrator {
     /// The fingerprint a successor reservation binds for this Run's open Koru
     /// decision: the exact continuation input it will send, less its key.
@@ -171,7 +183,7 @@ impl Orchestrator {
 
     /// Move the Run's in-memory folder claim from the retired origin to the
     /// successor. Another holder refuses before anything is released.
-    fn decision_transfer_claim(
+    pub(super) fn decision_transfer_claim(
         &mut self,
         run: RunId,
         origin: RunAttemptId,
@@ -239,7 +251,14 @@ impl Orchestrator {
         let fresh = self.runs.get(&run).and_then(|state| state.decision_launch)
             == Some(DecisionLaunch::Reserved(creation));
         if !fresh {
+            // Reconciling the exact key stays legal after Stop: a late known
+            // session is retained so its cleanup can target it.
             return self.bot_recover_decision_successor(owner, run);
+        }
+        if !resume_open(&execution) {
+            // Stop, expiry or authority loss superseded the resume before any
+            // creation was asked for: nothing is created.
+            return Ok(None);
         }
         if !self.ports.sessions.supports_delegation() {
             return Err(RunError::NotDelegatable);
@@ -339,6 +358,10 @@ impl Orchestrator {
             DecisionResumeState::InputUnconfirmed {} => false,
             _ => return Ok(None),
         };
+        if !resume_open(&execution) {
+            // A superseded resume never sends input; its cleanup owner decides.
+            return Ok(None);
+        }
         let (attempt, generation, session, _) = resume.consumer_identity();
         let session = session.ok_or_else(|| refused("bot_successor_unbound"))?;
         let row = execution.current_attempt;
