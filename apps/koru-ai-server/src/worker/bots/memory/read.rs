@@ -3,6 +3,8 @@
 use super::super::*;
 use super::{RunMemoryReadRequest, RunMemoryReadResult, cursor};
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
+// Named by the tests only since the read accepts either Bot classification.
+#[cfg(test)]
 use koru_delegate_core::RunToolAuthority;
 #[cfg(test)]
 mod tests;
@@ -152,9 +154,11 @@ impl MemoryReadJob {
                 },
                 Duration::from_secs(5),
             ) {
-                Ok(BotReply::RunAuthority {
-                    authority: RunToolAuthority::Bot { provenance, policy },
-                }) if provenance == request.provenance && policy == request.captured => {}
+                // A read stays available while a decision waits (O147).
+                Ok(BotReply::RunAuthority { authority })
+                    if authority.bot_subject().is_some_and(|(provenance, policy)| {
+                        *provenance == request.provenance && *policy == request.captured
+                    }) => {}
                 Err(_) => return Err(unavailable_failure()),
                 _ => return Err(bot_failure(BotError::Forbidden)),
             }

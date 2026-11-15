@@ -43,6 +43,8 @@ pub(super) struct Delegate {
     pub unknown: AtomicBool,
     pub gate: Mutex<Option<(usize, Gate)>>,
     pub other: Mutex<Vec<&'static str>>,
+    /// O147: classify the Run as waiting on this decision.
+    pub waiting: Mutex<Option<koru_delegate_core::decisions::DecisionId>>,
 }
 impl BotDelegatePort for Delegate {
     fn execute(&self, command: DelegateCommand) -> Result<BotReply, koru_delegate_api::Failure> {
@@ -84,10 +86,16 @@ impl BotDelegatePort for Delegate {
                 if self.denied.load(Ordering::Acquire) {
                     policy.workspace = WorkspaceId::new();
                 }
+                let provenance = self.subject.provenance.clone();
                 Ok(BotReply::RunAuthority {
-                    authority: RunToolAuthority::Bot {
-                        provenance: self.subject.provenance.clone(),
-                        policy,
+                    authority: match *self.waiting.lock().unwrap() {
+                        Some(decision) => RunToolAuthority::BotDecisionWait {
+                            provenance,
+                            policy,
+                            decision,
+                            phase: koru_delegate_core::decisions::DecisionPhase::Holding,
+                        },
+                        None => RunToolAuthority::Bot { provenance, policy },
                     },
                 })
             }
@@ -255,6 +263,7 @@ impl Fixture {
             unknown: AtomicBool::new(false),
             gate: Mutex::new(None),
             other: Mutex::new(vec![]),
+            waiting: Mutex::new(None),
         });
         let authority = Arc::new(Authority {
             adapter: store.adapter.clone(),

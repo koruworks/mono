@@ -17,6 +17,15 @@ fn denied() -> Failure {
         false,
     )
 }
+/// O147: a Run waiting on a decision accepts no new Routine change. Typed
+/// and not retryable; the gateway shows its existing Routine wording.
+fn decision_in_progress() -> Failure {
+    failure(
+        "decision_in_progress",
+        "The Run is waiting on a decision; no new Routine change is accepted.",
+        false,
+    )
+}
 fn invalid() -> Failure {
     failure(
         "invalid_request",

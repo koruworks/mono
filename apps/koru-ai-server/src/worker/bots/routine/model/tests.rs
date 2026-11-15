@@ -724,3 +724,137 @@ fn routine_model_shutdown_joins_held_physical_job_without_detaching_it() {
     let _ = response.recv_timeout(WAIT);
     returned.recv_timeout(WAIT).unwrap();
 }
+
+/// O147: a Run whose decision wait is open accepts no new Routine change.
+#[test]
+fn routine_model_decision_wait_refuses_new_create_and_retry_but_keeps_reads() {
+    let f = Fixture::new();
+    let args = f.create();
+    let (worker, returned) = f.start();
+    let client = worker.client();
+    let created = fixture::created(
+        call(
+            &client,
+            &f.subject,
+            RunRoutineOperation::Create(args.clone()),
+        )
+        .unwrap(),
+    );
+    let observed = status(
+        call(
+            &client,
+            &f.subject,
+            RunRoutineOperation::ReadCreation {
+                request_id: args.request_id,
+            },
+        )
+        .unwrap(),
+    )
+    .observed_token;
+    *f.delegate.waiting.lock().unwrap() = Some(koru_delegate_core::decisions::DecisionId::mint());
+    // A new Create allocates nothing.
+    let fresh = f.create();
+    let refused = call(
+        &client,
+        &f.subject,
+        RunRoutineOperation::Create(fresh.clone()),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(refused.code, "decision_in_progress");
+    assert!(!refused.retryable);
+    // A Retry is a new acceptance too.
+    let retry = call(
+        &client,
+        &f.subject,
+        RunRoutineOperation::RetryCreation {
+            original_request_id: args.request_id,
+            observed_token: observed,
+        },
+    )
+    .err()
+    .unwrap();
+    assert_eq!(retry.code, "decision_in_progress");
+    // Reads are unaffected.
+    let read = status(
+        call(
+            &client,
+            &f.subject,
+            RunRoutineOperation::ReadCreation {
+                request_id: args.request_id,
+            },
+        )
+        .unwrap(),
+    );
+    assert_eq!(read.schedule_id, created.schedule_id);
+    let listed = page(call(&client, &f.subject, list()).unwrap());
+    assert!(
+        listed
+            .items
+            .iter()
+            .any(|i| i.schedule_id == created.schedule_id)
+    );
+    // The wait settles: the same Create is accepted again.
+    *f.delegate.waiting.lock().unwrap() = None;
+    let later = fixture::created(
+        call(
+            &client,
+            &f.subject,
+            RunRoutineOperation::Create(fresh.clone()),
+        )
+        .unwrap(),
+    );
+    assert_eq!(later.request_id, fresh.request_id);
+    let repo = finish(worker, returned);
+    assert!(
+        repo.bot_routine_creation_by_request(f.store.owner, f.store.bot.id, fresh.request_id)
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// O93 stays independent of O147: a creation accepted before the wait
+/// opened replies truthfully and its journal finishes during the wait.
+#[test]
+fn routine_model_o93_accepted_creation_finishes_while_a_decision_waits() {
+    let f = Fixture::new();
+    let args = f.create();
+    let id = args.request_id;
+    let req = request(&f.subject, RunRoutineOperation::Create(args));
+    // The third Run proof begins the reply phase, after the writer committed
+    // the immutable creation journal; the wait opens right there.
+    let (held, entered, mut release) = gate();
+    *f.delegate.gate.lock().unwrap() = Some((3, held));
+    let (worker, returned) = f.start();
+    let response = direct(&worker.client(), req);
+    entered.recv_timeout(WAIT).unwrap();
+    *f.delegate.waiting.lock().unwrap() = Some(koru_delegate_core::decisions::DecisionId::mint());
+    release.open();
+    let created = fixture::created(response.recv_timeout(WAIT).unwrap().unwrap());
+    assert_eq!(created.request_id, id);
+    // Recovery confirms the accepted creation while the wait stays open.
+    let end = Instant::now() + WAIT;
+    loop {
+        let read = status(
+            call(
+                &worker.client(),
+                &f.subject,
+                RunRoutineOperation::ReadCreation { request_id: id },
+            )
+            .unwrap(),
+        );
+        if read.observed_token.state == BotRoutineCreationState::Bound {
+            break;
+        }
+        assert!(Instant::now() < end, "accepted recovery did not confirm");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let repo = finish(worker, returned);
+    assert_eq!(
+        repo.bot_routine_creation_by_request(f.store.owner, f.store.bot.id, id)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotRoutineCreationState::Bound
+    );
+}
