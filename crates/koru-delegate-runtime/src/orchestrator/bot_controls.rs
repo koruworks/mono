@@ -337,10 +337,22 @@ impl Orchestrator {
         {
             return Err(refused("bot_approval_stale"));
         }
-        Ok(self
-            .ports
-            .sessions
-            .bot_answer_approval(fence.session, approval, decision, choice)?)
+        // A decision-owned native prompt is answered only through the decision
+        // owner with its journaled key; this legacy route cannot bypass it.
+        self.restore_publication_owner(fence.run)?;
+        if self.run_publication_pending(fence.run) {
+            return Err(refused("bot_decision_owned"));
+        }
+        // Legacy non-decision route: the existing IPC15 command carries no
+        // stable request key, so each call is its own request, exactly as the
+        // host did before. A keyed IPC16 command replaces this (author A).
+        Ok(self.ports.sessions.bot_answer_approval(
+            fence.session,
+            koru_delegate_core::IdempotencyKey::mint(),
+            approval,
+            decision,
+            choice,
+        )?)
     }
 
     pub fn bot_answer_questions(

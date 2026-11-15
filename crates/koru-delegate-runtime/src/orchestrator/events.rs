@@ -37,6 +37,10 @@ use super::{Orchestrator, RunError};
 /// a handful of steps and never a thousand.
 pub const TOOL_STEP_BOUND: u32 = 64;
 
+/// At most this many offered choices are retained per native prompt; a
+/// prompt offering more is not eligible for a native decision.
+pub(crate) const NATIVE_PROMPT_CHOICES: usize = 16;
+
 impl Orchestrator {
     /// Apply one update from the run's session.
     pub fn handle(&mut self, run: RunId, update: SessionUpdate) -> Result<HandleOutcome, RunError> {
@@ -236,11 +240,29 @@ impl Orchestrator {
             AgentEvent::ApprovalRequired {
                 turn_id,
                 approval_id,
+                choices,
                 ..
             } => {
-                self.attempt_mut(run)?
-                    .pending_approvals
-                    .insert(approval_id, turn_id);
+                let attempt = self.attempt_mut(run)?;
+                attempt.pending_approvals.insert(approval_id, turn_id);
+                // Keep only identity and intent of the offered choices; the
+                // summary and labels are content and are never retained.
+                if (1..=NATIVE_PROMPT_CHOICES).contains(&choices.len()) {
+                    attempt.native_prompts.insert(
+                        approval_id,
+                        choices
+                            .iter()
+                            .map(
+                                |choice| koru_delegate_core::decisions::DecisionNativeChoice {
+                                    id: choice.id,
+                                    intent: choice.intent,
+                                },
+                            )
+                            .collect(),
+                    );
+                } else {
+                    attempt.native_prompts.remove(&approval_id);
+                }
                 self.apply(run, &RunEvent::ApprovalRequired)?;
                 self.step(
                     run,
@@ -588,6 +610,7 @@ impl Orchestrator {
                 return Ok(());
             }
             attempt.pending_approvals.remove(&approval);
+            attempt.native_prompts.remove(&approval);
             (
                 attempt.id,
                 known && attempt.pending_approvals.is_empty() && attempt.approval_evidence_complete,
@@ -671,6 +694,10 @@ impl Orchestrator {
             attempt
                 .pending_approvals
                 .retain(|_, pending| *pending != turn);
+            let pending = &attempt.pending_approvals;
+            attempt
+                .native_prompts
+                .retain(|approval, _| pending.contains_key(approval));
             if own_terminal && attempt.pending_approvals.is_empty() {
                 attempt.approval_evidence_complete = true;
             }
@@ -705,6 +732,10 @@ impl Orchestrator {
             attempt
                 .pending_approvals
                 .retain(|_, pending| *pending != turn);
+            let pending = &attempt.pending_approvals;
+            attempt
+                .native_prompts
+                .retain(|approval, _| pending.contains_key(approval));
             let ours = attempt.orchestrator_turn == Some(turn);
             if ours {
                 attempt.orchestrator_turn = None;

@@ -614,6 +614,11 @@ impl Orchestrator {
                 })
                 .collect();
             attempt.pending_approvals = memory.approvals.as_slice().iter().copied().collect();
+            // Prompts resolved by this observation lose their retained choices.
+            let pending = &attempt.pending_approvals;
+            attempt
+                .native_prompts
+                .retain(|approval, _| pending.contains_key(approval));
             attempt.pending_questions = memory.questions.as_slice().iter().copied().collect();
         }
         let bookkeeping = target

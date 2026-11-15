@@ -1048,9 +1048,13 @@ pub trait Sessions {
             "Conditional steering is unsupported.",
         ))
     }
+    /// The caller supplies the stable idempotency key: for a decision-owned
+    /// native answer it is the exact key C's native answer journal retained,
+    /// so a lost reply retries the same request rather than a second answer.
     fn bot_answer_approval(
         &mut self,
         _session: SessionId,
+        _key: IdempotencyKey,
         _approval: koru_delegate_core::ApprovalId,
         _decision: koru_delegate_core::ApprovalDecision,
         _choice: Option<koru_delegate_core::ApprovalChoiceId>,

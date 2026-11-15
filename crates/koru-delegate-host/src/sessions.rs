@@ -456,6 +456,7 @@ impl Sessions for HostSessions {
     fn bot_answer_approval(
         &mut self,
         session: SessionId,
+        key: IdempotencyKey,
         approval: koru_session_protocol::ApprovalId,
         decision: koru_session_protocol::ApprovalDecision,
         choice: Option<koru_session_protocol::ApprovalChoiceId>,
@@ -466,7 +467,7 @@ impl Sessions for HostSessions {
             .answer_approval(
                 session,
                 controller.lease,
-                IdempotencyKey::mint(),
+                key,
                 approval,
                 decision,
                 choice,

@@ -139,6 +139,12 @@ pub struct Attempt {
     /// Retry only already-interrupted/terminal Bot cleanup, never healthy work.
     pub bot_cleanup: Option<BotCleanupRetry>,
     pub pending_questions: HashMap<koru_delegate_core::QuestionRequestId, AgentTurnId>,
+    /// The offered choices of each pending native prompt, the only part of a
+    /// prompt a native decision binding needs (identity and intent, never the
+    /// summary or labels). Bounded per prompt; an over-bound or choiceless
+    /// prompt is simply not eligible for a native decision. No expiry (O116).
+    pub native_prompts:
+        HashMap<ApprovalId, Vec<koru_delegate_core::decisions::DecisionNativeChoice>>,
     /// The admitted working directory.
     pub run_workspace: PathBuf,
     pub captured: CapturedContext,
@@ -162,6 +168,7 @@ impl Attempt {
             bot_terminal_turn: None,
             bot_cleanup: None,
             pending_questions: HashMap::new(),
+            native_prompts: HashMap::new(),
             run_workspace: PathBuf::new(),
             captured: CapturedContext::default(),
         }
