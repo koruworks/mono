@@ -219,3 +219,85 @@ fn scripted_composition_drives_a_prepared_edit_decision_to_one_acknowledged_succ
         )
     );
 }
+
+/// A Run whose publication the document keeps refusing is started once and
+/// then waits one ordinary TICK, instead of restarting on every worker wake
+/// (which spun the actor and kept the handle out). Meanwhile the handle is
+/// home, so the resume driver still takes its steps, including enrollment,
+/// which starts only while no handle is out.
+#[test]
+fn a_persistently_refused_publication_waits_a_tick_and_the_resume_driver_still_steps() {
+    let DecisionChain {
+        orchestrator,
+        sessions,
+        documents,
+        prepared,
+        ..
+    } = decision_chain();
+    let owner = prepared.owner;
+    prepared.script_resume(
+        &mut sessions.lock().unwrap(),
+        SessionId::mint(),
+        AgentTurnId::mint(),
+    );
+    // From here every preparation is refused, as a Store that keeps refusing.
+    documents.refuse_preparations(Some("store_unavailable"));
+    let before = documents.preparations();
+
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    actor
+        .attach_decision_bridge(Box::new(bridge(&listener)))
+        .unwrap();
+    let answering = prepared.clone();
+    let server = std::thread::spawn(move || {
+        let mut stream = accept_within(&listener, Duration::from_secs(10));
+        reply(&mut stream, |request: &EnrollBotWaitCleanup| {
+            answering.enrolled_reply(request)
+        });
+    });
+
+    // A window shorter than one TICK, every wake handled as the loop does.
+    let window = Instant::now() + TICK / 2;
+    let mut wakes = 0usize;
+    while Instant::now() < window {
+        actor.maintenance_tick();
+        while Instant::now() < window {
+            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+                break;
+            };
+            if matches!(command, Command::PublicationWake) {
+                wakes += 1;
+            }
+            actor.handle(command);
+        }
+    }
+    // Counted before the fixture server is joined: a starved enrollment
+    // never reaches it.
+    let starts = documents.preparations() - before;
+    assert_eq!(
+        starts, 1,
+        "one refused start, then the Run waits a TICK (wakes {wakes})"
+    );
+    assert_eq!(
+        steps(&actor.resume_log),
+        vec![
+            Step::EnrollmentRequested,
+            Step::Enrolled,
+            Step::OriginStopped
+        ]
+    );
+    // Enrollment was taken on a turn that began with the handle home.
+    assert!(actor.resume_log.iter().any(|record| !record.handle_out
+        && matches!(record.turn, ResumeTurn::Stepped(_, Step::Enrolled))));
+    assert_eq!(
+        actor
+            .publication_worker
+            .as_ref()
+            .unwrap()
+            .enrollments_started(),
+        1
+    );
+    server.join().unwrap();
+}

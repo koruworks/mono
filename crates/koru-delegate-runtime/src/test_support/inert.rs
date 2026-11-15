@@ -37,6 +37,42 @@ use crate::{
 struct Stored {
     snapshots: HashMap<DocumentId, Vec<u8>>,
     by_run: HashMap<RunId, DocumentId>,
+    /// When set, every decision projection preparation is refused with this
+    /// code (a Store that keeps refusing); nothing is staged.
+    refuse_preparations: Option<&'static str>,
+    /// Decision projection preparations asked of any handle.
+    preparations: usize,
+}
+
+/// The test's view of the in-memory documents: script a persistent
+/// preparation refusal and count the preparations asked for.
+#[derive(Clone)]
+pub struct DocumentFaults {
+    stored: Arc<Mutex<Stored>>,
+}
+
+impl std::fmt::Debug for DocumentFaults {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DocumentFaults")
+    }
+}
+
+impl DocumentFaults {
+    /// Refuse every later preparation with `code` (`None` stops refusing).
+    pub fn refuse_preparations(&self, code: Option<&'static str>) {
+        self.stored
+            .lock()
+            .expect("the document store is not poisoned")
+            .refuse_preparations = code;
+    }
+
+    /// How many decision projection preparations were asked for so far.
+    pub fn preparations(&self) -> usize {
+        self.stored
+            .lock()
+            .expect("the document store is not poisoned")
+            .preparations
+    }
 }
 
 /// In-memory Run documents. Every commit is durable when it returns (the
@@ -49,6 +85,12 @@ impl MemoryRunDocuments {
     pub(super) fn new() -> Self {
         Self {
             stored: Arc::new(Mutex::new(Stored::default())),
+        }
+    }
+
+    pub(super) fn faults(&self) -> DocumentFaults {
+        DocumentFaults {
+            stored: Arc::clone(&self.stored),
         }
     }
 
@@ -113,6 +155,20 @@ impl RunDocumentHandle for StagingHandle {
         &mut self,
         intent: &RunProjectionIntent,
     ) -> PortResult<DecisionPreparedProjection> {
+        {
+            let mut stored = self
+                .stored
+                .lock()
+                .expect("the document store is not poisoned");
+            stored.preparations += 1;
+            if let Some(code) = stored.refuse_preparations {
+                return Err(PortError::new(
+                    Port::Documents,
+                    code,
+                    "the scripted document refused the preparation",
+                ));
+            }
+        }
         // Every commit was durable when it returned: the causal base is settled.
         self.staging.prepare(&self.doc, intent).map_err(Into::into)
     }

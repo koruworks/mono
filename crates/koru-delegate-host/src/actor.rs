@@ -246,6 +246,10 @@ pub struct Actor {
     publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
     /// The last Run a physical publication workflow was started for.
     publication_cursor: Option<RunId>,
+    /// Runs whose last publication workflow failed, and the instant (one
+    /// ordinary TICK later) before which they are not started again. Memory
+    /// only; bounded by the publication candidates.
+    publication_retry_at: HashMap<RunId, Instant>,
     /// The last Run offered to the decision resume driver (O123 rotation).
     decision_resume_cursor: Option<RunId>,
     /// Whether the last resume turn found an open decision wait (or none has
@@ -285,6 +289,7 @@ impl Actor {
             publication_worker: None,
             publication_ack: None,
             publication_cursor: None,
+            publication_retry_at: HashMap::new(),
             decision_resume_cursor: None,
             // A restart may find waits a previous process left open.
             decision_resume_pending: true,

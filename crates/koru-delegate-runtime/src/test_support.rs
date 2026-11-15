@@ -63,6 +63,7 @@ mod sessions;
 #[cfg(test)]
 mod tests;
 
+pub use inert::DocumentFaults;
 pub use sessions::{SessionCall, SessionScript};
 
 /// The instant the shared clock starts at (epoch milliseconds). It never
@@ -254,6 +255,9 @@ pub struct DecisionChain {
     pub sessions: Arc<Mutex<SessionScript>>,
     /// The one instant both the orchestrator and the ledger read.
     pub clock: Arc<AtomicI64>,
+    /// The in-memory documents' fault script and preparation count. Nothing
+    /// is refused unless a test asks.
+    pub documents: DocumentFaults,
     pub prepared: PreparedDecision,
 }
 
@@ -356,9 +360,11 @@ pub fn decision_chain() -> DecisionChain {
         Box::new(inert::SharedClock(Arc::clone(&clock))),
     )
     .expect("open the in-memory ledger");
+    let documents = inert::MemoryRunDocuments::new();
+    let faults = documents.faults();
     let ports = Ports {
         store: Box::new(ledger::UncountedLedger(store)),
-        documents: Box::new(inert::MemoryRunDocuments::new()),
+        documents: Box::new(documents),
         sessions: Box::new(sessions::ScriptedSessions {
             script: Arc::clone(&sessions),
         }),
@@ -473,6 +479,7 @@ pub fn decision_chain() -> DecisionChain {
         orchestrator,
         sessions,
         clock,
+        documents: faults,
         prepared,
     }
 }
