@@ -681,13 +681,21 @@ fn a_v9_database_keeps_its_tool_rows_with_no_text_offset() {
     assert_eq!(user_version(&connection).unwrap(), 9);
     connection
         .execute_batch(
-            "PRAGMA foreign_keys = OFF;
+            // The row's chat and attempt exist: the bot migrations refuse a
+            // database with foreign-key violations (019/021 guards), and this
+            // test is about text_offset, not about orphan rows.
+            "INSERT INTO chats (id, title, current_provider, current_model, created_at_ms, updated_at_ms)
+             VALUES ('chat', 't', 'agent-codex', 'default', 1, 1);
+             INSERT INTO inference_attempts (
+                 id, operation_id, chat_id, surface, provider, requested_model,
+                 prompt_template_version, status, queued_at_ms
+             ) VALUES ('attempt', 'operation', 'chat', 'standalone', 'agent-codex',
+                       'default', 'v1', 'pending', 1);
              INSERT INTO tool_invocations (
                  id, attempt_id, chat_id, tool_name, read_only, status, approval,
                  proposed_at_ms, started_at_ms, completed_at_ms, agent_label
              ) VALUES ('row', 'attempt', 'chat', 'agent.other', 0, 'complete',
-                       'not_required', 1, 1, 2, 'Read a.txt');
-             PRAGMA foreign_keys = ON;",
+                       'not_required', 1, 1, 2, 'Read a.txt');",
         )
         .unwrap();
 
