@@ -51,7 +51,7 @@ fn waiting() -> (Harness, BotSubmission, BotExecutionFence) {
         routine: None,
         human_profile: profile,
         workspace: submission.workspace,
-        target: DocumentId::mint(),
+        target: DocumentId::new(),
         action: DecisionEditAction::EditDocument,
         operation_id: Uuid::new_v4(),
         edit_fingerprint: [3; 32],
@@ -111,7 +111,7 @@ fn decision_cold_header_restores_unopened_owner_without_opening_document() {
 
 #[test]
 fn decision_cold_fresh_policy_refuses_before_provider_or_ordinary_open() {
-    let (mut h, submission, fence) = waiting();
+    let (mut h, submission, _) = waiting();
     h.documents.lock().unwrap().snapshots.clear();
     let calls = h.sessions.lock().unwrap().calls.clone();
     assert!(
