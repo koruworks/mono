@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import app.koru.mobile.R
 import app.koru.mobile.domain.*
@@ -69,6 +70,7 @@ internal fun CloudCopyBody(
     structure: Map<BlockId, CloudCopyStructure> = emptyMap(),
     fileControls: @Composable (Block) -> Unit = {},
 ) {
+    val passiveReference = referenceFallback(LocalContext.current.resources, passive = true)
     val rows = remember(document.blocks, structure) { passiveBlockLayouts(document.blocks, structure.keys) }
     if (rows == null) {
         Text(stringResource(R.string.cloud_inventory_unavailable), modifier)
@@ -91,6 +93,7 @@ internal fun CloudCopyBody(
                         Column(Modifier.padding(KoruSpacing.md), verticalArrangement = Arrangement.spacedBy(KoruSpacing.sm)) {
                             row.block.properties.name?.takeIf(String::isNotBlank)?.let { Text(it) }
                             file.mimeType.takeIf(String::isNotBlank)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            file.reference?.let { Text(passiveReference(it), style = MaterialTheme.typography.bodySmall) }
                             Text(stringResource(R.string.cloud_copy_preview_unavailable), style = MaterialTheme.typography.bodySmall)
                         }
                     }

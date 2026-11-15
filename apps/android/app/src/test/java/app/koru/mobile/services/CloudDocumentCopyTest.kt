@@ -69,6 +69,20 @@ class CloudDocumentCopyTest {
         assertNull(CloudDocumentCopyDecoder.decode(fixture().toString(), selection.copy(accountId = "bad")))
     }
 
+    @Test fun legacyFileLeavesRetainTheirPassiveReferenceAlongsideCountedBlobMetadata() {
+        for (kind in listOf("file", "image", "canvas")) {
+            val value = fixture()
+            value.getJSONObject("document").getJSONArray("blocks").getJSONObject(0)
+                .put("kind", kind).put("reference", JSONObject().put("kind", "label").put("value", "Stored target"))
+            val copy = decode(value)!!
+            val file = copy.files.getValue(BlockId(id(6)))
+            assertEquals(app.koru.mobile.domain.EntityReference.Label("Stored target"), file.reference)
+            assertEquals("application/octet-stream", file.mimeType)
+            assertEquals(setOf(BlockId(id(6))), copy.permittedNodes)
+            assertTrue(copy.document.blocks[0].content is app.koru.mobile.domain.BlockContent.Unsupported)
+        }
+    }
+
     @Test fun onlyNativePermittedLeavesOfferRemovalAndUnknownOutcomesCannotRetryWrite() {
         val copy = decode(fixture())!!
         val removable = cloudCopyRemovableNodes(copy.document, copy.permittedNodes)

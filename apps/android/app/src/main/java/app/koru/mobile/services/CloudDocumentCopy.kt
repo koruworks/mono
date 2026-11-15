@@ -24,7 +24,7 @@ internal data class CloudCopySelection(
 }
 
 /** Metadata only: deliberately not a global BlobReference usable by hydration. */
-internal data class CloudCopyFile(val mimeType: String, val sizeDecimal: String?)
+internal data class CloudCopyFile(val mimeType: String, val sizeDecimal: String?, val reference: EntityReference? = null)
 internal enum class CloudCopyStructure { Document, Trash }
 internal class CloudDocumentCopy(
     val selection: CloudCopySelection,
@@ -75,7 +75,7 @@ internal object CloudDocumentCopyDecoder {
                 val mime = budget.text(it.string("mime_type"))
                 val size = it.nullInteger("size", "18446744073709551615")
                 it.nullInteger("width", "4294967295"); it.nullInteger("height", "4294967295")
-                CloudCopyFile(mime, size)
+                CloudCopyFile(mime, size, reference)
             }
             if (blob != null && kind in setOf("file", "image", "canvas")) files[BlockId(id)] = blob
             if (blob != null && kind in setOf("file", "image", "canvas")) eligible.add(id)
