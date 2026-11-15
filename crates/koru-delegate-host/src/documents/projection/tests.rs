@@ -6,7 +6,7 @@ use koru_delegate_core::*;
 fn id<T: std::str::FromStr>() -> T {
     uuid::Uuid::new_v4().to_string().parse().ok().unwrap()
 }
-fn fixture() -> (RunDocument, RunProjectionIntent) {
+pub(crate) fn fixture() -> (RunDocument, RunProjectionIntent) {
     let device = DeviceId::from_uuid(uuid::Uuid::new_v4());
     let mut header = RunHeader::from_request(
         DelegationRequest {

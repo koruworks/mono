@@ -180,6 +180,18 @@ impl PublicationWorker {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        // A worker may end outside execute's unwind boundary (for example its
+        // wake callback fails). Joining is actual physical completion; an
+        // absent returned handle is now loss, not an indefinitely live ticket.
+        // Prepared alone never returns ownership. Keep that receipt followed by
+        // Lost so the actor can retain SQL debt and enter ReopenOwed.
+        if let Some(ticket) = self.ticket
+            && !completions
+                .iter()
+                .any(|completion| completion.ticket() == ticket && !completion.retains_handle())
+        {
+            completions.push(Completion::Lost { ticket });
+        }
         self.ticket = None;
         self.waiting = false;
         completions
@@ -331,3 +343,6 @@ fn apply(
         Err(error) => Completion::Pending { ticket, error },
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -13,6 +13,7 @@ use koru_delegate_core::decisions::{
     DecisionPreparedProjection, DecisionProjectionAcknowledgment, DecisionProjectionState,
 };
 use koru_delegate_document::{RunDocument, RunDocumentError};
+mod cleanup;
 
 pub(crate) enum RunDocumentOwner {
     Attached {

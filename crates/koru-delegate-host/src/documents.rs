@@ -454,6 +454,11 @@ struct StoreHandle {
 
 mod projection;
 
+#[cfg(test)]
+pub(crate) fn projection_fixture() -> (RunDocument, koru_delegate_runtime::RunProjectionIntent) {
+    projection::tests::fixture()
+}
+
 impl RunDocumentHandle for StoreHandle {
     fn document(&self) -> &RunDocument {
         &self.doc
