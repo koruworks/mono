@@ -222,15 +222,15 @@ impl std::fmt::Debug for ObservedRetirementResult {
 }
 impl ObservedCreationRetirement {
     pub fn matches_target(&self, target: &DecisionCleanupTarget) -> bool {
-        self.creation_key == target.creation_key()
-            && match self.result {
-                ObservedRetirementResult::NoEvidence {} => true,
-                ObservedRetirementResult::KnownEnded { session }
-                | ObservedRetirementResult::KnownExited { session, .. }
-                | ObservedRetirementResult::KnownFailed { session, .. } => {
-                    target.session() == Some(session)
-                }
-            }
+        self.creation_key == target.creation_key() && self.matches_session(target.session())
+    }
+    fn matches_session(&self, expected: Option<SessionId>) -> bool {
+        match self.result {
+            ObservedRetirementResult::NoEvidence {} => true,
+            ObservedRetirementResult::KnownEnded { session }
+            | ObservedRetirementResult::KnownExited { session, .. }
+            | ObservedRetirementResult::KnownFailed { session, .. } => expected == Some(session),
+        }
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,7 +335,12 @@ impl DecisionValidate for ConsumerCleanup {
                         && attempt_retirement.generation == generation
                         && native_drain.run == target.origin().run
                         && native_drain.attempt == attempt
-                        && native_drain.generation == generation,
+                        && native_drain.generation == generation
+                        && native_drain
+                            .effects
+                            .as_slice()
+                            .iter()
+                            .all(|e| e.binding.user_scope == target.origin().owner.user_scope),
                 )?;
                 if let Some(effect) = retained_effect_outcome {
                     let key = match effect {
@@ -355,12 +360,14 @@ impl DecisionValidate for ConsumerCleanup {
                             && identity::v4(key.operation_id),
                     )?;
                     match effect {
-                        DecisionRetainedEffect::Durable { reference, .. } => {
-                            require(reference.valid())?
-                        }
-                        DecisionRetainedEffect::DrainedUnknown { drain, .. } => {
-                            require(drain.binding.valid() && drain.drained_at >= drain.fenced_at)?
-                        }
+                        DecisionRetainedEffect::Durable { reference, .. } => require(
+                            reference.valid() && reference.operation_id == key.operation_id,
+                        )?,
+                        DecisionRetainedEffect::DrainedUnknown { drain, .. } => require(
+                            drain.binding.valid()
+                                && drain.drained_at >= drain.fenced_at
+                                && drain.binding.user_scope == target.origin().owner.user_scope,
+                        )?,
                         DecisionRetainedEffect::NotApplied { .. } => {}
                     }
                 }
@@ -418,6 +425,8 @@ impl DecisionValidate for BotDecisionWaitObservation {
         } = &self.origin_stop
         {
             native_drain.validate()?;
+            // C/D checks the original creation key against the retained attempt.
+            // This neutral value can correlate only the known origin session.
             require(
                 *origin_fence == self.cleanup_intent.origin()
                     && *wait_id == self.key.wait_id
@@ -426,10 +435,12 @@ impl DecisionValidate for BotDecisionWaitObservation {
                     && native_drain.run == origin_fence.run
                     && native_drain.attempt == origin_fence.attempt
                     && native_drain.generation == origin_fence.generation
-                    && creation_retirement.matches_target(&DecisionCleanupTarget::Origin {
-                        fence: *origin_fence,
-                        creation_key: creation_retirement.creation_key,
-                    }),
+                    && native_drain
+                        .effects
+                        .as_slice()
+                        .iter()
+                        .all(|e| e.binding.user_scope == origin_fence.owner.user_scope)
+                    && creation_retirement.matches_session(Some(origin_fence.session)),
             )?;
         }
         bounded::encode(&self.origin_stop, DECISION_EVIDENCE_BYTES)?;

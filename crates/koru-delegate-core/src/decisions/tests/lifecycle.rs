@@ -2,6 +2,23 @@
 
 use super::*;
 
+fn drain() -> NativeEffectDrainReceipt {
+    let e = edit();
+    NativeEffectDrainReceipt {
+        binding: NativeEffectBinding {
+            user_scope: e.owner.user_scope,
+            scope: "koru.native.result.v1".into(),
+            request_key: uuid(90),
+            workspace: e.workspace,
+            document: e.target,
+            kind: NativeEffectKind::EditDocument,
+            request_fingerprint: e.edit_fingerprint,
+        },
+        fenced_at: NativeEffectTimestamp::from_millis(1),
+        drained_at: NativeEffectTimestamp::from_millis(2),
+    }
+}
+
 #[test]
 fn decision_closed_kind_authorization_phase_matrix() {
     use DecisionAuthorization as A;
@@ -320,11 +337,52 @@ fn decision_cleanup_cannot_use_origin_retirement_for_live_successor() {
             attempt,
             generation,
             observed_at_ms: 8,
-            effects: DecisionList::default(),
+            effects: DecisionList::new(vec![drain()]).unwrap(),
         },
-        retained_effect_outcome: None,
+        retained_effect_outcome: Some(DecisionRetainedEffect::Durable {
+            key: r.candidate_native_key(&binding()).unwrap(),
+            reference: NativeResultReference {
+                operation_id: uuid(12),
+                workspace: edit().workspace,
+                document: edit().target,
+                version: vec![1],
+                title: "fixture".into(),
+                confirmed_at_ms: 8,
+                kind: NativeResultKind::EditedPage,
+            },
+        }),
     };
     assert!(c.validate().is_ok());
+    let mut wrong = c.clone();
+    if let ConsumerCleanup::Confirmed { native_drain, .. } = &mut wrong {
+        let mut foreign = drain();
+        foreign.binding.user_scope = koru_store_core::UserScopeId::from_uuid(uuid(99));
+        native_drain.effects = DecisionList::new(vec![foreign]).unwrap();
+    }
+    assert!(wrong.validate().is_err());
+    let mut wrong = c.clone();
+    if let ConsumerCleanup::Confirmed {
+        retained_effect_outcome: Some(DecisionRetainedEffect::Durable { reference, .. }),
+        ..
+    } = &mut wrong
+    {
+        reference.operation_id = uuid(99);
+    }
+    assert!(wrong.validate().is_err());
+    let mut wrong = c.clone();
+    if let ConsumerCleanup::Confirmed {
+        retained_effect_outcome,
+        ..
+    } = &mut wrong
+    {
+        let mut foreign = drain();
+        foreign.binding.user_scope = koru_store_core::UserScopeId::from_uuid(uuid(99));
+        *retained_effect_outcome = Some(DecisionRetainedEffect::DrainedUnknown {
+            key: r.candidate_native_key(&binding()).unwrap(),
+            drain: foreign,
+        });
+    }
+    assert!(wrong.validate().is_err());
     if let ConsumerCleanup::Confirmed {
         attempt_retirement, ..
     } = &mut c
@@ -436,6 +494,17 @@ fn decision_wait_observation_keeps_historical_origin_and_final_consumer_distinct
         read.consumer_cleanup,
         ConsumerCleanup::Owed { .. }
     ));
+    if let OriginWaitStop::Confirmed { native_drain, .. } = &mut read.origin_stop {
+        native_drain.effects = DecisionList::new(vec![drain()]).unwrap();
+    }
+    assert!(read.validate().is_ok());
+    let mut foreign = read.clone();
+    if let OriginWaitStop::Confirmed { native_drain, .. } = &mut foreign.origin_stop {
+        let mut wrong = drain();
+        wrong.binding.user_scope = koru_store_core::UserScopeId::from_uuid(uuid(99));
+        native_drain.effects = DecisionList::new(vec![wrong]).unwrap();
+    }
+    assert!(foreign.validate().is_err());
     if let OriginWaitStop::Confirmed { origin_fence, .. } = &mut read.origin_stop {
         origin_fence.turn = id(100);
     }
