@@ -22,6 +22,7 @@ use koru_delegate_sqlite::{AnswerDecision, DecisionRecord};
 
 mod edit;
 mod resume;
+mod successor;
 pub use edit::DecisionEditRequest;
 pub use resume::DecisionEnrollmentBridge;
 

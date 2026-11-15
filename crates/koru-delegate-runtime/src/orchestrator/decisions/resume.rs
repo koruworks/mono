@@ -27,7 +27,7 @@ pub trait DecisionEnrollmentBridge {
 }
 
 impl Orchestrator {
-    fn decision_ticket(
+    pub(super) fn decision_ticket(
         &mut self,
         owner: BotOwner,
         run: RunId,
