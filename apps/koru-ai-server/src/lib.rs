@@ -14,6 +14,7 @@ mod bots;
 pub mod fixtures;
 pub use bots::BotAuthorityAdapter;
 mod chat_tools;
+pub mod native_effect;
 mod store_context;
 mod store_tools;
 mod worker;

@@ -17,6 +17,7 @@ use koru_delegate_core::decisions::{
 };
 use std::collections::BTreeMap;
 
+pub(in crate::worker) mod apply;
 mod card;
 mod client;
 mod delegate;

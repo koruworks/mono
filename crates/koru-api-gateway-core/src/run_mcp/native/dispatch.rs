@@ -3,14 +3,15 @@
 use super::decision::EditDecisions;
 use super::*;
 use crate::GatewayState;
+use koru_ai_server::native_effect::{self as effect, NativeEffectHost, NativeEffectSubject};
 use koru_ai_server::{
     AiWorkerClient, NativePolicyEvidence, NativePolicyRequest, NativeStoreAuthority,
 };
 use koru_artifact_wire::run_tools::ToolFailure;
 use koru_delegate_core::*;
 use koru_mcp_server::native::{
-    NativeReconciliation, NativeStoreIdentity, NativeWriteError, NativeWriteEvidence,
-    NativeWriteKind, PreparedNativeWrite,
+    NativeStoreIdentity, NativeWriteError, NativeWriteEvidence, NativeWriteKind,
+    PreparedNativeWrite,
 };
 use koru_mcp_server::{RequestContext, ToolError, WorkspaceToolExecutor};
 use koru_store_core::model::Scope;
@@ -64,6 +65,26 @@ impl PolicySource for AiWorkerClient {
             .map_err(|_| failure("decision_record_unavailable"))
     }
 }
+/// The shared native effect ([`koru_ai_server::native_effect`]) answering in
+/// this path's failure vocabulary and notifying through the AI policy source.
+struct Host<'a>(&'a dyn PolicySource);
+impl NativeEffectHost for Host<'_> {
+    type Failure = ToolFailure;
+    fn failure(&self, code: &'static str) -> ToolFailure {
+        failure(code)
+    }
+    fn settled(&self) {
+        self.0.settled();
+    }
+    fn uncertain(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        key: NativeResultKey,
+    ) -> Result<(), ToolFailure> {
+        self.0.uncertain(owner, bot, key)
+    }
+}
 pub(super) fn failure(code: &'static str) -> ToolFailure {
     ToolFailure::new(
         code,
@@ -71,18 +92,10 @@ pub(super) fn failure(code: &'static str) -> ToolFailure {
     )
 }
 fn refused(error: ToolError) -> ToolFailure {
-    let code = match error.code.as_str() {
-        "permission_denied" | "forbidden" => "permission_denied",
-        "revision_conflict" | "idempotency_conflict" => "revision_conflict",
-        "native_no_change" => "native_no_change",
-        "invalid_request" => "invalid_request",
-        _ => "native_request_refused",
-    };
-    failure(code)
+    failure(effect::refused_code(&error))
 }
 fn owner_call(port: &dyn BotDelegatePort, command: BotCommand) -> Result<BotReply, ToolFailure> {
-    port.execute(command)
-        .map_err(|_| failure("native_owner_unavailable"))
+    effect::owner_call(port, command, &failure)
 }
 
 pub(in crate::run_mcp) async fn call(
@@ -156,15 +169,7 @@ fn operation(arguments: &mut Value) -> Result<Uuid, ToolFailure> {
     Ok(id)
 }
 pub(super) fn fingerprint(raw: &str) -> Result<[u8; 32], ToolFailure> {
-    if raw.len() != 64 || !raw.is_ascii() {
-        return Err(failure("invalid_request"));
-    }
-    let mut result = [0; 32];
-    for (index, value) in result.iter_mut().enumerate() {
-        *value = u8::from_str_radix(&raw[index * 2..index * 2 + 2], 16)
-            .map_err(|_| failure("invalid_request"))?;
-    }
-    Ok(result)
+    effect::parse_fingerprint(raw).ok_or_else(|| failure("invalid_request"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -296,13 +301,13 @@ fn invoke(
         _ => return Err(failure("native_owner_unavailable")),
     };
     if let Some(intent) = &retained
-        && let Some(answer) = recover_retained(
+        && let Some(answer) = effect::recover_retained(
+            &Host(policy),
             port,
-            policy,
             store,
             &backend,
             &authority,
-            &provenance,
+            NativeEffectSubject::of(&provenance),
             &prepared,
             intent,
         )
@@ -334,15 +339,20 @@ fn invoke(
             },
         )?;
         if let super::decision::DecisionOutcome::Consume { view, boot } = outcome {
-            return consume(
+            return effect::consume(
+                &Host(policy),
                 store,
-                policy,
                 port,
                 &backend,
                 &authority,
-                &provenance,
+                NativeEffectSubject::of(&provenance),
                 &prepared,
-                &edit,
+                &effect::ApprovedEdit {
+                    fence: edit.fence,
+                    key: edit.key,
+                    fingerprint: edit.fingerprint,
+                    payload: edit.payload,
+                },
                 &view,
                 &current.proof,
                 boot,
@@ -387,7 +397,7 @@ fn invoke(
     validate_intent(&intent, &key, &prepared, expected_hash)?;
     if intent.disposition != NativeResultDisposition::Execute {
         return if intent.stage == NativeResultStage::Registered {
-            saved(store, &authority, &intent)
+            effect::saved(&Host(policy), store, &authority, &intent)
         } else {
             Err(failure("save_status_unknown"))
         };
@@ -399,7 +409,7 @@ fn invoke(
         || policy.settled(),
         || policy.uncertain(provenance.owner, provenance.bot, key),
     )?;
-    saved(store, &authority, &registered)
+    effect::saved(&Host(policy), store, &authority, &registered)
 }
 
 /// The existing fresh checks before a lease: current policy synchronization
@@ -425,148 +435,13 @@ fn fresh_fence(
     }
 }
 
-/// Settle a retained intent from its own evidence, before any fresh right is
-/// asked for. `None` only for an unleased Prepared intent whose Store effect
-/// is positively unconfirmed: the ordinary path may then ask for its one
-/// fresh lease, which the owner itself refuses to grant twice.
-#[allow(clippy::too_many_arguments)]
-fn recover_retained(
-    port: &dyn BotDelegatePort,
-    policy: &dyn PolicySource,
-    store: &StoreWorkerClient,
-    backend: &koru_mcp_server::LocalBackend,
-    authority: &NativeStoreAuthority,
-    provenance: &BotProvenance,
-    prepared: &PreparedNativeWrite,
-    intent: &NativeResultIntentView,
-) -> Option<Result<Value, ToolFailure>> {
-    let key = &intent.key;
-    if intent.stage == NativeResultStage::Registered {
-        return Some(saved(store, authority, intent));
-    }
-    if intent.stage == NativeResultStage::Refused {
-        return Some(Err(failure("native_request_refused")));
-    }
-    if intent.stage == NativeResultStage::Verified {
-        // Durable evidence belongs to the owner, including edits whose
-        // transport cannot independently prove a second Store outcome.
-        let Some(evidence) = intent.verified.as_ref().filter(|e| {
-            e.valid()
-                && e.operation_id == key.operation_id
-                && e.workspace == intent.destination
-                && e.document == intent.target
-        }) else {
-            return Some(Err(failure("save_status_unknown")));
-        };
-        return Some(confirm(
-            port,
-            policy,
-            store,
-            authority,
-            intent,
-            NativeWriteEvidence {
-                kind: match evidence.kind {
-                    NativeResultKind::CreatedPage => NativeWriteKind::Created,
-                    NativeResultKind::EditedPage => NativeWriteKind::Edited,
-                },
-                workspace: evidence.workspace,
-                document: evidence.document,
-                version: evidence.version.clone(),
-                title: evidence.title.clone(),
-                confirmed_at_ms: evidence.confirmed_at_ms,
-            },
-        ));
-    }
-    // Recover original Store proof before asking for fresh execution rights.
-    // This can register a held creation after an access-narrowing barrier.
-    match backend.reconcile_native_write(prepared, store_identity(provenance, intent)) {
-        Ok(NativeReconciliation::Verified(evidence)) => {
-            Some(confirm(port, policy, store, authority, intent, evidence))
-        }
-        Ok(NativeReconciliation::Unconfirmed) if intent.stage == NativeResultStage::Prepared => {
-            None
-        }
-        _ => Some(Err(failure("save_status_unknown"))),
-    }
-}
+// The effect half lives in `koru_ai_server::native_effect`, shared with the
+// AI's approved-edit trigger (O133 design B). These keep this module's
+// signatures for the Memory path and the tests; each is the shared function
+// answering in this path's failure vocabulary.
 
-/// The acknowledged consumer's retry of the exact approved edit: one atomic
-/// consume creates the native intent, its lease and the decision's
-/// consumption together; the existing Store executor and receipt path then
-/// runs once. A replay carries no Execute and only reconciles.
-#[allow(clippy::too_many_arguments)]
-fn consume(
-    store: &StoreWorkerClient,
-    policy: &dyn PolicySource,
-    port: &dyn BotDelegatePort,
-    backend: &koru_mcp_server::LocalBackend,
-    authority: &NativeStoreAuthority,
-    provenance: &BotProvenance,
-    prepared: &PreparedNativeWrite,
-    edit: &super::decision::DeniedEdit<'_>,
-    view: &koru_delegate_api::bots::DecisionReceiptView,
-    proof: &FreshBotPolicyProof,
-    boot: DelegateBootId,
-) -> Result<Value, ToolFailure> {
-    let decisions::DecisionBindingV1::KoruEdit(binding) = &view.receipt.binding else {
-        return Err(failure("native_operation_conflict"));
-    };
-    let description = prepared.description();
-    let document = description
-        .document
-        .ok_or_else(|| failure("native_operation_conflict"))?;
-    let title = koru_ai_server::native_document_title(store.clone(), authority.clone(), document)
-        .map_err(refused)?;
-    let request = PrepareNativeResult {
-        key: edit.key.clone(),
-        kind: NativeResultOperation::EditPage,
-        destination: description.workspace,
-        target: Some(document),
-        request_fingerprint: edit.fingerprint,
-        expected_revision: description.expected_revision.clone(),
-        // The binding's own policy identity: any change refuses consumption.
-        config_revision: binding.global_policy.config_revision.get(),
-        policy_revision: binding.global_policy.policy_revision.get(),
-        title,
-    };
-    let intent = match port.execute(BotCommand::ConsumeDecisionEdit {
-        fence: edit.fence.clone(),
-        request,
-        payload: edit.payload.clone(),
-        proof: proof.clone(),
-        boot,
-    }) {
-        Ok(BotReply::NativeResult { intent }) => intent,
-        // A typed refusal committed nothing; there is no other route to run it.
-        Err(error) if error.code.starts_with("bot_") && !error.retryable => {
-            return Err(failure("native_execution_unavailable"));
-        }
-        // The consume may have committed its one lease: never run it blind.
-        _ => return Err(failure("save_status_unknown")),
-    };
-    validate_intent(&intent, edit.key, prepared, edit.fingerprint)?;
-    if intent.disposition == NativeResultDisposition::Execute {
-        let registered = execute_record(
-            port,
-            &intent,
-            || backend.execute_native_write(prepared, store_identity(provenance, &intent)),
-            || policy.settled(),
-            || policy.uncertain(provenance.owner, provenance.bot, edit.key.clone()),
-        )?;
-        return saved(store, authority, &registered);
-    }
-    // Consumed replay is reconcile-only: never another Execute or Store
-    // request, even when the original lease's outcome is still unknown.
-    recover_retained(
-        port, policy, store, backend, authority, provenance, prepared, &intent,
-    )
-    .unwrap_or_else(|| Err(failure("save_status_unknown")))
-}
-
-/// The single lease-to-settlement state machine for Result and Memory purposes.
-/// Callers validate immutable intent identity before entering. Cancellation may
-/// refuse before acquisition, but cannot abandon an Execute lease here. Fresh
-/// AI preparation is forbidden; settlement/recovery notifications remain owed.
+/// The single lease-to-settlement state machine for Result and Memory purposes
+/// ([`effect::execute_record`]).
 pub(super) fn execute_record(
     port: &dyn BotDelegatePort,
     intent: &NativeResultIntentView,
@@ -574,65 +449,7 @@ pub(super) fn execute_record(
     settled: impl FnOnce(),
     uncertain: impl FnOnce() -> Result<(), ToolFailure>,
 ) -> Result<NativeResultIntentView, ToolFailure> {
-    if intent.disposition != NativeResultDisposition::Execute
-        || intent.stage != NativeResultStage::Prepared
-        || intent.verified.is_some()
-    {
-        return Err(failure("native_operation_conflict"));
-    }
-    match execute() {
-        Ok(evidence) => {
-            let registered = confirm_record(port, intent, evidence)?;
-            settled();
-            Ok(registered)
-        }
-        Err(NativeWriteError::Refused(error)) => {
-            let observed = owner_call(
-                port,
-                BotCommand::ConfirmNativeResult {
-                    request: ConfirmNativeResult {
-                        key: intent.key.clone(),
-                        request_fingerprint: intent.request_fingerprint,
-                        observation: NativeResultObservation::NotApplied {
-                            code: match error.code.as_str() {
-                                "permission_denied" | "forbidden" => {
-                                    NativeResultRefusal::AccessDenied
-                                }
-                                "revision_conflict" | "idempotency_conflict" => {
-                                    NativeResultRefusal::Conflict
-                                }
-                                _ => NativeResultRefusal::InvalidInput,
-                            },
-                        },
-                    },
-                },
-            )?;
-            if !matches!(observed, BotReply::NativeResult { intent: observed } if observed.stage == NativeResultStage::Refused
-                && observed.key == intent.key && observed.request_fingerprint == intent.request_fingerprint
-                && observed.purpose == intent.purpose && observed.store_request == intent.store_request
-                && observed.destination == intent.destination && observed.target == intent.target
-                && observed.kind == intent.kind && observed.verified.is_none())
-            {
-                return Err(failure("save_status_unknown"));
-            }
-            settled();
-            Err(refused(error))
-        }
-        Err(NativeWriteError::Unconfirmed(_)) => {
-            let _ = owner_call(
-                port,
-                BotCommand::ConfirmNativeResult {
-                    request: ConfirmNativeResult {
-                        key: intent.key.clone(),
-                        request_fingerprint: intent.request_fingerprint,
-                        observation: NativeResultObservation::Unconfirmed,
-                    },
-                },
-            );
-            uncertain()?;
-            Err(failure("save_status_unknown"))
-        }
-    }
+    effect::execute_record(port, intent, execute, settled, uncertain, &failure)
 }
 
 fn validate_intent(
@@ -641,122 +458,23 @@ fn validate_intent(
     prepared: &PreparedNativeWrite,
     hash: [u8; 32],
 ) -> Result<(), ToolFailure> {
-    let d = prepared.description();
-    let kind = match d.kind {
-        NativeWriteKind::Created => NativeResultOperation::CreatePage,
-        NativeWriteKind::Edited => NativeResultOperation::EditPage,
-    };
-    if intent.purpose != (NativeEffectPurpose::Result {})
-        || intent.key != *key
-        || intent.destination != d.workspace
-        || intent.kind != kind
-        || intent.request_fingerprint != hash
-        || d.document.is_some_and(|document| document != intent.target)
-        || intent.target.as_uuid().is_nil()
-        || intent.store_request.get_version_num() != 4
-        || intent.store_request.as_bytes()[8] & 0xc0 != 0x80
-    {
-        return Err(failure("native_operation_conflict"));
-    }
-    Ok(())
+    effect::validate_intent(intent, key, prepared, hash, &failure)
 }
 pub(super) fn store_identity(
     provenance: &BotProvenance,
     intent: &NativeResultIntentView,
 ) -> NativeStoreIdentity {
-    NativeStoreIdentity {
-        candidate: intent.target,
-        scope: format!(
-            "koru.bot.native.v1:{}:{}:{}",
-            provenance.owner.user_scope, provenance.bot, intent.key.run
-        ),
-        request_key: intent.store_request.to_string(),
-    }
-}
-fn confirm(
-    port: &dyn BotDelegatePort,
-    policy: &dyn PolicySource,
-    store: &StoreWorkerClient,
-    authority: &NativeStoreAuthority,
-    intent: &NativeResultIntentView,
-    evidence: NativeWriteEvidence,
-) -> Result<Value, ToolFailure> {
-    let observed = confirm_record(port, intent, evidence)?;
-    policy.settled();
-    saved(store, authority, &observed)
+    effect::store_identity(NativeEffectSubject::of(provenance), intent)
 }
 
-/// Settle retained evidence without choosing its user-facing result format.
-/// Memory receipts must never flow through the ordinary page-result formatter.
+/// Settle retained evidence without choosing its user-facing result format
+/// ([`effect::confirm_record`]).
 pub(super) fn confirm_record(
     port: &dyn BotDelegatePort,
     intent: &NativeResultIntentView,
     evidence: NativeWriteEvidence,
 ) -> Result<NativeResultIntentView, ToolFailure> {
-    let reference = NativeResultReference {
-        operation_id: intent.key.operation_id,
-        workspace: evidence.workspace,
-        document: evidence.document,
-        version: evidence.version,
-        title: evidence.title,
-        confirmed_at_ms: evidence.confirmed_at_ms,
-        kind: match evidence.kind {
-            NativeWriteKind::Created => NativeResultKind::CreatedPage,
-            NativeWriteKind::Edited => NativeResultKind::EditedPage,
-        },
-    };
-    let observed = match owner_call(
-        port,
-        BotCommand::ConfirmNativeResult {
-            request: ConfirmNativeResult {
-                key: intent.key.clone(),
-                request_fingerprint: intent.request_fingerprint,
-                observation: NativeResultObservation::Durable {
-                    evidence: reference.clone(),
-                },
-            },
-        },
-    )? {
-        BotReply::NativeResult { intent: observed }
-            if observed.key == intent.key
-                && observed.purpose == intent.purpose
-                && observed.store_request == intent.store_request
-                && observed.request_fingerprint == intent.request_fingerprint
-                && observed.destination == intent.destination
-                && observed.target == intent.target
-                && observed.kind == intent.kind
-                && observed.verified.as_ref() == Some(&reference)
-                && observed.stage == NativeResultStage::Registered =>
-        {
-            observed
-        }
-        _ => return Err(failure("save_status_unknown")),
-    };
-    Ok(observed)
-}
-fn saved(
-    store: &StoreWorkerClient,
-    authority: &NativeStoreAuthority,
-    intent: &NativeResultIntentView,
-) -> Result<Value, ToolFailure> {
-    let evidence = intent
-        .verified
-        .as_ref()
-        .filter(|e| {
-            e.valid()
-                && e.operation_id == intent.key.operation_id
-                && e.workspace == intent.destination
-                && e.document == intent.target
-        })
-        .ok_or_else(|| failure("save_status_unknown"))?;
-    // Even an old Saved receipt cannot expose a now-hidden page.
-    koru_ai_server::native_document_title(store.clone(), authority.clone(), evidence.document)
-        .map_err(refused)?;
-    Ok(
-        json!({"status":"saved","operation_id":evidence.operation_id,"workspace_id":evidence.workspace,
-        "document_id":evidence.document,"title":evidence.title,
-        "base_revision":evidence.version.iter().map(|b| format!("{b:02x}")).collect::<String>(),"kind":evidence.kind}),
-    )
+    effect::confirm_record(port, intent, evidence, &failure)
 }
 
 #[cfg(test)]
