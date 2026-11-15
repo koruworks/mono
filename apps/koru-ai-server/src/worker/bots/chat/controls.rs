@@ -2,6 +2,7 @@
 //! Finite native commands, with live identity checked before queueing and by
 //! the delegate owner at execution. Only observations settle permission rows.
 use super::*;
+mod decision;
 #[cfg(test)]
 mod tests;
 
@@ -40,6 +41,8 @@ pub(in crate::worker) struct ControlJob {
     command: DelegateCommand,
     port: Arc<dyn BotDelegatePort>,
     reply: SyncSender<ApiResult<ToolDecisionResponse>>,
+    /// A decision card's answer: human proof and reread off the writer.
+    decision: Option<Box<decision::DecisionHuman>>,
 }
 pub(in crate::worker) struct ControlResult {
     context: CommandContext,
@@ -48,6 +51,8 @@ pub(in crate::worker) struct ControlResult {
     invocation: ToolInvocationId,
     result: Result<BotReply, koru_delegate_api::Failure>,
     reply: SyncSender<ApiResult<ToolDecisionResponse>>,
+    /// The decision answer as actually sent, when one was.
+    decision: Option<Box<decision::DecisionSent>>,
 }
 enum PreparedDecision {
     Forward(ControlJob),
@@ -91,25 +96,43 @@ impl ControlJob {
             },
             port,
             reply: sync_channel(1).0,
+            decision: None,
         }
     }
     pub(in crate::worker) fn run(self) -> ControlResult {
-        let result = catch_unwind(AssertUnwindSafe(|| self.port.execute(self.command)))
-            .unwrap_or_else(|_| {
+        let ControlJob {
+            context,
+            workspace,
+            attempt,
+            invocation,
+            command,
+            port,
+            reply,
+            decision,
+        } = self;
+        let (result, sent) = catch_unwind(AssertUnwindSafe(|| match decision {
+            Some(human) => decision::answer(&human, command, port.as_ref()),
+            None => (port.execute(command), None),
+        }))
+        .unwrap_or_else(|_| {
+            (
                 Err(koru_delegate_api::Failure {
                     code: "bot_unavailable".into(),
                     message: "Bot control unavailable.".into(),
                     retryable: true,
                     details: Default::default(),
-                })
-            });
+                }),
+                None,
+            )
+        });
         ControlResult {
-            context: self.context,
-            workspace: self.workspace,
-            attempt: self.attempt,
-            invocation: self.invocation,
+            context,
+            workspace,
+            attempt,
+            invocation,
             result,
-            reply: self.reply,
+            reply,
+            decision: sent,
         }
     }
 }
@@ -265,6 +288,17 @@ impl WorkerState {
                 }
                 return Err(tool_not_resumable());
             }
+            // A decision's card answers through the decision route, never
+            // through the native prompt's legacy answer.
+            if let Some(card) = self
+                .repository
+                .bot_decision_card(invocation)
+                .map_err(bot_failure)?
+            {
+                return self
+                    .prepare_decision_answer(&context, &bot, &row, card, &decision, approve, &reply)
+                    .map(PreparedDecision::Forward);
+            }
             let chat = self
                 .bot_chats
                 .get(&row.attempt_id)
@@ -299,11 +333,11 @@ impl WorkerState {
                         AgentSource::Approval(*approval),
                         DelegateCommand::AnswerApproval {
                             fence,
-                            // IPC16 carries the key; this call mints one per
-                            // forwarded answer, as the host did before. A key
-                            // retained per human answer is the AI owner's to
-                            // add (it has no answer journal for this route).
-                            request: koru_delegate_core::IdempotencyKey::mint(),
+                            // O138: one stable key per human answer, derived
+                            // from this prompt, decision and choice, so a
+                            // retry resends the same key and a different
+                            // answer never shares it.
+                            request: decision::native_answer_key(*approval, answer, choice)?,
                             approval: *approval,
                             decision: answer,
                             choice,
@@ -357,6 +391,7 @@ impl WorkerState {
                 command,
                 port: self.bot_delegate.clone().ok_or_else(tool_not_resumable)?,
                 reply: reply.clone(),
+                decision: None,
             }))
         })();
         match prepared {
@@ -384,7 +419,10 @@ impl WorkerState {
         }
     }
 
-    pub(in crate::worker) fn complete_bot_interaction(&mut self, result: ControlResult) {
+    pub(in crate::worker) fn complete_bot_interaction(&mut self, mut result: ControlResult) {
+        if let Some(sent) = result.decision.take() {
+            self.settle_decision_answer(&mut result, *sent);
+        }
         if matches!(&result.result, Ok(BotReply::Applied)) {
             let reply = result.reply.clone();
             let invocation = result.invocation;
@@ -410,11 +448,7 @@ impl WorkerState {
         }
         self.bot_interactions.remove(&result.invocation);
         let answer = match result.result {
-            Err(error) => Err(failure(
-                "tool_not_resumable",
-                "The current Bot request could not be answered. Its latest state will appear in the conversation.",
-                error.retryable,
-            )),
+            Err(error) => Err(decision::person_failure(&error.code, error.retryable)),
             _ => Err(tool_not_resumable()),
         };
         let _ = result.reply.send(answer);
