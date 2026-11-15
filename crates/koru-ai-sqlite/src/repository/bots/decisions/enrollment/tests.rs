@@ -3,7 +3,7 @@
 use super::*;
 use koru_delegate_core as d;
 
-fn fixture() -> (
+pub(in crate::repository::bots::decisions) fn fixture() -> (
     Repository,
     BotOwner,
     EnrollBotWaitCleanup,

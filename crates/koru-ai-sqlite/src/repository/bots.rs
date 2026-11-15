@@ -20,6 +20,7 @@ pub use creation::BotCreationScan;
 pub(crate) mod library;
 mod reads;
 mod decisions;
+pub use decisions::BotDecisionReplayRollover;
 mod routines;
 pub use routines::{
     RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,

@@ -33,9 +33,10 @@ use koru_ai_core::bots::ChatReadAccess;
 
 pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
-    BotBootSnapshot, BotCreationScan, BotHold, HistoricalBotRun, LifecycleCapture, LifecycleMember,
-    LifecycleMemberDraft, LifecycleOperation, ParkedCursor, ParkedForOwner, RoutineDetailSnapshot,
-    RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
+    BotBootSnapshot, BotCreationScan, BotDecisionReplayRollover, BotHold, HistoricalBotRun,
+    LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
+    ParkedForOwner, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
+    RoutineReadSubject, RoutineToolSubject,
 };
 
 pub struct Repository {
