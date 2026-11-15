@@ -215,7 +215,7 @@ fn hashes(model: &WorkspaceDoc) -> Result<BTreeSet<String>, CloudDocumentFailure
 fn eligible(model: &WorkspaceDoc, id: NodeId) -> bool {
     model.read(id).is_ok_and(|node| {
         matches!(node.kind, Kind::File | Kind::Image | Kind::Canvas)
-            && matches!(node.content, koru_core::Content::Blob { .. })
+            && model.retained_blob(id).is_ok_and(|slot| slot.is_some())
     }) && model
         .children(Parent::Node(id))
         .is_ok_and(|children| children.is_empty())
@@ -327,7 +327,7 @@ fn view_block(
 ) -> Result<ViewBlock, String> {
     use koru_core::Content;
 
-    let (rich_text, blob, reference, kind) = match &node.content {
+    let (rich_text, mut blob, reference, mut kind) = match &node.content {
         Content::Text { .. } => {
             let rich = Some(view_rich_text(model, node, root, document)?);
             (rich, None, None, node.kind.as_str().to_owned())
@@ -358,6 +358,25 @@ fn view_block(
         ),
     };
 
+    if let Some(Content::Blob {
+        hash,
+        mime,
+        width,
+        height,
+        ..
+    }) = model
+        .retained_blob(node.id)
+        .map_err(|_| "invalid retained attachment")?
+    {
+        blob = Some(ViewBlob {
+            id: hash.0,
+            mime_type: mime,
+            size: None,
+            width,
+            height,
+        });
+        kind = node.kind.as_str().to_owned();
+    }
     let meta = &node.meta;
     let alignment = match meta.align {
         Some(koru_core::Align::Center) => "center",
