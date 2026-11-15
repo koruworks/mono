@@ -612,3 +612,37 @@ fn inventory_result_echoes_exact_document_scope_on_success_and_failure() {
         assert_eq!(result.error_code.as_deref(), failure.map(|f| f.code()));
     }
 }
+
+#[test]
+fn cloud_document_result_echoes_exact_selection_and_unknown_edit_outcome() {
+    use koru_agent_wire::{CloudDocumentSelectionPayload, CloudInspectionFailure};
+    for failure in [
+        None,
+        Some(CloudInspectionFailure::SourceChanged),
+        Some(CloudInspectionFailure::OutcomeUnknown),
+    ] {
+        let result = operation_result(
+            7,
+            42,
+            9,
+            AccountOperationResult::CloudFileRemoval {
+                request_id: 42,
+                selection: CloudDocumentSelectionPayload::new("exact-selection".into()).unwrap(),
+                node_id: "exact-node".into(),
+                removed: failure.is_none(),
+                failure,
+            },
+        );
+        assert_eq!(result.kind, "cloud_file_removal");
+        assert_eq!(result.requester, 42);
+        assert_eq!(result.generation, 9);
+        assert_eq!(
+            result.cloud_document_selection_json.as_deref(),
+            Some("exact-selection")
+        );
+        assert_eq!(result.cloud_file_node_id.as_deref(), Some("exact-node"));
+        assert_eq!(result.cloud_file_removed, failure.is_none());
+        assert_eq!(result.error_code.as_deref(), failure.map(|f| f.code()));
+        assert!(result.cloud_document_inspection_json.is_none());
+    }
+}

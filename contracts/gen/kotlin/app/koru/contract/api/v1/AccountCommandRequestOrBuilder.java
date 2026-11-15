@@ -224,4 +224,62 @@ public interface AccountCommandRequestOrBuilder extends
    */
   com.google.protobuf.ByteString
       getCloudCursorBytes();
+
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return Whether the cloudDocumentSelectionJson field is set.
+   */
+  boolean hasCloudDocumentSelectionJson();
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The cloudDocumentSelectionJson.
+   */
+  java.lang.String getCloudDocumentSelectionJson();
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The bytes for cloudDocumentSelectionJson.
+   */
+  com.google.protobuf.ByteString
+      getCloudDocumentSelectionJsonBytes();
+
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return Whether the cloudFileNodeId field is set.
+   */
+  boolean hasCloudFileNodeId();
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return The cloudFileNodeId.
+   */
+  java.lang.String getCloudFileNodeId();
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return The bytes for cloudFileNodeId.
+   */
+  com.google.protobuf.ByteString
+      getCloudFileNodeIdBytes();
 }

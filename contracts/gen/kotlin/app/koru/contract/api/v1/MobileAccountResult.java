@@ -25,6 +25,9 @@ public  final class MobileAccountResult extends
     cloudInventoryJson_ = "";
     cloudWorkspaceId_ = "";
     cloudIncarnationId_ = "";
+    cloudDocumentSelectionJson_ = "";
+    cloudDocumentInspectionJson_ = "";
+    cloudFileNodeId_ = "";
   }
   private int bitField0_;
   public static final int SEQUENCE_FIELD_NUMBER = 1;
@@ -1051,6 +1054,260 @@ public  final class MobileAccountResult extends
     checkByteStringIsUtf8(value);
     cloudIncarnationId_ = value.toStringUtf8();
     bitField0_ |= 0x00000080;
+  }
+
+  public static final int CLOUD_DOCUMENT_SELECTION_JSON_FIELD_NUMBER = 19;
+  private java.lang.String cloudDocumentSelectionJson_;
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return Whether the cloudDocumentSelectionJson field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudDocumentSelectionJson() {
+    return ((bitField0_ & 0x00000100) != 0);
+  }
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The cloudDocumentSelectionJson.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudDocumentSelectionJson() {
+    return cloudDocumentSelectionJson_;
+  }
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The bytes for cloudDocumentSelectionJson.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudDocumentSelectionJsonBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudDocumentSelectionJson_);
+  }
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @param value The cloudDocumentSelectionJson to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudDocumentSelectionJson(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000100;
+    cloudDocumentSelectionJson_ = value;
+  }
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   */
+  private void clearCloudDocumentSelectionJson() {
+    bitField0_ = (bitField0_ & ~0x00000100);
+    cloudDocumentSelectionJson_ = getDefaultInstance().getCloudDocumentSelectionJson();
+  }
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @param value The bytes for cloudDocumentSelectionJson to set.
+   */
+  private void setCloudDocumentSelectionJsonBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudDocumentSelectionJson_ = value.toStringUtf8();
+    bitField0_ |= 0x00000100;
+  }
+
+  public static final int CLOUD_DOCUMENT_INSPECTION_JSON_FIELD_NUMBER = 20;
+  private java.lang.String cloudDocumentInspectionJson_;
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @return Whether the cloudDocumentInspectionJson field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudDocumentInspectionJson() {
+    return ((bitField0_ & 0x00000200) != 0);
+  }
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @return The cloudDocumentInspectionJson.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudDocumentInspectionJson() {
+    return cloudDocumentInspectionJson_;
+  }
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @return The bytes for cloudDocumentInspectionJson.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudDocumentInspectionJsonBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudDocumentInspectionJson_);
+  }
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @param value The cloudDocumentInspectionJson to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudDocumentInspectionJson(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000200;
+    cloudDocumentInspectionJson_ = value;
+  }
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   */
+  private void clearCloudDocumentInspectionJson() {
+    bitField0_ = (bitField0_ & ~0x00000200);
+    cloudDocumentInspectionJson_ = getDefaultInstance().getCloudDocumentInspectionJson();
+  }
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @param value The bytes for cloudDocumentInspectionJson to set.
+   */
+  private void setCloudDocumentInspectionJsonBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudDocumentInspectionJson_ = value.toStringUtf8();
+    bitField0_ |= 0x00000200;
+  }
+
+  public static final int CLOUD_FILE_NODE_ID_FIELD_NUMBER = 21;
+  private java.lang.String cloudFileNodeId_;
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @return Whether the cloudFileNodeId field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudFileNodeId() {
+    return ((bitField0_ & 0x00000400) != 0);
+  }
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @return The cloudFileNodeId.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudFileNodeId() {
+    return cloudFileNodeId_;
+  }
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @return The bytes for cloudFileNodeId.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudFileNodeIdBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudFileNodeId_);
+  }
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @param value The cloudFileNodeId to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudFileNodeId(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000400;
+    cloudFileNodeId_ = value;
+  }
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   */
+  private void clearCloudFileNodeId() {
+    bitField0_ = (bitField0_ & ~0x00000400);
+    cloudFileNodeId_ = getDefaultInstance().getCloudFileNodeId();
+  }
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @param value The bytes for cloudFileNodeId to set.
+   */
+  private void setCloudFileNodeIdBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudFileNodeId_ = value.toStringUtf8();
+    bitField0_ |= 0x00000400;
+  }
+
+  public static final int CLOUD_FILE_REMOVED_FIELD_NUMBER = 22;
+  private boolean cloudFileRemoved_;
+  /**
+   * <pre>
+   * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+   * </pre>
+   *
+   * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+   * @return The cloudFileRemoved.
+   */
+  @java.lang.Override
+  public boolean getCloudFileRemoved() {
+    return cloudFileRemoved_;
+  }
+  /**
+   * <pre>
+   * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+   * </pre>
+   *
+   * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+   * @param value The cloudFileRemoved to set.
+   */
+  private void setCloudFileRemoved(boolean value) {
+    
+    cloudFileRemoved_ = value;
+  }
+  /**
+   * <pre>
+   * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+   * </pre>
+   *
+   * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+   */
+  private void clearCloudFileRemoved() {
+
+    cloudFileRemoved_ = false;
   }
 
   public static app.koru.contract.api.v1.MobileAccountResult parseFrom(
@@ -2214,6 +2471,265 @@ public  final class MobileAccountResult extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Echoed on inspection/removal success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return Whether the cloudDocumentSelectionJson field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudDocumentSelectionJson() {
+      return instance.hasCloudDocumentSelectionJson();
+    }
+    /**
+     * <pre>
+     * Echoed on inspection/removal success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return The cloudDocumentSelectionJson.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudDocumentSelectionJson() {
+      return instance.getCloudDocumentSelectionJson();
+    }
+    /**
+     * <pre>
+     * Echoed on inspection/removal success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return The bytes for cloudDocumentSelectionJson.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudDocumentSelectionJsonBytes() {
+      return instance.getCloudDocumentSelectionJsonBytes();
+    }
+    /**
+     * <pre>
+     * Echoed on inspection/removal success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @param value The cloudDocumentSelectionJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudDocumentSelectionJson(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudDocumentSelectionJson(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Echoed on inspection/removal success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudDocumentSelectionJson() {
+      copyOnWrite();
+      instance.clearCloudDocumentSelectionJson();
+      return this;
+    }
+    /**
+     * <pre>
+     * Echoed on inspection/removal success and failure.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @param value The bytes for cloudDocumentSelectionJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudDocumentSelectionJsonBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudDocumentSelectionJsonBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+     * @return Whether the cloudDocumentInspectionJson field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudDocumentInspectionJson() {
+      return instance.hasCloudDocumentInspectionJson();
+    }
+    /**
+     * <pre>
+     * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+     * @return The cloudDocumentInspectionJson.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudDocumentInspectionJson() {
+      return instance.getCloudDocumentInspectionJson();
+    }
+    /**
+     * <pre>
+     * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+     * @return The bytes for cloudDocumentInspectionJson.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudDocumentInspectionJsonBytes() {
+      return instance.getCloudDocumentInspectionJsonBytes();
+    }
+    /**
+     * <pre>
+     * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+     * @param value The cloudDocumentInspectionJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudDocumentInspectionJson(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudDocumentInspectionJson(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudDocumentInspectionJson() {
+      copyOnWrite();
+      instance.clearCloudDocumentInspectionJson();
+      return this;
+    }
+    /**
+     * <pre>
+     * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+     * @param value The bytes for cloudDocumentInspectionJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudDocumentInspectionJsonBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudDocumentInspectionJsonBytes(value);
+      return this;
+    }
+
+    /**
+     * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+     * @return Whether the cloudFileNodeId field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudFileNodeId() {
+      return instance.hasCloudFileNodeId();
+    }
+    /**
+     * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+     * @return The cloudFileNodeId.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudFileNodeId() {
+      return instance.getCloudFileNodeId();
+    }
+    /**
+     * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+     * @return The bytes for cloudFileNodeId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudFileNodeIdBytes() {
+      return instance.getCloudFileNodeIdBytes();
+    }
+    /**
+     * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+     * @param value The cloudFileNodeId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudFileNodeId(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudFileNodeId(value);
+      return this;
+    }
+    /**
+     * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudFileNodeId() {
+      copyOnWrite();
+      instance.clearCloudFileNodeId();
+      return this;
+    }
+    /**
+     * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+     * @param value The bytes for cloudFileNodeId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudFileNodeIdBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudFileNodeIdBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * </pre>
+     *
+     * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+     * @return The cloudFileRemoved.
+     */
+    @java.lang.Override
+    public boolean getCloudFileRemoved() {
+      return instance.getCloudFileRemoved();
+    }
+    /**
+     * <pre>
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * </pre>
+     *
+     * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+     * @param value The cloudFileRemoved to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudFileRemoved(boolean value) {
+      copyOnWrite();
+      instance.setCloudFileRemoved(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * </pre>
+     *
+     * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudFileRemoved() {
+      copyOnWrite();
+      instance.clearCloudFileRemoved();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.MobileAccountResult)
   }
   @java.lang.Override
@@ -2251,12 +2767,17 @@ public  final class MobileAccountResult extends
             "cloudInventoryJson_",
             "cloudWorkspaceId_",
             "cloudIncarnationId_",
+            "cloudDocumentSelectionJson_",
+            "cloudDocumentInspectionJson_",
+            "cloudFileNodeId_",
+            "cloudFileRemoved_",
           };
           java.lang.String info =
-              "\u0000\u0011\u0000\u0001\u0001\u0012\u0011\u0000\u0003\u0000\u0001\u0003\u0002\u0003" +
+              "\u0000\u0015\u0000\u0001\u0001\u0016\u0015\u0000\u0003\u0000\u0001\u0003\u0002\u0003" +
               "\u0003\u0003\u0004\u0208\u0005\u1208\u0000\u0006\u001b\b\u1009\u0001\t\u0003\n\u1208" +
               "\u0002\u000b\u1003\u0003\f\u001b\r\u001b\u000e\u1208\u0004\u000f\u0003\u0010\u1208" +
-              "\u0005\u0011\u1208\u0006\u0012\u1208\u0007";
+              "\u0005\u0011\u1208\u0006\u0012\u1208\u0007\u0013\u1208\b\u0014\u1208\t\u0015\u1208" +
+              "\n\u0016\u0007";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

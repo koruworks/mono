@@ -71,6 +71,36 @@ pub fn command(value: &wire::AccountCommandRequest) -> Result<(), &'static str> 
     {
         return Err("account_payload_invalid");
     }
+    let inspection = matches!(
+        action,
+        wire::AccountAction::InspectCloudDocument | wire::AccountAction::RemoveCloudFile
+    );
+    if inspection {
+        let selection = value
+            .cloud_document_selection_json
+            .as_deref()
+            .ok_or("account_payload_invalid")?;
+        if selection.is_empty() || selection.len() > 1024 {
+            return Err("account_payload_invalid");
+        }
+        if action == wire::AccountAction::RemoveCloudFile {
+            let node = value
+                .cloud_file_node_id
+                .as_deref()
+                .ok_or("account_payload_invalid")?;
+            if node.len() != 36
+                || uuid::Uuid::parse_str(node)
+                    .ok()
+                    .is_none_or(|id| id.to_string() != node)
+            {
+                return Err("account_payload_invalid");
+            }
+        } else if value.cloud_file_node_id.is_some() {
+            return Err("account_payload_invalid");
+        }
+    } else if value.cloud_document_selection_json.is_some() || value.cloud_file_node_id.is_some() {
+        return Err("account_payload_invalid");
+    }
     if action == wire::AccountAction::Cancel && value.generation == 0 {
         return Err("account_generation_invalid");
     }
