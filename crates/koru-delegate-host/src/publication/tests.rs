@@ -435,7 +435,8 @@ fn enrolled(request: &EnrollBotWaitCleanup) -> BotWaitEnrollmentReply {
     BotWaitEnrollmentReply::Enrolled {
         receipt_digest: request.key.receipt_digest,
         key: request.key.clone(),
-        ai_attempt: uuid::Uuid::new_v4(),
+        // Deterministic per request, so two replies for one key compare equal.
+        ai_attempt: request.key.wait_id.as_uuid(),
     }
 }
 
