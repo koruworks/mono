@@ -164,6 +164,78 @@ fn require_current_origin(
 }
 
 impl Repository {
+    /// The origin terminal interceptor's lookup: the one retained enrollment
+    /// of this AI attempt on this *exact* origin execution fence, or `None`
+    /// when that exact origin never enrolled. A consumer, a later turn or a
+    /// fence without a turn never matches. The answer is permission to ask the
+    /// delegate whether one internal cause applies, never proof of a stop.
+    pub fn bot_wait_enrollment_for_origin(
+        &self,
+        owner: BotOwner,
+        attempt: InferenceAttemptId,
+        origin: &koru_ai_core::bots::replay::BotExecutionFence,
+    ) -> Result<Option<BotWaitEnrollmentKey>, BotError> {
+        if owner.user_scope != origin.owner.user_scope || owner.device != origin.owner.device {
+            return Err(BotError::Forbidden);
+        }
+        if origin.generation.get() == 0 {
+            return Err(BotError::Invalid);
+        }
+        let Some(turn) = origin.turn else {
+            return Ok(None);
+        };
+        let tx = self.connection.unchecked_transaction().map_err(bad)?;
+        // Count and bound in SQL before one at most 4 KiB body is read; the
+        // receipt's own decoder and normalized crosscheck then own the row.
+        let (count, body): (i64, Option<String>) = tx
+            .query_row(
+                "SELECT count(*),max(CASE WHEN typeof(receipt_json)='text' AND length(CAST(receipt_json AS BLOB)) BETWEEN 1 AND 4096 THEN receipt_json END)
+                 FROM bot_decision_wait_enrollments WHERE run_id=?1 AND ai_attempt_id=?2 AND origin_attempt_id=?3
+                 AND origin_generation=?4 AND origin_session_id=?5 AND origin_turn_id=?6",
+                params![
+                    origin.run.to_storage(),
+                    attempt.to_storage(),
+                    origin.attempt.to_storage(),
+                    origin.generation.get(),
+                    origin.session.to_string(),
+                    turn.to_string()
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(bad)?;
+        if count == 0 {
+            return Ok(None);
+        }
+        // One origin turn is stopped at most once for a Koru decision wait.
+        if count != 1 {
+            return Err(BotError::Storage);
+        }
+        let BotWaitEnrollmentReply::Enrolled { key, .. } =
+            decode_enrolled(&body.ok_or(BotError::Storage)?)?
+        else {
+            return Err(BotError::Storage);
+        };
+        if key.owner != origin.owner
+            || key.bot != origin.bot
+            || key.run != origin.run
+            || key.origin_attempt != origin.attempt
+            || key.origin_generation != origin.generation
+            || key.origin_session != origin.session
+            || key.origin_turn != turn
+        {
+            return Err(BotError::Storage);
+        }
+        validate_owner(owner, &key)?;
+        let receipt = retained_on(&tx, &key)?.ok_or(BotError::Storage)?;
+        let (subject, _, _) = subject_on(&tx, owner, &key)?;
+        if subject != attempt
+            || !matches!(receipt, BotWaitEnrollmentReply::Enrolled { ai_attempt, .. } if ai_attempt == attempt.as_uuid())
+        {
+            return Err(BotError::Storage);
+        }
+        Ok(Some(key))
+    }
+
     /// Historical lookup proves the exact retained subject without current
     /// model, card or execution policy. Absence is successful only after proof.
     pub fn read_bot_wait_cleanup(

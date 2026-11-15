@@ -599,7 +599,9 @@ impl Repository {
     }
 }
 
-fn finish_agent_rows_on(
+/// Shared by the replay writer, the Routine settlement and the decision
+/// Needed-you closure (`bots::decisions::closure`): the statement, not a wrapper.
+pub(super) fn finish_agent_rows_on(
     connection: &Connection,
     attempt: InferenceAttemptId,
     cleanup: &BotTerminalCleanup,
