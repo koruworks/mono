@@ -306,7 +306,7 @@ impl Fold {
                         attempt,
                         turn: *turn_id,
                         attachment: *attachment_id,
-                        code: *code,
+                        code: code.clone(),
                     },
                 );
             }
