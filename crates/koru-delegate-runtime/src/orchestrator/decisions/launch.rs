@@ -29,8 +29,13 @@ const ACKNOWLEDGMENT_DOMAIN: &str = "koru.bot.decision.continuation.ack.v1";
 /// Provider payload, never logged: the person's original captured task input,
 /// why a new session continues it, and the one edit the person allowed,
 /// exactly as retained in the decision binding (target, operation id and the
-/// normalized arguments) so the successor can repeat that edit and nothing
-/// else. No answer text or earlier conversation is added.
+/// normalized arguments). O133 (design B): Koru saves that edit itself right
+/// after this input is acknowledged, so the text says only what is true when
+/// it is sent: the edit was approved and Koru is saving it. It never claims
+/// the outcome. The exact retry it describes is the existing read of that
+/// outcome (and the fallback that saves once if Koru could not): the one-use
+/// consume and the retained result make it never save twice. No answer text
+/// or earlier conversation is added.
 fn continuation_body(
     task: &str,
     decision: DecisionId,
@@ -44,7 +49,7 @@ fn continuation_body(
     let arguments =
         std::str::from_utf8(edit.payload.as_slice()).map_err(|_| refused("bot_invalid"))?;
     Ok(format!(
-        "{task}\n\nKoru resumed this run in a new session after the person allowed decision `{decision}`. The earlier session's conversation is not available here; results it already saved remain. Do not repeat a write that already succeeded.\n\nThe person allowed exactly one edit. Make it once with `{tool}` on document `{target}`, with operation_id `{operation}` and these approved arguments unchanged:\n{arguments}",
+        "{task}\n\nKoru resumed this run in a new session after the person allowed decision `{decision}`. The earlier session's conversation is not available here; results it already wrote remain.\n\nThe person approved exactly one edit: `{tool}` on document `{target}` with operation_id `{operation}`. Koru is applying it for you now. Do not repeat it and do not make another edit in its place. If you need its outcome, call `{tool}` once more with operation_id `{operation}` and exactly these approved arguments: that returns the result of the one approved change and never applies it twice. Then continue the task.\n\nApproved arguments:\n{arguments}",
         target = edit.target,
         operation = edit.operation_id,
     ))
@@ -449,3 +454,6 @@ impl Orchestrator {
         Ok(Some(record))
     }
 }
+
+#[cfg(test)]
+mod tests;
