@@ -721,6 +721,15 @@ fn after_memory_loss_the_successor_is_recognized_only_from_its_durable_acknowled
     let mut c = edit_decision();
     let consumer = acknowledged(&mut c);
     let (run, device) = (c.fence.run, c.fence.owner.device);
+    // After the wait settled the handle is no longer exclusive (modelled
+    // directly: settlement itself is covered by the D2 tests).
+    {
+        use crate::orchestrator::publication::RunDocumentOwner;
+        let state = c.h.orchestrator.runs.get_mut(&run).unwrap();
+        if let RunDocumentOwner::Attached { exclusive, .. } = &mut state.doc {
+            *exclusive = false;
+        }
+    }
     assert!(!c.h.orchestrator.run_publication_pending(run));
     // A restart loses working memory of the successor's turn.
     {
