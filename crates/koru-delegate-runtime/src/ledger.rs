@@ -133,6 +133,33 @@ impl crate::RoutineLedger for RunsDb {
 }
 
 impl RunStore for RunsDb {
+    fn decision_projection_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<RunId>, LedgerError> {
+        RunsDb::decision_projection_runs(self, after, limit)
+    }
+    fn pending_publication_run_anchor(
+        &self,
+    ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {
+        RunsDb::pending_publication_run_anchor(self)
+    }
+    fn next_pending_publication_run(
+        &self,
+        after: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+        through: koru_delegate_sqlite::PendingPublicationRunCursor,
+        before_or_at: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+    ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError> {
+        RunsDb::next_pending_publication_run(self, after, through, before_or_at)
+    }
+    fn decision_open_publications_for(
+        &self,
+        run: RunId,
+        limit: usize,
+    ) -> Result<Vec<OpenPublication>, LedgerError> {
+        RunsDb::decision_open_publications_for(self, run, limit)
+    }
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
         Some(self)
     }

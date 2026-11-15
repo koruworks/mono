@@ -172,6 +172,7 @@ fn an_undeclared_cached_input_relationship_is_recorded_incomplete_never_guessed(
         .unwrap()
         .doc
         .document()
+        .unwrap()
         .models()
         .unwrap();
     let identity = models.values().next().unwrap();

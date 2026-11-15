@@ -9,6 +9,7 @@ mod binding;
 mod codec;
 mod golden;
 mod lifecycle;
+mod outcome;
 mod projection;
 mod publication;
 

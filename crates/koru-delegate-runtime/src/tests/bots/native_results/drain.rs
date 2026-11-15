@@ -684,6 +684,7 @@ fn interrupted_delivery_cleanup_replays_after_late_durable_registration() {
         .unwrap()
         .doc
         .document()
+        .unwrap()
         .timeline_all();
     assert_eq!(timeline.iter().filter(|item|matches!(item,koru_delegate_document::TimelineItem::Step(entry) if matches!(entry.kind,StepKind::Interrupted{prior_attempt:PriorAttempt::Unknown}))).count(),1);
     assert!(!timeline.iter().any(|item|matches!(item,koru_delegate_document::TimelineItem::Step(entry) if entry.kind==StepKind::Completed)));

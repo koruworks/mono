@@ -86,7 +86,7 @@ pub(crate) fn current_policy(
 ) -> Result<Option<NativePolicyRecord>, BotLedgerError> {
     conn.query_row("SELECT * FROM bot_policy_barriers WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 ORDER BY config_revision DESC LIMIT 1",params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|row|Ok(policy(row))).optional().map_err(sql)?.transpose()
 }
-pub(super) fn held(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<bool, BotLedgerError> {
+pub(crate) fn held(conn: &Connection, owner: BotOwner, bot: BotId) -> Result<bool, BotLedgerError> {
     conn.query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE lease_user_scope=?1 AND lease_device_id=?2 AND lease_bot_id=?3 AND lease_state='held')",params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|r|r.get(0)).map_err(sql)
 }
 pub(super) fn stage(value: &str) -> Result<NativeResultStage, BotLedgerError> {
@@ -328,7 +328,7 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
 pub(super) fn decode_historical(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
     decode(row)
 }
-pub(super) fn read(
+pub(crate) fn read(
     conn: &Connection,
     key: &NativeResultKey,
 ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {
@@ -372,6 +372,7 @@ pub(super) fn read_admitted(
         }
         routine::validate_record(conn, record, admitted)?;
         memory::validate_record(conn, record)?;
+        crate::decisions::validate_native_on(conn, record)?;
     }
     Ok(record)
 }

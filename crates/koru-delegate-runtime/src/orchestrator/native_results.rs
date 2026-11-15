@@ -38,7 +38,7 @@ impl Orchestrator {
         if row.retired || row.phase.is_terminal() || row.generation != generation {
             return Err(refused("bot_fenced"));
         }
-        let header = self.open(run)?.doc.document().header()?;
+        let header = self.open(run)?.doc.document()?.header()?;
         if header.run != run
             || header.executing_device() != Some(device)
             || header.status.is_terminal()
@@ -254,7 +254,18 @@ impl Orchestrator {
         if admission.submission.provenance.owner.device != device || device.as_uuid().is_nil() {
             return Err(refused("bot_owner_mismatch"));
         }
-        let header = self.open(key.run)?.doc.document().header()?;
+        if self.run_publication_pending(key.run) {
+            self.publication_retained_subject(&admission)?;
+            // Only an existing fully decoded record crosses this narrow path.
+            // Absence still needs the owning attached authority below; an
+            // unavailable document never becomes a fabricated Missing result.
+            return self
+                .native_ledger()?
+                .native_result(key)?
+                .map(Some)
+                .ok_or_else(|| crate::publication_pending().into());
+        }
+        let header = self.open(key.run)?.doc.document()?.header()?;
         if header.run != key.run || header.bot.as_ref() != Some(&admission.submission.provenance) {
             return Err(refused("bot_provenance_mismatch"));
         }
@@ -320,7 +331,7 @@ impl Orchestrator {
                 .store
                 .current_attempt(key.run)?
                 .is_none_or(|row| row.retired || row.phase.is_terminal())
-                || self.status(key.run)?.is_terminal();
+                || (!self.run_publication_pending(key.run) && self.status(key.run)?.is_terminal());
             if ended {
                 record = self
                     .native_ledger()?
@@ -337,7 +348,9 @@ impl Orchestrator {
     ) -> Result<NativeResultIntentView, RunError> {
         self.native_record_for_device(&request.key, device)?;
         let record = self.native_ledger()?.confirm_native_result(request)?;
-        self.arm_bot_cleanup(request.key.run)?;
+        if !self.run_publication_pending(request.key.run) {
+            self.arm_bot_cleanup(request.key.run)?;
+        }
         let view = self.publish_native_result(record)?;
         Ok(view)
     }
@@ -378,6 +391,12 @@ impl Orchestrator {
                 .native_ledger()?
                 .register_native_result(&record.key, evidence)?
                 .view());
+        }
+        if self.run_publication_pending(record.key.run) {
+            // Confirmation is already durable in the native journal. Result
+            // registration still owes its canonical projection; keep Verified
+            // instead of claiming Registered or discarding the exact evidence.
+            return Ok(record.view());
         }
         let state = self.open(record.key.run)?;
         state

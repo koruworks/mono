@@ -54,16 +54,24 @@ impl Orchestrator {
             return Ok(None);
         }
         let target = record.pending_effect()?;
-        let header = self.header(key.run)?;
         let allowed = match reason {
             NativeDrainReason::GatewayStartup => true, // private process-start gate, never an AI restart/read
             NativeDrainReason::UnconfirmedOperation => {
                 record.stage == NativeResultStage::Unconfirmed
             }
-            NativeDrainReason::OwnerStop => header.status == RunStatus::Cancelled,
+            NativeDrainReason::OwnerStop if self.run_publication_pending(key.run) => {
+                self.publication_cleanup_requested(key.run, true)?
+            }
+            NativeDrainReason::OwnerStop => self.header(key.run)?.status == RunStatus::Cancelled,
+            NativeDrainReason::RunRecovery if self.run_publication_pending(key.run) => {
+                // A current successor may still exist after origin retirement.
+                // The retained current wait fences cleanup; no old attempt's
+                // retirement is substituted for that subject while detached.
+                self.publication_cleanup_requested(key.run, false)?
+            }
             NativeDrainReason::RunRecovery => {
                 matches!(
-                    header.status,
+                    self.header(key.run)?.status,
                     RunStatus::Interrupted { .. } | RunStatus::Failed { .. } | RunStatus::Cancelled
                 ) || self.ports.store.current_attempt(key.run)?.is_some_and(|a| {
                     a.attempt == key.attempt && a.generation == key.generation && a.retired

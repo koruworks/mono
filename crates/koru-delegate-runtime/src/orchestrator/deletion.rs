@@ -71,6 +71,9 @@ impl Orchestrator {
         run: RunId,
         artifacts: ArtifactDisposition,
     ) -> Result<RunPlace, RunError> {
+        if self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
+        }
         let status = self.status(run)?;
         if status.may_be_writing() {
             return Err(RunError::WrongStatus {
@@ -85,8 +88,12 @@ impl Orchestrator {
     /// nothing to put back: the decision about the results is forgotten and
     /// the document is the caller's to move out of the bin.
     pub fn restore(&mut self, run: RunId) -> Result<RunPlace, RunError> {
+        if self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
+        }
+        let place = self.place(run)?;
         self.ports.store.clear_deletion(run)?;
-        self.place(run)
+        Ok(place)
     }
 
     /// **The empty.** Everything this device holds about the run, in the

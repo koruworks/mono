@@ -6,7 +6,7 @@ use koru_delegate_core::*;
 fn id<T: std::str::FromStr>() -> T {
     uuid::Uuid::new_v4().to_string().parse().ok().unwrap()
 }
-fn fixture() -> (RunDocument, RunProjectionIntent) {
+pub(crate) fn fixture() -> (RunDocument, RunProjectionIntent) {
     let device = DeviceId::from_uuid(uuid::Uuid::new_v4());
     let mut header = RunHeader::from_request(
         DelegationRequest {
@@ -49,6 +49,8 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
     let target = RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: header.created_at_ms,
+            timeline_start: doc.timeline_len() as u64,
             projection: None,
             status: header.status.clone(),
             failure_reason: None,
@@ -60,6 +62,7 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
             economics_at_ms: None,
             steps: DecisionList::default(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: DecisionFence {
             owner,
@@ -75,6 +78,8 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::DecisionWaiting {},
         retained_bookkeeping: None,
+        flush: DecisionList::default(),
+        delivery: None,
     };
     let intent = RunProjectionIntent {
         identity: DecisionProjectionIdentity {

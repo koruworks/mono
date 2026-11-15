@@ -32,7 +32,10 @@ use koru_delegate_core::{
     ResultReference, RunAttemptId, RunContextItem, RunHeader, RunId, SessionId, SessionProfileKey,
     WorkspaceId,
 };
-pub use koru_delegate_document::{AppliedRunProjection, RunProjectionIntent};
+pub use koru_delegate_document::{
+    AppliedRunProjection, DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage,
+    RunProjectionIntent,
+};
 use koru_delegate_document::{
     RunDocument, RunDocumentError, ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument,
     ScheduleDocumentError, ScheduleWrite,
@@ -161,6 +164,27 @@ pub type PortResult<T> = Result<T, PortError>;
 /// test. The method set is the ledger's own; the port exists so the
 /// orchestrator can be driven with no file.
 pub trait RunStore: ScheduleLedger {
+    /// Bounded keyset selection over the three approved open-projection
+    /// partial indexes: at most `limit` (<= 16) distinct Runs after `after`.
+    fn decision_projection_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<RunId>, LedgerError>;
+    fn pending_publication_run_anchor(
+        &self,
+    ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError>;
+    fn next_pending_publication_run(
+        &self,
+        after: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+        through: koru_delegate_sqlite::PendingPublicationRunCursor,
+        before_or_at: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+    ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError>;
+    fn decision_open_publications_for(
+        &self,
+        run: RunId,
+        limit: usize,
+    ) -> Result<Vec<OpenPublication>, LedgerError>;
     /// Native intent/effect evidence on the same sole-writer connection.
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
         None
@@ -255,7 +279,9 @@ pub trait RunStore: ScheduleLedger {
     ) -> Result<WriteOutcome, LedgerError>;
 }
 
+mod publication;
 mod routines;
+pub use publication::*;
 pub use routines::*;
 
 /// The local half of schedule execution. The authority token is minted only
@@ -628,6 +654,15 @@ pub trait RunDocumentHandle: Send {
 
 /// The Run documents of a workspace, through the Store.
 pub trait RunDocuments {
+    /// Freeze a cold-open specification without opening a canonical connection.
+    /// A host without this seam refuses; it never opens on the actor as fallback.
+    fn publication_open(
+        &mut self,
+        _workspace: WorkspaceId,
+        _document: DocumentId,
+    ) -> PortResult<Box<dyn RunDocumentOpen>> {
+        Err(publication_pending())
+    }
     /// §7.1 step 3: commit the Run document with its header, atomically and
     /// idempotently by run id — a retry after a lost answer finds the one
     /// it made. This is the moment a run exists.
@@ -939,6 +974,11 @@ pub enum SessionUpdate {
         actual: StreamSequence,
     },
     Session(SequencedSessionEvent),
+    /// Explicit Session-stream loss, distinct from the Agent stream's fence.
+    SessionGap {
+        expected: StreamSequence,
+        actual: StreamSequence,
+    },
     /// The stream ended: the session is gone, or the host is.
     Closed {
         error: Option<SessionFailure>,
@@ -956,6 +996,19 @@ pub trait SessionEvents: Send {
 /// reason, and the streams. The port keeps the controller lease it holds
 /// per session; the orchestrator never sees a token.
 pub trait Sessions {
+    /// Decision-window stream: bounded merge, independent retained frontiers,
+    /// and explicit gap observations. An unqualified adapter refuses.
+    fn subscribe_decision(
+        &mut self,
+        _session: SessionId,
+        _after: &koru_delegate_core::decisions::DecisionSourceFrontiers,
+    ) -> PortResult<Box<dyn SessionEvents>> {
+        Err(PortError::new(
+            Port::Sessions,
+            "decision_stream_unavailable",
+            "the session adapter does not support decision source ownership",
+        ))
+    }
     fn supports_delegation(&self) -> bool;
     /// Whether this exact authored profile is ready for unattended
     /// delegation according to the session host's cached provider verdict.

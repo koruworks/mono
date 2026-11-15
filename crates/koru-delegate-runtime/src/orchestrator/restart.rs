@@ -58,7 +58,29 @@ impl DurableClaims for Recorded {
 }
 
 impl Orchestrator {
+    fn retained_restart_scope(
+        &mut self,
+        run: koru_delegate_core::RunId,
+    ) -> Result<WorkspaceScope, RunError> {
+        let admission = self
+            .bot_ledger()?
+            .bot_admission(run)?
+            .ok_or_else(crate::publication_pending)?;
+        if admission.submission.request.run != run
+            || self
+                .runs
+                .get(&run)
+                .is_some_and(|state| state.workspace != admission.submission.workspace)
+        {
+            return Err(crate::publication_pending().into());
+        }
+        Ok(admission.submission.request.scope)
+    }
+
     pub fn restart(&mut self) -> Result<RestartReport, RunError> {
+        // A failed global inventory read cannot clear an earlier uncertainty.
+        // Reattach and cleanup remain available while fresh attempts are fenced.
+        self.scope_recovery_incomplete = true;
         let mut report = RestartReport::default();
 
         // §7.1: an unsatisfied intent is completed forward.
@@ -86,20 +108,27 @@ impl Orchestrator {
         // §7.6: every attempt a process may still exist for.
         let mut liveness: HashMap<koru_delegate_core::RunAttemptId, Liveness> = HashMap::new();
         let mut recorded = Vec::new();
+        let mut unresolved_scopes = Vec::new();
         let mut restart_rows = self.ports.store.live_attempts()?;
         // Ordinary live_attempts excludes terminal Unknown/Interrupted phases.
         // A Bot's unretired row still owns capacity and its folder. This is a
         // one-time startup intent scan, never a timer or queue payload scan.
         for intent in self.ports.store.intents()? {
-            let Some(record) = self
+            let observed = self
                 .ports
                 .store
                 .bots()
                 .map(|ledger| ledger.bot_execution(intent.run))
-                .transpose()?
-                .flatten()
-            else {
-                continue;
+                .transpose();
+            let record = match observed {
+                Ok(Some(Some(record))) => record,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::warn!(target: "koru::delegate", run = ?intent.run, %error, "retained Bot recovery is unavailable");
+                    report.unresolved.push(intent.run);
+                    unresolved_scopes.push(intent.run);
+                    continue;
+                }
             };
             if matches!(
                 record.state,
@@ -122,10 +151,47 @@ impl Orchestrator {
         }
         for row in restart_rows {
             let run = row.run;
+            let publication = self.restore_publication_owner(run).and_then(|()| {
+                if self.run_publication_pending(run) {
+                    self.retained_restart_scope(run).map(Some)
+                } else {
+                    Ok(None)
+                }
+            });
+            if !matches!(publication, Ok(None)) {
+                // Canonical status is deliberately unavailable during cold
+                // publication. Recover the immutable scope from its retained
+                // admission and keep the claim, including a retired origin
+                // whose decision/cleanup publication is not yet drained.
+                let scope = match publication {
+                    Ok(scope) => scope,
+                    Err(error) => {
+                        tracing::warn!(target: "koru::delegate", run = ?run, %error, "cold publication recovery is unavailable");
+                        // The admission scope decoder is independent of the
+                        // malformed wait/release projection. Never substitute
+                        // a guessed scope when both owners refuse their rows.
+                        self.retained_restart_scope(run).ok()
+                    }
+                };
+                if let Some(scope) = scope {
+                    recorded.push(DurableClaim {
+                        run,
+                        attempt: row.attempt,
+                        scope,
+                    });
+                } else {
+                    unresolved_scopes.push(run);
+                }
+                liveness.insert(row.attempt, Liveness::Unknown);
+                report.unresolved.push(run);
+                continue;
+            }
             let header = match self.header(run) {
                 Ok(header) => header,
                 Err(error) => {
                     tracing::warn!(target: "koru::delegate", run = ?run, %error, "a live attempt's run could not be opened");
+                    unresolved_scopes.push(run);
+                    report.unresolved.push(run);
                     continue;
                 }
             };
@@ -288,10 +354,16 @@ impl Orchestrator {
         }
 
         // P1.5: the registry, rebuilt. Unknown is never free.
-        let (claims, claims_report) =
-            ScopeClaims::reconcile(&Recorded(recorded), self.ports.roots.as_ref(), |attempt| {
-                liveness.get(&attempt).copied().unwrap_or(Liveness::Unknown)
-            })?;
+        let (claims, claims_report) = ScopeClaims::reconcile_preserving(
+            &Recorded(recorded),
+            self.ports.roots.as_ref(),
+            |attempt| liveness.get(&attempt).copied().unwrap_or(Liveness::Unknown),
+            &self.claims,
+            &unresolved_scopes,
+        )?;
+        self.scope_recovery_incomplete = unresolved_scopes
+            .iter()
+            .any(|run| !claims.claims().any(|claim| claim.run == *run));
         self.claims = claims;
         report.claims = claims_report;
 
@@ -508,7 +580,7 @@ impl Orchestrator {
         attempt.session = Some(session);
         // A session summary proves activity, not who asked for it. Read only
         // a bounded window of existing content-free steps for positive ownership.
-        let timeline = self.open(run)?.doc.document().timeline_window(0, 256);
+        let timeline = self.open(run)?.doc.document()?.timeline_window(0, 256);
         if let Some(turn) = active_turn {
             let originator = if is_bot {
                 (bot_turn == Some(turn)).then_some(TurnOriginator::Orchestrator)

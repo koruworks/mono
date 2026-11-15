@@ -3,7 +3,7 @@
 use super::*;
 
 #[derive(Clone, Debug)]
-pub(crate) struct AnswerDecision {
+pub struct AnswerDecision {
     pub owner: BotOwner,
     pub run: RunId,
     pub decision: DecisionId,

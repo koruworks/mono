@@ -4,6 +4,7 @@
 //! records are local reconciliation evidence, never canonical Run status.
 use crate::LedgerError;
 mod repository;
+pub(crate) use repository::bounded_owned_executions;
 pub(crate) mod routines;
 pub use routines::RoutinePolicyRecord;
 pub use routines::{
@@ -12,6 +13,13 @@ pub use routines::{
 };
 #[cfg(test)]
 mod tests;
+use koru_delegate_core::decisions::{
+    BotWaitEnrollmentReply, BotWaitId, BotWaitReason, ConsumerCleanup, DecisionBindingV1,
+    DecisionClosureReason, DecisionExpected, DecisionFence, DecisionInputAcknowledgment,
+    DecisionNativeResponse, DecisionPreparedProjection, DecisionProjectionAcknowledgment,
+    DecisionProjectionRecord, DecisionPublicationBase, DecisionRetainedEffect,
+    DecisionTransitionId, DecisionWaitExpected, OriginWaitStop, RunProjectionTargetV1,
+};
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
     BotDeliveryReceipt, BotId, BotOwner, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey,
@@ -21,6 +29,29 @@ use koru_delegate_core::{
 pub const BOT_ACTIVE_BUDGET_MS: u64 = 600_000;
 pub const BOT_PENDING_LIMIT: usize = 50;
 pub const BOT_HOST_EXECUTION_LIMIT: usize = 2;
+
+/// Ownership and physical capacity are separate projections of the same rows.
+/// A released wait still owns its Bot and remains visible to restart recovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotExecutionInventory {
+    pub owned: Vec<BotOwnedExecution>,
+    pub occupied: usize,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotOwnedExecution {
+    pub execution: BotExecutionRecord,
+    pub capacity: BotExecutionCapacity,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BotExecutionCapacity {
+    Occupied,
+    QualifiedDecisionRelease {
+        wait: BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+        revision: koru_delegate_core::decisions::DecisionRevision,
+        origin: koru_delegate_core::decisions::DecisionFence,
+    },
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct BotInitialSend {
@@ -171,6 +202,202 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn decision_cleanup_ownership(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionCleanupOwnership>, BotLedgerError>;
+    fn consume_decision_edit(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        request: &koru_delegate_core::PrepareNativeResult,
+        payload: &[u8],
+        fence: &koru_delegate_core::BotExecutionFence,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<crate::NativeLeaseOutcome, BotLedgerError>;
+    fn settle_decision_effect(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        outcome: &DecisionRetainedEffect,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn settle_decision_wait(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        ack: &DecisionProjectionAcknowledgment,
+    ) -> Result<crate::DecisionWaitRecord, BotLedgerError>;
+    fn begin_bot_wait_cleanup(
+        &mut self,
+        fence: &DecisionFence,
+        reason: BotWaitReason,
+        observed: koru_delegate_core::StreamSequence,
+        transition: DecisionTransitionId,
+        base: &DecisionPublicationBase,
+    ) -> Result<crate::DecisionWaitRecord, BotLedgerError>;
+    fn record_nondecision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        cleanup_projection: DecisionTransitionId,
+        transition: DecisionTransitionId,
+        cleanup: &ConsumerCleanup,
+    ) -> Result<crate::DecisionWaitRecord, BotLedgerError>;
+    fn answer_bot_decision(
+        &mut self,
+        input: &crate::AnswerDecision,
+        transition: DecisionTransitionId,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn record_decision_native_answer(
+        &mut self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+        response: &DecisionNativeResponse,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn record_decision_consumer_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        cleanup_projection: DecisionTransitionId,
+        transition: DecisionTransitionId,
+        observation: &ConsumerCleanup,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn enroll_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn record_decision_enrollment(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        reply: &BotWaitEnrollmentReply,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn record_decision_origin_stop(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        release: &OriginWaitStop,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn reserve_decision_successor(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        host: koru_delegate_core::HostInstanceId,
+        fingerprint: [u8; 32],
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn bind_decision_successor(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        creation: IdempotencyKey,
+        host: koru_delegate_core::HostInstanceId,
+        session: koru_delegate_core::SessionId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn record_decision_resume_input(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        input: IdempotencyKey,
+        fingerprint: [u8; 32],
+        acknowledgment: Option<&DecisionInputAcknowledgment>,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn prepare_bot_decision(
+        &mut self,
+        binding: &DecisionBindingV1,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn request_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        cause: DecisionClosureReason,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
+    fn decision_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError>;
+    /// The delegate-owned observation behind IPC16 `ReadBotDecisionWait`.
+    /// Read-only and historical: it never grants permission to stop, and its
+    /// fresh eligibility is derived from today's exact state alone.
+    fn read_bot_decision_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_core::decisions::BotDecisionWaitObservation>, BotLedgerError>;
+    /// Complete retained native drain evidence for one exact retired attempt,
+    /// for a final cleanup proof. Refuses a live attempt, a held lease, an
+    /// overflow of the 4KiB evidence body or a corrupt row; grants nothing.
+    fn decision_native_drain(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        attempt: RunAttemptId,
+        generation: AttemptGeneration,
+        observed_at_ms: i64,
+    ) -> Result<koru_delegate_core::decisions::DecisionNativeDrain, BotLedgerError>;
+    /// The retained effect outcome a consumed Koru edit's final cleanup must
+    /// carry; `None` when none is owed, Fenced while the effect is unresolved.
+    fn decision_retained_effect(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError>;
+    fn record_decision_source(
+        &mut self,
+        owner: BotOwner,
+        transition: DecisionTransitionId,
+        wait: BotWaitId,
+        base: &DecisionPublicationBase,
+        target: &RunProjectionTargetV1,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
+    fn decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn next_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn decision_projection_prefix(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Vec<DecisionProjectionRecord>, BotLedgerError>;
+    fn latest_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn latest_applied_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn record_decision_preparation(
+        &mut self,
+        owner: BotOwner,
+        prepared: &DecisionPreparedProjection,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
+    fn acknowledge_decision_projection(
+        &mut self,
+        owner: BotOwner,
+        acknowledgment: &DecisionProjectionAcknowledgment,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,
@@ -209,6 +436,18 @@ pub trait BotLedger {
         &self,
         device: koru_delegate_core::DeviceId,
     ) -> Result<Vec<BotExecutionRecord>, BotLedgerError>;
+    fn bot_execution_inventory(
+        &self,
+        device: koru_delegate_core::DeviceId,
+    ) -> Result<BotExecutionInventory, BotLedgerError>;
+    /// Device restart discovery, independent of capacity/release qualification.
+    /// At most sixteen reserved/executing identities through the queue index.
+    fn owned_bot_execution_page(
+        &self,
+        device: koru_delegate_core::DeviceId,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError>;
     /// Atomically insert the ordinary Run intent and Bot admission. Exact
     /// retries return the original row; changed full typed payload conflicts.
     /// Enforce 50 queued jobs/Bot before inserting either row; a rejected call

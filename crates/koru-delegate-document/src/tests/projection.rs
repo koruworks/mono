@@ -38,6 +38,8 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
     let target = RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: h.created_at_ms,
+            timeline_start: doc.timeline_len() as u64,
             projection: None,
             status: h.status.clone(),
             failure_reason: h.failure_reason,
@@ -55,6 +57,7 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
             }])
             .unwrap(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: DecisionFence {
             owner: bot.owner,
@@ -70,6 +73,8 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::DecisionWaiting {},
         retained_bookkeeping: None,
+        flush: DecisionList::default(),
+        delivery: None,
     };
     RunProjectionIntent {
         identity: DecisionProjectionIdentity {
@@ -104,6 +109,8 @@ fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> R
     value.target = RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: doc.header().unwrap().created_at_ms,
+            timeline_start: doc.timeline_len() as u64,
             projection: Some(DecisionProjectionPrior {
                 transition: previous.identity.transition,
                 sequence: previous.identity.sequence,
@@ -119,13 +126,16 @@ fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> R
             economics_at_ms: None,
             steps: DecisionList::default(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: *previous.target.fence(),
         disposition: None,
         wait_phase: BotWaitPhase::CleanupPending,
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::Stop {},
-        retained_bookkeeping: previous.target.bookkeeping().cloned(),
+        retained_bookkeeping: previous.target.resulting_bookkeeping().unwrap(),
+        flush: DecisionList::default(),
+        delivery: None,
     };
     value.identity.target_digest = value.target.digest().unwrap();
     value
@@ -337,10 +347,9 @@ fn projection_cold_preflight_rejects_changed_marker_effects_before_connected_imp
     assert_eq!(doc.timeline_len(), 0);
 }
 
-#[test]
-fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
-    let doc = bot(false);
-    let mut source = intent(&doc);
+/// One Source carrying a complete usage envelope (model 48) on `doc`.
+fn usage_source(doc: &RunDocument) -> (RunProjectionIntent, DecisionSourceBookkeeping) {
+    let mut source = intent(doc);
     let bookkeeping = DecisionSourceBookkeeping {
         boundary: DecisionSourceBoundary {
             fence: *source.target.fence(),
@@ -376,16 +385,73 @@ fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
         allocated_steps: DecisionList::new(vec![id(91)]).unwrap(),
     };
     let mut effects = source.target.effects().clone();
+    effects.event = None;
     effects.economics_at_ms = Some(1234);
     effects.models = DecisionList::new(vec![identity(48)]).unwrap();
+    let fence = *source.target.fence();
+    effects.steps = DecisionList::new(vec![TimelineEntry {
+        id: id(91),
+        kind: StepKind::ApprovalRequired,
+        at_ms: 1,
+        refs: TimelineRefs::new([
+            TimelineRef::Attempt {
+                attempt: fence.attempt,
+            },
+            TimelineRef::Turn { turn: fence.turn },
+            TimelineRef::Approval { approval: id(103) },
+        ])
+        .unwrap(),
+    }])
+    .unwrap();
+    let usage = bookkeeping.usage.as_ref().unwrap();
+    effects.publications = DecisionList::new(vec![
+        DecisionProjectionPublication {
+            event: id(104),
+            step: Some(id(91)),
+            fact: RunFact::ApprovalRequired {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                approval: id(103),
+            },
+        },
+        DecisionProjectionPublication {
+            event: usage.event,
+            step: None,
+            fact: RunFact::Usage {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: usage.turn,
+                report: UsageReport {
+                    usage: usage.id,
+                    revision: usage.revision,
+                    input: usage.input,
+                    output: usage.output,
+                    cached_input: usage.cached_input,
+                    model: usage.model,
+                    completeness: usage.fact().completeness,
+                    cached_relationship: usage.cached_input_relationship,
+                },
+            },
+        },
+    ])
+    .unwrap();
     source.target = RunProjectionTargetV1::Source {
         version: DecisionVersionV1,
         predecessor: source.target.predecessor().clone(),
+        transitions: DecisionList::new(vec![RunEvent::ApprovalRequired]).unwrap(),
         effects,
         bookkeeping: bookkeeping.clone(),
     };
     source.identity.kind = DecisionProjectionKind::Source;
     source.identity.target_digest = source.target.digest().unwrap();
+    (source, bookkeeping)
+}
+
+#[test]
+fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
+    let doc = bot(false);
+    let (source, bookkeeping) = usage_source(&doc);
     let mut stage = RunProjectionStaging::default();
     let p = stage.prepare(&doc, &source).unwrap();
     applied(&mut stage, &doc, &p);
@@ -422,6 +488,125 @@ fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
     assert_eq!(
         marker["bookkeeping"],
         serde_json::to_value(bookkeeping).unwrap()
+    );
+}
+
+#[test]
+fn projection_new_wait_uses_current_baseline_but_same_wait_keeps_exact_bookkeeping() {
+    let doc = bot(false);
+    let mut first = intent(&doc);
+    let bookkeeping = DecisionSourceBookkeeping {
+        boundary: DecisionSourceBoundary {
+            fence: *first.target.fence(),
+            producer_epoch: v4(100),
+            stream: DecisionSourceStream::Agent,
+            sequence: StreamSequence::new(3).unwrap(),
+            resulting: DecisionSourceFrontiers {
+                agent_after: Some(StreamSequence::new(3).unwrap()),
+                session_after: None,
+            },
+        },
+        unflushed: DecisionList::new(vec![DecisionTurnTally {
+            turn: turn(82),
+            originator: TurnOriginator::Orchestrator,
+            tool_calls: 2,
+            tool_failures: 0,
+            failure_breakdown: ToolFailures::default(),
+        }])
+        .unwrap(),
+        usage: None,
+        allocated_steps: DecisionList::default(),
+    };
+    if let RunProjectionTargetV1::Control {
+        retained_bookkeeping,
+        ..
+    } = &mut first.target
+    {
+        *retained_bookkeeping = Some(bookkeeping);
+    }
+    first.identity.target_digest = first.target.digest().unwrap();
+    let mut stage = RunProjectionStaging::default();
+    let old = stage.prepare(&doc, &first).unwrap();
+    applied(&mut stage, &doc, &old);
+    // Model ordinary causal writes after SQL-qualified exit. D1 deliberately
+    // keeps the generic Run5 writer closed until E; raw Loro here only supplies
+    // that later canonical state, not proof that the previous wait settled.
+    doc.doc()
+        .get_map("run")
+        .insert(
+            "status",
+            loro::LoroValue::from(serde_json::to_value(RunStatus::running()).unwrap()),
+        )
+        .unwrap();
+    doc.doc().commit();
+    let mut second = next(&doc, &first, RunEvent::Cancel);
+    if let RunProjectionTargetV1::Control {
+        retained_bookkeeping,
+        ..
+    } = &mut second.target
+    {
+        *retained_bookkeeping = None;
+    }
+    second.identity.target_digest = second.target.digest().unwrap();
+    assert!(
+        stage.prepare(&doc, &second).is_err(),
+        "same wait cannot replace accepted bookkeeping"
+    );
+    second.identity.wait = id(73);
+    let mut stale = second.clone();
+    if let RunProjectionTargetV1::Control { predecessor, .. } = &mut stale.target {
+        predecessor.status = first.target.effects().status.clone();
+    }
+    stale.identity.target_digest = stale.target.digest().unwrap();
+    assert!(
+        stage.prepare(&doc, &stale).is_err(),
+        "new wait still checks current canonical status"
+    );
+    let prepared = stage.prepare(&doc, &second).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    assert_eq!(doc.header().unwrap().status, RunStatus::Cancelled);
+    let mut late = RunProjectionStaging::default();
+    assert!(late.apply(&doc, &old).is_err());
+    assert_eq!(doc.header().unwrap().status, RunStatus::Cancelled);
+}
+
+#[test]
+fn projection_retained_baseline_rejects_wrong_creation_time_or_timeline_offset() {
+    let doc = bot(false);
+    let exact = intent(&doc);
+    let before = doc.version();
+    for wrong_time in [false, true] {
+        let mut wrong = exact.clone();
+        if let RunProjectionTargetV1::Control { predecessor, .. } = &mut wrong.target {
+            if wrong_time {
+                predecessor.observed_created_at_ms += 1;
+            } else {
+                predecessor.timeline_start += 1;
+            }
+        }
+        wrong.identity.target_digest = wrong.target.digest().unwrap();
+        assert!(
+            RunProjectionStaging::default()
+                .prepare(&doc, &wrong)
+                .is_err()
+        );
+        assert!(
+            DecisionProjectionMarker::for_target(
+                &wrong.identity,
+                &wrong.target,
+                doc.timeline_len() as u64
+            )
+            .is_err()
+                || wrong_time
+        );
+        assert_eq!(doc.version(), before);
+    }
+    let prepared = RunProjectionStaging::default()
+        .prepare(&doc, &exact)
+        .unwrap();
+    assert_eq!(
+        prepared.identity.target_digest,
+        exact.identity.target_digest
     );
 }
 
@@ -537,6 +722,7 @@ fn projection_marker_has_independent_64k_and_depth_bounds() {
         oversized.target = RunProjectionTargetV1::Source {
             version: DecisionVersionV1,
             predecessor: original.target.predecessor().clone(),
+            transitions: DecisionList::default(),
             effects,
             bookkeeping: bookkeeping.clone(),
         };
@@ -584,4 +770,170 @@ fn projection_marker_has_independent_64k_and_depth_bounds() {
     doc.doc().commit();
     let control = next(&doc, &original, RunEvent::Cancel);
     assert!(stage.prepare(&doc, &control).is_err());
+}
+
+// ---------------------------------------------- cold usage recovery (O111)
+
+fn usage_lookup(fact: &UsageFact, model: &ModelIdentity) -> DecisionUsageLookup {
+    DecisionUsageLookup {
+        attempt: fact.attempt,
+        turn: fact.turn,
+        provider: model.provider.clone(),
+        requested: model.requested.clone(),
+        reported: model.reported.clone(),
+    }
+}
+
+/// Ordinary facts first (schema 3 is writable), then one applied marker.
+fn marked_after(
+    facts: &[UsageFact],
+    models: &[ModelIdentity],
+) -> (RunDocument, RunProjectionIntent) {
+    let doc = bot(false);
+    for model in models {
+        doc.record_model(model).unwrap();
+    }
+    for fact in facts {
+        doc.record_usage(fact).unwrap();
+    }
+    let control = intent(&doc);
+    let mut stage = RunProjectionStaging::default();
+    let prepared = stage.prepare(&doc, &control).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    (doc, control)
+}
+
+#[test]
+fn decision_usage_cold_lookup_keeps_highest_amendment_and_legal_duplicates() {
+    let first = usage(5, 0, 100);
+    let amended = usage(5, 1, 120);
+    let (doc, control) = marked_after(
+        &[first, amended.clone(), amended.clone(), usage(6, 0, 1)],
+        &[identity(0x30)],
+    );
+    let observed = doc
+        .observe_decision_usage(&control.identity, &usage_lookup(&amended, &identity(0x30)))
+        .unwrap();
+    // A stored fact has no EventId or cached relationship: AppliedFact only.
+    assert_eq!(
+        observed.usage,
+        RecoveredDecisionUsage::AppliedFact(amended.clone())
+    );
+    assert_eq!(observed.model, Some(identity(0x30)));
+    let mut other_key = usage(7, 0, 1);
+    other_key.identity = UsageFactId::from_uuid(v4(0x77));
+    let absent = doc
+        .observe_decision_usage(
+            &control.identity,
+            &usage_lookup(&other_key, &identity(0x30)),
+        )
+        .unwrap();
+    assert_eq!(absent.usage, RecoveredDecisionUsage::Absent);
+    // A tuple nobody retained is positive model absence, not a guess.
+    let mut unseen = identity(0x31);
+    unseen.reported = ModelReport::Named {
+        name: ModelName::new("never-reported").unwrap(),
+    };
+    let unseen = doc
+        .observe_decision_usage(&control.identity, &usage_lookup(&amended, &unseen))
+        .unwrap();
+    assert_eq!(unseen.model, None);
+}
+
+#[test]
+fn decision_usage_cold_lookup_refuses_conflicts_and_stale_markers() {
+    let same_revision = {
+        let mut changed = usage(5, 1, 999);
+        changed.output = Some(11);
+        changed
+    };
+    let (doc, control) = marked_after(&[usage(5, 1, 120), same_revision.clone()], &[]);
+    assert!(
+        doc.observe_decision_usage(
+            &control.identity,
+            &usage_lookup(&same_revision, &identity(0x30))
+        )
+        .is_err(),
+        "conflicting facts at one revision refuse recovery"
+    );
+    let mut competing = usage(5, 2, 120);
+    competing.identity = UsageFactId::from_uuid(v4(0x7e));
+    let (doc, control) = marked_after(&[usage(5, 0, 120), competing.clone()], &[]);
+    assert!(
+        doc.observe_decision_usage(
+            &control.identity,
+            &usage_lookup(&competing, &identity(0x30))
+        )
+        .is_err(),
+        "two identities for one accounting key refuse recovery"
+    );
+    let (doc, control) = marked_after(&[usage(5, 0, 120)], &[]);
+    let mut stale = control.identity.clone();
+    stale.transition = id(73);
+    assert!(
+        doc.observe_decision_usage(&stale, &usage_lookup(&usage(5, 0, 120), &identity(0x30)))
+            .is_err(),
+        "only the current applied marker is a valid observation base"
+    );
+    let unmarked = bot(false);
+    assert!(
+        unmarked
+            .observe_decision_usage(
+                &control.identity,
+                &usage_lookup(&usage(5, 0, 1), &identity(0x30))
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn decision_usage_cold_lookup_prefers_the_facts_own_model_identity() {
+    let fact = usage(5, 0, 100);
+    let mut duplicate = identity(0x2f);
+    duplicate.id = model(0x2f);
+    // Two retained identities carry the same three values; the one the
+    // latest fact references wins even though the other sorts first.
+    let (doc, control) = marked_after(&[fact.clone()], &[duplicate, identity(0x30)]);
+    let observed = doc
+        .observe_decision_usage(&control.identity, &usage_lookup(&fact, &identity(0x30)))
+        .unwrap();
+    assert_eq!(observed.model.map(|model| model.id), Some(model(0x30)));
+}
+
+#[test]
+fn decision_usage_full_envelope_only_from_the_exact_applied_marker() {
+    let doc = bot(false);
+    let (source, bookkeeping) = usage_source(&doc);
+    let mut stage = RunProjectionStaging::default();
+    let prepared = stage.prepare(&doc, &source).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    let snapshot = bookkeeping.usage.clone().unwrap();
+    let fact = snapshot.fact();
+    let observed = doc
+        .observe_decision_usage(&source.identity, &usage_lookup(&fact, &identity(48)))
+        .unwrap();
+    assert_eq!(
+        observed.usage,
+        RecoveredDecisionUsage::FullEnvelope {
+            fact: fact.clone(),
+            snapshot: snapshot.clone()
+        }
+    );
+    assert_eq!(observed.model, Some(identity(48)));
+    // A later Control retains the same bookkeeping, so the envelope stays
+    // exact against the new marker identity; the old identity is stale.
+    let mut control = next(&doc, &source, RunEvent::Cancel);
+    control.identity.kind = DecisionProjectionKind::Control;
+    let prepared = stage.prepare(&doc, &control).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    assert!(
+        doc.observe_decision_usage(&source.identity, &usage_lookup(&fact, &identity(48)))
+            .is_err()
+    );
+    assert!(matches!(
+        doc.observe_decision_usage(&control.identity, &usage_lookup(&fact, &identity(48)))
+            .unwrap()
+            .usage,
+        RecoveredDecisionUsage::FullEnvelope { .. }
+    ));
 }

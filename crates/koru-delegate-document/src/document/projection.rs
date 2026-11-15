@@ -5,9 +5,12 @@
 
 use super::*;
 use koru_delegate_core::decisions::*;
-use serde::{Deserialize, Serialize};
 
 const K_PROJECTION: &str = "decision_projection";
+/// The Bot5 format written only by a committed decision projection. The
+/// reader gate (`RUN_DOCUMENT_SCHEMA_VERSION`, still 4) is raised with the
+/// coherent reader integration; until then a projected Run reads as TooNew
+/// and every ordinary write on it refuses ReadOnly.
 const BOT_PROJECTION_SCHEMA: i64 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,15 +43,7 @@ impl AppliedRunProjection {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Marker {
-    identity: DecisionProjectionIdentity,
-    status: RunStatus,
-    bookkeeping: Option<DecisionSourceBookkeeping>,
-    timeline_start: u64,
-    timeline_end: u64,
-}
+type Marker = DecisionProjectionMarker;
 
 /// Lives in the sole connected handle, not in a separate per-Run cache. The
 /// first initialization copies current state (including retained timeline), not
@@ -88,7 +83,7 @@ impl RunProjectionStaging {
         intent: &RunProjectionIntent,
     ) -> Result<DecisionPreparedProjection> {
         connected.check_projection_subject(&intent.identity, &intent.target, false)?;
-        connected.check_projection_predecessor(&intent.target)?;
+        connected.check_projection_predecessor(intent)?;
         self.refresh(connected)?;
         let stage = self.staged.as_ref().ok_or_else(|| invalid(()))?;
         let base = stage.doc.oplog_vv();
@@ -209,6 +204,24 @@ impl RunProjectionStaging {
 }
 
 impl RunDocument {
+    /// Read-only requalification after the worker physically returned the sole
+    /// handle. The proof still comes from the real durable acknowledgment;
+    /// checking the current marker prevents a stale return from ending a later
+    /// publication interval. This performs no Store operation or history copy.
+    pub fn check_returned_projection(
+        &self,
+        prepared: &DecisionPreparedProjection,
+        proof: &AppliedRunProjection,
+    ) -> Result<()> {
+        require_document(proof.identity == prepared.identity)?;
+        require_document(covers(
+            &decode_vv(&proof.observed_version)?,
+            &decode_vv(&prepared.result_version)?,
+        ))?;
+        let target = checked_prepared(prepared)?;
+        self.check_applied(prepared, &target)
+    }
+
     fn check_projection_subject(
         &self,
         identity: &DecisionProjectionIdentity,
@@ -234,6 +247,7 @@ impl RunDocument {
                 && (schema != 4 || bot.routine.is_some())
                 && header.bot_fields_valid()
                 && header.run == identity.run
+                && header.created_at_ms == target.predecessor().observed_created_at_ms
                 && target.fence().owner == bot.owner
                 && target.fence().bot == bot.bot
                 && header.executing_device() == Some(bot.owner.device)
@@ -243,7 +257,7 @@ impl RunDocument {
         Ok(())
     }
 
-    fn marker(&self) -> Result<Option<Marker>> {
+    pub(super) fn marker(&self) -> Result<Option<Marker>> {
         match self.run().get(K_PROJECTION) {
             None => Ok(None),
             Some(ValueOrContainer::Value(value)) => {
@@ -257,11 +271,13 @@ impl RunDocument {
         }
     }
 
-    fn check_projection_predecessor(&self, target: &RunProjectionTargetV1) -> Result<()> {
+    fn check_projection_predecessor(&self, intent: &RunProjectionIntent) -> Result<()> {
+        let target = &intent.target;
         let header = self.header()?;
         require_document(
             header.status == target.predecessor().status
-                && header.failure_reason == target.predecessor().failure_reason,
+                && header.failure_reason == target.predecessor().failure_reason
+                && self.timeline().len() as u64 == target.predecessor().timeline_start,
         )?;
         match (&target.predecessor().projection, self.marker()?) {
             (None, None) => Ok(()),
@@ -269,8 +285,21 @@ impl RunDocument {
                 require_document(
                     prior.transition == marker.identity.transition
                         && prior.sequence == marker.identity.sequence
-                        && prior.target_digest == marker.identity.target_digest,
+                        && prior.target_digest == marker.identity.target_digest
+                        && marker.identity.run == intent.identity.run
+                        && marker.identity.workspace == intent.identity.workspace
+                        && marker.identity.document == intent.identity.document
+                        && marker.identity.subject_digest == intent.identity.subject_digest,
                 )?;
+                if marker.identity.wait != intent.identity.wait {
+                    // A new wait's first target was accepted by the sole SQL
+                    // owner only after the prior wait settled with no owed
+                    // projection. Its D-observed durable baseline includes
+                    // ordinary writes since that old marker. The host checks
+                    // current Link acknowledgement before preparing; a changed
+                    // wait ID alone is never SQL settlement authority.
+                    return Ok(());
+                }
                 if let RunProjectionTargetV1::Control {
                     retained_bookkeeping,
                     ..
@@ -308,10 +337,25 @@ impl RunDocument {
 
     fn write_projection(&self, intent: &RunProjectionIntent) -> Result<()> {
         self.check_projection_subject(&intent.identity, &intent.target, false)?;
-        self.check_projection_predecessor(&intent.target)?;
+        self.check_projection_predecessor(intent)?;
         let effects = intent.target.effects();
         let start = self.timeline().len();
-        for step in effects.steps.as_slice() {
+        // Shared neutral shape preflight precedes every staging mutation. The
+        // SQL source owner performs this same check before frontier acceptance.
+        let marker =
+            Marker::for_target(&intent.identity, &intent.target, start as u64).map_err(invalid)?;
+        if let Some(delivery) = intent.target.delivery() {
+            let header = self.checked_bot_delivery_identity(&delivery.receipt)?;
+            for publication in intent.target.publications() {
+                if let koru_delegate_core::RunFact::Completed { artifacts, .. } = publication.fact {
+                    require_document(
+                        artifacts == u32::try_from(header.artifacts.len()).unwrap_or(u32::MAX),
+                    )?;
+                }
+            }
+        }
+        let steps = intent.target.projected_steps().map_err(invalid)?;
+        for step in &steps {
             self.timeline()
                 .push(to_stored(&StoredItem::Step(step.clone()), Part::Timeline)?)?;
         }
@@ -336,6 +380,10 @@ impl RunDocument {
                 to_stored(&self.economics(now), Part::Economics)?,
             )?;
         }
+        if let Some(delivery) = intent.target.delivery() {
+            self.run()
+                .insert("chat_delivery", to_stored(&delivery.receipt, Part::Header)?)?;
+        }
         self.run()
             .insert(K_STATUS, to_stored(&effects.status, Part::Header)?)?;
         if let Some(reason) = effects.failure_reason {
@@ -344,19 +392,7 @@ impl RunDocument {
         } else {
             self.run().delete("failure_reason")?;
         }
-        let marker = Marker {
-            identity: intent.identity.clone(),
-            status: effects.status.clone(),
-            bookkeeping: intent.target.bookkeeping().cloned(),
-            timeline_start: start as u64,
-            timeline_end: self.timeline().len() as u64,
-        };
-        koru_delegate_core::routine_digest_json(
-            b"koru.bot.decision.projection.marker-shape.v1",
-            &marker,
-            DECISION_PAYLOAD_BYTES,
-        )
-        .map_err(invalid)?;
+        require_document(marker.timeline_end == self.timeline().len() as u64)?;
         self.run()
             .insert(K_PROJECTION, to_stored(&marker, Part::Header)?)?;
         self.run().insert(K_SCHEMA, BOT_PROJECTION_SCHEMA)?;
@@ -376,15 +412,22 @@ impl RunDocument {
         )?;
         let marker = self.marker()?.ok_or_else(|| invalid(()))?;
         let effects = target.effects();
+        if let Some(delivery) = target.delivery() {
+            self.checked_bot_delivery_identity(&delivery.receipt)?;
+            require_document(self.header()?.chat_delivery.as_ref() == Some(&delivery.receipt))?;
+        }
         require_document(
             marker.identity == prepared.identity
+                && marker.timeline_start == target.predecessor().timeline_start
+                && marker.timeline_end == target.timeline_end().map_err(invalid)?
                 && marker.status == effects.status
-                && marker.bookkeeping.as_ref() == target.bookkeeping()
+                && marker.bookkeeping == target.resulting_bookkeeping().map_err(invalid)?
                 && self.header()?.status == effects.status
                 && self.header()?.failure_reason == effects.failure_reason,
         )?;
         let start = usize::try_from(marker.timeline_start).map_err(invalid)?;
-        let count = effects.steps.as_slice().len()
+        let steps = target.projected_steps().map_err(invalid)?;
+        let count = steps.len()
             + usize::from(
                 target
                     .source_bookkeeping()
@@ -394,7 +437,7 @@ impl RunDocument {
             start.checked_add(count) == usize::try_from(marker.timeline_end).ok()
                 && marker.timeline_end <= self.timeline().len() as u64,
         )?;
-        for (offset, step) in effects.steps.as_slice().iter().enumerate() {
+        for (offset, step) in steps.iter().enumerate() {
             require_document(
                 self.timeline()
                     .get(start + offset)

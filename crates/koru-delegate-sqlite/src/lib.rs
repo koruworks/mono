@@ -57,8 +57,9 @@ mod schedule_publications;
 pub use attempts::AttemptRow;
 pub use bots::{
     BOT_ACTIVE_BUDGET_MS, BOT_HOST_EXECUTION_LIMIT, BOT_PENDING_LIMIT, BotAdmissionRecord,
-    BotExecutionRecord, BotInitialSend, BotLedger, BotLedgerError, BotReservation, BotSettlement,
-    QueuedBotAdmission, RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutinePolicyRecord,
+    BotExecutionCapacity, BotExecutionInventory, BotExecutionRecord, BotInitialSend, BotLedger,
+    BotLedgerError, BotOwnedExecution, BotReservation, BotSettlement, QueuedBotAdmission,
+    RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutinePolicyRecord,
     RoutineQueuedCursor, RoutineRecoveryEntry, RoutineSlotCursor,
 };
 pub use claims::{ClaimedSlot, SkippedSlot, SlotClaim};
@@ -67,8 +68,11 @@ pub use crash::WriteOp;
 #[cfg(any(test, feature = "crash-points"))]
 pub use crash::{CrashPoint, Moment};
 pub use db::{DATABASE_NAME, OpenError, RUNS_SCHEMA_VERSION, runs_db_path};
+pub use decisions::{
+    AnswerDecision, DecisionCleanupOrigin, DecisionCleanupOwnership, DecisionRecord,
+    DecisionWaitExecution, DecisionWaitRecord,
+};
 pub use deletions::DeletionRecord;
-pub use decisions::{DecisionRecord, DecisionWaitRecord};
 pub use domains::{AttemptPhase, IntentState, Projection, SlotOutcome, SlotState};
 pub use error::LedgerError;
 pub use inspect::{
@@ -82,7 +86,10 @@ pub use native_results::{
     NativeEffectLease, NativeIntentRecord, NativeLeaseOutcome, NativeLeaseState,
     NativePolicyRecord, NativeRecoveryCursor, NativeResultLedger, PendingNativeResult,
 };
-pub use publications::{OpenPublication, PublicationBody, PublicationRecord};
+pub use publications::{
+    DECISION_PROJECTION_RUN_PAGE, OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek, PublicationBody,
+    PublicationRecord,
+};
 pub use restart::{LookupAnswer, RestartVerdict, ResumePolicy, classify_at_restart};
 pub use schedule_publications::{
     SchedulePublicationBody, SchedulePublicationCursor, SchedulePublicationFact,
