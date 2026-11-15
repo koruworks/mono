@@ -39,19 +39,33 @@ impl Orchestrator {
             .initial_send
             .as_ref()
             .ok_or_else(|| refused("bot_fenced"))?;
-        let turn = send.turn.ok_or_else(|| refused("bot_fenced"))?;
         let session = row
             .provider_session
             .as_ref()
             .and_then(|key| key.session)
             .ok_or_else(|| refused("bot_fenced"))?;
-        if receipt.attempt != row.attempt
-            || receipt.generation != row.generation
-            || send.attempt != row.attempt
-            || send.generation != row.generation
-        {
+        if receipt.attempt != row.attempt || receipt.generation != row.generation {
             return Err(refused("bot_fenced"));
         }
+        // The original attempt's immutable initial turn, or only the exact
+        // recorded successor's acknowledged continuation turn that working
+        // memory mirrored from C for this same attempt and session. Anything
+        // else (including memory lost to a restart) is not positive evidence;
+        // the ledger then refuses the successor receipt on its own as well.
+        let turn = if send.attempt == row.attempt && send.generation == row.generation {
+            send.turn.ok_or_else(|| refused("bot_fenced"))?
+        } else {
+            self.runs
+                .get(&key.run)
+                .and_then(|state| state.attempt.as_ref())
+                .filter(|attempt| {
+                    attempt.id == row.attempt
+                        && attempt.generation == row.generation
+                        && attempt.session == Some(session)
+                })
+                .and_then(|attempt| attempt.resume_turn)
+                .ok_or_else(|| refused("bot_fenced"))?
+        };
         let header = self.header(key.run)?;
         let bot = header.bot.as_ref().ok_or_else(|| refused("bot_fenced"))?;
         if bot.owner != key.owner

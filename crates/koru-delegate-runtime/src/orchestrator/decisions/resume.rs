@@ -37,7 +37,7 @@ impl Orchestrator {
             .ok_or_else(|| refused("bot_fenced"))
     }
 
-    fn decision_expected(
+    pub(super) fn decision_expected(
         execution: &koru_delegate_sqlite::DecisionWaitExecution,
     ) -> Result<DecisionExpected, RunError> {
         execution
@@ -227,12 +227,14 @@ impl Orchestrator {
         proof: &FreshBotPolicyProof,
         boot: DelegateBootId,
     ) -> Result<koru_delegate_core::decisions::DecisionResume, RunError> {
+        self.decision_boot_current(boot)?;
         let execution = self.decision_ticket(owner, run)?;
         if let Some(resume) = execution.resume {
             return Ok(resume);
         }
         let expected = Self::decision_expected(&execution)?;
-        self.bot_ledger()?
+        let resume = self
+            .bot_ledger()?
             .reserve_decision_successor(
                 &expected,
                 DecisionTransitionId::mint(),
@@ -242,7 +244,17 @@ impl Orchestrator {
                 boot,
             )?
             .resume
-            .ok_or_else(|| refused("bot_fenced"))
+            .ok_or_else(|| refused("bot_fenced"))?;
+        // Only a reservation this process made may ask for its creation; one
+        // found already retained (a replay, or an earlier process) is
+        // recovered by its exact creation key, never created a second time.
+        let (_, _, _, creation) = resume.consumer_identity();
+        if let Some(state) = self.runs.get_mut(&run) {
+            state.decision_launch = Some(crate::orchestrator::state::DecisionLaunch::Reserved(
+                creation,
+            ));
+        }
+        Ok(resume)
     }
 
     /// Bind the created successor session, from the host's positive answer

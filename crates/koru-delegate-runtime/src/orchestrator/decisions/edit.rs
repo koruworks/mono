@@ -40,6 +40,7 @@ impl Orchestrator {
         proof: &FreshBotPolicyProof,
         boot: DelegateBootId,
     ) -> Result<DecisionRecord, RunError> {
+        self.decision_boot_current(boot)?;
         self.bot_live_fence(fence, device, true, true)?;
         let run = fence.run;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
@@ -63,6 +64,11 @@ impl Orchestrator {
         let ActorRef::Person { profile } = submission.request.requested_by else {
             return Err(refused("bot_fenced"));
         };
+        // Plan section 5: without the existing delegated launch a successor
+        // could never be started, so no answerable Koru decision is prepared.
+        if let Some(code) = self.decision_successor_unsupported(run)? {
+            return Err(refused(code));
+        }
         let global_policy = self.decision_global_policy(proof)?;
         let binding = DecisionBindingV1::KoruEdit(DecisionEditBinding {
             version: DecisionVersionV1,
@@ -109,6 +115,7 @@ impl Orchestrator {
         boot: DelegateBootId,
     ) -> Result<NativeLeaseOutcome, RunError> {
         owner_device(fence.owner, device)?;
+        self.decision_boot_current(boot)?;
         let execution = self
             .bot_ledger()?
             .decision_wait_execution(fence.owner, fence.run)?

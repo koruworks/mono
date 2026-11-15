@@ -464,14 +464,7 @@ impl Sessions for HostSessions {
         let controller = self.controller(session)?;
         controller
             .client
-            .answer_approval(
-                session,
-                controller.lease,
-                key,
-                approval,
-                decision,
-                choice,
-            )
+            .answer_approval(session, controller.lease, key, approval, decision, choice)
             .map_err(|error| session_error("bot_approval", error))
     }
     fn bot_answer_questions(

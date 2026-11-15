@@ -20,13 +20,27 @@ use koru_delegate_core::{
 };
 use koru_delegate_sqlite::{AnswerDecision, DecisionRecord};
 
+mod driver;
 mod edit;
+mod launch;
 mod resume;
 mod successor;
+pub use driver::DecisionResumeStep;
 pub use edit::DecisionEditRequest;
 pub use resume::DecisionEnrollmentBridge;
 
 impl Orchestrator {
+    /// A decision is prepared, answered, consumed and resumed only under this
+    /// delegate process's current boot (as `synchronize_boot_bot` requires).
+    /// The ledger keeps the caller's boot as the decision's creation boot, so
+    /// a stale one is refused here, before any ledger write.
+    pub(super) fn decision_boot_current(&self, boot: DelegateBootId) -> Result<(), RunError> {
+        if boot != self.delegate_boot() {
+            return Err(refused("bot_boot_stale"));
+        }
+        Ok(())
+    }
+
     /// Prepare a native approval decision for the exact live consumer's
     /// pending prompt, from its retained offered choices. The document base is
     /// the attached handle's current state; C commits the decision, its wait
@@ -39,6 +53,7 @@ impl Orchestrator {
         proof: &FreshBotPolicyProof,
         boot: DelegateBootId,
     ) -> Result<DecisionRecord, RunError> {
+        self.decision_boot_current(boot)?;
         self.bot_live_fence(fence, device, true, true)?;
         let run = fence.run;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
@@ -166,6 +181,7 @@ impl Orchestrator {
         boot: DelegateBootId,
     ) -> Result<DecisionRecord, RunError> {
         owner_device(input.owner, device)?;
+        self.decision_boot_current(boot)?;
         let record = self.bot_ledger()?.answer_bot_decision(
             input,
             DecisionTransitionId::mint(),
