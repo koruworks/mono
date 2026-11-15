@@ -563,4 +563,14 @@
     <string name="update_retry">Try again</string>
     <string name="update_not_now">Not now</string>
     <string name="update_whats_new">What’s new</string>
+    <string name="cloud_upload_policy_unavailable">Cloud permissions could not be checked. This upload is waiting.</string>
+    <string name="cloud_upload_plan_required">Your plan currently does not allow Cloud uploads. Your content stays on this device.</string>
+    <string name="cloud_upload_file_allowance">This file stays on this device because it exceeds the Cloud allowance. Files above Koru Free’s 1 GB need Plus. Other files can still sync.</string>
+    <string name="cloud_upload_usage_unknown">Cloud storage is still being checked. This upload is waiting; you can keep editing locally.</string>
+    <string name="cloud_upload_account_quota">There is not enough Cloud space for this upload. Free some space or increase your allowance. Smaller files may still sync.</string>
+    <string name="cloud_upload_document_count">Cloud has reached its document count limit. This upload is waiting.</string>
+    <string name="cloud_upload_document_bytes">Cloud has reached its stored document size limit. This upload is waiting.</string>
+    <string name="cloud_upload_physical_bytes">Cloud storage has reached a physical safety limit. This upload is waiting.</string>
+    <string name="cloud_upload_staging_bytes">Cloud temporary storage is full. This upload is waiting.</string>
+    <string name="cloud_upload_removal_capacity">Cloud cleanup capacity is temporarily unavailable. This operation is waiting.</string>
 </resources>

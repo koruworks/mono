@@ -500,4 +500,14 @@
     <string name="update_retry">Tentar de novo</string>
     <string name="update_not_now">Agora não</string>
     <string name="update_whats_new">Novidades</string>
+    <string name="cloud_upload_policy_unavailable">Não foi possível verificar as permissões do Cloud. Este upload está aguardando.</string>
+    <string name="cloud_upload_plan_required">Seu plano não permite uploads para o Cloud no momento. Seu conteúdo fica neste dispositivo.</string>
+    <string name="cloud_upload_file_allowance">Este arquivo fica neste dispositivo porque excede a cota do Cloud. Arquivos acima de 1 GB do Koru Free precisam do Plus. Outros arquivos podem continuar sincronizando.</string>
+    <string name="cloud_upload_usage_unknown">O armazenamento do Cloud ainda está sendo verificado. Este upload está aguardando; você pode continuar editando localmente.</string>
+    <string name="cloud_upload_account_quota">Não há espaço suficiente no Cloud para este upload. Libere espaço ou aumente sua cota. Arquivos menores ainda podem sincronizar.</string>
+    <string name="cloud_upload_document_count">O Cloud atingiu o limite de documentos. Este upload está aguardando.</string>
+    <string name="cloud_upload_document_bytes">O Cloud atingiu o limite de tamanho dos documentos armazenados. Este upload está aguardando.</string>
+    <string name="cloud_upload_physical_bytes">O armazenamento do Cloud atingiu um limite físico de segurança. Este upload está aguardando.</string>
+    <string name="cloud_upload_staging_bytes">O armazenamento temporário do Cloud está cheio. Este upload está aguardando.</string>
+    <string name="cloud_upload_removal_capacity">A capacidade de limpeza do Cloud está temporariamente indisponível. Esta operação está aguardando.</string>
 </resources>

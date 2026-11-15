@@ -342,6 +342,28 @@ async fn run_session(
         session.reset(1);
         return;
     }
+    if let (Some(workspace), Some(incarnation), Some(blobs)) =
+        (blob_workspace, blob_incarnation, blobs.get())
+    {
+        let holds = deferrals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .admissions
+            .entry(workspace)
+            .or_default()
+            .clone();
+        let live = host.clone();
+        blobs.bind_admission(
+            &tokio::runtime::Handle::current(),
+            &permit,
+            holds,
+            Arc::new(move |_| {
+                lock(&live)
+                    .cloud_permit_live(permit_id, generation)
+                    .then_some(incarnation)
+            }),
+        );
+    }
     set_stage(&host, permit_id, CloudStage::Reconciling, None);
 
     let (reader, writer) = session_io::split(session);

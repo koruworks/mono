@@ -14,6 +14,13 @@ import org.junit.Test
  * describe one hold two ways; a code with no sentence is left for *Waiting:*.
  */
 class CloudProgressHoldTest {
+    @Test
+    fun upload_holds_keep_the_same_message_in_progress() {
+        assertEquals(R.string.cloud_upload_file_allowance, holdSentence(CloudHold.Code("file_exceeds_plan_allowance")))
+        assertEquals(R.string.cloud_upload_account_quota, holdSentence(CloudHold.Code("account_over_quota")))
+        assertEquals(R.string.cloud_upload_usage_unknown, holdSentence(CloudHold.Code("usage_unknown")))
+    }
+
     @Test fun everyKnownHoldIsTheTransferPanelsOwnSentence() {
         assertEquals(R.string.blob_state_paused_person, holdSentence(CloudHold.PausedByYou))
         assertEquals(R.string.blob_state_paused_person, holdSentence(CloudHold.Code("paused_by_person")))

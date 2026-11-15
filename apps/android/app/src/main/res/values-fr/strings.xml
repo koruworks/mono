@@ -500,4 +500,14 @@
     <string name="update_retry">Réessayer</string>
     <string name="update_not_now">Plus tard</string>
     <string name="update_whats_new">Nouveautés</string>
+    <string name="cloud_upload_policy_unavailable">Les autorisations Cloud n’ont pas pu être vérifiées. Cet envoi est en attente.</string>
+    <string name="cloud_upload_plan_required">Votre forfait ne permet pas les envois Cloud actuellement. Votre contenu reste sur cet appareil.</string>
+    <string name="cloud_upload_file_allowance">Ce fichier reste sur cet appareil car il dépasse le quota Cloud. Les fichiers dépassant le Go de Koru Free nécessitent Plus. Les autres fichiers peuvent continuer à se synchroniser.</string>
+    <string name="cloud_upload_usage_unknown">Le stockage Cloud est encore en cours de vérification. Cet envoi attend ; vous pouvez continuer à modifier le contenu localement.</string>
+    <string name="cloud_upload_account_quota">L’espace Cloud est insuffisant pour cet envoi. Libérez de l’espace ou augmentez votre quota. Des fichiers plus petits peuvent encore se synchroniser.</string>
+    <string name="cloud_upload_document_count">Cloud a atteint sa limite de documents. Cet envoi est en attente.</string>
+    <string name="cloud_upload_document_bytes">Cloud a atteint sa limite de stockage des documents. Cet envoi est en attente.</string>
+    <string name="cloud_upload_physical_bytes">Le stockage Cloud a atteint une limite physique de sécurité. Cet envoi est en attente.</string>
+    <string name="cloud_upload_staging_bytes">Le stockage temporaire Cloud est plein. Cet envoi est en attente.</string>
+    <string name="cloud_upload_removal_capacity">La capacité de nettoyage Cloud est temporairement indisponible. Cette opération est en attente.</string>
 </resources>

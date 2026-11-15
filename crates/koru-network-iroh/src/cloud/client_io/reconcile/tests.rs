@@ -240,6 +240,7 @@ async fn download_during_retained_verification_is_rechecked_after_original_read(
         verify_again: false,
         uploaded_version: None,
         upload_acked: false,
+        local_version: None,
     });
     sync.transport_event(super::super::Event::Downloaded(unit))
         .unwrap();
@@ -308,6 +309,7 @@ async fn an_edit_after_the_acknowledged_export_is_not_claimed_as_synced() {
         verify_again: false,
         uploaded_version: Some(acknowledged),
         upload_acked: true,
+        local_version: None,
     });
     let event = tokio::time::timeout(Duration::from_secs(1), sync.next())
         .await
@@ -382,6 +384,7 @@ async fn an_upload_the_worker_refuses_ends_the_pass_with(refusal: Error) {
         verify_again: false,
         uploaded_version: Some(doc.oplog_vv()),
         upload_acked: false,
+        local_version: None,
     });
     sync.client.upload(unit, seed.clone(), ()).unwrap();
     let worker = async {

@@ -65,6 +65,8 @@ use koru_store_core::{
 };
 use koru_sync_control::ControlHost;
 
+mod admission;
+
 use super::StoreWorkerClient;
 
 // ------------------------------------------------------------------- walk
@@ -1046,6 +1048,7 @@ impl koru_projection::Consumer for BlobChangeFeed {
 /// something else is the one way a value like that escapes (D257).
 #[derive(Clone)]
 pub struct BlobSync {
+    admission: Arc<admission::Observer>,
     engine: Arc<BlobEngine>,
     arrivals: Arc<BlobArrivals>,
     /// The two seams an embedding host fills after the engine exists: the
@@ -1091,6 +1094,18 @@ impl std::fmt::Debug for BlobSync {
 }
 
 impl BlobSync {
+    /// Bind the shared background observer to this installed current permit.
+    /// Current account/owner proof is completed by the owner-only usage read.
+    pub fn bind_admission(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        permit: &koru_sync_control::cloud::CloudPermitV2,
+        holds: koru_network_iroh::cloud::client_io::reconcile::UploadAdmissionHolds,
+        live: LiveAuthorization,
+    ) {
+        self.admission.register(runtime, permit, holds, live);
+    }
+
     /// Install the account's reach into the blob control plane from inside
     /// this process — the in-process counterpart of control 7's
     /// `replace_cloud_blob_access`, for a host that holds the account itself
@@ -1740,7 +1755,7 @@ pub(crate) fn install(
             },
             downloads: arrivals.clone(),
         },
-        control,
+        control.clone(),
         objects,
     );
     let hydration = Arc::new(CloudFallbackHydration {
@@ -1751,6 +1766,7 @@ pub(crate) fn install(
     });
     Some((
         BlobSync {
+            admission: admission::Observer::new(&engine, access.clone(), control),
             engine,
             arrivals,
             access,

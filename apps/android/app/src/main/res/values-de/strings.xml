@@ -500,4 +500,14 @@
     <string name="update_retry">Erneut versuchen</string>
     <string name="update_not_now">Nicht jetzt</string>
     <string name="update_whats_new">Neuerungen</string>
+    <string name="cloud_upload_policy_unavailable">Die Cloud-Berechtigungen konnten nicht geprüft werden. Dieser Upload wartet.</string>
+    <string name="cloud_upload_plan_required">Dein Tarif erlaubt derzeit keine Cloud-Uploads. Deine Inhalte bleiben auf diesem Gerät.</string>
+    <string name="cloud_upload_file_allowance">Diese Datei bleibt auf diesem Gerät, da sie das Cloud-Kontingent überschreitet. Dateien über dem 1 GB von Koru Free benötigen Plus. Andere Dateien können weiter synchronisiert werden.</string>
+    <string name="cloud_upload_usage_unknown">Der Cloud-Speicher wird noch geprüft. Dieser Upload wartet; du kannst lokal weiterarbeiten.</string>
+    <string name="cloud_upload_account_quota">Für diesen Upload ist nicht genug Cloud-Speicher frei. Gib Speicher frei oder erhöhe dein Kontingent. Kleinere Dateien können weiterhin synchronisiert werden.</string>
+    <string name="cloud_upload_document_count">Die Cloud hat ihre Dokumentanzahlgrenze erreicht. Dieser Upload wartet.</string>
+    <string name="cloud_upload_document_bytes">Die Cloud hat ihre Speichergrenze für Dokumente erreicht. Dieser Upload wartet.</string>
+    <string name="cloud_upload_physical_bytes">Der Cloud-Speicher hat eine physische Sicherheitsgrenze erreicht. Dieser Upload wartet.</string>
+    <string name="cloud_upload_staging_bytes">Der temporäre Cloud-Speicher ist voll. Dieser Upload wartet.</string>
+    <string name="cloud_upload_removal_capacity">Die Cloud-Bereinigungskapazität ist vorübergehend nicht verfügbar. Dieser Vorgang wartet.</string>
 </resources>

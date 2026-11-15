@@ -367,6 +367,9 @@ async fn exercise(
                         assert!(if upload { hold_upload } else { hold_download });
                         deferred += 1;
                     }
+                    Event::AdmissionHeld { unit, reason } => {
+                        panic!("no admission refuses here: {unit:?} {reason:?}")
+                    }
                     Event::Refused { unit, code } => {
                         panic!("no Store job refuses here: {unit:?} {code}")
                     }

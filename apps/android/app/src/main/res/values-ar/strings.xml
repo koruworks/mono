@@ -540,4 +540,14 @@
     <string name="update_retry">إعادة المحاولة</string>
     <string name="update_not_now">ليس الآن</string>
     <string name="update_whats_new">ما الجديد</string>
+    <string name="cloud_upload_policy_unavailable">تعذّر التحقق من أذونات Cloud. هذا الرفع قيد الانتظار.</string>
+    <string name="cloud_upload_plan_required">لا تسمح خطتك حاليًا بالرفع إلى Cloud. يبقى محتواك على هذا الجهاز.</string>
+    <string name="cloud_upload_file_allowance">يبقى هذا الملف على الجهاز لأنه يتجاوز حصة Cloud. الملفات التي تتجاوز حصة Koru Free البالغة 1 غيغابايت تحتاج إلى Plus. يمكن متابعة مزامنة الملفات الأخرى.</string>
+    <string name="cloud_upload_usage_unknown">لا يزال التخزين في Cloud قيد التحقق. هذا الرفع قيد الانتظار؛ يمكنك مواصلة التحرير محليًا.</string>
+    <string name="cloud_upload_account_quota">لا توجد مساحة كافية في Cloud لهذا الرفع. حرّر مساحة أو زد حصتك. قد تستمر مزامنة الملفات الأصغر.</string>
+    <string name="cloud_upload_document_count">بلغ Cloud الحد الأقصى لعدد المستندات. هذا الرفع قيد الانتظار.</string>
+    <string name="cloud_upload_document_bytes">بلغ Cloud الحد الأقصى لحجم المستندات المخزنة. هذا الرفع قيد الانتظار.</string>
+    <string name="cloud_upload_physical_bytes">بلغ تخزين Cloud حد الأمان الفعلي. هذا الرفع قيد الانتظار.</string>
+    <string name="cloud_upload_staging_bytes">التخزين المؤقت في Cloud ممتلئ. هذا الرفع قيد الانتظار.</string>
+    <string name="cloud_upload_removal_capacity">سعة التنظيف في Cloud غير متاحة مؤقتًا. هذه العملية قيد الانتظار.</string>
 </resources>

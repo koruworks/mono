@@ -454,3 +454,112 @@ async fn policy_change_before_handoff_discards_the_unfinished_download() {
     drop((client, stream));
     assert_eq!(budget.used(), 0);
 }
+
+#[tokio::test]
+async fn typed_upload_refusals_keep_the_framed_read_lane_and_never_ack() {
+    use koru_account_core::cloud_admission::Reason;
+    for reason in [
+        Reason::PolicyUnavailable,
+        Reason::PlanRequired,
+        Reason::DocumentCount,
+        Reason::StoredDocumentBytes,
+        Reason::PhysicalBytes,
+        Reason::StagingBytes,
+        Reason::RemovalCapacity,
+        Reason::FileAllowance,
+        Reason::UsageUnknown,
+        Reason::AccountQuota,
+    ] {
+        let (mut client, mut reader, mut writer, mut stream, scope, budget) = pair().await;
+        let unit = Unit::Identity {
+            profile_id: scope.profile,
+        };
+        let doc = loro::LoroDoc::new();
+        doc.get_text("fixture")
+            .insert(0, "retained local edit")
+            .unwrap();
+        client
+            .upload(unit, doc.export(loro::ExportMode::Snapshot).unwrap(), ())
+            .unwrap();
+        drive(&mut client, async {
+            loop {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                let received = records::read(&mut reader, deadline, &budget).await.unwrap();
+                match received.into_parts().1 {
+                    Record::Control(control) => {
+                        stream.receive_control(control, 0, 0, |_| Ok(())).unwrap();
+                    }
+                    Record::Peer(frame) => {
+                        stream.receive_peer(frame, 0, |_| Ok(())).unwrap();
+                    }
+                }
+                if stream.status().incoming_complete {
+                    stream.handoff(0, |_| Ok(()), |v| v).unwrap();
+                    break;
+                }
+            }
+        })
+        .await;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        records::write(
+            &mut writer,
+            &Record::Peer(PeerFrame::Error {
+                code: reason.code().into(),
+            }),
+            deadline,
+            &budget,
+        )
+        .await
+        .unwrap();
+        loop {
+            match client.next().await.unwrap() {
+                Event::UploadRefused {
+                    start,
+                    reason: received,
+                } => {
+                    assert_eq!(start.unit, unit);
+                    assert_eq!(received, reason);
+                    break;
+                }
+                Event::Uploaded { .. } => panic!("refusal must never become a durable Ack"),
+                _ => {}
+            }
+        }
+        assert!(client.status().transfer.closed.is_none());
+        assert!(client.upload.is_none());
+        records::write(
+            &mut writer,
+            &Record::Peer(PeerFrame::SyncRequest),
+            deadline,
+            &budget,
+        )
+        .await
+        .unwrap();
+        loop {
+            if let Event::Metadata(messages) = client.next().await.unwrap() {
+                assert!(matches!(
+                    messages.values.as_slice(),
+                    [Metadata::SyncRequest]
+                ));
+                break;
+            }
+        }
+        // A subsequent ordinary read join uses this very carrier. The durable
+        // Store download/Ack boundary is exercised by Store integration tests.
+        client
+            .join(unit, loro::VersionVector::default().encode())
+            .unwrap();
+        let request = drive(&mut client, records::read(&mut reader, deadline, &budget))
+            .await
+            .unwrap();
+        let Record::Peer(frame) = request.record() else {
+            panic!("read join")
+        };
+        assert!(matches!(
+            metadata::decode(scope, frame.clone(), 4)
+                .unwrap()
+                .as_slice(),
+            [Metadata::Request(_)]
+        ));
+    }
+}
