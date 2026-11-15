@@ -12740,7 +12740,7 @@
             "description": "For a Bot conversation's owner, the Run that wrote this reply, as\n`read_run` accepts it with this `message_id` and the conversation's\n`chat_id` (a copied reply in a branch names the Run it was copied\nfrom). Absent on every reply no Run the execution owner holds wrote,\nand in every ordinary chat. A reply that reports no usage may carry\nonly this."
           },
           "stop_code": {
-            "description": "Why the engine refused this reply, as the same stable code the live\n`failed` event carried (O36): one of the closed `bot_input_*` codes,\nnever provider text. Absent on every other reply. A refused reply\nreports no usage, so an entry may carry only this.",
+            "description": "Why the engine ended this reply, as a closed stable code, never\nprovider text: one of the `bot_input_*` codes the live `failed` event\ncarried (O36), or `bot_decision_declined` / `bot_decision_needed_you`\nfor a Bot turn that ended as \"Needed you\" (O128, the live `needed_you`\nevent). Absent on every other reply. Such a reply may report no usage,\nso an entry may carry only this.",
             "nullable": true,
             "type": "string"
           },
@@ -13100,6 +13100,25 @@
           "workspace"
         ],
         "type": "object"
+      },
+      "NeededYouReason": {
+        "description": "Why a Bot turn ended as \"Needed you\" (O128), only as far as the closure\npositively knows it. Absent means the closure could not tell the reasons\napart; it is never a guess.",
+        "oneOf": [
+          {
+            "description": "The person declined the decision.",
+            "enum": [
+              "declined"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The decision was not answered in time (it expired or was cancelled).",
+            "enum": [
+              "not_answered"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "NewDocument": {
         "description": "`POST /v1/workspaces/{id}/documents`.",
@@ -14822,6 +14841,42 @@
               "type": {
                 "enum": [
                   "cancelled"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "at"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A Bot turn ended because its decision wait closed without the work\ncontinuing (\"Needed you\", O128). Terminal and **not a failure**.\n`reason` is only what the closure positively knows: absent when it\ncould not tell the reasons apart, and read as absent when a newer\nserver sends a reason this client does not know.",
+            "properties": {
+              "at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NeededYouReason"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "type": {
+                "enum": [
+                  "needed_you"
                 ],
                 "type": "string"
               }

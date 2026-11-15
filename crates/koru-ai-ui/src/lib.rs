@@ -4203,6 +4203,12 @@ impl ChatSurface {
                             self.live_sources.push(source.clone());
                         }
                     }
+                    PublicAiEvent::NeededYou { reason, .. } => {
+                        // O128: the quiet closing line, as a stopped turn's
+                        // footer says it. Never a failure.
+                        self.status =
+                            Some(koru_i18n::t(self.lang, needed_you_key(*reason)).to_owned());
+                    }
                     PublicAiEvent::Failed { error, .. } => {
                         // A refused level is said in the person's language.
                         self.status = Some(
@@ -4233,7 +4239,9 @@ impl ChatSurface {
                     if let Some(chat) = self.shown_chat_id() {
                         let end = match &event.event {
                             PublicAiEvent::Completed { .. } => queue::ReplyEnd::Completed,
-                            PublicAiEvent::Cancelled { .. } => queue::ReplyEnd::Stopped,
+                            PublicAiEvent::Cancelled { .. } | PublicAiEvent::NeededYou { .. } => {
+                                queue::ReplyEnd::Stopped
+                            }
                             _ => queue::ReplyEnd::Failed,
                         };
                         self.reply_end = Some((chat, end));
@@ -7728,6 +7736,22 @@ impl ChatSurface {
                         koru_i18n::t(self.lang, koru_i18n::Key::BotsPicturesRefused).to_owned()
                     } else if message.markdown.is_empty() && message.state == MessageState::Failed {
                         failure_label(message.error_class, self.lang)
+                    } else if let Some(key) = (message.markdown.is_empty()
+                        && message.state == MessageState::Interrupted)
+                        .then(|| {
+                            needed_you_stop_key(
+                                transcript
+                                    .usage
+                                    .iter()
+                                    .find(|entry| entry.message_id == message.id)
+                                    .and_then(|entry| entry.stop_code.as_deref()),
+                            )
+                        })
+                        .flatten()
+                    {
+                        // O128: a reopened Bot turn that ended as "Needed
+                        // you" says so where a stopped reply says it stopped.
+                        koru_i18n::t(self.lang, key).to_owned()
                     } else if message.markdown.is_empty()
                         && message.state == MessageState::Interrupted
                     {
@@ -10692,6 +10716,28 @@ pub(crate) fn refused_pictures(code: Option<&str>) -> bool {
         code,
         Some("bot_input_pictures_refused" | "bot_input_too_large")
     )
+}
+
+/// **A Bot turn's "Needed you" closing line** (QUESTIONS O128), by the
+/// reason the live `needed_you` event positively carries. Without one the
+/// second sentence is said: it is true of every such ending.
+pub(crate) fn needed_you_key(reason: Option<koru_ai_core::NeededYouReason>) -> koru_i18n::Key {
+    match reason {
+        Some(koru_ai_core::NeededYouReason::Declined) => koru_i18n::Key::BotsNeededYouDeclined,
+        Some(koru_ai_core::NeededYouReason::NotAnswered) | None => {
+            koru_i18n::Key::BotsNeededYouUnanswered
+        }
+    }
+}
+
+/// The same line after a reload, from the reply's `MessageUsage.stop_code`.
+/// Any other code (or none) is not a "Needed you" ending.
+pub(crate) fn needed_you_stop_key(code: Option<&str>) -> Option<koru_i18n::Key> {
+    match code? {
+        koru_ai_core::STOP_DECISION_DECLINED => Some(koru_i18n::Key::BotsNeededYouDeclined),
+        koru_ai_core::STOP_DECISION_NEEDED_YOU => Some(koru_i18n::Key::BotsNeededYouUnanswered),
+        _ => None,
+    }
 }
 
 /// The sentence for a failed response, by its class, in the person's
@@ -15329,6 +15375,103 @@ mod tests {
                 surface.refused_pictures.is_empty(),
                 "no live event: {code:?}"
             );
+        }
+    }
+
+    /// **O128: "Needed you" reads as a quiet closing line, never a
+    /// failure**: the live event's footer says the sentence its reason
+    /// positively carries (the second one when it carries none).
+    #[test]
+    fn needed_you_reads_as_a_quiet_closing_line_not_a_failure() {
+        for (reason, key) in [
+            (
+                Some(koru_ai_core::NeededYouReason::Declined),
+                koru_i18n::Key::BotsNeededYouDeclined,
+            ),
+            (
+                Some(koru_ai_core::NeededYouReason::NotAnswered),
+                koru_i18n::Key::BotsNeededYouUnanswered,
+            ),
+            (None, koru_i18n::Key::BotsNeededYouUnanswered),
+        ] {
+            let mut surface = ChatSurface::new();
+            surface.lang = koru_i18n::Lang::En;
+            let finished = surface.replies_finished;
+            surface.apply_update(Update::Event(koru_ai_wire::StreamEvent {
+                version: 1,
+                sequence: 1,
+                event: PublicAiEvent::NeededYou {
+                    attempt_id: InferenceAttemptId::new(),
+                    reason,
+                    at: koru_ai_core::Timestamp::from_millis(1),
+                },
+            }));
+            let expected = koru_i18n::t(koru_i18n::Lang::En, key);
+            assert_eq!(surface.status.as_deref(), Some(expected), "{reason:?}");
+            assert_ne!(
+                surface.status.as_deref(),
+                Some(failure_label(None, koru_i18n::Lang::En).as_str()),
+                "{reason:?}"
+            );
+            assert_eq!(surface.replies_finished, finished.wrapping_add(1));
+        }
+    }
+
+    /// **O128, the reload half: a reopened Bot turn that ended as "Needed
+    /// you" still says so** from the reply's stop code, where a stopped
+    /// reply says it was interrupted. Any other code keeps that sentence.
+    #[test]
+    fn needed_you_survives_a_reload_from_the_stop_code() {
+        for (code, key) in [
+            (
+                Some(koru_ai_core::STOP_DECISION_DECLINED),
+                koru_i18n::Key::BotsNeededYouDeclined,
+            ),
+            (
+                Some(koru_ai_core::STOP_DECISION_NEEDED_YOU),
+                koru_i18n::Key::BotsNeededYouUnanswered,
+            ),
+            (
+                Some("bot_input_unknown"),
+                koru_i18n::Key::AiResponseInterrupted,
+            ),
+            (None, koru_i18n::Key::AiResponseInterrupted),
+        ] {
+            let mut surface = ChatSurface::new();
+            surface.lang = koru_i18n::Lang::En;
+            let mut transcript = transcript();
+            let reply = MessageId::new();
+            transcript.messages.push(koru_ai_core::Message {
+                id: reply,
+                chat_id: transcript.chat.id,
+                ordinal: 0,
+                role: ChatRole::Assistant,
+                state: MessageState::Interrupted,
+                markdown: String::new(),
+                origin_message_id: None,
+                provider: None,
+                requested_model: None,
+                resolved_model: None,
+                error_class: None,
+                created_at: koru_ai_core::Timestamp::from_millis(1),
+                completed_at: Some(koru_ai_core::Timestamp::from_millis(2)),
+            });
+            transcript.usage.push(koru_ai_wire::MessageUsage {
+                message_id: reply,
+                usage: Default::default(),
+                context: None,
+                stop_code: code.map(str::to_owned),
+                run_id: None,
+            });
+            surface.transcript = Some(transcript);
+            surface.rebuild_messages(600.0);
+            let shown = surface
+                .message_layouts
+                .iter()
+                .find(|layout| layout.id == Some(reply))
+                .map(|layout| layout.display.clone())
+                .expect("the interrupted reply is laid out");
+            assert_eq!(shown, koru_i18n::t(koru_i18n::Lang::En, key), "{code:?}");
         }
     }
 

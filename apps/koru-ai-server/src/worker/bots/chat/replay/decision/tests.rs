@@ -215,3 +215,36 @@ fn suppressed_batch_keeps_every_frame_and_drops_only_the_terminal_effect() {
     // The original candidate is untouched for an uncertain retry.
     assert_eq!(batch.events[1].effects.len(), 2);
 }
+
+#[test]
+fn needed_you_closure_publishes_exactly_one_closing_event_and_no_failure() {
+    let attempt = InferenceAttemptId::new();
+    let at = Timestamp::from_millis(5);
+    for reason in [
+        Some(koru_ai_core::NeededYouReason::Declined),
+        Some(koru_ai_core::NeededYouReason::NotAnswered),
+        None,
+    ] {
+        let event = needed_you_event(attempt, BotDecisionClosure::Closed { reason }, at)
+            .expect("the closure that wrote it publishes one event");
+        assert_eq!(
+            event,
+            PublicAiEvent::NeededYou {
+                attempt_id: attempt,
+                reason,
+                at
+            }
+        );
+        // Terminal, and never a failure.
+        assert!(event.is_terminal());
+        assert!(!matches!(event, PublicAiEvent::Failed { .. }));
+    }
+    // An exact replay, another cause's ending or an owed closure: nothing.
+    for closure in [
+        BotDecisionClosure::ClosedBefore,
+        BotDecisionClosure::AlreadyEnded,
+        BotDecisionClosure::Owed,
+    ] {
+        assert_eq!(needed_you_event(attempt, closure, at), None, "{closure:?}");
+    }
+}
