@@ -101,4 +101,4 @@ impl DecisionEnrollmentBridge for HostDecisionBridge {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

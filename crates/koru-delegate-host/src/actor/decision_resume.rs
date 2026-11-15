@@ -55,8 +55,20 @@ pub(super) enum ResumeTurn {
     /// `decision_enrollment_pending`), the path is unsupported, the wait
     /// closed meanwhile, or the driver refused. Neither is success.
     Unchanged(RunId),
-    /// This Run took one exact step.
-    Stepped(RunId),
+    /// This Run took this one exact step.
+    Stepped(RunId, DecisionResumeStep),
+}
+
+/// One turn as a test observes it: whether a Run's document handle was out
+/// when the turn began, how many enrollment jobs the worker had been handed
+/// before and after it, and what the turn did.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ResumeTurnRecord {
+    pub handle_out: bool,
+    pub jobs_before: usize,
+    pub jobs_after: usize,
+    pub turn: ResumeTurn,
 }
 
 /// One maintenance turn: offer the first Run after `cursor` (wrapping) to the
@@ -91,7 +103,7 @@ pub(super) fn decision_resume_turn(
         }
         Ok(step) => {
             tracing::debug!(target: "koru::delegate", run = ?run, step = ?step, "decision resume stepped");
-            ResumeTurn::Stepped(run)
+            ResumeTurn::Stepped(run, step)
         }
         Err(error) => {
             tracing::warn!(target: "koru::delegate", run = ?run, %error, "decision resume step refused");
@@ -101,24 +113,33 @@ pub(super) fn decision_resume_turn(
 }
 
 impl Actor {
-    /// One maintenance turn of the resume driver. Returns whether a Run took
-    /// a step, so the loop can offer the next turn without waiting a tick.
-    pub(super) fn advance_decision_resume(&mut self) -> bool {
+    /// One maintenance turn of the resume driver. A step taken lets the loop
+    /// offer the next turn without waiting a tick.
+    pub(super) fn advance_decision_resume(&mut self) -> ResumeTurn {
         if let Err(error) = self.ensure_publication_worker() {
             tracing::warn!(target: "koru::delegate", %error, "decision resume has no publication worker");
-            return false;
+            return ResumeTurn::Unavailable;
         }
         let Some(worker) = self.publication_worker.as_mut() else {
-            return false;
+            return ResumeTurn::Unavailable;
         };
+        #[cfg(test)]
+        let (handle_out, jobs_before) = (worker.ticket().is_some(), worker.enrollments_started());
         let turn = decision_resume_turn(
             &mut self.orchestrator,
             &mut self.decision_resume_cursor,
             worker,
         );
+        #[cfg(test)]
+        self.resume_log.push(ResumeTurnRecord {
+            handle_out,
+            jobs_before,
+            jobs_after: worker.enrollments_started(),
+            turn,
+        });
         // Idle stops asking until something opens a wait; anything else keeps
         // the maintenance tick alive for the next turn.
         self.decision_resume_pending = turn != ResumeTurn::Idle;
-        matches!(turn, ResumeTurn::Stepped(_))
+        turn
     }
 }

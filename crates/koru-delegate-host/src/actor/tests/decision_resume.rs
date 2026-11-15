@@ -110,7 +110,7 @@ fn decision_resume_tick_advances_one_run_per_turn_and_rotates() {
     for turn in 0..4 {
         let outcome = decision_resume_turn(&mut script, &mut cursor, &mut worker);
         assert_eq!(script.advanced.len(), turn + 1, "exactly one Run per turn");
-        let ResumeTurn::Stepped(run) = outcome else {
+        let ResumeTurn::Stepped(run, Step::OriginStopped) = outcome else {
             panic!("a step: {outcome:?}")
         };
         assert_eq!(cursor, Some(run), "the cursor follows the Run offered");
@@ -146,7 +146,7 @@ fn decision_resume_tick_an_erroring_run_does_not_block_the_next() {
     );
     assert_eq!(
         decision_resume_turn(&mut script, &mut cursor, &mut worker),
-        ResumeTurn::Stepped(runs[1]),
+        ResumeTurn::Stepped(runs[1], Step::OriginStopped),
         "the next turn moves past the erroring Run"
     );
     assert_eq!(
@@ -166,7 +166,7 @@ fn decision_resume_tick_an_erroring_run_does_not_block_the_next() {
     script.unlisted = false;
     assert_eq!(
         decision_resume_turn(&mut script, &mut cursor, &mut worker),
-        ResumeTurn::Stepped(runs[1])
+        ResumeTurn::Stepped(runs[1], Step::OriginStopped)
     );
     drop(worker.shutdown());
 }
@@ -323,7 +323,7 @@ fn decision_resume_tick_starts_no_enrollment_while_a_document_handle_is_out() {
     woken(&wake);
     assert_eq!(
         decision_resume_turn(&mut script, &mut cursor, &mut worker),
-        ResumeTurn::Stepped(runs[0])
+        ResumeTurn::Stepped(runs[0], Step::Enrolled)
     );
     assert_eq!(
         calls.load(Ordering::SeqCst),
@@ -367,7 +367,11 @@ fn an_idle_resume_turn_releases_the_maintenance_tick_and_a_bot_command_rearms_it
         "a restart may find open waits"
     );
     assert!(actor.publications_pending());
-    assert!(!actor.advance_decision_resume(), "no open wait, no step");
+    assert_eq!(
+        actor.advance_decision_resume(),
+        ResumeTurn::Idle,
+        "no open wait, no step"
+    );
     assert!(!actor.decision_resume_pending);
     assert!(
         !actor.publications_pending(),

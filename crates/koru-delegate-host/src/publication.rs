@@ -126,6 +126,9 @@ pub(crate) struct EnrollmentSlot {
     returned: Option<EnrollmentReply>,
     /// The other keys that asked since `returned` came back, in order.
     missed: Vec<BotWaitEnrollmentKey>,
+    /// Enrollment jobs handed to the worker thread (a test observation).
+    #[cfg(test)]
+    started: usize,
 }
 
 /// Bounds the miss record. It exceeds the most open decision waits a device
@@ -139,6 +142,8 @@ impl EnrollmentSlot {
             active: None,
             returned: None,
             missed: Vec::new(),
+            #[cfg(test)]
+            started: 0,
         }
     }
 }
@@ -299,8 +304,19 @@ impl PublicationWorker {
             .is_ok()
         {
             self.enrollment.active = Some(request.key.clone());
+            #[cfg(test)]
+            {
+                self.enrollment.started += 1;
+            }
         }
         Err(enrollment_pending())
+    }
+
+    /// How many enrollment jobs this worker was handed (tests observe that
+    /// none starts while a document handle is out).
+    #[cfg(test)]
+    pub(crate) fn enrollments_started(&self) -> usize {
+        self.enrollment.started
     }
 
     /// Close only after physical completion, draining the single completion

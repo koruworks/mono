@@ -252,6 +252,9 @@ pub struct Actor {
     /// run yet, or a Bot command may have opened one): keeps the maintenance
     /// tick alive so the next Run is offered.
     decision_resume_pending: bool,
+    /// Every resume turn, as tests observe it.
+    #[cfg(test)]
+    resume_log: Vec<decision_resume::ResumeTurnRecord>,
 }
 
 impl Actor {
@@ -285,6 +288,8 @@ impl Actor {
             decision_resume_cursor: None,
             // A restart may find waits a previous process left open.
             decision_resume_pending: true,
+            #[cfg(test)]
+            resume_log: Vec::new(),
         }
     }
 
@@ -522,14 +527,8 @@ impl Actor {
                 settle_at = (!durable).then(|| Instant::now() + SETTLE_POLL);
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
-                self.retry_publication_ack();
-                self.drive_publication();
-                if let Err(error) = self.orchestrator.retry_publications(64) {
-                    tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
-                }
-                // One Run's decision wait per turn; a step taken offers the
-                // next turn now rather than a tick later.
-                publication_at = if self.advance_decision_resume() {
+                // A step taken offers the next turn now rather than a tick later.
+                publication_at = if self.maintenance_tick() {
                     Some(Instant::now())
                 } else {
                     self.publications_pending().then(|| Instant::now() + TICK)
@@ -618,6 +617,21 @@ impl Actor {
         self.shutdown_publication();
         // What was sent is acknowledged before this process is gone.
         self.orchestrator.settle_all();
+    }
+
+    /// One maintenance tick: the retained acknowledgment, one publication
+    /// step, bus retries, then one Run's decision wait (O123 rotation).
+    /// Returns whether that Run took a step.
+    fn maintenance_tick(&mut self) -> bool {
+        self.retry_publication_ack();
+        self.drive_publication();
+        if let Err(error) = self.orchestrator.retry_publications(64) {
+            tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
+        }
+        matches!(
+            self.advance_decision_resume(),
+            decision_resume::ResumeTurn::Stepped(..)
+        )
     }
 
     /// The answer to a person's request, once the run's commits are

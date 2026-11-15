@@ -40,7 +40,7 @@ fn request() -> EnrollBotWaitCleanup {
 }
 
 /// Read the one request body after proving the decision credential.
-fn body(stream: &mut TcpStream) -> Vec<u8> {
+pub(crate) fn body(stream: &mut TcpStream) -> Vec<u8> {
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -81,7 +81,7 @@ fn body(stream: &mut TcpStream) -> Vec<u8> {
     body
 }
 
-fn reply(
+pub(crate) fn reply(
     stream: &mut TcpStream,
     payload: impl FnOnce(&EnrollBotWaitCleanup) -> BotWaitEnrollmentReply,
 ) {
@@ -99,7 +99,7 @@ fn reply(
     stream.write_all(&answer).unwrap();
 }
 
-fn bridge(listener: &TcpListener) -> HostDecisionBridge {
+pub(crate) fn bridge(listener: &TcpListener) -> HostDecisionBridge {
     HostDecisionBridge::new(
         &gateway(&format!("http://{}", listener.local_addr().unwrap())),
         Some(&authority()),
