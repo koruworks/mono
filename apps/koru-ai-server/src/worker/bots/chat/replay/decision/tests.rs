@@ -286,5 +286,8 @@ fn the_consumer_arms_the_approved_edit_trigger_and_the_read_backoff_paces_its_at
     // Before the last attempt, at least 3.5 s of read backoff passed.
     let window: Duration = spacing[..spacing.len() - 1].iter().sum();
     assert!(window >= Duration::from_millis(3_400), "{window:?}");
-    assert!(spacing.windows(2).all(|pair| pair[1] > pair[0]), "{spacing:?}");
+    assert!(
+        spacing.windows(2).all(|pair| pair[1] > pair[0]),
+        "{spacing:?}"
+    );
 }

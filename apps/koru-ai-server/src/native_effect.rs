@@ -388,9 +388,9 @@ pub fn recover_retained<H: NativeEffectHost + ?Sized>(
     // Recover original Store proof before asking for fresh execution rights.
     // This can register a held creation after an access-narrowing barrier.
     match backend.reconcile_native_write(prepared, store_identity(subject, intent)) {
-        Ok(NativeReconciliation::Verified(evidence)) => Some(confirm(
-            host, port, store, authority, intent, evidence,
-        )),
+        Ok(NativeReconciliation::Verified(evidence)) => {
+            Some(confirm(host, port, store, authority, intent, evidence))
+        }
         Ok(NativeReconciliation::Unconfirmed) if intent.stage == NativeResultStage::Prepared => {
             None
         }

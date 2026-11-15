@@ -516,11 +516,7 @@ impl WorkerState {
         key: &BotWaitEnrollmentKey,
         state: &DecisionState,
     ) {
-        let Some(apply) = chat
-            .decision
-            .as_mut()
-            .and_then(|wait| wait.apply.as_mut())
-        else {
+        let Some(apply) = chat.decision.as_mut().and_then(|wait| wait.apply.as_mut()) else {
             return;
         };
         if !apply.due(state) {
@@ -563,8 +559,12 @@ impl WorkerState {
         key: &BotWaitEnrollmentKey,
         consumer: &BotExecutionFence,
     ) -> Result<ApplyWork, DecisionApplyGap> {
-        let view = approved_receipt(self.decision_waits.receipt(key.decision_id), key, &origin_of(key))
-            .ok_or(DecisionApplyGap::Absent)?;
+        let view = approved_receipt(
+            self.decision_waits.receipt(key.decision_id),
+            key,
+            &origin_of(key),
+        )
+        .ok_or(DecisionApplyGap::Absent)?;
         let koru_delegate_core::decisions::DecisionBindingV1::KoruEdit(binding) =
             &view.receipt.binding
         else {
@@ -592,8 +592,9 @@ impl WorkerState {
         }
         let global = match self.lifecycle_policy_barrier(&bot) {
             Ok(Some(barrier)) => barrier,
-            Ok(None) => crate::worker::bots::policy::barrier(&bot)
-                .map_err(|_| DecisionApplyGap::NotNow)?,
+            Ok(None) => {
+                crate::worker::bots::policy::barrier(&bot).map_err(|_| DecisionApplyGap::NotNow)?
+            }
             Err(_) => return Err(DecisionApplyGap::NotNow),
         };
         Ok(ApplyWork {

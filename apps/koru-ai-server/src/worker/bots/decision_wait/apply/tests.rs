@@ -608,7 +608,10 @@ fn allow_saves_the_approved_edit_once_through_the_shared_executor_with_no_model_
     assert_eq!(s.log, vec!["hello", "consume", "receipt"]);
     let intent = s.intent.as_ref().unwrap();
     assert_eq!(intent.stage, NativeResultStage::Registered);
-    assert_eq!(intent.key.attempt, f.consumer.attempt, "the successor's consume");
+    assert_eq!(
+        intent.key.attempt, f.consumer.attempt,
+        "the successor's consume"
+    );
     assert_eq!(intent.key.turn, f.consumer.turn.unwrap());
     drop(s);
     assert!(f.text_count() > 0, "the approved edit was saved");
@@ -628,7 +631,10 @@ fn a_lost_receipt_reply_reconciles_on_the_next_read_and_never_saves_twice() {
     assert_eq!(first.outcome, ApplyOutcome::Unknown);
     progress.finish(first.outcome);
     let once = f.text_count();
-    assert!(once > 0, "the Store applied the edit before the reply was lost");
+    assert!(
+        once > 0,
+        "the Store applied the edit before the reply was lost"
+    );
     // The next read sees the consume committed: only reconciliation is due.
     let consumed = state(DecisionAuthorization::Consumed, DecisionPhase::Effect);
     assert!(progress.due(&consumed));
@@ -638,8 +644,15 @@ fn a_lost_receipt_reply_reconciles_on_the_next_read_and_never_saves_twice() {
     progress.finish(second.outcome);
     assert!(!progress.due(&consumed), "done after the saved receipt");
     let s = ledger.script();
-    assert_eq!((s.consumes, s.leases), (2, 1), "the replay licensed nothing");
-    assert_eq!(s.intent.as_ref().unwrap().stage, NativeResultStage::Registered);
+    assert_eq!(
+        (s.consumes, s.leases),
+        (2, 1),
+        "the replay licensed nothing"
+    );
+    assert_eq!(
+        s.intent.as_ref().unwrap().stage,
+        NativeResultStage::Registered
+    );
     drop(s);
     assert_eq!(f.text_count(), once, "never a second save");
 }
@@ -650,16 +663,10 @@ fn a_lost_consume_reply_is_never_run_blind() {
     let ledger = f.ledger();
     let human = f.human();
     ledger.script().lose_consume_reply = true;
-    assert_eq!(
-        f.work(&ledger, &human).run().outcome,
-        ApplyOutcome::Unknown
-    );
+    assert_eq!(f.work(&ledger, &human).run().outcome, ApplyOutcome::Unknown);
     // The replay carries no Execute and the Store holds nothing for the
     // original request: still unknown, and nothing runs.
-    assert_eq!(
-        f.work(&ledger, &human).run().outcome,
-        ApplyOutcome::Unknown
-    );
+    assert_eq!(f.work(&ledger, &human).run().outcome, ApplyOutcome::Unknown);
     let s = ledger.script();
     assert_eq!((s.consumes, s.leases, s.receipts), (2, 1, 0));
     assert!(!s.log.contains(&"receipt"));
@@ -774,7 +781,10 @@ fn deny_or_expiry_saves_nothing() {
     assert!(!progress.due(&native));
     // Even if an attempt ran, the owner refuses a decision that is not
     // granted, and nothing is saved.
-    for authorization in [DecisionAuthorization::Denied, DecisionAuthorization::Expired] {
+    for authorization in [
+        DecisionAuthorization::Denied,
+        DecisionAuthorization::Expired,
+    ] {
         let ledger = f.ledger();
         ledger.script().authorization = authorization;
         assert_eq!(
@@ -792,12 +802,8 @@ fn a_stale_human_or_policy_saves_nothing() {
     // The home's profile is no longer the decision's human.
     let ledger = f.ledger();
     let human = f.human();
-    *human.profile.lock().unwrap() =
-        serde_json::from_value(json!(Uuid::new_v4())).unwrap();
-    assert_eq!(
-        f.work(&ledger, &human).run().outcome,
-        ApplyOutcome::Refused
-    );
+    *human.profile.lock().unwrap() = serde_json::from_value(json!(Uuid::new_v4())).unwrap();
+    assert_eq!(f.work(&ledger, &human).run().outcome, ApplyOutcome::Refused);
     assert!(ledger.script().log.is_empty(), "nothing was sent");
     // Another owner answers the authority read.
     let ledger = f.ledger();
