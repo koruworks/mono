@@ -453,7 +453,7 @@ fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
             &DecisionNativeResponse::Acknowledged {
                 key: key.clone(),
                 acknowledgment: key,
-                observed_at_ms: 1000,
+                observed_at_ms: h.schedule_clock.load(Ordering::Acquire),
             },
         )
         .unwrap();
