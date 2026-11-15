@@ -591,6 +591,27 @@ impl MobileAccount {
                     cursor: request.cloud_cursor.clone(),
                 }
             }
+            wire::AccountAction::InspectCloudDocument => AccountCommand::InspectCloudDocument {
+                request_id: request.requester,
+                selection: koru_agent_wire::CloudDocumentSelectionPayload::new(
+                    request
+                        .cloud_document_selection_json
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .map_err(|_| "account_payload_invalid")?,
+            },
+            wire::AccountAction::RemoveCloudFile => AccountCommand::RemoveCloudFile {
+                request_id: request.requester,
+                selection: koru_agent_wire::CloudDocumentSelectionPayload::new(
+                    request
+                        .cloud_document_selection_json
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .map_err(|_| "account_payload_invalid")?,
+                node_id: request.cloud_file_node_id.clone().unwrap_or_default(),
+            },
             wire::AccountAction::InspectCloudUsageDocuments => {
                 AccountCommand::InspectCloudUsageDocuments {
                     request_id: request.requester,
@@ -913,6 +934,30 @@ fn operation_result(
             result.selected_scope = Some(scope_id);
             result.selected_account_id = account_id;
             "account_selected"
+        }
+        AccountOperationResult::CloudDocumentInspection {
+            selection,
+            payload,
+            failure,
+            ..
+        } => {
+            result.cloud_document_selection_json = Some(selection.as_str().to_owned());
+            result.cloud_document_inspection_json = payload.map(|p| p.as_str().to_owned());
+            result.error_code = failure.map(|f| f.code().to_owned());
+            "cloud_document_inspection"
+        }
+        AccountOperationResult::CloudFileRemoval {
+            selection,
+            node_id,
+            removed,
+            failure,
+            ..
+        } => {
+            result.cloud_document_selection_json = Some(selection.as_str().to_owned());
+            result.cloud_file_node_id = Some(node_id);
+            result.cloud_file_removed = removed;
+            result.error_code = failure.map(|f| f.code().to_owned());
+            "cloud_file_removal"
         }
         AccountOperationResult::CloudUsageWorkspaces {
             payload, failure, ..

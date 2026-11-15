@@ -83,7 +83,7 @@ impl ProductionAccountService {
     }
 
     pub(super) fn document_inventory(
-        &self,
+        &mut self,
         generation: u64,
         request_id: u64,
         workspace_id: String,
@@ -94,6 +94,8 @@ impl ProductionAccountService {
         validate_cursor(&cursor)?;
         let workspace = read_uuid(&workspace_id)?;
         let incarnation = read_uuid(&incarnation_id)?;
+        let context = self.document_context();
+        let requested_cursor = cursor.clone();
         let response = if cancel.cancelled() {
             Err(ClientError::InvalidRequest)
         } else {
@@ -107,6 +109,7 @@ impl ProductionAccountService {
                 },
             )
         };
+        self.remember_document_page(context, requested_cursor, response.as_ref().ok(), cancel);
         let (payload, failure) = payload(response, cancel);
         Ok(ServiceOutcome {
             state: self.state(generation, AccountStage::SignedIn),

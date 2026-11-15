@@ -125,6 +125,8 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
   case inspectCloudPlan // = 18
   case inspectCloudUsageWorkspaces // = 19
   case inspectCloudUsageDocuments // = 20
+  case inspectCloudDocument // = 21
+  case removeCloudFile // = 22
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -153,6 +155,8 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     case 18: self = .inspectCloudPlan
     case 19: self = .inspectCloudUsageWorkspaces
     case 20: self = .inspectCloudUsageDocuments
+    case 21: self = .inspectCloudDocument
+    case 22: self = .removeCloudFile
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -179,6 +183,8 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     case .inspectCloudPlan: return 18
     case .inspectCloudUsageWorkspaces: return 19
     case .inspectCloudUsageDocuments: return 20
+    case .inspectCloudDocument: return 21
+    case .removeCloudFile: return 22
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -205,6 +211,8 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     .inspectCloudPlan,
     .inspectCloudUsageWorkspaces,
     .inspectCloudUsageDocuments,
+    .inspectCloudDocument,
+    .removeCloudFile,
   ]
 
 }
@@ -3386,6 +3394,26 @@ public nonisolated struct KORAPIAccountCommandRequest: @unchecked Sendable {
   /// Clears the value of `cloudCursor`. Subsequent reads from it will return its default value.
   public mutating func clearCloudCursor() {_uniqueStorage()._cloudCursor = nil}
 
+  /// Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+  public var cloudDocumentSelectionJson: String {
+    get {_storage._cloudDocumentSelectionJson ?? String()}
+    set {_uniqueStorage()._cloudDocumentSelectionJson = newValue}
+  }
+  /// Returns true if `cloudDocumentSelectionJson` has been explicitly set.
+  public var hasCloudDocumentSelectionJson: Bool {_storage._cloudDocumentSelectionJson != nil}
+  /// Clears the value of `cloudDocumentSelectionJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudDocumentSelectionJson() {_uniqueStorage()._cloudDocumentSelectionJson = nil}
+
+  /// REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+  public var cloudFileNodeID: String {
+    get {_storage._cloudFileNodeID ?? String()}
+    set {_uniqueStorage()._cloudFileNodeID = newValue}
+  }
+  /// Returns true if `cloudFileNodeID` has been explicitly set.
+  public var hasCloudFileNodeID: Bool {_storage._cloudFileNodeID != nil}
+  /// Clears the value of `cloudFileNodeID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudFileNodeID() {_uniqueStorage()._cloudFileNodeID = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3818,6 +3846,41 @@ public nonisolated struct KORAPIMobileAccountResult: @unchecked Sendable {
   /// Clears the value of `cloudIncarnationID`. Subsequent reads from it will return its default value.
   public mutating func clearCloudIncarnationID() {_uniqueStorage()._cloudIncarnationID = nil}
 
+  /// Echoed on inspection/removal success and failure.
+  public var cloudDocumentSelectionJson: String {
+    get {_storage._cloudDocumentSelectionJson ?? String()}
+    set {_uniqueStorage()._cloudDocumentSelectionJson = newValue}
+  }
+  /// Returns true if `cloudDocumentSelectionJson` has been explicitly set.
+  public var hasCloudDocumentSelectionJson: Bool {_storage._cloudDocumentSelectionJson != nil}
+  /// Clears the value of `cloudDocumentSelectionJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudDocumentSelectionJson() {_uniqueStorage()._cloudDocumentSelectionJson = nil}
+
+  /// Validated detached passive projection, <=1 MiB UTF-8 bytes.
+  public var cloudDocumentInspectionJson: String {
+    get {_storage._cloudDocumentInspectionJson ?? String()}
+    set {_uniqueStorage()._cloudDocumentInspectionJson = newValue}
+  }
+  /// Returns true if `cloudDocumentInspectionJson` has been explicitly set.
+  public var hasCloudDocumentInspectionJson: Bool {_storage._cloudDocumentInspectionJson != nil}
+  /// Clears the value of `cloudDocumentInspectionJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudDocumentInspectionJson() {_uniqueStorage()._cloudDocumentInspectionJson = nil}
+
+  public var cloudFileNodeID: String {
+    get {_storage._cloudFileNodeID ?? String()}
+    set {_uniqueStorage()._cloudFileNodeID = newValue}
+  }
+  /// Returns true if `cloudFileNodeID` has been explicitly set.
+  public var hasCloudFileNodeID: Bool {_storage._cloudFileNodeID != nil}
+  /// Clears the value of `cloudFileNodeID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudFileNodeID() {_uniqueStorage()._cloudFileNodeID = nil}
+
+  /// True only after the ordinary remote durable Ack; never bytes-freed evidence.
+  public var cloudFileRemoved: Bool {
+    get {_storage._cloudFileRemoved}
+    set {_uniqueStorage()._cloudFileRemoved = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4148,7 +4211,7 @@ nonisolated extension KORAPIRelayState: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension KORAPIAccountAction: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCOUNT_ACTION_UNSPECIFIED\0\u{1}ACCOUNT_ACTION_START_GOOGLE\0\u{1}ACCOUNT_ACTION_CANCEL\0\u{1}ACCOUNT_ACTION_RETRY\0\u{1}ACCOUNT_ACTION_LOGOUT\0\u{1}ACCOUNT_ACTION_LIST_PROFILES\0\u{2}\u{2}ACCOUNT_ACTION_RETRY_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CANCEL_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CONFIRM_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_CANCEL_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_SWITCH_ACCOUNT\0\u{1}ACCOUNT_ACTION_ADD_ACCOUNT\0\u{1}ACCOUNT_ACTION_SELECT_PROFILES\0\u{1}ACCOUNT_ACTION_SET_PROFILE_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_START_EMAIL\0\u{1}ACCOUNT_ACTION_START_APPLE\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_PLAN\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCOUNT_ACTION_UNSPECIFIED\0\u{1}ACCOUNT_ACTION_START_GOOGLE\0\u{1}ACCOUNT_ACTION_CANCEL\0\u{1}ACCOUNT_ACTION_RETRY\0\u{1}ACCOUNT_ACTION_LOGOUT\0\u{1}ACCOUNT_ACTION_LIST_PROFILES\0\u{2}\u{2}ACCOUNT_ACTION_RETRY_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CANCEL_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CONFIRM_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_CANCEL_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_SWITCH_ACCOUNT\0\u{1}ACCOUNT_ACTION_ADD_ACCOUNT\0\u{1}ACCOUNT_ACTION_SELECT_PROFILES\0\u{1}ACCOUNT_ACTION_SET_PROFILE_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_START_EMAIL\0\u{1}ACCOUNT_ACTION_START_APPLE\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_PLAN\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT\0\u{1}ACCOUNT_ACTION_REMOVE_CLOUD_FILE\0")
 }
 
 nonisolated extension KORAPIAccountVaultAction: SwiftProtobuf._ProtoNameProviding {
@@ -8530,7 +8593,7 @@ nonisolated extension KORAPIDeviceHistory: SwiftProtobuf.Message, SwiftProtobuf.
 
 nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AccountCommandRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}host\0\u{1}version\0\u{1}requester\0\u{1}action\0\u{1}generation\0\u{1}locale\0\u{3}profile_id\0\u{3}account_id\0\u{3}expected_owner_scope\0\u{3}profile_ids\0\u{3}cloud_sync_enabled\0\u{3}cloud_workspace_id\0\u{3}cloud_incarnation_id\0\u{3}cloud_cursor\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}host\0\u{1}version\0\u{1}requester\0\u{1}action\0\u{1}generation\0\u{1}locale\0\u{3}profile_id\0\u{3}account_id\0\u{3}expected_owner_scope\0\u{3}profile_ids\0\u{3}cloud_sync_enabled\0\u{3}cloud_workspace_id\0\u{3}cloud_incarnation_id\0\u{3}cloud_cursor\0\u{3}cloud_document_selection_json\0\u{3}cloud_file_node_id\0")
 
   fileprivate class _StorageClass {
     var _host: KORAPIHostContext? = nil
@@ -8547,6 +8610,8 @@ nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftP
     var _cloudWorkspaceID: String? = nil
     var _cloudIncarnationID: String? = nil
     var _cloudCursor: String? = nil
+    var _cloudDocumentSelectionJson: String? = nil
+    var _cloudFileNodeID: String? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -8571,6 +8636,8 @@ nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftP
       _cloudWorkspaceID = source._cloudWorkspaceID
       _cloudIncarnationID = source._cloudIncarnationID
       _cloudCursor = source._cloudCursor
+      _cloudDocumentSelectionJson = source._cloudDocumentSelectionJson
+      _cloudFileNodeID = source._cloudFileNodeID
     }
   }
 
@@ -8603,6 +8670,8 @@ nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftP
         case 12: try { try decoder.decodeSingularStringField(value: &_storage._cloudWorkspaceID) }()
         case 13: try { try decoder.decodeSingularStringField(value: &_storage._cloudIncarnationID) }()
         case 14: try { try decoder.decodeSingularStringField(value: &_storage._cloudCursor) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._cloudDocumentSelectionJson) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._cloudFileNodeID) }()
         default: break
         }
       }
@@ -8657,6 +8726,12 @@ nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftP
       try { if let v = _storage._cloudCursor {
         try visitor.visitSingularStringField(value: v, fieldNumber: 14)
       } }()
+      try { if let v = _storage._cloudDocumentSelectionJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 15)
+      } }()
+      try { if let v = _storage._cloudFileNodeID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 16)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -8680,6 +8755,8 @@ nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftP
         if _storage._cloudWorkspaceID != rhs_storage._cloudWorkspaceID {return false}
         if _storage._cloudIncarnationID != rhs_storage._cloudIncarnationID {return false}
         if _storage._cloudCursor != rhs_storage._cloudCursor {return false}
+        if _storage._cloudDocumentSelectionJson != rhs_storage._cloudDocumentSelectionJson {return false}
+        if _storage._cloudFileNodeID != rhs_storage._cloudFileNodeID {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -9110,7 +9187,7 @@ nonisolated extension KORAPIMobileAccountSummary: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MobileAccountResult"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}requester\0\u{1}generation\0\u{1}kind\0\u{3}error_code\0\u{1}profiles\0\u{2}\u{2}account\0\u{3}owner_scope\0\u{3}selected_account_id\0\u{3}selected_scope\0\u{1}enrollments\0\u{3}cloud_sync\0\u{3}cloud_plan_json\0\u{3}cloud_plan_request_elapsed_millis\0\u{3}cloud_inventory_json\0\u{3}cloud_workspace_id\0\u{3}cloud_incarnation_id\0\u{b}selected_profile_id\0\u{c}\u{7}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}requester\0\u{1}generation\0\u{1}kind\0\u{3}error_code\0\u{1}profiles\0\u{2}\u{2}account\0\u{3}owner_scope\0\u{3}selected_account_id\0\u{3}selected_scope\0\u{1}enrollments\0\u{3}cloud_sync\0\u{3}cloud_plan_json\0\u{3}cloud_plan_request_elapsed_millis\0\u{3}cloud_inventory_json\0\u{3}cloud_workspace_id\0\u{3}cloud_incarnation_id\0\u{3}cloud_document_selection_json\0\u{3}cloud_document_inspection_json\0\u{3}cloud_file_node_id\0\u{3}cloud_file_removed\0\u{b}selected_profile_id\0\u{c}\u{7}\u{1}")
 
   fileprivate class _StorageClass {
     var _sequence: UInt64 = 0
@@ -9130,6 +9207,10 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
     var _cloudInventoryJson: String? = nil
     var _cloudWorkspaceID: String? = nil
     var _cloudIncarnationID: String? = nil
+    var _cloudDocumentSelectionJson: String? = nil
+    var _cloudDocumentInspectionJson: String? = nil
+    var _cloudFileNodeID: String? = nil
+    var _cloudFileRemoved: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -9157,6 +9238,10 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
       _cloudInventoryJson = source._cloudInventoryJson
       _cloudWorkspaceID = source._cloudWorkspaceID
       _cloudIncarnationID = source._cloudIncarnationID
+      _cloudDocumentSelectionJson = source._cloudDocumentSelectionJson
+      _cloudDocumentInspectionJson = source._cloudDocumentInspectionJson
+      _cloudFileNodeID = source._cloudFileNodeID
+      _cloudFileRemoved = source._cloudFileRemoved
     }
   }
 
@@ -9192,6 +9277,10 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
         case 16: try { try decoder.decodeSingularStringField(value: &_storage._cloudInventoryJson) }()
         case 17: try { try decoder.decodeSingularStringField(value: &_storage._cloudWorkspaceID) }()
         case 18: try { try decoder.decodeSingularStringField(value: &_storage._cloudIncarnationID) }()
+        case 19: try { try decoder.decodeSingularStringField(value: &_storage._cloudDocumentSelectionJson) }()
+        case 20: try { try decoder.decodeSingularStringField(value: &_storage._cloudDocumentInspectionJson) }()
+        case 21: try { try decoder.decodeSingularStringField(value: &_storage._cloudFileNodeID) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cloudFileRemoved) }()
         default: break
         }
       }
@@ -9255,6 +9344,18 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
       try { if let v = _storage._cloudIncarnationID {
         try visitor.visitSingularStringField(value: v, fieldNumber: 18)
       } }()
+      try { if let v = _storage._cloudDocumentSelectionJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 19)
+      } }()
+      try { if let v = _storage._cloudDocumentInspectionJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 20)
+      } }()
+      try { if let v = _storage._cloudFileNodeID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 21)
+      } }()
+      if _storage._cloudFileRemoved != false {
+        try visitor.visitSingularBoolField(value: _storage._cloudFileRemoved, fieldNumber: 22)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -9281,6 +9382,10 @@ nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftPro
         if _storage._cloudInventoryJson != rhs_storage._cloudInventoryJson {return false}
         if _storage._cloudWorkspaceID != rhs_storage._cloudWorkspaceID {return false}
         if _storage._cloudIncarnationID != rhs_storage._cloudIncarnationID {return false}
+        if _storage._cloudDocumentSelectionJson != rhs_storage._cloudDocumentSelectionJson {return false}
+        if _storage._cloudDocumentInspectionJson != rhs_storage._cloudDocumentInspectionJson {return false}
+        if _storage._cloudFileNodeID != rhs_storage._cloudFileNodeID {return false}
+        if _storage._cloudFileRemoved != rhs_storage._cloudFileRemoved {return false}
         return true
       }
       if !storagesAreEqual {return false}

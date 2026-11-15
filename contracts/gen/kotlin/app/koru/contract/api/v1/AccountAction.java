@@ -128,6 +128,14 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;</code>
    */
   ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS(20),
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT = 21;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT(21),
+  /**
+   * <code>ACCOUNT_ACTION_REMOVE_CLOUD_FILE = 22;</code>
+   */
+  ACCOUNT_ACTION_REMOVE_CLOUD_FILE(22),
   UNRECOGNIZED(-1),
   ;
 
@@ -242,6 +250,14 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;</code>
    */
   public static final int ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS_VALUE = 20;
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT = 21;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT_VALUE = 21;
+  /**
+   * <code>ACCOUNT_ACTION_REMOVE_CLOUD_FILE = 22;</code>
+   */
+  public static final int ACCOUNT_ACTION_REMOVE_CLOUD_FILE_VALUE = 22;
 
 
   @java.lang.Override
@@ -284,6 +300,8 @@ public enum AccountAction
       case 18: return ACCOUNT_ACTION_INSPECT_CLOUD_PLAN;
       case 19: return ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES;
       case 20: return ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS;
+      case 21: return ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT;
+      case 22: return ACCOUNT_ACTION_REMOVE_CLOUD_FILE;
       default: return null;
     }
   }

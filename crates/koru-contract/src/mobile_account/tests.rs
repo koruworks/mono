@@ -248,3 +248,28 @@ fn cloud_inventory_requires_exact_selectors_and_bounded_cursor_only_on_read_acti
     request.action = wire::AccountAction::InspectCloudPlan as i32;
     assert!(command(&request).is_err());
 }
+
+#[test]
+fn cloud_document_actions_require_bounded_selection_and_exact_removal_node() {
+    let mut request = wire::AccountCommandRequest {
+        version: 1,
+        requester: 42,
+        expected_owner_scope: Some(9),
+        action: wire::AccountAction::InspectCloudDocument as i32,
+        ..Default::default()
+    };
+    assert!(command(&request).is_err());
+    request.cloud_document_selection_json = Some("{}".into());
+    assert!(command(&request).is_ok()); // Full schema is checked by the account service.
+    request.cloud_document_selection_json = Some("x".repeat(1025));
+    assert!(command(&request).is_err());
+    request.cloud_document_selection_json = Some("{}".into());
+    request.cloud_file_node_id = Some("00000000-0000-0000-0000-000000001234".into());
+    assert!(command(&request).is_err());
+    request.action = wire::AccountAction::RemoveCloudFile as i32;
+    assert!(command(&request).is_ok());
+    request.cloud_file_node_id = Some("wrong".into());
+    assert!(command(&request).is_err());
+    request.action = wire::AccountAction::InspectCloudPlan as i32;
+    assert!(command(&request).is_err());
+}
