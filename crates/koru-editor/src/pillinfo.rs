@@ -55,7 +55,7 @@ pub fn schedule_entity_key(schedule: &str) -> String {
 /// `Attr::labelled`'s braces. Not localized on purpose: the localized label is
 /// the one the writer stored, and this is the shape of a record that has none.
 const RUN_WITHOUT_A_LABEL: &str = "Run";
-const SCHEDULE_WITHOUT_A_LABEL: &str = "Schedule";
+const SCHEDULE_WITHOUT_A_LABEL: &str = "Routine";
 
 /// How many characters of a quoted passage its chip shows before the `…`.
 const QUOTE_LABEL_CHARS: usize = 24;
@@ -617,6 +617,16 @@ mod tests {
             Some("schedule:00000000-0000-0000-0000-000000000123")
         );
         assert!(!info.dangling);
+        let unlabeled = info_for(
+            &ws(),
+            &Attr::new(
+                koru_core::attributes::ROLE_SCHEDULE,
+                AttrValue::Text(schedule.into()),
+            ),
+        );
+        assert_eq!(unlabeled.label, "Routine");
+        assert_eq!(unlabeled.entity, info.entity);
+        assert_eq!(unlabeled.kind, info.kind);
     }
 
     /// **Nothing on the drawing path can block.** A structural assertion, the
