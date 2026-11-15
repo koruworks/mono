@@ -16,6 +16,8 @@ fn base(h: &Harness) -> DecisionPublicationBase {
         timeline_len: 0,
         subject_digest: decision_projection_subject_digest(&header).unwrap(),
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: 777,
+            timeline_start: 0,
             projection: None,
             status: RunStatus::running(),
             failure_reason: None,
@@ -29,6 +31,7 @@ fn source(h: &Harness, base: &DecisionPublicationBase, sequence: u64) -> RunProj
     RunProjectionTargetV1::Source {
         version: DecisionVersionV1,
         predecessor: base.predecessor.clone(),
+        transitions: DecisionList::default(),
         effects: DecisionProjectionEffects {
             event: None,
             status: base.predecessor.status.clone(),
@@ -86,6 +89,8 @@ fn apply(h: &mut Harness, record: &DecisionProjectionRecord) -> DecisionProjecti
 fn advance_base(base: &mut DecisionPublicationBase, record: &DecisionProjectionRecord) {
     base.source_schema = 5u8.try_into().unwrap();
     base.predecessor = DecisionProjectionPredecessor {
+        observed_created_at_ms: record.target.predecessor().observed_created_at_ms,
+        timeline_start: record.target.timeline_end().unwrap(),
         projection: Some(DecisionProjectionPrior {
             transition: record.identity.transition,
             sequence: record.identity.sequence,
@@ -95,6 +100,7 @@ fn advance_base(base: &mut DecisionPublicationBase, record: &DecisionProjectionR
         failure_reason: record.target.effects().failure_reason,
     };
     base.bookkeeping = record.target.resulting_bookkeeping().unwrap();
+    base.timeline_len = base.predecessor.timeline_start;
 }
 
 #[test]
@@ -238,4 +244,63 @@ fn decision_projection_source_refuses_changed_subject_placement_and_pending_sour
         .is_err()
     );
     assert_eq!(h.count("bot_decision_publications"), 1);
+}
+
+#[test]
+fn decision_projection_latest_applied_refuses_all_illegal_open_shapes_before_body_decode() {
+    for kinds in [
+        vec!["source", "source"],
+        vec!["control", "source"],
+        vec!["source", "control", "control"],
+    ] {
+        let mut h = Harness::new();
+        let decision = h.prepare();
+        let base = base(&h);
+        let target = source(&h, &base, 1);
+        let f = h.origin();
+        let first =
+            h.db.record_decision_source(
+                f.owner,
+                DecisionTransitionId::mint(),
+                decision.wait.wait,
+                &base,
+                &target,
+            )
+            .unwrap();
+        // Simulate damaged uniqueness without removing the named query indexes.
+        h.db.conn().execute_batch("DROP TRIGGER bot_decision_publications_immutable;
+            DROP INDEX bot_decision_publications_pending_source;
+            DROP INDEX bot_decision_publications_pending_control;
+            CREATE INDEX bot_decision_publications_pending_source ON bot_decision_publications(run_id) WHERE state='pending' AND projection_kind='source';
+            CREATE INDEX bot_decision_publications_pending_control ON bot_decision_publications(run_id) WHERE state='pending' AND projection_kind='control';").unwrap();
+        h.db.conn()
+            .execute(
+                "UPDATE bot_decision_publications SET projection_kind=?2 WHERE transition_id=?1",
+                params![first.identity.transition.to_storage(), kinds[0]],
+            )
+            .unwrap();
+        for (index, kind) in kinds.iter().enumerate().skip(1) {
+            h.db.conn().execute("INSERT INTO bot_decision_publications(transition_id,run_id,wait_id,decision_id,run_sequence,decision_revision,workspace_id,document_id,source_schema,subject_digest,projection_kind,target_json,target_digest,state,created_at_ms)
+                SELECT ?2,run_id,wait_id,decision_id,?3,decision_revision,workspace_id,document_id,source_schema,subject_digest,?4,target_json,target_digest,'pending',created_at_ms
+                FROM bot_decision_publications WHERE transition_id=?1",
+                params![first.identity.transition.to_storage(),DecisionTransitionId::mint().to_storage(),index as u64+1,*kind]).unwrap();
+        }
+        let bad = BotLedgerError::Ledger(LedgerError::Corrupt {
+            table: "bot_decision_publications",
+            column: "open_shape",
+        });
+        assert_eq!(
+            h.db.latest_applied_decision_projection(f.owner, f.run)
+                .unwrap_err(),
+            bad
+        );
+        assert_eq!(
+            h.db.latest_decision_projection(f.owner, f.run).unwrap_err(),
+            bad
+        );
+        assert_eq!(
+            h.db.decision_projection_prefix(f.owner, f.run).unwrap_err(),
+            bad
+        );
+    }
 }

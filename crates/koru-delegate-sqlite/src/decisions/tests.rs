@@ -13,6 +13,7 @@ mod native_completion;
 mod observation;
 mod preparation;
 mod projection;
+mod resume;
 
 struct Harness {
     db: RunsDb,

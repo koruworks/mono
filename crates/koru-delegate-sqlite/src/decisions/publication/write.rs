@@ -39,7 +39,14 @@ pub(super) fn prior_applied(
             require(
                 old.target.effects().status == record.target.predecessor().status
                     && old.target.effects().failure_reason
-                        == record.target.predecessor().failure_reason,
+                        == record.target.predecessor().failure_reason
+                    && old.target.predecessor().observed_created_at_ms
+                        == record.target.predecessor().observed_created_at_ms
+                    && old
+                        .target
+                        .timeline_end()
+                        .map_err(|_| BotLedgerError::Invalid)?
+                        == record.target.predecessor().timeline_start,
             )?;
         } else {
             let prior_wait =
@@ -89,6 +96,7 @@ impl RunsDb {
                     now.max(old.created_at_ms)],
             ).map_err(sql)?;
             require(changed == 1)?;
+            initial::activate_on(tx,owner,&old,now)?;
             required(tx, owner, &old.identity)
         })
     }

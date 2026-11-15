@@ -5,6 +5,8 @@
 
 use super::*;
 mod insert;
+mod control;
+mod initial;
 mod rows;
 mod write;
 

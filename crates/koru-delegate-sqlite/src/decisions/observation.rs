@@ -19,12 +19,24 @@ pub(super) fn execution(
     let wait =
         rows::by_wait(conn, run, wait)?.ok_or_else(|| corrupt("bot_wait_runtime", "wait_id"))?;
     require(wait.origin.owner == owner && wait.origin.run == run)?;
-    let (wait, decision_state, resume) = match wait.reason {
+    let (wait, decision_state, resume, decision_expected) = match wait.reason {
         BotWaitReason::Decision { decision } => {
             let record = rows::read(conn, owner, run, decision)?
                 .ok_or_else(|| corrupt("bot_wait_runtime", "decision_id"))?;
             require(record.wait.wait == wait.wait)?;
-            (record.wait, Some(record.receipt.state), record.resume)
+            let expected = DecisionExpected {
+                owner,
+                run,
+                decision,
+                revision: record.receipt.state.revision,
+                binding_digest: record.receipt.binding_digest,
+            };
+            (
+                record.wait,
+                Some(record.receipt.state),
+                record.resume,
+                Some(expected),
+            )
         }
         _ => {
             crate::bots::routines::bounded_admission(conn, run)?;
@@ -35,7 +47,7 @@ pub(super) fn execution(
             )?;
             let origin = authority::attempt(conn, &wait.origin)?;
             require(origin.provider_session.and_then(|s| s.session) == Some(wait.origin.session))?;
-            (wait, None, None)
+            (wait, None, None, None)
         }
     };
     let cleanup_target = match &resume {
@@ -72,6 +84,13 @@ pub(super) fn execution(
             }),
     )?;
     Ok(Some(DecisionWaitExecution {
+        expected: DecisionWaitExpected {
+            owner,
+            run,
+            wait: wait.wait,
+            revision: wait.revision,
+            decision: decision_expected,
+        },
         wait,
         decision_state,
         resume,

@@ -2,8 +2,15 @@
 
 use super::*;
 
-fn prior(record: &DecisionProjectionRecord) -> DecisionProjectionPredecessor {
-    DecisionProjectionPredecessor {
+pub(super) fn prior(
+    record: &DecisionProjectionRecord,
+) -> Result<DecisionProjectionPredecessor, BotLedgerError> {
+    Ok(DecisionProjectionPredecessor {
+        observed_created_at_ms: record.target.predecessor().observed_created_at_ms,
+        timeline_start: record
+            .target
+            .timeline_end()
+            .map_err(|_| BotLedgerError::Invalid)?,
         projection: Some(DecisionProjectionPrior {
             transition: record.identity.transition,
             sequence: record.identity.sequence,
@@ -11,7 +18,7 @@ fn prior(record: &DecisionProjectionRecord) -> DecisionProjectionPredecessor {
         }),
         status: record.target.effects().status.clone(),
         failure_reason: record.target.effects().failure_reason,
-    }
+    })
 }
 
 fn base_on(
@@ -31,6 +38,10 @@ fn base_on(
             && intent.run_document == Some(base.document)
             && request == admitted.submission.request
             && admitted.submission.provenance.owner == owner,
+    )?;
+    require(
+        base.predecessor.observed_created_at_ms == base.observed_created_at_ms
+            && base.predecessor.timeline_start == base.timeline_len,
     )?;
     let mut header = RunHeader::from_request(request, base.observed_created_at_ms);
     header.bot = Some(admitted.submission.provenance.clone());
@@ -52,11 +63,11 @@ fn base_on(
                 && base.workspace == applied.identity.workspace
                 && base.document == applied.identity.document
                 && base.subject_digest == applied.identity.subject_digest
-                && base.predecessor.projection == prior(&applied).projection,
+                && base.predecessor.projection == prior(&applied)?.projection,
         )?;
         if applied.identity.wait == wait {
             require(
-                base.predecessor == prior(&applied)
+                base.predecessor == prior(&applied)?
                     && base.bookkeeping
                         == applied
                             .target
@@ -243,7 +254,7 @@ pub(super) fn insert_on(
     };
     let (expected, bookkeeping) = if let Some(last) = open.last() {
         (
-            prior(last),
+            prior(last)?,
             last.target
                 .resulting_bookkeeping()
                 .map_err(|_| BotLedgerError::Invalid)?,
