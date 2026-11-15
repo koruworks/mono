@@ -169,6 +169,10 @@ fn change(document: &ScheduleDocument, kind: u8) {
         2 => {
             header.definition.routine.as_mut().unwrap().bot = BotId::mint();
         }
+        4 => {
+            root.insert("initial_owner", DeviceId::from_uuid(v4(0xd4)).to_string())
+                .unwrap();
+        }
         _ => {
             root.insert("created_at_ms", header.created_at_ms - 1)
                 .unwrap();
@@ -237,7 +241,7 @@ fn invoke(
 #[test]
 fn known_route_stripped_association_or_header_cannot_enter_any_ordinary_mutation() {
     for action in 0..5 {
-        for kind in 0..3 {
+        for kind in 0..5 {
             let owner = DeviceId::from_uuid(v4(0xd3));
             let schedules = associated_schedules(owner, action != 2);
             let inspect = schedules.clone();

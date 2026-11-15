@@ -141,7 +141,13 @@ impl Routines {
             None if header.schedule == location.schedule && header.definition.routine.is_none() => {
                 Ok(None)
             }
-            Some(route) if route_header(&route, location, header) => Ok(Some(route)),
+            Some(route)
+                if route_header(&route, location, header)
+                    && header.created_at_ms == route.created_at_ms
+                    && header.initial_owner == route.owner.device =>
+            {
+                Ok(Some(route))
+            }
             _ => Err(refused("routine_catalog_identity")),
         }
     }
