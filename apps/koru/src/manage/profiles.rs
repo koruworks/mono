@@ -38,6 +38,7 @@ mod selection_tests;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use cloud::inventory;
 pub use cloud::{Status as CloudStatus, SyncAvailability};
 pub use effect::Effect;
 pub use intent::{Intent, LinkControl, SessionAction};
@@ -598,6 +599,7 @@ impl ProfilesController {
             preview,
             self.progress.deadline(),
             self.cloud_storage_deadline(),
+            self.cloud.inventory.deadline(),
         ]
         .into_iter()
         .flatten()
@@ -608,6 +610,7 @@ impl ProfilesController {
         self.drain_deletion_preview()
             | self.maintain_cloud_progress(now)
             | self.maintain_cloud_storage(now)
+            | self.cloud.inventory.maintain(now)
     }
 }
 
