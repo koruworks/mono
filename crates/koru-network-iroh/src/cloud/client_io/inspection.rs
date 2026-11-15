@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! One authenticated metadata read. No transfer payload, Store job, subscription,
-//! upload, import, or adoption is admitted. The caller still owns the complete
+//! Authenticated metadata and detached content reads. No Store job, live
+//! subscription, upload, durable acknowledgement, or adoption is admitted.
+//! The caller still owns the complete
 //! session::with_fence lifetime and rechecks account/lifecycle before use.
 use super::*;
 
@@ -65,7 +66,7 @@ where
         .map_err(|_| Error::Timeout)?
 }
 
-async fn probe<'a, R, W>(
+pub(super) async fn probe<'a, R, W>(
     mut client: Client<'a, R, W>,
     unit: Unit,
     local_version: Vec<u8>,
@@ -116,3 +117,157 @@ where
 
 #[cfg(test)]
 mod tests;
+
+/// A complete, hash-checked download with the original remote version token.
+/// It has never entered a Store and is not a durable receive receipt. Keep this
+/// owner alive during detached replay so the carrier memory reservation lives
+/// as long as its bytes. A caller must validate causal/schema state and `matches`
+/// before rendering or editing it.
+pub struct ObservedDownload {
+    observed: ObservedVersion,
+    complete: Completed,
+}
+impl ObservedDownload {
+    pub fn bytes(&self) -> &[u8] {
+        &self.complete.bytes
+    }
+    pub fn observed(&self) -> &ObservedVersion {
+        &self.observed
+    }
+    /// Replay into detached memory only. Missing ancestors or a state other
+    /// than the exact sampled remote position never become a partial view.
+    /// Domain schema and identity validation remain the projection's boundary.
+    pub fn replay(&self) -> Result<loro::LoroDoc, Error> {
+        let doc = loro::LoroDoc::new();
+        let status = doc
+            .import(&self.complete.bytes)
+            .map_err(|_| Error::Invalid)?;
+        let expected =
+            loro::VersionVector::decode(&self.observed.version).map_err(|_| Error::Invalid)?;
+        if status.pending.is_some() || doc.state_vv() != expected || doc.oplog_vv() != expected {
+            return Err(Error::Invalid);
+        }
+        Ok(doc)
+    }
+}
+impl std::fmt::Debug for ObservedDownload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ObservedDownload(<redacted>)")
+    }
+}
+
+pub(super) fn idle<'a, R, W>(client: &Client<'a, R, W>) -> bool
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+{
+    client.available_writer()
+        && !(client.status().committing
+            || client.writing.is_some()
+            || !client.controls.is_empty()
+            || client.policy_pending != 0
+            || client.upload.is_some()
+            || client.stream.incoming_deadline().is_some()
+            || client.stream.outgoing_deadline().is_some()
+            || client.stream.status().draining
+            || client.next_start.is_some())
+}
+
+/// Admitted only after the retained reconciler returned its idle carrier.
+/// Dropping an admitted inspection cancels that inspection, never a rejected
+/// pre-existing transfer. It owns no normal Store jobs once admitted.
+pub struct InspectionCarrier<'a, R, W> {
+    pub(super) client: Client<'a, R, W>,
+}
+impl<'a, R, W> InspectionCarrier<'a, R, W>
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+{
+    pub async fn download(mut self, unit: Unit) -> Result<ObservedDownload, Error> {
+        download(&mut self.client, unit).await
+    }
+}
+
+/// Consume an idle retained carrier for one detached read. The caller ends this
+/// session afterwards; no success Ack is sent because nothing was persisted.
+/// Empty Join knowledge requests the complete existing source, never a seed.
+pub(super) async fn download<'a, R, W>(
+    client: &mut Client<'a, R, W>,
+    unit: Unit,
+) -> Result<ObservedDownload, Error>
+where
+    R: AsyncRead + Unpin + Send + 'a,
+    W: AsyncWrite + Unpin + Send + 'a,
+{
+    if !idle(client) {
+        return Err(Error::Unavailable);
+    }
+    client.scope.object_unit(unit)?;
+    (client.authorize)(unit).map_err(Error::Authority)?;
+    client.inspection_only = true;
+    client.inspection_download = Some(unit);
+    client.inspection_joined = false;
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut requested = false;
+        let mut observed = None;
+        loop {
+            if client.available_writer() && !requested {
+                client.join(unit, loro::VersionVector::default().encode())?;
+                requested = true;
+            }
+            if client.stream.status().incoming_complete {
+                let complete =
+                    client
+                        .stream
+                        .handoff(client.now(), &mut client.authorize, |complete| complete)?;
+                if complete.unit != unit
+                    || complete.origin != client.scope.principal.update_origin()
+                    || complete.bytes.is_empty()
+                {
+                    return Err(Error::Invalid);
+                }
+                (client.authorize)(unit).map_err(Error::Authority)?;
+                return Ok(ObservedDownload {
+                    observed: observed.take().ok_or(Error::Invalid)?,
+                    complete,
+                });
+            }
+            match client.next().await? {
+                Event::Progress => {}
+                Event::Metadata(mut messages) if requested && observed.is_none() => {
+                    let Metadata::Joined {
+                        unit: received,
+                        version,
+                        live: false,
+                    } = messages.values.pop().ok_or(Error::Invalid)?
+                    else {
+                        return Err(Error::Invalid);
+                    };
+                    if received != unit
+                        || !messages.values.is_empty()
+                        || loro::VersionVector::decode(&version)
+                            .map_err(|_| Error::Invalid)?
+                            .is_empty()
+                    {
+                        return Err(Error::Invalid);
+                    }
+                    (client.authorize)(unit).map_err(Error::Authority)?;
+                    observed = Some(ObservedVersion {
+                        scope: client.scope,
+                        unit,
+                        version,
+                        _charge: messages._charge,
+                    });
+                    client.inspection_joined = true;
+                }
+                _ => return Err(Error::Invalid),
+            }
+        }
+    })
+    .await
+    .map_err(|_| Error::Timeout)
+    .and_then(|v| v);
+    client.cancel(Error::Closed);
+    result
+}
