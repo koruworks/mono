@@ -44,6 +44,7 @@ fn retry_code(error: &RunError) -> Option<&'static str> {
     match error {
         RunError::Port(error) => match error.code.as_str() {
             "publication_pending" => Some("publication_pending"),
+            "decision_enrollment_pending" => Some("decision_enrollment_pending"),
             "bot_stale" => Some("bot_stale"),
             "bot_fenced" => Some("bot_fenced"),
             "bot_capacity" => Some("bot_capacity"),
@@ -58,6 +59,27 @@ fn retry_code(error: &RunError) -> Option<&'static str> {
 }
 
 impl Orchestrator {
+    /// Runs to offer the per-turn resume driver, rotating after `after`: one
+    /// bounded keyset page of open decision waits strictly after the cursor,
+    /// then one wrapped page at or before it, each with its owner. Durable
+    /// (it reads the approved open-wait index), so it survives a restart.
+    /// Identity only: the driver's own reads qualify every step.
+    pub fn bot_decision_resume_runs(
+        &mut self,
+        after: Option<RunId>,
+    ) -> Result<Vec<(BotOwner, RunId)>, RunError> {
+        use koru_delegate_sqlite::DECISION_RESUME_RUN_PAGE as PAGE;
+        let mut runs = self.bot_ledger()?.decision_resume_runs(after, PAGE)?;
+        if let Some(cursor) = after {
+            for entry in self.bot_ledger()?.decision_resume_runs(None, PAGE)? {
+                if entry.1 <= cursor && !runs.iter().any(|(_, run)| *run == entry.1) {
+                    runs.push(entry);
+                }
+            }
+        }
+        Ok(runs)
+    }
+
     /// Advance this Run's open decision wait by at most one exact step. The
     /// enrollment HTTP call goes out through `bridge` (the host's; there is
     /// no default) only while the fixed worker is not holding the document

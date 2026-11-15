@@ -26,13 +26,28 @@ const CONTINUATION_DOMAIN: &str = "koru.bot.decision.continuation.v1";
 /// Domain of the digest of one observed continuation acknowledgment.
 const ACKNOWLEDGMENT_DOMAIN: &str = "koru.bot.decision.continuation.ack.v1";
 
-/// Provider payload, never logged: the person's original captured task input
-/// and why a new session continues it. The decision is named by id only; no
-/// answer text, edit payload or earlier conversation is added.
-fn continuation_body(task: &str, decision: DecisionId) -> String {
-    format!(
-        "{task}\n\nKoru resumed this run in a new session after the person allowed decision `{decision}`. The earlier session's conversation is not available here; results it already saved remain. Do not repeat a write that already succeeded."
-    )
+/// Provider payload, never logged: the person's original captured task input,
+/// why a new session continues it, and the one edit the person allowed,
+/// exactly as retained in the decision binding (target, operation id and the
+/// normalized arguments) so the successor can repeat that edit and nothing
+/// else. No answer text or earlier conversation is added.
+fn continuation_body(
+    task: &str,
+    decision: DecisionId,
+    edit: &koru_delegate_core::decisions::DecisionEditBinding,
+) -> Result<String, RunError> {
+    let tool = match edit.action {
+        koru_delegate_core::decisions::DecisionEditAction::EditDocument => "edit_document",
+    };
+    // The retained arguments are normalized JSON text; anything else is not
+    // sent rather than sent garbled.
+    let arguments =
+        std::str::from_utf8(edit.payload.as_slice()).map_err(|_| refused("bot_invalid"))?;
+    Ok(format!(
+        "{task}\n\nKoru resumed this run in a new session after the person allowed decision `{decision}`. The earlier session's conversation is not available here; results it already saved remain. Do not repeat a write that already succeeded.\n\nThe person allowed exactly one edit. Make it once with `{tool}` on document `{target}`, with operation_id `{operation}` and these approved arguments unchanged:\n{arguments}",
+        target = edit.target,
+        operation = edit.operation_id,
+    ))
 }
 
 /// The digest of one positive host acknowledgment of the continuation input:
@@ -100,12 +115,22 @@ impl Orchestrator {
         if submission.provenance.routine.is_some() {
             return Err(refused("bot_routine_decision_unsupported"));
         }
+        let retained = self
+            .bot_ledger()?
+            .bot_decision(owner, run, expected.decision)?
+            .ok_or_else(|| refused("bot_fenced"))?;
+        if retained.receipt.binding_digest != expected.binding_digest {
+            return Err(refused("bot_fenced"));
+        }
+        let DecisionBindingV1::KoruEdit(edit) = &retained.receipt.binding else {
+            return Err(refused("bot_fenced"));
+        };
         let workspace = self.decision_run_workspace(run)?;
         let task = &submission.input;
         let text = crate::orchestrator::bot_controls::native_prompt::compose(
             run,
             &workspace,
-            &continuation_body(&task.text, expected.decision),
+            &continuation_body(&task.text, expected.decision, edit)?,
         );
         let input = PendingInput {
             idempotency_key: key,

@@ -334,6 +334,14 @@ pub trait BotLedger {
         run: RunId,
         decision: koru_delegate_core::decisions::DecisionId,
     ) -> Result<Option<crate::DecisionRecord>, BotLedgerError>;
+    /// At most `limit` (1..=16) Runs with an open decision wait strictly after
+    /// `after`, with their owner, through the approved open-wait index. The
+    /// caller rotates and wraps; selection is identity only, never authority.
+    fn decision_resume_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<(BotOwner, RunId)>, BotLedgerError>;
     /// The durably acknowledged continuation of the Run's current attempt
     /// when it is a recorded decision successor; `None` otherwise. History
     /// only: it never grants input, execution or capacity.

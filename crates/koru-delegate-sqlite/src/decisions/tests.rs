@@ -20,6 +20,7 @@ mod occupancy;
 mod preparation;
 mod projection;
 mod resume;
+mod resume_runs;
 mod retained_reads;
 mod wait_read;
 

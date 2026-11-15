@@ -645,3 +645,173 @@ fn keyed_native_answer_forwards_the_callers_key_and_refuses_while_a_decision_own
         "{refused:?}"
     );
 }
+
+/// Drive the chain to an acknowledged successor; returns its consumer fence.
+fn acknowledged(c: &mut Chain) -> BotExecutionFence {
+    held_and_allowed(c);
+    script_creation(c, session(2));
+    for step in [
+        Step::SuccessorReserved,
+        Step::SuccessorBound,
+        Step::SuccessorInstalled,
+        Step::InputAcknowledged,
+    ] {
+        assert_eq!(advance(c), step);
+    }
+    let resume = execution(c).resume.unwrap();
+    let (attempt, generation, session, _) = resume.consumer_identity();
+    let DecisionResumeState::InputAcknowledged { acknowledgment } = resume.state else {
+        panic!("acknowledged")
+    };
+    BotExecutionFence {
+        attempt,
+        generation,
+        session: session.unwrap(),
+        turn: Some(acknowledgment.turn),
+        ..c.fence
+    }
+}
+
+#[test]
+fn the_successor_repeats_the_exact_approved_edit_and_consume_accepts_it() {
+    let mut c = edit_decision();
+    let consumer = acknowledged(&mut c);
+    let record =
+        c.h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_decision(c.fence.owner, c.fence.run, c.decision)
+            .unwrap()
+            .unwrap();
+    let DecisionBindingV1::KoruEdit(edit) = &record.receipt.binding else {
+        panic!("edit")
+    };
+    // The continuation names the retained target, operation and arguments.
+    let text =
+        c.h.calls()
+            .into_iter()
+            .find_map(|call| match call {
+                Call::Submit { session, text } if session == consumer.session => Some(text),
+                _ => None,
+            })
+            .unwrap();
+    assert!(text.contains(&edit.target.to_string()));
+    assert!(text.contains(&edit.operation_id.to_string()));
+    assert!(text.contains("PRIVATE-EDIT"));
+    // The successor repeats exactly that edit: the one-use consume accepts it
+    // under the acknowledged consumer fence and licenses it once.
+    let request = koru_delegate_sqlite::test_support::consume_request(&record, &consumer).unwrap();
+    let outcome =
+        c.h.orchestrator
+            .bot_consume_decision_edit(
+                &consumer,
+                c.fence.owner.device,
+                &request,
+                edit.payload.as_slice(),
+                &c.proof,
+                c.boot,
+            )
+            .unwrap();
+    assert!(outcome.execute.is_some(), "licensed exactly once");
+}
+
+#[test]
+fn after_memory_loss_the_successor_is_recognized_only_from_its_durable_acknowledgment() {
+    let mut c = edit_decision();
+    let consumer = acknowledged(&mut c);
+    let (run, device) = (c.fence.run, c.fence.owner.device);
+    // After the wait settled the handle is no longer exclusive (modelled
+    // directly: settlement itself is covered by the D2 tests).
+    {
+        use crate::orchestrator::publication::RunDocumentOwner;
+        let state = c.h.orchestrator.runs.get_mut(&run).unwrap();
+        if let RunDocumentOwner::Attached { exclusive, .. } = &mut state.doc {
+            *exclusive = false;
+        }
+    }
+    assert!(!c.h.orchestrator.run_publication_pending(run));
+    // A restart loses working memory of the successor's turn.
+    {
+        let memory =
+            c.h.orchestrator
+                .runs
+                .get_mut(&run)
+                .unwrap()
+                .attempt
+                .as_mut()
+                .unwrap();
+        memory.resume_turn = None;
+        memory.orchestrator_turn = None;
+    }
+    // Native positive absence: the successor's acknowledged turn qualifies,
+    // the original's turn under the successor attempt never does.
+    let key = |turn| NativeResultKey {
+        run,
+        attempt: consumer.attempt,
+        generation: consumer.generation,
+        turn,
+        operation_id: Uuid::new_v4(),
+    };
+    assert!(
+        c.h.orchestrator
+            .reconcile_native_result_if_present(&key(consumer.turn.unwrap()), device)
+            .unwrap()
+            .is_none()
+    );
+    let foreign =
+        c.h.orchestrator
+            .reconcile_native_result_if_present(&key(c.fence.turn.unwrap()), device);
+    assert!(matches!(&foreign, Err(RunError::Port(error)) if error.code == "bot_fenced"));
+    // Delivery: the original attempt's receipt is refused; the successor's is
+    // accepted from the durable acknowledgment and recorded.
+    let original = successor_receipt(&c.s, run, c.fence.attempt, c.fence.generation);
+    let refused =
+        c.h.orchestrator
+            .bot_acknowledge_delivery(&key_of(&c.s), device, &original);
+    assert!(matches!(&refused, Err(RunError::Port(error)) if error.code == "bot_fenced"));
+    let delivered = successor_receipt(&c.s, run, consumer.attempt, consumer.generation);
+    let accepted =
+        c.h.orchestrator
+            .bot_acknowledge_delivery(&key_of(&c.s), device, &delivered);
+    assert!(
+        !matches!(&accepted, Err(RunError::Port(error)) if error.code == "bot_fenced"),
+        "{accepted:?}"
+    );
+    assert_eq!(
+        c.h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_admission(run)
+            .unwrap()
+            .unwrap()
+            .delivery,
+        Some(delivered)
+    );
+}
+
+fn key_of(s: &BotSubmission) -> BotRunKey {
+    BotRunKey {
+        owner: s.provenance.owner,
+        bot: s.provenance.bot,
+        run: s.request.run,
+    }
+}
+
+#[test]
+fn decision_resume_runs_offer_the_open_decision_and_wrap_after_the_cursor() {
+    let mut c = edit_decision();
+    let (run, owner) = (c.fence.run, c.fence.owner);
+    assert_eq!(
+        c.h.orchestrator.bot_decision_resume_runs(None).unwrap(),
+        vec![(owner, run)]
+    );
+    // Rotating past the only Run wraps to it once, never twice.
+    assert_eq!(
+        c.h.orchestrator
+            .bot_decision_resume_runs(Some(run))
+            .unwrap(),
+        vec![(owner, run)]
+    );
+}

@@ -10,6 +10,7 @@ use serde::{Serialize, de::DeserializeOwned};
 mod authority;
 mod current;
 mod drain;
+mod resume_runs;
 pub(crate) use current::fresh_native_input_on;
 pub(crate) use current::{acknowledged_continuation_on, fresh_activity_on, retained_consumer_on};
 mod effect;
@@ -25,6 +26,7 @@ mod rows;
 mod tests;
 #[allow(dead_code)]
 mod write;
+pub use resume_runs::DECISION_RESUME_RUN_PAGE;
 pub use write::AnswerDecision;
 
 /// Immutable identity of a cleanup mutation, independent of the projection

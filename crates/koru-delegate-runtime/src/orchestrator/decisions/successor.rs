@@ -150,10 +150,11 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// The acknowledged continuation turn of the open decision wait's exact
-    /// recorded consumer, for restart reconciliation. `None` is "no positive
-    /// evidence", never permission: no open wait, another consumer, or an
-    /// input that was never acknowledged.
+    /// The durably acknowledged continuation turn of this exact recorded
+    /// successor (attempt, generation, bound session), read from C even after
+    /// the wait settled or the process restarted. `None` is "no positive
+    /// evidence", never permission: the original attempt, another consumer,
+    /// or an input that was never acknowledged.
     pub(in crate::orchestrator) fn decision_resume_turn(
         &mut self,
         run: RunId,
@@ -165,19 +166,15 @@ impl Orchestrator {
             return Ok(None);
         };
         let owner = admission.submission.provenance.owner;
-        let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+        let Some(continuation) = self
+            .bot_ledger()?
+            .decision_acknowledged_continuation(owner, run)?
+        else {
             return Ok(None);
         };
-        let Some(resume) = execution.resume else {
-            return Ok(None);
-        };
-        let (consumer, consumer_generation, consumer_session, _) = resume.consumer_identity();
-        if consumer != attempt
-            || consumer_generation != generation
-            || consumer_session != Some(session)
-        {
-            return Ok(None);
-        }
-        Ok(acknowledged_turn(&resume))
+        Ok((continuation.attempt == attempt
+            && continuation.generation == generation
+            && continuation.session == session)
+            .then_some(continuation.turn))
     }
 }

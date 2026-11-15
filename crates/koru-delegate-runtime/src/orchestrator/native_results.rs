@@ -282,7 +282,7 @@ impl Orchestrator {
         // The key's turn must be this attempt's own recorded input turn: the
         // original InitialSend, or a recorded successor's acknowledged resume
         // turn mirrored from C. Never the original's turn under a successor.
-        let recorded = self
+        let mirrored = self
             .runs
             .get(&key.run)
             .and_then(|state| state.attempt.as_ref())
@@ -304,6 +304,15 @@ impl Orchestrator {
                     )
                 },
             );
+        // Memory lost to a restart: a recorded successor's durable
+        // acknowledgment from C, for this exact attempt and session only.
+        let recorded = match (mirrored, attempt.provider_session.and_then(|k| k.session)) {
+            (Some(turn), _) => Some(turn),
+            (None, Some(session)) => {
+                self.decision_resume_turn(key.run, key.attempt, key.generation, session)?
+            }
+            (None, None) => None,
+        };
         if attempt.attempt != key.attempt
             || attempt.generation != key.generation
             || recorded != Some(key.turn)
