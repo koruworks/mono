@@ -16,6 +16,7 @@ fn target() -> RunProjectionTargetV1 {
             economics_at_ms: None,
             steps: DecisionList::default(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: edit().origin(),
         disposition: None,
@@ -23,6 +24,8 @@ fn target() -> RunProjectionTargetV1 {
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::DecisionWaiting {},
         retained_bookkeeping: None,
+        flush: DecisionList::default(),
+        delivery: None,
     }
 }
 
