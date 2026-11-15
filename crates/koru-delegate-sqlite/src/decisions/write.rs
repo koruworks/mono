@@ -5,8 +5,10 @@ use super::*;
 use rusqlite::{params_from_iter, types::Value};
 mod answer;
 mod phase;
-pub(crate) use answer::{AnswerDecision, answer_on};
-pub(crate) use phase::{DecisionStopCause, enroll_on, phase_on, record_enrollment_on};
+#[cfg(test)]
+pub(super) use answer::{AnswerDecision, answer_on};
+#[cfg(test)]
+pub(super) use phase::{DecisionStopCause, enroll_on, phase_on, record_enrollment_on};
 
 #[derive(Debug)]
 pub(crate) struct DecisionMutation {
