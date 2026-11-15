@@ -56,12 +56,12 @@ impl BotDelegatePort for Port {
 }
 
 #[test]
-fn admission_read_wire_is_closed_correlated_and_keeps_ipc15() {
+fn admission_read_wire_is_closed_correlated_and_keeps_ipc16() {
     let (owner, bot) = subject();
     let command = BotCommand::ReadAdmissionBarrier { owner, bot };
     assert_eq!(command.owner(), Some(&owner));
-    assert_eq!(crate::ipc::WIRE_VERSION, 15);
-    let frame = koru_ipc::frame::encode(15, &command).unwrap();
+    assert_eq!(crate::ipc::WIRE_VERSION, 16);
+    let frame = koru_ipc::frame::encode(16, &command).unwrap();
     assert_eq!(
         koru_ipc::frame::read_frame::<_, BotCommand>(&mut frame.as_slice())
             .unwrap()
@@ -202,7 +202,7 @@ fn admission_read_helper_refuses_zero_invalid_and_late_completion_without_retrie
 #[test]
 fn admission_read_unknown_transport_and_old_peer_never_become_missing() {
     let (owner, bot) = subject();
-    let old = koru_ipc::frame::encode(14, &serde_json::json!({"old":true})).unwrap();
+    let old = koru_ipc::frame::encode(15, &serde_json::json!({"old":true})).unwrap();
     for bytes in [old, vec![], vec![0, 1, 2, 3]] {
         let failure = crate::local::read_current_response(&mut bytes.as_slice()).unwrap_err();
         let port = Port {

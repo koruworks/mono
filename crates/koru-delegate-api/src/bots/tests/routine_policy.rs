@@ -14,11 +14,11 @@ fn ipc15_routine_policy_sync_is_strict_owner_bound_and_rejects_ipc14() {
         barrier: barrier.clone(),
     };
     assert_eq!(command.owner(), Some(&barrier.owner));
-    assert_eq!(crate::ipc::WIRE_VERSION, 15);
-    let bytes = koru_ipc::frame::encode(15, &command).unwrap();
+    assert_eq!(crate::ipc::WIRE_VERSION, 16);
+    let bytes = koru_ipc::frame::encode(16, &command).unwrap();
     let (version, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     assert_eq!(decoded, command);
     for field in [
         "owner",
@@ -61,7 +61,7 @@ fn ipc15_routine_policy_sync_is_strict_owner_bound_and_rejects_ipc14() {
         value["execute"] = true.into();
         assert!(serde_json::from_value::<BotReply>(value).is_err());
     }
-    let bytes = koru_ipc::frame::encode(14, &serde_json::json!({"old":true})).unwrap();
+    let bytes = koru_ipc::frame::encode(15, &serde_json::json!({"old":true})).unwrap();
     assert_eq!(
         crate::local::read_current_response(&mut bytes.as_slice())
             .unwrap_err()

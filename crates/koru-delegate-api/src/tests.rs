@@ -330,6 +330,23 @@ fn a_stale_v5_hello_is_incompatible_before_its_old_shape_is_decoded() {
     assert!(!failure.retryable);
 }
 
+/// IPC16. A worker on another frame version drops the request without
+/// replying (it refuses by version before decoding), so the connection closes
+/// unanswered: the client sees `delegate_unavailable`, retryable, not
+/// `delegate_incompatible`. Only a peer that does answer in another version is
+/// `delegate_incompatible` (above). Existing behaviour, pinned for the bump.
+#[test]
+fn a_peer_that_drops_the_frame_unanswered_is_delegate_unavailable_not_incompatible() {
+    assert_eq!(WIRE_VERSION, 16);
+    let mut header_only = koru_ipc::frame::encode(WIRE_VERSION, &serde_json::json!({})).unwrap();
+    header_only.truncate(koru_ipc::frame::HEADER_LEN);
+    for bytes in [Vec::new(), header_only] {
+        let failure = crate::local::read_current_response(&mut bytes.as_slice()).unwrap_err();
+        assert_eq!(failure.code, "delegate_unavailable");
+        assert!(failure.retryable);
+    }
+}
+
 fn schedule_view() -> ScheduleView {
     let request = schedule_request();
     ScheduleView {
