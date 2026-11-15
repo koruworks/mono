@@ -160,6 +160,9 @@ pub(super) struct Incoming {
     pub deadline: u64,
     next: usize,
     header: bool,
+    received: usize,
+    hash: Sha256,
+    discard: bool,
     pub reservation: Reservation,
 }
 impl Incoming {
@@ -169,16 +172,34 @@ impl Incoming {
         deadline: u64,
         budget: &MemoryBudget,
     ) -> Result<Self, Error> {
+        Self::build(start, room, deadline, budget, false)
+    }
+    pub fn discard(
+        start: Start,
+        room: String,
+        deadline: u64,
+        budget: &MemoryBudget,
+    ) -> Result<Self, Error> {
+        Self::build(start, room, deadline, budget, true)
+    }
+    fn build(
+        start: Start,
+        room: String,
+        deadline: u64,
+        budget: &MemoryBudget,
+        discard: bool,
+    ) -> Result<Self, Error> {
         let reservation = budget.reserve(
-            start
-                .total_length
+            (if discard { 0 } else { start.total_length })
                 .checked_add(room.capacity())
                 .ok_or(Error::Unavailable)?,
         )?;
         let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(start.total_length)
-            .map_err(|_| Error::Unavailable)?;
+        if !discard {
+            bytes
+                .try_reserve_exact(start.total_length)
+                .map_err(|_| Error::Unavailable)?;
+        }
         Ok(Self {
             start,
             room,
@@ -186,6 +207,9 @@ impl Incoming {
             deadline,
             next: 0,
             header: false,
+            received: 0,
+            hash: Sha256::new(),
+            discard,
             reservation,
         })
     }
@@ -232,20 +256,39 @@ impl Incoming {
                     && batch_id.0 == self.start.batch_id
                     && index == self.next as u64
                     && !fragment.is_empty()
-                    && fragment.len() <= self.start.total_length - self.bytes.len() =>
+                    && fragment.len() <= self.start.total_length - self.received =>
                 {
-                    self.bytes.extend(fragment);
+                    self.received += fragment.len();
+                    self.hash.update(&fragment);
+                    if !self.discard {
+                        self.bytes.extend(fragment);
+                    }
                     self.next += 1;
                 }
                 _ => return Err(Error::Invalid),
             }
         }
         if self.complete() {
-            let hash: [u8; 32] = Sha256::digest(&self.bytes).into();
-            if self.bytes.len() != self.start.total_length || hash != self.start.sha256.0 {
+            let hash: [u8; 32] = self.hash.clone().finalize().into();
+            if self.received != self.start.total_length || hash != self.start.sha256.0 {
                 return Err(Error::Invalid);
             }
         }
         Ok(self.complete())
     }
+}
+
+/// Only an already-rejected automatic body's ordered trailing fragments are
+/// discarded. Metadata remains available to the opposite transfer direction.
+pub(super) fn is_fragment(messages: &[Vec<u8>]) -> bool {
+    messages
+        .first()
+        .and_then(|value| encoding::try_decode(value))
+        .is_some_and(|message| {
+            matches!(
+                message,
+                ProtocolMessage::DocUpdateFragmentHeader { .. }
+                    | ProtocolMessage::DocUpdateFragment { .. }
+            )
+        })
 }
