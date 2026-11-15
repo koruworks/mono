@@ -46,15 +46,25 @@ impl std::fmt::Debug for RoutineListCheckpoint {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct RoutineReadSubject {
+    pub metadata: BotPolicyMetadata,
+    pub profile: ProfileId,
+    pub model: BotRoutineModelObservation,
+    model_fields: (Option<String>, Option<String>, Option<String>),
+}
+impl std::fmt::Debug for RoutineReadSubject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RoutineReadSubject([REDACTED])")
+    }
+}
+
 impl Repository {
-    pub fn routine_list_snapshot(
+    pub fn routine_read_subject(
         &self,
         owner: BotOwner,
         bot: BotId,
-        after: Option<ScheduleId>,
-        limit: u8,
-    ) -> Result<RoutineListSnapshot, BotError> {
-        validate_routine_list_request(bot, after, limit)?;
+    ) -> Result<RoutineReadSubject, BotError> {
         let metadata = self.bot_policy_metadata(owner, bot)?;
         if metadata.lifecycle == BotLifecycle::Trashed {
             return Err(BotError::NotFound);
@@ -82,6 +92,28 @@ impl Repository {
             })
         })()
         .unwrap_or(BotRoutineModelObservation::Unavailable {});
+        Ok(RoutineReadSubject {
+            metadata,
+            profile,
+            model,
+            model_fields,
+        })
+    }
+
+    pub fn routine_list_snapshot(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        after: Option<ScheduleId>,
+        limit: u8,
+    ) -> Result<RoutineListSnapshot, BotError> {
+        validate_routine_list_request(bot, after, limit)?;
+        let RoutineReadSubject {
+            metadata,
+            profile,
+            model,
+            model_fields,
+        } = self.routine_read_subject(owner, bot)?;
         let roster = page::read(&self.connection, owner, bot, after, limit)?;
         Ok(RoutineListSnapshot {
             metadata,

@@ -24,7 +24,7 @@ pub use dialect::{
 };
 pub use evaluate::{
     CanonicalZone, EvaluationError, OCCURRENCE_PRECISION_MS, Occurrence, OccurrenceTiming,
-    RecurrenceRule,
+    RecurrenceRule, next_zoned_after_at_least,
 };
 
 #[cfg(test)]

@@ -64,9 +64,9 @@ mod schedule;
 pub use codec::{Part, RunDocumentError, TimelineItem};
 pub use document::RunDocument;
 pub use schedule::{
-    RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOverview, ScheduleClaimAuthority,
-    ScheduleClaimPlan, ScheduleDocument, ScheduleDocumentError, ScheduleRunClaim,
-    ScheduleSkipClaim, ScheduleWrite,
+    RoutineDetailProjection, RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOverview,
+    ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument, ScheduleDocumentError,
+    ScheduleRunClaim, ScheduleSkipClaim, ScheduleWrite,
 };
 
 /// The manifest kind token a run is registered under. A **stored name**: it

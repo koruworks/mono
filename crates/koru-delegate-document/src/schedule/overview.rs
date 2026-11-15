@@ -22,6 +22,18 @@ pub struct RoutineOverview {
     pub definition_revision: u32,
     pub state: ScheduleState,
 }
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RoutineDetailProjection {
+    pub overview: RoutineOverview,
+    pub effective_at_ms: i64,
+    pub recurrence: koru_delegate_schedule::RecurrenceRule,
+}
+impl fmt::Debug for RoutineDetailProjection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RoutineDetailProjection([REDACTED])")
+    }
+}
 impl fmt::Debug for RoutineOverview {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("RoutineOverview([REDACTED])")
@@ -90,6 +102,11 @@ impl ScheduleDocument {
     /// Observe only the applied current definition/lifecycle. Does not inspect
     /// firings, export history, prove a live claim, or bound Store cold-open heap.
     pub fn routine_overview(&self) -> Result<RoutineOverview> {
+        self.routine_detail().map(|p| p.overview)
+    }
+
+    /// The same bounded current projection, with timing but no firing history.
+    pub fn routine_detail(&self) -> Result<RoutineDetailProjection> {
         if self.doc.is_detached() || self.doc.oplog_vv() != self.doc.state_vv() {
             return Err(invalid());
         }
@@ -140,15 +157,19 @@ impl ScheduleDocument {
             return Err(invalid());
         }
         let association = header.definition.routine.ok_or_else(invalid)?;
-        Ok(RoutineOverview {
-            schedule: header.schedule,
-            created_at_ms: header.created_at_ms,
-            initial_owner: header.initial_owner,
-            association,
-            requested_by: header.definition.template.requested_by,
-            name: self.name()?,
-            definition_revision: header.definition.revision,
-            state: self.state()?,
+        Ok(RoutineDetailProjection {
+            overview: RoutineOverview {
+                schedule: header.schedule,
+                created_at_ms: header.created_at_ms,
+                initial_owner: header.initial_owner,
+                association,
+                requested_by: header.definition.template.requested_by,
+                name: self.name()?,
+                definition_revision: header.definition.revision,
+                state: self.state()?,
+            },
+            effective_at_ms: header.definition.effective_at_ms,
+            recurrence: header.definition.recurrence,
         })
     }
 }

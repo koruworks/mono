@@ -7,6 +7,7 @@ use koru_ai_core::{
 };
 use koru_i18n::Key as Words;
 use std::rc::Rc;
+pub(crate) mod detail;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReadFailure {
@@ -47,6 +48,7 @@ pub(crate) fn listed(reply: Result<BotResponse, Said>) -> Result<BotRoutineListP
 
 #[derive(Default)]
 pub(crate) struct Routines {
+    pub detail: detail::Detail,
     bot: Option<BotId>,
     pub held: Option<Rc<BotRoutineListPage>>,
     pub notice: Option<Words>,
@@ -68,7 +70,9 @@ impl Routines {
     }
     pub fn show(&mut self, bot: Option<BotId>, visible: bool) -> bool {
         if self.bot != bot {
+            let detail = self.detail.retired();
             *self = Self {
+                detail,
                 bot,
                 revision: self.revision.wrapping_add(1),
                 seq: self.seq,
@@ -81,6 +85,7 @@ impl Routines {
             return false;
         }
         self.visible = visible;
+        self.detail.select(self.bot, self.expanded, visible);
         self.epoch = self.epoch.wrapping_add(1);
         self.stale = self.held.is_some();
         self.opening = None;
@@ -93,6 +98,7 @@ impl Routines {
         true
     }
     pub fn invalidate(&mut self) {
+        self.detail = self.detail.retired();
         self.held = None;
         self.expanded = None;
         self.opening = None;
@@ -142,6 +148,8 @@ impl Routines {
             return false;
         }
         self.owed = true;
+        self.expanded = None;
+        self.detail = self.detail.retired();
         self.stale = self.held.is_some();
         self.notice = None;
         self.opening = None;
@@ -165,6 +173,7 @@ impl Routines {
         self.opening = None;
         self.opened = None;
         self.expanded = None;
+        self.detail = self.detail.retired();
         match result {
             Ok(page) if page.bot_id == bot => {
                 self.held = Some(Rc::new(page));
@@ -202,26 +211,40 @@ impl Routines {
         } else {
             Some(schedule)
         };
+        self.detail.select(self.bot, self.expanded, self.visible);
         self.changed();
         true
     }
     pub fn can_open(&self, chat: ChatId) -> bool {
-        self.navigable()
-            && self.held.as_ref().is_some_and(|p| {
-                p.items.iter().any(|item| {
-                    self.expanded == Some(item.schedule_id)
-                        && match &item.local_conversations {
-                            BotRoutineLocalConversations::Available { items, .. } => {
-                                items.iter().any(|v| {
-                                    v.chat_id == chat.as_uuid()
-                                        && v.conversation
-                                            == BotRoutineConversationVisibility::Available
-                                })
-                            }
-                            _ => false,
-                        }
-                })
-            })
+        self.visible && self.expanded.is_some() && self.detail.can_open(chat)
+    }
+    pub fn detail_answer(
+        &mut self,
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        result: Result<BotRoutineDetail, ReadFailure>,
+    ) -> bool {
+        if !self.detail.answer(seq, bot, schedule, result) {
+            return false;
+        }
+        self.opening = None;
+        self.opened = None;
+        self.changed();
+        true
+    }
+    pub fn detail_refresh(&mut self, next: bool) -> bool {
+        if !self.detail.refresh(next) {
+            return false;
+        }
+        self.opening = None;
+        self.opened = None;
+        self.changed();
+        true
+    }
+    pub fn detail_unsent(&mut self) {
+        self.detail.unsent();
+        self.changed();
     }
     pub fn open(&mut self, chat: ChatId) -> Option<Command> {
         if !self.can_open(chat) || self.opening.is_some() {

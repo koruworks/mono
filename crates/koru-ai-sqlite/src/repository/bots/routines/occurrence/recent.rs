@@ -31,6 +31,31 @@ struct Reference {
 #[derive(Clone, PartialEq, Eq)]
 pub(in super::super) struct RecentSnapshot(Vec<Reference>);
 impl RecentSnapshot {
+    pub(in super::super) fn history(
+        &self,
+        limit: u8,
+    ) -> Result<RoutineLocalHistoryObservation, BotError> {
+        if !(1..=16).contains(&limit) {
+            return Err(BotError::Invalid);
+        }
+        let limit = usize::from(limit);
+        Ok(RoutineLocalHistoryObservation::Available {
+            items: self
+                .0
+                .iter()
+                .take(limit)
+                .map(|r| BotRoutineLocalConversation {
+                    occurrence_ms: r.candidate.occurrence,
+                    run_id: r.candidate.ids.run,
+                    chat_id: r.candidate.ids.chat,
+                    attempt_id: r.candidate.ids.attempt,
+                    conversation: r.visibility,
+                })
+                .collect(),
+            next_before_occurrence_ms: (self.0.len() > limit)
+                .then(|| self.0[limit - 1].candidate.occurrence),
+        })
+    }
     pub(in super::super) fn observation(&self) -> BotRoutineLocalConversations {
         BotRoutineLocalConversations::Available {
             more: self.0.len() == 5,
@@ -64,6 +89,16 @@ fn digest(column: &str) -> String {
     format!("CASE WHEN typeof({column})='blob' AND length({column})=32 THEN {column} END")
 }
 pub(super) fn candidates_sql() -> String {
+    candidates_select(" ORDER BY occurrence_ms DESC LIMIT 5")
+}
+pub(super) fn history_candidates_sql(cursor: bool) -> String {
+    candidates_select(if cursor {
+        " AND occurrence_ms<?5 ORDER BY occurrence_ms DESC LIMIT ?6"
+    } else {
+        " ORDER BY occurrence_ms DESC LIMIT ?5"
+    })
+}
+fn candidates_select(suffix: &str) -> String {
     let columns = [
         integer("occurrence_ms", i64::MIN), integer("definition_revision", 1), digest("definition_digest"),
         "CASE WHEN owner_handoff IS NULL OR (typeof(owner_handoff)='text' AND length(CAST(owner_handoff AS BLOB))=36) THEN owner_handoff ELSE 1 END".into(),
@@ -75,9 +110,20 @@ pub(super) fn candidates_sql() -> String {
         integer("created_at_ms",i64::MIN),integer("updated_at_ms",i64::MIN),
     ];
     format!(
-        "SELECT {} FROM bot_routine_preparations INDEXED BY bot_routine_conversations WHERE user_scope_id=?1 AND owner_device_id=?2 AND bot_id=?3 AND schedule_id=?4 AND stage='linked' ORDER BY occurrence_ms DESC LIMIT 5",
+        "SELECT {} FROM bot_routine_preparations INDEXED BY bot_routine_conversations WHERE user_scope_id=?1 AND owner_device_id=?2 AND bot_id=?3 AND schedule_id=?4 AND stage='linked'{suffix}",
         columns.join(",")
     )
+}
+
+pub(super) fn association_sql() -> &'static str {
+    "SELECT CASE WHEN typeof(h.profile_id)='text' AND length(CAST(h.profile_id AS BLOB))=36 THEN h.profile_id END
+            FROM bot_chats c JOIN chats h ON h.id=c.chat_id JOIN bot_chat_runs b ON b.chat_id=c.chat_id AND b.bot_id=c.bot_id
+            JOIN inference_attempts a ON a.id=b.ai_attempt_id JOIN messages u ON u.id=?11 JOIN messages m ON m.id=b.assistant_message_id
+            WHERE c.bot_id=?1 AND c.chat_id=?2 AND b.user_scope_id=?3 AND b.owner_device_id=?4 AND b.submission_id=?5
+            AND b.run_id=?6 AND b.ai_attempt_id=?7 AND b.assistant_message_id=?8 AND b.record_workspace_id=?9
+            AND b.continued_from_run_id IS NULL AND a.operation_id=?10 AND a.chat_id=c.chat_id
+            AND a.assistant_message_id=b.assistant_message_id AND u.chat_id=c.chat_id AND u.role='user'
+            AND m.chat_id=c.chat_id AND m.role='assistant' LIMIT 2"
 }
 
 pub(in super::super) fn read(
@@ -87,20 +133,72 @@ pub(in super::super) fn read(
     schedule: ScheduleId,
     home: WorkspaceId,
 ) -> Result<RecentSnapshot, BotError> {
+    read_selected(
+        repository,
+        owner,
+        bot,
+        home,
+        &candidates_sql(),
+        &[
+            owner.user_scope.to_storage().into(),
+            owner.device.to_storage().into(),
+            bot.to_storage().into(),
+            schedule.to_storage().into(),
+        ],
+        5,
+    )
+}
+pub(in super::super) fn read_page(
+    repository: &Repository,
+    owner: BotOwner,
+    bot: BotId,
+    schedule: ScheduleId,
+    home: WorkspaceId,
+    before: Option<i64>,
+    limit: u8,
+) -> Result<RecentSnapshot, BotError> {
+    validate_routine_detail_request(bot, schedule, limit)?;
+    let mut values: Vec<rusqlite::types::Value> = vec![
+        owner.user_scope.to_storage().into(),
+        owner.device.to_storage().into(),
+        bot.to_storage().into(),
+        schedule.to_storage().into(),
+    ];
+    if let Some(before) = before {
+        values.push(before.into());
+    }
+    values.push((i64::from(limit) + 1).into());
+    read_selected(
+        repository,
+        owner,
+        bot,
+        home,
+        &history_candidates_sql(before.is_some()),
+        &values,
+        usize::from(limit) + 1,
+    )
+}
+fn read_selected(
+    repository: &Repository,
+    owner: BotOwner,
+    bot: BotId,
+    home: WorkspaceId,
+    sql: &str,
+    values: &[rusqlite::types::Value],
+    maximum: usize,
+) -> Result<RecentSnapshot, BotError> {
     let conn = &repository.connection;
-    let mut query = conn.prepare_cached(&candidates_sql()).map_err(bad)?;
+    let mut query = conn.prepare_cached(sql).map_err(bad)?;
     let mut rows = query
-        .query(params![
-            owner.user_scope.to_storage(),
-            owner.device.to_storage(),
-            bot.to_storage(),
-            schedule.to_storage()
-        ])
+        .query(rusqlite::params_from_iter(values))
         .map_err(bad)?;
-    let mut candidates = Vec::with_capacity(5);
-    // Select the five candidates before any joins. Nothing below can filter a
+    let mut candidates = Vec::with_capacity(maximum);
+    // Select the bounded candidates before any joins. Nothing below can filter a
     // corrupt candidate out or backfill an older materialization.
     while let Some(r) = rows.next().map_err(bad)? {
+        if candidates.len() == maximum {
+            return Err(BotError::Storage);
+        }
         let s = |i| r.get::<_, String>(i).map_err(bad);
         let hash = |i| -> Result<RoutineDigest32, BotError> {
             Ok(RoutineDigest32::from_bytes(
@@ -185,15 +283,8 @@ pub(in super::super) fn read(
         if correlations != 1 {
             return Err(BotError::Storage);
         }
-        let association = "SELECT CASE WHEN typeof(h.profile_id)='text' AND length(CAST(h.profile_id AS BLOB))=36 THEN h.profile_id END
-            FROM bot_chats c JOIN chats h ON h.id=c.chat_id JOIN bot_chat_runs b ON b.chat_id=c.chat_id AND b.bot_id=c.bot_id
-            JOIN inference_attempts a ON a.id=b.ai_attempt_id JOIN messages u ON u.id=?11 JOIN messages m ON m.id=b.assistant_message_id
-            WHERE c.bot_id=?1 AND c.chat_id=?2 AND b.user_scope_id=?3 AND b.owner_device_id=?4 AND b.submission_id=?5
-            AND b.run_id=?6 AND b.ai_attempt_id=?7 AND b.assistant_message_id=?8 AND b.record_workspace_id=?9
-            AND b.continued_from_run_id IS NULL AND a.operation_id=?10 AND a.chat_id=c.chat_id
-            AND a.assistant_message_id=b.assistant_message_id AND u.chat_id=c.chat_id AND u.role='user'
-            AND m.chat_id=c.chat_id AND m.role='assistant' LIMIT 2";
-        let mut q = conn.prepare_cached(association).map_err(bad)?;
+
+        let mut q = conn.prepare_cached(association_sql()).map_err(bad)?;
         let mut r = q
             .query(params![
                 bot.to_storage(),

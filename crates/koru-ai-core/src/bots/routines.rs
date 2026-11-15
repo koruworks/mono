@@ -11,12 +11,14 @@ use koru_delegate_schedule::{
 use serde::{Deserialize, Serialize};
 
 mod creation;
+mod detail;
 mod listing;
 mod occurrence;
 mod overview;
 mod owner;
 mod preparation;
 pub use creation::*;
+pub use detail::*;
 /// Existing recurrence owner, reused without adding an adapter dependency edge.
 pub use koru_delegate_schedule::RecurrenceRule as RoutineRecurrenceRule;
 pub use koru_delegate_schedule::ScheduleContextPointer as RoutineScheduleContextPointer;

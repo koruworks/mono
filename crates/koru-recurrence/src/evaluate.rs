@@ -97,7 +97,8 @@ impl schemars::JsonSchema for CanonicalZone {
 }
 
 impl CanonicalZone {
-    fn parse(value: &str) -> Result<Self, EvaluationError> {
+    /// Validate and canonicalize through the existing compiled IANA owner.
+    pub fn parse(value: &str) -> Result<Self, EvaluationError> {
         let rules = IanaZoneRules::parse(value).map_err(EvaluationError::Zone)?;
         Ok(Self(rules.canonical_name().as_str().to_owned()))
     }
@@ -105,6 +106,25 @@ impl CanonicalZone {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Forecast one fixed-zone occurrence strictly after the observation and not
+/// before the definition lower bound. No clock, claim or floating viewer zone.
+pub fn next_zoned_after_at_least(
+    cron: &CronExpression,
+    zone: &CanonicalZone,
+    observed_at_ms: i64,
+    effective_at_ms: i64,
+) -> Result<Option<Occurrence>, EvaluationError> {
+    let reference = if effective_at_ms > observed_at_ms {
+        effective_at_ms
+            .checked_sub(1)
+            .ok_or(EvaluationError::InvalidInstant)?
+    } else {
+        observed_at_ms
+    };
+    let rules = IanaZoneRules::parse(zone.as_str()).map_err(EvaluationError::Zone)?;
+    next_after(cron, reference, &rules)
 }
 
 impl<'de> Deserialize<'de> for CanonicalZone {

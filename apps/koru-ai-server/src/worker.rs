@@ -549,6 +549,22 @@ impl AiServerPort for AiWorkerClient {
         request: koru_ai_wire::BotCommand,
     ) -> ApiResult<koru_ai_wire::BotResponse> {
         let (reply, response) = sync_channel(1);
+        if matches!(&request, koru_ai_wire::BotCommand::ReadRoutineDetail { .. }) {
+            let cancellation = Cancellation::default();
+            let _wait = bots::routine::listing::CancelOnDrop(cancellation.clone());
+            self.sender
+                .try_send(Envelope::RoutineDetail {
+                    command: WorkerCommand::Bots {
+                        context: context.into(),
+                        request,
+                        reply,
+                    },
+                    cancellation,
+                    deadline: Instant::now() + RESPONSE_TIMEOUT,
+                })
+                .map_err(queue_failure)?;
+            return receive_api(response);
+        }
         if matches!(&request, koru_ai_wire::BotCommand::ReadRoutines { .. }) {
             let cancellation = Cancellation::default();
             let _wait = bots::routine::listing::CancelOnDrop(cancellation.clone());
@@ -1226,6 +1242,12 @@ enum Envelope {
     RetireMemoryReadKeyForFixture {
         reply: SyncSender<()>,
     },
+    RoutineDetail {
+        command: WorkerCommand,
+        cancellation: Cancellation,
+        deadline: Instant,
+    },
+    RoutineDetailCompleted(bots::routine::detail::DetailResult),
     RoutineListing {
         command: WorkerCommand,
         cancellation: Cancellation,
@@ -2111,6 +2133,12 @@ fn run_worker(
                 reply,
                 deadline,
             }) => state.request_run_memory_read(request, reply, deadline),
+            Ok(Envelope::RoutineDetail {
+                command,
+                cancellation,
+                deadline,
+            }) => state.start_routine_detail(command, cancellation, deadline),
+            Ok(Envelope::RoutineDetailCompleted(result)) => state.complete_routine_detail(result),
             Ok(Envelope::RoutineListing {
                 command,
                 cancellation,
@@ -2309,6 +2337,20 @@ fn grant_targets_in_profile(
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
+        if matches!(
+            &command,
+            WorkerCommand::Bots {
+                request: koru_ai_wire::BotCommand::ReadRoutineDetail { .. },
+                ..
+            }
+        ) {
+            self.start_routine_detail(
+                command,
+                Cancellation::default(),
+                Instant::now() + RESPONSE_TIMEOUT,
+            );
+            return;
+        }
         if matches!(
             &command,
             WorkerCommand::Bots {
@@ -5944,6 +5986,7 @@ enum ProviderAdminJob {
     RoutineRead(bots::occurrence::OccurrenceJob),
     BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotRoutineListing(bots::routine::listing::ListingJob),
+    BotRoutineDetail(bots::routine::detail::DetailJob),
     BotRoutineModel(Box<bots::routine::model::RunRoutineJob>),
     BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
@@ -6046,6 +6089,7 @@ impl ProviderAdminJob {
         match self {
             Self::BotPrepare(_)
             | Self::BotRoutineListing(_)
+            | Self::BotRoutineDetail(_)
             | Self::BotRoutineModel(_)
             | Self::BotMemoryRead(_)
             | Self::BotMemoryWrite(_)
@@ -6137,6 +6181,7 @@ impl ProviderAdminPool {
                         }
                         ProviderAdminJob::BotPrepare(_)
                         | ProviderAdminJob::BotRoutineListing(_)
+                        | ProviderAdminJob::BotRoutineDetail(_)
                         | ProviderAdminJob::BotRoutineModel(_)
                         | ProviderAdminJob::BotMemoryRead(_)
                         | ProviderAdminJob::BotMemoryWrite(_)
@@ -6734,6 +6779,7 @@ fn run_preparation(
 ) {
     let envelope = match job {
         ProviderAdminJob::BotRoutineListing(job) => Envelope::RoutineListingCompleted(job.run()),
+        ProviderAdminJob::BotRoutineDetail(job) => Envelope::RoutineDetailCompleted(job.run()),
         ProviderAdminJob::BotRoutineModel(job) => Envelope::RunRoutineCompleted(job.run()),
         ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
         ProviderAdminJob::BotMemoryWrite(job) => Envelope::MemoryWriteCompleted(job.run()),

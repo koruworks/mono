@@ -13,6 +13,8 @@ use koru_draw::{
 use koru_i18n::{Key as Words, Lang, fill, t};
 use std::rc::Rc;
 
+pub(crate) mod detail;
+
 const SURFACE: &str = "bot-context-routines";
 pub(crate) const REFRESH: Key = Key::surface(SURFACE, "refresh");
 pub(crate) const NEXT: Key = Key::surface(SURFACE, "next");
@@ -27,15 +29,17 @@ pub(crate) struct Data {
     pub revision: u64,
     page: Option<Rc<BotRoutineListPage>>,
     loading: bool,
-    navigable: bool,
     stale: bool,
     notice: Option<Words>,
     expanded: Option<ScheduleId>,
+    detail: crate::bots::routines::detail::Data,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
     Refresh,
     Next,
+    RefreshDetail,
+    NextHistory,
     Details(ScheduleId),
     Open(ChatId),
 }
@@ -46,17 +50,9 @@ impl Data {
             if page.next_schedule.is_some() {
                 keys.push(NEXT);
             }
-            for item in &page.items {
-                keys.push(details_key(item.schedule_id));
-                if self.expanded == Some(item.schedule_id) {
-                    if let BotRoutineLocalConversations::Available { items, .. } =
-                        &item.local_conversations
-                    {
-                        keys.extend(items.iter().map(|reference| chat_key(reference.chat_id)));
-                    }
-                }
-            }
+            keys.extend(page.items.iter().map(|i| details_key(i.schedule_id)));
         }
+        keys.extend(detail::keys(&self.detail, false));
         keys
     }
     pub(super) fn selected(&self, key: Key) -> bool {
@@ -67,44 +63,29 @@ impl Data {
             revision: state.revision,
             page: state.held.clone(),
             loading: state.loading(),
-            navigable: state.navigable(),
             stale: state.stale,
             notice: state.notice,
             expanded: state.expanded,
+            detail: state.detail.data(),
         }
     }
     pub fn keys(&self) -> Vec<Key> {
-        let mut result = Vec::new();
+        let mut keys = Vec::new();
         if let Some(page) = &self.page {
-            for item in &page.items {
-                result.push(details_key(item.schedule_id));
-                if self.navigable && self.expanded == Some(item.schedule_id) {
-                    if let BotRoutineLocalConversations::Available { items, .. } =
-                        &item.local_conversations
-                    {
-                        result.extend(
-                            items
-                                .iter()
-                                .filter(|v| {
-                                    v.conversation == BotRoutineConversationVisibility::Available
-                                })
-                                .map(|v| chat_key(v.chat_id)),
-                        );
-                    }
-                }
-            }
+            keys.extend(page.items.iter().map(|i| details_key(i.schedule_id)));
         }
+        keys.extend(detail::keys(&self.detail, true));
         if !self.loading {
-            result.push(REFRESH);
+            keys.push(REFRESH);
             if self
                 .page
                 .as_ref()
                 .is_some_and(|p| p.next_schedule.is_some())
             {
-                result.push(NEXT);
+                keys.push(NEXT);
             }
         }
-        result
+        keys
     }
     pub fn action(&self, key: Key) -> Option<Action> {
         if !self.keys().contains(&key) {
@@ -120,14 +101,8 @@ impl Data {
             if key == details_key(item.schedule_id) {
                 return Some(Action::Details(item.schedule_id));
             }
-            if let BotRoutineLocalConversations::Available { items, .. } = &item.local_conversations
-            {
-                if let Some(reference) = items.iter().find(|v| chat_key(v.chat_id) == key) {
-                    return ChatId::parse(&reference.chat_id.to_string()).map(Action::Open);
-                }
-            }
         }
-        None
+        detail::action(&self.detail, key)
     }
     pub fn content(&self, surface: &Surface, engine: &mut TextEngine, lang: Lang) -> El {
         let mut content = col("Routine overview").gap(Space::S2).pad(Space::S3);
@@ -155,7 +130,7 @@ impl Data {
                 content = content.child(line(t(lang, Words::BotsRoutinesEmpty)));
             }
             for item in &page.items {
-                let (name, state) = match &item.live {
+                let (mut name, mut state) = match &item.live {
                     BotRoutineLiveObservation::Current { name, state, .. } => (
                         name.as_str().to_owned(),
                         match state {
@@ -176,6 +151,11 @@ impl Data {
                         Words::BotsRoutineLiveUnavailable,
                     ),
                 };
+                if self.expanded == Some(item.schedule_id) {
+                    if let Some(current) = detail::heading(&self.detail, item.schedule_id, lang) {
+                        (name, state) = current;
+                    }
+                }
                 let mut group = col("Routine")
                     .id(Key::model(
                         item.schedule_id.as_uuid().as_u128(),
@@ -239,54 +219,19 @@ impl Data {
                                 .button(
                                     engine,
                                     details_key(item.schedule_id),
-                                    t(lang, Words::BotsConversations).into(),
+                                    t(lang, Words::BotsRoutineDetails).into(),
                                     false,
                                 )
                                 .selected(self.expanded == Some(item.schedule_id))
-                                .name_text(fill(t(lang, Words::BotsRoutineHistory), &[&name])),
+                                .name_text(format!(
+                                    "{}: {}",
+                                    t(lang, Words::BotsRoutineDetails),
+                                    name
+                                )),
                         ),
                     );
                 if self.expanded == Some(item.schedule_id) {
-                    match &item.local_conversations {
-                        BotRoutineLocalConversations::Unavailable {} => {
-                            group = group.child(line(t(lang, Words::BotsRoutineHistoryUnavailable)))
-                        }
-                        BotRoutineLocalConversations::Available { items, more } => {
-                            if items.is_empty() {
-                                group = group.child(line(t(lang, Words::BotsRoutineHistoryEmpty)));
-                            }
-                            for reference in items {
-                                let label = fill(
-                                    t(lang, Words::BotsRoutineConversation),
-                                    &[&date(lang, reference.occurrence_ms)],
-                                );
-                                let enabled = self.navigable
-                                    && reference.conversation
-                                        == BotRoutineConversationVisibility::Available;
-                                group = group.child(
-                                    row("Routine conversation reference").child(
-                                        surface
-                                            .button(
-                                                engine,
-                                                chat_key(reference.chat_id),
-                                                date(lang, reference.occurrence_ms),
-                                                !enabled,
-                                            )
-                                            .name_text(label),
-                                    ),
-                                );
-                                if reference.conversation
-                                    == BotRoutineConversationVisibility::Unavailable
-                                {
-                                    group = group
-                                        .child(line(t(lang, Words::BotsConversationUnavailable)));
-                                }
-                            }
-                            if *more {
-                                group = group.child(line(t(lang, Words::BotsRoutineHistoryMore)));
-                            }
-                        }
-                    }
+                    group = group.child(detail::content(&self.detail, surface, engine, lang));
                 }
                 content = content.child(group);
             }
@@ -331,12 +276,20 @@ pub(crate) fn date(lang: Lang, ms: i64) -> String {
 }
 impl BotView {
     pub(super) fn routines_pass(&mut self) -> bool {
-        let Some(command) = self.routines.read() else {
+        let Some(command) = self.routines.read().or_else(|| self.routines.detail.read()) else {
             return false;
         };
+        let detail = matches!(
+            &command,
+            crate::bots::link::Command::ReadRoutineDetail { .. }
+        );
         let sent = self.link.as_ref().is_some_and(|link| link.send(command));
         if !sent {
-            self.routines.unsent();
+            if detail {
+                self.routines.detail_unsent();
+            } else {
+                self.routines.unsent();
+            }
         }
         let mut work = self.work.get();
         work.commands += usize::from(sent);
@@ -348,6 +301,8 @@ impl BotView {
             Action::Refresh => self.routines.refresh(false),
             Action::Next => self.routines.refresh(true),
             Action::Details(schedule) => self.routines.toggle(schedule),
+            Action::RefreshDetail => self.routines.detail_refresh(false),
+            Action::NextHistory => self.routines.detail_refresh(true),
             Action::Open(chat) => {
                 let Some(command) = self.routines.open(chat) else {
                     return false;

@@ -124,6 +124,103 @@ fn chat(page: &BotRoutineListPage) -> koru_ai_core::ChatId {
     koru_ai_core::ChatId::parse(&items[0].chat_id.to_string()).unwrap()
 }
 
+fn detail_page(bot: &Bot, page: &BotRoutineListPage, id: ScheduleId) -> BotRoutineDetail {
+    let item = page
+        .items
+        .iter()
+        .find(|item| item.schedule_id == id)
+        .unwrap();
+    let live = match &item.live {
+        BotRoutineLiveObservation::Current {
+            name,
+            definition_revision,
+            state,
+        } => RoutineDetailObservation::Current {
+            name: name.clone(),
+            definition_revision: *definition_revision,
+            effective_at_ms: 0,
+            recurrence: koru_recurrence::RecurrenceRule::floating(
+                koru_recurrence::CronExpression::parse("0 9 * * *").unwrap(),
+            ),
+            state: state.clone(),
+        }
+        .live(0),
+        BotRoutineLiveObservation::NotLive {} => RoutineDetailLive::NotLive {},
+        BotRoutineLiveObservation::Unavailable {} => RoutineDetailLive::Unavailable {},
+    };
+    BotRoutineDetail {
+        bot_id: bot.id,
+        schedule_id: id,
+        bot_revision: bot.revision,
+        observed_at_ms: 0,
+        creation: item.creation.clone(),
+        access_at_setup: item.grant.clone(),
+        configured_model: page.effective_model.clone(),
+        destination: RoutineDestinationObservation::Unavailable {},
+        live,
+        readiness: RoutineReadinessObservation::NotAssessed {},
+        local_history: match &item.local_conversations {
+            BotRoutineLocalConversations::Available { items, more } => {
+                RoutineLocalHistoryObservation::Available {
+                    items: items.clone(),
+                    next_before_occurrence_ms: more.then(|| items.last().unwrap().occurrence_ms),
+                }
+            }
+            _ => RoutineLocalHistoryObservation::Unavailable {},
+        },
+    }
+}
+fn detail_request(
+    v: &mut MainView,
+    commands: &Receiver<Command>,
+) -> (u64, ScheduleId, Option<i64>) {
+    held(v).shown_pass(None);
+    commands
+        .try_iter()
+        .find_map(|command| match command {
+            Command::ReadRoutineDetail {
+                seq,
+                schedule,
+                before,
+                ..
+            } => Some((seq, schedule, before)),
+            _ => None,
+        })
+        .expect("selected detail read")
+}
+fn detail_answer(
+    v: &mut MainView,
+    tx: &SyncSender<Answer>,
+    bot: &Bot,
+    seq: u64,
+    schedule: ScheduleId,
+    result: Result<BotRoutineDetail, crate::bots::routines::ReadFailure>,
+) {
+    tx.send(Answer::RoutineDetail {
+        seq,
+        bot: bot.id,
+        schedule,
+        result,
+    })
+    .unwrap();
+    held(v).shown_pass(None);
+    v.sync_bot_context();
+}
+fn select_detail(
+    v: &mut MainView,
+    commands: &Receiver<Command>,
+    tx: &SyncSender<Answer>,
+    bot: &Bot,
+    id: ScheduleId,
+) {
+    assert!(v.bot_context_action(details_key(id)));
+    let page = held(v).routines.held.clone().unwrap();
+    let (seq, schedule, before) = detail_request(v, commands);
+    assert_eq!(schedule, id);
+    assert_eq!(before, None);
+    detail_answer(v, tx, bot, seq, id, Ok(detail_page(bot, &page, id)));
+}
+
 #[test]
 fn routine_context_reads_only_selected_visible_section() {
     let (mut v, _w) = on_document();
@@ -210,8 +307,8 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
     p.items[0].creation.updated_at_ms = i64::MIN;
     p.items[0].local_conversations = BotRoutineLocalConversations::Unavailable {};
     let id = p.items[0].schedule_id;
-    setup(&mut v, &bot, p);
-    v.bot_context_action(details_key(id));
+    let (commands, tx) = setup(&mut v, &bot, p);
+    select_detail(&mut v, &commands, &tx, &bot, id);
     let labels = lines(&v);
     assert!(!labels.contains("Morning reading"));
     assert!(!labels.contains(&id.to_string()));
@@ -280,8 +377,8 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
         .iter()
         .map(|item| item.schedule_id)
         .collect::<Vec<_>>();
-    setup(&mut v, &bot, mixed);
-    v.bot_context_action(details_key(ids[0]));
+    let (commands, tx) = setup(&mut v, &bot, mixed);
+    select_detail(&mut v, &commands, &tx, &bot, ids[0]);
     View::set_viewport(&mut v, 420.0, 500.0);
     v.sync_bot_context();
     for lang in koru_i18n::Lang::ALL {
@@ -363,7 +460,7 @@ fn routine_context_transport_stale_disables_navigation_until_refresh() {
     let id = p.items[0].schedule_id;
     let chat = chat(&p);
     let (commands, tx) = setup(&mut v, &bot, p.clone());
-    v.bot_context_action(details_key(id));
+    select_detail(&mut v, &commands, &tx, &bot, id);
     assert!(v.bot_context.action(chat_key(chat.as_uuid())).is_some());
     v.bot_context_action(crate::bots::view::context_routines::REFRESH);
     let seq = request(&mut v, &commands);
@@ -376,7 +473,7 @@ fn routine_context_transport_stale_disables_navigation_until_refresh() {
     v.bot_context_action(crate::bots::view::context_routines::REFRESH);
     let seq = request(&mut v, &commands);
     answer(&mut v, &tx, &bot, seq, Ok(p));
-    v.bot_context_action(details_key(id));
+    select_detail(&mut v, &commands, &tx, &bot, id);
     assert!(v.bot_context.action(chat_key(chat.as_uuid())).is_some());
 }
 
@@ -388,7 +485,7 @@ fn routine_context_retires_old_press_and_accessibility_occurrence() {
     let id = p.items[0].schedule_id;
     let chat = chat(&p);
     let (commands, tx) = setup(&mut v, &bot, p.clone());
-    v.bot_context_action(details_key(id));
+    select_detail(&mut v, &commands, &tx, &bot, id);
     let key = chat_key(chat.as_uuid());
     let old = v.bot_context.occurrence(key).unwrap();
     v.bot_context.focus = Some(key);
@@ -403,7 +500,7 @@ fn routine_context_retires_old_press_and_accessibility_occurrence() {
     assert!(v.bot_context.pressed.is_none());
     let seq = request(&mut v, &commands);
     answer(&mut v, &tx, &bot, seq, Ok(p));
-    v.bot_context_action(details_key(id));
+    select_detail(&mut v, &commands, &tx, &bot, id);
     assert_ne!(v.bot_context.occurrence(key), Some(old));
     assert!(v.bot_context.key_for_occurrence(old).is_none());
     let target = Occurrence::instance(
@@ -431,7 +528,7 @@ fn routine_context_open_requires_expected_bot_including_existing_tab() {
         let id = p.items[0].schedule_id;
         let chat = chat(&p);
         let (commands, tx) = setup(&mut v, &bot, p);
-        v.bot_context_action(details_key(id));
+        select_detail(&mut v, &commands, &tx, &bot, id);
         assert!(v.bot_context_action(chat_key(chat.as_uuid())));
         let (seq, expected) = commands
             .try_iter()
@@ -483,7 +580,7 @@ fn routine_context_open_requires_expected_bot_including_existing_tab() {
         let id = p.items[0].schedule_id;
         let chat = chat(&p);
         let (commands, tx) = setup(&mut v, &bot, p);
-        v.bot_context_action(details_key(id));
+        select_detail(&mut v, &commands, &tx, &bot, id);
         v.bot_context_action(chat_key(chat.as_uuid()));
         let seq = commands
             .try_iter()
@@ -507,7 +604,7 @@ fn routine_context_open_requires_expected_bot_including_existing_tab() {
         assert!(held(&mut v).routines.held.is_some());
         assert!(held(&mut v).routines.notice.is_none());
         assert!(!v.drain_bot_routine_open());
-        v.bot_context_action(details_key(id));
+        select_detail(&mut v, &commands, &tx, &bot, id);
         v.bot_context_action(chat_key(chat.as_uuid()));
         let old = commands
             .try_iter()
@@ -590,4 +687,212 @@ fn routine_context_keyboard_narrow_focus_and_geometry() {
     assert_eq!(hit, Some(key));
     assert!(press(&mut v, &mut w.ws, NamedKey::Escape));
     assert!(!v.context.is_open());
+}
+
+#[test]
+fn routine_detail_selection_hidden_aba_retire() {
+    let (mut v, _w) = on_document();
+    let bot = bot();
+    let mut p = page(&bot);
+    p.items.push(item());
+    let a = p.items[0].schedule_id;
+    let b = p.items[1].schedule_id;
+    let (commands, tx) = setup(&mut v, &bot, p.clone());
+    v.bot_context_action(details_key(a));
+    let (old, _, _) = detail_request(&mut v, &commands);
+    v.bot_context_action(details_key(b));
+    let (other, _, _) = detail_request(&mut v, &commands);
+    v.bot_context_action(details_key(a));
+    let (current, _, _) = detail_request(&mut v, &commands);
+    assert!(old < other && other < current);
+    detail_answer(&mut v, &tx, &bot, old, a, Ok(detail_page(&bot, &p, a)));
+    detail_answer(&mut v, &tx, &bot, other, b, Ok(detail_page(&bot, &p, b)));
+    assert!(held(&mut v).routines.detail.held.is_none());
+    detail_answer(&mut v, &tx, &bot, current, a, Ok(detail_page(&bot, &p, a)));
+    assert_eq!(
+        held(&mut v)
+            .routines
+            .detail
+            .held
+            .as_ref()
+            .unwrap()
+            .schedule_id,
+        a
+    );
+    assert!(
+        !commands
+            .try_iter()
+            .any(|c| matches!(c, Command::ReadRoutineDetail { .. }))
+    );
+    held(&mut v).routines.detail_refresh(false);
+    let (hidden, _, _) = detail_request(&mut v, &commands);
+    v.bot_context_action(LIBRARY_SECTION);
+    detail_answer(&mut v, &tx, &bot, hidden, a, Ok(detail_page(&bot, &p, a)));
+    assert!(held(&mut v).routines.detail.stale);
+    assert!(!held(&mut v).routines.detail.data().navigable);
+    held(&mut v).shown_pass(None);
+    assert!(
+        !commands
+            .try_iter()
+            .any(|c| matches!(c, Command::ReadRoutineDetail { .. }))
+    );
+}
+
+#[test]
+fn routine_detail_stale_and_existing_tab_expected_bot() {
+    let (mut v, _w) = on_document();
+    let bot = bot();
+    let p = page(&bot);
+    let id = p.items[0].schedule_id;
+    let target = chat(&p);
+    let (commands, tx) = setup(&mut v, &bot, p.clone());
+    select_detail(&mut v, &commands, &tx, &bot, id);
+    let key = chat_key(target.as_uuid());
+    let old = v.bot_context.occurrence(key).unwrap();
+    let refresh = crate::bots::view::context_routines::detail::REFRESH_DETAIL;
+    assert!(v.bot_context_action(refresh));
+    let (seq, _, _) = detail_request(&mut v, &commands);
+    detail_answer(
+        &mut v,
+        &tx,
+        &bot,
+        seq,
+        id,
+        Err(crate::bots::routines::ReadFailure::TransportOnly),
+    );
+    assert!(held(&mut v).routines.detail.held.is_some());
+    assert!(v.bot_context.action(key).is_none());
+    assert!(v.bot_context.key_for_occurrence(old).is_none());
+    assert!(v.bot_context_action(refresh));
+    let (seq, _, _) = detail_request(&mut v, &commands);
+    detail_answer(
+        &mut v,
+        &tx,
+        &bot,
+        seq,
+        id,
+        Err(crate::bots::routines::ReadFailure::Other(
+            Failure::Unanswered,
+        )),
+    );
+    assert!(held(&mut v).routines.detail.held.is_none());
+    assert!(!lines(&v).contains("Local conversations"));
+    assert!(v.bot_context_action(refresh));
+    let (seq, _, _) = detail_request(&mut v, &commands);
+    detail_answer(&mut v, &tx, &bot, seq, id, Ok(detail_page(&bot, &p, id)));
+    v.tabs_mut().push(Tab::ai_chat_existing_at(target, None));
+    assert!(!v.open_routine_conversation(bot.id, target));
+    assert!(held(&mut v).routines.detail.can_open(target));
+    assert!(v.bot_context_action(key));
+    let label = commands
+        .try_iter()
+        .find_map(|c| match c {
+            Command::RoutineLabel { seq, .. } => Some(seq),
+            _ => None,
+        })
+        .unwrap();
+    tx.send(Answer::RoutineLabel {
+        seq: label,
+        bot: bot.id,
+        chat: target,
+        result: Err(Failure::Refused("forbidden".into())),
+    })
+    .unwrap();
+    held(&mut v).shown_pass(None);
+    v.sync_bot_context();
+    assert!(held(&mut v).routines.detail.held.is_none());
+    assert!(!v.drain_bot_routine_open());
+}
+
+#[test]
+fn routine_detail_locale_geometry_keyboard_signed_date() {
+    let (mut v, mut w) = on_document();
+    let bot = bot();
+    let p = page(&bot);
+    let id = p.items[0].schedule_id;
+    let (commands, tx) = setup(&mut v, &bot, p.clone());
+    v.bot_context_action(details_key(id));
+    let (seq, _, _) = detail_request(&mut v, &commands);
+    let mut d = detail_page(&bot, &p, id);
+    if let RoutineDetailLive::Current {
+        effective_at_ms,
+        next,
+        ..
+    } = &mut d.live
+    {
+        *effective_at_ms = i64::MIN;
+        *next = RoutineNextObservation::Exact { at_ms: i64::MAX };
+    }
+    let mut references = Vec::new();
+    for i in 0..16 {
+        let mut r = match &p.items[0].local_conversations {
+            BotRoutineLocalConversations::Available { items, .. } => items[0].clone(),
+            _ => panic!(),
+        };
+        r.chat_id = uuid::Uuid::new_v4();
+        r.occurrence_ms = if i == 0 {
+            i64::MIN
+        } else {
+            -(i as i64) * 60_000
+        };
+        references.push(r);
+    }
+    d.local_history = RoutineLocalHistoryObservation::Available {
+        items: references.clone(),
+        next_before_occurrence_ms: Some(-960_000),
+    };
+    detail_answer(&mut v, &tx, &bot, seq, id, Ok(d));
+    View::set_viewport(&mut v, 420.0, 400.0);
+    v.relayout();
+    v.sync_bot_context();
+    assert!(lines(&v).contains("Date unavailable"));
+    for lang in koru_i18n::Lang::ALL {
+        v.bot_context.data.as_mut().unwrap().lang = lang;
+        v.bot_context
+            .with_frame(|frame| {
+                for reference in &references {
+                    assert!(frame.node(chat_key(reference.chat_id)).is_some());
+                }
+                for node in frame.nodes.iter().filter(|node| node.focusable) {
+                    assert!(
+                        node.rect.w > 0.0 && node.rect.h > 0.0,
+                        "{} {:?}",
+                        lang.tag(),
+                        node.rect
+                    );
+                    if !node.disabled {
+                        if let Some(hit) = node.hit_region().filter(|r| r.w > 0.0 && r.h > 0.0) {
+                            assert_eq!(
+                                frame.hit_at(hit.x + hit.w / 2.0, hit.y + hit.h / 2.0),
+                                node.key
+                            );
+                        }
+                    }
+                }
+            })
+            .unwrap();
+    }
+    v.focus_bot_context();
+    for _ in 0..20 {
+        press(&mut v, &mut w.ws, NamedKey::Tab);
+    }
+    assert!(v.bot_context.scroll > 0.0);
+    let next = crate::bots::view::context_routines::detail::NEXT_HISTORY;
+    assert!(v.bot_context_action(next));
+    let (seq, _, before) = detail_request(&mut v, &commands);
+    assert_eq!(before, Some(-960_000));
+    let replacement = detail_page(&bot, &p, id);
+    detail_answer(&mut v, &tx, &bot, seq, id, Ok(replacement));
+    let RoutineLocalHistoryObservation::Available { items, .. } = &held(&mut v)
+        .routines
+        .detail
+        .held
+        .as_ref()
+        .unwrap()
+        .local_history
+    else {
+        panic!()
+    };
+    assert_eq!(items.len(), 1);
+    assert!(!items.iter().any(|r| r.chat_id == references[0].chat_id));
 }

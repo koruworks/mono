@@ -15,6 +15,67 @@ fn utc() -> IanaZoneRules {
     IanaZoneRules::parse("UTC").unwrap()
 }
 
+#[test]
+fn routine_detail_fixed_next_respects_now_effective_dst() {
+    let cron = CronExpression::parse("30 2 * * *").unwrap();
+    let zone = CanonicalZone::parse("America/New_York").unwrap();
+    let now = epoch("2026-03-08T07:00:00Z");
+    let next = next_zoned_after_at_least(&cron, &zone, now, now)
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.instant_ms(), epoch("2026-03-08T07:30:00Z"));
+    assert_eq!(
+        next_zoned_after_at_least(&cron, &zone, now, next.instant_ms()).unwrap(),
+        Some(next)
+    );
+    assert!(
+        next_zoned_after_at_least(&cron, &zone, next.instant_ms(), 0)
+            .unwrap()
+            .unwrap()
+            .instant_ms()
+            > next.instant_ms()
+    );
+    let lower = epoch("2026-03-10T07:00:00Z");
+    assert!(
+        next_zoned_after_at_least(&cron, &zone, now, lower)
+            .unwrap()
+            .unwrap()
+            .instant_ms()
+            >= lower
+    );
+    let cron = CronExpression::parse("30 1 * * *").unwrap();
+    let fold = next_zoned_after_at_least(&cron, &zone, epoch("2026-11-01T04:00:00Z"), 0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fold.instant_ms(),
+        zoned("30 1 * * *", "America/New_York")
+            .next_after(epoch("2026-11-01T04:00:00Z"), &utc())
+            .unwrap()
+            .unwrap()
+            .instant_ms()
+    );
+}
+#[test]
+fn routine_detail_fixed_next_refuses_extreme_horizon() {
+    let cron = CronExpression::parse("*/1 * * * *").unwrap();
+    let zone = CanonicalZone::parse("UTC").unwrap();
+    for (now, lower) in [(i64::MIN, i64::MIN), (i64::MAX, 0), (0, i64::MAX)] {
+        assert!(next_zoned_after_at_least(&cron, &zone, now, lower).is_err());
+    }
+    let next = next_zoned_after_at_least(&cron, &zone, -60_001, -60_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(next.instant_ms(), -60_000);
+    assert_eq!(
+        next_zoned_after_at_least(&cron, &zone, -60_000, -60_000)
+            .unwrap()
+            .unwrap()
+            .instant_ms(),
+        0
+    );
+}
+
 fn floating(expression: &str) -> RecurrenceRule {
     RecurrenceRule::floating(CronExpression::parse(expression).unwrap())
 }

@@ -15,8 +15,8 @@ pub use db::{OpenError, SCHEMA_VERSION, SUPERSEDED_DEVELOPMENT_SCHEMA};
 pub use repository::{
     BotBootSnapshot, BotCreationScan, BotHold, HistoricalBotRun, KnownAttachmentDirs,
     LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
-    ParkedForOwner, RemovedAttachment, Repository, RoutineListCheckpoint, RoutineListSnapshot,
-    RoutineToolSubject,
+    ParkedForOwner, RemovedAttachment, Repository, RoutineDetailSnapshot, RoutineListCheckpoint,
+    RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
 };
 
 pub const DATABASE_FILE: &str = "ai.db";
