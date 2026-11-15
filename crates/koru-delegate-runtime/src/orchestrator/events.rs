@@ -40,9 +40,30 @@ pub const TOOL_STEP_BOUND: u32 = 64;
 impl Orchestrator {
     /// Apply one update from the run's session.
     pub fn handle(&mut self, run: RunId, update: SessionUpdate) -> Result<HandleOutcome, RunError> {
-        match update {
+        // The decision source owner accepts/journals the complete bounded
+        // observation first. This ordinary path cannot mutate turns, approval
+        // maps, tallies or usage while that owner holds publication exclusively.
+        if self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
+        }
+        let (agent, session, gap) = match &update {
+            SessionUpdate::Agent(event) => (Some(event.sequence), None, false),
+            SessionUpdate::Session(event) => (None, Some(event.sequence), false),
+            SessionUpdate::AgentGap { .. } | SessionUpdate::SessionGap { .. } => (None, None, true),
+            SessionUpdate::Closed { error } => (
+                None,
+                None,
+                error
+                    .as_ref()
+                    .is_some_and(|e| e.code == koru_session_protocol::ErrorCode::StreamGap),
+            ),
+        };
+        if gap {
+            self.open(run)?.source_gap = true;
+        }
+        let outcome = match update {
             SessionUpdate::Agent(event) => self.agent_event(run, event.event),
-            SessionUpdate::AgentGap { .. } => {
+            SessionUpdate::AgentGap { .. } | SessionUpdate::SessionGap { .. } => {
                 if let Some(attempt) = self.open(run)?.attempt.as_mut() {
                     attempt.approval_evidence_complete = false;
                 }
@@ -64,7 +85,27 @@ impl Orchestrator {
             }
             SessionUpdate::Session(event) => self.session_event(run, event.event),
             SessionUpdate::Closed { .. } => self.session_lost(run),
+        };
+        if outcome.is_ok() {
+            let state = self.open(run)?;
+            if let Some(sequence) = agent {
+                state.source_frontiers.agent_after = Some(
+                    state
+                        .source_frontiers
+                        .agent_after
+                        .map_or(sequence, |old| old.max(sequence)),
+                );
+            }
+            if let Some(sequence) = session {
+                state.source_frontiers.session_after = Some(
+                    state
+                        .source_frontiers
+                        .session_after
+                        .map_or(sequence, |old| old.max(sequence)),
+                );
+            }
         }
+        outcome
     }
 
     fn agent_event(&mut self, run: RunId, event: AgentEvent) -> Result<HandleOutcome, RunError> {
@@ -565,6 +606,9 @@ impl Orchestrator {
 
     /// Write the turn's coalesced tool completions as one step, if any.
     fn flush_tools(&mut self, run: RunId, turn: AgentTurnId) -> Result<(), RunError> {
+        if self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
+        }
         let attempt = self.attempt_mut(run)?;
         let attempt_id = attempt.id;
         let Some(tally) = attempt.turns.get_mut(&turn) else {
@@ -689,7 +733,7 @@ impl Orchestrator {
             attempt: attempt_id,
         }])
         .expect("one ref");
-        let artifacts = u32::try_from(self.open(run)?.doc.document().header()?.artifacts.len())
+        let artifacts = u32::try_from(self.open(run)?.doc.document()?.header()?.artifacts.len())
             .unwrap_or(u32::MAX);
         let (kind, fact) = match status {
             RunStatus::Completed => (
@@ -704,7 +748,7 @@ impl Orchestrator {
             RunStatus::Failed { stage } => (
                 StepKind::Failed {
                     stage: *stage,
-                    reason: self.open(run)?.doc.document().header()?.failure_reason,
+                    reason: self.open(run)?.doc.document()?.header()?.failure_reason,
                 },
                 RunFact::Failed {
                     run,
@@ -877,7 +921,7 @@ impl Orchestrator {
                 }
                 // The objective was not satisfied at the fenced boundary:
                 // the orchestrator resumes with the next turn.
-                let objective = self.open(run)?.doc.document().header()?.objective;
+                let objective = self.open(run)?.doc.document()?.header()?.objective;
                 let turn = self.ports.sessions.submit(
                     session,
                     format!("Continue with the objective.\n\n{}", objective.as_str()),

@@ -162,11 +162,13 @@ pub enum Command {
     /// One update from a run's session, pumped in.
     Update {
         run: RunId,
+        epoch: uuid::Uuid,
         update: SessionUpdate,
     },
     /// A run's pump ended.
     PumpEnded {
         run: RunId,
+        epoch: uuid::Uuid,
     },
 }
 
@@ -186,6 +188,7 @@ struct Watcher {
 
 struct Pump {
     stop: Arc<AtomicBool>,
+    epoch: uuid::Uuid,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1020,7 +1023,12 @@ impl Actor {
                 });
                 self.notify(run);
             }
-            Command::Update { run, update } => {
+            Command::Update { run, epoch, update } => {
+                // Already queued old-pump updates cannot enter a replacement
+                // decision producer or mutate its retained source frontier.
+                if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
+                    return;
+                }
                 let was_active = self.orchestrator.bot_budget_runs().contains(&run);
                 match self.orchestrator.handle(run, update) {
                     Ok(HandleOutcome::Continue) => {}
@@ -1045,7 +1053,10 @@ impl Actor {
                     self.wake_bots();
                 }
             }
-            Command::PumpEnded { run } => {
+            Command::PumpEnded { run, epoch } => {
+                if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
+                    return;
+                }
                 self.pumps.remove(&run);
                 self.count_active();
                 self.wake_bots();
@@ -1320,6 +1331,7 @@ impl Actor {
         self.stop_pump(run);
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
+        let epoch = uuid::Uuid::new_v4();
         let commands = self.commands.clone();
         let spawned = std::thread::Builder::new()
             .name("koru-delegate pump".into())
@@ -1330,15 +1342,19 @@ impl Actor {
                         continue;
                     };
                     let closed = matches!(update, SessionUpdate::Closed { .. });
-                    if commands.send(Command::Update { run, update }).is_err() || closed {
+                    if commands
+                        .send(Command::Update { run, epoch, update })
+                        .is_err()
+                        || closed
+                    {
                         break;
                     }
                 }
-                let _ = commands.send(Command::PumpEnded { run });
+                let _ = commands.send(Command::PumpEnded { run, epoch });
             });
         match spawned {
             Ok(_) => {
-                self.pumps.insert(run, Pump { stop });
+                self.pumps.insert(run, Pump { stop, epoch });
             }
             Err(error) => {
                 tracing::error!(target: "koru::delegate", run = ?run, %error, "the run's stream could not be pumped");
@@ -1426,6 +1442,12 @@ impl Actor {
         };
         let header = match self.orchestrator.header(run) {
             Ok(header) => header,
+            Err(error) if error.publication_pending() => {
+                // Temporary ownership transfer is not a closed Run. Keep each
+                // watcher's exact delivery cursor for the returned handle.
+                self.watchers.insert(run, watchers);
+                return;
+            }
             Err(_) => {
                 for watcher in watchers {
                     let _ = watcher.sink.try_send(RunStreamItem::Closed);
@@ -1518,6 +1540,13 @@ fn wire_item(item: WindowItem) -> TimelineItem {
 }
 
 pub fn failure_of(error: &RunError) -> Failure {
+    if error.publication_pending() {
+        return Failure::new(
+            "publication_pending",
+            "The Run publication is still in progress.",
+            true,
+        );
+    }
     if let RunError::Port(port) = error {
         if matches!(
             port.code.as_str(),

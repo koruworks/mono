@@ -40,7 +40,7 @@ fn delivered_turn() -> (
 }
 
 fn complete_count(h: &mut Harness, run: RunId) -> usize {
-    h.orchestrator.open(run).unwrap().doc.document().timeline_all().into_iter()
+    h.orchestrator.open(run).unwrap().doc.document().unwrap().timeline_all().into_iter()
         .filter(|item| matches!(item, koru_delegate_document::TimelineItem::Step(entry) if entry.kind == StepKind::Completed)).count()
 }
 

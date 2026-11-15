@@ -38,7 +38,7 @@ impl Orchestrator {
         if row.retired || row.phase.is_terminal() || row.generation != generation {
             return Err(refused("bot_fenced"));
         }
-        let header = self.open(run)?.doc.document().header()?;
+        let header = self.open(run)?.doc.document()?.header()?;
         if header.run != run
             || header.executing_device() != Some(device)
             || header.status.is_terminal()
@@ -254,7 +254,7 @@ impl Orchestrator {
         if admission.submission.provenance.owner.device != device || device.as_uuid().is_nil() {
             return Err(refused("bot_owner_mismatch"));
         }
-        let header = self.open(key.run)?.doc.document().header()?;
+        let header = self.open(key.run)?.doc.document()?.header()?;
         if header.run != key.run || header.bot.as_ref() != Some(&admission.submission.provenance) {
             return Err(refused("bot_provenance_mismatch"));
         }

@@ -249,7 +249,7 @@ fn bot_header_or_folder_without_admission_refuses_purge_and_synced_ordinary_rema
         h.orchestrator.create(ordinary, s.workspace).unwrap();
         if bot_header {
             let state = h.orchestrator.open(s.request.run).unwrap();
-            let mut header = state.doc.document().header().unwrap();
+            let mut header = state.doc.document().unwrap().header().unwrap();
             header.bot = Some(s.provenance.clone());
             header.scope = s.request.scope.clone();
             state.doc = Box::new(MemoryHandle {

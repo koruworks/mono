@@ -255,7 +255,9 @@ pub trait RunStore: ScheduleLedger {
     ) -> Result<WriteOutcome, LedgerError>;
 }
 
+mod publication;
 mod routines;
+pub use publication::*;
 pub use routines::*;
 
 /// The local half of schedule execution. The authority token is minted only
@@ -939,6 +941,11 @@ pub enum SessionUpdate {
         actual: StreamSequence,
     },
     Session(SequencedSessionEvent),
+    /// Explicit Session-stream loss, distinct from the Agent stream's fence.
+    SessionGap {
+        expected: StreamSequence,
+        actual: StreamSequence,
+    },
     /// The stream ended: the session is gone, or the host is.
     Closed {
         error: Option<SessionFailure>,
@@ -956,6 +963,19 @@ pub trait SessionEvents: Send {
 /// reason, and the streams. The port keeps the controller lease it holds
 /// per session; the orchestrator never sees a token.
 pub trait Sessions {
+    /// Decision-window stream: bounded merge, independent retained frontiers,
+    /// and explicit gap observations. An unqualified adapter refuses.
+    fn subscribe_decision(
+        &mut self,
+        _session: SessionId,
+        _after: &koru_delegate_core::decisions::DecisionSourceFrontiers,
+    ) -> PortResult<Box<dyn SessionEvents>> {
+        Err(PortError::new(
+            Port::Sessions,
+            "decision_stream_unavailable",
+            "the session adapter does not support decision source ownership",
+        ))
+    }
     fn supports_delegation(&self) -> bool;
     /// Whether this exact authored profile is ready for unattended
     /// delegation according to the session host's cached provider verdict.

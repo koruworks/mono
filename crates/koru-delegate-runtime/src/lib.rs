@@ -84,12 +84,13 @@ pub use ports::{
     NoScheduleEvents, Port, PortError, PortResult, Ports, Preamble, PreparedScheduleEvent,
     PublishFailure, RoutineBridge, RoutineBridgeFailure, RoutineBridgeResult, RoutineCandidate,
     RoutineLedger, RoutinePreparationObservation, RoutinePreparedReply, RoutineWork,
-    RunDocumentHandle, RunDocuments, RunEvents, RunProjectionIntent, RunStore, ScheduleCatalog,
-    ScheduleChangeWatch, ScheduleClock, ScheduleDefinitionEvent, ScheduleDocumentHandle,
-    ScheduleDocuments, ScheduleEventMaintenance, ScheduleEventRef, ScheduleEvents, ScheduleLedger,
+    RunDocumentHandle, RunDocuments, RunEvents, RunProjectionIntent, RunPublicationOperation,
+    RunPublicationStart, RunPublicationTicket, RunStore, ScheduleCatalog, ScheduleChangeWatch,
+    ScheduleClock, ScheduleDefinitionEvent, ScheduleDocumentHandle, ScheduleDocuments,
+    ScheduleEventMaintenance, ScheduleEventRef, ScheduleEvents, ScheduleLedger,
     ScheduleOccurrenceEvent, SchedulePhaseGate, SchedulePhaseGuard, SchedulePreparation,
     ScheduleWake, ScheduleWatchTargets, SessionEvents, SessionLaunch, SessionUpdate, Sessions,
-    Sleep, SourceRefusal, SourceRefusalReason, schedule_definition_event,
+    Sleep, SourceRefusal, SourceRefusalReason, publication_pending, schedule_definition_event,
 };
 pub use scheduler::{
     PlannedAction, ScheduleAdmission, ScheduleCoordinator, ScheduleEffects, ScheduleEvaluation,

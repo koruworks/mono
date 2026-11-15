@@ -266,7 +266,7 @@ impl Orchestrator {
             )?;
         }
 
-        let header = self.open(run)?.doc.document().header()?;
+        let header = self.open(run)?.doc.document()?.header()?;
 
         // Admission (P1.5, D34).
         let (admission, resolved_directory) = match resolved_scope {

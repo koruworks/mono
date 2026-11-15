@@ -39,6 +39,7 @@ mod context;
 mod documents;
 mod events;
 mod ledger;
+mod publication;
 mod roots;
 mod routine_bridge;
 mod schedule_events;

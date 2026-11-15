@@ -80,7 +80,7 @@ impl Orchestrator {
         if prior == PriorAttempt::Unknown && !confirm {
             return Err(RunError::PriorAttemptUnknown);
         }
-        Ok(self.open(run)?.doc.document().header()?.scope)
+        Ok(self.open(run)?.doc.document()?.header()?.scope)
     }
 
     /// Continue an interrupted run as a fresh attempt. `confirm` is the
@@ -131,7 +131,7 @@ impl Orchestrator {
         }
 
         // D48, over the original pins, before anything is fenced.
-        let header = self.open(run)?.doc.document().header()?;
+        let header = self.open(run)?.doc.document()?.header()?;
         if let Some(scope) = resolved_scope.as_mut() {
             self.verify_resolved_scope(run, &header.scope, scope)?;
         }

@@ -22,7 +22,7 @@ use super::Orchestrator;
 impl Orchestrator {
     /// The run's status as the document holds it.
     pub(crate) fn status(&mut self, run: RunId) -> Result<RunStatus, RunError> {
-        Ok(self.open(run)?.doc.document().header()?.status)
+        Ok(self.open(run)?.doc.document()?.header()?.status)
     }
 
     /// Move the status through the one closed function and commit it.
