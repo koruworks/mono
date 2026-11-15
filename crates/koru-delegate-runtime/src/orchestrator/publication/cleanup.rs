@@ -9,6 +9,7 @@ use koru_delegate_core::decisions::{
     BotWaitPhase, DecisionClosureReason, DecisionTransitionId, ObservedCreationRetirement,
     ObservedRetirementResult,
 };
+use koru_delegate_sqlite::BotLedgerError;
 use koru_session_protocol::{CreationLookup, ProcessState};
 use std::time::{Duration, Instant};
 
@@ -239,9 +240,7 @@ impl Orchestrator {
         run: RunId,
         observed: ObservedCreationRetirement,
     ) -> Result<bool, RunError> {
-        use koru_delegate_core::decisions::{
-            ConsumerCleanup, DecisionAttemptRetirement, DecisionList, DecisionNativeDrain,
-        };
+        use koru_delegate_core::decisions::{ConsumerCleanup, DecisionAttemptRetirement};
         use koru_delegate_sqlite::AttemptPhase;
         let owner = self.publication_owner(run)?;
         let Some(ownership) = self.bot_ledger()?.decision_cleanup_ownership(owner, run)? else {
@@ -275,12 +274,9 @@ impl Orchestrator {
                     return Ok(false);
                 }
                 let (attempt, generation) = execution.cleanup_target.attempt();
-                // Both proofs are gathered before anything is retired, so an
-                // unavailable one changes nothing and occupancy stays held.
-                let Some(effect) = self.decision_retained_effect(&execution)? else {
-                    return Ok(false);
-                };
-                let Some(drained) = self.decision_native_drain(run, attempt, generation)? else {
+                // The effect proof is gathered before anything is retired, so
+                // an unresolved effect changes nothing and occupancy stays held.
+                let Some(effect) = self.decision_retained_effect(owner, &execution)? else {
                     return Ok(false);
                 };
                 let row = &execution.current_attempt;
@@ -316,6 +312,14 @@ impl Orchestrator {
                     return Ok(false);
                 }
                 let now = self.ports.clock.now_ms();
+                // The drain reader requires the retired terminal attempt. An
+                // unavailable drain records nothing; the retired row is only
+                // the physical part, which may legitimately finish first.
+                let Some(native_drain) =
+                    self.decision_native_drain(owner, run, attempt, generation, now)?
+                else {
+                    return Ok(false);
+                };
                 let cleanup = ConsumerCleanup::Confirmed {
                     cleanup_revision: current.expected.revision,
                     target: current.cleanup_target.clone(),
@@ -326,13 +330,7 @@ impl Orchestrator {
                         generation,
                         retired_at_ms: row.updated_at_ms,
                     },
-                    native_drain: DecisionNativeDrain {
-                        run,
-                        attempt,
-                        generation,
-                        observed_at_ms: now,
-                        effects: DecisionList::new(drained).map_err(|_| publication_pending())?,
-                    },
+                    native_drain,
                     retained_effect_outcome: effect,
                 };
                 let transition = DecisionTransitionId::mint();
@@ -390,35 +388,51 @@ impl Orchestrator {
         Ok(true)
     }
 
-    /// The complete drained native receipts of exactly this attempt, or None
-    /// while that proof is unavailable. Join point for the C bounded reader:
-    /// until it exists only the empty list is offered, and the C correlation
-    /// refuses it whenever any effect of the attempt was fenced or drained,
-    /// so such a Run stays occupied rather than claiming a complete drain.
+    /// The complete drained native receipts of exactly this retired attempt
+    /// from the C bounded reader, or None while that proof is unavailable
+    /// (a held lease, an unretired attempt, or evidence over its bound).
     fn decision_native_drain(
         &mut self,
-        _run: RunId,
-        _attempt: koru_delegate_core::RunAttemptId,
-        _generation: koru_delegate_core::AttemptGeneration,
-    ) -> Result<Option<Vec<koru_delegate_core::NativeEffectDrainReceipt>>, RunError> {
-        Ok(Some(Vec::new()))
+        owner: koru_delegate_core::BotOwner,
+        run: RunId,
+        attempt: koru_delegate_core::RunAttemptId,
+        generation: koru_delegate_core::AttemptGeneration,
+        observed_at_ms: i64,
+    ) -> Result<Option<koru_delegate_core::decisions::DecisionNativeDrain>, RunError> {
+        match self.bot_ledger()?.decision_native_drain(
+            owner,
+            run,
+            attempt,
+            generation,
+            observed_at_ms,
+        ) {
+            Ok(drain) => Ok(Some(drain)),
+            Err(BotLedgerError::Fenced | BotLedgerError::Capacity) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// The retained effect outcome the final record must carry. `None` means
-    /// the proof is unavailable and occupancy stays held; `Some(None)` means
-    /// no outcome applies (the decision did not consume a Koru edit). Join
-    /// point for the C accessor of a consumed Koru edit's retained outcome.
+    /// the proof is unavailable (the effect is unresolved) and occupancy stays
+    /// held; `Some(None)` means no outcome is owed. Never invents NotApplied.
     fn decision_retained_effect(
         &mut self,
+        owner: koru_delegate_core::BotOwner,
         execution: &koru_delegate_sqlite::DecisionWaitExecution,
     ) -> Result<Option<Option<koru_delegate_core::decisions::DecisionRetainedEffect>>, RunError>
     {
-        use koru_delegate_core::decisions::{DecisionAuthorization, DecisionKind};
-        let consumed_edit = execution.decision_state.as_ref().is_some_and(|state| {
-            state.kind == DecisionKind::KoruEdit
-                && state.authorization == DecisionAuthorization::Consumed
-        });
-        Ok(if consumed_edit { None } else { Some(None) })
+        let Some(decision) = execution.expected.decision.as_ref() else {
+            return Ok(Some(None));
+        };
+        match self.bot_ledger()?.decision_retained_effect(
+            owner,
+            execution.expected.run,
+            decision.decision,
+        ) {
+            Ok(effect) => Ok(Some(effect)),
+            Err(BotLedgerError::Fenced | BotLedgerError::Capacity) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Permission to reconcile an existing Held effect while canonical status
